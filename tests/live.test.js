@@ -66,8 +66,10 @@ test(
                 stream: false
             })
         });
-        assert.ok(res.ok, `HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
-        const data = await res.json();
+        // Read the body once — a fetch Response can only be consumed once.
+        const text = await res.text();
+        assert.ok(res.ok, `HTTP ${res.status}: ${text.slice(0, 200)}`);
+        const data = JSON.parse(text);
         assert.equal(typeof data.choices?.[0]?.message?.content, "string");
     }
 );
@@ -98,8 +100,10 @@ test(
                 }
             })
         });
-        assert.ok(res.ok, `HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
-        const content = (await res.json()).choices?.[0]?.message?.content;
+        // Read the body once — a fetch Response can only be consumed once.
+        const text = await res.text();
+        assert.ok(res.ok, `HTTP ${res.status}: ${text.slice(0, 200)}`);
+        const content = JSON.parse(text).choices?.[0]?.message?.content;
         // If the backend forwards response_format, content parses cleanly to
         // an object with the schema's key.
         const parsed = JSON.parse(content);
