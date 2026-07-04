@@ -175,6 +175,7 @@ async function listAvailableModels(overrides = {}) {
     const errors = [];
 
     for (const path of ["/api/models", "/v1/models", "/api/tags"]) {
+        let list;
         try {
             const res = await fetch(origin + path, { headers: authHeaders(config) });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -186,14 +187,23 @@ async function listAvailableModels(overrides = {}) {
                 throw new Error("returned HTML, not JSON (route not found)");
             }
 
-            const models = (data.data || data.models || [])
-                .map(m => m.id || m.name)
-                .filter(Boolean);
-            if (!models.length) throw new Error("no models in response");
-            return models;
+            list = data.data || data.models;
+            if (!Array.isArray(list)) throw new Error("no model list in response");
         } catch (err) {
             errors.push(`${path}: ${err.message}`);
+            continue;
         }
+
+        // A valid-but-empty list is authoritative: the server is fine, it
+        // just has nothing installed — don't bury that in route errors.
+        if (!list.length) {
+            throw new Error(
+                "The server is reachable but has no models installed. " +
+                "Pull one first (e.g. `ollama pull llama3.2`) or add a " +
+                "model connection in OpenWebUI, then reload the list."
+            );
+        }
+        return list.map(m => m.id || m.name).filter(Boolean);
     }
     throw new Error(errors.join("; "));
 }

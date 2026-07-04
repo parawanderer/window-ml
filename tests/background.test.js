@@ -197,6 +197,22 @@ test("SET_MODEL validates against the server list and persists", async () => {
     assert.equal(bg.stored.model, "b"); // unchanged
 });
 
+test("LIST_MODELS explains an empty server instead of route-hopping", async () => {
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            // Valid route, valid response, zero models installed.
+            assert.equal(call.url, "http://host/api/models");
+            return jsonResponse({ data: [] });
+        }
+    });
+
+    const res = await bg.send({ type: "LIST_MODELS" });
+    assert.match(res.error, /no models installed/);
+    assert.match(res.error, /ollama pull/);
+    assert.equal(bg.calls.length, 1); // authoritative — no fallback probing
+});
+
 test("LIST_MODELS falls back across routes (HTML means wrong path)", async () => {
     const bg = loadBackground({
         config: baseConfig(),

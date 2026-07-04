@@ -2,7 +2,12 @@
 
 What you need: a Chromium-based browser (Chrome, Edge, Brave, …) and a
 reachable [OpenWebUI](https://openwebui.com) instance (or a bare
-[Ollama](https://ollama.com) server) that runs your models.
+[Ollama](https://ollama.com) server) **with at least one model pulled** —
+a fresh install serves nothing until you `ollama pull` something:
+
+```sh
+ollama pull llama3.2            # or: docker exec ollama ollama pull llama3.2
+```
 
 ## 1. Install the extension
 
@@ -56,6 +61,7 @@ The full API is documented in the [README](../README.md#windowml-api).
 
 | Symptom | Cause / fix |
 | --- | --- |
+| **Load** says "no models installed" | Your server runs fine but serves nothing — pull a model (see top of this page), then hit **Load** again. |
 | `Test failed: HTTP 400 … "Model not found"` | The model id doesn't exist on the server — use the **Load** button instead of typing one. |
 | `Unexpected token '<' … not valid JSON` or `HTTP 405` | Wrong URL path for your server — copy it from the table above. OpenWebUI has **no** root-level `/v1/chat/completions`. |
 | `HTTP 400 … 'NoneType' object has no attribute 'startswith'` | OpenWebUI 0.9.5 bug ([#24550](https://github.com/open-webui/open-webui/issues/24550)); upgrade OpenWebUI, or use the `/ollama/api/chat` passthrough URL with the **Ollama native** format. |
