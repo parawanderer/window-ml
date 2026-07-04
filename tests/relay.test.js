@@ -42,6 +42,12 @@ test("ml.chat converts <img> elements to data URLs in the payload", async () => 
     assert.deepEqual(world.runtimeCalls[0].payload.messages[0].images, [IMG]);
 });
 
+test("window.ml signals readiness via the ml:ready event and ml.ready promise", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: () => ({ data: "ok" }) });
+    assert.ok(world.dispatchedEvents.includes("ml:ready"));
+    assert.strictEqual(await world.ml.ready, world.ml);
+});
+
 test("ml.read sends an OCR request and returns cleaned text", async () => {
     const world = loadPageWorld({
         onRuntimeMessage: (msg) => {

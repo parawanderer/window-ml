@@ -213,5 +213,12 @@
         },
     };
 
+    // Readiness signal for scripts (e.g. userscripts) that may run before this
+    // one injects. Resolves immediately since window.ml is fully synchronous:
+    //   const ml = await (window.ml?.ready
+    //       ?? new Promise(r => addEventListener("ml:ready", () => r(window.ml), { once: true })));
+    window.ml.ready = Promise.resolve(window.ml);
+    window.dispatchEvent(new Event("ml:ready"));
+
     console.log("🟢 window.ml is ready.");
 })();

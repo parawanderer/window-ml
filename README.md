@@ -150,6 +150,28 @@ There's no separate OCR server — OCR is just a vision-model call through the
 same OpenWebUI pipe. For specialized accuracy, point the OCR model at any
 vision/OCR model you've added to OpenWebUI (a GOT-OCR2 or TrOCR GGUF, etc.).
 
+### Using from a userscript
+
+`window.ml` lives on the page's **main-world** `window`, so a userscript that
+runs in page context (Tampermonkey, *User JavaScript and CSS*, …) can call it
+directly — no messaging. Since your script and the extension race to load, wait
+for the readiness signal rather than assuming `window.ml` exists yet:
+
+```js
+const ml = await (window.ml?.ready
+    ?? new Promise(r => addEventListener("ml:ready", () => r(window.ml), { once: true })));
+
+// e.g. flag a lunch menu you'd hate, then nudge the tab title:
+const menu = await ml.read(document.querySelector(".menu img"));
+const v = await ml.chat("I hate sandwiches. Warn me if lunch here is sandwich-only.\n\n" + menu,
+    { schema: { type: "object", properties: { warn: { type: "boolean" }, why: { type: "string" } }, required: ["warn", "why"] } });
+if (v.warn) document.title = "🥪 " + v.why;
+```
+
+`window.ml.ready` is a promise resolving to `ml`; the `ml:ready` event fires once
+on injection. (A sandboxed/isolated-world userscript won't see `window.ml` —
+bridge via `window.postMessage` instead.)
+
 ## Architecture
 
 | File | Role |

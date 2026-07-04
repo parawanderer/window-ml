@@ -98,19 +98,28 @@ function loadBackground({ config = {}, onFetch }) {
 // it gets the runtime message and returns { data } or { error }.
 function loadPageWorld({ onRuntimeMessage }) {
     const runtimeCalls = [];
-    const messageListeners = [];
+    const listeners = {};       // type -> fn[]
+    const dispatchedEvents = []; // event types dispatched (for assertions)
 
     const win = {
         addEventListener: (type, fn) => {
-            if (type === "message") messageListeners.push(fn);
+            (listeners[type] ??= []).push(fn);
         },
         removeEventListener: (type, fn) => {
-            const i = messageListeners.indexOf(fn);
-            if (i >= 0) messageListeners.splice(i, 1);
+            const arr = listeners[type];
+            if (arr) {
+                const i = arr.indexOf(fn);
+                if (i >= 0) arr.splice(i, 1);
+            }
+        },
+        dispatchEvent: (event) => {
+            dispatchedEvents.push(event.type);
+            for (const fn of [...(listeners[event.type] || [])]) fn(event);
+            return true;
         },
         postMessage: (data) => {
             queueMicrotask(() => {
-                for (const fn of [...messageListeners]) fn({ source: win, data });
+                for (const fn of [...(listeners.message || [])]) fn({ source: win, data });
             });
         }
     };
@@ -119,6 +128,7 @@ function loadPageWorld({ onRuntimeMessage }) {
         console,
         Math,
         structuredClone,
+        Event: class Event { constructor(type) { this.type = type; } },
         window: win,
         HTMLImageElement: class HTMLImageElement {},
         document: {
@@ -140,7 +150,7 @@ function loadPageWorld({ onRuntimeMessage }) {
     vm.runInContext(fs.readFileSync(path.join(ROOT, "content.js"), "utf8"), context);
     vm.runInContext(fs.readFileSync(path.join(ROOT, "injected.js"), "utf8"), context);
 
-    return { ml: win.ml, runtimeCalls, context };
+    return { ml: win.ml, runtimeCalls, context, dispatchedEvents };
 }
 
 module.exports = { jsonResponse, htmlResponse, loadBackground, loadPageWorld, loadDotEnv };
