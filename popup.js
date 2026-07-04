@@ -111,6 +111,32 @@ async function freeVram() {
         } else {
             setStatus(`Unloaded: ${response.data.join(", ")}`, "ok");
         }
+        refreshVram();
+    });
+}
+
+// Renders per-model VRAM usage from Ollama's /api/ps (used only — Ollama's API
+// doesn't report total GPU capacity, so there's no denominator to show).
+function renderVram(models) {
+    if (!models.length) {
+        $("vram").textContent = "Nothing loaded.";
+        return;
+    }
+    const usedGB = models.reduce((sum, m) => sum + (m.vramGB || 0), 0);
+    const list = models.map(m => `• ${m.model} — ${m.vramGB ?? "?"} GB`).join("\n");
+    $("vram").textContent = `${usedGB.toFixed(1)} GB in use\n${list}`;
+}
+
+function refreshVram() {
+    chrome.runtime.sendMessage({ type: "OLLAMA_PS", payload: {} }, (response) => {
+        // No Ollama backend (e.g. a cloud-only setup) — hide the section entirely
+        // rather than showing an error for something that doesn't apply.
+        if (chrome.runtime.lastError || (response && response.error)) {
+            $("vramSection").style.display = "none";
+            return;
+        }
+        $("vramSection").style.display = "block";
+        renderVram(response.data || []);
     });
 }
 
@@ -118,5 +144,7 @@ $("save").addEventListener("click", save);
 $("unload").addEventListener("click", freeVram);
 $("test").addEventListener("click", saveAndTest);
 $("loadModels").addEventListener("click", loadModels);
+$("refreshVram").addEventListener("click", refreshVram);
 
 loadForm();
+refreshVram();

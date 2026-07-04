@@ -84,6 +84,7 @@
     #status.ok { color: #4ade80; }
     #status.err { color: #f87171; }
     #status.busy { color: #a1a1aa; }
+    #vram { white-space: pre-wrap; }
 </style>
 </head>
 <body>
@@ -114,6 +115,12 @@
     <label for="ocrModel">OCR model (optional)</label>
     <input id="ocrModel" type="text" list="modelList" placeholder="e.g. qwen2.5vl">
     <div class="hint">Vision model ml.read() uses for OCR — kept separate from the chat model</div>
+
+    <div id="vramSection" style="display:none">
+        <label>VRAM usage</label>
+        <div id="vram" class="hint">—</div>
+        <button id="refreshVram" title="Refresh VRAM usage" style="margin-top:6px">Refresh</button>
+    </div>
 
     <div class="actions">
         <button id="save" class="primary">Save</button>

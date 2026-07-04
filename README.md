@@ -157,7 +157,7 @@ vision/OCR model you've added to OpenWebUI (a GOT-OCR2 or TrOCR GGUF, etc.).
 | `injected.js` | Runs in the page's main world; defines `window.ml`. Serializes `<img>`/blob/http images to data URLs. |
 | `content.js` | Dumb relay: `window.postMessage` ⇄ `chrome.runtime.sendMessage`. |
 | `background.js` | Service worker. Owns config, builds per-format request bodies, extracts replies, talks to OpenWebUI/Ollama (CORS-free). |
-| `popup.html/js` | Settings UI (`chrome.storage.sync`), model picker, Save & Test, Free VRAM. |
+| `popup.html/js` | Settings UI (`chrome.storage.sync`), model picker, Save & Test, VRAM usage readout, Free VRAM. |
 
 Security note: config overrides (URL/key) are only accepted from the popup —
 messages relayed from web pages (`sender.tab` set) cannot repoint the saved
