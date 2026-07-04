@@ -6,8 +6,14 @@
 //
 // The chat round-trip additionally requires OPENWEBUI_MODEL (explicit, so a
 // test run never surprise-loads a huge model into VRAM).
+//
+// Values may also be placed in a git-ignored .env at the repo root (see
+// .env.example) — loadDotEnv() reads it; real env vars take precedence.
 const { test } = require("node:test");
 const assert = require("node:assert");
+const { loadDotEnv } = require("./helpers");
+
+loadDotEnv();
 
 const BASE = (process.env.OPENWEBUI_URL || "").replace(/\/$/, "");
 const KEY = process.env.OPENWEBUI_KEY;

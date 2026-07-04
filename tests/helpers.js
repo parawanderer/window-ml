@@ -7,6 +7,30 @@ const path = require("node:path");
 
 const ROOT = path.join(__dirname, "..");
 
+// Loads KEY=VALUE pairs from a repo-root .env into process.env, for the opt-in
+// live tests. Zero-dependency (no `dotenv`); missing file is a no-op so CI and
+// offline runs are unaffected. Real environment variables win over .env, so an
+// inline `OPENWEBUI_MODEL=... npm test` still overrides the file.
+function loadDotEnv() {
+    let text;
+    try {
+        text = fs.readFileSync(path.join(ROOT, ".env"), "utf8");
+    } catch {
+        return; // no .env — nothing to load
+    }
+    for (const raw of text.split("\n")) {
+        const line = raw.trim();
+        if (!line || line.startsWith("#")) continue;
+        const eq = line.indexOf("=");
+        if (eq === -1) continue;
+        const key = line.slice(0, eq).replace(/^export\s+/, "").trim();
+        // Split on the first "=" only; keys/tokens may contain "=". Strip one
+        // layer of surrounding quotes but leave the rest (incl. "#") intact.
+        let value = line.slice(eq + 1).trim().replace(/^(['"])(.*)\1$/, "$2");
+        if (key && !(key in process.env)) process.env[key] = value;
+    }
+}
+
 function jsonResponse(obj, status = 200) {
     return {
         ok: status >= 200 && status < 300,
@@ -119,4 +143,4 @@ function loadPageWorld({ onRuntimeMessage }) {
     return { ml: win.ml, runtimeCalls, context };
 }
 
-module.exports = { jsonResponse, htmlResponse, loadBackground, loadPageWorld };
+module.exports = { jsonResponse, htmlResponse, loadBackground, loadPageWorld, loadDotEnv };

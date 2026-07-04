@@ -151,8 +151,15 @@ tests exercise the exact files Chrome runs:
   OPENWEBUI_URL=http://localhost:3000 OPENWEBUI_KEY=sk-... npm test
   ```
 
-  The chat round-trip test additionally requires `OPENWEBUI_MODEL=<id>` so a
-  test run never surprise-loads a huge model into VRAM.
+  Copy [`.env.example`](.env.example) to `.env` (git-
+  ignored) and fill it in — the suite auto-loads it (`loadDotEnv` in
+  `tests/helpers.js`, no `dotenv` dependency). Real environment variables take
+  precedence over `.env`, so an inline override still works.
+
+  The chat round-trip and structured-output tests additionally require
+  `OPENWEBUI_MODEL=<id>` so a test run never surprise-loads a huge model into
+  VRAM. With only URL + key set, the read-only route/capability checks run and
+  the model-loading ones self-skip.
 
 ### VSCode test runner
 
