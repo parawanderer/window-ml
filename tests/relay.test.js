@@ -42,6 +42,33 @@ test("ml.chat converts <img> elements to data URLs in the payload", async () => 
     assert.deepEqual(world.runtimeCalls[0].payload.messages[0].images, [IMG]);
 });
 
+test("ml.read sends an OCR request and returns cleaned text", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: (msg) => {
+            assert.equal(msg.type, "FETCH_LLM");
+            assert.equal(msg.payload.ocr, true);
+            assert.equal(msg.payload.think, null);
+            assert.deepEqual(msg.payload.messages[0].images, [IMG]);
+            assert.match(msg.payload.messages[0].content, /transcribe/i);
+            return { data: "<think>reading</think>  Invoice #42  " };
+        }
+    });
+
+    const text = await world.ml.read(IMG);
+    assert.equal(text, "Invoice #42"); // think stripped, trimmed
+});
+
+test("ml.read passes a per-call model override", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: (msg) => {
+            assert.equal(msg.payload.model, "got-ocr2");
+            return { data: "text" };
+        }
+    });
+
+    await world.ml.read(IMG, { model: "got-ocr2" });
+});
+
 test("createChat accumulates history and resends it each turn", async () => {
     let n = 0;
     const world = loadPageWorld({

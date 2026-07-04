@@ -10,7 +10,7 @@ function baseConfig(overrides = {}) {
         apiKey: "sk-test",
         model: "default-model",
         apiFormat: "openai",
-        ocrUrl: "",
+        ocrModel: "",
         ...overrides
     };
 }
@@ -67,6 +67,38 @@ test("FETCH_LLM honors a per-call model override", async () => {
         payload: { messages: [{ role: "user", content: "hi" }], model: "override-model" }
     });
     assert.equal(res.data, "ok");
+});
+
+test("FETCH_LLM ocr flag resolves the dedicated ocrModel", async () => {
+    const bg = loadBackground({
+        config: baseConfig({ model: "qwen3:235b", ocrModel: "qwen2.5vl" }),
+        onFetch: (call) => {
+            if (call.url.endsWith("/api/show")) {
+                return jsonResponse({ capabilities: ["completion", "vision"] });
+            }
+            assert.equal(call.body.model, "qwen2.5vl"); // not the reasoning model
+            return jsonResponse({ choices: [{ message: { content: "hello world" } }] });
+        }
+    });
+
+    const res = await bg.send({
+        type: "FETCH_LLM",
+        payload: { messages: [{ role: "user", content: "transcribe", images: [IMG] }], ocr: true }
+    });
+    assert.equal(res.data, "hello world");
+});
+
+test("FETCH_LLM ocr flag errors clearly when no OCR model is set", async () => {
+    const bg = loadBackground({
+        config: baseConfig({ model: "", ocrModel: "" }),
+        onFetch: () => assert.fail("no request should be sent")
+    });
+
+    const res = await bg.send({
+        type: "FETCH_LLM",
+        payload: { messages: [{ role: "user", content: "x", images: [IMG] }], ocr: true }
+    });
+    assert.match(res.error, /No OCR model configured/);
 });
 
 test("FETCH_LLM errors clearly when no model is configured", async () => {

@@ -111,8 +111,9 @@
     </select>
     <div class="hint">Request and response shape — match it to the URL above</div>
 
-    <label for="ocrUrl">OCR URL (optional)</label>
-    <input id="ocrUrl" type="text" placeholder="http://host:port/api/ocr">
+    <label for="ocrModel">OCR model (optional)</label>
+    <input id="ocrModel" type="text" list="modelList" placeholder="e.g. qwen2.5vl">
+    <div class="hint">Vision model ml.read() uses for OCR — kept separate from the chat model</div>
 
     <div class="actions">
         <button id="save" class="primary">Save</button>

@@ -65,7 +65,7 @@ list. See [docs/CLOUD-MODELS.md](docs/CLOUD-MODELS.md).
 | `ml.getModel()` / `ml.setModel(id)` | Read / persistently switch the default model. `setModel` validates against the server list and syncs the popup. |
 | `ml.ps()` | Models loaded in VRAM: `[{ model, vramGB, expiresAt }]`. |
 | `ml.unload(model?)` | Evict a model from VRAM (`keep_alive: 0`); no argument = evict all. |
-| `ml.read(imageOrUrl)` | OCR via the (optional) OCR server. |
+| `ml.read(image, { model?, prompt? })` | OCR — transcribe baked-in text from an `<img>` or URL to a plain string, using the configured OCR (vision) model. See [OCR](#ocr). |
 | `ml.logChat` / `ml.logChatShort` | `console.log` variants. |
 
 Options (all optional, both for `chat` and `createChat`):
@@ -116,6 +116,39 @@ h.fork()            // independent deep copy of the conversation
 
 Design invariants: assistant replies are stored post-cleanup (thinking blocks
 are never resent as context) and a failed request leaves `messages` untouched.
+
+### OCR
+
+`ml.read()` transcribes text that's baked into image pixels — the case where a
+site renders content as an image so it can't be selected or scraped. It returns
+a **plain string**, so it composes with `chat`:
+
+```js
+await ml.chat("Summarize this: " + await ml.read(document.images[0]));
+const imgs = [...document.querySelectorAll(".listing img")];         // bulk
+const texts = await Promise.all(imgs.map(img => ml.read(img)));
+```
+
+**Setup:** OCR needs a vision model. Pull one and set it as the *OCR model* in
+the popup (kept separate from your chat model, so a text-only reasoning model
+stays the default and never sees image tokens):
+
+```sh
+ollama pull qwen2.5vl        # or: docker exec ollama ollama pull qwen2.5vl
+```
+
+Typical bulk flow, using the VRAM controls to avoid holding both models at once:
+
+```js
+const texts = await Promise.all(imgs.map(img => ml.read(img)));  // vision model stays warm
+await ml.unload();                    // purge it
+await ml.setModel("qwen3:235b");      // load the reasoning model
+await ml.chat("Analyze:\n" + texts.join("\n---\n"));
+```
+
+There's no separate OCR server — OCR is just a vision-model call through the
+same OpenWebUI pipe. For specialized accuracy, point the OCR model at any
+vision/OCR model you've added to OpenWebUI (a GOT-OCR2 or TrOCR GGUF, etc.).
 
 ## Architecture
 

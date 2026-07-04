@@ -95,9 +95,30 @@
         chatShort: async function(prompt, options) {
             return this.chat(`${prompt}. Short and concise:`, options);
         },
-        read: async function(image) {
+        // OCR: transcribe baked-in text from an image to a plain string, using
+        // the dedicated OCR (vision) model — so the reasoning model never sees
+        // image tokens. Composes with chat:
+        //   await ml.chat("Summarize: " + await ml.read($0))
+        //   await Promise.all(imgs.map(i => ml.read(i)))
+        // image: <img> element or URL string. model: per-call override of the
+        // configured OCR model. prompt: override the default transcription prompt.
+        read: async function(image, { model = null, prompt = null } = {}) {
             const dataUrl = await this._imageToDataUrl(image);
-            return this._ocr(dataUrl.split(",")[1]);
+            const instruction = prompt ||
+                "Transcribe all text in this image exactly as it appears, " +
+                "preserving reading order. Output only the transcribed text — " +
+                "no commentary, no descriptions, no markdown.";
+            const reply = await makeBackgroundTaskPromise(
+                "LLM_REQUEST",
+                "LLM_RESPONSE",
+                {
+                    "messages": [{ role: "user", content: instruction, images: [dataUrl] }],
+                    "think": null,
+                    "model": model,
+                    "ocr": true
+                }
+            );
+            return reply.replace(/^<think>[\s\S]*?<\/think>\s*/i, '').trim();
         },
         // Parses a structured-output reply, tolerating a stray ```json fence
         // and surfacing the raw text on failure for debugging.
@@ -158,13 +179,6 @@
                 "B64_REQUEST",
                 "B64_RESPONSE",
                 { "url": url }
-            );
-        },
-        _ocr: async function(base64Image) {
-            return makeBackgroundTaskPromise(
-                "OCR_REQUEST",
-                "OCR_RESPONSE",
-                { "image": base64Image }
             );
         },
         // Available model ids on the server.

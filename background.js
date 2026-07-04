@@ -10,8 +10,9 @@ const DEFAULT_CONFIG = {
     model: "",
     // Request body + response shape, see API_FORMATS.
     apiFormat: "openai",
-    // Legacy OCR server endpoint; leave empty if unused.
-    ocrUrl: ""
+    // Vision model ml.read() uses for OCR, independent of `model` so a text-only
+    // reasoning model can stay the default. Empty = fall back to `model`.
+    ocrModel: ""
 };
 
 // Messages arrive in a neutral shape: { role, content, images? } with images
@@ -103,10 +104,15 @@ async function fetchLLM(payload) {
     const headers = { "Content-Type": "application/json" };
     if (config.apiKey) headers["Authorization"] = `Bearer ${config.apiKey}`;
 
-    const model = payload.model || config.model;
+    // ml.read() sets ocr:true so OCR resolves to the dedicated ocrModel first,
+    // keeping the reasoning model (config.model) free of image tokens.
+    const model = payload.model || (payload.ocr && config.ocrModel) || config.model;
     if (!model) {
         throw new Error(
-            "No model configured. Open the extension popup and use Load to pick one."
+            payload.ocr
+                ? "No OCR model configured. Set an OCR model (a vision model like " +
+                  "qwen2.5vl) in the extension popup."
+                : "No model configured. Open the extension popup and use Load to pick one."
         );
     }
 
@@ -291,38 +297,12 @@ async function unloadModels(modelName) {
     return targets;
 }
 
-async function fetchOCR(payload) {
-    const config = await getConfig();
-    if (!config.ocrUrl) {
-        throw new Error("OCR URL is not configured (set it in the extension popup).");
-    }
-
-    const res = await fetch(config.ocrUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-    });
-
-    const data = await res.json();
-    if (!data["success"]) {
-        throw new Error(data["error"]);
-    }
-
-    return { text: data["text"], segments: data["segments"] };
-}
-
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === "FETCH_LLM") {
         fetchLLM(message.payload)
             .then(content => sendResponse({ data: content }))
             .catch(err => sendResponse({ error: err.message }));
         return true; // Keep channel open for async fetch
-
-    } else if (message.type === "FETCH_OCR") {
-        fetchOCR(message.payload)
-            .then(result => sendResponse({ data: result }))
-            .catch(err => sendResponse({ error: err.message }));
-        return true;
 
     } else if (message.type === "LIST_MODELS") {
         // Config overrides are only honored from the extension's own pages

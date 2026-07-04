@@ -4,10 +4,10 @@ const DEFAULT_CONFIG = {
     apiKey: "",
     model: "",
     apiFormat: "openai",
-    ocrUrl: ""
+    ocrModel: ""
 };
 
-const FIELDS = ["chatUrl", "apiKey", "model", "apiFormat", "ocrUrl"];
+const FIELDS = ["chatUrl", "apiKey", "model", "apiFormat", "ocrModel"];
 
 const $ = (id) => document.getElementById(id);
 const statusEl = () => $("status");

@@ -9,10 +9,6 @@ const HANDLE_MAP = {
         type: "FETCH_LLM",
         responseType: "LLM_RESPONSE"
     },
-    "OCR_REQUEST": {
-        type: "FETCH_OCR",
-        responseType: "OCR_RESPONSE"
-    },
     "B64_REQUEST": {
         type: "FETCH_IMAGE_B64",
         responseType: "B64_RESPONSE"

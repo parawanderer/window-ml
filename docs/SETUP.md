@@ -53,7 +53,23 @@ await ml.chat("What's in this image?", { images: [document.images[0]] });
 const h = ml.createChat({ system: "Be terse." });
 await h.chat("What is a monad?");
 await h.chat("Shorter.");
+
+// OCR — transcribe text baked into an image to a string (see below):
+await ml.read(document.images[0]);
 ```
+
+### OCR (optional)
+
+`ml.read()` transcribes text that's baked into image pixels. It uses a separate
+**vision** model so your chat model can stay text-only. To enable it: pull a
+vision model, then set it as the **OCR model** in the popup.
+
+```sh
+ollama pull qwen2.5vl        # or: docker exec ollama ollama pull qwen2.5vl
+```
+
+Details and the bulk-processing pattern are in the
+[README](../README.md#ocr).
 
 The full API is documented in the [README](../README.md#windowml-api). To route
 to commercial models (Claude, GPT, OpenRouter) through the same setup, see
