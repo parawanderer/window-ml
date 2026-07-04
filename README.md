@@ -1,5 +1,7 @@
 # window.ml
 
+[![tests](https://github.com/parawanderer/window-ml/actions/workflows/tests.yml/badge.svg)](https://github.com/parawanderer/window-ml/actions/workflows/tests.yml)
+
 Personal Chrome extension that exposes a scripting API (`window.ml`) on web
 pages, bridging them to local LLMs served by [OpenWebUI](https://openwebui.com)
 / [Ollama](https://ollama.com). Built as devtools-console glue: the deliverable
