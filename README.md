@@ -25,6 +25,8 @@ await h.chat("Now explain it like I'm five");
 
 ## Setup
 
+> Step-by-step walkthrough (install, minimum config, troubleshooting): [docs/SETUP.md](docs/SETUP.md)
+
 1. `chrome://extensions` → Developer mode → **Load unpacked** → this directory.
 2. Recommended: set the extension's **Site access** to **On click**, so
    `window.ml` only exists on pages where you've clicked the extension icon.
