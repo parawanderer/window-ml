@@ -15,13 +15,37 @@ const DEFAULT_CONFIG = {
     ocrModel: ""
 };
 
-// Messages arrive in a neutral shape: { role, content, images? } with images
-// as full data URLs ("data:image/png;base64,..."); each format converts them
-// to its wire representation.
+// OpenAI serves tool-call arguments as a JSON string; Ollama as an object.
+// Normalize to a parsed object, falling back to the raw value on bad JSON.
+function parseToolArgs(args) {
+    if (args == null) return {};
+    if (typeof args === "object") return args;
+    try { return JSON.parse(args); } catch { return args; }
+}
+
+// Messages arrive in a neutral shape: { role, content, images?, tool_calls?,
+// tool_call_id? } with images as full data URLs; each format converts them to
+// its wire representation. tool_calls are normalized as { id, name, arguments }.
 const API_FORMATS = {
     // chat/completions (OpenWebUI /api, or any OpenAI-compatible server)
     openai: {
-        buildMessage({ role, content, images = [] }) {
+        buildMessage({ role, content, images = [], tool_calls, tool_call_id }) {
+            if (role === "tool") return { role: "tool", tool_call_id, content };
+            if (tool_calls) {
+                return {
+                    role,
+                    content: content ?? "",
+                    tool_calls: tool_calls.map((tc, i) => ({
+                        id: tc.id ?? `call_${i}`,
+                        type: "function",
+                        function: {
+                            name: tc.name,
+                            arguments: typeof tc.arguments === "string"
+                                ? tc.arguments : JSON.stringify(tc.arguments ?? {})
+                        }
+                    }))
+                };
+            }
             if (!images.length) return { role, content };
             return {
                 role,
@@ -32,6 +56,11 @@ const API_FORMATS = {
             };
         },
         extractContent: (data) => data.choices?.[0]?.message?.content,
+        extractToolCalls: (data) => (data.choices?.[0]?.message?.tool_calls || []).map(tc => ({
+            id: tc.id,
+            name: tc.function?.name,
+            arguments: parseToolArgs(tc.function?.arguments)
+        })),
         expectedShape: "choices[0].message.content",
         // OpenAI structured outputs: response_format with a JSON schema.
         applyFormat(body, schema) {
@@ -43,12 +72,28 @@ const API_FORMATS = {
     },
     // Ollama native /api/chat (e.g. OpenWebUI's /ollama/api/chat passthrough)
     ollama: {
-        buildMessage({ role, content, images = [] }) {
+        buildMessage({ role, content, images = [], tool_calls }) {
+            // Ollama tool results carry no tool_call_id (matched by order).
+            if (role === "tool") return { role: "tool", content };
+            if (tool_calls) {
+                return {
+                    role,
+                    content: content ?? "",
+                    tool_calls: tool_calls.map(tc => ({
+                        function: { name: tc.name, arguments: parseToolArgs(tc.arguments) }
+                    }))
+                };
+            }
             const message = { role, content };
             if (images.length) message.images = images.map(u => u.split(",")[1]);
             return message;
         },
         extractContent: (data) => data.message?.content,
+        extractToolCalls: (data) => (data.message?.tool_calls || []).map((tc, i) => ({
+            id: `call_${i}`,
+            name: tc.function?.name,
+            arguments: tc.function?.arguments
+        })),
         expectedShape: "message.content",
         // Ollama takes a JSON schema (or the string "json") directly as `format`.
         applyFormat(body, schema) {
@@ -133,6 +178,15 @@ async function fetchLLM(payload) {
         visionConfirmed = supportsVision === true;
     }
 
+    // tool_ids invokes OpenWebUI's server-side tools — an OpenWebUI concept that
+    // plain Ollama has no notion of. Fail clearly rather than silently no-op.
+    if (payload.toolIds?.length && config.apiFormat === "ollama") {
+        throw new Error(
+            "Server-side tool_ids requires OpenWebUI; the Ollama-native endpoint " +
+            "doesn't support it. Use client-side tools (ml.step) instead."
+        );
+    }
+
     const format = API_FORMATS[config.apiFormat] || API_FORMATS.openai;
 
     const body = {
@@ -147,6 +201,12 @@ async function fetchLLM(payload) {
     // Structured output: constrain the reply to a JSON schema. The wire shape
     // differs per backend; the caller parses the returned JSON string.
     if (payload.schema) format.applyFormat(body, payload.schema);
+
+    // Client-side tool definitions (ml.step): passed through to the model, which
+    // may reply with tool_calls. Same schema shape for both backends.
+    if (payload.tools?.length) body.tools = payload.tools;
+    // Server-side tools run by OpenWebUI (ml.chat { toolIds }).
+    if (payload.toolIds?.length) body.tool_ids = payload.toolIds;
 
     const res = await fetch(config.chatUrl, {
         method: "POST",
@@ -166,6 +226,16 @@ async function fetchLLM(payload) {
     }
 
     const data = await res.json();
+
+    // Raw mode (ml.step): hand back content + normalized tool_calls so the
+    // caller drives the loop. content may be null when the model chose a tool.
+    if (payload.raw) {
+        return {
+            content: format.extractContent(data) ?? null,
+            tool_calls: format.extractToolCalls(data)
+        };
+    }
+
     const content = format.extractContent(data);
 
     if (content == null) {

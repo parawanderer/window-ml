@@ -48,6 +48,36 @@ test("window.ml signals readiness via the ml:ready event and ml.ready promise", 
     assert.strictEqual(await world.ml.ready, world.ml);
 });
 
+test("ml.step returns the raw assistant message with tool_calls", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: (msg) => {
+            assert.equal(msg.payload.raw, true);
+            assert.ok(Array.isArray(msg.payload.tools));
+            return { data: { content: null, tool_calls: [{ id: "call_0", name: "readDom", arguments: { selector: ".x" } }] } };
+        }
+    });
+
+    const out = await world.ml.step(
+        [{ role: "user", content: "go" }],
+        { tools: [{ type: "function", function: { name: "readDom" } }] }
+    );
+    assert.equal(out.content, null);
+    assert.equal(out.tool_calls[0].name, "readDom");
+    assert.deepEqual(out.tool_calls[0].arguments, { selector: ".x" });
+});
+
+test("ml.chat forwards toolIds for server-side tools", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: (msg) => {
+            assert.deepEqual(msg.payload.toolIds, ["web_search"]);
+            return { data: "answer" };
+        }
+    });
+
+    const out = await world.ml.chat("weather?", { toolIds: ["web_search"] });
+    assert.equal(out, "answer");
+});
+
 test("ml.read sends an OCR request and returns cleaned text", async () => {
     const world = loadPageWorld({
         onRuntimeMessage: (msg) => {

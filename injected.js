@@ -53,8 +53,10 @@
         // schema:  a JSON Schema object — constrains the reply to matching JSON
         //          and returns it parsed (an object), not a string. History
         //          still stores the raw JSON text so turns chain normally.
-        // history.chat() accepts { images, model, think, cleanup, schema } per turn.
-        createChat: function({ system = null, model = null, think = false, cleanup = true, schema = null } = {}) {
+        // toolIds: OpenWebUI server-side tool ids (e.g. ["web_search"]) — OpenWebUI
+        //          runs those tools and returns the finished answer. OpenWebUI only.
+        // history.chat() accepts { images, model, think, cleanup, schema, toolIds } per turn.
+        createChat: function({ system = null, model = null, think = false, cleanup = true, schema = null, toolIds = null } = {}) {
             const ml = this;
             return {
                 messages: system ? [{ role: "system", content: system }] : [],
@@ -62,7 +64,8 @@
                 think,
                 cleanup,
                 schema,
-                chat: async function(prompt, { images = [], model = this.model, think = this.think, cleanup = this.cleanup, schema = this.schema } = {}) {
+                toolIds,
+                chat: async function(prompt, { images = [], model = this.model, think = this.think, cleanup = this.cleanup, schema = this.schema, toolIds = this.toolIds } = {}) {
                     const userMessage = { role: "user", content: prompt };
                     if (images.length) {
                         userMessage.images = await Promise.all(
@@ -73,7 +76,7 @@
                     let reply = await makeBackgroundTaskPromise(
                         "LLM_REQUEST",
                         "LLM_RESPONSE",
-                        { "messages": [...this.messages, userMessage], "think": think, "model": model, "schema": schema }
+                        { "messages": [...this.messages, userMessage], "think": think, "model": model, "schema": schema, "toolIds": toolIds }
                     );
                     if (cleanup) reply = reply.replace(/^<think>[\s\S]*?<\/think>\s*/i, '');
 
@@ -81,16 +84,29 @@
                     return schema ? ml._parseJSON(reply) : reply;
                 },
                 fork: function() {
-                    const copy = ml.createChat({ model: this.model, think: this.think, cleanup: this.cleanup, schema: this.schema });
+                    const copy = ml.createChat({ model: this.model, think: this.think, cleanup: this.cleanup, schema: this.schema, toolIds: this.toolIds });
                     copy.messages = structuredClone(this.messages);
                     return copy;
                 }
             };
         },
         // One-shot chat — a throwaway single-turn history.
-        // Options: { system, think, cleanup, images, model, schema } as in createChat.
+        // Options: { system, think, cleanup, images, model, schema, toolIds } as in createChat.
         chat: async function(prompt, options = {}) {
             return this.createChat(options).chat(prompt, options);
+        },
+        // Low-level single model turn WITH client-side tools. Returns the raw
+        // assistant message { content, tool_calls: [{ id, name, arguments }] } and
+        // hands control back to you: execute the calls, append the results as
+        // { role: "tool", tool_call_id, content }, and call ml.step again to
+        // continue. You own the loop (whitelist, limits, overseer — all yours).
+        // Works on both OpenWebUI and plain Ollama (wire differences normalized).
+        step: async function(messages, { tools = [], model = null, think = null } = {}) {
+            return makeBackgroundTaskPromise(
+                "LLM_REQUEST",
+                "LLM_RESPONSE",
+                { "messages": messages, "tools": tools, "model": model, "think": think, "raw": true }
+            );
         },
         chatShort: async function(prompt, options) {
             return this.chat(`${prompt}. Short and concise:`, options);

@@ -250,6 +250,113 @@ test("FETCH_LLM omits format fields when no schema is given", async () => {
     });
 });
 
+test("FETCH_LLM raw mode returns normalized tool_calls (openai, string args)", async () => {
+    const tools = [{ type: "function", function: { name: "readDom", parameters: {} } }];
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            assert.deepEqual(call.body.tools, tools);
+            return jsonResponse({ choices: [{ message: {
+                content: null,
+                tool_calls: [{ id: "call_abc", function: { name: "readDom", arguments: '{"selector":".menu"}' } }]
+            } }] });
+        }
+    });
+
+    const res = await bg.send({
+        type: "FETCH_LLM",
+        payload: { messages: [{ role: "user", content: "go" }], tools, raw: true }
+    });
+    assert.deepEqual(res.data, {
+        content: null,
+        tool_calls: [{ id: "call_abc", name: "readDom", arguments: { selector: ".menu" } }]
+    });
+});
+
+test("FETCH_LLM raw mode normalizes Ollama tool_calls (object args)", async () => {
+    const bg = loadBackground({
+        config: baseConfig({ apiFormat: "ollama", chatUrl: "http://host/ollama/api/chat" }),
+        onFetch: () => jsonResponse({ message: {
+            content: "",
+            tool_calls: [{ function: { name: "readDom", arguments: { selector: ".menu" } } }]
+        } })
+    });
+
+    const res = await bg.send({
+        type: "FETCH_LLM",
+        payload: { messages: [{ role: "user", content: "go" }], raw: true }
+    });
+    assert.equal(res.data.tool_calls[0].name, "readDom");
+    assert.deepEqual(res.data.tool_calls[0].arguments, { selector: ".menu" });
+    assert.equal(res.data.tool_calls[0].id, "call_0");
+});
+
+test("FETCH_LLM passes toolIds to OpenWebUI as tool_ids (openai)", async () => {
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            assert.deepEqual(call.body.tool_ids, ["web_search"]);
+            return jsonResponse({ choices: [{ message: { content: "answer" } }] });
+        }
+    });
+
+    const res = await bg.send({
+        type: "FETCH_LLM",
+        payload: { messages: [{ role: "user", content: "weather?" }], toolIds: ["web_search"] }
+    });
+    assert.equal(res.data, "answer");
+});
+
+test("FETCH_LLM rejects toolIds on the Ollama-native format", async () => {
+    const bg = loadBackground({
+        config: baseConfig({ apiFormat: "ollama", chatUrl: "http://host/ollama/api/chat" }),
+        onFetch: () => assert.fail("no request should be sent")
+    });
+
+    const res = await bg.send({
+        type: "FETCH_LLM",
+        payload: { messages: [{ role: "user", content: "x" }], toolIds: ["web_search"] }
+    });
+    assert.match(res.error, /requires OpenWebUI/);
+    assert.equal(bg.calls.length, 0);
+});
+
+test("FETCH_LLM builds tool-call and tool-result messages (openai wire shape)", async () => {
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            const [asst, toolMsg] = call.body.messages;
+            assert.deepEqual(asst.tool_calls[0], {
+                id: "call_0", type: "function",
+                function: { name: "readDom", arguments: '{"selector":".x"}' }
+            });
+            assert.deepEqual(toolMsg, { role: "tool", tool_call_id: "call_0", content: "result text" });
+            return jsonResponse({ choices: [{ message: { content: "done" } }] });
+        }
+    });
+
+    await bg.send({ type: "FETCH_LLM", payload: { raw: true, messages: [
+        { role: "assistant", content: null, tool_calls: [{ id: "call_0", name: "readDom", arguments: { selector: ".x" } }] },
+        { role: "tool", tool_call_id: "call_0", content: "result text" }
+    ] } });
+});
+
+test("FETCH_LLM omits tool_call_id in tool results for Ollama", async () => {
+    const bg = loadBackground({
+        config: baseConfig({ apiFormat: "ollama", chatUrl: "http://host/ollama/api/chat" }),
+        onFetch: (call) => {
+            const toolMsg = call.body.messages.find(m => m.role === "tool");
+            assert.deepEqual(toolMsg, { role: "tool", content: "r" });
+            assert.ok(!("tool_call_id" in toolMsg));
+            return jsonResponse({ message: { content: "done" } });
+        }
+    });
+
+    await bg.send({ type: "FETCH_LLM", payload: { raw: true, messages: [
+        { role: "tool", tool_call_id: "call_0", content: "r" }
+    ] } });
+});
+
 test("FETCH_LLM explains a response shape mismatch", async () => {
     const bg = loadBackground({
         config: baseConfig(),

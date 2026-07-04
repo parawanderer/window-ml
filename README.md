@@ -66,6 +66,8 @@ list. See [docs/CLOUD-MODELS.md](docs/CLOUD-MODELS.md).
 | `ml.ps()` | Models loaded in VRAM: `[{ model, vramGB, expiresAt }]`. |
 | `ml.unload(model?)` | Evict a model from VRAM (`keep_alive: 0`); no argument = evict all. |
 | `ml.read(image, { model?, prompt? })` | OCR — transcribe baked-in text from an `<img>` or URL to a plain string, using the configured OCR (vision) model. See [OCR](#ocr). |
+| `ml.step(messages, { tools?, model?, think? })` | One model turn with client-side tools; returns the raw assistant message and hands the loop to you. See [Tools](#tools-agents). |
+| `ml.chat(prompt, { toolIds })` | Server-side tools: OpenWebUI runs the tools and returns the finished answer. See [Tools](#tools-agents). |
 | `ml.logChat` / `ml.logChatShort` | `console.log` variants. |
 
 Options (all optional, both for `chat` and `createChat`):
@@ -149,6 +151,55 @@ await ml.chat("Analyze:\n" + texts.join("\n---\n"));
 There's no separate OCR server — OCR is just a vision-model call through the
 same OpenWebUI pipe. For specialized accuracy, point the OCR model at any
 vision/OCR model you've added to OpenWebUI (a GOT-OCR2 or TrOCR GGUF, etc.).
+
+### Tools & agents
+
+Two primitives, for the two places tools can run. Both need a model that
+supports function calling (e.g. qwen3); a model that doesn't just replies with
+text and no tool calls.
+
+**Server-side tools** — OpenWebUI runs its own registered tools (web search,
+MCP servers, community/Python tools) and returns the finished answer. One call,
+no loop on your side. **OpenWebUI only** (the Ollama-native format errors):
+
+```js
+await ml.chat("What's the weather in Amsterdam right now?", { toolIds: ["web_search"] });
+```
+
+**Client-side tools** — `ml.step()` is one model turn that hands the loop back
+to *you*: it returns the raw assistant message, you execute any tool calls
+(in the page — the whole point), append the results, and call it again. This is
+the piece nothing else can do, because the tools touch your tab. You own the
+loop, so whitelisting, step/time limits, and any overseer/critic are yours to
+add — `window.ml` stays a primitive.
+
+```js
+const tools = [{ type: "function", function: {
+  name: "readDom",
+  description: "Visible text of elements matching a CSS selector.",
+  parameters: { type: "object", properties: { selector: { type: "string" } }, required: ["selector"] }
+}}];
+
+const runners = {
+  readDom: ({ selector }) => [...document.querySelectorAll(selector)].map(e => e.innerText).join("\n")
+};
+
+let messages = [{ role: "user", content: "Find the menu link text on this page." }];
+for (let i = 0; i < 8; i++) {                      // your loop, your step limit
+  const msg = await ml.step(messages, { tools });
+  if (!msg.tool_calls?.length) { console.log(msg.content); break; }
+  messages.push({ role: "assistant", content: msg.content, tool_calls: msg.tool_calls });
+  for (const call of msg.tool_calls) {
+    if (!(call.name in runners)) continue;         // your whitelist
+    const result = await runners[call.name](call.arguments);
+    messages.push({ role: "tool", tool_call_id: call.id, content: String(result) });
+  }
+}
+```
+
+`ml.step` works on both OpenWebUI and plain Ollama — the wire differences
+(where `tool_calls` live, string vs object arguments, tool-result shape) are
+normalized so `{ id, name, arguments }` is the same either way.
 
 ### Using from a userscript
 
