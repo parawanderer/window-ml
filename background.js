@@ -1,0 +1,352 @@
+const DEFAULT_CONFIG = {
+    // OpenWebUI's OpenAI-compatible chat completions endpoint. There is no
+    // root-level /v1 alias (tested on 0.9.5 and 0.10.2); external API clients
+    // use /api/chat/completions, which is broken on 0.9.5 (issue #24550,
+    // fixed by 0.10.x) — the /ollama/api/chat passthrough works around that.
+    chatUrl: "http://localhost:3000/api/chat/completions",
+    // Bearer token, generated in OpenWebUI under Settings -> Account.
+    apiKey: "",
+    // Model id as listed by GET /v1/models.
+    model: "",
+    // Request body + response shape, see API_FORMATS.
+    apiFormat: "openai",
+    // Legacy OCR server endpoint; leave empty if unused.
+    ocrUrl: ""
+};
+
+// Messages arrive in a neutral shape: { role, content, images? } with images
+// as full data URLs ("data:image/png;base64,..."); each format converts them
+// to its wire representation.
+const API_FORMATS = {
+    // chat/completions (OpenWebUI /api, or any OpenAI-compatible server)
+    openai: {
+        buildMessage({ role, content, images = [] }) {
+            if (!images.length) return { role, content };
+            return {
+                role,
+                content: [
+                    { type: "text", text: content },
+                    ...images.map(u => ({ type: "image_url", image_url: { url: u } }))
+                ]
+            };
+        },
+        extractContent: (data) => data.choices?.[0]?.message?.content,
+        expectedShape: "choices[0].message.content"
+    },
+    // Ollama native /api/chat (e.g. OpenWebUI's /ollama/api/chat passthrough)
+    ollama: {
+        buildMessage({ role, content, images = [] }) {
+            const message = { role, content };
+            if (images.length) message.images = images.map(u => u.split(",")[1]);
+            return message;
+        },
+        extractContent: (data) => data.message?.content,
+        expectedShape: "message.content"
+    }
+};
+
+function getConfig() {
+    return chrome.storage.sync.get(DEFAULT_CONFIG);
+}
+
+// model -> true/false/null, per service-worker lifetime
+const visionSupportCache = new Map();
+
+// Asks Ollama's /api/show (directly or via the OpenWebUI passthrough) whether
+// the model has the "vision" capability. Returns true/false, or null when
+// capabilities can't be determined (non-Ollama backend, old Ollama, etc.).
+async function modelSupportsVision(config, model) {
+    const cacheKey = `${config.chatUrl}|${model}`;
+    if (visionSupportCache.has(cacheKey)) return visionSupportCache.get(cacheKey);
+
+    const origin = new URL(config.chatUrl).origin;
+    const headers = { "Content-Type": "application/json" };
+    if (config.apiKey) headers["Authorization"] = `Bearer ${config.apiKey}`;
+
+    let result = null;
+    for (const path of ["/ollama/api/show", "/api/show"]) {
+        try {
+            const res = await fetch(origin + path, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({ model })
+            });
+            if (!res.ok) continue;
+            const data = await res.json();
+            if (Array.isArray(data.capabilities)) {
+                result = data.capabilities.includes("vision");
+                break;
+            }
+        } catch {
+            // unreachable or non-JSON — try the next candidate
+        }
+    }
+
+    visionSupportCache.set(cacheKey, result);
+    return result;
+}
+
+async function fetchLLM(payload) {
+    const config = await getConfig();
+
+    const headers = { "Content-Type": "application/json" };
+    if (config.apiKey) headers["Authorization"] = `Bearer ${config.apiKey}`;
+
+    const model = payload.model || config.model;
+    if (!model) {
+        throw new Error(
+            "No model configured. Open the extension popup and use Load to pick one."
+        );
+    }
+
+    const messages = payload.messages || [];
+    const hasImages = messages.some(m => m.images && m.images.length);
+
+    // Fail fast with a clear error instead of sending images to a text-only
+    // model, which would otherwise error cryptically or ignore them silently.
+    let visionConfirmed = false;
+    if (hasImages) {
+        const supportsVision = await modelSupportsVision(config, model);
+        if (supportsVision === false) {
+            throw new Error(
+                `Model "${model}" does not support image input — ` +
+                `pick a vision-capable model (e.g. qwen2.5vl, gemma3, llava).`
+            );
+        }
+        visionConfirmed = supportsVision === true;
+    }
+
+    const format = API_FORMATS[config.apiFormat] || API_FORMATS.openai;
+
+    const body = {
+        model: model,
+        messages: messages.map(m => format.buildMessage(m)),
+        stream: false
+    };
+    // Ollama's native thinking toggle, forwarded by OpenWebUI. Only sent when
+    // explicitly boolean — models without thinking support reject the param.
+    if (typeof payload.think === "boolean") body.think = payload.think;
+
+    const res = await fetch(config.chatUrl, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body)
+    });
+
+    if (!res.ok) {
+        const text = await res.text().catch(() => "");
+        let msg = `HTTP ${res.status} from ${config.chatUrl}: ${text.slice(0, 300)}`;
+        // Capability probe was inconclusive for this backend, so the images
+        // themselves are a plausible culprit — say so.
+        if (hasImages && !visionConfirmed) {
+            msg += " (request included images — the model may not support image input)";
+        }
+        throw new Error(msg);
+    }
+
+    const data = await res.json();
+    const content = format.extractContent(data);
+
+    if (content == null) {
+        throw new Error(
+            `Response did not match the "${config.apiFormat}" format ` +
+            `(expected ${format.expectedShape}). ` +
+            `Top-level keys were: ${Object.keys(data).join(", ")} — ` +
+            `check the API format setting in the extension popup.`
+        );
+    }
+
+    return content;
+}
+
+function authHeaders(config) {
+    const headers = { "Content-Type": "application/json" };
+    if (config.apiKey) headers["Authorization"] = `Bearer ${config.apiKey}`;
+    return headers;
+}
+
+// Fetches available model ids. The list route differs by backend — OpenWebUI
+// serves /api/models, other OpenAI-compatible servers /v1/models, direct
+// Ollama /api/tags — and unknown GET routes on OpenWebUI return the frontend
+// HTML, so a non-JSON body just means "wrong path, try the next one".
+async function listAvailableModels(overrides = {}) {
+    const config = { ...(await getConfig()), ...overrides };
+    const origin = new URL(config.chatUrl).origin;
+    const errors = [];
+
+    for (const path of ["/api/models", "/v1/models", "/api/tags"]) {
+        try {
+            const res = await fetch(origin + path, { headers: authHeaders(config) });
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+            let data;
+            try {
+                data = await res.json();
+            } catch {
+                throw new Error("returned HTML, not JSON (route not found)");
+            }
+
+            const models = (data.data || data.models || [])
+                .map(m => m.id || m.name)
+                .filter(Boolean);
+            if (!models.length) throw new Error("no models in response");
+            return models;
+        } catch (err) {
+            errors.push(`${path}: ${err.message}`);
+        }
+    }
+    throw new Error(errors.join("; "));
+}
+
+// Persistently switches the default model, validating against the server's
+// model list so page scripts can't write junk into the saved config.
+async function setModel(model) {
+    if (!model || typeof model !== "string") {
+        throw new Error("setModel expects a model id string.");
+    }
+    const models = await listAvailableModels();
+    if (!models.includes(model)) {
+        throw new Error(`Unknown model "${model}". Available: ${models.join(", ")}`);
+    }
+    await chrome.storage.sync.set({ model: model });
+    return model;
+}
+
+// Locates the Ollama API root behind the configured chat URL — either the
+// OpenWebUI /ollama passthrough or a direct Ollama server — and returns it
+// along with the currently loaded models. /api/ps only exists on Ollama, so
+// it doubles as the discriminator.
+async function findOllamaBase(config) {
+    const origin = new URL(config.chatUrl).origin;
+    for (const base of [`${origin}/ollama`, origin]) {
+        try {
+            const res = await fetch(`${base}/api/ps`, { headers: authHeaders(config) });
+            if (!res.ok) continue;
+            const data = await res.json();
+            if (Array.isArray(data.models)) return { base, loaded: data.models };
+        } catch {
+            // unreachable or non-JSON — try the next candidate
+        }
+    }
+    throw new Error(`Could not reach an Ollama API behind ${origin}.`);
+}
+
+async function listLoadedModels() {
+    const config = await getConfig();
+    const { loaded } = await findOllamaBase(config);
+    return loaded.map(m => ({
+        model: m.model || m.name,
+        vramGB: m.size_vram ? +(m.size_vram / 1e9).toFixed(1) : null,
+        expiresAt: m.expires_at || null
+    }));
+}
+
+// A generate request with keep_alive: 0 tells Ollama to evict the model
+// from VRAM immediately. No model argument = unload everything loaded.
+async function unloadModels(modelName) {
+    const config = await getConfig();
+    const { base, loaded } = await findOllamaBase(config);
+
+    const targets = modelName
+        ? [modelName]
+        : loaded.map(m => m.model || m.name);
+
+    for (const model of targets) {
+        const res = await fetch(`${base}/api/generate`, {
+            method: "POST",
+            headers: authHeaders(config),
+            body: JSON.stringify({ model: model, keep_alive: 0 })
+        });
+        if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            throw new Error(`Failed to unload ${model}: HTTP ${res.status} ${text.slice(0, 200)}`);
+        }
+    }
+
+    return targets;
+}
+
+async function fetchOCR(payload) {
+    const config = await getConfig();
+    if (!config.ocrUrl) {
+        throw new Error("OCR URL is not configured (set it in the extension popup).");
+    }
+
+    const res = await fetch(config.ocrUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+    });
+
+    const data = await res.json();
+    if (!data["success"]) {
+        throw new Error(data["error"]);
+    }
+
+    return { text: data["text"], segments: data["segments"] };
+}
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.type === "FETCH_LLM") {
+        fetchLLM(message.payload)
+            .then(content => sendResponse({ data: content }))
+            .catch(err => sendResponse({ error: err.message }));
+        return true; // Keep channel open for async fetch
+
+    } else if (message.type === "FETCH_OCR") {
+        fetchOCR(message.payload)
+            .then(result => sendResponse({ data: result }))
+            .catch(err => sendResponse({ error: err.message }));
+        return true;
+
+    } else if (message.type === "LIST_MODELS") {
+        // Config overrides are only honored from the extension's own pages
+        // (popup); pages relaying through the content script (sender.tab set)
+        // must not be able to point the saved API key at another host.
+        listAvailableModels(sender.tab ? {} : (message.payload || {}))
+            .then(models => sendResponse({ data: models }))
+            .catch(err => sendResponse({ error: err.message }));
+        return true;
+
+    } else if (message.type === "SET_MODEL") {
+        setModel(message.payload && message.payload.model)
+            .then(model => sendResponse({ data: model }))
+            .catch(err => sendResponse({ error: err.message }));
+        return true;
+
+    } else if (message.type === "GET_MODEL") {
+        getConfig()
+            .then(config => sendResponse({ data: config.model }))
+            .catch(err => sendResponse({ error: err.message }));
+        return true;
+
+    } else if (message.type === "OLLAMA_PS") {
+        listLoadedModels()
+            .then(models => sendResponse({ data: models }))
+            .catch(err => sendResponse({ error: err.message }));
+        return true;
+
+    } else if (message.type === "OLLAMA_UNLOAD") {
+        unloadModels(message.payload && message.payload.model)
+            .then(unloaded => sendResponse({ data: unloaded }))
+            .catch(err => sendResponse({ error: err.message }));
+        return true;
+
+    } else if (message.type === "FETCH_IMAGE_B64") {
+        fetch(message.payload.url)
+            .then(response => {
+                if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                return response.blob();
+            })
+            .then(blob => {
+                const reader = new FileReader();
+                reader.onloadend = () => {
+                    // Returns "data:image/jpeg;base64,..."
+                    sendResponse({ data: reader.result });
+                };
+                reader.readAsDataURL(blob);
+            })
+            .catch(err => sendResponse({ error: err.message }));
+        return true;
+    }
+});

@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+    body {
+        font-family: system-ui, -apple-system, sans-serif;
+        font-size: 13px;
+        width: 340px;
+        margin: 0;
+        padding: 14px;
+        background: #1e1f24;
+        color: #e4e4e7;
+    }
+    h1 {
+        font-size: 14px;
+        margin: 0 0 12px;
+    }
+    label {
+        display: block;
+        margin: 10px 0 3px;
+        color: #a1a1aa;
+    }
+    input, select {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 6px 8px;
+        border: 1px solid #3f3f46;
+        border-radius: 5px;
+        background: #27272a;
+        color: #e4e4e7;
+        font-size: 13px;
+    }
+    input:focus, select:focus {
+        outline: none;
+        border-color: #6366f1;
+    }
+    .row {
+        display: flex;
+        gap: 6px;
+        align-items: flex-end;
+    }
+    .row input {
+        flex: 1;
+    }
+    .hint {
+        font-size: 11px;
+        color: #71717a;
+        margin-top: 2px;
+    }
+    button {
+        padding: 6px 12px;
+        border: none;
+        border-radius: 5px;
+        background: #3f3f46;
+        color: #e4e4e7;
+        font-size: 13px;
+        cursor: pointer;
+        white-space: nowrap;
+    }
+    button:hover {
+        background: #52525b;
+    }
+    button.primary {
+        background: #4f46e5;
+        color: #fff;
+    }
+    button.primary:hover {
+        background: #6366f1;
+    }
+    .actions {
+        display: flex;
+        gap: 6px;
+        margin-top: 16px;
+    }
+    #status {
+        margin-top: 10px;
+        font-size: 12px;
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: 90px;
+        overflow-y: auto;
+    }
+    #status.ok { color: #4ade80; }
+    #status.err { color: #f87171; }
+    #status.busy { color: #a1a1aa; }
+</style>
+</head>
+<body>
+    <h1>window.ml</h1>
+
+    <label for="chatUrl">Chat completions URL</label>
+    <input id="chatUrl" type="text" placeholder="http://localhost:3000/api/chat/completions">
+    <div class="hint">OpenWebUI: /api/chat/completions &middot; Ollama passthrough: /ollama/api/chat</div>
+
+    <label for="apiKey">API key</label>
+    <input id="apiKey" type="password" placeholder="sk-...">
+    <div class="hint">OpenWebUI &rarr; Settings &rarr; Account &rarr; API keys</div>
+
+    <label for="model">Model</label>
+    <div class="row">
+        <input id="model" type="text" list="modelList" placeholder="e.g. qwen3:14b">
+        <button id="loadModels" title="Fetch model list from the server">Load</button>
+    </div>
+    <datalist id="modelList"></datalist>
+
+    <label for="apiFormat">API format</label>
+    <select id="apiFormat">
+        <option value="openai">OpenAI (…/chat/completions)</option>
+        <option value="ollama">Ollama native (…/api/chat)</option>
+    </select>
+    <div class="hint">Request and response shape — match it to the URL above</div>
+
+    <label for="ocrUrl">OCR URL (optional)</label>
+    <input id="ocrUrl" type="text" placeholder="http://host:port/api/ocr">
+
+    <div class="actions">
+        <button id="save" class="primary">Save</button>
+        <button id="test" title="Saves, then sends a test prompt">Save &amp; Test</button>
+        <button id="unload" title="Evict all loaded models from VRAM">Free VRAM</button>
+    </div>
+
+    <div id="status"></div>
+
+    <script src="popup.js"></script>
+</body>
+</html>
