@@ -50,6 +50,10 @@ await h.chat("Now explain it like I'm five");
 There is **no** root-level `/v1/chat/completions` on OpenWebUI (tested 0.9.5
 and 0.10.2) — unknown routes return the frontend HTML page.
 
+**Cloud/commercial models** (Claude, GPT, OpenRouter) work with no extension
+changes — add them as a Connection in OpenWebUI and they appear in the model
+list. See [docs/CLOUD-MODELS.md](docs/CLOUD-MODELS.md).
+
 ## `window.ml` API
 
 | Call | Purpose |

@@ -55,7 +55,9 @@ await h.chat("What is a monad?");
 await h.chat("Shorter.");
 ```
 
-The full API is documented in the [README](../README.md#windowml-api).
+The full API is documented in the [README](../README.md#windowml-api). To route
+to commercial models (Claude, GPT, OpenRouter) through the same setup, see
+[CLOUD-MODELS.md](CLOUD-MODELS.md).
 
 ## Troubleshooting
 
