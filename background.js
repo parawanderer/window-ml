@@ -31,7 +31,14 @@ const API_FORMATS = {
             };
         },
         extractContent: (data) => data.choices?.[0]?.message?.content,
-        expectedShape: "choices[0].message.content"
+        expectedShape: "choices[0].message.content",
+        // OpenAI structured outputs: response_format with a JSON schema.
+        applyFormat(body, schema) {
+            body.response_format = {
+                type: "json_schema",
+                json_schema: { name: "response", strict: true, schema }
+            };
+        }
     },
     // Ollama native /api/chat (e.g. OpenWebUI's /ollama/api/chat passthrough)
     ollama: {
@@ -41,7 +48,11 @@ const API_FORMATS = {
             return message;
         },
         extractContent: (data) => data.message?.content,
-        expectedShape: "message.content"
+        expectedShape: "message.content",
+        // Ollama takes a JSON schema (or the string "json") directly as `format`.
+        applyFormat(body, schema) {
+            body.format = schema;
+        }
     }
 };
 
@@ -126,6 +137,10 @@ async function fetchLLM(payload) {
     // Ollama's native thinking toggle, forwarded by OpenWebUI. Only sent when
     // explicitly boolean — models without thinking support reject the param.
     if (typeof payload.think === "boolean") body.think = payload.think;
+
+    // Structured output: constrain the reply to a JSON schema. The wire shape
+    // differs per backend; the caller parses the returned JSON string.
+    if (payload.schema) format.applyFormat(body, payload.schema);
 
     const res = await fetch(config.chatUrl, {
         method: "POST",

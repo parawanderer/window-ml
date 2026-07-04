@@ -74,6 +74,29 @@ Options (all optional, both for `chat` and `createChat`):
   with a clear error (checked via `/api/show`).
 - `cleanup` — strip `<think>…</think>` from replies (default on).
 - `images` — (per-call) list of `<img>` elements and/or URL strings.
+- `schema` — a JSON Schema object. Constrains the reply to matching JSON and
+  returns it **parsed** (an object), not a string. Turns `window.ml` into a
+  classifier/extractor — the primitive for DOM-scripting against a policy:
+
+  ```js
+  const verdict = await ml.chat(videoTitle, {
+    system: "You enforce this feed policy: no rage-bait, no crypto shilling.",
+    schema: {
+      type: "object",
+      properties: {
+        hide: { type: "boolean" },
+        rewritten_title: { type: "string" }
+      },
+      required: ["hide", "rewritten_title"]
+    }
+  });
+  if (verdict.hide) tile.style.display = "none";
+  ```
+
+  Wire mapping: OpenAI format → `response_format` json_schema; Ollama native →
+  `format`. Support depends on the backend — most reliable against Ollama
+  (directly or via OpenWebUI). In history objects the raw JSON text is stored
+  as context so turns still chain.
 
 ### History objects
 

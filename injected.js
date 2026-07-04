@@ -50,15 +50,19 @@
         //          (forwarded by OpenWebUI); null omits it so the server default applies.
         // cleanup: strip the <think>...</think> block from responses — also
         //          before storing them, so it isn't resent as context.
-        // history.chat() accepts { images, model, think, cleanup } per turn.
-        createChat: function({ system = null, model = null, think = false, cleanup = true } = {}) {
+        // schema:  a JSON Schema object — constrains the reply to matching JSON
+        //          and returns it parsed (an object), not a string. History
+        //          still stores the raw JSON text so turns chain normally.
+        // history.chat() accepts { images, model, think, cleanup, schema } per turn.
+        createChat: function({ system = null, model = null, think = false, cleanup = true, schema = null } = {}) {
             const ml = this;
             return {
                 messages: system ? [{ role: "system", content: system }] : [],
                 model,
                 think,
                 cleanup,
-                chat: async function(prompt, { images = [], model = this.model, think = this.think, cleanup = this.cleanup } = {}) {
+                schema,
+                chat: async function(prompt, { images = [], model = this.model, think = this.think, cleanup = this.cleanup, schema = this.schema } = {}) {
                     const userMessage = { role: "user", content: prompt };
                     if (images.length) {
                         userMessage.images = await Promise.all(
@@ -69,22 +73,22 @@
                     let reply = await makeBackgroundTaskPromise(
                         "LLM_REQUEST",
                         "LLM_RESPONSE",
-                        { "messages": [...this.messages, userMessage], "think": think, "model": model }
+                        { "messages": [...this.messages, userMessage], "think": think, "model": model, "schema": schema }
                     );
                     if (cleanup) reply = reply.replace(/^<think>[\s\S]*?<\/think>\s*/i, '');
 
                     this.messages.push(userMessage, { role: "assistant", content: reply });
-                    return reply;
+                    return schema ? ml._parseJSON(reply) : reply;
                 },
                 fork: function() {
-                    const copy = ml.createChat({ model: this.model, think: this.think, cleanup: this.cleanup });
+                    const copy = ml.createChat({ model: this.model, think: this.think, cleanup: this.cleanup, schema: this.schema });
                     copy.messages = structuredClone(this.messages);
                     return copy;
                 }
             };
         },
         // One-shot chat — a throwaway single-turn history.
-        // Options: { system, think, cleanup, images, model } as in createChat.
+        // Options: { system, think, cleanup, images, model, schema } as in createChat.
         chat: async function(prompt, options = {}) {
             return this.createChat(options).chat(prompt, options);
         },
@@ -94,6 +98,19 @@
         read: async function(image) {
             const dataUrl = await this._imageToDataUrl(image);
             return this._ocr(dataUrl.split(",")[1]);
+        },
+        // Parses a structured-output reply, tolerating a stray ```json fence
+        // and surfacing the raw text on failure for debugging.
+        _parseJSON: function(text) {
+            const stripped = text.trim().replace(/^```(?:json)?\s*|\s*```$/g, "");
+            try {
+                return JSON.parse(stripped);
+            } catch (err) {
+                throw new Error(
+                    `schema was set but the reply wasn't valid JSON (${err.message}). ` +
+                    `Got: ${text.slice(0, 200)}`
+                );
+            }
         },
         // Accepts a URL string or <img> element, returns "data:image/...;base64,..."
         _imageToDataUrl: async function(image) {

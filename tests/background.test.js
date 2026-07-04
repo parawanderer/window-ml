@@ -163,6 +163,61 @@ test("FETCH_LLM annotates server errors when vision support is unknown", async (
     assert.match(res.error, /may not support image input/);
 });
 
+test("FETCH_LLM openai schema becomes a json_schema response_format", async () => {
+    const schema = { type: "object", properties: { hide: { type: "boolean" } } };
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            assert.deepEqual(call.body.response_format, {
+                type: "json_schema",
+                json_schema: { name: "response", strict: true, schema }
+            });
+            assert.ok(!("format" in call.body));
+            return jsonResponse({ choices: [{ message: { content: "{\"hide\":true}" } }] });
+        }
+    });
+
+    const res = await bg.send({
+        type: "FETCH_LLM",
+        payload: { messages: [{ role: "user", content: "hi" }], schema }
+    });
+    assert.equal(res.data, "{\"hide\":true}");
+});
+
+test("FETCH_LLM ollama schema becomes the native format field", async () => {
+    const schema = { type: "object", properties: { hide: { type: "boolean" } } };
+    const bg = loadBackground({
+        config: baseConfig({ apiFormat: "ollama", chatUrl: "http://host/ollama/api/chat" }),
+        onFetch: (call) => {
+            assert.deepEqual(call.body.format, schema);
+            assert.ok(!("response_format" in call.body));
+            return jsonResponse({ message: { content: "{\"hide\":true}" } });
+        }
+    });
+
+    const res = await bg.send({
+        type: "FETCH_LLM",
+        payload: { messages: [{ role: "user", content: "hi" }], schema }
+    });
+    assert.equal(res.data, "{\"hide\":true}");
+});
+
+test("FETCH_LLM omits format fields when no schema is given", async () => {
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            assert.ok(!("response_format" in call.body));
+            assert.ok(!("format" in call.body));
+            return jsonResponse({ choices: [{ message: { content: "ok" } }] });
+        }
+    });
+
+    await bg.send({
+        type: "FETCH_LLM",
+        payload: { messages: [{ role: "user", content: "hi" }] }
+    });
+});
+
 test("FETCH_LLM explains a response shape mismatch", async () => {
     const bg = loadBackground({
         config: baseConfig(),

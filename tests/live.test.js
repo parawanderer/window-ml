@@ -65,3 +65,38 @@ test(
         assert.equal(typeof data.choices?.[0]?.message?.content, "string");
     }
 );
+
+test(
+    "live: structured output honors a json schema",
+    { skip: skipLive || (!MODEL && "set OPENWEBUI_MODEL (loads that model into VRAM)"), timeout: 120_000 },
+    async () => {
+        const res = await fetch(`${BASE}/api/chat/completions`, {
+            method: "POST",
+            headers: HEADERS,
+            body: JSON.stringify({
+                model: MODEL,
+                messages: [{ role: "user", content: "Is the sky blue? Answer as JSON." }],
+                stream: false,
+                response_format: {
+                    type: "json_schema",
+                    json_schema: {
+                        name: "response",
+                        strict: true,
+                        schema: {
+                            type: "object",
+                            properties: { answer: { type: "boolean" } },
+                            required: ["answer"],
+                            additionalProperties: false
+                        }
+                    }
+                }
+            })
+        });
+        assert.ok(res.ok, `HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+        const content = (await res.json()).choices?.[0]?.message?.content;
+        // If the backend forwards response_format, content parses cleanly to
+        // an object with the schema's key.
+        const parsed = JSON.parse(content);
+        assert.equal(typeof parsed.answer, "boolean");
+    }
+);

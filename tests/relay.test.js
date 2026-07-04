@@ -112,3 +112,42 @@ test("per-turn overrides beat the chat defaults", async () => {
     assert.equal(world.runtimeCalls[1].payload.model, "turn-override");
     assert.equal(world.runtimeCalls[1].payload.think, true);
 });
+
+test("schema returns parsed JSON and stores raw text in history", async () => {
+    const schema = { type: "object", properties: { hide: { type: "boolean" } } };
+    const world = loadPageWorld({
+        onRuntimeMessage: (msg) => {
+            assert.deepEqual(msg.payload.schema, schema);
+            return { data: '{"hide":true,"title":"clean"}' };
+        }
+    });
+
+    const out = await world.ml.chat("judge this", { schema });
+    assert.deepEqual(out, { hide: true, title: "clean" });
+
+    // Multi-turn keeps the raw JSON string as context, not the parsed object.
+    const h = world.ml.createChat({ schema });
+    await h.chat("again");
+    assert.equal(h.messages.at(-1).content, '{"hide":true,"title":"clean"}');
+    assert.equal(typeof h.messages.at(-1).content, "string");
+});
+
+test("schema tolerates a ```json fence around the reply", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: () => ({ data: '```json\n{"ok":1}\n```' })
+    });
+
+    const out = await world.ml.chat("x", { schema: { type: "object" } });
+    assert.deepEqual(out, { ok: 1 });
+});
+
+test("schema surfaces invalid JSON with the raw text", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: () => ({ data: "sorry, I cannot do that" })
+    });
+
+    await assert.rejects(
+        world.ml.chat("x", { schema: { type: "object" } }),
+        /wasn't valid JSON.*sorry, I cannot/s
+    );
+});
