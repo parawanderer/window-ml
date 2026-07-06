@@ -230,6 +230,13 @@ if (v.warn) document.title = "🥪 " + v.why;
 on injection. (A sandboxed/isolated-world userscript won't see `window.ml` —
 bridge via `window.postMessage` instead.)
 
+> **Worked example:** [`examples/youtube-summarizer.user.js`](./examples/youtube-summarizer.user.js)
+> is a full userscript that injects an in-page **AI Summary** panel into the
+> YouTube watch page — it summarizes the video via an OpenWebUI server-side
+> transcript tool and takes follow-up questions, with a model picker and
+> capability-warning badge. See [`examples/README.md`](./examples/README.md) for
+> setup and a troubleshooting table.
+
 ## Architecture
 
 | File | Role |
