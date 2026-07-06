@@ -201,6 +201,15 @@
         models: async function() {
             return makeBackgroundTaskPromise("LIST_MODELS_REQUEST", "LIST_MODELS_RESPONSE", {});
         },
+        // Capability list for a model, read from Ollama's /api/show — e.g.
+        // ["completion", "tools", "vision", "thinking"]. Handy for feature
+        // gating (e.g. only offer server-side tools on a tool-capable model).
+        // Returns null when it can't be determined (cloud/non-Ollama model, old
+        // Ollama, unreachable) — treat null as "unknown", never as "no".
+        // model omitted = the saved default model.
+        capabilities: async function(model = null) {
+            return makeBackgroundTaskPromise("CAPS_REQUEST", "CAPS_RESPONSE", { "model": model });
+        },
         // The saved default model.
         getModel: async function() {
             return makeBackgroundTaskPromise("GET_MODEL_REQUEST", "GET_MODEL_RESPONSE", {});

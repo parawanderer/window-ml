@@ -66,6 +66,19 @@ test("ml.step returns the raw assistant message with tool_calls", async () => {
     assert.deepEqual(out.tool_calls[0].arguments, { selector: ".x" });
 });
 
+test("ml.capabilities relays a MODEL_CAPS request and returns the capability list", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: (msg) => {
+            assert.equal(msg.type, "MODEL_CAPS");
+            assert.equal(msg.payload.model, "qwen3:32b");
+            return { data: ["completion", "tools", "thinking"] };
+        }
+    });
+
+    const caps = await world.ml.capabilities("qwen3:32b");
+    assert.deepEqual(caps, ["completion", "tools", "thinking"]);
+});
+
 test("ml.chat forwards toolIds for server-side tools", async () => {
     const world = loadPageWorld({
         onRuntimeMessage: (msg) => {

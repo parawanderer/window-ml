@@ -23,6 +23,23 @@ function parseToolArgs(args) {
     try { return JSON.parse(args); } catch { return args; }
 }
 
+// OpenWebUI's server-side tool-execution loop (which runs a `tool_ids` tool and
+// returns a finished answer) is selected per-request via params.function_calling,
+// but its label was renamed across versions — "legacy" on v0.10.0+, "default"
+// on older builds. Rather than sniff the version (a mapping that rots every time
+// they reshuffle), we try these in order and detect which one the server
+// actually honored. See isHandedBack + the toolIds path in fetchLLM.
+const SERVER_TOOL_MODES = ["legacy", "default"];
+
+// A "handed-back" response is OpenWebUI returning an unexecuted tool_call (empty
+// content + tool_calls present) instead of running the server-side tool and
+// answering — the signature of native function calling, or of a function_calling
+// value the server didn't honor.
+function isHandedBack(format, data) {
+    const content = format.extractContent(data);
+    return (!content || !content.trim()) && format.extractToolCalls(data).length > 0;
+}
+
 // Messages arrive in a neutral shape: { role, content, images?, tool_calls?,
 // tool_call_id? } with images as full data URLs; each format converts them to
 // its wire representation. tool_calls are normalized as { id, name, arguments }.
@@ -106,15 +123,17 @@ function getConfig() {
     return chrome.storage.sync.get(DEFAULT_CONFIG);
 }
 
-// model -> true/false/null, per service-worker lifetime
-const visionSupportCache = new Map();
+// model -> capabilities array | null, per service-worker lifetime
+const capabilitiesCache = new Map();
 
-// Asks Ollama's /api/show (directly or via the OpenWebUI passthrough) whether
-// the model has the "vision" capability. Returns true/false, or null when
-// capabilities can't be determined (non-Ollama backend, old Ollama, etc.).
-async function modelSupportsVision(config, model) {
+// Asks Ollama's /api/show (directly or via the OpenWebUI passthrough) for a
+// model's capability list, e.g. ["completion", "tools", "vision", "thinking"].
+// Returns the array, or null when it can't be determined (non-Ollama backend,
+// old Ollama, cloud model, unreachable) — callers must treat null as "unknown"
+// and degrade gracefully, never as "no".
+async function modelCapabilities(config, model) {
     const cacheKey = `${config.chatUrl}|${model}`;
-    if (visionSupportCache.has(cacheKey)) return visionSupportCache.get(cacheKey);
+    if (capabilitiesCache.has(cacheKey)) return capabilitiesCache.get(cacheKey);
 
     const origin = new URL(config.chatUrl).origin;
     const headers = { "Content-Type": "application/json" };
@@ -131,7 +150,7 @@ async function modelSupportsVision(config, model) {
             if (!res.ok) continue;
             const data = await res.json();
             if (Array.isArray(data.capabilities)) {
-                result = data.capabilities.includes("vision");
+                result = data.capabilities;
                 break;
             }
         } catch {
@@ -139,8 +158,15 @@ async function modelSupportsVision(config, model) {
         }
     }
 
-    visionSupportCache.set(cacheKey, result);
+    capabilitiesCache.set(cacheKey, result);
     return result;
+}
+
+// Whether a model has the "vision" capability: true/false, or null when the
+// capability list can't be determined (see modelCapabilities).
+async function modelSupportsVision(config, model) {
+    const caps = await modelCapabilities(config, model);
+    return caps === null ? null : caps.includes("vision");
 }
 
 async function fetchLLM(payload) {
@@ -205,27 +231,54 @@ async function fetchLLM(payload) {
     // Client-side tool definitions (ml.step): passed through to the model, which
     // may reply with tool_calls. Same schema shape for both backends.
     if (payload.tools?.length) body.tools = payload.tools;
-    // Server-side tools run by OpenWebUI (ml.chat { toolIds }).
+    // Server-side tools run by OpenWebUI (ml.chat { toolIds }). tool_ids only
+    // works with OpenWebUI's server-side execution loop; the per-request
+    // function_calling override that selects it is applied in the send loop
+    // below (its label is version-dependent, so we probe SERVER_TOOL_MODES).
     if (payload.toolIds?.length) body.tool_ids = payload.toolIds;
 
-    const res = await fetch(config.chatUrl, {
-        method: "POST",
-        headers,
-        body: JSON.stringify(body)
-    });
-
-    if (!res.ok) {
-        const text = await res.text().catch(() => "");
-        let msg = `HTTP ${res.status} from ${config.chatUrl}: ${text.slice(0, 300)}`;
-        // Capability probe was inconclusive for this backend, so the images
-        // themselves are a plausible culprit — say so.
-        if (hasImages && !visionConfirmed) {
-            msg += " (request included images — the model may not support image input)";
+    const postChat = async (requestBody) => {
+        const res = await fetch(config.chatUrl, {
+            method: "POST",
+            headers,
+            body: JSON.stringify(requestBody)
+        });
+        if (!res.ok) {
+            const text = await res.text().catch(() => "");
+            let msg = `HTTP ${res.status} from ${config.chatUrl}: ${text.slice(0, 300)}`;
+            // Capability probe was inconclusive for this backend, so the images
+            // themselves are a plausible culprit — say so.
+            if (hasImages && !visionConfirmed) {
+                msg += " (request included images — the model may not support image input)";
+            }
+            throw new Error(msg);
         }
-        throw new Error(msg);
-    }
+        return res.json();
+    };
 
-    const data = await res.json();
+    let data;
+    if (payload.toolIds?.length && !payload.raw) {
+        // Force OpenWebUI's server-side execution loop so it runs the tool and
+        // returns finished content. We try each mode label until the server
+        // stops handing back an unexecuted tool_call — version-agnostic, no
+        // version sniffing, just check what actually came back.
+        for (const mode of SERVER_TOOL_MODES) {
+            body.params = { ...body.params, function_calling: mode };
+            data = await postChat(body);
+            if (!isHandedBack(format, data)) break;
+        }
+        if (isHandedBack(format, data)) {
+            throw new Error(
+                "OpenWebUI returned the tool call without executing it (empty " +
+                "content, finish_reason=tool_calls), so no answer was produced. " +
+                "Set this model's Function Calling to the server-side loop " +
+                '("Legacy" on OpenWebUI v0.10.0+, "Default" on older builds), ' +
+                "or check that the tool id is correct."
+            );
+        }
+    } else {
+        data = await postChat(body);
+    }
 
     // Raw mode (ml.step): hand back content + normalized tool_calls so the
     // caller drives the loop. content may be null when the model chose a tool.
@@ -392,6 +445,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     } else if (message.type === "GET_MODEL") {
         getConfig()
             .then(config => sendResponse({ data: config.model }))
+            .catch(err => sendResponse({ error: err.message }));
+        return true;
+
+    } else if (message.type === "MODEL_CAPS") {
+        getConfig()
+            .then(config => modelCapabilities(config, (message.payload && message.payload.model) || config.model))
+            .then(caps => sendResponse({ data: caps }))
             .catch(err => sendResponse({ error: err.message }));
         return true;
 

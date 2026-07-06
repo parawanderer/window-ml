@@ -2,11 +2,14 @@
 
 [![tests](https://github.com/parawanderer/window-ml/actions/workflows/tests.yml/badge.svg)](https://github.com/parawanderer/window-ml/actions/workflows/tests.yml)
 
+![Screenshot showing extension being used with the gemma4 model in the DevTools console](./docs/fullscreen-and-console-2026-07-06_21-38.png)
+
 Personal Chrome extension that exposes a scripting API (`window.ml`) on web
 pages, bridging them to local LLMs served by [OpenWebUI](https://openwebui.com)
 / [Ollama](https://ollama.com). Built as devtools-console glue: the deliverable
 is a `window.ml` object you call from any page's console (or from page scripts),
 not a chat UI.
+
 
 > Honest provenance: this is personal, largely AI-generated glue code, shared
 > so the next person wanting a console-first LLM bridge doesn't have to build
@@ -29,8 +32,9 @@ await h.chat("Now explain it like I'm five");
 
 > Step-by-step walkthrough (install, minimum config, troubleshooting): [docs/SETUP.md](docs/SETUP.md)
 
+
 1. `chrome://extensions` → Developer mode → **Load unpacked** → this directory.
-2. Recommended: set the extension's **Site access** to **On click**, so
+2. Recommended: set the extension's **Site access** to **On click** or whitelist specific trusted sites only, so
    `window.ml` only exists on pages where you've clicked the extension icon.
 3. Open the popup (extension icon):
    - **Chat completions URL** — e.g. `http://localhost:3000/api/chat/completions`
@@ -38,6 +42,9 @@ await h.chat("Now explain it like I'm five");
    - **Model** — hit **Load** to pick from the server's list
    - **API format** — must match the URL (see table below)
    - **Save & Test** sends a real prompt and shows the extracted reply.
+
+<img src="./docs/extension-config-2026-07-06_21-33.png" alt="Screenshot showing Settings Config Menu For Extension" width="360">
+
 
 ### Endpoint / format cheatsheet
 

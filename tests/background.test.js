@@ -195,6 +195,30 @@ test("FETCH_LLM annotates server errors when vision support is unknown", async (
     assert.match(res.error, /may not support image input/);
 });
 
+test("MODEL_CAPS returns a model's capability list from /api/show", async () => {
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            assert.ok(call.url.endsWith("/api/show"));
+            assert.equal(call.body.model, "qwen3:32b");
+            return jsonResponse({ capabilities: ["completion", "tools", "thinking"] });
+        }
+    });
+
+    const res = await bg.send({ type: "MODEL_CAPS", payload: { model: "qwen3:32b" } });
+    assert.deepEqual(res.data, ["completion", "tools", "thinking"]);
+});
+
+test("MODEL_CAPS returns null when capabilities can't be determined", async () => {
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => htmlResponse(404)   // no /api/show on this backend
+    });
+
+    const res = await bg.send({ type: "MODEL_CAPS", payload: { model: "gpt-4o" } });
+    assert.equal(res.data, null);
+});
+
 test("FETCH_LLM openai schema becomes a json_schema response_format", async () => {
     const schema = { type: "object", properties: { hide: { type: "boolean" } } };
     const bg = loadBackground({
@@ -296,6 +320,12 @@ test("FETCH_LLM passes toolIds to OpenWebUI as tool_ids (openai)", async () => {
         config: baseConfig(),
         onFetch: (call) => {
             assert.deepEqual(call.body.tool_ids, ["web_search"]);
+            // Forces a server-side execution mode so OpenWebUI runs the tool and
+            // returns finished content. The exact label is version-dependent
+            // ("legacy" on v0.10.0+, "default" on older); the invariant is that
+            // it is NOT "native", which hands back an unexecuted tool_call.
+            assert.ok(call.body.params.function_calling);
+            assert.notEqual(call.body.params.function_calling, "native");
             return jsonResponse({ choices: [{ message: { content: "answer" } }] });
         }
     });
@@ -305,6 +335,70 @@ test("FETCH_LLM passes toolIds to OpenWebUI as tool_ids (openai)", async () => {
         payload: { messages: [{ role: "user", content: "weather?" }], toolIds: ["web_search"] }
     });
     assert.equal(res.data, "answer");
+});
+
+test("FETCH_LLM does not set function_calling when no toolIds", async () => {
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            assert.equal(call.body.params, undefined);
+            return jsonResponse({ choices: [{ message: { content: "hi" } }] });
+        }
+    });
+
+    await bg.send({
+        type: "FETCH_LLM",
+        payload: { messages: [{ role: "user", content: "hi" }] }
+    });
+});
+
+// OpenWebUI hands back an unexecuted tool_call (empty content + tool_calls) when
+// the function_calling mode wasn't the server-side loop. We retry with the next
+// mode label rather than sniffing the version.
+const handedBack = () => jsonResponse({
+    choices: [{
+        finish_reason: "tool_calls",
+        message: {
+            content: "",
+            tool_calls: [{ id: "c1", type: "function", function: { name: "get_x", arguments: "{}" } }]
+        }
+    }]
+});
+
+test("FETCH_LLM retries a handed-back tool call with the fallback mode", async () => {
+    const modes = [];
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            modes.push(call.body.params.function_calling);
+            // First mode: server hands the call back unexecuted; second: it runs.
+            return modes.length === 1
+                ? handedBack()
+                : jsonResponse({ choices: [{ message: { content: "done" } }] });
+        }
+    });
+
+    const res = await bg.send({
+        type: "FETCH_LLM",
+        payload: { messages: [{ role: "user", content: "go" }], toolIds: ["t"] }
+    });
+    assert.equal(res.data, "done");
+    assert.deepEqual(modes, ["legacy", "default"]);
+    assert.equal(bg.calls.length, 2);
+});
+
+test("FETCH_LLM throws a clear error when the tool call is never executed", async () => {
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => handedBack()
+    });
+
+    const res = await bg.send({
+        type: "FETCH_LLM",
+        payload: { messages: [{ role: "user", content: "go" }], toolIds: ["t"] }
+    });
+    assert.match(res.error, /without executing it/);
+    assert.equal(bg.calls.length, 2);     // tried each mode, then gave up
 });
 
 test("FETCH_LLM rejects toolIds on the Ollama-native format", async () => {

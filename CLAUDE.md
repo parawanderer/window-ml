@@ -39,7 +39,12 @@ To add a new one, touch three files:
    or `sendResponse({ error })`; `return true` to keep the channel open.
 
 Existing message types: `FETCH_LLM`, `LIST_MODELS`, `GET_MODEL`, `SET_MODEL`,
-`OLLAMA_PS`, `OLLAMA_UNLOAD`, `FETCH_IMAGE_B64`.
+`MODEL_CAPS`, `OLLAMA_PS`, `OLLAMA_UNLOAD`, `FETCH_IMAGE_B64`.
+
+`MODEL_CAPS` (`ml.capabilities(model)`) reads Ollama `/api/show` capabilities
+(`["completion","tools","vision","thinking"]`); `modelSupportsVision` is derived
+from it. Returns `null` when undeterminable (cloud model, old Ollama) — treat as
+"unknown", never "no".
 
 ## Config
 
@@ -63,7 +68,15 @@ tool_call_id? }` shape; each format converts to its wire form.
 `FETCH_LLM` payload gained `tools` (client-side defs → `body.tools`), `toolIds`
 (OpenWebUI server-side tools → `body.tool_ids`, rejected on the `ollama`
 format), and `raw` (return `{ content, tool_calls }` instead of the content
-string, skipping the null-content error). `tool_calls` are normalized to
+string, skipping the null-content error). Sending `toolIds` forces
+`body.params.function_calling` to OpenWebUI's server-side execution loop so it
+runs the tool and returns finished content; without it, the `native` mode
+(OpenWebUI's default since v0.10.0) hands back an unexecuted `tool_call` (empty
+`content`, `finish_reason: "tool_calls"`) that the page can't run. That loop's
+label is version-dependent (`legacy` on v0.10.0+, `default` on older builds), so
+instead of sniffing the version `fetchLLM` **probes `SERVER_TOOL_MODES` in
+order** — send, check `isHandedBack`, retry with the next label, and throw a
+clear error if every mode still hands the call back. `tool_calls` are normalized to
 `{ id, name, arguments }` — OpenAI gives string args + real ids; Ollama gives
 object args + no ids (`buildMessage` drops `tool_call_id` for Ollama tool
 results). The **agent loop lives client-side** (`ml.step` in `injected.js`);
