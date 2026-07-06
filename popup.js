@@ -101,7 +101,7 @@ async function freeVram() {
     await chrome.storage.sync.set(readForm());
     setStatus("Unloading models…", "busy");
 
-    chrome.runtime.sendMessage({ type: "OLLAMA_UNLOAD", payload: {} }, (response) => {
+    chrome.runtime.sendMessage({ type: "OLLAMA_UNLOAD", payload: {} }, async (response) => {
         if (chrome.runtime.lastError) {
             setStatus(`Unload failed: ${chrome.runtime.lastError.message}`, "err");
         } else if (response && response.error) {
@@ -111,7 +111,14 @@ async function freeVram() {
         } else {
             setStatus(`Unloaded: ${response.data.join(", ")}`, "ok");
         }
-        refreshVram();
+        // Eviction is async on the server: right after the unload returns,
+        // /api/ps often still lists the model. Poll a few times until VRAM
+        // actually drops (or we give up) so the readout reflects reality.
+        let models = await refreshVram();
+        for (let i = 0; i < 4 && models && models.length; i++) {
+            await new Promise(r => setTimeout(r, 500));
+            models = await refreshVram();
+        }
     });
 }
 
@@ -127,16 +134,23 @@ function renderVram(models) {
     $("vram").textContent = `${usedGB.toFixed(1)} GB in use\n${list}`;
 }
 
+// Resolves to the loaded-model list (so callers can poll after an unload), or
+// null when there's no Ollama backend to report on.
 function refreshVram() {
-    chrome.runtime.sendMessage({ type: "OLLAMA_PS", payload: {} }, (response) => {
-        // No Ollama backend (e.g. a cloud-only setup) — hide the section entirely
-        // rather than showing an error for something that doesn't apply.
-        if (chrome.runtime.lastError || (response && response.error)) {
-            $("vramSection").style.display = "none";
-            return;
-        }
-        $("vramSection").style.display = "block";
-        renderVram(response.data || []);
+    return new Promise((resolve) => {
+        chrome.runtime.sendMessage({ type: "OLLAMA_PS", payload: {} }, (response) => {
+            // No Ollama backend (e.g. a cloud-only setup) — hide the section
+            // entirely rather than showing an error for something that doesn't apply.
+            if (chrome.runtime.lastError || (response && response.error)) {
+                $("vramSection").style.display = "none";
+                resolve(null);
+                return;
+            }
+            $("vramSection").style.display = "block";
+            const models = response.data || [];
+            renderVram(models);
+            resolve(models);
+        });
     });
 }
 
