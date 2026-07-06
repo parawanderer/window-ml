@@ -31,6 +31,37 @@
         });
     };
 
+    // Streaming counterpart of makeBackgroundTaskPromise: fires onToken(delta,
+    // full) for each streamed chunk and resolves with the full concatenated
+    // text once done. Rides a Port on the content-script side (many messages),
+    // vs the one-shot request/response above.
+    const makeStreamingTaskPromise = (payload, onToken) => {
+        return new Promise((resolve, reject) => {
+            const requestId = Math.random().toString(36).substring(7);
+            let full = "";
+
+            function handle(event) {
+                const d = event.data;
+                if (!d || d.requestId !== requestId) return;
+                if (d.type === "LLM_STREAM_CHUNK") {
+                    const delta = d.delta || "";
+                    full += delta;
+                    // A throwing caller callback shouldn't break the stream.
+                    try { onToken(delta, full); } catch (e) { console.error("ml onToken threw:", e); }
+                } else if (d.type === "LLM_STREAM_DONE") {
+                    window.removeEventListener("message", handle);
+                    resolve(d.content != null ? d.content : full);
+                } else if (d.type === "LLM_STREAM_ERROR") {
+                    window.removeEventListener("message", handle);
+                    reject(d.error);
+                }
+            }
+
+            window.addEventListener("message", handle);
+            window.postMessage({ type: "LLM_STREAM_REQUEST", requestId, payload }, "*");
+        });
+    };
+
     window.ml = {
         // Stateful multi-turn chat:
         //
@@ -55,7 +86,9 @@
         //          still stores the raw JSON text so turns chain normally.
         // toolIds: OpenWebUI server-side tool ids (e.g. ["web_search"]) — OpenWebUI
         //          runs those tools and returns the finished answer. OpenWebUI only.
-        // history.chat() accepts { images, model, think, cleanup, schema, toolIds } per turn.
+        // onToken: (delta, full) => {} streams the reply token-by-token (text only,
+        //          ignored when a schema is set); the call still resolves to the full string.
+        // history.chat() accepts { images, model, think, cleanup, schema, toolIds, onToken } per turn.
         createChat: function({ system = null, model = null, think = false, cleanup = true, schema = null, toolIds = null } = {}) {
             const ml = this;
             return {
@@ -65,7 +98,10 @@
                 cleanup,
                 schema,
                 toolIds,
-                chat: async function(prompt, { images = [], model = this.model, think = this.think, cleanup = this.cleanup, schema = this.schema, toolIds = this.toolIds } = {}) {
+                // onToken(delta, full): stream the reply token-by-token. The call
+                // still resolves to the full string (and history updates as usual).
+                // Streaming is text-only, so it's skipped when a schema is set.
+                chat: async function(prompt, { images = [], model = this.model, think = this.think, cleanup = this.cleanup, schema = this.schema, toolIds = this.toolIds, onToken = null } = {}) {
                     const userMessage = { role: "user", content: prompt };
                     if (images.length) {
                         userMessage.images = await Promise.all(
@@ -73,11 +109,10 @@
                         );
                     }
 
-                    let reply = await makeBackgroundTaskPromise(
-                        "LLM_REQUEST",
-                        "LLM_RESPONSE",
-                        { "messages": [...this.messages, userMessage], "think": think, "model": model, "schema": schema, "toolIds": toolIds }
-                    );
+                    const requestPayload = { "messages": [...this.messages, userMessage], "think": think, "model": model, "schema": schema, "toolIds": toolIds };
+                    let reply = (typeof onToken === "function" && !schema)
+                        ? await makeStreamingTaskPromise(requestPayload, onToken)
+                        : await makeBackgroundTaskPromise("LLM_REQUEST", "LLM_RESPONSE", requestPayload);
                     if (cleanup) reply = reply.replace(/^<think>[\s\S]*?<\/think>\s*/i, '');
 
                     this.messages.push(userMessage, { role: "assistant", content: reply });
@@ -91,7 +126,7 @@
             };
         },
         // One-shot chat — a throwaway single-turn history.
-        // Options: { system, think, cleanup, images, model, schema, toolIds } as in createChat.
+        // Options: { system, think, cleanup, images, model, schema, toolIds, onToken } as in createChat.
         chat: async function(prompt, options = {}) {
             return this.createChat(options).chat(prompt, options);
         },

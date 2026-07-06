@@ -85,6 +85,20 @@ const API_FORMATS = {
                 type: "json_schema",
                 json_schema: { name: "response", strict: true, schema }
             };
+        },
+        // Parse one line of a streamed SSE response into { delta, toolCall }, or
+        // null to skip (comments, blanks, the [DONE] sentinel, non-JSON).
+        streamChunk(line) {
+            if (!line.startsWith("data:")) return null;
+            const payload = line.slice(5).trim();
+            if (payload === "[DONE]") return null;
+            let obj;
+            try { obj = JSON.parse(payload); } catch { return null; }
+            const choice = obj.choices?.[0] || {};
+            return {
+                delta: choice.delta?.content || "",
+                toolCall: choice.finish_reason === "tool_calls" || !!choice.delta?.tool_calls
+            };
         }
     },
     // Ollama native /api/chat (e.g. OpenWebUI's /ollama/api/chat passthrough)
@@ -115,6 +129,13 @@ const API_FORMATS = {
         // Ollama takes a JSON schema (or the string "json") directly as `format`.
         applyFormat(body, schema) {
             body.format = schema;
+        },
+        // Ollama streams newline-delimited JSON objects ({ message.content,
+        // done }); each whole line is a chunk.
+        streamChunk(line) {
+            let obj;
+            try { obj = JSON.parse(line); } catch { return null; }
+            return { delta: obj.message?.content || "", toolCall: !!obj.message?.tool_calls };
         }
     }
 };
@@ -169,11 +190,13 @@ async function modelSupportsVision(config, model) {
     return caps === null ? null : caps.includes("vision");
 }
 
-async function fetchLLM(payload) {
+// Shared setup for a chat request: resolves the model, runs the vision
+// fail-fast, builds the wire body, and returns a `send(body, stream)` that does
+// the privileged fetch (returning parsed JSON, or the raw Response when
+// streaming). fetchLLM and streamLLM both build on this.
+async function prepareRequest(payload) {
     const config = await getConfig();
-
-    const headers = { "Content-Type": "application/json" };
-    if (config.apiKey) headers["Authorization"] = `Bearer ${config.apiKey}`;
+    const headers = authHeaders(config);
 
     // ml.read() sets ocr:true so OCR resolves to the dedicated ocrModel first,
     // keeping the reasoning model (config.model) free of image tokens.
@@ -217,8 +240,7 @@ async function fetchLLM(payload) {
 
     const body = {
         model: model,
-        messages: messages.map(m => format.buildMessage(m)),
-        stream: false
+        messages: messages.map(m => format.buildMessage(m))
     };
     // Ollama's native thinking toggle, forwarded by OpenWebUI. Only sent when
     // explicitly boolean — models without thinking support reject the param.
@@ -237,11 +259,11 @@ async function fetchLLM(payload) {
     // below (its label is version-dependent, so we probe SERVER_TOOL_MODES).
     if (payload.toolIds?.length) body.tool_ids = payload.toolIds;
 
-    const postChat = async (requestBody) => {
+    const send = async (requestBody, stream = false) => {
         const res = await fetch(config.chatUrl, {
             method: "POST",
             headers,
-            body: JSON.stringify(requestBody)
+            body: JSON.stringify({ ...requestBody, stream })
         });
         if (!res.ok) {
             const text = await res.text().catch(() => "");
@@ -253,8 +275,20 @@ async function fetchLLM(payload) {
             }
             throw new Error(msg);
         }
-        return res.json();
+        return stream ? res : res.json();
     };
+
+    return { config, format, body, send };
+}
+
+const HANDBACK_ERROR =
+    "OpenWebUI returned the tool call without executing it (empty content, " +
+    "finish_reason=tool_calls), so no answer was produced. Set this model's " +
+    'Function Calling to the server-side loop ("Legacy" on OpenWebUI v0.10.0+, ' +
+    '"Default" on older builds), or check that the tool id is correct.';
+
+async function fetchLLM(payload) {
+    const { config, format, body, send } = await prepareRequest(payload);
 
     let data;
     if (payload.toolIds?.length && !payload.raw) {
@@ -264,20 +298,12 @@ async function fetchLLM(payload) {
         // version sniffing, just check what actually came back.
         for (const mode of SERVER_TOOL_MODES) {
             body.params = { ...body.params, function_calling: mode };
-            data = await postChat(body);
+            data = await send(body);
             if (!isHandedBack(format, data)) break;
         }
-        if (isHandedBack(format, data)) {
-            throw new Error(
-                "OpenWebUI returned the tool call without executing it (empty " +
-                "content, finish_reason=tool_calls), so no answer was produced. " +
-                "Set this model's Function Calling to the server-side loop " +
-                '("Legacy" on OpenWebUI v0.10.0+, "Default" on older builds), ' +
-                "or check that the tool id is correct."
-            );
-        }
+        if (isHandedBack(format, data)) throw new Error(HANDBACK_ERROR);
     } else {
-        data = await postChat(body);
+        data = await send(body);
     }
 
     // Raw mode (ml.step): hand back content + normalized tool_calls so the
@@ -300,6 +326,52 @@ async function fetchLLM(payload) {
         );
     }
 
+    return content;
+}
+
+// Streaming variant of fetchLLM: reads the SSE/NDJSON response and calls
+// onDelta(text) for each content chunk, returning the full concatenated text.
+// Text-only — no schema/raw/tools; toolIds is supported (streams each
+// server-side mode; a handed-back attempt streams no content, so nothing is
+// emitted to the caller before we retry the next mode).
+async function streamLLM(payload, onDelta) {
+    const { format, body, send } = await prepareRequest(payload);
+
+    const consume = async (res) => {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "", content = "", sawToolCall = false;
+        const handleLine = (line) => {
+            const chunk = format.streamChunk(line);
+            if (!chunk) return;
+            if (chunk.delta) { content += chunk.delta; onDelta(chunk.delta); }
+            if (chunk.toolCall) sawToolCall = true;
+        };
+        for (;;) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            let nl;
+            while ((nl = buffer.indexOf("\n")) >= 0) {
+                const line = buffer.slice(0, nl).trim();
+                buffer = buffer.slice(nl + 1);
+                if (line) handleLine(line);
+            }
+        }
+        if (buffer.trim()) handleLine(buffer.trim());
+        return { content, sawToolCall };
+    };
+
+    if (payload.toolIds?.length) {
+        for (const mode of SERVER_TOOL_MODES) {
+            body.params = { ...body.params, function_calling: mode };
+            const { content, sawToolCall } = await consume(await send(body, true));
+            if (content.trim() || !sawToolCall) return content;   // real answer, or a plain empty completion
+        }
+        throw new Error(HANDBACK_ERROR);
+    }
+
+    const { content } = await consume(await send(body, true));
     return content;
 }
 
@@ -484,4 +556,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             .catch(err => sendResponse({ error: err.message }));
         return true;
     }
+});
+
+// Streaming uses a Port instead of the one-shot sendMessage/sendResponse, so
+// tokens can arrive as many messages. The content script opens the port and
+// posts { payload }; we stream { type: "chunk", delta } and finish with
+// { type: "done", content } or { type: "error", error }. A connected port also
+// keeps the MV3 service worker alive for the request's duration.
+chrome.runtime.onConnect.addListener((port) => {
+    if (port.name !== "LLM_STREAM") return;
+    port.onMessage.addListener((message) => {
+        streamLLM(message.payload, (delta) => port.postMessage({ type: "chunk", delta }))
+            .then((content) => port.postMessage({ type: "done", content }))
+            .catch((err) => port.postMessage({ type: "error", error: err.message }));
+    });
 });

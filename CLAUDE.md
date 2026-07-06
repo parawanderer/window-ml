@@ -46,6 +46,22 @@ Existing message types: `FETCH_LLM`, `LIST_MODELS`, `GET_MODEL`, `SET_MODEL`,
 from it. Returns `null` when undeterminable (cloud model, old Ollama) — treat as
 "unknown", never "no".
 
+## Streaming (`onToken`)
+
+Streaming is the **one path that bypasses `HANDLE_MAP`/`sendMessage`** — the
+one-shot `sendResponse` can't emit many tokens. Instead it rides a **Port**:
+`ml.chat(prompt, { onToken })` → `injected.js` `makeStreamingTaskPromise` posts
+`LLM_STREAM_REQUEST` → `content.js` opens `chrome.runtime.connect({ name:
+"LLM_STREAM" })` and relays each port message back as `LLM_STREAM_CHUNK` /
+`_DONE` / `_ERROR` → `background.js` `onConnect` runs `streamLLM`, pushing
+`{ type: "chunk", delta }` then `{ type: "done", content }`. `fetchLLM` and
+`streamLLM` share `prepareRequest` (setup + `send(body, stream)`); each format
+has a `streamChunk(line)` parser (OpenAI SSE vs Ollama NDJSON). Streaming is
+text-only (skipped when `schema` set) but supports `toolIds` — it streams each
+`SERVER_TOOL_MODES` attempt, and a handed-back attempt emits no content, so
+nothing reaches the caller before the retry. The call still resolves to the
+full string, so history/`cleanup` behave exactly as non-streaming.
+
 ## Config
 
 `chrome.storage.sync`, schema in `DEFAULT_CONFIG`:
@@ -58,7 +74,7 @@ every editable key.
 ## API formats
 
 `API_FORMATS` in `background.js` maps each backend to `{ buildMessage,
-extractContent, extractToolCalls, expectedShape, applyFormat }`. `openai` uses
+extractContent, extractToolCalls, expectedShape, applyFormat, streamChunk }`. `openai` uses
 `choices[0].message.*` + `response_format`; `ollama` uses `message.*` +
 `format`. Messages travel in a neutral `{ role, content, images?, tool_calls?,
 tool_call_id? }` shape; each format converts to its wire form.

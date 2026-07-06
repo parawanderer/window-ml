@@ -50,16 +50,39 @@ function htmlResponse(status = 200) {
     };
 }
 
+// A streaming response stub: `lines` are raw wire lines (SSE "data: {...}\n" or
+// Ollama NDJSON) fed through body.getReader() one read() at a time.
+function streamResponse(lines, { status = 200 } = {}) {
+    const enc = new TextEncoder();
+    let i = 0;
+    return {
+        ok: status >= 200 && status < 300,
+        status,
+        body: {
+            getReader: () => ({
+                read: async () => (i < lines.length
+                    ? { done: false, value: enc.encode(lines[i++]) }
+                    : { done: true, value: undefined })
+            })
+        },
+        text: async () => lines.join(""),
+        json: async () => { throw new Error("streaming response has no json()"); }
+    };
+}
+
 // Loads background.js. `onFetch` receives { url, opts, body } (body already
 // JSON-parsed for requests that have one) and returns a response stub.
 function loadBackground({ config = {}, onFetch }) {
     const calls = [];
     const listeners = [];
+    const connectListeners = [];
     const stored = { ...config };
 
     const context = {
         console,
         URL,
+        TextDecoder,
+        TextEncoder,
         fetch: async (url, opts = {}) => {
             const call = {
                 url: String(url),
@@ -77,7 +100,8 @@ function loadBackground({ config = {}, onFetch }) {
                 }
             },
             runtime: {
-                onMessage: { addListener: (fn) => listeners.push(fn) }
+                onMessage: { addListener: (fn) => listeners.push(fn) },
+                onConnect: { addListener: (fn) => connectListeners.push(fn) }
             }
         }
     };
@@ -89,14 +113,35 @@ function loadBackground({ config = {}, onFetch }) {
         stored,
         // Simulates chrome.runtime.sendMessage hitting the listener.
         send: (message, sender = {}) =>
-            new Promise((resolve) => listeners[0](message, sender, resolve))
+            new Promise((resolve) => listeners[0](message, sender, resolve)),
+        // Simulates the content script opening a streaming Port. Returns a client
+        // handle: send(msg) posts to the background port; onMessage(fn) receives
+        // background pushes; messages[] collects them.
+        connect: (name = "LLM_STREAM") => {
+            const messages = [];
+            const clientHandlers = [];
+            const backgroundHandlers = [];
+            const port = {
+                name,
+                onMessage: { addListener: (fn) => backgroundHandlers.push(fn) },
+                postMessage: (msg) => { messages.push(msg); for (const h of clientHandlers) h(msg); },
+                onDisconnect: { addListener: () => {} },
+                disconnect: () => {}
+            };
+            for (const fn of connectListeners) fn(port);
+            return {
+                messages,
+                onMessage: (fn) => clientHandlers.push(fn),
+                send: (msg) => { for (const h of backgroundHandlers) h(msg); }
+            };
+        }
     };
 }
 
 // Loads content.js + injected.js into one fake "page world" so ml.* calls
 // travel the real postMessage relay. `onRuntimeMessage` plays the background:
 // it gets the runtime message and returns { data } or { error }.
-function loadPageWorld({ onRuntimeMessage }) {
+function loadPageWorld({ onRuntimeMessage, onStream }) {
     const runtimeCalls = [];
     const listeners = {};       // type -> fn[]
     const dispatchedEvents = []; // event types dispatched (for assertions)
@@ -142,6 +187,21 @@ function loadPageWorld({ onRuntimeMessage }) {
                 sendMessage: (message, cb) => {
                     runtimeCalls.push(message);
                     queueMicrotask(async () => cb(await onRuntimeMessage(message)));
+                },
+                // Streaming Port. content.js posts { payload }; the test's onStream
+                // plays the background, calling emit({ type, ... }) to push chunks
+                // back down the port to content.js.
+                connect: () => {
+                    const portHandlers = [];
+                    return {
+                        onMessage: { addListener: (fn) => portHandlers.push(fn) },
+                        postMessage: (msg) => {
+                            if (onStream) onStream(msg, (m) =>
+                                queueMicrotask(() => { for (const h of portHandlers) h(m); }));
+                        },
+                        onDisconnect: { addListener: () => {} },
+                        disconnect: () => {}
+                    };
                 }
             }
         }
@@ -153,4 +213,4 @@ function loadPageWorld({ onRuntimeMessage }) {
     return { ml: win.ml, runtimeCalls, context, dispatchedEvents };
 }
 
-module.exports = { jsonResponse, htmlResponse, loadBackground, loadPageWorld, loadDotEnv };
+module.exports = { jsonResponse, htmlResponse, streamResponse, loadBackground, loadPageWorld, loadDotEnv };

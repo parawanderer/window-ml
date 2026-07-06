@@ -54,6 +54,25 @@ const sendRuntimeMessage = (type, requestId, payload, responseType) => {
     );
 };
 
+// Streaming can't use the one-shot sendMessage/sendResponse (it answers once),
+// so it rides a long-lived Port: open it, forward the payload, and relay each
+// { chunk | done | error } from the background back to the Main World.
+const startStream = (requestId, payload) => {
+    const port = chrome.runtime.connect({ name: "LLM_STREAM" });
+    port.onMessage.addListener((msg) => {
+        if (msg.type === "chunk") {
+            window.postMessage({ type: "LLM_STREAM_CHUNK", requestId, delta: msg.delta }, "*");
+        } else if (msg.type === "done") {
+            window.postMessage({ type: "LLM_STREAM_DONE", requestId, content: msg.content }, "*");
+            port.disconnect();
+        } else if (msg.type === "error") {
+            window.postMessage({ type: "LLM_STREAM_ERROR", requestId, error: msg.error }, "*");
+            port.disconnect();
+        }
+    });
+    port.postMessage({ payload });
+};
+
 // 2. Listen for messages from injected.js (Main World)
 window.addEventListener("message", (event) => {
     // Only accept messages from our own window
@@ -62,6 +81,11 @@ window.addEventListener("message", (event) => {
     }
 
     const { requestId, payload } = event.data;
+
+    if (event.data.type === "LLM_STREAM_REQUEST") {
+        startStream(requestId, payload);
+        return;
+    }
 
     // 3. Forward to Background Script (to bypass CORS)
     if (!HANDLE_MAP[event.data.type]) return;

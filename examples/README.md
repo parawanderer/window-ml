@@ -13,7 +13,8 @@ all inside the page, grounded in the actual transcript.
 
 - A themed panel in the right rail (light/dark aware) that survives YouTube's
   in-app navigation between videos.
-- **✨ Summarize this video** → a compact, consistent TL;DR + key points.
+- **✨ Summarize this video** → a compact, consistent TL;DR + key points, **streamed
+  token-by-token** into the panel (via `onToken`), then finalized as formatted markdown.
 - A follow-up box to chat about the video (the transcript tool stays available,
   so answers stay grounded).
 - A **model dropdown** in the header, populated from `ml.models()`. Defaults to
@@ -97,3 +98,5 @@ const TRANSCRIPT_FN      = "get_youtube_transcript";               // the tool's
   `innerHTML`), and a tiny markdown renderer returns real DOM nodes.
 - **SPA aware.** It re-mounts and resets the chat on `yt-navigate-finish` when
   you move between videos.
+- **Streamed.** `chat.chat(prompt, { onToken })` paints tokens into a live bubble
+  as they arrive, then swaps in rendered markdown when the reply completes.

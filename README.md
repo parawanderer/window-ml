@@ -87,6 +87,17 @@ Options (all optional, both for `chat` and `createChat`):
   with a clear error (checked via `/api/show`).
 - `cleanup` — strip `<think>…</think>` from replies (default on).
 - `images` — (per-call) list of `<img>` elements and/or URL strings.
+- `onToken` — `(delta, full) => {}`. Stream the reply token-by-token (for a live
+  "typing" effect) while the call still resolves to the full string and history
+  updates as usual. Text-only, so it's ignored when `schema` is set. Works with
+  `toolIds` too (a server-side tool runs first, then its answer streams).
+
+  ```js
+  const out = document.querySelector("#out");
+  await ml.chat("Explain the Jevons paradox", {
+    onToken: (tok) => { out.textContent += tok; }   // paints as it generates
+  });
+  ```
 - `schema` — a JSON Schema object. Constrains the reply to matching JSON and
   returns it **parsed** (an object), not a string. Turns `window.ml` into a
   classifier/extractor — the primitive for DOM-scripting against a policy:

@@ -227,3 +227,65 @@ test("schema surfaces invalid JSON with the raw text", async () => {
         /wasn't valid JSON.*sorry, I cannot/s
     );
 });
+
+test("ml.chat streams tokens via onToken and resolves the full string", async () => {
+    const world = loadPageWorld({
+        onStream: (msg, emit) => {
+            assert.ok(Array.isArray(msg.payload.messages));
+            emit({ type: "chunk", delta: "Hel" });
+            emit({ type: "chunk", delta: "lo" });
+            emit({ type: "done", content: "Hello" });
+        }
+    });
+
+    const tokens = [];
+    const full = await world.ml.chat("hi", { onToken: (t) => tokens.push(t) });
+    assert.deepEqual(tokens, ["Hel", "lo"]);
+    assert.equal(full, "Hello");
+});
+
+test("streaming onToken sees raw deltas but the resolved value is cleaned", async () => {
+    const world = loadPageWorld({
+        onStream: (msg, emit) => {
+            emit({ type: "chunk", delta: "<think>hmm</think>" });
+            emit({ type: "chunk", delta: "Hi" });
+            emit({ type: "done", content: "<think>hmm</think>Hi" });
+        }
+    });
+
+    const seen = [];
+    const full = await world.ml.chat("q", { onToken: (t) => seen.push(t) });
+    assert.ok(seen.join("").includes("<think>"), "callback should see raw think tokens");
+    assert.equal(full, "Hi");                  // stored/returned value is cleaned
+});
+
+test("streaming updates history with the full reply for follow-ups", async () => {
+    const world = loadPageWorld({
+        onStream: (msg, emit) => {
+            emit({ type: "chunk", delta: "two" });
+            emit({ type: "done", content: "two" });
+        }
+    });
+
+    const h = world.ml.createChat();
+    await h.chat("one", { onToken: () => {} });
+    assert.deepEqual(h.messages, [
+        { role: "user", content: "one" },
+        { role: "assistant", content: "two" }
+    ]);
+});
+
+test("a schema call ignores onToken (streaming is text-only)", async () => {
+    let streamed = false;
+    const world = loadPageWorld({
+        onRuntimeMessage: () => ({ data: '{"ok":true}' }),
+        onStream: () => { streamed = true; }
+    });
+
+    const out = await world.ml.chat("x", {
+        schema: { type: "object" },
+        onToken: () => {}
+    });
+    assert.equal(streamed, false);             // went through the one-shot path
+    assert.deepEqual(out, { ok: true });
+});

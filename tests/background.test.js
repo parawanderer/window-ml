@@ -1,6 +1,6 @@
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { jsonResponse, htmlResponse, loadBackground } = require("./helpers");
+const { jsonResponse, htmlResponse, streamResponse, loadBackground } = require("./helpers");
 
 const IMG = "data:image/png;base64,AAA";
 
@@ -583,4 +583,77 @@ test("OLLAMA_PS reports loaded models with VRAM usage", async () => {
 
     const res = await bg.send({ type: "OLLAMA_PS", payload: {} });
     assert.deepEqual(res, { data: [{ model: "a", vramGB: 21.4, expiresAt: "soon" }] });
+});
+
+// A tiny helper: drains microtasks/macrotasks so port messages settle.
+const settle = () => new Promise((r) => setTimeout(r, 10));
+
+test("streaming Port relays SSE deltas and finishes with the full content", async () => {
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            assert.equal(call.body.stream, true);
+            return streamResponse([
+                'data: {"choices":[{"delta":{"role":"assistant"}}]}\n',
+                'data: {"choices":[{"delta":{"content":"Hel"}}]}\n',
+                'data: {"choices":[{"delta":{"content":"lo"}}]}\n',
+                "data: [DONE]\n"
+            ]);
+        }
+    });
+
+    const client = bg.connect("LLM_STREAM");
+    client.send({ payload: { messages: [{ role: "user", content: "hi" }] } });
+    await settle();
+
+    const deltas = client.messages.filter(m => m.type === "chunk").map(m => m.delta);
+    const done = client.messages.find(m => m.type === "done");
+    assert.deepEqual(deltas, ["Hel", "lo"]);
+    assert.equal(done.content, "Hello");
+});
+
+test("streaming with toolIds retries the next mode when the first hands back", async () => {
+    const modes = [];
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            modes.push(call.body.params.function_calling);
+            // First mode: native-style hand-back — a tool_call, no content.
+            if (modes.length === 1) {
+                return streamResponse([
+                    'data: {"choices":[{"delta":{"tool_calls":[{"index":0}]},"finish_reason":"tool_calls"}]}\n',
+                    "data: [DONE]\n"
+                ]);
+            }
+            // Second mode: the server runs the tool and streams the answer.
+            return streamResponse([
+                'data: {"choices":[{"delta":{"content":"done"}}]}\n',
+                "data: [DONE]\n"
+            ]);
+        }
+    });
+
+    const client = bg.connect("LLM_STREAM");
+    client.send({ payload: { messages: [{ role: "user", content: "go" }], toolIds: ["t"] } });
+    await settle();
+
+    assert.deepEqual(modes, ["legacy", "default"]);
+    const deltas = client.messages.filter(m => m.type === "chunk").map(m => m.delta);
+    assert.deepEqual(deltas, ["done"]);          // nothing emitted for the hand-back
+    assert.equal(client.messages.find(m => m.type === "done").content, "done");
+});
+
+test("streaming surfaces errors as a port error message", async () => {
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => htmlResponse(500)
+    });
+
+    const client = bg.connect("LLM_STREAM");
+    client.send({ payload: { messages: [{ role: "user", content: "hi" }] } });
+    await settle();
+
+    const err = client.messages.find(m => m.type === "error");
+    assert.ok(err, "expected an error message");
+    assert.match(err.error, /HTTP 500/);
 });

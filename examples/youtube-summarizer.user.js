@@ -90,6 +90,25 @@
         return t || document.title.replace(/\s*-\s*YouTube\s*$/, "");
     }
 
+    // Scrape the metadata YouTube already shows on the page (channel, subs,
+    // views/date, description) so the model can answer questions "beyond the
+    // transcript" — who the creator is, when it was posted, etc.
+    function pageContext() {
+        const pick = (sel) => {
+            const el = document.querySelector(sel);
+            return el ? el.textContent.trim().replace(/\s+/g, " ") : "";
+        };
+        const channel = pick("ytd-video-owner-renderer #channel-name a, #owner #channel-name a");
+        const subs = pick("#owner-sub-count");
+        const info = pick("ytd-watch-info-text, #info-container yt-formatted-string, #info.ytd-watch-metadata");
+        const desc = pick("#description-inline-expander, ytd-text-inline-expander");
+        const lines = [];
+        if (channel) lines.push(`Channel: ${channel}${subs ? ` (${subs})` : ""}`);
+        if (info) lines.push(`Views/date: ${info}`);
+        if (desc) lines.push(`Description: ${desc.slice(0, 1500)}`);
+        return lines.join("\n") || "(no extra page details found)";
+    }
+
     // ---- Minimal markdown renderer (builds real DOM nodes) ------------------
     //
     // We build DOM with createElement/textContent rather than assigning
@@ -379,6 +398,29 @@
         return div;
     }
 
+    // Stream a chat turn into `bubble`, rendering the accumulated text as
+    // markdown live (so bullets/bold format as they arrive, not as raw `-`/`**`).
+    // Re-renders are coalesced to one per animation frame to stay smooth.
+    async function streamInto(bubble, prompt) {
+        let started = false, pending = "", frame = 0;
+        const flush = () => {
+            frame = 0;
+            bubble.replaceChildren(renderMarkdown(pending));
+            bubble.scrollIntoView({ block: "nearest" });
+        };
+        const reply = await chat.chat(prompt, {
+            onToken: (_delta, full) => {
+                if (!started) { started = true; bubble.classList.remove("mlyt-thinking"); }
+                pending = full;
+                if (!frame) frame = requestAnimationFrame(flush);
+            }
+        });
+        if (frame) cancelAnimationFrame(frame);
+        bubble.classList.remove("mlyt-thinking");
+        bubble.replaceChildren(renderMarkdown(reply || ""));   // final, authoritative
+        return reply;
+    }
+
     function setBusy(on) {
         busy = on;
         if (!els) return;
@@ -433,15 +475,16 @@
                 think: false,
                 toolIds: [TRANSCRIPT_TOOL_ID],
                 system:
-                    `You summarize a single YouTube video from its transcript and answer ` +
-                    `follow-ups about it. Use the ${TRANSCRIPT_FN} tool to fetch the transcript ` +
-                    `and ground everything in what was actually said — never invent, never add ` +
-                    `citation markers like [1], and never reply that the transcript is merely ` +
-                    `"available". Keep answers tight.`,
+                    `You are embedded in a YouTube watch page. You summarize the video from ` +
+                    `its transcript and answer follow-ups. Use the ${TRANSCRIPT_FN} tool to ` +
+                    `fetch the transcript and ground content questions in what was actually ` +
+                    `said — never invent transcript content, never add citation markers like ` +
+                    `[1], and never reply that the transcript is merely "available". For ` +
+                    `questions about the video itself (creator/channel, views, upload date, ` +
+                    `description), use the page details below. Keep answers tight.\n\n` +
+                    `Page details:\n${pageContext()}`,
             });
-            const reply = await chat.chat(summaryPrompt(id));
-            thinking.remove();
-            addMessage("assistant", reply, true);
+            await streamInto(thinking, summaryPrompt(id));
             els.summarizeBtn.style.display = "none";
             els.ask.style.display = "flex";
             els.input.focus();
@@ -463,9 +506,7 @@
         const thinking = addMessage("assistant", "Thinking…");
         thinking.classList.add("mlyt-thinking");
         try {
-            const reply = await chat.chat(q);
-            thinking.remove();
-            addMessage("assistant", reply, true);
+            await streamInto(thinking, q);
         } catch (err) {
             thinking.remove();
             addMessage("error", String(err && err.message || err));
