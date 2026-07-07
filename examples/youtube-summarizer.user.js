@@ -35,6 +35,14 @@
     // The transcript tool's *function* name (what the model calls), distinct
     // from the tool id above (what enables the tool server-side).
     const TRANSCRIPT_FN = "get_youtube_transcript";
+    // OpenWebUI's built-in web search, exposed as a server-side tool so the model
+    // can look up things beyond the transcript (channel/creator, related facts)
+    // when a follow-up needs it. Requires Web Search to be enabled+configured in
+    // OpenWebUI's admin settings. Set to "" to disable.
+    const WEB_SEARCH_TOOL_ID = "web_search";
+
+    // Server-side tools the summary chat gets (falsy entries dropped).
+    const TOOL_IDS = [TRANSCRIPT_TOOL_ID, WEB_SEARCH_TOOL_ID].filter(Boolean);
 
     // Currently-selected model — starts at DEFAULT_MODEL, changeable via the
     // header dropdown once ml.models() has loaded. availableModels/mlRef back
@@ -469,11 +477,12 @@
             const ml = await getMl();
             mlRef = ml;
             // One chat for the whole video. toolIds stays on every turn so the
-            // model can (re)pull the transcript server-side whenever it needs it.
+            // model can (re)pull the transcript — or run a web search — server-side
+            // whenever it needs to.
             chat = ml.createChat({
                 model: selectedModel,
                 think: false,
-                toolIds: [TRANSCRIPT_TOOL_ID],
+                toolIds: TOOL_IDS,
                 system:
                     `You are embedded in a YouTube watch page. You summarize the video from ` +
                     `its transcript and answer follow-ups. Use the ${TRANSCRIPT_FN} tool to ` +
@@ -481,7 +490,10 @@
                     `said — never invent transcript content, never add citation markers like ` +
                     `[1], and never reply that the transcript is merely "available". For ` +
                     `questions about the video itself (creator/channel, views, upload date, ` +
-                    `description), use the page details below. Keep answers tight.\n\n` +
+                    `description), use the page details below. For anything beyond the ` +
+                    `transcript and these details — e.g. more about the channel/creator, ` +
+                    `related facts, or verifying a claim — use the web_search tool. Don't ` +
+                    `search when the transcript or page details already answer it. Keep answers tight.\n\n` +
                     `Page details:\n${pageContext()}`,
             });
             await streamInto(thinking, summaryPrompt(id));

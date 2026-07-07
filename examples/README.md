@@ -16,7 +16,9 @@ all inside the page, grounded in the actual transcript.
 - **✨ Summarize this video** → a compact, consistent TL;DR + key points, **streamed
   token-by-token** into the panel (via `onToken`), then finalized as formatted markdown.
 - A follow-up box to chat about the video (the transcript tool stays available,
-  so answers stay grounded).
+  so answers stay grounded). It can also reach for OpenWebUI's **built-in web
+  search** to answer questions beyond the transcript — more about the
+  channel/creator, related facts — when a follow-up needs it.
 - A **model dropdown** in the header, populated from `ml.models()`. Defaults to
   `qwen3:32b`; pick any model on your server.
 - A **⚠️ warning badge** (hover for details) when the selected model isn't
@@ -41,6 +43,9 @@ all inside the page, grounded in the actual transcript.
    If that link dies, create a new Tool and paste
    [`youtube_transcript_provider_update_2_12_2025.py`](./youtube_transcript_provider_update_2_12_2025.py)
    as the source, with `youtube_transcript_provider_update_2_12_2025` as the **ID**.
+5. **(Optional) Web Search enabled in OpenWebUI** (Admin → Settings → Web Search,
+   with a provider like SearXNG / Google PSE). Lets follow-ups answer questions
+   beyond the transcript. Set `WEB_SEARCH_TOOL_ID = ""` in the script to skip it.
 
 ### Install
 
@@ -64,6 +69,7 @@ The model is selectable at runtime from the header dropdown. To change the
 const DEFAULT_MODEL      = "qwen3:32b";                             // pre-selected model
 const TRANSCRIPT_TOOL_ID = "youtube_transcript_provider_update_2_12_2025"; // OpenWebUI tool *id*
 const TRANSCRIPT_FN      = "get_youtube_transcript";               // the tool's *function* name
+const WEB_SEARCH_TOOL_ID = "web_search";                           // OpenWebUI built-in web search ("" to disable)
 ```
 
 > **Tool id vs. function name** — these are two different things and both matter.
@@ -84,13 +90,15 @@ const TRANSCRIPT_FN      = "get_youtube_transcript";               // the tool's
 | **⚠️ "isn't available on your server"** | The selected model isn't in `ml.models()`. | Pull it in OpenWebUI, or pick another model from the dropdown. |
 | **⚠️ "doesn't advertise tool-calling support"** | The model's Ollama capabilities don't include `tools`. | Pick a tool-capable model (e.g. a `qwen3` variant). Note: for cloud/non-Ollama models the capability is *unknown*, so no badge shows — it may still work. |
 | **Model just says "the transcript is available…"** | The model retrieved the transcript but didn't summarize it. | The prompt is hardened against this; if a weaker model still hedges, switch to a stronger one. |
+| **Follow-ups never web-search / search errors** | Web Search isn't enabled in OpenWebUI, or the model chose not to search. | Enable it under Admin → Settings → Web Search with a provider; or set `WEB_SEARCH_TOOL_ID = ""` to remove it entirely. |
 | **`Server-side tool_ids requires OpenWebUI`** | Your window.ml endpoint is the Ollama-native format. | Point the extension at OpenWebUI's `/api/chat/completions` (OpenAI format). |
 | **Red `Blocked script execution in 'about:blank'…` console spam** | The injector runs in every frame; Chrome blocks the sandboxed ad/utility iframes *before any code runs*. | Harmless — it doesn't affect the panel. Filter the console with `-Blocked script execution` if it bothers you. |
 
 ### How it works (for hacking on it)
 
 - **Server-side tools, one call.** `ml.createChat({ toolIds: [...] })` keeps the
-  transcript tool available on every turn, so OpenWebUI runs it and returns a
+  transcript tool (and OpenWebUI's built-in `web_search`) available on every
+  turn; the model calls whichever it needs and OpenWebUI runs it and returns a
   finished answer — no client-side agent loop. The whole flow lives in the
   userscript; `window.ml` stays a primitive.
 - **Trusted Types safe.** YouTube enforces `require-trusted-types-for 'script'`,
