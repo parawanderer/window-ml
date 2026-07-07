@@ -143,14 +143,8 @@ Tiny card or just testing? `qwen3:4b` (~3 GB) is a capable, tool-able featherwei
 
 ## 4. Turn on web search
 
-SearXNG is already running from step 1. Confirm/enable it in OpenWebUI:
-
-**Admin Panel → Settings → Web Search** → enable, **Engine = `searxng`**,
-**Searxng Query URL = `http://searxng:8080/search?q=<query>`** (literal
-`<query>`; use the container name, not `localhost`), Save.
-
-Quick sanity check that SearXNG itself is serving JSON (run from the OpenWebUI
-container so you test the real network path):
+SearXNG is already running from step 1. First, sanity-check it's serving JSON
+(run from the OpenWebUI container so you test the real network path):
 
 ```bash
 docker exec open-webui sh -c 'curl -s "http://searxng:8080/search?q=test&format=json" | head -c 200'
@@ -158,6 +152,19 @@ docker exec open-webui sh -c 'curl -s "http://searxng:8080/search?q=test&format=
 
 You want JSON back. HTML/403 → re-check `settings.yml` (the `json` format and
 `limiter: false`) and `docker compose restart searxng`.
+
+There are **two** ways to use it, and they're separate:
+
+- **In OpenWebUI's own chat UI:** Admin Panel → Settings → Web Search → enable,
+  Engine = `searxng`, Searxng Query URL = `http://searxng:8080/search?q=<query>`.
+- **For `window.ml` / any API client** (e.g. the summarizer example): the
+  built-in feature above is **UI-only — it does not run over OpenWebUI's API**
+  ([open-webui#12045](https://github.com/open-webui/open-webui/issues/12045)). So
+  register a **web-search workspace tool** instead:
+  [`examples/searxng_search.py`](../examples/searxng_search.py) → paste it as a
+  Tool in the workspace (id auto-derives to `searxng_web_search`) and set its
+  `SEARXNG_URL` valve to `http://searxng:8080/search`. That one *does* execute via
+  the API, exactly like the transcript tool.
 
 
 ## 5. Point the extension at it
