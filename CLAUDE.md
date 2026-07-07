@@ -99,6 +99,15 @@ results). The **agent loop lives client-side** (`ml.step` in `injected.js`);
 the extension deliberately ships no loop/whitelist/overseer — callers compose
 those, keeping `window.ml` a primitive.
 
+**Sources.** When a tool/RAG runs, OpenWebUI attaches provenance — top-level
+`data.sources` (non-stream) or its own SSE line `{ sources: [...] }` (stream,
+captured in `streamChunk`/`consume`). `fetchLLM`/`streamLLM` return
+`{ content, sources }`; the `FETCH_LLM` response and stream `done` carry
+`sources` alongside; `injected.js` attaches it to the stored assistant message
+as `.sources`. Only OpenWebUI built-in **web search is UI-only** and never
+reaches the API — use a web-search *workspace tool* (see
+`examples/searxng_search.py`), which does.
+
 ## Conventions
 
 - **Plain JS in docs/examples** — `document.querySelector`, never jQuery-style

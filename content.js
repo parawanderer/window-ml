@@ -48,6 +48,7 @@ const sendRuntimeMessage = (type, requestId, payload, responseType) => {
                 type: responseType,
                 requestId: requestId,
                 result: response && response.data,
+                sources: response && response.sources,
                 error: response && response.error
             }, "*");
         }
@@ -63,7 +64,7 @@ const startStream = (requestId, payload) => {
         if (msg.type === "chunk") {
             window.postMessage({ type: "LLM_STREAM_CHUNK", requestId, delta: msg.delta }, "*");
         } else if (msg.type === "done") {
-            window.postMessage({ type: "LLM_STREAM_DONE", requestId, content: msg.content }, "*");
+            window.postMessage({ type: "LLM_STREAM_DONE", requestId, content: msg.content, sources: msg.sources }, "*");
             port.disconnect();
         } else if (msg.type === "error") {
             window.postMessage({ type: "LLM_STREAM_ERROR", requestId, error: msg.error }, "*");

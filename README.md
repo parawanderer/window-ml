@@ -142,6 +142,12 @@ h.fork()            // independent deep copy of the conversation
 Design invariants: assistant replies are stored post-cleanup (thinking blocks
 are never resent as context) and a failed request leaves `messages` untouched.
 
+**Sources.** When a server-side tool or RAG runs (e.g. `toolIds`), OpenWebUI
+attaches provenance, and `window.ml` surfaces it on the stored assistant message
+as `.sources` — the raw OpenWebUI array (`[{ source, metadata, document }]`), so
+you can render citations. Read it off the turn: `h.messages.at(-1).sources`.
+Absent on plain chats and the Ollama-native format.
+
 ### OCR
 
 `ml.read()` transcribes text that's baked into image pixels — the case where a

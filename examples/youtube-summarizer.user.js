@@ -254,6 +254,20 @@
         #mlyt-panel .mlyt-msg a { color: #065fd4; }
         html[dark] #mlyt-panel .mlyt-msg a { color: #3ea6ff; }
         #mlyt-panel .mlyt-thinking { opacity: .6; font-style: italic; }
+        #mlyt-panel .mlyt-sources {
+            display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+            margin-top: 8px; padding-top: 8px;
+            border-top: 1px solid rgba(0,0,0,.1);
+        }
+        html[dark] #mlyt-panel .mlyt-sources { border-top-color: rgba(255,255,255,.15); }
+        #mlyt-panel .mlyt-sources-label { font-size: 1.1rem; opacity: .6; }
+        #mlyt-panel .mlyt-source {
+            font-size: 1.1rem; text-decoration: none; padding: 2px 8px;
+            border-radius: 10px; max-width: 170px;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+            background: rgba(0,0,0,.06); color: #065fd4;
+        }
+        html[dark] #mlyt-panel .mlyt-source { background: rgba(255,255,255,.1); color: #3ea6ff; }
         #mlyt-panel .mlyt-ask { display: flex; gap: 6px; margin-top: 10px; }
         #mlyt-panel .mlyt-ask input {
             flex: 1; min-width: 0; border-radius: 18px; padding: 8px 12px;
@@ -412,9 +426,60 @@
         return div;
     }
 
+    // Extract "Title\nhttps://url" pairs from a tool's text output blob (our
+    // search tool formats results as "N. Title\nURL\nsnippet").
+    function parseBlobLinks(text) {
+        const out = [];
+        const re = /(?:^|\n)(?:\d+\.\s*)?([^\n]+?)\n(https?:\/\/\S+)/g;
+        let m;
+        while ((m = re.exec(String(text)))) out.push({ title: m[1].trim(), url: m[2].trim() });
+        return out;
+    }
+
+    // Pull { title, url } from ml's per-turn sources (server-side tool / RAG
+    // provenance). Handles both shapes OpenWebUI produces: per-result citations
+    // (a real URL in metadata.source), and a single tool_result blob whose URLs
+    // live in the `document` text. De-dupes by URL.
+    function sourceLinks(sources) {
+        const out = [], seen = new Set();
+        const add = (title, url) => {
+            url = (url || "").trim();
+            if (!/^https?:\/\//.test(url) || seen.has(url)) return;
+            seen.add(url);
+            out.push({ url, title: (title || url).toString().trim() });
+        };
+        for (const s of sources || []) {
+            const metaUrl = ((s.metadata || [])[0] || {}).source || (s.source && s.source.url) || "";
+            if (/^https?:\/\//.test(metaUrl)) {
+                add(s.source && s.source.name, metaUrl);           // per-result citation
+            } else {
+                for (const doc of [].concat(s.document || [])) {    // tool_result blob → parse text
+                    for (const link of parseBlobLinks(doc)) add(link.title, link.url);
+                }
+            }
+        }
+        return out;
+    }
+
+    function hostOf(url) {
+        try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; }
+    }
+
+    function renderSources(links) {
+        const wrap = el("div", "mlyt-sources");
+        wrap.appendChild(el("span", "mlyt-sources-label", "🔎 Sources"));
+        links.forEach((l, i) => {
+            const a = el("a", "mlyt-source", `${i + 1}. ${hostOf(l.url)}`);
+            a.href = l.url; a.target = "_blank"; a.rel = "noopener noreferrer"; a.title = l.title;
+            wrap.appendChild(a);
+        });
+        return wrap;
+    }
+
     // Stream a chat turn into `bubble`, rendering the accumulated text as
     // markdown live (so bullets/bold format as they arrive, not as raw `-`/`**`).
-    // Re-renders are coalesced to one per animation frame to stay smooth.
+    // Re-renders are coalesced to one per animation frame to stay smooth. Any
+    // web-search / tool sources are shown as a chip row under the finished reply.
     async function streamInto(bubble, prompt) {
         let started = false, pending = "", frame = 0;
         const flush = () => {
@@ -432,6 +497,8 @@
         if (frame) cancelAnimationFrame(frame);
         bubble.classList.remove("mlyt-thinking");
         bubble.replaceChildren(renderMarkdown(reply || ""));   // final, authoritative
+        const links = sourceLinks(chat.messages.at(-1) && chat.messages.at(-1).sources);
+        if (links.length) bubble.appendChild(renderSources(links));
         return reply;
     }
 

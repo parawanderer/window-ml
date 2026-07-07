@@ -60,6 +60,22 @@ class Tools:
                     }
                 )
 
+        async def cite(title: str, url: str, snippet: str):
+            # One citation per result → each becomes its own source with a real
+            # URL, so clients (and the UI) can render individual clickable chips
+            # instead of one opaque tool-output blob.
+            if __event_emitter__ and url:
+                await __event_emitter__(
+                    {
+                        "type": "citation",
+                        "data": {
+                            "document": [snippet or title or url],
+                            "metadata": [{"source": url}],
+                            "source": {"name": title or url},
+                        },
+                    }
+                )
+
         await emit(f"Searching the web for: {query}")
         try:
             resp = requests.get(
@@ -88,6 +104,7 @@ class Tools:
             url = (r.get("url") or "").strip()
             snippet = (r.get("content") or "").strip()
             lines.append(f"{i}. {title}\n{url}\n{snippet}")
+            await cite(title, url, snippet)
 
         await emit(f"Found {len(results)} result(s).", "success", True)
         return "Web search results:\n\n" + "\n\n".join(lines)

@@ -31,10 +31,26 @@
         });
     };
 
-    // Streaming counterpart of makeBackgroundTaskPromise: fires onToken(delta,
-    // full) for each streamed chunk and resolves with the full concatenated
-    // text once done. Rides a Port on the content-script side (many messages),
-    // vs the one-shot request/response above.
+    // A chat request that resolves { content, sources } — the content string plus
+    // any server-side tool / RAG provenance the backend attached (empty otherwise).
+    const makeChatRequest = (payload) => {
+        return new Promise((resolve, reject) => {
+            const requestId = Math.random().toString(36).substring(7);
+            function handle(event) {
+                const d = event.data;
+                if (!d || d.type !== "LLM_RESPONSE" || d.requestId !== requestId) return;
+                window.removeEventListener("message", handle);
+                if (d.error) reject(d.error);
+                else resolve({ content: d.result, sources: d.sources || [] });
+            }
+            window.addEventListener("message", handle);
+            window.postMessage({ type: "LLM_REQUEST", requestId, payload }, "*");
+        });
+    };
+
+    // Streaming counterpart: fires onToken(delta, full) for each streamed chunk
+    // and resolves { content, sources } once done. Rides a Port on the
+    // content-script side (many messages), vs the one-shot request/response above.
     const makeStreamingTaskPromise = (payload, onToken) => {
         return new Promise((resolve, reject) => {
             const requestId = Math.random().toString(36).substring(7);
@@ -50,7 +66,7 @@
                     try { onToken(delta, full); } catch (e) { console.error("ml onToken threw:", e); }
                 } else if (d.type === "LLM_STREAM_DONE") {
                     window.removeEventListener("message", handle);
-                    resolve(d.content != null ? d.content : full);
+                    resolve({ content: d.content != null ? d.content : full, sources: d.sources || [] });
                 } else if (d.type === "LLM_STREAM_ERROR") {
                     window.removeEventListener("message", handle);
                     reject(d.error);
@@ -101,6 +117,8 @@
                 // onToken(delta, full): stream the reply token-by-token. The call
                 // still resolves to the full string (and history updates as usual).
                 // Streaming is text-only, so it's skipped when a schema is set.
+                // Any server-side tool / RAG sources are attached to the stored
+                // assistant message as `.sources` (read history.messages.at(-1)).
                 chat: async function(prompt, { images = [], model = this.model, think = this.think, cleanup = this.cleanup, schema = this.schema, toolIds = this.toolIds, onToken = null } = {}) {
                     const userMessage = { role: "user", content: prompt };
                     if (images.length) {
@@ -110,12 +128,15 @@
                     }
 
                     const requestPayload = { "messages": [...this.messages, userMessage], "think": think, "model": model, "schema": schema, "toolIds": toolIds };
-                    let reply = (typeof onToken === "function" && !schema)
+                    const { content, sources } = (typeof onToken === "function" && !schema)
                         ? await makeStreamingTaskPromise(requestPayload, onToken)
-                        : await makeBackgroundTaskPromise("LLM_REQUEST", "LLM_RESPONSE", requestPayload);
+                        : await makeChatRequest(requestPayload);
+                    let reply = content;
                     if (cleanup) reply = reply.replace(/^<think>[\s\S]*?<\/think>\s*/i, '');
 
-                    this.messages.push(userMessage, { role: "assistant", content: reply });
+                    const assistantMessage = { role: "assistant", content: reply };
+                    if (sources && sources.length) assistantMessage.sources = sources;
+                    this.messages.push(userMessage, assistantMessage);
                     return schema ? ml._parseJSON(reply) : reply;
                 },
                 fork: function() {

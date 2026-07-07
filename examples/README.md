@@ -18,7 +18,8 @@ all inside the page, grounded in the actual transcript.
 - A follow-up box to chat about the video (the transcript tool stays available,
   so answers stay grounded). With the optional **SearXNG web-search tool** it also
   searches the web on its own to answer questions beyond the transcript — more
-  about the channel/creator, related facts — when a follow-up needs it.
+  about the channel/creator, related facts — when a follow-up needs it, and shows
+  a row of clickable **source chips** under any web-answered reply.
 - A **model dropdown** in the header, populated from `ml.models()`. Defaults to
   `qwen3:32b`; pick any model on your server.
 - A **⚠️ warning badge** (hover for details) when the selected model isn't

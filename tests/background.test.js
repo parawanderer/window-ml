@@ -657,3 +657,45 @@ test("streaming surfaces errors as a port error message", async () => {
     assert.ok(err, "expected an error message");
     assert.match(err.error, /HTTP 500/);
 });
+
+test("FETCH_LLM surfaces top-level sources alongside the reply", async () => {
+    const srcs = [{ source: { name: "web/search" }, metadata: [{ source: "https://x.com" }] }];
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => jsonResponse({ choices: [{ message: { content: "hi" } }], sources: srcs })
+    });
+
+    const res = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "q" }] } });
+    assert.equal(res.data, "hi");
+    assert.deepEqual(res.sources, srcs);
+});
+
+test("FETCH_LLM omits sources when there are none", async () => {
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => jsonResponse({ choices: [{ message: { content: "hi" } }] })
+    });
+
+    const res = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "q" }] } });
+    assert.deepEqual(res, { data: "hi" });     // no sources key on a plain chat
+});
+
+test("streaming delivers sources (their own SSE line) on the done message", async () => {
+    const srcs = [{ source: { name: "web" }, metadata: [{ source: "https://x.com" }] }];
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => streamResponse([
+            'data: {"choices":[{"delta":{"content":"hi"}}]}\n',
+            'data: {"sources":' + JSON.stringify(srcs) + '}\n',
+            "data: [DONE]\n"
+        ])
+    });
+
+    const client = bg.connect("LLM_STREAM");
+    client.send({ payload: { messages: [{ role: "user", content: "q" }] } });
+    await settle();
+
+    const done = client.messages.find(m => m.type === "done");
+    assert.equal(done.content, "hi");
+    assert.deepEqual(done.sources, srcs);
+});

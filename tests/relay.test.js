@@ -289,3 +289,36 @@ test("a schema call ignores onToken (streaming is text-only)", async () => {
     assert.equal(streamed, false);             // went through the one-shot path
     assert.deepEqual(out, { ok: true });
 });
+
+test("chat attaches server-side sources to the assistant message (non-stream)", async () => {
+    const srcs = [{ source: { name: "web/search" }, metadata: [{ source: "https://x.com" }] }];
+    const world = loadPageWorld({
+        onRuntimeMessage: () => ({ data: "answer", sources: srcs })
+    });
+
+    const h = world.ml.createChat();
+    const out = await h.chat("q", { toolIds: ["web"] });
+    assert.equal(out, "answer");
+    assert.deepEqual(h.messages.at(-1).sources, srcs);
+});
+
+test("streaming chat attaches sources from the done message", async () => {
+    const srcs = [{ source: { name: "web" }, metadata: [{ source: "https://x.com" }] }];
+    const world = loadPageWorld({
+        onStream: (msg, emit) => {
+            emit({ type: "chunk", delta: "hi" });
+            emit({ type: "done", content: "hi", sources: srcs });
+        }
+    });
+
+    const h = world.ml.createChat();
+    await h.chat("q", { onToken: () => {} });
+    assert.deepEqual(h.messages.at(-1).sources, srcs);
+});
+
+test("a plain reply has no sources field on the message", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: () => ({ data: "hi" }) });
+    const h = world.ml.createChat();
+    await h.chat("q");
+    assert.ok(!("sources" in h.messages.at(-1)));
+});

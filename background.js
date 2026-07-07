@@ -97,7 +97,9 @@ const API_FORMATS = {
             const choice = obj.choices?.[0] || {};
             return {
                 delta: choice.delta?.content || "",
-                toolCall: choice.finish_reason === "tool_calls" || !!choice.delta?.tool_calls
+                toolCall: choice.finish_reason === "tool_calls" || !!choice.delta?.tool_calls,
+                // OpenWebUI emits tool/RAG provenance on its own line: { sources: [...] }.
+                sources: Array.isArray(obj.sources) ? obj.sources : null
             };
         }
     },
@@ -326,7 +328,9 @@ async function fetchLLM(payload) {
         );
     }
 
-    return content;
+    // sources: server-side tool / RAG provenance (OpenWebUI attaches it top-level
+    // when a tool runs). Absent on plain chats and the Ollama-native format.
+    return { content, sources: Array.isArray(data.sources) ? data.sources : [] };
 }
 
 // Streaming variant of fetchLLM: reads the SSE/NDJSON response and calls
@@ -340,12 +344,14 @@ async function streamLLM(payload, onDelta) {
     const consume = async (res) => {
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
-        let buffer = "", content = "", sawToolCall = false;
+        let buffer = "", content = "", sawToolCall = false, sources = [];
         const handleLine = (line) => {
             const chunk = format.streamChunk(line);
             if (!chunk) return;
             if (chunk.delta) { content += chunk.delta; onDelta(chunk.delta); }
             if (chunk.toolCall) sawToolCall = true;
+            // sources arrive on their own SSE line (no choices) — capture them.
+            if (Array.isArray(chunk.sources)) sources = chunk.sources;
         };
         for (;;) {
             const { done, value } = await reader.read();
@@ -359,20 +365,20 @@ async function streamLLM(payload, onDelta) {
             }
         }
         if (buffer.trim()) handleLine(buffer.trim());
-        return { content, sawToolCall };
+        return { content, sawToolCall, sources };
     };
 
     if (payload.toolIds?.length) {
         for (const mode of SERVER_TOOL_MODES) {
             body.params = { ...body.params, function_calling: mode };
-            const { content, sawToolCall } = await consume(await send(body, true));
-            if (content.trim() || !sawToolCall) return content;   // real answer, or a plain empty completion
+            const { content, sawToolCall, sources } = await consume(await send(body, true));
+            if (content.trim() || !sawToolCall) return { content, sources };   // real answer, or a plain empty completion
         }
         throw new Error(HANDBACK_ERROR);
     }
 
-    const { content } = await consume(await send(body, true));
-    return content;
+    const { content, sources } = await consume(await send(body, true));
+    return { content, sources };
 }
 
 function authHeaders(config) {
@@ -495,7 +501,14 @@ async function unloadModels(modelName) {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === "FETCH_LLM") {
         fetchLLM(message.payload)
-            .then(content => sendResponse({ data: content }))
+            // raw (ml.step) returns { content, tool_calls } as data; normal chat
+            // returns the content string, with sources alongside only when present.
+            .then(result => {
+                if (message.payload.raw) return sendResponse({ data: result });
+                const resp = { data: result.content };
+                if (result.sources && result.sources.length) resp.sources = result.sources;
+                sendResponse(resp);
+            })
             .catch(err => sendResponse({ error: err.message }));
         return true; // Keep channel open for async fetch
 
@@ -561,13 +574,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // Streaming uses a Port instead of the one-shot sendMessage/sendResponse, so
 // tokens can arrive as many messages. The content script opens the port and
 // posts { payload }; we stream { type: "chunk", delta } and finish with
-// { type: "done", content } or { type: "error", error }. A connected port also
-// keeps the MV3 service worker alive for the request's duration.
+// { type: "done", content, sources } or { type: "error", error }. A connected
+// port also keeps the MV3 service worker alive for the request's duration.
 chrome.runtime.onConnect.addListener((port) => {
     if (port.name !== "LLM_STREAM") return;
     port.onMessage.addListener((message) => {
         streamLLM(message.payload, (delta) => port.postMessage({ type: "chunk", delta }))
-            .then((content) => port.postMessage({ type: "done", content }))
+            .then(({ content, sources }) => port.postMessage({ type: "done", content, sources }))
             .catch((err) => port.postMessage({ type: "error", error: err.message }));
     });
 });
