@@ -30,6 +30,11 @@ await h.chat("Now explain it like I'm five");
 
 ## Setup
 
+> **Starting from nothing?** [docs/FULL-SETUP.md](docs/FULL-SETUP.md) stands up the
+> whole backend from scratch with Docker (Ollama + OpenWebUI + web search) and a
+> couple of models — the "initial setup for max utility" so `window.ml` can do
+> real tasks immediately.
+>
 > Step-by-step walkthrough (install, minimum config, troubleshooting): [docs/SETUP.md](docs/SETUP.md)
 
 
@@ -186,10 +191,7 @@ await ml.chat("What's the weather in Amsterdam right now?", { toolIds: ["web_sea
 
 **Client-side tools** — `ml.step()` is one model turn that hands the loop back
 to *you*: it returns the raw assistant message, you execute any tool calls
-(in the page — the whole point), append the results, and call it again. This is
-the piece nothing else can do, because the tools touch your tab. You own the
-loop, so whitelisting, step/time limits, and any overseer/critic are yours to
-add — `window.ml` stays a primitive.
+(in the page), append the results, and call it again.
 
 ```js
 const tools = [{ type: "function", function: {

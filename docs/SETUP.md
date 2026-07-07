@@ -1,5 +1,10 @@
 # Setup — from zero to `ml.chat()` in your console
 
+> **No server yet?** This page is the extension side and assumes you already have
+> OpenWebUI/Ollama running. To stand up the whole backend from scratch with
+> Docker (Ollama + OpenWebUI + web search) for **maximum utility**, start with
+> [FULL-SETUP.md](FULL-SETUP.md), then come back here.
+
 What you need: a Chromium-based browser (Chrome, Edge, Brave, …) and a
 reachable [OpenWebUI](https://openwebui.com) instance (or a bare
 [Ollama](https://ollama.com) server) **with at least one model pulled** —
