@@ -556,7 +556,9 @@
                   `(e.g. more about the channel/creator, related facts, or verifying a claim), ` +
                   `proactively call the ${WEB_SEARCH_FN} tool to supplement or verify before ` +
                   `answering — do this on your own, without being asked. Don't search when the ` +
-                  `transcript or page details already answer it. `
+                  `transcript or page details already answer it. ONLY for questions about the script ` +
+                  `of the video itself or information covered in the video description you must ` +
+                  `answer entirely from context and training data.`
                 : "";
             // One chat for the whole video. toolIds stays on every turn so the
             // model can (re)pull the transcript — or run a web search — server-side
