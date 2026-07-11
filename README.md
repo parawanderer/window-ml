@@ -28,6 +28,11 @@ await h.chat("What is a monad?");
 await h.chat("Now explain it like I'm five");
 ```
 
+…or let an **agent drive the page** from one line of English —
+`ml.agent("Search for cat videos.")` on YouTube ([example](examples/youtube_search.js)):
+
+<video src="https://github.com/parawanderer/window-ml/raw/main/docs/cat-videos-demo.mp4" controls muted playsinline width="100%"></video>
+
 ## Setup
 
 > **Starting from nothing?** [docs/FULL-SETUP.md](docs/FULL-SETUP.md) stands up the

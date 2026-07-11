@@ -266,6 +266,35 @@ test("pageInfo grounds time/locale for time-relative tasks", () => {
     assert.match(info, /ISO \d{4}-\d{2}-\d{2}T/);      // the model can reason about "today"
 });
 
+test("scroll tool is in the default set and scrolls to bottom by default", async () => {
+    const { ml, window } = loadDomWorld("<div>content</div>");
+    const calls = [];
+    window.scrollTo = (x, y) => calls.push(["to", x, y]);
+    const out = await run(ml, "scroll", {});
+    assert.equal(calls[0][0], "to");
+    assert.match(out, /Scrolled to bottom/);
+    assert.match(out, /Re-run look\/countMatches\/findByText/);   // nudges the follow-up
+});
+
+test("scroll tool handles to:top, by:N, and scrolling an element into view", async () => {
+    const { ml, window, document } = loadDomWorld('<div id="target">x</div>');
+    const calls = [];
+    window.scrollTo = (x, y) => calls.push(["to", x, y]);
+    window.scrollBy = (x, y) => calls.push(["by", x, y]);
+    document.querySelector("#target").scrollIntoView = () => calls.push(["intoView"]);
+
+    assert.match(await run(ml, "scroll", { to: "top" }), /Scrolled to top/);
+    assert.match(await run(ml, "scroll", { by: -200 }), /Scrolled by -200px/);
+    assert.match(await run(ml, "scroll", { to: "element", selector: "#target" }), /into view/);
+    assert.deepEqual(calls, [["to", 0, 0], ["by", 0, -200], ["intoView"]]);
+});
+
+test("scroll tool errors clearly for a missing element target", async () => {
+    const { ml } = loadDomWorld("");
+    assert.match(await run(ml, "scroll", { to: "element", selector: "#nope" }), /No element matches/);
+    assert.match(await run(ml, "scroll", { to: "element" }), /Provide `selector`/);
+});
+
 test("exec captures console output and returns it with the value", async () => {
     const { ml } = loadDomWorld();
     const res = await run(ml, "exec", { js: "console.log('hello', 42); 'done'" });
@@ -397,6 +426,50 @@ test("agent runs a requiresApproval tool only when the gate allows it", async ()
     const noRes = await refused.world.ml.agent("go", { tools: [refused.danger], approve: () => false });
     assert.equal(refused.ran(), false, "denied tool must not run");
     assert.match(noRes.transcript[0].result, /Denied by the user/);
+});
+
+test("approve contract: a rejection's feedback string is fed back to the model", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: scriptedModel([toolCall("danger", { js: "drop()" }, "c1"), reply("ok")])
+    });
+    let ran = false;
+    const danger = world.ml.defineTool({ name: "danger", requiresApproval: true, run: () => { ran = true; } });
+    const res = await world.ml.agent("go", {
+        tools: [danger],
+        approve: () => ({ approved: false, feedback: "use a read-only query instead" })
+    });
+    assert.equal(ran, false);
+    assert.match(res.transcript[0].result, /Denied by the user: use a read-only query instead/);
+    // the comment reaches the model as the tool result
+    assert.match(world.runtimeCalls.at(-1).payload.messages.at(-1).content, /use a read-only query instead/);
+});
+
+test("approve contract: approved-with-edited-arguments runs the edited args", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: scriptedModel([toolCall("exec", { js: "original()" }, "c1"), reply("done")])
+    });
+    let sawArgs;
+    const exec = world.ml.defineTool({
+        name: "exec", requiresApproval: true, run: (a) => { sawArgs = a; return "ran"; }
+    });
+    const res = await world.ml.agent("go", {
+        tools: [exec],
+        approve: () => ({ approved: true, arguments: { js: "edited()" } })
+    });
+    assert.deepEqual(sawArgs, { js: "edited()" });              // ran the edited script
+    assert.equal(res.transcript[0].result, "ran");
+    assert.deepEqual(res.transcript[0].arguments, { js: "edited()" }); // transcript reflects what ran
+});
+
+test("approve contract: a boolean return still works (backward compatible)", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: scriptedModel([toolCall("danger", { x: 1 }, "c1"), reply("ok")])
+    });
+    let ran = false;
+    const danger = world.ml.defineTool({ name: "danger", requiresApproval: true, run: () => { ran = true; return "did it"; } });
+    const res = await world.ml.agent("go", { tools: [danger], approve: () => true });
+    assert.equal(ran, true);
+    assert.equal(res.transcript[0].result, "did it");
 });
 
 test("the default approval gate fails safe to deny without a confirm()", async () => {
@@ -750,6 +823,50 @@ test("screenshot rejects a degenerate 1px-sliver element (roadmap #10)", async (
     const hidden = document.querySelector("#ok");
     hidden.getBoundingClientRect = () => ({ width: 0, height: 0, left: 0, top: 0, right: 0, bottom: 0 });
     await assert.rejects(ml.screenshot("#ok", { scroll: false }), /0×0px — too small/);
+});
+
+// ---- interaction tools (opt-in, gated): click / type (#7) ----
+
+test("clickTool is gated, opt-in, and clicks the selected match", async () => {
+    const { ml, document } = loadDomWorld('<button id="b">Go</button><a class="x">1</a><a class="x">2</a>');
+    const click = ml.clickTool();
+    assert.equal(click.requiresApproval, true);                 // side effects → gated
+    assert.ok(!ml.domTools.some(t => t.name === "click"), "not in the default read-only set");
+
+    let clicked = 0;
+    document.querySelector("#b").click = () => { clicked++; };
+    assert.match(await click.run({ selector: "#b" }), /Clicked/);
+    assert.equal(clicked, 1);
+
+    let hit = null;
+    document.querySelectorAll("a.x")[1].click = () => { hit = "2"; };
+    await click.run({ selector: "a.x", index: 1 });             // Nth match
+    assert.equal(hit, "2");
+
+    assert.match(await click.run({ selector: "#nope" }), /No element matches/);
+});
+
+test("typeTool sets a field's value, fires input/change, and can append", async () => {
+    const { ml, document } = loadDomWorld('<input id="q" value="old">');
+    const type = ml.typeTool();
+    assert.equal(type.requiresApproval, true);
+
+    const events = [];
+    const input = document.querySelector("#q");
+    for (const t of ["input", "change"]) input.addEventListener(t, () => events.push(t));
+
+    const out = await type.run({ selector: "#q", text: "hello" });   // replaces by default
+    assert.equal(input.value, "hello");
+    assert.deepEqual(events, ["input", "change"]);
+    assert.match(out, /Value now: "hello"/);
+
+    await type.run({ selector: "#q", text: "!", append: true });     // append
+    assert.equal(input.value, "hello!");
+});
+
+test("typeTool errors clearly for a missing field", async () => {
+    const { ml } = loadDomWorld('<input id="q">');
+    assert.match(await ml.typeTool().run({ selector: "#nope", text: "x" }), /No element matches/);
 });
 
 // ---- describeSkeleton ----

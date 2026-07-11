@@ -241,6 +241,11 @@
         return parts.join("\n");
     };
 
+    // Await a short beat so a click/submit's navigation or DOM update can begin
+    // before we read the result. Guarded: where setTimeout is absent (the jsdom
+    // test sandbox) it resolves immediately rather than throwing.
+    const settle = (ms) => new Promise(r => (typeof setTimeout === "function" ? setTimeout(r, ms) : r()));
+
     // Smallest CSS-px width/height an element may have and still be worth
     // screenshotting. Below this (a 1px spacer, a collapsed box) the crop is a
     // useless sliver; ml.screenshot rejects instead of sending it (roadmap #10).
@@ -395,6 +400,24 @@
         );
     };
 
+    // Normalize what an `approve` gate returned into { approved, feedback, arguments }.
+    // The contract accepts a plain boolean OR a rich object so an approval UI can:
+    //   • feed a rejection COMMENT back to the model (`feedback`) instead of the
+    //     fixed "Denied" string, and
+    //   • EDIT the arguments before the tool runs (`arguments`, only on approval).
+    // `orig` is the model-proposed arguments — the fallback when none were edited.
+    const normalizeApproval = (result, orig) => {
+        if (result && typeof result === "object") {
+            const edited = result.approved && result.arguments && typeof result.arguments === "object";
+            return {
+                approved: !!result.approved,
+                feedback: typeof result.feedback === "string" && result.feedback.trim() ? result.feedback.trim() : null,
+                arguments: edited ? result.arguments : orig
+            };
+        }
+        return { approved: !!result, feedback: null, arguments: orig };
+    };
+
     window.ml = {
         // Stateful multi-turn chat:
         //
@@ -538,9 +561,14 @@
          * @param {number} [opts.maxSteps=10] Hard cap on tool-executing turns.
          * @param {string} [opts.model] Model override, forwarded to each {@link module:ml.step}.
          * @param {boolean} [opts.think] Thinking flag, forwarded to each {@link module:ml.step}.
-         * @param {(req: {tool: string, arguments: Object}) => (boolean|Promise<boolean>)} [opts.approve]
+         * @param {(req: {tool: string, arguments: Object}) => (boolean|{approved: boolean, feedback?: string, arguments?: Object}|Promise<boolean|{approved: boolean, feedback?: string, arguments?: Object}>)} [opts.approve]
          *   Gate called before each model-driven call to a `requiresApproval` tool;
-         *   defaults to a blocking `confirm()`. A denial is fed back to the model.
+         *   defaults to a blocking `confirm()`. Return a boolean, or the richer
+         *   contract `{ approved, feedback?, arguments? }`: on a rejection, `feedback`
+         *   is fed to the model as the reason (instead of the fixed "Denied" note);
+         *   on approval, `arguments` (when given) REPLACES the model's arguments
+         *   before the tool runs — so a UI can edit an `exec` script before it fires.
+         *   A denial (either form) is always fed back to the model.
          * @param {boolean} [opts.env=true] Prepend a "current page context" note
          *   (URL, title, language, date/time, locale) to the system prompt, so the
          *   model is oriented and knows what "today"/the locale is. Set false to skip.
@@ -620,27 +648,41 @@
                 }
                 messages.push({ role: "assistant", content: msg.content || "", tool_calls: msg.tool_calls });
 
+                // Run a tool, unwrapping its { content, elements } envelope. A tool
+                // may return a plain string, or { content, elements } to also hand
+                // back real DOM nodes — routed to onStep/the transcript for hovering
+                // in devtools, never to the model.
+                const runTool = async (tool, args) => {
+                    try {
+                        const raw = await tool.run(args);
+                        if (raw && typeof raw === "object" && typeof raw.content === "string") {
+                            return { result: raw.content, elements: raw.elements };
+                        }
+                        return { result: raw };
+                    } catch (e) { return { result: `Error: ${errText(e)}` }; }
+                };
+
                 for (const call of msg.tool_calls) {
                     const tool = byName[call.name];
-                    const args = call.arguments || {};
+                    let args = call.arguments || {};
                     let result, elements;
                     if (!tool) {
                         result = `Error: no tool named "${call.name}".`;
-                    } else if (tool.requiresApproval && !(await approve({ tool: call.name, arguments: args }))) {
-                        result = "Denied by the user. Do not retry this exact call; try another approach.";
+                    } else if (tool.requiresApproval) {
+                        // Approval gate. `approve` may return a boolean or the rich
+                        // contract { approved, feedback?, arguments? } — a rejection
+                        // can hand the model a comment, an approval can edit the args.
+                        const decision = normalizeApproval(await approve({ tool: call.name, arguments: args }), args);
+                        if (!decision.approved) {
+                            result = decision.feedback
+                                ? `Denied by the user: ${decision.feedback}\nDo not retry this exact call unchanged; address the feedback or try another approach.`
+                                : "Denied by the user. Do not retry this exact call; try another approach.";
+                        } else {
+                            args = decision.arguments;   // possibly caller-edited before running
+                            ({ result, elements } = await runTool(tool, args));
+                        }
                     } else {
-                        try {
-                            const raw = await tool.run(args);
-                            // A tool may return a plain string, or { content, elements }
-                            // to also hand back real DOM nodes — routed to onStep/the
-                            // transcript for hovering in devtools, never to the model.
-                            if (raw && typeof raw === "object" && typeof raw.content === "string") {
-                                result = raw.content;
-                                elements = raw.elements;
-                            } else {
-                                result = raw;
-                            }
-                        } catch (e) { result = `Error: ${errText(e)}`; }
+                        ({ result, elements } = await runTool(tool, args));
                     }
                     result = String(result);
                     const entry = { tool: call.name, arguments: args, result };
@@ -865,6 +907,100 @@
                           "badges, prices, delivery text) I could search for with findByText to locate " +
                           "the key items.";
                     return ml.chat(base + guidance, { images: [shot], model, maxTokens });
+                }
+            });
+        },
+        // Interaction tools that DRIVE the page (real side effects), so they are
+        // `requiresApproval` and deliberately NOT in the default read-only domTools —
+        // opt in per task, gated by the approval flow:
+        //   ml.agent(task, { extraTools: [ml.clickTool(), ml.typeTool()] })
+        // clickTool: click a link/button/tab/result. Navigation, form submit,
+        // expand/collapse — irreversible, hence gated.
+        clickTool: function() {
+            const ml = this;
+            return ml.defineTool({
+                name: "click",
+                requiresApproval: true,
+                description: "Click an element (link, button, tab, search result). REAL SIDE EFFECTS — " +
+                    "may navigate, submit a form, or expand/collapse. Pass a CSS selector (supports " +
+                    ":contains()/:has-text()/:eq()); `index` picks the Nth match (0-based). Orient with " +
+                    "scroll/look/findByText FIRST so you click the right thing. Returns the resulting " +
+                    "URL/title so you can confirm what happened.",
+                parameters: {
+                    type: "object",
+                    properties: {
+                        selector: { type: "string", description: "CSS selector of the element to click." },
+                        index: { type: "integer", description: "Which match to click (0-based); default 0." }
+                    },
+                    required: ["selector"]
+                },
+                run: async ({ selector, index = 0 } = {}) => {
+                    let el;
+                    try { el = queryAll(selector)[index]; }
+                    catch (e) { return selectorError(selector, e); }
+                    if (!el) return `No element matches "${selector}"${index ? ` at index ${index}` : ""}.`;
+                    const before = (typeof location !== "undefined" && location.href) || "";
+                    try { el.scrollIntoView({ block: "center", inline: "center" }); } catch {}
+                    el.click();
+                    await settle(80);   // let navigation / DOM updates begin
+                    const after = (typeof location !== "undefined" && location.href) || "";
+                    const nav = after && after !== before ? ` Navigated to ${after}.` : "";
+                    return `Clicked ${elLine(el)}.${nav} Page title: ${truncate(document.title || "", 80)}. ` +
+                        "Re-run look/findByText to see the result.";
+                }
+            });
+        },
+        // typeTool: type text into an input/textarea/contenteditable (e.g. a search
+        // box), firing input/change so the page's JS reacts. Side-effecting (it can
+        // trigger live search / autosave), so gated + opt-in like click. `submit`
+        // presses Enter afterwards, so "search for X" is one call without eval.
+        typeTool: function() {
+            const ml = this;
+            return ml.defineTool({
+                name: "type",
+                requiresApproval: true,
+                description: "Type text into a field (text input, textarea, or contenteditable) — e.g. a " +
+                    "search box. Pass `selector` and the `text`; `index` picks the Nth match. By default " +
+                    "it REPLACES the field's value; set append:true to add to it. Set submit:true to press " +
+                    "Enter after (submit a search/form). Fires input/change events so the page reacts. " +
+                    "Returns the field's resulting value.",
+                parameters: {
+                    type: "object",
+                    properties: {
+                        selector: { type: "string", description: "CSS selector of the field." },
+                        text: { type: "string", description: "Text to type in." },
+                        index: { type: "integer", description: "Which match (0-based); default 0." },
+                        append: { type: "boolean", description: "Append instead of replacing the value." },
+                        submit: { type: "boolean", description: "Press Enter afterwards (submit)." }
+                    },
+                    required: ["selector", "text"]
+                },
+                run: async ({ selector, text = "", index = 0, append = false, submit = false } = {}) => {
+                    let el;
+                    try { el = queryAll(selector)[index]; }
+                    catch (e) { return selectorError(selector, e); }
+                    if (!el) return `No element matches "${selector}"${index ? ` at index ${index}` : ""}.`;
+                    const editable = "value" in el;
+                    const cur = editable ? el.value : (el.textContent || "");
+                    const next = append ? cur + text : text;
+                    if (editable) el.value = next; else el.textContent = next;
+                    // Fire the events frameworks listen for so the field isn't "empty" to them.
+                    try { el.focus(); } catch {}
+                    for (const type of ["input", "change"]) {
+                        try { el.dispatchEvent(new Event(type, { bubbles: true })); } catch {}
+                    }
+                    let note = "";
+                    if (submit) {
+                        for (const type of ["keydown", "keyup"]) {
+                            try { el.dispatchEvent(new KeyboardEvent(type, { key: "Enter", code: "Enter", keyCode: 13, bubbles: true })); } catch {}
+                        }
+                        if (el.form && typeof el.form.requestSubmit === "function") { try { el.form.requestSubmit(); } catch {} }
+                        await settle(80);
+                        note = " Submitted (Enter).";
+                    }
+                    const shown = editable ? el.value : (el.textContent || "");
+                    return `Typed into ${elLine(el)}. Value now: "${truncate(shown, 100)}".${note} ` +
+                        "Re-run look/findByText to see the result.";
                 }
             });
         },
@@ -1214,6 +1350,52 @@
                 "'today'?) and to confirm the site and language before matching text.",
             parameters: { type: "object", properties: {} },
             run: () => pageContext()
+        }),
+        T({
+            name: "scroll",
+            description: "Scroll the page to reveal below-the-fold or lazy-loaded content, then " +
+                "re-run look/countMatches/findByText to see what appeared. `to`: 'bottom' (default — " +
+                "triggers infinite-scroll/lazy-load), 'top', or 'element' (needs `selector`). Or `by`: " +
+                "scroll N pixels (negative = up).",
+            parameters: {
+                type: "object",
+                properties: {
+                    to: { type: "string", enum: ["bottom", "top", "element"], description: "Where to scroll (default 'bottom')." },
+                    selector: { type: "string", description: "Element to bring into view (with to:'element')." },
+                    by: { type: "integer", description: "Scroll by this many pixels instead (negative = up)." }
+                }
+            },
+            run: async ({ to, selector, by } = {}) => {
+                const doc = document.scrollingElement || document.documentElement || document.body;
+                let note;
+                if (typeof by === "number") {
+                    window.scrollBy(0, by);
+                    note = `Scrolled by ${by}px`;
+                } else if (to === "element" || selector) {
+                    if (!selector) return "Provide `selector` to scroll to an element.";
+                    let el;
+                    try { el = queryAll(selector)[0]; }
+                    catch (e) { return selectorError(selector, e); }
+                    if (!el) return `No element matches "${selector}".`;
+                    el.scrollIntoView({ block: "center", inline: "center" });
+                    note = `Scrolled "${selector}" into view`;
+                } else if (to === "top") {
+                    window.scrollTo(0, 0);
+                    note = "Scrolled to top";
+                } else {
+                    window.scrollTo(0, (doc && doc.scrollHeight) || 0);
+                    note = "Scrolled to bottom";
+                }
+                // Let lazy-load fire and layout settle before reporting (skipped where
+                // requestAnimationFrame is absent, e.g. the jsdom test sandbox).
+                const raf = (typeof window !== "undefined" && window.requestAnimationFrame) || null;
+                if (raf) await new Promise(r => raf(() => raf(r)));
+                const y = Math.round(typeof window.scrollY === "number" ? window.scrollY : ((doc && doc.scrollTop) || 0));
+                const max = Math.max(0, Math.round(((doc && doc.scrollHeight) || 0) - (window.innerHeight || 0)));
+                const atBottom = max === 0 || y >= max - 2;
+                return `${note}. Position y=${y}/${max}${atBottom ? " (at bottom)" : ""}. ` +
+                    "Re-run look/countMatches/findByText to see any newly loaded content.";
+            }
         }),
         T({
             name: "answer",
