@@ -287,6 +287,7 @@ via `hints`, and watch every thought and tool call in the console with
 const res = await ml.agent("Hide items that can't be delivered today.", {
   hints: "On amazon.nl the delivery line reads 'Wordt vandaag bezorgd'.",
   logDebug: true          // one console line per step — thoughts, tool calls, live nodes
+  maxSteps: 45
 });
 console.log(res.summary);
 ```
