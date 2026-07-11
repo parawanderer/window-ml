@@ -239,12 +239,21 @@
     const AGENT_SYSTEM = [
         "You are an automation agent operating on the CURRENT web page through a set",
         "of tools. You cannot see the page directly — discover its structure by",
-        "calling tools, in small steps, like working in the devtools console.",
+        "calling tools, in small steps, like working in the devtools console. Your",
+        "available tools are in the function schema; use the ones that fit.",
         "",
-        "Work incrementally: form a hypothesis, check it with a cheap tool, and only",
-        "then act. Before acting on a selector, verify it (e.g. countMatches,",
-        "sampleText) — if the result is implausible, reconsider. Prefer ONE general",
-        "rule that handles all matching items at once over acting item-by-item.",
+        "General method:",
+        "1. ORIENT — get your bearings (what page is this, what's on it).",
+        "2. LOCATE — find a known bit of visible text to anchor on.",
+        "3. NAVIGATE the DOM — inspect an element's structure DOWN into its children",
+        "   and UP through its ancestors to reach the repeating container, or the",
+        "   specific element, you need.",
+        "4. VERIFY before acting — check a selector (count its matches, sample their",
+        "   text); reject implausible counts; prefer data-* attributes and stable",
+        "   structural anchors over obfuscated, build-versioned class names.",
+        "5. ACT with ONE general rule that handles all matching items at once, not",
+        "   item-by-item.",
+        "6. CONFIRM the outcome, and iterate if needed.",
         "",
         "Be DECISIVE — you have a limited number of tool-steps. Once a selector is",
         "verified, ACT; don't keep exploring for its own sake (you can always observe",
@@ -255,9 +264,24 @@
         "that nothing slipped past the rule you used — a concept can have more than",
         "one form on the page, so a selector scoped to one form will miss the others.",
         "",
+        "KNOW YOUR LIMITS: if the task needs a capability you have no tool for — e.g.",
+        "judging what a photo/image depicts when you have no vision tool — STOP and",
+        "say plainly which tool you'd need, rather than guessing.",
+        "",
         "When the task is complete, stop calling tools and reply with a one-line",
-        "summary of what you did and how many elements you affected."
+        "summary of what you did (or why you couldn't)."
     ].join("\n");
+
+    // Tool-aware clauses appended to AGENT_SYSTEM (only when the caller didn't
+    // supply its own `system`) based on what the toolset can actually do.
+    const VISION_CLAUSE =
+        "\n\nYou have a VISION tool: use it to ORIENT (see the page) when the task or " +
+        "layout is unclear, and to VERIFY your work by looking at the result before " +
+        "declaring done — a screenshot catches what a DOM selector scoped to one form missed.";
+    const ANSWER_CLAUSE =
+        "\n\nIf the task asks you to FIND / LOCATE / return an element (rather than change " +
+        "the page), designate it with the answer tool (by selector) so the actual element " +
+        "is handed back to the caller.";
 
     // Render a tool's arguments for an approval prompt: string values shown raw
     // (real newlines — so an exec `js` blob is readable, not escaped JSON), others
@@ -377,6 +401,9 @@
          * @property {boolean} [requiresApproval] When true, {@link module:ml.agent}
          *   pauses and calls its approval gate before every model-driven call —
          *   set it on anything with side effects or arbitrary power (e.g. `exec`).
+         * @property {string[]} [capabilities] Role tags the agent adapts to, e.g.
+         *   `["vision"]` (this tool lets the model see) or `["answer"]` (this tool
+         *   designates result element(s), surfaced on `result.elements`).
          */
 
         /**
@@ -390,11 +417,11 @@
          * @returns {MlTool} The tool with defaults filled in.
          * @throws {Error} If `name` or a `run` function is missing.
          */
-        defineTool: function({ name, description = "", parameters = { type: "object", properties: {} }, run, requiresApproval = false } = {}) {
+        defineTool: function({ name, description = "", parameters = { type: "object", properties: {} }, run, requiresApproval = false, capabilities = [] } = {}) {
             if (!name || typeof run !== "function") {
                 throw new Error("ml.defineTool needs a name and a run(args) function");
             }
-            return { name, description, parameters, run, requiresApproval };
+            return { name, description, parameters, run, requiresApproval, capabilities };
         },
         /**
          * Run a full agent loop over a tool registry: the model calls tools, we
@@ -423,7 +450,9 @@
          *   and `{ step, tool, arguments, result, elements? }` for each tool call —
          *   `elements` holds real DOM nodes when the tool provided them (log them to
          *   hover in devtools).
-         * @returns {Promise<{summary: string, steps: number, transcript: Array<{thought?: string, tool?: string, arguments?: Object, result?: string, elements?: Node[]}>, hitCap?: boolean}>}
+         * @returns {Promise<{summary: string, steps: number, transcript: Array<{thought?: string, tool?: string, arguments?: Object, result?: string, elements?: Node[]}>, elements: Node[], hitCap?: boolean}>}
+         *   `elements` is the live DOM node(s) the model designated via an
+         *   `answer`-capable tool (empty for tasks that just act on the page).
          */
         agent: async function(task, { tools = null, extraTools = [], system = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true } = {}) {
             const toolset = [...(tools || this.domTools), ...extraTools];
@@ -432,7 +461,13 @@
                 type: "function",
                 function: { name: t.name, description: t.description, parameters: t.parameters }
             }));
+            const hasCap = (cap) => toolset.some(t => t.capabilities && t.capabilities.includes(cap));
             let systemPrompt = system || AGENT_SYSTEM;
+            if (!system) {
+                // Adapt the default prompt to what the toolset can actually do.
+                if (hasCap("vision")) systemPrompt += VISION_CLAUSE;
+                if (hasCap("answer")) systemPrompt += ANSWER_CLAUSE;
+            }
             if (env) {
                 const ctx = pageContext();
                 if (ctx) systemPrompt += `\n\nCurrent page context:\n${ctx}`;
@@ -442,6 +477,7 @@
                 { role: "user", content: task }
             ];
             const transcript = [];
+            const answered = [];   // element(s) designated via an `answer`-capable tool
             const emit = (event) => {
                 if (!onStep) return;
                 try { onStep(event); } catch (e) { console.error("ml.agent onStep threw:", e); }
@@ -451,7 +487,7 @@
             for (let step = 1; step <= maxSteps; step++) {
                 const msg = await this.step(messages, { tools: toolDefs, model, think });
                 if (!msg.tool_calls || !msg.tool_calls.length) {
-                    return { summary: stripThink(msg.content), steps: step - 1, transcript };
+                    return { summary: stripThink(msg.content), steps: step - 1, transcript, elements: answered };
                 }
                 // Surface the model's reasoning (its prose before the tool calls,
                 // plus any <think> block when think:true) so callers can watch it
@@ -490,10 +526,14 @@
                     if (elements && elements.length) entry.elements = elements;
                     transcript.push(entry);
                     emit({ step, ...entry });
+                    // An answer-capable tool designates the caller-facing result node(s).
+                    if (tool && tool.capabilities && tool.capabilities.includes("answer") && elements && elements.length) {
+                        answered.push(...elements);
+                    }
                     messages.push({ role: "tool", tool_call_id: call.id, content: result });
                 }
             }
-            return { summary: `Stopped at the ${maxSteps}-step cap without finishing.`, steps: maxSteps, transcript, hitCap: true };
+            return { summary: `Stopped at the ${maxSteps}-step cap without finishing.`, steps: maxSteps, transcript, elements: answered, hitCap: true };
         },
         /**
          * A de-duplicating approval gate for {@link module:ml.agent}: prompts (via
@@ -624,6 +664,7 @@
             const ml = this;
             return ml.defineTool({
                 name: "look",
+                capabilities: ["vision"],
                 description: "See the page visually and get a vision-model description. Call it with " +
                     "NO selector to screenshot the viewport and ORIENT yourself when the task is " +
                     "vague — seeing the page often makes the intended edit obvious. Pass a selector " +
@@ -975,6 +1016,33 @@
                 "'today'?) and to confirm the site and language before matching text.",
             parameters: { type: "object", properties: {} },
             run: () => pageContext()
+        }),
+        T({
+            name: "answer",
+            capabilities: ["answer"],
+            description: "Return specific element(s) as your RESULT — use this when the task asks " +
+                "you to find / locate / return an element rather than change the page. Pass the CSS " +
+                "selector (supports :contains()/:has-text()); the matching element(s) are handed back " +
+                "to the caller (and are hoverable in the console).",
+            parameters: {
+                type: "object",
+                properties: {
+                    selector: { type: "string", description: "CSS selector for the answer element(s)." },
+                    note: { type: "string", description: "Optional note about what these are." }
+                },
+                required: ["selector"]
+            },
+            run: ({ selector, note }) => {
+                let els;
+                try { els = queryAll(selector); }
+                catch (e) { return selectorError(selector, e); }
+                if (!els.length) return `No element matches "${selector}".`;
+                const preview = els.slice(0, 5).map(elLine).join("; ");
+                return {
+                    content: `Answer: ${els.length} element(s)${note ? ` — ${note}` : ""}: ${preview}`,
+                    elements: els.slice(0, 50)
+                };
+            }
         })
     ];
 

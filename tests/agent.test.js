@@ -107,6 +107,12 @@ test("defineTool rejects a tool with no name or no run()", () => {
     assert.throws(() => ml.defineTool(), /needs a name/);
 });
 
+test("defineTool carries capability tags (default empty)", () => {
+    const { ml } = loadDomWorld();
+    assert.deepEqual(ml.defineTool({ name: "a", run: () => "x" }).capabilities, []);
+    assert.deepEqual(ml.defineTool({ name: "b", run: () => "x", capabilities: ["vision"] }).capabilities, ["vision"]);
+});
+
 // ---- domTools registry ----
 
 // Run a named tool from the default registry (run may be async, e.g. exec).
@@ -193,6 +199,15 @@ test("selector tools accept end-position :contains/:has-text and explain mid-sel
     assert.equal(run(ml, "describeElement", { selector: '.card:contains("y")' }).elements[0].textContent, "y");
     // a genuinely malformed selector still reports the raw error
     assert.match(run(ml, "countMatches", { selector: "((" }), /Invalid selector: /);
+});
+
+test("answer tool returns the designated element(s) as the result", () => {
+    const { ml } = loadDomWorld('<div id="banner">Ad</div><p class="x">a</p><p class="x">b</p>');
+    const one = run(ml, "answer", { selector: "#banner", note: "the banner" });
+    assert.match(one.content, /Answer: 1 element.*the banner/);
+    assert.equal(one.elements[0].id, "banner");
+    assert.equal(run(ml, "answer", { selector: "p.x" }).elements.length, 2);
+    assert.match(run(ml, "answer", { selector: ".nope" }), /No element matches/);
 });
 
 test("pageInfo grounds time/locale for time-relative tasks", () => {
@@ -375,6 +390,52 @@ test("agent routes a tool's DOM nodes to onStep/transcript but never to the mode
     // The human-facing channels get the real node.
     assert.deepEqual(events.find(e => e.tool === "grab").elements, [node]);
     assert.deepEqual(res.transcript.find(t => t.tool === "grab").elements, [node]);
+});
+
+test("agent surfaces answer-capable tool elements on result.elements", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: scriptedModel([toolCall("pick", { selector: "#x" }, "c1"), reply("found it")])
+    });
+    const node = { tagName: "DIV" };
+    const pick = world.ml.defineTool({
+        name: "pick", capabilities: ["answer"], run: () => ({ content: "here", elements: [node] })
+    });
+    const res = await world.ml.agent("find it", { tools: [pick] });
+
+    assert.deepEqual(res.elements, [node]);                    // handed back to the caller
+    const toolMsg = world.runtimeCalls[1].payload.messages.at(-1);
+    assert.ok(!("elements" in toolMsg));                       // never leaked to the model
+});
+
+test("result.elements is empty for a plain action task", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: scriptedModel([toolCall("ping", {}, "c1"), reply("done")])
+    });
+    const ping = world.ml.defineTool({ name: "ping", run: () => "pong" });
+    const res = await world.ml.agent("act", { tools: [ping] });
+    assert.deepEqual(res.elements, []);
+});
+
+test("agent adds tool-aware clauses to the DEFAULT prompt (vision/answer), not a custom one", async () => {
+    const seen = [];
+    const world = loadPageWorld({
+        onRuntimeMessage: (m) => { seen.push(m.payload.messages[0].content); return { data: reply("done") }; }
+    });
+    const look = world.ml.defineTool({ name: "look", capabilities: ["vision"], run: () => "" });
+    const answer = world.ml.defineTool({ name: "answer", capabilities: ["answer"], run: () => "" });
+    const plain = world.ml.defineTool({ name: "plain", run: () => "" });
+
+    await world.ml.agent("t", { tools: [look, answer] });       // default system → clauses added
+    assert.match(seen[0], /VISION tool/);
+    assert.match(seen[0], /answer tool/);
+
+    await world.ml.agent("t", { tools: [plain] });              // no vision/answer capability
+    assert.doesNotMatch(seen[1], /VISION tool/);
+    assert.doesNotMatch(seen[1], /designate it with the answer tool/);
+
+    await world.ml.agent("t", { tools: [look, answer], system: "MINE" }); // custom system → no clauses
+    assert.ok(seen[2].startsWith("MINE"));
+    assert.doesNotMatch(seen[2], /VISION tool/);
 });
 
 test("approveOnce dedups by (tool, args): identical repeats free, new scripts re-ask", () => {
