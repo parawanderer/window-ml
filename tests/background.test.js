@@ -53,6 +53,35 @@ test("FETCH_LLM omits think unless it is a boolean", async () => {
     assert.equal(res.data, "ok");
 });
 
+test("FETCH_LLM maxTokens becomes max_tokens (openai) and is omitted otherwise", async () => {
+    let sawBody;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => { sawBody = call.body; return jsonResponse({ choices: [{ message: { content: "ok" } }] }); }
+    });
+
+    await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }], maxTokens: 512 } });
+    assert.equal(sawBody.max_tokens, 512);
+
+    await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }] } });
+    assert.ok(!("max_tokens" in sawBody), "no cap → no max_tokens field");
+
+    // Non-positive / non-integer caps are ignored (no runaway guard, but no bad body).
+    await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }], maxTokens: 0 } });
+    assert.ok(!("max_tokens" in sawBody));
+});
+
+test("FETCH_LLM maxTokens becomes options.num_predict on the ollama format", async () => {
+    let sawBody;
+    const bg = loadBackground({
+        config: baseConfig({ apiFormat: "ollama", chatUrl: "http://host/ollama/api/chat" }),
+        onFetch: (call) => { sawBody = call.body; return jsonResponse({ message: { content: "ok" } }); }
+    });
+
+    await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }], maxTokens: 256 } });
+    assert.equal(sawBody.options.num_predict, 256);
+});
+
 test("FETCH_LLM honors a per-call model override", async () => {
     const bg = loadBackground({
         config: baseConfig(),

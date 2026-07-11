@@ -86,6 +86,8 @@ const API_FORMATS = {
                 json_schema: { name: "response", strict: true, schema }
             };
         },
+        // Cap generated tokens (OpenAI-compatible field).
+        applyMaxTokens(body, n) { body.max_tokens = n; },
         // Parse one line of a streamed SSE response into { delta, toolCall }, or
         // null to skip (comments, blanks, the [DONE] sentinel, non-JSON).
         streamChunk(line) {
@@ -132,6 +134,8 @@ const API_FORMATS = {
         applyFormat(body, schema) {
             body.format = schema;
         },
+        // Cap generated tokens (Ollama's num_predict lives under options).
+        applyMaxTokens(body, n) { body.options = { ...body.options, num_predict: n }; },
         // Ollama streams newline-delimited JSON objects ({ message.content,
         // done }); each whole line is a chunk.
         streamChunk(line) {
@@ -251,6 +255,13 @@ async function prepareRequest(payload) {
     // Structured output: constrain the reply to a JSON schema. The wire shape
     // differs per backend; the caller parses the returned JSON string.
     if (payload.schema) format.applyFormat(body, payload.schema);
+
+    // Cap generated tokens (openai max_tokens / ollama num_predict). Guards
+    // against a runaway generation pegging the model — see ml.lookTool, which
+    // bounds vision calls where this has bitten.
+    if (Number.isInteger(payload.maxTokens) && payload.maxTokens > 0) {
+        format.applyMaxTokens(body, payload.maxTokens);
+    }
 
     // Client-side tool definitions (ml.step): passed through to the model, which
     // may reply with tool_calls. Same schema shape for both backends.

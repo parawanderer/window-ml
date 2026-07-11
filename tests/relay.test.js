@@ -91,6 +91,18 @@ test("ml.config relays a GET_CONFIG request and returns the non-secret config", 
     assert.deepEqual(cfg, { model: "qwen3:235b", ocrModel: "qwen2.5vl", apiFormat: "ollama" });
 });
 
+test("ml.chat forwards a maxTokens cap in the request payload", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: (msg) => {
+            assert.equal(msg.payload.maxTokens, 300);
+            return { data: "ok" };
+        }
+    });
+
+    const out = await world.ml.chat("hi", { maxTokens: 300 });
+    assert.equal(out, "ok");
+});
+
 test("ml.chat forwards toolIds for server-side tools", async () => {
     const world = loadPageWorld({
         onRuntimeMessage: (msg) => {

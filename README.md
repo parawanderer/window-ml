@@ -94,6 +94,9 @@ Options (all optional, both for `chat` and `createChat`):
   with a clear error (checked via `/api/show`).
 - `cleanup` — strip `<think>…</think>` from replies (default on).
 - `images` — (per-call) list of `<img>` elements and/or URL strings.
+- `maxTokens` — hard cap on generated tokens (OpenAI `max_tokens` / Ollama
+  `num_predict`); `null` omits it. Bounds a runaway generation so it can't peg
+  the model. `ml.agent`'s auto-wired vision tool caps itself this way by default.
 - `onToken` — `(delta, full) => {}`. Stream the reply token-by-token (for a live
   "typing" effect) while the call still resolves to the full string and history
   updates as usual. Text-only, so it's ignored when `schema` is set. Works with

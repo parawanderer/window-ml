@@ -386,10 +386,13 @@
         //          still stores the raw JSON text so turns chain normally.
         // toolIds: OpenWebUI server-side tool ids (e.g. ["web_search"]) — OpenWebUI
         //          runs those tools and returns the finished answer. OpenWebUI only.
+        // maxTokens: hard cap on generated tokens (openai max_tokens / ollama
+        //          num_predict); null omits it. Stops a runaway generation from
+        //          pegging the model — used to bound vision calls (see ml.lookTool).
         // onToken: (delta, full) => {} streams the reply token-by-token (text only,
         //          ignored when a schema is set); the call still resolves to the full string.
-        // history.chat() accepts { images, model, think, cleanup, schema, toolIds, onToken } per turn.
-        createChat: function({ system = null, model = null, think = false, cleanup = true, schema = null, toolIds = null } = {}) {
+        // history.chat() accepts { images, model, think, cleanup, schema, toolIds, maxTokens, onToken } per turn.
+        createChat: function({ system = null, model = null, think = false, cleanup = true, schema = null, toolIds = null, maxTokens = null } = {}) {
             const ml = this;
             return {
                 messages: system ? [{ role: "system", content: system }] : [],
@@ -398,12 +401,13 @@
                 cleanup,
                 schema,
                 toolIds,
+                maxTokens,
                 // onToken(delta, full): stream the reply token-by-token. The call
                 // still resolves to the full string (and history updates as usual).
                 // Streaming is text-only, so it's skipped when a schema is set.
                 // Any server-side tool / RAG sources are attached to the stored
                 // assistant message as `.sources` (read history.messages.at(-1)).
-                chat: async function(prompt, { images = [], model = this.model, think = this.think, cleanup = this.cleanup, schema = this.schema, toolIds = this.toolIds, onToken = null } = {}) {
+                chat: async function(prompt, { images = [], model = this.model, think = this.think, cleanup = this.cleanup, schema = this.schema, toolIds = this.toolIds, maxTokens = this.maxTokens, onToken = null } = {}) {
                     const userMessage = { role: "user", content: prompt };
                     if (images.length) {
                         userMessage.images = await Promise.all(
@@ -411,7 +415,7 @@
                         );
                     }
 
-                    const requestPayload = { "messages": [...this.messages, userMessage], "think": think, "model": model, "schema": schema, "toolIds": toolIds };
+                    const requestPayload = { "messages": [...this.messages, userMessage], "think": think, "model": model, "schema": schema, "toolIds": toolIds, "maxTokens": maxTokens };
                     const { content, sources } = (typeof onToken === "function" && !schema)
                         ? await makeStreamingTaskPromise(requestPayload, onToken)
                         : await makeChatRequest(requestPayload);
@@ -424,14 +428,14 @@
                     return schema ? ml._parseJSON(reply) : reply;
                 },
                 fork: function() {
-                    const copy = ml.createChat({ model: this.model, think: this.think, cleanup: this.cleanup, schema: this.schema, toolIds: this.toolIds });
+                    const copy = ml.createChat({ model: this.model, think: this.think, cleanup: this.cleanup, schema: this.schema, toolIds: this.toolIds, maxTokens: this.maxTokens });
                     copy.messages = structuredClone(this.messages);
                     return copy;
                 }
             };
         },
         // One-shot chat — a throwaway single-turn history.
-        // Options: { system, think, cleanup, images, model, schema, toolIds, onToken } as in createChat.
+        // Options: { system, think, cleanup, images, model, schema, toolIds, maxTokens, onToken } as in createChat.
         chat: async function(prompt, options = {}) {
             return this.createChat(options).chat(prompt, options);
         },
@@ -769,7 +773,10 @@
         // round-trip — opt in by composing it:
         //   ml.agent(task, { extraTools: [ml.lookTool({ model: "qwen2.5vl" })] })
         // model: vision model for the description (null = the saved default).
-        lookTool: function({ model = null } = {}) {
+        // maxTokens: hard cap on the description length, so a runaway vision
+        //   generation can't peg the model for minutes (see roadmap #11 — the
+        //   "48-minute wedge"). A description needs few tokens; default 512.
+        lookTool: function({ model = null, maxTokens = 512 } = {}) {
             const ml = this;
             return ml.defineTool({
                 name: "look",
@@ -815,7 +822,7 @@
                         : "\n\nThen list a few EXACT on-screen text strings (quoted, verbatim — labels, " +
                           "badges, prices, delivery text) I could search for with findByText to locate " +
                           "the key items.";
-                    return ml.chat(base + guidance, { images: [shot], model });
+                    return ml.chat(base + guidance, { images: [shot], model, maxTokens });
                 }
             });
         },

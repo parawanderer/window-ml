@@ -646,6 +646,19 @@ test("lookTool falls back to a default prompt and forwards a vision model", asyn
     assert.equal(await look.run({ selector: "#x" }), "a product card");
 });
 
+test("lookTool caps the vision generation by default (roadmap #11 wedge guard)", async () => {
+    const seen = [];
+    const world = loadPageWorld({
+        onRuntimeMessage: (msg) => { seen.push(msg.payload.maxTokens); return { data: "desc" }; }
+    });
+    world.ml.screenshot = async () => "data:image/png;base64,SHOT";
+
+    await world.ml.lookTool().run({ selector: "#x" });                 // default cap
+    assert.equal(seen[0], 512);
+    await world.ml.lookTool({ maxTokens: 128 }).run({ selector: "#x" }); // override
+    assert.equal(seen[1], 128);
+});
+
 test("lookTool with no selector screenshots the whole page to orient", async () => {
     const world = loadPageWorld({
         onRuntimeMessage: (msg) => {
