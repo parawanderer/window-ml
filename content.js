@@ -36,6 +36,10 @@ const HANDLE_MAP = {
     "UNLOAD_REQUEST": {
         type: "OLLAMA_UNLOAD",
         responseType: "UNLOAD_RESPONSE"
+    },
+    "CAPTURE_TAB_REQUEST": {
+        type: "CAPTURE_TAB",
+        responseType: "CAPTURE_TAB_RESPONSE"
     }
 };
 

@@ -1,5 +1,20 @@
 # Examples
 
+## Amazon search filter (agent) — [`amazon_filter.js`](./amazon_filter.js)
+
+A devtools-console snippet: paste it on an Amazon **search results** page and a
+local LLM hides the cards you don't want (Sponsored, not shipping today, …). It's
+one `ml.agent()` call — the model discovers the DOM itself with the built-in
+agent tools (`findByText` → `describeElement` → `countMatches`/`sampleText` →
+apply), driven by a task-specific strategy prompt.
+
+It composes **one custom `hideElements` tool** (via `ml.defineTool` + `extraTools`)
+on top of the generic `ml.domTools`, showing how you extend the agent — the loop,
+step cap, and action all stay on your side. Needs a **tool-capable** model; bigger
+models drive the loop more reliably. Edit the `TASK` line to filter differently.
+
+---
+
 ## YouTube video summarizer — [`youtube-summarizer.user.js`](./youtube-summarizer.user.js)
 
 ![A screenshot showing youtube with the youtube-summarizer.user.js user script enabled](../docs/youtube-summarizer-2026-07-06_21-26.png)

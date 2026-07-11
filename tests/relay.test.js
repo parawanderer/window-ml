@@ -322,3 +322,28 @@ test("a plain reply has no sources field on the message", async () => {
     await h.chat("q");
     assert.ok(!("sources" in h.messages.at(-1)));
 });
+
+test("CAPTURE_TAB_REQUEST relays to a CAPTURE_TAB background message", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: (msg) => {
+            assert.equal(msg.type, "CAPTURE_TAB");
+            return { data: "data:image/png;base64,SHOT" };
+        }
+    });
+    // Post the raw request (ml.screenshot's crop needs a real canvas — browser
+    // only); this asserts the content.js HANDLE_MAP wiring forwards it.
+    world.context.window.postMessage({ type: "CAPTURE_TAB_REQUEST", requestId: "r1", payload: {} });
+    await new Promise(r => setTimeout(r));
+    assert.equal(world.runtimeCalls[0].type, "CAPTURE_TAB");
+});
+
+test("ml.screenshot() with no target returns the whole viewport uncropped", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: (msg) => {
+            assert.equal(msg.type, "CAPTURE_TAB");
+            return { data: "data:image/png;base64,VIEWPORT" };
+        }
+    });
+    // No target → no crop (no canvas), so this whole path is testable headless.
+    assert.equal(await world.ml.screenshot(), "data:image/png;base64,VIEWPORT");
+});

@@ -568,6 +568,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             })
             .catch(err => sendResponse({ error: err.message }));
         return true;
+
+    } else if (message.type === "CAPTURE_TAB") {
+        // Screenshot the visible viewport so the page can crop it to an element.
+        // Privileged: pages can't capture pixels, and a cross-origin canvas would
+        // taint — same escalation the FETCH_IMAGE_B64 fetch already grants. For a
+        // page-relayed message sender.tab is set; its windowId targets the tab.
+        const capture = sender.tab
+            ? chrome.tabs.captureVisibleTab(sender.tab.windowId, { format: "png" })
+            : chrome.tabs.captureVisibleTab({ format: "png" });
+        capture
+            .then(dataUrl => sendResponse({ data: dataUrl }))
+            .catch(err => sendResponse({ error: err.message }));
+        return true;
     }
 });
 

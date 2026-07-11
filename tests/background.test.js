@@ -699,3 +699,21 @@ test("streaming delivers sources (their own SSE line) on the done message", asyn
     assert.equal(done.content, "hi");
     assert.deepEqual(done.sources, srcs);
 });
+
+test("CAPTURE_TAB screenshots the sender's window and returns the data URL", async () => {
+    const bg = loadBackground({ config: baseConfig(), onFetch: () => htmlResponse() });
+    const res = await bg.send({ type: "CAPTURE_TAB", payload: {} }, { tab: { windowId: 7 } });
+
+    assert.deepEqual(bg.captures[0], [7, { format: "png" }]); // targeted the sender's window
+    assert.equal(res.data, "data:image/png;base64,SHOT");
+});
+
+test("CAPTURE_TAB surfaces a capture failure as an error", async () => {
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => htmlResponse(),
+        onCaptureTab: () => { throw new Error("cannot capture chrome:// page"); }
+    });
+    const res = await bg.send({ type: "CAPTURE_TAB", payload: {} }, { tab: { windowId: 1 } });
+    assert.match(res.error, /cannot capture/);
+});

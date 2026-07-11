@@ -4,6 +4,7 @@
 const vm = require("node:vm");
 const fs = require("node:fs");
 const path = require("node:path");
+const { JSDOM } = require("jsdom");
 
 const ROOT = path.join(__dirname, "..");
 
@@ -72,8 +73,9 @@ function streamResponse(lines, { status = 200 } = {}) {
 
 // Loads background.js. `onFetch` receives { url, opts, body } (body already
 // JSON-parsed for requests that have one) and returns a response stub.
-function loadBackground({ config = {}, onFetch }) {
+function loadBackground({ config = {}, onFetch, onCaptureTab }) {
     const calls = [];
+    const captures = [];        // captureVisibleTab arg lists, for screenshot tests
     const listeners = [];
     const connectListeners = [];
     const stored = { ...config };
@@ -102,6 +104,14 @@ function loadBackground({ config = {}, onFetch }) {
             runtime: {
                 onMessage: { addListener: (fn) => listeners.push(fn) },
                 onConnect: { addListener: (fn) => connectListeners.push(fn) }
+            },
+            tabs: {
+                // Records args so tests can assert the windowId; onCaptureTab (if
+                // given) provides the data URL or throws to simulate a failure.
+                captureVisibleTab: async (...args) => {
+                    captures.push(args);
+                    return onCaptureTab ? onCaptureTab(...args) : "data:image/png;base64,SHOT";
+                }
             }
         }
     };
@@ -110,6 +120,7 @@ function loadBackground({ config = {}, onFetch }) {
 
     return {
         calls,
+        captures,
         stored,
         // Simulates chrome.runtime.sendMessage hitting the listener.
         send: (message, sender = {}) =>
@@ -172,6 +183,8 @@ function loadPageWorld({ onRuntimeMessage, onStream }) {
     const context = {
         console,
         Math,
+        Date,
+        Intl,
         structuredClone,
         Event: class Event { constructor(type) { this.type = type; } },
         window: win,
@@ -213,4 +226,33 @@ function loadPageWorld({ onRuntimeMessage, onStream }) {
     return { ml: win.ml, runtimeCalls, context, dispatchedEvents };
 }
 
-module.exports = { jsonResponse, htmlResponse, streamResponse, loadBackground, loadPageWorld, loadDotEnv };
+// Boots ONLY injected.js over a real jsdom document, so the agent's DOM
+// helpers (ml._elPath, ml._describeSkeleton, ...) traverse a faithful DOM
+// instead of a hand-rolled fake. No content.js relay — these helpers are pure
+// page-context DOM code and never touch the background. `html` is the <body>
+// inner HTML. Returns { ml, window, document } for querying in assertions.
+function loadDomWorld(html = "") {
+    const dom = new JSDOM(`<!doctype html><html><body>${html}</body></html>`);
+    const win = dom.window;
+    const context = {
+        console,
+        Math,
+        Date,
+        Intl,
+        structuredClone,
+        window: win,
+        document: win.document,
+        location: win.location,
+        Event: win.Event,
+        HTMLImageElement: win.HTMLImageElement,
+        // DOM globals the agent tools reference (real in a browser main world).
+        Element: win.Element,
+        NodeList: win.NodeList,
+        HTMLCollection: win.HTMLCollection
+    };
+    vm.createContext(context);
+    vm.runInContext(fs.readFileSync(path.join(ROOT, "injected.js"), "utf8"), context);
+    return { ml: win.ml, window: win, document: win.document };
+}
+
+module.exports = { jsonResponse, htmlResponse, streamResponse, loadBackground, loadPageWorld, loadDomWorld, loadDotEnv };

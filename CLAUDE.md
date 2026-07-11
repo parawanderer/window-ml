@@ -112,12 +112,15 @@ reaches the API — use a web-search *workspace tool* (see
 
 - **Plain JS in docs/examples** — `document.querySelector`, never jQuery-style
   `$`/`$$` (those are devtools-only and read as dated).
-- **Zero dependencies.** Runtime and tests use only built-ins.
+- **Zero runtime dependencies.** The shipped extension uses only built-ins; the
+  only dev dependency is `jsdom`, for the DOM-helper tests (never bundled).
 - **Tests: `npm test`** (Node ≥ 20, `node:test`). `tests/helpers.js` loads the
   real extension files into `node:vm` sandboxes with mocked `chrome`/`fetch`/
   `window`, so tests exercise the shipped code with no build step. Add a
   background-contract test to `tests/background.test.js` and a page-relay test to
-  `tests/relay.test.js` for any new primitive. Live tests (`tests/live.test.js`)
+  `tests/relay.test.js` for any new primitive. DOM-manipulating helpers
+  (the agent tools) are tested against a real DOM via `loadDomWorld(html)`, which
+  boots `injected.js` over a `jsdom` document. Live tests (`tests/live.test.js`)
   are opt-in via `.env` (see `.env.example`). CI runs offline tests on push.
 
 ## Security invariants (don't regress these)
