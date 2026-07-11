@@ -12,9 +12,10 @@
 //   2. a tool-capable model selected (see ml.getModel() / the popup). Bigger
 //      models drive the loop more reliably — loop reliability scales with size.
 //
-// The loop, the step cap, and the action all live HERE, on your side. window.ml
-// stays a primitive. This also shows the extensibility point: we compose ONE
-// custom tool (hideElements) on top of the generic ml.domTools.
+// The generic devtools *workflow* is built into ml.agent's default prompt, so all
+// we supply is task FACTS (`hints`) + ONE custom action tool (hideElements) — the
+// "minimal setup" the agent is designed for. The loop, step cap, and action all
+// live HERE, on your side; window.ml stays a primitive.
 
 (async () => {
     // window.ml is synchronous once injected; this is the canonical ready-wait
@@ -27,58 +28,25 @@
         "Hide every search result that is Sponsored, and every result that is not " +
         "available to ship today or tomorrow. Leave all other results visible.";
 
-    // Task-specific strategy prompt. This is the part we deliberately keep OUT of
-    // window.ml core: the loop is generic, the how-to lives with the task.
-    const STRATEGY = [
-        "You are filtering the current Amazon SEARCH RESULTS page by hiding result",
-        "cards. You cannot see the page — use the tools to discover its structure.",
-        "",
-        "This page may NOT be in English.",
-        "Never assume the wording; discover it with sampleText first.",
-        "",
-        "If the task or the page is unclear, call look with NO selector FIRST to see",
-        "the page — a screenshot often makes the intended edit obvious, the way a",
-        "glance at devtools would. look sees the viewport; pass scope:'page' to",
-        "scroll+stitch the whole page when what you need is below the fold. Use look",
-        "on a specific element to judge how it *looks* (greyed-out / sponsored).",
-        "",
-        "Method (like a human in devtools):",
-        "1. Pick a visible product title and findByText it to get its element path.",
-        "2. Walk UP with ancestors (describeElement goes DOWN) until you reach the",
-        "   element that repeats once per result — the result CARD. On Amazon it's",
-        '   `div[data-component-type="s-search-result"]` carrying a `data-asin`;',
-        "   confirm with countMatches before trusting it (a search page has ~20-60).",
-        "3. Find the signal for each filter. FIRST check whether the target cards",
-        "   carry a distinguishing class or attribute (describeElement / inspect the",
-        "   card's own classes — e.g. Amazon marks sponsored cards with an 'AdHolder'",
-        "   class), because a CSS selector is simpler and more robust than text.",
-        "   Otherwise READ cards with sampleText and confirm the exact wording (e.g.",
-        "   'Gesponsord'). If a filter's signal is not present on the page (e.g. no",
-        "   'delivery today' wording — the fastest may be 'morgen'/tomorrow), do NOT",
-        "   guess — skip that filter and say so at the end.",
-        "4. VERIFY before acting: countMatches / sampleText the cards you intend to",
-        "   hide. If that matches all / none / an implausible number, reconsider.",
-        "5. Apply each filter AS SOON AS it's verified — don't investigate every",
-        "   filter before acting. Sponsored is easy: hide it",
-        "   first with hideElements, THEN work out the delivery filter.",
-        "   - If the cards to hide share a plain CSS selector, call hideElements.",
-        "   - If the filter depends on TEXT inside each card (a 'Sponsored' label),",
-        "     a CSS selector can't express it. Use exec to loop the cards and set",
-        "     `card.style.display = 'none'` on the matching ones. Do NOT add CSS",
-        "     classes — they have no styling and hide nothing. (You'll be asked to",
-        "     approve exec once.)",
-        "6. Sponsored content has MORE than one form: the in-grid result cards, but",
-        "   ALSO a top brand banner and mid-page carousel/video blocks that live",
-        "   OUTSIDE the s-search-result grid (different markup, same 'Gesponsord'",
-        "   label). A selector scoped to the grid will miss them.",
-        "7. VERIFY VISUALLY at the end: scroll to top and call look (and a scope:'page'",
-        "   overview) to confirm nothing sponsored or too-slow-to-ship is still",
-        "   visible. If something remains, find and hide that block too, then look",
-        "   again — repeat until the page is clean.",
-        "",
-        "Prefer data-* attributes and structural anchors over Amazon's obfuscated,",
-        "build-versioned class names. When done, reply with one line: how many cards",
-        "you hid, by which filter, and any filter you had to skip.",
+    // Task-specific FACTS only. The generic devtools workflow (orient → locate →
+    // walk up → verify → act → confirm → iterate) is built into ml.agent's default
+    // system prompt — we pass these as `hints`, which APPEND to it (vs `system`,
+    // which would replace the whole thing). This is the "minimal setup" the agent
+    // is designed for: the model already knows *how*; we supply the *facts*.
+    const HINTS = [
+        "This page may be in Dutch (amazon.nl): sponsored = 'Gesponsord'; the fastest",
+        "delivery is 'morgen' (tomorrow) — there is no 'today'. Confirm wording with",
+        "sampleText rather than assuming.",
+        "Result cards are `div[data-component-type=\"s-search-result\"]` (carry data-asin);",
+        "in-grid SPONSORED cards also carry an `AdHolder` class — prefer that clean",
+        "selector over text matching. Delivery text lives in `div[data-cy=\"delivery-recipe\"]`",
+        "/ `.udm-primary-delivery-message`.",
+        "IMPORTANT: sponsored content has more than one form — the in-grid cards, but",
+        "ALSO a top brand banner and mid-page carousel/video blocks OUTSIDE the",
+        "s-search-result grid (different markup, same 'Gesponsord' label). A grid-scoped",
+        "selector misses them, so verify visually and hide those too.",
+        "For a delivery filter you must read each card's text (a CSS selector can't),",
+        "so hide with exec setting `style.display='none'` (never add empty CSS classes).",
     ].join("\n");
 
     // The one custom ACTION tool, composed on top of the generic ml.domTools.
@@ -114,7 +82,7 @@
     const result = await ml.agent(TASK, {
         model: 'qwen3.5:122b',
         think: true,                       // surface the model's reasoning (below)
-        system: STRATEGY,
+        hints: HINTS,                      // task FACTS; the workflow is built in
         // ml.domTools (read-only probes) + your action + eyes. lookTool lets the
         // model screenshot the page (no selector) to ORIENT when the task is
         // vague, or an element to judge how it *looks* (sponsored/greyed-out).

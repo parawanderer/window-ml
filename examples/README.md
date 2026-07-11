@@ -1,5 +1,16 @@
 # Examples
 
+## Find an element by describing it (agent "hello world") — [`find_element.js`](./find_element.js)
+
+The smallest agent demo, and the best place to **start** — it needs no login, so
+it works on any page (try [example.com](https://example.com)). Ask for an element
+in plain English and get the **live DOM node** back, hoverable in the console.
+One `ml.agent()` call + `ml.lookTool()`. Bonus: it's typo-proof — ask for
+"Exampl Domain" (missing an 'e') and vision reads the real page text and finds
+the right element anyway.
+
+---
+
 ## Amazon search filter (agent) — [`amazon_filter.js`](./amazon_filter.js)
 
 A devtools-console snippet: paste it on an Amazon **search results** page and a
@@ -12,6 +23,20 @@ It composes **one custom `hideElements` tool** (via `ml.defineTool` + `extraTool
 on top of the generic `ml.domTools`, showing how you extend the agent — the loop,
 step cap, and action all stay on your side. Needs a **tool-capable** model; bigger
 models drive the loop more reliably. Edit the `TASK` line to filter differently.
+
+---
+
+## Instagram cat finder (vision agent) — [`instagram_cats.js`](./instagram_cats.js)
+
+A minimal, **vision-heavy** console snippet: paste it on an Instagram profile and
+a local LLM finds the first few grid photos that show a cat, handing them back as
+**live, hoverable DOM nodes** (`result.elements`). The whole setup is one
+`ml.agent()` call + `ml.lookTool()` — no custom tools, no strategy prompt. The
+model reverse-engineers Instagram's obfuscated grid on its own, then looks at each
+post one at a time (tight per-element crops via `look`'s `index`) and designates
+the hits with `answer`. Needs a **vision-capable** model; without a vision tool it
+correctly reports it can't judge image content. (`exec` is blocked by Instagram's
+CSP — the DOM + vision tools don't eval, so it works anyway.)
 
 ---
 

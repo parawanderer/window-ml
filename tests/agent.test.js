@@ -208,6 +208,9 @@ test("answer tool returns the designated element(s) as the result", () => {
     assert.equal(one.elements[0].id, "banner");
     assert.equal(run(ml, "answer", { selector: "p.x" }).elements.length, 2);
     assert.match(run(ml, "answer", { selector: ".nope" }), /No element matches/);
+    // index designates one specific match (call repeatedly to collect several)
+    assert.equal(run(ml, "answer", { selector: "p.x", index: 1 }).elements[0].textContent, "b");
+    assert.match(run(ml, "answer", { selector: "p.x", index: 9 }), /No element at index 9/);
 });
 
 test("pageInfo grounds time/locale for time-relative tasks", () => {
@@ -407,6 +410,16 @@ test("agent surfaces answer-capable tool elements on result.elements", async () 
     assert.ok(!("elements" in toolMsg));                       // never leaked to the model
 });
 
+test("agent surfaces string rejections cleanly (not 'Error: undefined')", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: scriptedModel([toolCall("boom", {}, "c1"), reply("done")])
+    });
+    // Background tasks reject with a plain string, not an Error.
+    const boom = world.ml.defineTool({ name: "boom", run: () => Promise.reject("capture failed") });
+    const res = await world.ml.agent("x", { tools: [boom] });
+    assert.equal(res.transcript.find(t => t.tool === "boom").result, "Error: capture failed");
+});
+
 test("result.elements is empty for a plain action task", async () => {
     const world = loadPageWorld({
         onRuntimeMessage: scriptedModel([toolCall("ping", {}, "c1"), reply("done")])
@@ -436,6 +449,18 @@ test("agent adds tool-aware clauses to the DEFAULT prompt (vision/answer), not a
     await world.ml.agent("t", { tools: [look, answer], system: "MINE" }); // custom system → no clauses
     assert.ok(seen[2].startsWith("MINE"));
     assert.doesNotMatch(seen[2], /VISION tool/);
+});
+
+test("hints append task facts while keeping the built-in workflow", async () => {
+    const seen = [];
+    const world = loadPageWorld({
+        onRuntimeMessage: (m) => { seen.push(m.payload.messages[0].content); return { data: reply("done") }; }
+    });
+    const plain = world.ml.defineTool({ name: "plain", run: () => "" });
+    await world.ml.agent("t", { tools: [plain], hints: "On amazon.nl sponsored = Gesponsord." });
+
+    assert.match(seen[0], /General method:/);                  // workflow still present
+    assert.match(seen[0], /Task-specific notes:\nOn amazon\.nl sponsored/);  // hints appended
 });
 
 test("approveOnce dedups by (tool, args): identical repeats free, new scripts re-ask", () => {
@@ -520,13 +545,18 @@ test("lookTool scope:'page' stitches and frames it as a downscaled overview", as
     world.ml.screenshot = async (t, o) => { seen.push([t, o]); return "data:image/png;base64,VIEW"; };
 
     await world.ml.lookTool().run({ scope: "page" });
-    assert.deepEqual(seen[0], [null, { fullPage: true }]);      // whole page, stitched
+    assert.deepEqual(seen[0], [null, { fullPage: true, index: 0 }]); // whole page, stitched
     assert.match(prompts[0], /downscaled|overview/i);          // framed as orientation
     assert.doesNotMatch(prompts[0], /list a few EXACT/i);      // does NOT ask to extract anchors
 
     await world.ml.lookTool().run({});                         // default: viewport only
     assert.equal(seen[1][1].fullPage, false);
     assert.match(prompts[1], /list a few EXACT.*findByText/s); // sharp enough to quote anchors
+
+    // classifying a grid: look at the Nth match (index passed through to screenshot)
+    await world.ml.lookTool().run({ selector: ".post", index: 2 });
+    assert.deepEqual(seen[2], [".post", { fullPage: false, index: 2 }]);
+    assert.match(prompts[2], /match #2/);
 });
 
 test("lookTool surfaces a screenshot failure as an error string", async () => {

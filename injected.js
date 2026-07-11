@@ -88,6 +88,10 @@
         return str.length > n ? str.slice(0, n) + "…" : str;
     };
 
+    // Message for a caught throw. Background tasks reject with a plain STRING
+    // (not an Error), so `e.message` would be undefined — fall back to the value.
+    const errText = (e) => (e && e.message) ? e.message : String(e);
+
     // A compact structural path for an element:
     //   body > div#main > div.card > h2.title
     // Tag + id + up to 4 classes per ancestor, capped at 8 hops — enough for the
@@ -277,7 +281,12 @@
     const VISION_CLAUSE =
         "\n\nYou have a VISION tool: use it to ORIENT (see the page) when the task or " +
         "layout is unclear, and to VERIFY your work by looking at the result before " +
-        "declaring done — a screenshot catches what a DOM selector scoped to one form missed.";
+        "declaring done — a screenshot catches what a DOM selector scoped to one form missed. " +
+        "But to JUDGE INDIVIDUAL ITEMS (e.g. which posts in a grid show a cat), look at each " +
+        "one with the item selector and an incrementing index (0,1,2,…) — a tight per-element " +
+        "crop is sharp, decisive, and bound to that exact element (answer the same selector+index " +
+        "for the ones that match). Do NOT classify items from a whole-page/grid screenshot: it is " +
+        "downscaled to mush and its verdicts are unreliable and won't map to specific elements.";
     const ANSWER_CLAUSE =
         "\n\nIf the task asks you to FIND / LOCATE / return an element (rather than change " +
         "the page), designate it with the answer tool (by selector) so the actual element " +
@@ -435,6 +444,9 @@
          * @param {MlTool[]} [opts.tools] Tool registry (default {@link module:ml.domTools}).
          * @param {MlTool[]} [opts.extraTools=[]] Extra tools appended to `tools`.
          * @param {string} [opts.system] System prompt (default the generic strategy preamble).
+         * @param {string} [opts.hints] Task-specific notes APPENDED to the system prompt
+         *   (keeps the built-in workflow + tool clauses — unlike `system`, which
+         *   REPLACES them). Put site/task facts here for a minimal setup.
          * @param {number} [opts.maxSteps=10] Hard cap on tool-executing turns.
          * @param {string} [opts.model] Model override, forwarded to each {@link module:ml.step}.
          * @param {boolean} [opts.think] Thinking flag, forwarded to each {@link module:ml.step}.
@@ -454,7 +466,7 @@
          *   `elements` is the live DOM node(s) the model designated via an
          *   `answer`-capable tool (empty for tasks that just act on the page).
          */
-        agent: async function(task, { tools = null, extraTools = [], system = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true } = {}) {
+        agent: async function(task, { tools = null, extraTools = [], system = null, hints = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true } = {}) {
             const toolset = [...(tools || this.domTools), ...extraTools];
             const byName = Object.fromEntries(toolset.map(t => [t.name, t]));
             const toolDefs = toolset.map(t => ({
@@ -468,6 +480,7 @@
                 if (hasCap("vision")) systemPrompt += VISION_CLAUSE;
                 if (hasCap("answer")) systemPrompt += ANSWER_CLAUSE;
             }
+            if (hints) systemPrompt += `\n\nTask-specific notes:\n${hints}`;
             if (env) {
                 const ctx = pageContext();
                 if (ctx) systemPrompt += `\n\nCurrent page context:\n${ctx}`;
@@ -519,7 +532,7 @@
                             } else {
                                 result = raw;
                             }
-                        } catch (e) { result = `Error: ${e.message}`; }
+                        } catch (e) { result = `Error: ${errText(e)}`; }
                     }
                     result = String(result);
                     const entry = { tool: call.name, arguments: args, result };
@@ -595,16 +608,17 @@
         //   await ml.chat("What does this show?", { images: [await ml.screenshot("#card")] })
         //   await ml.chat("What page is this?", { images: [await ml.screenshot()] })
         // target: a CSS selector, an Element, or null for the whole viewport.
-        // scroll: set false to skip scroll-into-view. The capture is viewport-only,
-        // so a taller-than-screen element is clipped.
-        screenshot: async function(target = null, { scroll = true, fullPage = false } = {}) {
+        // scroll: set false to skip scroll-into-view. index: which match of a
+        // selector to shoot (0-based) — iterate a grid with 0,1,2,… The capture is
+        // viewport-only, so a taller-than-screen element is clipped.
+        screenshot: async function(target = null, { scroll = true, fullPage = false, index = 0 } = {}) {
             const viewport = () => makeBackgroundTaskPromise("CAPTURE_TAB_REQUEST", "CAPTURE_TAB_RESPONSE", {});
             if (target == null) return fullPage ? this._stitchFullPage(viewport) : viewport();
 
             let el = target;
             if (typeof target === "string") {
-                el = document.querySelector(target);
-                if (!el) throw new Error(`No element matches "${target}".`);
+                el = queryAll(target)[index];   // Nth match (queryAll adds :contains support)
+                if (!el) throw new Error(`No element matches "${target}"${index ? ` at index ${index}` : ""}.`);
             }
             if (!(el instanceof Element)) throw new Error("ml.screenshot needs a CSS selector, an Element, or nothing.");
             if (scroll) {
@@ -672,21 +686,27 @@
                     "sponsored / greyed-out / out of stock). By default you see only the current " +
                     "viewport; pass scope:'page' (with no selector) to scroll the whole page and " +
                     "stitch it into one tall image when what you need is below the fold — but that " +
-                    "image is DOWNSCALED, so use it for layout/orientation, not for reading small text.",
+                    "image is DOWNSCALED, so use it for layout/orientation, not for reading small text. " +
+                    "To CLASSIFY items in a grid/list (which posts show a cat?), give the item selector " +
+                    "and iterate `index` (0,1,2,…) — one tight, high-res crop per item, decisive and " +
+                    "bound to that exact element.",
                 parameters: {
                     type: "object",
                     properties: {
                         selector: { type: "string", description: "CSS selector of an element; omit to see the page." },
                         question: { type: "string", description: "What to determine (optional)." },
-                        scope: { type: "string", enum: ["viewport", "page"], description: "'viewport' (default), or 'page' to scroll+stitch the full page (only when no selector)." }
+                        scope: { type: "string", enum: ["viewport", "page"], description: "'viewport' (default), or 'page' to scroll+stitch the full page (only when no selector)." },
+                        index: { type: "integer", description: "Which match of the selector to look at (0-based); iterate a grid with 0,1,2,…" }
                     }
                 },
-                run: async ({ selector, question, scope } = {}) => {
+                run: async ({ selector, question, scope, index } = {}) => {
                     const fullPage = scope === "page" && !selector;
                     let shot;
-                    try { shot = await ml.screenshot(selector || null, { fullPage }); }
-                    catch (e) { return `Error: ${e.message}`; }
-                    const subject = selector ? `the element "${selector}"` : (fullPage ? "the whole page" : "the current page");
+                    try { shot = await ml.screenshot(selector || null, { fullPage, index: index || 0 }); }
+                    catch (e) { return `Error: ${errText(e)}`; }
+                    const subject = selector
+                        ? `the element "${selector}"${index ? ` (match #${index})` : ""}`
+                        : (fullPage ? "the whole page" : "the current page");
                     const base = question || `Describe ${subject} concisely — what is shown and what stands out.`;
                     // A full-page stitch is downscaled — the vision model's patches get
                     // too coarse to read small text, so frame it as layout/orientation
@@ -1022,20 +1042,27 @@
             capabilities: ["answer"],
             description: "Return specific element(s) as your RESULT — use this when the task asks " +
                 "you to find / locate / return an element rather than change the page. Pass the CSS " +
-                "selector (supports :contains()/:has-text()); the matching element(s) are handed back " +
-                "to the caller (and are hoverable in the console).",
+                "selector (supports :contains()/:has-text()); pass `index` to designate one specific " +
+                "match (0-based) — call it once per item to collect several. The element(s) are handed " +
+                "back to the caller (and are hoverable in the console).",
             parameters: {
                 type: "object",
                 properties: {
                     selector: { type: "string", description: "CSS selector for the answer element(s)." },
+                    index: { type: "integer", description: "Designate one specific match (0-based); omit to return all matches." },
                     note: { type: "string", description: "Optional note about what these are." }
                 },
                 required: ["selector"]
             },
-            run: ({ selector, note }) => {
+            run: ({ selector, index, note }) => {
                 let els;
                 try { els = queryAll(selector); }
                 catch (e) { return selectorError(selector, e); }
+                if (index != null) {
+                    const el = els[index];
+                    if (!el) return `No element at index ${index} for "${selector}" (${els.length} match(es)).`;
+                    els = [el];
+                }
                 if (!els.length) return `No element matches "${selector}".`;
                 const preview = els.slice(0, 5).map(elLine).join("; ");
                 return {
