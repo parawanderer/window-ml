@@ -89,6 +89,38 @@ test("_queryAll allows a bare text predicate (empty base → *) and plain select
     assert.equal(ml._queryAll('a:contains("keep") > b').length, 0);
 });
 
+test("_queryAll supports :eq(n) as a 0-based positional pick", () => {
+    const { ml } = loadDomWorld('<p class="x">a</p><p class="x">b</p><p class="x">c</p>');
+    assert.equal(ml._queryAll(".x:eq(0)")[0].textContent, "a");
+    assert.equal(ml._queryAll(".x:eq(2)")[0].textContent, "c");
+    assert.equal(ml._queryAll(".x:eq(5)").length, 0);              // out of range → empty
+});
+
+test("_queryAll combines a text filter with an :eq positional pick", () => {
+    const { ml } = loadDomWorld('<p class="x">keep me</p><p class="x">skip</p><p class="x">keep you</p>');
+    // among .x containing "keep" → [keep me, keep you]; :eq(1) → keep you
+    const r = ml._queryAll('.x:contains("keep"):eq(1)');
+    assert.equal(r.length, 1);
+    assert.equal(r[0].textContent, "keep you");
+});
+
+test("_queryAll reinterprets a dead :nth-of-type(n) as the nth match (model idiom)", () => {
+    // Each .card is the 1st of its own tag, so native .card:nth-of-type(2) matches
+    // NOTHING — the mistake the model keeps making. Fall back to "the 2nd .card".
+    const { ml } = loadDomWorld('<div class="card">A</div><p class="card">B</p><span class="card">C</span>');
+    const r = ml._queryAll(".card:nth-of-type(2)");
+    assert.equal(r.length, 1);
+    assert.equal(r[0].textContent, "B");
+    assert.equal(ml._queryAll(".card:nth-of-type(9)").length, 0); // out of range → empty
+});
+
+test("_queryAll leaves a VALID native :nth-of-type alone (only falls back on 0 matches)", () => {
+    const { ml } = loadDomWorld('<ul><li class="x">1</li><li class="x">2</li><li class="x">3</li></ul>');
+    const r = ml._queryAll("li:nth-of-type(2)");   // native + correct → the 2nd li
+    assert.equal(r.length, 1);
+    assert.equal(r[0].textContent, "2");
+});
+
 // ---- suspiciousChars (prompt-injection scan) ----
 
 test("_suspiciousChars flags bidi/zero-width/control chars, ignores clean code", () => {

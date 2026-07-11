@@ -150,32 +150,59 @@
         return out;
     };
 
-    // Resolve a selector that MAY carry a jQuery/Sizzle/Playwright text predicate
-    // — `:contains("x")` / `:has-text("x")`. Those aren't native (dropped from CSS;
-    // `querySelectorAll` throws) but models reach for them constantly, so we support
-    // them: peel any text predicates OFF THE END of the selector, run the (native)
-    // base, then filter by textContent (case-insensitive, all predicates required).
-    // Native `:has()` is left alone. A mid-selector predicate stays in the base and
-    // throws, so selectorError still catches genuine mistakes. Returns an array.
-    // Greedy prefix so the LAST predicate is peeled first (handles chained
-    // predicates like `.card:contains("a"):has-text("b")`): group 1 = everything
-    // before the trailing predicate, group 3 = its text.
+    // Resolve a selector that MAY carry a jQuery/Sizzle/Playwright predicate the
+    // model reaches for but native `querySelectorAll` lacks:
+    //   • text — `:contains("x")` / `:has-text("x")`: peel OFF THE END, run the
+    //     (native) base, filter by textContent (case-insensitive, all required).
+    //   • positional — `:eq(n)` (jQuery, 0-based): peel and pick the nth match.
+    //   • `:nth-of-type(n)` / `:nth-child(n)` FALLBACK: these ARE native, but the
+    //     model habitually writes `.foo:nth-of-type(2)` meaning "the 2nd .foo",
+    //     whereas native nth-of-type is per-TAG and usually matches nothing. So we
+    //     run the literal selector first and, ONLY when it finds nothing, reinterpret
+    //     a trailing nth-of-type/child(n) as the 1-based nth match of the base set.
+    //     Correct native uses (non-empty) are never touched.
+    // Native `:has()` is left alone. A mid-selector text predicate stays in the base
+    // and throws, so selectorError still catches genuine mistakes. Returns an array.
+    // Greedy prefixes so the LAST predicate peels first (handles chains like
+    // `.card:contains("a"):eq(0)`).
     const TRAILING_TEXT_PSEUDO = /^([\s\S]*):(?:contains|has-text)\(\s*(['"]?)([\s\S]*?)\2\s*\)\s*$/i;
+    const TRAILING_EQ_PSEUDO = /^([\s\S]*):eq\(\s*(\d+)\s*\)\s*$/i;
+    const TRAILING_NTH_NATIVE = /^([\s\S]*):nth-(?:of-type|child)\(\s*(\d+)\s*\)\s*$/i;
     const queryAll = (selector) => {
         let base = String(selector).trim();
         const texts = [];
-        let m;
-        while ((m = base.match(TRAILING_TEXT_PSEUDO))) {
-            texts.unshift(m[3]);
-            base = m[1].trim();
+        let eqIndex = null;   // trailing :eq(n) → jQuery-style 0-based positional pick
+        // Peel trailing :eq and text predicates (loop for chained/mixed ones). :eq
+        // comes off FIRST each pass: the text regex's optional-quote branch would
+        // otherwise greedily swallow a following `:eq(1)` into its match text.
+        for (let changed = true; changed; ) {
+            changed = false;
+            let m = base.match(TRAILING_EQ_PSEUDO);
+            if (m && eqIndex === null) { eqIndex = parseInt(m[2], 10); base = m[1].trim(); changed = true; continue; }
+            m = base.match(TRAILING_TEXT_PSEUDO);
+            if (m) { texts.unshift(m[3]); base = m[1].trim(); changed = true; }
         }
-        let els = [...document.querySelectorAll(base || "*")];
-        if (texts.length) {
-            const wanted = texts.map(t => t.toLowerCase());
-            els = els.filter(el => {
-                const tc = (el.textContent || "").toLowerCase();
-                return wanted.every(w => tc.includes(w));
-            });
+        // Run a (native) selector and apply any collected text filter.
+        const run = (sel) => {
+            let els = [...document.querySelectorAll(sel || "*")];
+            if (texts.length) {
+                const wanted = texts.map(t => t.toLowerCase());
+                els = els.filter(el => {
+                    const tc = (el.textContent || "").toLowerCase();
+                    return wanted.every(w => tc.includes(w));
+                });
+            }
+            return els;
+        };
+        const els = run(base);
+        if (eqIndex !== null) return els[eqIndex] ? [els[eqIndex]] : [];
+        if (!els.length) {
+            const m = base.match(TRAILING_NTH_NATIVE);
+            if (m) {
+                const pool = run(m[1].trim());
+                const i = parseInt(m[2], 10) - 1;   // CSS nth-* is 1-based
+                return pool[i] ? [pool[i]] : [];
+            }
         }
         return els;
     };
