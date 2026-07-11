@@ -701,9 +701,23 @@ test("lookTool scope:'page' stitches and frames it as a downscaled overview", as
 
 test("lookTool surfaces a screenshot failure as an error string", async () => {
     const world = loadPageWorld({ onRuntimeMessage: () => ({ data: "unused" }) });
-    world.ml.screenshot = async () => { throw new Error("element has zero size (hidden?)."); };
+    world.ml.screenshot = async () => { throw new Error("element is 320×1px — too small to screenshot."); };
     const out = await world.ml.lookTool().run({ selector: ".gone" });
-    assert.match(out, /^Error: element has zero size/);
+    assert.match(out, /^Error: element is 320×1px/);
+});
+
+test("screenshot rejects a degenerate 1px-sliver element (roadmap #10)", async () => {
+    const { ml, document } = loadDomWorld('<div id="sliver"></div><div id="ok"></div>');
+    const el = document.querySelector("#sliver");
+    el.getBoundingClientRect = () => ({ width: 320, height: 1, left: 0, top: 0, right: 320, bottom: 1 });
+    // scroll:false skips the requestAnimationFrame path (not in the jsdom sandbox),
+    // so we exercise just the size guard.
+    await assert.rejects(ml.screenshot("#sliver", { scroll: false }), /320×1px — too small/);
+
+    // A zero-sized (hidden) element is caught by the same guard.
+    const hidden = document.querySelector("#ok");
+    hidden.getBoundingClientRect = () => ({ width: 0, height: 0, left: 0, top: 0, right: 0, bottom: 0 });
+    await assert.rejects(ml.screenshot("#ok", { scroll: false }), /0×0px — too small/);
 });
 
 // ---- describeSkeleton ----

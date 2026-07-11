@@ -214,6 +214,12 @@
         return parts.join("\n");
     };
 
+    // Smallest CSS-px width/height an element may have and still be worth
+    // screenshotting. Below this (a 1px spacer, a collapsed box) the crop is a
+    // useless sliver; ml.screenshot rejects instead of sending it (roadmap #10).
+    // Kept tiny so genuinely small-but-real targets (icons, badges) still pass.
+    const MIN_SHOT_PX = 4;
+
     // Crop a full-viewport PNG data URL down to an element's rect. Runs page-side
     // because a data: image doesn't taint the canvas (the cross-origin-taint
     // gotcha only bites remote images), so pixel readback works. rect is in CSS
@@ -702,7 +708,16 @@
                 await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
             }
             const rect = el.getBoundingClientRect();
-            if (rect.width === 0 || rect.height === 0) throw new Error("element has zero size (hidden?).");
+            // A zero- or sliver-sized element (e.g. a 1px-tall spacer/rule, or a
+            // collapsed container) crops to a degenerate 1px-by-N image the vision
+            // model just hallucinates over. Reject it with an actionable message
+            // rather than sending the sliver off (roadmap #10).
+            if (rect.width < MIN_SHOT_PX || rect.height < MIN_SHOT_PX) {
+                throw new Error(
+                    `element is ${Math.round(rect.width)}×${Math.round(rect.height)}px — too small to ` +
+                    `screenshot (hidden, collapsed, or a 1px spacer?). Target a parent container with real size.`
+                );
+            }
             return cropDataUrl(await viewport(), rect, window.devicePixelRatio || 1);
         },
         // Scroll the page in viewport-height steps, capture each, and stitch them
