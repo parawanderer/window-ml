@@ -29,6 +29,10 @@ const HANDLE_MAP = {
         type: "MODEL_CAPS",
         responseType: "CAPS_RESPONSE"
     },
+    "CONFIG_REQUEST": {
+        type: "GET_CONFIG",
+        responseType: "CONFIG_RESPONSE"
+    },
     "PS_REQUEST": {
         type: "OLLAMA_PS",
         responseType: "PS_RESPONSE"

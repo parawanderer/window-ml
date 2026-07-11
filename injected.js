@@ -499,6 +499,13 @@
          * @param {boolean} [opts.env=true] Prepend a "current page context" note
          *   (URL, title, language, date/time, locale) to the system prompt, so the
          *   model is oriented and knows what "today"/the locale is. Set false to skip.
+         * @param {boolean|string} [opts.vision=null] Auto-register a `look` (vision)
+         *   tool so the agent can see with no wiring. Default (`null`) probes the
+         *   agent's model — and falls back to the configured OCR model — and adds
+         *   `look` only when one is vision-capable (a positive Ollama capability;
+         *   unknown/cloud models never qualify). Pass `false` to disable, or a model
+         *   id to force `look` onto that specific vision model. Skipped when the
+         *   toolset already contains a vision-capable tool.
          * @param {(ev: {step: number, thought?: string, tool?: string, arguments?: Object, result?: string, elements?: Node[]}) => void} [opts.onStep]
          *   Live tracer: fires `{ step, thought }` with the model's reasoning
          *   (its prose before the calls, plus any `<think>` block when `think:true`)
@@ -509,8 +516,17 @@
          *   `elements` is the live DOM node(s) the model designated via an
          *   `answer`-capable tool (empty for tasks that just act on the page).
          */
-        agent: async function(task, { tools = null, extraTools = [], system = null, hints = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true } = {}) {
+        agent: async function(task, { tools = null, extraTools = [], system = null, hints = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null } = {}) {
             const toolset = [...(tools || this.domTools), ...extraTools];
+            // #8: give the agent eyes with no wiring. If nothing in the toolset can
+            // already see and the caller didn't opt out, auto-register a `look` tool
+            // bound to a vision-capable model (the agent's own model, else the
+            // configured OCR model). The doer+critic loop is our reliability model,
+            // so this makes `ml.agent("task")` verify its own work out of the box.
+            if (vision !== false && !toolset.some(t => t.capabilities && t.capabilities.includes("vision"))) {
+                const visionModel = await this._resolveVisionModel(model, vision);
+                if (visionModel) toolset.push(this.lookTool({ model: visionModel }));
+            }
             const byName = Object.fromEntries(toolset.map(t => [t.name, t]));
             const toolDefs = toolset.map(t => ({
                 type: "function",
@@ -675,21 +691,45 @@
         },
         // Scroll the page in viewport-height steps, capture each, and stitch them
         // vertically into one tall PNG data URL. Browser-only (canvas). Paces
-        // captures to respect captureVisibleTab's ~2/sec limit, and caps the height
-        // (~8 screens) so the image stays sane.
+        // captures to respect captureVisibleTab's 2/sec limit, with backoff retries.
         _stitchFullPage: async function(capture) {
             const dpr = window.devicePixelRatio || 1;
             const vh = window.innerHeight;
+            // Cap at ~8 screens so the image stays sane
             const total = Math.min(document.documentElement.scrollHeight, vh * 8);
             const startY = window.scrollY;
             const shots = [];
+
             for (let y = 0; y < total; y += vh) {
                 window.scrollTo(0, y);
+                // Wait for the browser to actually paint the new scroll position
                 await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-                await new Promise(r => setTimeout(r, 350));   // rate-limit headroom
-                shots.push({ y, url: await capture() });
+
+                let url = null;
+                let retries = 3;
+
+                while (retries > 0 && !url) {
+                    try {
+                        // 600ms ensures we strictly stay under the 2 calls/sec limit
+                        await new Promise(r => setTimeout(r, 600));
+                        url = await capture();
+                    } catch (e) {
+                        // If we still hit the quota, back off for a full second and retry
+                        if (e.message && e.message.includes("MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND")) {
+                            console.warn(`Hit Chrome capture limit at scroll ${y}, backing off...`);
+                            await new Promise(r => setTimeout(r, 1000));
+                            retries--;
+                        } else {
+                            throw e; // Unrelated error, fail fast
+                        }
+                    }
+                }
+
+                if (!url) throw new Error("Failed to capture after retries due to quota limits.");
+                shots.push({ y, url });
             }
             window.scrollTo(0, startY);
+
             return new Promise((resolve, reject) => {
                 if (!shots.length) return reject(new Error("nothing captured"));
                 const imgs = [];
@@ -766,6 +806,30 @@
                     return ml.chat(base + guidance, { images: [shot], model });
                 }
             });
+        },
+        // #8: pick a vision model for the auto-registered `look` tool (see
+        // ml.agent's `vision` option). Returns a model id the agent can see with,
+        // or null. `agentModel` is the agent's own model (opts.model, or null =
+        // the saved default). A string `vision` forces that model; otherwise probe
+        // the agent's model, then the configured OCR model, accepting only a
+        // POSITIVE Ollama vision capability — unknown/null (cloud/non-Ollama) must
+        // NOT qualify, or we'd send image tokens to a text-only model. The caps
+        // probe is cached per service-worker lifetime in the background worker.
+        _resolveVisionModel: async function(agentModel, vision) {
+            if (typeof vision === "string" && vision) return vision;   // forced
+            let cfg;
+            try { cfg = await this.config(); } catch (e) { cfg = null; }
+            const canSee = async (m) => {
+                if (!m) return false;
+                let caps;
+                try { caps = await this.capabilities(m); } catch (e) { return false; }
+                return Array.isArray(caps) && caps.includes("vision");
+            };
+            const primary = agentModel || (cfg && cfg.model);
+            if (await canSee(primary)) return primary;
+            const ocr = cfg && cfg.ocrModel;
+            if (ocr && ocr !== primary && await canSee(ocr)) return ocr;
+            return null;
         },
         // Internal DOM helpers used by the agent tools, exposed under `_` (as
         // with _parseJSON below) so tests and console debugging can reach them.
@@ -851,6 +915,13 @@
         // The saved default model.
         getModel: async function() {
             return makeBackgroundTaskPromise("GET_MODEL_REQUEST", "GET_MODEL_RESPONSE", {});
+        },
+        // The non-secret saved config the page is allowed to read:
+        // { model, ocrModel, apiFormat }. The server URL and API key are never
+        // exposed to the page (see the security invariants in CLAUDE.md).
+        // ml.agent uses this to auto-wire a vision tool from the OCR model.
+        config: async function() {
+            return makeBackgroundTaskPromise("CONFIG_REQUEST", "CONFIG_RESPONSE", {});
         },
         // Persistently switch the default model (validated against the server;
         // the settings popup picks it up automatically).

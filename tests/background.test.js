@@ -219,6 +219,17 @@ test("MODEL_CAPS returns null when capabilities can't be determined", async () =
     assert.equal(res.data, null);
 });
 
+test("GET_CONFIG returns the model/ocrModel/apiFormat and withholds the URL and key", async () => {
+    const bg = loadBackground({
+        config: baseConfig({ model: "qwen3:235b", ocrModel: "qwen2.5vl", apiFormat: "ollama" })
+    });
+
+    const res = await bg.send({ type: "GET_CONFIG", payload: {} });
+    assert.deepEqual(res.data, { model: "qwen3:235b", ocrModel: "qwen2.5vl", apiFormat: "ollama" });
+    // The page must never see the server URL or API key (security invariant).
+    assert.ok(!("chatUrl" in res.data) && !("apiKey" in res.data), Object.keys(res.data).join());
+});
+
 test("FETCH_LLM openai schema becomes a json_schema response_format", async () => {
     const schema = { type: "object", properties: { hide: { type: "boolean" } } };
     const bg = loadBackground({

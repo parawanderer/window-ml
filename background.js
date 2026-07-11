@@ -533,6 +533,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             .catch(err => sendResponse({ error: err.message }));
         return true;
 
+    } else if (message.type === "GET_CONFIG") {
+        // Non-secret config the page may read (model/OCR model/format). The URL
+        // and API key are deliberately withheld — see the security invariants.
+        getConfig()
+            .then(config => sendResponse({ data: { model: config.model, ocrModel: config.ocrModel, apiFormat: config.apiFormat } }))
+            .catch(err => sendResponse({ error: err.message }));
+        return true;
+
     } else if (message.type === "MODEL_CAPS") {
         getConfig()
             .then(config => modelCapabilities(config, (message.payload && message.payload.model) || config.model))

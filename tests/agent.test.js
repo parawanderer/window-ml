@@ -269,7 +269,12 @@ test("exec hands back DOM nodes as hoverable elements", async () => {
 // A scripted model: `turns` is an array of assistant replies, one per ml.step.
 const scriptedModel = (turns) => {
     let i = 0;
-    return () => ({ data: turns[Math.min(i++, turns.length - 1)] });
+    return (m) => {
+        // Let the harness auto-answer the agent's #8 config/capability probes so
+        // they don't consume a scripted model turn.
+        if (m.type === "GET_CONFIG" || m.type === "MODEL_CAPS") return undefined;
+        return { data: turns[Math.min(i++, turns.length - 1)] };
+    };
 };
 const toolCall = (name, args = {}, id = "c") => ({ content: "", tool_calls: [{ id, name, arguments: args }] });
 const reply = (content) => ({ content, tool_calls: [] });
@@ -446,7 +451,10 @@ test("result.elements is empty for a plain action task", async () => {
 test("agent adds tool-aware clauses to the DEFAULT prompt (vision/answer), not a custom one", async () => {
     const seen = [];
     const world = loadPageWorld({
-        onRuntimeMessage: (m) => { seen.push(m.payload.messages[0].content); return { data: reply("done") }; }
+        onRuntimeMessage: (m) => {
+            if (m.type === "GET_CONFIG" || m.type === "MODEL_CAPS") return undefined;
+            seen.push(m.payload.messages[0].content); return { data: reply("done") };
+        }
     });
     const look = world.ml.defineTool({ name: "look", capabilities: ["vision"], run: () => "" });
     const answer = world.ml.defineTool({ name: "answer", capabilities: ["answer"], run: () => "" });
@@ -468,13 +476,86 @@ test("agent adds tool-aware clauses to the DEFAULT prompt (vision/answer), not a
 test("hints append task facts while keeping the built-in workflow", async () => {
     const seen = [];
     const world = loadPageWorld({
-        onRuntimeMessage: (m) => { seen.push(m.payload.messages[0].content); return { data: reply("done") }; }
+        onRuntimeMessage: (m) => {
+            if (m.type === "GET_CONFIG" || m.type === "MODEL_CAPS") return undefined;
+            seen.push(m.payload.messages[0].content); return { data: reply("done") };
+        }
     });
     const plain = world.ml.defineTool({ name: "plain", run: () => "" });
     await world.ml.agent("t", { tools: [plain], hints: "On amazon.nl sponsored = Gesponsord." });
 
     assert.match(seen[0], /General method:/);                  // workflow still present
     assert.match(seen[0], /Task-specific notes:\nOn amazon\.nl sponsored/);  // hints appended
+});
+
+// ---- #8: auto-registered vision tool (no wiring needed) ----
+// The default toolset (ml.domTools) has no vision tool. ml.agent probes the
+// model's capabilities and, when it (or the OCR model) can see, wires up `look`.
+
+const agentTools = (world) => world.runtimeCalls[0].payload.tools.map(t => t.function.name);
+
+test("agent auto-registers a look tool when its model is vision-capable", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: scriptedModel([reply("done")]),
+        config: { model: "qwen-vl", ocrModel: "" },
+        caps: (m) => (m === "qwen-vl" ? ["completion", "vision"] : null)
+    });
+    await world.ml.agent("t");
+    assert.ok(agentTools(world).includes("look"), agentTools(world).join());
+    // adding a vision tool also switches on the default prompt's VISION clause
+    assert.match(world.runtimeCalls[0].payload.messages[0].content, /VISION tool/);
+});
+
+test("agent falls back to the OCR model for eyes when its own model is text-only", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: scriptedModel([reply("done")]),
+        config: { model: "text-only", ocrModel: "ocr-vl" },
+        caps: (m) => (m === "ocr-vl" ? ["vision"] : ["completion"])
+    });
+    await world.ml.agent("t");
+    assert.ok(agentTools(world).includes("look"), agentTools(world).join());
+});
+
+test("agent does NOT auto-add a look tool when vision capability is unknown (cloud/non-Ollama)", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: scriptedModel([reply("done")]),
+        config: { model: "gpt-4o", ocrModel: "" },
+        caps: () => null                       // undeterminable → must NOT qualify
+    });
+    await world.ml.agent("t");
+    assert.ok(!agentTools(world).includes("look"), agentTools(world).join());
+    assert.doesNotMatch(world.runtimeCalls[0].payload.messages[0].content, /VISION tool/);
+});
+
+test("vision:false disables auto-registration", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: scriptedModel([reply("done")]),
+        config: { model: "qwen-vl", ocrModel: "" },
+        caps: () => ["vision"]
+    });
+    await world.ml.agent("t", { vision: false });
+    assert.ok(!agentTools(world).includes("look"), agentTools(world).join());
+});
+
+test("vision:'<model>' forces a look tool without probing", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: scriptedModel([reply("done")]),
+        caps: () => { throw new Error("must not probe when a model is forced"); }
+    });
+    await world.ml.agent("t", { vision: "my-vl" });
+    assert.ok(agentTools(world).includes("look"), agentTools(world).join());
+});
+
+test("agent skips auto-vision when the toolset already has a vision tool", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: scriptedModel([reply("done")]),
+        config: { model: "qwen-vl", ocrModel: "" },
+        caps: () => ["vision"]
+    });
+    const eyes = world.ml.defineTool({ name: "look", capabilities: ["vision"], run: () => "" });
+    await world.ml.agent("t", { extraTools: [eyes] });
+    const looks = world.runtimeCalls[0].payload.tools.filter(t => t.function.name === "look");
+    assert.equal(looks.length, 1, "must not add a second look tool");
 });
 
 test("approveOnce dedups by (tool, args): identical repeats free, new scripts re-ask", () => {

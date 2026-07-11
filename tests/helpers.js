@@ -152,7 +152,20 @@ function loadBackground({ config = {}, onFetch, onCaptureTab }) {
 // Loads content.js + injected.js into one fake "page world" so ml.* calls
 // travel the real postMessage relay. `onRuntimeMessage` plays the background:
 // it gets the runtime message and returns { data } or { error }.
-function loadPageWorld({ onRuntimeMessage, onStream }) {
+function loadPageWorld({ onRuntimeMessage, onStream, config, caps } = {}) {
+    // #8: ml.agent probes config + model capabilities on every call to decide
+    // whether to auto-wire a `look` tool. Answer those probes from `config`/`caps`
+    // (defaults: no OCR model, no capabilities → no vision tool) so loop tests
+    // needn't script them. `caps` may be a value or a fn(model) → capability list.
+    const agentConfig = config || { model: "", ocrModel: "" };
+    const probeReply = (message) => {
+        if (message.type === "GET_CONFIG") return { data: agentConfig };
+        if (message.type === "MODEL_CAPS") {
+            const m = message.payload && message.payload.model;
+            return { data: typeof caps === "function" ? caps(m) : (caps ?? null) };
+        }
+        return undefined;
+    };
     const runtimeCalls = [];
     const listeners = {};       // type -> fn[]
     const dispatchedEvents = []; // event types dispatched (for assertions)
@@ -198,8 +211,18 @@ function loadPageWorld({ onRuntimeMessage, onStream }) {
             runtime: {
                 getURL: (p) => `chrome-extension://test/${p}`,
                 sendMessage: (message, cb) => {
-                    runtimeCalls.push(message);
-                    queueMicrotask(async () => cb(await onRuntimeMessage(message)));
+                    queueMicrotask(async () => {
+                        let response = onRuntimeMessage ? await onRuntimeMessage(message) : undefined;
+                        // Fall back to the default probe answer for the agent's
+                        // config/capability lookups, and keep those OUT of
+                        // runtimeCalls so model-call indices stay stable for tests.
+                        if (response === undefined) {
+                            const probe = probeReply(message);
+                            if (probe !== undefined) return cb(probe);
+                        }
+                        runtimeCalls.push(message);
+                        cb(response);
+                    });
                 },
                 // Streaming Port. content.js posts { payload }; the test's onStream
                 // plays the background, calling emit({ type, ... }) to push chunks

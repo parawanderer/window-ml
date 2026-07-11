@@ -38,8 +38,12 @@ To add a new one, touch three files:
    the `chrome.runtime.onMessage` listener; do the work; `sendResponse({ data })`
    or `sendResponse({ error })`; `return true` to keep the channel open.
 
-Existing message types: `FETCH_LLM`, `LIST_MODELS`, `GET_MODEL`, `SET_MODEL`,
-`MODEL_CAPS`, `OLLAMA_PS`, `OLLAMA_UNLOAD`, `FETCH_IMAGE_B64`.
+Existing message types: `FETCH_LLM`, `LIST_MODELS`, `GET_MODEL`, `GET_CONFIG`,
+`SET_MODEL`, `MODEL_CAPS`, `OLLAMA_PS`, `OLLAMA_UNLOAD`, `FETCH_IMAGE_B64`.
+
+`GET_CONFIG` (`ml.config()`) returns the **non-secret** config subset
+`{ model, ocrModel, apiFormat }` — the URL and API key are never exposed to the
+page. `ml.agent` uses it to auto-wire a vision (`look`) tool from the OCR model.
 
 `MODEL_CAPS` (`ml.capabilities(model)`) reads Ollama `/api/show` capabilities
 (`["completion","tools","vision","thinking"]`); `modelSupportsVision` is derived

@@ -79,6 +79,18 @@ test("ml.capabilities relays a MODEL_CAPS request and returns the capability lis
     assert.deepEqual(caps, ["completion", "tools", "thinking"]);
 });
 
+test("ml.config relays a GET_CONFIG request and returns the non-secret config", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: (msg) => {
+            assert.equal(msg.type, "GET_CONFIG");
+            return { data: { model: "qwen3:235b", ocrModel: "qwen2.5vl", apiFormat: "ollama" } };
+        }
+    });
+
+    const cfg = await world.ml.config();
+    assert.deepEqual(cfg, { model: "qwen3:235b", ocrModel: "qwen2.5vl", apiFormat: "ollama" });
+});
+
 test("ml.chat forwards toolIds for server-side tools", async () => {
     const world = loadPageWorld({
         onRuntimeMessage: (msg) => {

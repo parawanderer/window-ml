@@ -79,6 +79,7 @@ list. See [docs/CLOUD-MODELS.md](docs/CLOUD-MODELS.md).
 | `ml.unload(model?)` | Evict a model from VRAM (`keep_alive: 0`); no argument = evict all. |
 | `ml.read(image, { model?, prompt? })` | OCR — transcribe baked-in text from an `<img>` or URL to a plain string, using the configured OCR (vision) model. See [OCR](#ocr). |
 | `ml.step(messages, { tools?, model?, think? })` | One model turn with client-side tools; returns the raw assistant message and hands the loop to you. See [Tools](#tools-agents). |
+| `ml.agent(task, options?)` | Plain-English page agent: runs the whole loop over built-in DOM recon tools (and auto-wired vision) until it acts or answers. See [Agent](#tools-agents). |
 | `ml.chat(prompt, { toolIds })` | Server-side tools: OpenWebUI runs the tools and returns the finished answer. See [Tools](#tools-agents). |
 | `ml.logChat` / `ml.logChatShort` | `console.log` variants. |
 
@@ -226,6 +227,52 @@ for (let i = 0; i < 8; i++) {                      // your loop, your step limit
 `ml.step` works on both OpenWebUI and plain Ollama — the wire differences
 (where `tool_calls` live, string vs object arguments, tool-result shape) are
 normalized so `{ id, name, arguments }` is the same either way.
+
+**An agent, with nothing to configure** — `ml.agent(task)` is the loop above,
+already assembled. You give it plain English; it discovers the DOM with built-in
+recon tools, writes **one** rule to act on every match at once, and — when your
+model can see — screenshots the page to check its own work. No tool definitions,
+no loop, no step cap to wire up:
+
+```js
+// Edit the page: the model finds the repeating container itself and hides them.
+await ml.agent("Hide every sponsored result on this page.");
+
+// Or get a live DOM node back — hover it in devtools:
+const { elements } = await ml.agent("Find the top banner ad element.");
+elements[0];        // a real <div>, not a selector string
+```
+
+That's the whole setup: point the popup at your server, pick a big tool-capable
+model, and call `ml.agent`. What's built in:
+
+- **DOM recon tools** — `findByText`, `describeElement`, `ancestors`,
+  `countMatches`, `sampleText`, plus an `exec` escape hatch. Small, structured
+  output (never raw HTML), so context stays cheap.
+- **Eyes, auto-wired** — if your model reports vision capability (or your
+  configured [OCR](#ocr) model does), a `look` tool is added automatically so the
+  agent can orient and *visually verify* its edits. Text-only model? It runs
+  without eyes and says so if a task truly needs them. Turn it off with
+  `vision: false`, or force a model with `vision: "qwen2.5vl"`.
+- **A safety gate** — `exec` (arbitrary page JS) is approval-gated; the default
+  is a blocking `confirm()`. Pass your own `approve({ tool, arguments })`.
+- **A step cap** (`maxSteps`, default 10) and a full `transcript`.
+
+Returns `{ summary, steps, transcript, elements }` (`elements` holds any DOM
+nodes the agent designated as its answer). Nudge it without rewriting the prompt
+via `hints`, and watch it work with `onStep`:
+
+```js
+const res = await ml.agent("Hide items that can't be delivered today.", {
+  hints: "On amazon.nl the delivery line reads 'Wordt vandaag bezorgd'.",
+  onStep: (e) => console.log(e.thought ?? `${e.tool}(${JSON.stringify(e.arguments)})`)
+});
+console.log(res.summary);
+```
+
+`ml.agent` is a *composition* of `ml.step`, not a black box — the loop, tool
+whitelist, step cap and approval gate are all plain code on top of the same
+primitive. Drop to `ml.step` when you want to own the loop yourself.
 
 ### Using from a userscript
 
