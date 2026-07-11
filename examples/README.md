@@ -22,7 +22,11 @@ effects, so they're **opt-in** (handed in via `extraTools`, not in the default
 read-only set) and **approval-gated** — you OK a `confirm()` before each action.
 Everything else is built in, and vision auto-wires if your model can see.
 
-<video src="https://github.com/parawanderer/window-ml/raw/main/docs/cat-videos-demo.mp4" controls muted playsinline width="100%"></video>
+
+
+https://github.com/user-attachments/assets/7efa00c8-338f-468c-b6d7-2447483d1bbb
+
+
 
 
 ---
