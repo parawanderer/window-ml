@@ -342,6 +342,14 @@
         .map(([k, v]) => `${k}:\n${typeof v === "string" ? v : JSON.stringify(v)}`)
         .join("\n\n");
 
+    // Built-in onStep tracer for ml.agent({ logDebug: true }): one console line
+    // per event — the model's reasoning, or a tool call with its args, result,
+    // and any live DOM nodes (logged as real objects so they're hoverable in
+    // devtools). Exposed as ml._logStep so you can also pass it as onStep yourself.
+    const logStep = (ev) => ev.thought
+        ? console.log(`#${ev.step} 💭`, ev.thought)
+        : console.log(`#${ev.step} ${ev.tool}`, ev.arguments, "→", String(ev.result), ...(ev.elements || []));
+
     // Default approval gate for tools flagged requiresApproval (e.g. exec): a
     // blocking page confirm() showing the tool and its arguments. Console-first,
     // so a native prompt is the right "pause and force approval". If confirm
@@ -512,11 +520,14 @@
          *   and `{ step, tool, arguments, result, elements? }` for each tool call —
          *   `elements` holds real DOM nodes when the tool provided them (log them to
          *   hover in devtools).
+         * @param {boolean} [opts.logDebug=false] Install a built-in console tracer
+         *   ({@link module:ml._logStep}) that logs each thought and tool call —
+         *   the quickest way to watch a run. Composes with `onStep` (both fire).
          * @returns {Promise<{summary: string, steps: number, transcript: Array<{thought?: string, tool?: string, arguments?: Object, result?: string, elements?: Node[]}>, elements: Node[], hitCap?: boolean}>}
          *   `elements` is the live DOM node(s) the model designated via an
          *   `answer`-capable tool (empty for tasks that just act on the page).
          */
-        agent: async function(task, { tools = null, extraTools = [], system = null, hints = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null } = {}) {
+        agent: async function(task, { tools = null, extraTools = [], system = null, hints = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false } = {}) {
             const toolset = [...(tools || this.domTools), ...extraTools];
             // #8: give the agent eyes with no wiring. If nothing in the toolset can
             // already see and the caller didn't opt out, auto-register a `look` tool
@@ -551,6 +562,7 @@
             const transcript = [];
             const answered = [];   // element(s) designated via an `answer`-capable tool
             const emit = (event) => {
+                if (logDebug) logStep(event);
                 if (!onStep) return;
                 try { onStep(event); } catch (e) { console.error("ml.agent onStep threw:", e); }
             };
@@ -831,6 +843,8 @@
             if (ocr && ocr !== primary && await canSee(ocr)) return ocr;
             return null;
         },
+        // The built-in ml.agent({ logDebug: true }) tracer; pass as onStep too.
+        _logStep: logStep,
         // Internal DOM helpers used by the agent tools, exposed under `_` (as
         // with _parseJSON below) so tests and console debugging can reach them.
         _truncate: truncate,

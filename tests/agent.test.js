@@ -488,6 +488,25 @@ test("hints append task facts while keeping the built-in workflow", async () => 
     assert.match(seen[0], /Task-specific notes:\nOn amazon\.nl sponsored/);  // hints appended
 });
 
+test("logDebug installs a built-in console tracer and still forwards to onStep", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: scriptedModel([toolCall("ping", { x: 1 }, "c1"), reply("done")])
+    });
+    const ping = world.ml.defineTool({ name: "ping", run: () => "pong" });
+    const seen = [];
+    const logs = [];
+    const orig = console.log;
+    console.log = (...a) => logs.push(a);
+    try {
+        await world.ml.agent("t", { tools: [ping], logDebug: true, onStep: (e) => seen.push(e) });
+    } finally { console.log = orig; }
+
+    // Built-in tracer logged the tool line: "#1 ping", { x: 1 }, "→", "pong".
+    assert.ok(logs.some(a => a[0] === "#1 ping" && a[2] === "→" && a[3] === "pong"), JSON.stringify(logs));
+    // onStep still fired (composes, not overrides).
+    assert.ok(seen.some(e => e.tool === "ping"));
+});
+
 // ---- #8: auto-registered vision tool (no wiring needed) ----
 // The default toolset (ml.domTools) has no vision tool. ml.agent probes the
 // model's capabilities and, when it (or the OCR model) can see, wires up `look`.

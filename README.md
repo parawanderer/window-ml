@@ -260,12 +260,13 @@ model, and call `ml.agent`. What's built in:
 
 Returns `{ summary, steps, transcript, elements }` (`elements` holds any DOM
 nodes the agent designated as its answer). Nudge it without rewriting the prompt
-via `hints`, and watch it work with `onStep`:
+via `hints`, and watch every thought and tool call in the console with
+`logDebug` (or pass your own `onStep`):
 
 ```js
 const res = await ml.agent("Hide items that can't be delivered today.", {
   hints: "On amazon.nl the delivery line reads 'Wordt vandaag bezorgd'.",
-  onStep: (e) => console.log(e.thought ?? `${e.tool}(${JSON.stringify(e.arguments)})`)
+  logDebug: true          // one console line per step — thoughts, tool calls, live nodes
 });
 console.log(res.summary);
 ```
