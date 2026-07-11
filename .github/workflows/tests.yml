@@ -16,6 +16,8 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: ${{ matrix.node }}
-      # No dependencies — the offline suite uses only Node's built-in
-      # node:test runner. Live tests self-skip without OPENWEBUI_URL/KEY.
+          cache: npm
+      # The DOM-helper tests boot injected.js over jsdom (the one devDependency),
+      # so install it. Live tests still self-skip without OPENWEBUI_URL/KEY.
+      - run: npm ci
       - run: npm test
