@@ -75,6 +75,7 @@ list. See [docs/CLOUD-MODELS.md](docs/CLOUD-MODELS.md).
 | `ml.createChat(options?)` | Multi-turn history object (below). |
 | `ml.models()` | Available model ids on the server. |
 | `ml.getModel()` / `ml.setModel(id)` | Read / persistently switch the default model. `setModel` validates against the server list and syncs the popup. |
+| `ml.config()` | Read all exposed configuration parameters for the extension (main model default, OCR model, apiFormat) |
 | `ml.ps()` | Models loaded in VRAM: `[{ model, vramGB, expiresAt }]`. |
 | `ml.unload(model?)` | Evict a model from VRAM (`keep_alive: 0`); no argument = evict all. |
 | `ml.read(image, { model?, prompt? })` | OCR — transcribe baked-in text from an `<img>` or URL to a plain string, using the configured OCR (vision) model. See [OCR](#ocr). |
@@ -188,7 +189,9 @@ Two primitives, for the two places tools can run. Both need a model that
 supports function calling (e.g. qwen3); a model that doesn't just replies with
 text and no tool calls.
 
-**Server-side tools** — OpenWebUI runs its own registered tools (web search,
+#### Server-Side tools & agents
+
+OpenWebUI runs its own registered tools (web search,
 MCP servers, community/Python tools) and returns the finished answer. One call,
 no loop on your side. **OpenWebUI only** (the Ollama-native format errors):
 
@@ -196,7 +199,12 @@ no loop on your side. **OpenWebUI only** (the Ollama-native format errors):
 await ml.chat("What's the weather in Amsterdam right now?", { toolIds: ["web_search"] });
 ```
 
-**Client-side tools** — `ml.step()` is one model turn that hands the loop back
+
+#### Client-Side tools & agents
+
+##### Option 1: Build your own agent
+
+`ml.step()` is one model turn that hands the loop back
 to *you*: it returns the raw assistant message, you execute any tool calls
 (in the page), append the results, and call it again.
 
@@ -227,6 +235,10 @@ for (let i = 0; i < 8; i++) {                      // your loop, your step limit
 `ml.step` works on both OpenWebUI and plain Ollama — the wire differences
 (where `tool_calls` live, string vs object arguments, tool-result shape) are
 normalized so `{ id, name, arguments }` is the same either way.
+
+##### Option 2: Ready-made extensible agent loop
+
+![An example showing the example.com website running an agent to change the HTML of the web page](./docs/agent-example-2026-07-11_16-10.png)
 
 **An agent, with nothing to configure** — `ml.agent(task)` is the loop above,
 already assembled. You give it plain English; it discovers the DOM with built-in
