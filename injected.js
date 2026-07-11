@@ -146,14 +146,44 @@
         return out;
     };
 
-    // Turn a querySelector failure into a useful message. Models often reach for
-    // Playwright/jQuery text pseudo-selectors (`:has-text`, `:contains`) that CSS
-    // doesn't have; catch those and point them at the exec text-filter pattern.
+    // Resolve a selector that MAY carry a jQuery/Sizzle/Playwright text predicate
+    // — `:contains("x")` / `:has-text("x")`. Those aren't native (dropped from CSS;
+    // `querySelectorAll` throws) but models reach for them constantly, so we support
+    // them: peel any text predicates OFF THE END of the selector, run the (native)
+    // base, then filter by textContent (case-insensitive, all predicates required).
+    // Native `:has()` is left alone. A mid-selector predicate stays in the base and
+    // throws, so selectorError still catches genuine mistakes. Returns an array.
+    // Greedy prefix so the LAST predicate is peeled first (handles chained
+    // predicates like `.card:contains("a"):has-text("b")`): group 1 = everything
+    // before the trailing predicate, group 3 = its text.
+    const TRAILING_TEXT_PSEUDO = /^([\s\S]*):(?:contains|has-text)\(\s*(['"]?)([\s\S]*?)\2\s*\)\s*$/i;
+    const queryAll = (selector) => {
+        let base = String(selector).trim();
+        const texts = [];
+        let m;
+        while ((m = base.match(TRAILING_TEXT_PSEUDO))) {
+            texts.unshift(m[3]);
+            base = m[1].trim();
+        }
+        let els = [...document.querySelectorAll(base || "*")];
+        if (texts.length) {
+            const wanted = texts.map(t => t.toLowerCase());
+            els = els.filter(el => {
+                const tc = (el.textContent || "").toLowerCase();
+                return wanted.every(w => tc.includes(w));
+            });
+        }
+        return els;
+    };
+
+    // Turn a querySelector failure into a useful message. If the model used a text
+    // pseudo-selector mid-selector (queryAll only supports it at the END), say so;
+    // otherwise surface the raw error.
     const selectorError = (selector, err) => {
         if (/:has-text\s*\(|:contains\s*\(/i.test(selector)) {
-            return "Invalid selector: CSS has no :has-text()/:contains(). To match by text, use " +
-                "exec — e.g. [...document.querySelectorAll('SELECTOR')].filter(el => " +
-                "el.textContent.includes('TEXT'))  (return .length to count, or act on them).";
+            return "Invalid selector: :contains()/:has-text() text predicates are only supported at " +
+                'the END of a selector (e.g. `div.card:contains("text")`). Move it to the final part, ' +
+                "or use exec for a text filter.";
         }
         return `Invalid selector: ${err.message}`;
     };
@@ -638,6 +668,7 @@
         _truncate: truncate,
         _elPath: elPath,
         _describeSkeleton: describeSkeleton,
+        _queryAll: queryAll,
         // Parses a structured-output reply, tolerating a stray ```json fence
         // and surfacing the raw text on failure for debugging.
         _parseJSON: function(text) {
@@ -794,7 +825,7 @@
             },
             run: ({ selector, depth = 2 }) => {
                 let el;
-                try { el = document.querySelector(selector); }
+                try { el = queryAll(selector)[0]; }
                 catch (e) { return selectorError(selector, e); }
                 if (!el) return `No element matches "${selector}".`;
                 return { content: describeSkeleton(el, Math.min(Math.max(depth, 0), 4)), elements: [el] };
@@ -813,7 +844,7 @@
             },
             run: ({ selector }) => {
                 let el;
-                try { el = document.querySelector(selector); }
+                try { el = queryAll(selector)[0]; }
                 catch (e) { return selectorError(selector, e); }
                 if (!el) return `No element matches "${selector}".`;
                 const chain = [];
@@ -837,9 +868,9 @@
             },
             run: ({ selector }) => {
                 let els;
-                try { els = document.querySelectorAll(selector); }
+                try { els = queryAll(selector); }
                 catch (e) { return selectorError(selector, e); }
-                return { content: String(els.length), elements: [...els].slice(0, 50) };
+                return { content: String(els.length), elements: els.slice(0, 50) };
             }
         }),
         T({
@@ -856,7 +887,7 @@
             },
             run: ({ selector, n = 5 }) => {
                 let els;
-                try { els = document.querySelectorAll(selector); }
+                try { els = queryAll(selector); }
                 catch (e) { return selectorError(selector, e); }
                 if (!els.length) return `No element matches "${selector}".`;
                 const count = Math.min(n, els.length);

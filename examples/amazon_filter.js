@@ -98,13 +98,14 @@
         },
         run: ({ selector, reason }) => {
             let els;
-            try { els = document.querySelectorAll(selector); }
+            // _queryAll adds :contains()/:has-text() support on top of CSS.
+            try { els = ml._queryAll(selector); }
             catch (e) { return `Invalid selector: ${e.message}`; }
             els.forEach(el => { el.style.display = "none"; });
             // content → the model; elements → your console (hover to highlight).
             return {
                 content: `Hid ${els.length} element(s)${reason ? ` — ${reason}` : ""}.`,
-                elements: [...els].slice(0, 50),
+                elements: els.slice(0, 50),
             };
         },
     });

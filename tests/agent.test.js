@@ -57,6 +57,38 @@ test("_elPath caps the walk at 8 ancestors", () => {
     assert.equal(segs.at(-1), "div#d0");
 });
 
+// ---- queryAll (:contains / :has-text shim) ----
+
+test("_queryAll supports :contains and :has-text as a text filter on the base", () => {
+    const { ml } = loadDomWorld(
+        '<div class="card">Gesponsord Widget A</div>' +
+        '<div class="card">Widget B</div>' +
+        '<div class="other">Gesponsord elsewhere</div>'
+    );
+    // base `.card` filtered to those containing the text
+    assert.equal(ml._queryAll('div.card:contains("Gesponsord")').length, 1);
+    assert.equal(ml._queryAll('div.card:has-text("Widget")').length, 2);
+    assert.equal(ml._queryAll('.card:contains("nope")').length, 0);
+});
+
+test("_queryAll is case-insensitive, unquoted-tolerant, and ANDs multiple predicates", () => {
+    const { ml } = loadDomWorld('<p>Alpha Beta</p><p>Alpha</p><p>beta</p>');
+    assert.equal(ml._queryAll('p:contains("ALPHA")').length, 2);   // case-insensitive
+    assert.equal(ml._queryAll('p:contains(beta)').length, 2);      // unquoted (Beta + beta)
+    assert.equal(ml._queryAll('p:contains("alpha"):contains("beta")').length, 1); // AND
+});
+
+test("_queryAll allows a bare text predicate (empty base → *) and plain selectors", () => {
+    const { ml } = loadDomWorld('<a>keepsake</a><b>other</b>');
+    // base defaults to * — so it matches the <a> (ancestors match too, since
+    // textContent bubbles up; that's expected).
+    assert.ok(ml._queryAll(':contains("keep")').some(e => e.tagName === "A"));
+    assert.equal(ml._queryAll("a").length, 1);                     // no predicate: normal CSS
+    // A mid-selector predicate is NOT peeled — left in the base for the engine
+    // (real browsers throw; here we just confirm it isn't treated as end-position).
+    assert.equal(ml._queryAll('a:contains("keep") > b').length, 0);
+});
+
 // ---- defineTool ----
 
 test("defineTool fills defaults and returns a well-formed tool", () => {
@@ -153,13 +185,12 @@ test("exec evaluates expressions, serializes objects, and catches errors", async
     assert.match(await run(ml, "exec", { js: "nope()" }), /^Error:/);
 });
 
-test("selector tools redirect :has-text/:contains hallucinations to exec", () => {
-    const { ml } = loadDomWorld("<div>x</div>");
-    // (:contains is non-standard too, but jsdom's nwsapi tolerates it; real
-    // browsers throw on both. :has-text throws everywhere, so test with that.)
-    assert.match(run(ml, "countMatches", { selector: 'div:has-text("x")' }), /has no :has-text\(\)\/:contains\(\)/i);
-    assert.match(run(ml, "sampleText", { selector: 'div:has-text("x")' }), /use\s+exec/i);
-    assert.match(run(ml, "describeElement", { selector: 'div:has-text("x")' }), /use\s+exec/i);
+test("selector tools accept end-position :contains/:has-text and explain mid-selector", () => {
+    const { ml } = loadDomWorld('<div class="card">x</div><div class="card">y</div>');
+    // end-position text predicate now just works (via queryAll)
+    assert.equal(run(ml, "countMatches", { selector: '.card:contains("x")' }).content, "1");
+    assert.match(run(ml, "sampleText", { selector: '.card:has-text("y")' }).content, /y/);
+    assert.equal(run(ml, "describeElement", { selector: '.card:contains("y")' }).elements[0].textContent, "y");
     // a genuinely malformed selector still reports the raw error
     assert.match(run(ml, "countMatches", { selector: "((" }), /Invalid selector: /);
 });
