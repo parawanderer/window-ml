@@ -292,6 +292,49 @@
         "the page), designate it with the answer tool (by selector) so the actual element " +
         "is handed back to the caller.";
 
+    // Invisible / bidi / format-control characters that never legitimately appear
+    // in code but are the vector for Trojan-Source and homoglyph prompt-injection
+    // attacks. Model-written scripts get scanned before you approve them.
+    const SUSPICIOUS_CHARS = {
+        0x202A: "LEFT-TO-RIGHT EMBEDDING", 0x202B: "RIGHT-TO-LEFT EMBEDDING",
+        0x202C: "POP DIRECTIONAL FORMATTING", 0x202D: "LEFT-TO-RIGHT OVERRIDE",
+        0x202E: "RIGHT-TO-LEFT OVERRIDE", 0x2066: "LEFT-TO-RIGHT ISOLATE",
+        0x2067: "RIGHT-TO-LEFT ISOLATE", 0x2068: "FIRST STRONG ISOLATE",
+        0x2069: "POP DIRECTIONAL ISOLATE", 0x200E: "LEFT-TO-RIGHT MARK",
+        0x200F: "RIGHT-TO-LEFT MARK", 0x061C: "ARABIC LETTER MARK",
+        0x200B: "ZERO WIDTH SPACE", 0x200C: "ZERO WIDTH NON-JOINER",
+        0x200D: "ZERO WIDTH JOINER", 0x2060: "WORD JOINER",
+        0xFEFF: "ZERO WIDTH NO-BREAK SPACE (BOM)", 0x00AD: "SOFT HYPHEN",
+        0x180E: "MONGOLIAN VOWEL SEPARATOR"
+    };
+    // Scan a string for those characters; returns [{ index, code, name }]. Also
+    // flags other C0/C1 control chars (except tab/newline/CR, which are normal).
+    const suspiciousChars = (str) => {
+        const out = [];
+        const s = String(str == null ? "" : str);
+        for (let i = 0; i < s.length; i++) {
+            const code = s.charCodeAt(i);
+            let name = SUSPICIOUS_CHARS[code];
+            if (!name && (code <= 0x08 || code === 0x0B || code === 0x0C ||
+                (code >= 0x0E && code <= 0x1F) || (code >= 0x7F && code <= 0x9F))) {
+                name = "CONTROL CHARACTER";
+            }
+            if (name) out.push({ index: i, code: "U+" + code.toString(16).toUpperCase().padStart(4, "0"), name });
+        }
+        return out;
+    };
+    // A banner for the approval prompt when any string arg hides suspicious chars.
+    const suspiciousArgsWarning = (args) => {
+        const findings = [];
+        for (const v of Object.values(args || {})) {
+            if (typeof v === "string") findings.push(...suspiciousChars(v));
+        }
+        if (!findings.length) return "";
+        const names = [...new Set(findings.map(f => f.name))].slice(0, 4).join(", ");
+        return `⚠ WARNING: ${findings.length} hidden/suspicious character(s) — ${names} ` +
+            `— possible prompt-injection. Inspect carefully before allowing.\n\n`;
+    };
+
     // Render a tool's arguments for an approval prompt: string values shown raw
     // (real newlines — so an exec `js` blob is readable, not escaped JSON), others
     // as compact JSON.
@@ -307,7 +350,7 @@
     const defaultApprove = ({ tool, arguments: args }) => {
         if (typeof window.confirm !== "function") return false;
         return window.confirm(
-            `window.ml agent wants to run "${tool}":\n\n${renderArgs(args)}\n\nAllow this?`
+            `${suspiciousArgsWarning(args)}window.ml agent wants to run "${tool}":\n\n${renderArgs(args)}\n\nAllow this?`
         );
     };
 
@@ -566,7 +609,7 @@
                 catch { key = tool + " " + String(args); }
                 if (!(key in remembered)) {
                     remembered[key] = (typeof window.confirm === "function") && window.confirm(
-                        `window.ml agent wants to run "${tool}":\n\n${renderArgs(args)}\n\n` +
+                        `${suspiciousArgsWarning(args)}window.ml agent wants to run "${tool}":\n\n${renderArgs(args)}\n\n` +
                         `Allow this call? (an identical repeat won't ask again)`
                     );
                 }
@@ -727,6 +770,7 @@
         // Internal DOM helpers used by the agent tools, exposed under `_` (as
         // with _parseJSON below) so tests and console debugging can reach them.
         _truncate: truncate,
+        _suspiciousChars: suspiciousChars,
         _elPath: elPath,
         _describeSkeleton: describeSkeleton,
         _queryAll: queryAll,

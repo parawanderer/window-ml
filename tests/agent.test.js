@@ -89,6 +89,20 @@ test("_queryAll allows a bare text predicate (empty base → *) and plain select
     assert.equal(ml._queryAll('a:contains("keep") > b').length, 0);
 });
 
+// ---- suspiciousChars (prompt-injection scan) ----
+
+test("_suspiciousChars flags bidi/zero-width/control chars, ignores clean code", () => {
+    const { ml } = loadDomWorld();
+    assert.deepEqual(ml._suspiciousChars("clean = 1 + 2;\n\ttabs and newlines ok"), []);
+    const rlo = ml._suspiciousChars("a\u202Eb");           // RIGHT-TO-LEFT OVERRIDE
+    assert.equal(rlo.length, 1);
+    assert.equal(rlo[0].code, "U+202E");
+    assert.match(rlo[0].name, /RIGHT-TO-LEFT OVERRIDE/);
+    assert.equal(ml._suspiciousChars("x\u200By").length, 1);   // zero-width space
+    assert.equal(ml._suspiciousChars("\uFEFFbom").length, 1);  // BOM
+    assert.match(ml._suspiciousChars("nul\0").pop().name, /CONTROL/); // control char
+});
+
 // ---- defineTool ----
 
 test("defineTool fills defaults and returns a well-formed tool", () => {
@@ -483,6 +497,19 @@ test("approveOnce dedups by (tool, args): identical repeats free, new scripts re
     assert.equal(gate({ tool: "danger", arguments: { x: 1 } }), false);
     assert.equal(gate({ tool: "danger", arguments: { x: 1 } }), false);
     assert.equal(asked, 3, "danger asked once, denial remembered");
+});
+
+test("the approval prompt warns about hidden characters in the args", () => {
+    const { ml, window } = loadDomWorld();
+    let msg = "";
+    window.confirm = (m) => { msg = m; return true; };
+    const gate = ml.approveOnce();
+
+    gate({ tool: "exec", arguments: { js: "doThing()\u202E // hidden" } });   // bidi override
+    assert.match(msg, /WARNING.*hidden\/suspicious/);
+    msg = "";
+    gate({ tool: "exec", arguments: { js: "cleanThing()" } });               // clean → no warning
+    assert.doesNotMatch(msg, /WARNING/);
 });
 
 // ---- lookTool (vision) ----
