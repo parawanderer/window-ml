@@ -269,11 +269,17 @@ model, and call `ml.agent`. What's built in:
 - **DOM recon tools** — `findByText`, `describeElement`, `ancestors`,
   `countMatches`, `sampleText`, plus an `exec` escape hatch. Small, structured
   output (never raw HTML), so context stays cheap.
-- **Eyes, auto-wired** — if your model reports vision capability (or your
-  configured [OCR](#ocr) model does), a `look` tool is added automatically so the
-  agent can orient and *visually verify* its edits. Text-only model? It runs
-  without eyes and says so if a task truly needs them. Turn it off with
-  `vision: false`, or force a model with `vision: "qwen2.5vl"`.
+- **Eyes, auto-wired — natively when possible.** If your model reports vision
+  capability (or your configured [OCR](#ocr) model does), a `look` tool is added
+  automatically so the agent can orient and *visually verify* its work. **When the
+  agent's own model is vision-capable (e.g. `qwen3.5:122b`), `look` feeds the
+  screenshot straight into that model's own conversation** — it reasons over the
+  real pixels, not a second model's text summary. That's a big reliability jump:
+  the delegated path squashes the page to a paragraph and plans over the paragraph,
+  blind to whatever the summary dropped; native vision removes that lossy step. If
+  only your OCR model can see, it falls back to that delegated `look`. Text-only
+  model? It runs without eyes and says so if a task truly needs them. Turn it off
+  with `vision: false`, or force a model with `vision: "qwen2.5vl"`.
 - **A safety gate** — `exec` (arbitrary page JS) is approval-gated; the default
   is a blocking `confirm()`. Pass your own `approve({ tool, arguments })`.
 - **A step cap** (`maxSteps`, default 10) and a full `transcript`.

@@ -682,6 +682,52 @@ test("agent skips auto-vision when the toolset already has a vision tool", async
     assert.equal(looks.length, 1, "must not add a second look tool");
 });
 
+// ---- #3: inline vision (agent's own model sees the pixels) ----
+
+test("_nativeLookTool captures a screenshot as an image envelope + the live element", async () => {
+    const { ml } = loadDomWorld('<div id="card">hi</div>');
+    ml.screenshot = async (sel) => `data:image/png;base64,SHOT_${sel || "viewport"}`;
+    const look = ml._nativeLookTool();
+    assert.deepEqual(look.capabilities, ["vision"]);
+
+    const out = await look.run({ selector: "#card" });
+    assert.equal(out.image, "data:image/png;base64,SHOT_#card");     // raw image handed back
+    assert.match(out.content, /Screenshot of the element "#card"/);  // text result for the tool msg
+    assert.match(out.content, /shown to you/);
+    // the screenshotted node rides the side-channel (hoverable in logDebug/onStep)
+    assert.equal(out.elements[0].id, "card");
+
+    // no selector (viewport) → no element
+    const view = await look.run({});
+    assert.equal(view.elements, undefined);
+});
+
+test("inline vision (#3): a vision-capable agent model gets the screenshot in its OWN history", async () => {
+    const steps = [];
+    const world = loadPageWorld({
+        onRuntimeMessage: (m) => {
+            if (m.type === "GET_CONFIG") return { data: { model: "qwen-vl", ocrModel: "" } };
+            if (m.type === "MODEL_CAPS") return { data: ["completion", "vision"] };
+            steps.push(m.payload.messages);
+            return { data: steps.length === 1
+                ? { content: "", tool_calls: [{ id: "c1", name: "look", arguments: {} }] }
+                : { content: "I can see a search box at the top.", tool_calls: [] } };
+        }
+    });
+    world.ml.screenshot = async () => "data:image/png;base64,SHOT";
+
+    const res = await world.ml.agent("what's on this page?");
+
+    // The screenshot was injected into the agent's own conversation as a user turn
+    // carrying the actual image bytes — not delegated to a second model.
+    const injected = steps.some(msgs => msgs.some(m =>
+        m.role === "user" && Array.isArray(m.images) && m.images.includes("data:image/png;base64,SHOT")));
+    assert.ok(injected, "screenshot injected into the agent's own history");
+    const imgTurn = steps.flat().find(m => m.role === "user" && Array.isArray(m.images));
+    assert.match(imgTurn.content, /Describe what you see/);
+    assert.equal(res.summary, "I can see a search box at the top.");
+});
+
 test("approveOnce dedups by (tool, args): identical repeats free, new scripts re-ask", () => {
     const { ml, window } = loadDomWorld();
     let asked = 0;

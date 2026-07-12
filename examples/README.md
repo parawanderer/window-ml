@@ -60,6 +60,21 @@ CSP — the DOM + vision tools don't eval, so it works anyway.)
 
 ---
 
+## Native vision — silliest outfits (vision agent) — [`native_vision_outfits.js`](./native_vision_outfits.js)
+
+Paste it on any page with a grid of outfits/looks and the agent picks the **top 3
+silliest** — a judgement that only works from the actual pixels — handing them
+back as **live DOM nodes** (`result.elements`). The point of this one is the
+vision *path*: because the model (`qwen3.5:122b`) is itself vision-capable,
+`ml.agent` uses **native inline vision** — each `look` screenshot goes straight
+into the model's own conversation, so it reasons over the real image instead of a
+second model's text summary. That's a real reliability jump over the delegated
+`ml.lookTool()` a *text-only* agent falls back to. One `ml.agent()` call with
+`model: "qwen3.5:122b"`, `logDebug: true`, `think: true`, and a high `maxSteps`
+(per-item visual classification takes many steps).
+
+---
+
 ## YouTube video summarizer — [`youtube-summarizer.user.js`](./youtube-summarizer.user.js)
 
 ![A screenshot showing youtube with the youtube-summarizer.user.js user script enabled](../docs/youtube-summarizer-2026-07-06_21-26.png)

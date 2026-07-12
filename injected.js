@@ -594,14 +594,26 @@
          */
         agent: async function(task, { tools = null, extraTools = [], system = null, hints = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false } = {}) {
             const toolset = [...(tools || this.domTools), ...extraTools];
-            // #8: give the agent eyes with no wiring. If nothing in the toolset can
-            // already see and the caller didn't opt out, auto-register a `look` tool
-            // bound to a vision-capable model (the agent's own model, else the
-            // configured OCR model). The doer+critic loop is our reliability model,
-            // so this makes `ml.agent("task")` verify its own work out of the box.
+            // #8 + #3: give the agent eyes with no wiring, preferring NATIVE vision.
+            // If the agent's OWN model is vision-capable, register a capture-only
+            // `look` whose screenshot ml.agent injects straight into the model's
+            // history (#3 inline vision), so it reasons over the real pixels instead
+            // of a lossy delegated text summary — the failure mode where a model
+            // "stumbles around" on an easy task. If only the OCR model can see, fall
+            // back to the delegated `lookTool` (#8). A forced `vision:"<model>"` is
+            // always delegated (can't inline a model that isn't the agent's).
             if (vision !== false && !toolset.some(t => t.capabilities && t.capabilities.includes("vision"))) {
-                const visionModel = await this._resolveVisionModel(model, vision);
-                if (visionModel) toolset.push(this.lookTool({ model: visionModel }));
+                if (typeof vision === "string" && vision) {
+                    toolset.push(this.lookTool({ model: vision }));
+                } else {
+                    const agentModel = model || ((await this.config().catch(() => null)) || {}).model;
+                    if (await this._modelSees(agentModel)) {
+                        toolset.push(this._nativeLookTool());
+                    } else {
+                        const visionModel = await this._resolveVisionModel(model, vision);
+                        if (visionModel) toolset.push(this.lookTool({ model: visionModel }));
+                    }
+                }
             }
             const byName = Object.fromEntries(toolset.map(t => [t.name, t]));
             const toolDefs = toolset.map(t => ({
@@ -655,17 +667,20 @@
                 const runTool = async (tool, args) => {
                     try {
                         const raw = await tool.run(args);
+                        // A tool may also hand back { image, imageLabel } — a screenshot
+                        // for #3 inline vision, injected into the model's own history.
                         if (raw && typeof raw === "object" && typeof raw.content === "string") {
-                            return { result: raw.content, elements: raw.elements };
+                            return { result: raw.content, elements: raw.elements, image: raw.image, imageLabel: raw.imageLabel };
                         }
                         return { result: raw };
                     } catch (e) { return { result: `Error: ${errText(e)}` }; }
                 };
 
+                const pendingImages = [];   // #3: screenshots captured this turn, injected below
                 for (const call of msg.tool_calls) {
                     const tool = byName[call.name];
                     let args = call.arguments || {};
-                    let result, elements;
+                    let result, elements, image, imageLabel;
                     if (!tool) {
                         result = `Error: no tool named "${call.name}".`;
                     } else if (tool.requiresApproval) {
@@ -679,10 +694,10 @@
                                 : "Denied by the user. Do not retry this exact call; try another approach.";
                         } else {
                             args = decision.arguments;   // possibly caller-edited before running
-                            ({ result, elements } = await runTool(tool, args));
+                            ({ result, elements, image, imageLabel } = await runTool(tool, args));
                         }
                     } else {
-                        ({ result, elements } = await runTool(tool, args));
+                        ({ result, elements, image, imageLabel } = await runTool(tool, args));
                     }
                     result = String(result);
                     const entry = { tool: call.name, arguments: args, result };
@@ -694,6 +709,23 @@
                         answered.push(...elements);
                     }
                     messages.push({ role: "tool", tool_call_id: call.id, content: result });
+                    if (image) pendingImages.push({ image, label: imageLabel || "screenshot" });
+                }
+
+                // #3 inline vision: hand any screenshots captured this turn to the
+                // agent's OWN (vision-capable) model as a user turn, so the next step
+                // reasons over the real pixels. v1 is the "dumb" way — the image stays
+                // in history (no purge), so context grows with each look; that's the
+                // known tradeoff (see roadmap #3). Tool RESULTS can't carry images, a
+                // user turn can — buildMessage already renders images per format.
+                if (pendingImages.length) {
+                    const labels = pendingImages.map(p => p.label).join(", ");
+                    messages.push({
+                        role: "user",
+                        content: `Screenshot${pendingImages.length > 1 ? "s" : ""} you requested (${labels}). ` +
+                            "Describe what you see, then take the next action — or give your final answer if the task is done.",
+                        images: pendingImages.map(p => p.image)
+                    });
                 }
             }
             return { summary: `Stopped at the ${maxSteps}-step cap without finishing.`, steps: maxSteps, transcript, elements: answered, hitCap: true };
@@ -906,7 +938,13 @@
                         : "\n\nThen list a few EXACT on-screen text strings (quoted, verbatim — labels, " +
                           "badges, prices, delivery text) I could search for with findByText to locate " +
                           "the key items.";
-                    return ml.chat(base + guidance, { images: [shot], model, maxTokens });
+                    const description = await ml.chat(base + guidance, { images: [shot], model, maxTokens });
+                    // Attach the inspected element on the side-channel (debug-only,
+                    // never to the model). Guarded so a stub-DOM/bad selector no-ops
+                    // and the return stays a plain string for viewport/no-selector.
+                    let elements;
+                    if (selector) { try { const el = queryAll(selector)[index || 0]; if (el) elements = [el]; } catch {} }
+                    return elements ? { content: description, elements } : description;
                 }
             });
         },
@@ -1016,17 +1054,67 @@
             if (typeof vision === "string" && vision) return vision;   // forced
             let cfg;
             try { cfg = await this.config(); } catch (e) { cfg = null; }
-            const canSee = async (m) => {
-                if (!m) return false;
-                let caps;
-                try { caps = await this.capabilities(m); } catch (e) { return false; }
-                return Array.isArray(caps) && caps.includes("vision");
-            };
             const primary = agentModel || (cfg && cfg.model);
-            if (await canSee(primary)) return primary;
+            if (await this._modelSees(primary)) return primary;
             const ocr = cfg && cfg.ocrModel;
-            if (ocr && ocr !== primary && await canSee(ocr)) return ocr;
+            if (ocr && ocr !== primary && await this._modelSees(ocr)) return ocr;
             return null;
+        },
+        // True only when `model` POSITIVELY reports Ollama vision capability.
+        // Unknown/null (cloud, non-Ollama, unreachable) is false — never send image
+        // tokens to a model we can't confirm sees. Caps are cached in the worker.
+        _modelSees: async function(model) {
+            if (!model) return false;
+            let caps;
+            try { caps = await this.capabilities(model); } catch (e) { return false; }
+            return Array.isArray(caps) && caps.includes("vision");
+        },
+        // #3 inline vision: a capture-only `look` for a vision-capable AGENT model.
+        // It screenshots and hands the raw image back to ml.agent, which injects it
+        // into the model's OWN history so it reasons over the real pixels (vs the
+        // delegated lookTool, which returns a second model's text description).
+        _nativeLookTool: function() {
+            const ml = this;
+            return ml.defineTool({
+                name: "look",
+                capabilities: ["vision"],
+                description: "See the page with your OWN eyes — this screenshots the page (or an element) " +
+                    "and shows YOU the image directly. Call with NO selector to see the viewport and ORIENT " +
+                    "when a task is vague; pass a selector to inspect one element (icons, badges, whether " +
+                    "something looks sponsored / greyed-out / out of stock); pass scope:'page' (no selector) " +
+                    "to see the whole page stitched into one tall image (DOWNSCALED — use it for layout, not " +
+                    "small text). To CLASSIFY items in a grid/list (which show a cat?), pass the item selector " +
+                    "and iterate `index` (0,1,2,…) for a tight crop of each. After looking, DESCRIBE what you " +
+                    "see, then take the next action.",
+                parameters: {
+                    type: "object",
+                    properties: {
+                        selector: { type: "string", description: "CSS selector of an element; omit to see the page." },
+                        scope: { type: "string", enum: ["viewport", "page"], description: "'viewport' (default), or 'page' to scroll+stitch the full page (only when no selector)." },
+                        index: { type: "integer", description: "Which match of the selector to look at (0-based); iterate a grid with 0,1,2,…" }
+                    }
+                },
+                run: async ({ selector, scope, index } = {}) => {
+                    const fullPage = scope === "page" && !selector;
+                    let shot;
+                    try { shot = await ml.screenshot(selector || null, { fullPage, index: index || 0 }); }
+                    catch (e) { return `Error: ${errText(e)}`; }
+                    const label = selector
+                        ? `element "${selector}"${index ? ` #${index}` : ""}`
+                        : (fullPage ? "full page" : "viewport");
+                    // Hand the screenshotted element back on the elements side-channel
+                    // so it's hoverable in `logDebug`/`onStep` (never sent to the model).
+                    // Guarded: a bad/stub-DOM selector just yields no node.
+                    let elements;
+                    if (selector) { try { const el = queryAll(selector)[index || 0]; if (el) elements = [el]; } catch {} }
+                    return {
+                        content: `Screenshot of the ${label} captured — shown to you in the next message. Describe it, then continue.`,
+                        image: shot,
+                        imageLabel: label,
+                        elements
+                    };
+                }
+            });
         },
         // The built-in ml.agent({ logDebug: true }) tracer; pass as onStep too.
         _logStep: logStep,
