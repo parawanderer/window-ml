@@ -172,18 +172,24 @@ const Dot = ({ status }: { status: Status }) => (
 const Code = ({ text, lang }: { text: string; lang?: string }) =>
     <pre class="code"><code class="hljs" dangerouslySetInnerHTML={{ __html: highlight(text, lang) }} /></pre>;
 
-// Copy to clipboard, with a fallback for non-secure (http) pages where the async
-// Clipboard API is unavailable.
-function copyText(text: string): Promise<void> {
-    if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text);
+// Copy to clipboard. Falls back to execCommand when the async Clipboard API is
+// unavailable (http pages) OR blocked — a host page's Permissions-Policy can
+// withhold clipboard-write from our iframe even though the API exists, so we
+// also catch a rejection, not just an absent API.
+function execCopy(text: string): Promise<void> {
     return new Promise((resolve, reject) => {
         try {
             const ta = document.createElement("textarea");
             ta.value = text; ta.style.cssText = "position:fixed;top:0;left:0;opacity:0";
             document.body.appendChild(ta); ta.focus(); ta.select();
-            document.execCommand("copy"); ta.remove(); resolve();
+            const ok = document.execCommand("copy"); ta.remove();
+            ok ? resolve() : reject(new Error("execCommand copy failed"));
         } catch (e) { reject(e); }
     });
+}
+function copyText(text: string): Promise<void> {
+    if (navigator.clipboard?.writeText) return navigator.clipboard.writeText(text).catch(() => execCopy(text));
+    return execCopy(text);
 }
 
 // "copied!" feedback that reverts after a moment.
@@ -243,11 +249,13 @@ const TagBadge = ({ tag }: { tag: string }) => (
     </span>
 );
 
-// Timestamp: compact label, exact full stamp on hover.
-const Stamp = ({ ts }: { ts?: number }) => (
+// Timestamp: compact label, exact full stamp on hover. `snap` picks which way the
+// tooltip opens — "left" (default, for right-edge placements like the chat view)
+// or "right" (for left-edge placements like the list row, so it doesn't clip).
+const Stamp = ({ ts, snap = "left" }: { ts?: number; snap?: "left" | "right" }) => (
     <span class="tt">
         <span class="time">{shortStamp(ts)}</span>
-        <span class="tt-pop" role="tooltip">{fullStamp(ts)}</span>
+        <span class={`tt-pop${snap === "right" ? " left" : ""}`} role="tooltip">{fullStamp(ts)}</span>
     </span>
 );
 
@@ -362,7 +370,7 @@ function SessionRow({ s }: { s: Session }) {
     return (
         <button class="row" onClick={() => (view.value = { name: "detail", hash: s.hash })}>
             <Dot status={s.status} />
-            <Stamp ts={s.lastTs} />
+            <Stamp ts={s.lastTs} snap="right" />
             <b class="row-title">{truncate(title, 80)}</b>
             <div class="row-meta">
                 <TagBadge tag={s.tag} />

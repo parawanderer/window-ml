@@ -284,6 +284,14 @@ function loadDomWorld(html = "") {
 // Boots the BUILT sidebar app (dist/sidebar-app.js, a Preact bundle) over a jsdom
 // window with mocked chrome/matchMedia, so we can drive it with __mlDebug events
 // and assert on the rendered shadow DOM. Independent of injected.js.
+// jsdom windows created for sidebar tests. The VRAM panel's setInterval keeps a
+// window's timers (and thus the Node event loop) alive, so a test file MUST
+// close them in an after() hook or the runner hangs forever after all tests pass.
+const _sidebarWins = [];
+function closeSidebarWorlds() {
+    while (_sidebarWins.length) { try { _sidebarWins.pop().close(); } catch { /* already closed */ } }
+}
+
 // Loads the sidebar APP bundle (dist/sidebar-app.js) as if it were the iframe
 // document (sidebar.html): renders into #root, no shadow root. In the real
 // extension the content-script shell relays __mlDebug in from the parent window;
@@ -292,6 +300,7 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], fetchLlm =
     const unloadCalls = [];
     const dom = new JSDOM(`<!doctype html><html><body><div id="root"></div></body></html>`, { runScripts: "outside-only", pretendToBeVisual: true });
     const win = dom.window;
+    _sidebarWins.push(win);   // closed in an after() hook — the VRAM panel's setInterval keeps the event loop alive otherwise
     const syncStore = { sidebar: true, theme: "auto", ...sync };
     const localStore = { ml_debug_fontscale: 1, ...local };
     const changeListeners = [];
@@ -345,4 +354,4 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], fetchLlm =
     return { window: win, shadow: win.document, dispatch, raw, tick, flush, changeListeners, syncStore, localStore, unloadCalls };
 }
 
-module.exports = { jsonResponse, htmlResponse, streamResponse, loadBackground, loadPageWorld, loadDomWorld, loadSidebarWorld, loadDotEnv };
+module.exports = { jsonResponse, htmlResponse, streamResponse, loadBackground, loadPageWorld, loadDomWorld, loadSidebarWorld, closeSidebarWorlds, loadDotEnv };

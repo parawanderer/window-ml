@@ -102,6 +102,7 @@ function mount(): void {
     resize.addEventListener("pointerdown", startResize);
     frame = document.createElement("iframe");
     frame.id = "ml-sb-frame";
+    frame.allow = "clipboard-write";   // delegate the Clipboard API into the extension iframe
     frame.src = chrome.runtime.getURL("sidebar.html");
     body.append(resize, frame);
 

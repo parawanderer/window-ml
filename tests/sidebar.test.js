@@ -1,6 +1,10 @@
-const { test } = require("node:test");
+const { test, after } = require("node:test");
 const assert = require("node:assert");
-const { loadSidebarWorld } = require("./helpers");
+const { loadSidebarWorld, closeSidebarWorlds } = require("./helpers");
+
+// Close every jsdom window after the file — the VRAM panel's setInterval keeps a
+// window's timers alive, which would otherwise hang the runner after all pass.
+after(closeSidebarWorlds);
 
 // Build __mlDebug events like injected.js emits them (see contract.ts).
 const chatStart = (hash, turn, user, opts = {}) => ({
