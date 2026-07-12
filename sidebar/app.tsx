@@ -71,6 +71,14 @@ const fullStamp = (ts?: number): string =>
     new Date(ts || Date.now()).toLocaleString(undefined,
         { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 const truncate = (s: string, n: number): string => (s.length > n ? s.slice(0, n - 1) + "…" : s);
+// One-line preview for a collapsed assistant reply: first non-empty line,
+// truncated. `more` marks that content is hidden (so we show a trailing …).
+function collapsedPreview(s: string): { text: string; more: boolean } {
+    const full = (s || "").trim();
+    const first = full.split("\n").map(x => x.trim()).find(Boolean) || "";
+    const text = truncate(first, 100);
+    return { text, more: text !== full };
+}
 const escapeHtml = (s: string): string =>
     s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
 
@@ -374,16 +382,25 @@ function OptionsBlock({ s }: { s: Session }) {
 // and a copy button (copies raw markdown, #6) sit on the right of the header row.
 function AssistantBody({ t }: { t: Turn }) {
     const [showRaw, setShowRaw] = useState(!!t.structured);
+    const [collapsed, setCollapsed] = useState(false);
+    const done = t.status === "ok";
+    const preview = done ? collapsedPreview(t.assistant || "") : null;
     return (
         <>
             <div class="mrow">
                 <Dot status={t.status} />
-                <span class="who">assistant</span>
+                {/* The chevron + label toggle collapse (only when there's a reply). */}
+                {done
+                    ? <button class="who-toggle" title={collapsed ? "expand" : "collapse"} onClick={() => setCollapsed(v => !v)}>
+                        <span class={`tri${collapsed ? "" : " open"}`} aria-hidden="true"><IconChevron /></span>
+                        <span class="who">assistant</span>
+                    </button>
+                    : <span class="who">assistant</span>}
                 <span class="sp" />
-                {t.status === "ok"
+                {done
                     ? <>
                         <CopyBtn text={t.assistant || ""} tip="copy markdown" />
-                        <button class="raw-btn" onClick={() => setShowRaw(v => !v)}>{showRaw ? "nice" : "raw"}</button>
+                        {collapsed ? null : <button class="raw-btn" onClick={() => setShowRaw(v => !v)}>{showRaw ? "nice" : "raw"}</button>}
                     </>
                     : null}
                 <Stamp ts={t.ts} />
@@ -392,9 +409,11 @@ function AssistantBody({ t }: { t: Turn }) {
                 ? <div class="pending-note">…thinking</div>
                 : t.status === "err"
                     ? <div class="errtext">{t.error || "(error)"}</div>
-                    : showRaw
-                        ? <Code text={t.assistant || ""} lang="markdown" />
-                        : <div class="md" dangerouslySetInnerHTML={{ __html: markdown(t.assistant || "") }} />}
+                    : collapsed
+                        ? <div class="asst-collapsed" onClick={() => setCollapsed(false)}>{preview!.text}{preview!.more ? <span class="more"> …</span> : null}</div>
+                        : showRaw
+                            ? <Code text={t.assistant || ""} lang="markdown" />
+                            : <div class="md" dangerouslySetInnerHTML={{ __html: markdown(t.assistant || "") }} />}
             {t.sources?.length
                 ? <details class="sources"><summary>{`sources (${t.sources.length})`}</summary><Code text={pretty(t.sources)} lang="json" /></details>
                 : null}

@@ -193,6 +193,13 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .utext { white-space: pre-wrap; word-break: break-word; color: var(--fg); }
 .errtext { color: var(--err); white-space: pre-wrap; word-break: break-word; }
 .pending-note { color: var(--fg-faint); font-style: italic; }
+/* Collapse toggle: chevron + "assistant" label act as one button. */
+.who-toggle { display: inline-flex; align-items: center; gap: 6px; background: none; border: none; padding: 0; font: inherit; cursor: pointer; }
+.who-toggle .tri { color: var(--fg-dim); }
+.who-toggle:hover .tri { color: var(--fg); }
+.asst-collapsed { color: var(--fg-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.asst-collapsed:hover { color: var(--fg); }
+.asst-collapsed .more { color: var(--fg-faint); }
 
 /* rendered markdown */
 .md { color: var(--fg); word-break: break-word; }

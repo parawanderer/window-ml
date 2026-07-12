@@ -210,6 +210,27 @@ test("an error result marks the turn (and session) failed", async () => {
     assert.match(w.shadow.querySelector(".msg.asst.err .errtext").textContent, /HTTP 500/);
 });
 
+test("detail: an assistant reply collapses to its first line and expands again", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(chatStart("col", 0, "q"));
+    await w.dispatch(chatResult("col", 0, "First line here\n\nSecond paragraph with more detail."));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    assert.ok(w.shadow.querySelector(".msg.asst .md"), "expanded by default");
+
+    w.shadow.querySelector(".who-toggle").click();              // collapse
+    await w.tick();
+    assert.ok(!w.shadow.querySelector(".msg.asst .md"), "markdown hidden when collapsed");
+    const c = w.shadow.querySelector(".asst-collapsed");
+    assert.match(c.textContent, /First line here/);
+    assert.ok(!/Second paragraph/.test(c.textContent), "only the first line shows");
+    assert.ok(c.querySelector(".more"), "trailing … since content is hidden");
+
+    w.shadow.querySelector(".who-toggle").click();              // expand again
+    await w.tick();
+    assert.ok(w.shadow.querySelector(".msg.asst .md"), "markdown back after expand");
+});
+
 test("session titles: summarises the first prompt via the utility model when the panel is open", async () => {
     const calls = [];
     const w = await loadSidebarWorld({ sync: { utilityModel: "qwen3:0.5b" }, fetchLlm: (p) => { calls.push(p); return { data: '"Reverse a linked list."' }; } });
