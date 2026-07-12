@@ -235,6 +235,10 @@ test("exec evaluates expressions, serializes objects, and catches errors", async
     assert.equal(await run(ml, "exec", { js: "({a:1})" }), '{"a":1}');
     assert.equal(await run(ml, "exec", { js: "Promise.resolve(42)" }), "42"); // thenable awaited
     assert.match(await run(ml, "exec", { js: "nope()" }), /^Error:/);
+    // Top-level await + return (async-function fallback when eval rejects them).
+    assert.equal(await run(ml, "exec", { js: "return await Promise.resolve(7)" }), "7");
+    assert.equal(await run(ml, "exec", { js: "const x = await Promise.resolve(5); return x * 2" }), "10");
+    assert.match(await run(ml, "exec", { js: "return (" }), /^Error:/); // genuine syntax error still reported
 });
 
 test("selector tools accept end-position :contains/:has-text and explain mid-selector", () => {

@@ -1782,7 +1782,9 @@ import type {
                 "BOTH anything it console.log's AND the final expression's value — so either " +
                 "console.log the data you want to inspect, or make the last line evaluate to it " +
                 "(e.g. `[...document.querySelectorAll('.card')].map(c => c.innerText.slice(0,80))`), " +
-                "or both. Use only when the other tools can't answer; prefer them.",
+                "or both. Async is supported: you may `await` inside and `return` a value " +
+                "(e.g. `const r = await fetch('/api').then(x => x.json()); return r.length`). " +
+                "Use only when the other tools can't answer; prefer them.",
             requiresApproval: true,     // arbitrary eval — the agent gate confirms each call
             parameters: {
                 type: "object",
@@ -1808,7 +1810,19 @@ import type {
                 let result: unknown;
                 let failed: unknown;
                 try {
-                    result = (0, eval)(js);
+                    try {
+                        result = (0, eval)(js);   // fast path — preserves the last expression's value
+                    } catch (e) {
+                        // eval rejects top-level `await`/`return` with a SyntaxError,
+                        // thrown at parse time before anything runs — so retry the
+                        // source as an async function body (both now work). The model
+                        // must `return` its value here (no last-expression auto-return).
+                        // A genuine syntax error re-throws from this attempt and is reported.
+                        if (e instanceof SyntaxError) {
+                            const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor as { new (body: string): () => Promise<unknown> };
+                            result = new AsyncFunction(js)();
+                        } else throw e;
+                    }
                     if (result && typeof (result as Promise<unknown>).then === "function") result = await result;
                 } catch (e) {
                     failed = e;
