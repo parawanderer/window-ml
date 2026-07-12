@@ -93,8 +93,11 @@ string, skipping the null-content error), `extend` (`"utility"` resolves the
 utility model + its `num_ctx`/`num_gpu` in `prepareRequest`, right beside the
 `ocr`/default model resolution; validated client-side in `injected.ts`), and
 `numCtx`/`numGpu` (placed per-format by `applyRuntimeOptions`: an `options`
-object on the ollama route, **top-level** on openai — OpenWebUI's OpenAI route
-ignores an `options` object; explicit values override the `extend` profile). Sending `toolIds` forces
+object on the ollama route; a `params` object on openai — OpenWebUI's
+`apply_params_to_form_data` reads `params` and maps it into Ollama's options for
+ollama-owned models, the same channel as `function_calling`; a direct `options`
+object on that route is overwritten and top-level fields dropped. Explicit values
+override the `extend` profile). Sending `toolIds` forces
 `body.params.function_calling` to OpenWebUI's server-side execution loop so it
 runs the tool and returns finished content; without it, the `native` mode
 (OpenWebUI's default since v0.10.0) hands back an unexecuted `tool_call` (empty

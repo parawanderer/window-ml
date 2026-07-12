@@ -115,7 +115,7 @@ test("FETCH_LLM explicit model + numCtx override the extend profile ({...profile
     assert.equal(sawBody.options.num_ctx, 8192, "explicit numCtx wins");
 });
 
-test("FETCH_LLM num_ctx/num_gpu go TOP-LEVEL on the openai format (OpenWebUI ignores an options object there)", async () => {
+test("FETCH_LLM sends num_ctx/num_gpu in the params object on the openai format (OpenWebUI's channel)", async () => {
     let sawBody;
     const bg = loadBackground({
         config: baseConfig({ apiFormat: "openai", utilityModel: "small", utilityNumCtx: 2048, utilityForceCpu: true }),
@@ -123,9 +123,9 @@ test("FETCH_LLM num_ctx/num_gpu go TOP-LEVEL on the openai format (OpenWebUI ign
     });
     await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }], extend: "utility" } });
     assert.equal(sawBody.model, "small", "utility model applies");
-    assert.equal(sawBody.num_ctx, 2048, "top-level, not in options");
-    assert.equal(sawBody.num_gpu, 0);
-    assert.equal(sawBody.options, undefined, "no options object on the openai route");
+    assert.equal(sawBody.params.num_ctx, 2048, "in params (OpenWebUI maps params → ollama options)");
+    assert.equal(sawBody.params.num_gpu, 0);
+    assert.equal(sawBody.options, undefined, "not a direct options object (OpenWebUI overwrites it)");
 });
 
 test("GET_CONFIG exposes the utility-model fields", async () => {

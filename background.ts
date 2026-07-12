@@ -13,12 +13,10 @@ interface ChatBody {
     response_format?: unknown;
     format?: unknown;
     max_tokens?: number;
-    options?: Record<string, unknown>;      // Ollama runtime opts live here (ollama format)
-    num_ctx?: number;                        // …but top-level on the OpenAI-compat format
-    num_gpu?: number;
+    options?: Record<string, unknown>;      // Ollama runtime opts (ollama format)
     tools?: unknown[];
     tool_ids?: string[];
-    params?: Record<string, unknown>;
+    params?: Record<string, unknown>;       // OpenWebUI reads runtime params here (openai format)
 }
 
 interface ApiFormatHandler {
@@ -108,11 +106,16 @@ const API_FORMATS: Record<ApiFormat, ApiFormatHandler> = {
         },
         // Cap generated tokens (OpenAI-compatible field).
         applyMaxTokens(body, n) { body.max_tokens = n; },
-        // OpenWebUI's OpenAI route ignores an `options` object — pass these
-        // top-level (the OpenAI-compatible convention).
+        // OpenWebUI reads model runtime params from a request-body `params` object
+        // (apply_params_to_form_data), then maps them into Ollama's `options` for
+        // Ollama-owned models — the SAME channel function_calling rides. A direct
+        // `options` object on this route is overwritten; top-level fields dropped.
+        // (Confirmed in OpenWebUI's source: utils/middleware.py + utils/payload.py.)
         applyRuntimeOptions(body, { numCtx, numGpu }) {
-            if (typeof numCtx === "number") body.num_ctx = numCtx;
-            if (typeof numGpu === "number") body.num_gpu = numGpu;
+            const p: Record<string, unknown> = {};
+            if (typeof numCtx === "number") p.num_ctx = numCtx;
+            if (typeof numGpu === "number") p.num_gpu = numGpu;
+            if (Object.keys(p).length) body.params = { ...body.params, ...p };
         },
         // Parse one line of a streamed SSE response into { delta, toolCall }, or
         // null to skip (comments, blanks, the [DONE] sentinel, non-JSON).
