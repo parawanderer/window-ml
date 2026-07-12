@@ -209,3 +209,41 @@ test("an error result marks the turn (and session) failed", async () => {
     await w.tick();
     assert.match(w.shadow.querySelector(".msg.asst.err .errtext").textContent, /HTTP 500/);
 });
+
+test("session titles: summarises the first prompt via the utility model when the panel is open", async () => {
+    const calls = [];
+    const w = await loadSidebarWorld({ sync: { utilityModel: "qwen3:0.5b" }, fetchLlm: (p) => { calls.push(p); return { data: '"Reverse a linked list."' }; } });
+    await w.raw({ __mlSidebarOpen: true });                          // panel slid open → titles allowed
+    await w.dispatch(chatStart("t1", 0, "how do I reverse a linked list in rust"));
+    await w.dispatch(chatResult("t1", 0, "Here's how…"));
+    await w.flush();
+
+    const titleCall = calls.find(c => c.extend === "utility");
+    assert.ok(titleCall, "title generated through extend:'utility'");
+    // cleanTitle strips the wrapping quotes + trailing period the model returned.
+    assert.equal(w.shadow.querySelector(".row-title").textContent, "Reverse a linked list");
+});
+
+test("session titles: no summary while the panel is slid closed (falls back to the prompt)", async () => {
+    const calls = [];
+    const w = await loadSidebarWorld({ sync: { utilityModel: "qwen3:0.5b" }, fetchLlm: (p) => { calls.push(p); return { data: "Should not be used" }; } });
+    // no __mlSidebarOpen received → closed → titles must not generate
+    await w.dispatch(chatStart("t2", 0, "some request text here"));
+    await w.dispatch(chatResult("t2", 0, "reply"));
+    await w.flush();
+
+    assert.ok(!calls.some(c => c.extend === "utility"), "no title call while closed");
+    assert.match(w.shadow.querySelector(".row-title").textContent, /some request text here/);
+});
+
+test("session titles: skipped entirely when no utility model is configured (opt-in)", async () => {
+    const calls = [];
+    const w = await loadSidebarWorld({ fetchLlm: (p) => { calls.push(p); return { data: "unwanted" }; } });  // no utilityModel
+    await w.raw({ __mlSidebarOpen: true });                          // open, but still opt-out
+    await w.dispatch(chatStart("t3", 0, "some request text here"));
+    await w.dispatch(chatResult("t3", 0, "reply"));
+    await w.flush();
+
+    assert.ok(!calls.some(c => c.extend === "utility"), "no title call without a utility model");
+    assert.match(w.shadow.querySelector(".row-title").textContent, /some request text here/);
+});
