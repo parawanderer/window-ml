@@ -565,6 +565,7 @@ function Settings() {
             <div class="set-note">Point this at <b>OpenWebUI</b> for the full feature set — server-side (Python) tools, RAG, and web search all route through it. A direct <b>Ollama</b> URL works but only gives the plain text-chat subset.</div>
             <label class="set-field"><span>Chat completions URL</span>
                 <input {...text("chatUrl")} class={c.chatUrl.trim() ? "" : "err"} />
+                <div class="set-hint">OpenWebUI: /api/chat/completions · Ollama passthrough: /ollama/api/chat</div>
                 {c.chatUrl.trim() ? null : <div class="set-err">Required — the extension won't work without this.</div>}
             </label>
             <label class="set-field"><span>API key</span>
