@@ -34,10 +34,18 @@ function onWindowMessage(e: MessageEvent): void {
     if (!d) return;
     // injected.js (page main world) → relay into the iframe app.
     if (d.__mlDebug && e.source === window) { frame?.contentWindow?.postMessage(d, "*"); return; }
-    // The iframe app is listening → handshake injected.js so it starts emitting.
+    // The iframe app is listening → handshake injected.js so it starts emitting,
+    // and tell the app the current open state (so it can pause polling when hidden).
     if (d.__mlSidebarApp === "ready" && frame && e.source === frame.contentWindow) {
         window.postMessage({ __mlSidebar: "ready" }, "*");
+        frame.contentWindow?.postMessage({ __mlSidebarOpen: panel?.classList.contains("open") ?? false }, "*");
     }
+}
+
+// Tell the iframe app when the panel slides open/closed (it gates polling on this).
+function toggleOpen(): void {
+    const open = panel?.classList.toggle("open") ?? false;
+    frame?.contentWindow?.postMessage({ __mlSidebarOpen: open }, "*");
 }
 
 const setWidth = (w: number): void => { if (panel) panel.style.width = `${Math.round(w)}px`; };
@@ -84,7 +92,7 @@ function mount(): void {
     tab.id = "ml-sb-tab";
     tab.title = "window.ml debug";
     tab.textContent = "ml · debug";
-    tab.addEventListener("click", () => panel?.classList.toggle("open"));
+    tab.addEventListener("click", toggleOpen);
 
     const body = document.createElement("div");
     body.id = "ml-sb-body";

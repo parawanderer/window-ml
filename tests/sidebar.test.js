@@ -93,7 +93,7 @@ test("status dot goes pending → ok, and a save:true call is tagged saved", asy
 test("settings: the font-size stepper scales --fs and persists it", async () => {
     const w = await loadSidebarWorld();
     const html = w.window.document.documentElement;
-    w.shadow.querySelector(".gear").click();                // open settings
+    w.shadow.querySelector('[title="Settings"]').click();                // open settings
     await w.tick();
     assert.ok(w.shadow.querySelector(".settings"), "settings panel opens");
 
@@ -112,7 +112,7 @@ test("settings: a saved font scale is applied on mount", async () => {
 
 test("settings view: loads config, populates the model datalist, gates + persists utility fields", async () => {
     const w = await loadSidebarWorld({ sync: { chatUrl: "http://host/api" }, models: ["qwen3:14b", "qwen3.5:0.8b"] });
-    w.shadow.querySelector(".gear").click();
+    w.shadow.querySelector('[title="Settings"]').click();
     await w.tick();
 
     assert.equal(w.shadow.querySelector('input[type="text"]').value, "http://host/api", "chatUrl loaded from storage.sync");
@@ -130,7 +130,7 @@ test("settings view: loads config, populates the model datalist, gates + persist
 
 test("settings: Test models runs a per-model liveness check (set models pass, unset stays '—')", async () => {
     const w = await loadSidebarWorld({ sync: { model: "qwen3:14b", utilityModel: "gemma:2b" }, models: ["qwen3:14b"] });
-    w.shadow.querySelector(".gear").click();
+    w.shadow.querySelector('[title="Settings"]').click();
     await w.tick();
     assert.equal(w.shadow.querySelectorAll(".test-row").length, 3, "one row per model role");
 
@@ -142,7 +142,7 @@ test("settings: Test models runs a per-model liveness check (set models pass, un
 
 test("settings: a failing model test shows the error", async () => {
     const w = await loadSidebarWorld({ sync: { model: "badmodel" }, fetchLlm: () => ({ error: "model not found" }) });
-    w.shadow.querySelector(".gear").click();
+    w.shadow.querySelector('[title="Settings"]').click();
     await w.tick();
     w.shadow.querySelector(".test-btn").click();
     await w.tick();
@@ -152,11 +152,48 @@ test("settings: a failing model test shows the error", async () => {
 
 test("settings view live-syncs a config change made elsewhere (e.g. the popup)", async () => {
     const w = await loadSidebarWorld();
-    w.shadow.querySelector(".gear").click();
+    w.shadow.querySelector('[title="Settings"]').click();
     await w.tick();
     w.window.chrome.storage.sync.set({ model: "llama3:70b" });   // popup edit → storage.onChanged
     await w.tick();
     assert.equal(w.shadow.querySelector('input[placeholder="e.g. qwen3:14b"]').value, "llama3:70b");
+});
+
+test("VRAM monitor lists loaded models with a total, and evicts one + all", async () => {
+    const w = await loadSidebarWorld({ vram: [
+        { model: "qwen3:14b", vramGB: 8.2, expiresAt: null },
+        { model: "glm-ocr", vramGB: 2.1, expiresAt: null },
+    ] });
+    await w.raw({ __mlSidebarOpen: true });                     // shell reports slid-open → polling allowed
+    w.shadow.querySelector('[title="VRAM monitor"]').click();
+    await w.flush();                                            // let the poll effect run
+
+    assert.equal(w.shadow.querySelectorAll(".vram-row").length, 2, "one row per loaded model");
+    assert.match(w.shadow.querySelector(".vram-total").textContent, /10\.3 GB/, "total VRAM summed");
+
+    w.shadow.querySelector(".vram-row .vram-x").click();        // evict the first model
+    await w.tick();
+    assert.deepEqual(w.unloadCalls.at(-1), { model: "qwen3:14b" });
+
+    w.shadow.querySelector(".vram-free").click();               // free all
+    await w.tick();
+    assert.deepEqual(w.unloadCalls.at(-1), {});
+});
+
+test("VRAM monitor pauses polling while the sidebar is slid closed", async () => {
+    const w = await loadSidebarWorld({ vram: [{ model: "x", vramGB: 1, expiresAt: null }] });
+    // sidebarOpen defaults false (no __mlSidebarOpen received) → poll is skipped
+    w.shadow.querySelector('[title="VRAM monitor"]').click();
+    await w.tick();
+    assert.equal(w.shadow.querySelectorAll(".vram-row").length, 0, "no poll while closed");
+});
+
+test("VRAM monitor shows unavailable with no Ollama backend", async () => {
+    const w = await loadSidebarWorld({ psError: "no ollama" });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[title="VRAM monitor"]').click();
+    await w.flush();
+    assert.match(w.shadow.querySelector(".vram-empty").textContent, /unavailable/);
 });
 
 test("an error result marks the turn (and session) failed", async () => {

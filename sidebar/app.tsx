@@ -5,9 +5,9 @@
 // render a list ⇄ detail UI. Bundled (Preact + signals) into dist/sidebar.js only
 // — the core primitive stays dependency-free.
 import { render } from "preact";
-import { useState } from "preact/hooks";
+import { useState, useEffect } from "preact/hooks";
 import { signal } from "@preact/signals";
-import type { MlDebugEvent, DebugSessionConfig, NeutralMessage, MlConfig, ApiFormat, Theme } from "../contract";
+import type { MlDebugEvent, DebugSessionConfig, NeutralMessage, MlConfig, ApiFormat, Theme, LoadedModel } from "../contract";
 import { DEFAULT_CONFIG } from "../contract";
 // Syntax highlighting — highlight.js core + a focused set of languages, and the
 // Atom One themes (imported as CSS text, injected into the shadow root).
@@ -49,6 +49,8 @@ const view = signal<{ name: "list" } | { name: "detail"; hash: string } | { name
 const fontScale = signal(1);
 const config = signal<MlConfig>(DEFAULT_CONFIG);   // live mirror of chrome.storage.sync
 const models = signal<string[]>([]);               // server model ids (for the datalists)
+const vramOpen = signal(false);                    // VRAM monitor panel toggled on?
+const sidebarOpen = signal(false);                 // is the shell slid open? (gates polling)
 
 /* -------------------------------- helpers -------------------------------- */
 const pretty = (v: unknown, max = 6000): string => {
@@ -591,6 +593,82 @@ function Settings() {
     );
 }
 
+// --- VRAM monitor ---
+const VRAM_COLORS = ["#6366f1", "#22c55e", "#f59e0b", "#ec4899", "#06b6d4", "#a855f7", "#ef4444", "#84cc16"];
+const colorFor = (name: string) => VRAM_COLORS[[...name].reduce((a, c) => a + c.charCodeAt(0), 0) % VRAM_COLORS.length];
+const VRAM_HISTORY = 45, VRAM_POLL_MS = 2000;
+
+const IconVram = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 12h4l2 5 4-13 3 8h5" />
+    </svg>
+);
+
+// Live VRAM: a sparkline of total usage over time + a per-model legend with
+// evict controls. Polls OLLAMA_PS while mounted AND the sidebar is slid open
+// (gated on sidebarOpen so it never hammers Ollama in the background). No
+// manual refresh — that's the whole point.
+function VramPanel() {
+    const [loaded, setLoaded] = useState<LoadedModel[] | null>(null);
+    const [history, setHistory] = useState<number[]>([]);
+    const [err, setErr] = useState<string | null>(null);
+
+    const poll = () => {
+        if (!sidebarOpen.value) return;   // paused while slid closed
+        chrome.runtime.sendMessage({ type: "OLLAMA_PS", payload: {} }, (resp: any) => {
+            if (chrome.runtime.lastError || (resp && resp.error)) {
+                setErr((resp && resp.error) || chrome.runtime.lastError?.message || "unavailable");
+                setLoaded([]); return;
+            }
+            setErr(null);
+            const list: LoadedModel[] = resp.data || [];
+            setLoaded(list);
+            const total = list.reduce((s, m) => s + (m.vramGB || 0), 0);
+            setHistory(h => [...h, total].slice(-VRAM_HISTORY));
+        });
+    };
+    useEffect(() => {
+        poll();
+        const id = setInterval(poll, VRAM_POLL_MS);
+        return () => clearInterval(id);
+    }, []);
+
+    const evict = (model?: string) =>
+        chrome.runtime.sendMessage({ type: "OLLAMA_UNLOAD", payload: model ? { model } : {} }, () => poll());
+
+    if (err) return <div class="vram"><div class="vram-empty">VRAM unavailable — no Ollama backend.</div></div>;
+
+    const total = history.length ? history[history.length - 1] : 0;
+    const W = 240, H = 34;
+    const yMax = Math.max(1, ...history) * 1.15;
+    const pts = history.length > 1
+        ? history.map((v, i) => `${((i / (history.length - 1)) * W).toFixed(1)},${(H - (v / yMax) * H).toFixed(1)}`).join(" ")
+        : "";
+    return (
+        <div class="vram">
+            <div class="vram-head">
+                <span class="vram-total">{total.toFixed(1)} GB in use</span>
+                <span class="sp" />
+                {loaded && loaded.length ? <button class="vram-free" onClick={() => evict()}>Free VRAM</button> : null}
+            </div>
+            <svg class="vram-spark" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
+                {pts ? <polyline points={pts} fill="none" stroke="var(--accent)" stroke-width="1.5" /> : null}
+            </svg>
+            {loaded && loaded.length
+                ? loaded.map(m => (
+                    <div class="vram-row" key={m.model}>
+                        <span class="vram-dot" style={{ background: colorFor(m.model) }} />
+                        <span class="vram-name">{m.model}</span>
+                        <span class="sp" />
+                        <span class="vram-gb">{m.vramGB != null ? `${m.vramGB} GB` : "?"}</span>
+                        <button class="vram-x" title="Evict from VRAM" onClick={() => evict(m.model)}>✕</button>
+                    </div>
+                ))
+                : <div class="vram-empty">Nothing loaded.</div>}
+        </div>
+    );
+}
+
 function App() {
     const v = view.value;
     // Subscribe to session-data changes. This read MUST land in always-rendered
@@ -610,8 +688,10 @@ function App() {
                 <b>{v.name === "detail" ? (sessionMap.get(v.hash)?.model || "default") : inSettings ? "Settings" : `Sessions (${sessionMap.size})`}</b>
                 <span class="sp" />
                 {v.name === "detail" ? <Hash hash={v.hash} /> : null}
-                {!inSettings ? <button class="gear" title="Settings" onClick={() => { fetchModels(); view.value = { name: "settings" }; }}><IconGear /></button> : null}
+                {!inSettings ? <button class={`hbtn${vramOpen.value ? " on" : ""}`} title="VRAM monitor" onClick={() => (vramOpen.value = !vramOpen.value)}><IconVram /></button> : null}
+                {!inSettings ? <button class="hbtn" title="Settings" onClick={() => { fetchModels(); view.value = { name: "settings" }; }}><IconGear /></button> : null}
             </div>
+            {vramOpen.value && !inSettings ? <VramPanel /> : null}
             <div class="view" data-rev={r}>
                 {v.name === "settings" ? <Settings />
                     : v.name === "list" ? <ListView />
@@ -646,8 +726,9 @@ const applyFont = () => document.documentElement.style.setProperty("--fs", `${(B
 // can't reach this iframe's message bus across the extension-origin boundary.
 function onMessage(e: MessageEvent): void {
     const d = e.data as any;
-    if (e.source !== window.parent || !d || !d.__mlDebug) return;
-    onDebug(d.__mlDebug as MlDebugEvent);
+    if (e.source !== window.parent || !d) return;
+    if (d.__mlDebug) onDebug(d.__mlDebug as MlDebugEvent);
+    else if (typeof d.__mlSidebarOpen === "boolean") sidebarOpen.value = d.__mlSidebarOpen;
 }
 
 function mount(): void {

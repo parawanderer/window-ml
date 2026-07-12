@@ -288,7 +288,8 @@ function loadDomWorld(html = "") {
 // document (sidebar.html): renders into #root, no shadow root. In the real
 // extension the content-script shell relays __mlDebug in from the parent window;
 // in jsdom window.parent === window, so dispatch posts with source: win.
-async function loadSidebarWorld({ sync = {}, local = {}, models = [], fetchLlm = () => ({ data: "OK" }) } = {}) {
+async function loadSidebarWorld({ sync = {}, local = {}, models = [], fetchLlm = () => ({ data: "OK" }), vram = [], psError = null } = {}) {
+    const unloadCalls = [];
     const dom = new JSDOM(`<!doctype html><html><body><div id="root"></div></body></html>`, { runScripts: "outside-only", pretendToBeVisual: true });
     const win = dom.window;
     const syncStore = { sidebar: true, theme: "auto", ...sync };
@@ -308,8 +309,11 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], fetchLlm =
             lastError: undefined,
             sendMessage: (msg, cb) => {
                 if (!cb) return;
-                if (msg && msg.type === "LIST_MODELS") cb({ data: models });
-                else if (msg && msg.type === "FETCH_LLM") cb(fetchLlm(msg.payload));
+                const type = msg && msg.type;
+                if (type === "LIST_MODELS") cb({ data: models });
+                else if (type === "FETCH_LLM") cb(fetchLlm(msg.payload));
+                else if (type === "OLLAMA_PS") cb(psError ? { error: psError } : { data: vram });
+                else if (type === "OLLAMA_UNLOAD") { unloadCalls.push(msg.payload); cb({ data: [] }); }
                 else cb({ data: null });
             },
         },
@@ -327,13 +331,18 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], fetchLlm =
 
     const tick = () => new Promise((r) => win.setTimeout(r, 0));   // flush async mount / Preact renders
     for (let i = 0; i < 60 && !win.document.querySelector(".app"); i++) await tick();
-    const dispatch = async (ev) => {
-        const e = new win.MessageEvent("message", { data: { __mlDebug: ev } });
+    // Post an arbitrary message to the app (as the shell/parent would).
+    const raw = async (data) => {
+        const e = new win.MessageEvent("message", { data });
         Object.defineProperty(e, "source", { value: win });   // app checks e.source === window.parent (=== window in jsdom)
         win.dispatchEvent(e);
         await tick();
     };
-    return { window: win, shadow: win.document, dispatch, tick, changeListeners, syncStore, localStore };
+    const dispatch = (ev) => raw({ __mlDebug: ev });
+    // Wait past a requestAnimationFrame so Preact useEffect (e.g. VRAM polling)
+    // has run, then flush the resulting async state update + re-render.
+    const flush = async () => { await new Promise((r) => win.setTimeout(r, 30)); await tick(); };
+    return { window: win, shadow: win.document, dispatch, raw, tick, flush, changeListeners, syncStore, localStore, unloadCalls };
 }
 
 module.exports = { jsonResponse, htmlResponse, streamResponse, loadBackground, loadPageWorld, loadDomWorld, loadSidebarWorld, loadDotEnv };
