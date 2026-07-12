@@ -1,6 +1,26 @@
-// @ts-nocheck — TEMP during the JS→TS migration: injected.ts is being typed
-// against ./contract (janitor pass pending). Remove once fully annotated.
 // This runs in the "Main World" (same as the page JS)
+
+import type {
+    MlPublicConfig,
+    NeutralMessage,
+    ToolResult,
+    MlTool,
+    ApprovalRequest,
+    ApprovalDecision,
+    AgentResult,
+    AgentTranscriptEntry,
+    SessionRef,
+    MlDebugEvent,
+    DebugChatStart,
+    DebugChatResult,
+    DebugChatError,
+    FetchLlmPayload,
+    ChatOptions,
+    JsonSchema,
+    ToolCall,
+    LoadedModel,
+    MlHistory
+} from "./contract";
 
 (function() {
 
@@ -19,9 +39,9 @@
      * Emit a debug event to the sidebar via postMessage.
      * No-op when debugging is disabled; catches non-cloneable errors silently.
      *
-     * @param {Object} event The event data to send.
+     * @param {MlDebugEvent} event The event data to send.
      */
-    const emitDebug = (event) => {
+    const emitDebug = (event: MlDebugEvent) => {
         if (!debugEnabled) return;
         try { window.postMessage({ __mlDebug: event }, "*"); } catch (e) { /* non-cloneable — ignore */ }
     };
@@ -31,7 +51,7 @@
      *
      * @returns {string} A short unique identifier.
      */
-    const debugId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+    const debugId = (): string => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
     /**
      * Generate a stable short hex id per session.
      * Uses crypto.getRandomValues when available, falls back to Math.random.
@@ -39,7 +59,7 @@
      *
      * @returns {string} A short hex identifier.
      */
-    const shortHash = () => {
+    const shortHash = (): string => {
         try {
             const b = new Uint8Array(4); crypto.getRandomValues(b);
             return [...b].map(x => x.toString(16).padStart(2, "0")).join("");
@@ -56,11 +76,16 @@
      * @param {(result: any) => any} [callbackOnResponseSuccess] Optional callback to transform the result before resolving.
      * @returns {Promise<any>} The task result.
      */
-    const makeBackgroundTaskPromise = (requestType, responseType, payload, callbackOnResponseSuccess) => {
+    const makeBackgroundTaskPromise = <T = unknown>(
+        requestType: string,
+        responseType: string,
+        payload: unknown,
+        callbackOnResponseSuccess?: (result: unknown) => T
+    ): Promise<T> => {
         return new Promise((resolve, reject) => {
             const requestId = Math.random().toString(36).substring(7);
 
-            function handleResponse(event) {
+            function handleResponse(event: MessageEvent) {
                 if (event.data.type === responseType && event.data.requestId === requestId) {
                     window.removeEventListener("message", handleResponse);
                     if (event.data.error) {
@@ -87,13 +112,13 @@
      * Make a chat request that resolves { content, sources }.
      * The content string plus any server-side tool / RAG provenance the backend attached (empty otherwise).
      *
-     * @param {Object} payload The chat request payload.
+     * @param {FetchLlmPayload} payload The chat request payload.
      * @returns {Promise<{content: string, sources: Array}>} The chat response.
      */
-    const makeChatRequest = (payload) => {
+    const makeChatRequest = (payload: FetchLlmPayload): Promise<{ content: string; sources: unknown[] }> => {
         return new Promise((resolve, reject) => {
             const requestId = Math.random().toString(36).substring(7);
-            function handle(event) {
+            function handle(event: MessageEvent) {
                 const d = event.data;
                 if (!d || d.type !== "LLM_RESPONSE" || d.requestId !== requestId) return;
                 window.removeEventListener("message", handle);
@@ -110,16 +135,19 @@
      * and resolves { content, sources } once done. Rides a Port on the
      * content-script side (many messages), vs the one-shot request/response above.
      *
-     * @param {Object} payload The chat request payload.
+     * @param {FetchLlmPayload} payload The chat request payload.
      * @param {(delta: string, full: string) => void} onToken Callback fired for each streamed token.
      * @returns {Promise<{content: string, sources: Array}>} The chat response.
      */
-    const makeStreamingTaskPromise = (payload, onToken) => {
+    const makeStreamingTaskPromise = (
+        payload: FetchLlmPayload,
+        onToken: (delta: string, full: string) => void
+    ): Promise<{ content: string; sources: unknown[] }> => {
         return new Promise((resolve, reject) => {
             const requestId = Math.random().toString(36).substring(7);
             let full = "";
 
-            function handle(event) {
+            function handle(event: MessageEvent) {
                 const d = event.data;
                 if (!d || d.requestId !== requestId) return;
                 if (d.type === "LLM_STREAM_CHUNK") {
@@ -154,7 +182,7 @@
      * @param {number} n Max characters before truncation.
      * @returns {string} The truncated string.
      */
-    const truncate = (str, n) => {
+    const truncate = (str: string, n: number): string => {
         str = String(str == null ? "" : str).replace(/\s+/g, " ").trim();
         return str.length > n ? str.slice(0, n) + "…" : str;
     };
@@ -166,7 +194,7 @@
      * @param {*} e The caught error value.
      * @returns {string} The error message text.
      */
-    const errText = (e) => (e && e.message) ? e.message : String(e);
+    const errText = (e: unknown): string => (e && (e as Error).message) ? (e as Error).message : String(e);
 
     /**
      * Build a compact structural path for an element.
@@ -177,14 +205,15 @@
      * @param {Element} el The element to build a path for.
      * @returns {string} The structural path string.
      */
-    const elPath = (el) => {
-        const parts = [];
-        let node = el, hops = 0;
+    const elPath = (el: Element): string => {
+        const parts: string[] = [];
+        let node: Node | null = el, hops = 0;
         while (node && node.nodeType === 1 && node !== document.documentElement && hops < 8) {
-            let seg = node.tagName.toLowerCase();
-            if (node.id) seg += "#" + node.id;
-            if (node.classList && node.classList.length) {
-                seg += "." + [...node.classList].slice(0, 4).join(".");
+            const elem = node as Element;
+            let seg = elem.tagName.toLowerCase();
+            if (elem.id) seg += "#" + elem.id;
+            if (elem.classList && elem.classList.length) {
+                seg += "." + [...elem.classList].slice(0, 4).join(".");
             }
             parts.unshift(seg);
             node = node.parentElement;
@@ -203,7 +232,7 @@
      * @param {Element} el The element to build a line for.
      * @returns {string} The skeleton line string.
      */
-    const elLine = (el) => {
+    const elLine = (el: Element): string => {
         let seg = el.tagName.toLowerCase();
         if (el.id) seg += "#" + el.id;
         if (el.classList && el.classList.length) seg += "." + [...el.classList].slice(0, 6).join(".");
@@ -230,7 +259,7 @@
      * @param {string} [indent=""] Current indentation level.
      * @returns {string} The skeleton tree as a newline-separated string.
      */
-    const describeSkeleton = (el, depth, indent = "") => {
+    const describeSkeleton = (el: Element, depth: number, indent = ""): string => {
         let out = indent + elLine(el);
         if (el.children.length && depth > 0) {
             for (const k of [...el.children].slice(0, 12)) {
@@ -272,10 +301,10 @@
      * @param {string} selector The CSS selector (possibly with pseudo-selectors).
      * @returns {Element[]} Array of matching elements (may be empty).
      */
-    const queryAll = (selector) => {
+    const queryAll = (selector: string): Element[] => {
         let base = String(selector).trim();
-        const texts = [];
-        let eqIndex = null;   // trailing :eq(n) → jQuery-style 0-based positional pick
+        const texts: string[] = [];
+        let eqIndex: number | null = null;   // trailing :eq(n) → jQuery-style 0-based positional pick
         // Peel trailing :eq and text predicates (loop for chained/mixed ones). :eq
         // comes off FIRST each pass: the text regex's optional-quote branch would
         // otherwise greedily swallow a following `:eq(1)` into its match text.
@@ -287,7 +316,7 @@
             if (m) { texts.unshift(m[3]); base = m[1].trim(); changed = true; }
         }
         // Run a (native) selector and apply any collected text filter.
-        const run = (sel) => {
+        const run = (sel: string): Element[] => {
             let els = [...document.querySelectorAll(sel || "*")];
             if (texts.length) {
                 const wanted = texts.map(t => t.toLowerCase());
@@ -320,7 +349,7 @@
      * @param {Error} err The caught error.
      * @returns {string} A helpful error message.
      */
-    const selectorError = (selector, err) => {
+    const selectorError = (selector: string, err: Error): string => {
         if (/:has-text\s*\(|:contains\s*\(/i.test(selector)) {
             return "Invalid selector: :contains()/:has-text() text predicates are only supported at " +
                 'the END of a selector (e.g. `div.card:contains("text")`). Move it to the final part, ' +
@@ -338,7 +367,7 @@
      *
      * @returns {string} A formatted string with page context info.
      */
-    const pageContext = () => {
+    const pageContext = (): string => {
         const parts = [];
         try { if (typeof location !== "undefined" && location.href) parts.push(`URL: ${location.href}`); } catch {}
         try { if (typeof document !== "undefined" && document.title) parts.push(`Title: ${truncate(document.title, 80)}`); } catch {}
@@ -363,7 +392,7 @@
      * @param {number} ms Milliseconds to wait (passed to setTimeout).
      * @returns {Promise<void>} Resolves after the delay (or immediately in test sandbox).
      */
-    const settle = (ms) => new Promise(r => (typeof setTimeout === "function" ? setTimeout(r, ms) : r()));
+    const settle = (ms: number): Promise<void> => new Promise(r => (typeof setTimeout === "function" ? setTimeout(r, ms) : r()));
 
     // Smallest CSS-px width/height an element may have and still be worth
     // screenshotting. Below this (a 1px spacer, a collapsed box) the crop is a
@@ -383,7 +412,7 @@
      * @param {number} dpr The device pixel ratio.
      * @returns {Promise<string>} The cropped image as a data URL.
      */
-    const cropDataUrl = (dataUrl, rect, dpr) => new Promise((resolve, reject) => {
+    const cropDataUrl = (dataUrl: string, rect: DOMRect, dpr: number): Promise<string> => new Promise((resolve, reject) => {
         const img = new Image();
         img.onload = () => {
             const sx = Math.max(0, Math.round(rect.left * dpr));
@@ -393,7 +422,7 @@
             const canvas = document.createElement("canvas");
             canvas.width = sw;
             canvas.height = sh;
-            canvas.getContext("2d").drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+            canvas.getContext("2d")!.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
             resolve(canvas.toDataURL("image/png"));
         };
         img.onerror = () => reject(new Error("failed to load the captured screenshot"));
@@ -459,7 +488,7 @@
     // Invisible / bidi / format-control characters that never legitimately appear
     // in code but are the vector for Trojan-Source and homoglyph prompt-injection
     // attacks. Model-written scripts get scanned before you approve them.
-    const SUSPICIOUS_CHARS = {
+    const SUSPICIOUS_CHARS: { [key: number]: string } = {
         0x202A: "LEFT-TO-RIGHT EMBEDDING", 0x202B: "RIGHT-TO-LEFT EMBEDDING",
         0x202C: "POP DIRECTIONAL FORMATTING", 0x202D: "LEFT-TO-RIGHT OVERRIDE",
         0x202E: "RIGHT-TO-LEFT OVERRIDE", 0x2066: "LEFT-TO-RIGHT ISOLATE",
@@ -479,8 +508,8 @@
      * @param {string} str The string to scan.
      * @returns {Array<{index: number, code: string, name: string}>} Array of findings.
      */
-    const suspiciousChars = (str) => {
-        const out = [];
+    const suspiciousChars = (str: string): { index: number; code: string; name: string }[] => {
+        const out: { index: number; code: string; name: string }[] = [];
         const s = String(str == null ? "" : str);
         for (let i = 0; i < s.length; i++) {
             const code = s.charCodeAt(i);
@@ -499,8 +528,8 @@
      * @param {Object} args The arguments object to check.
      * @returns {string} Warning banner if suspicious chars found, empty string otherwise.
      */
-    const suspiciousArgsWarning = (args) => {
-        const findings = [];
+    const suspiciousArgsWarning = (args: unknown): string => {
+        const findings: { index: number; code: string; name: string }[] = [];
         for (const v of Object.values(args || {})) {
             if (typeof v === "string") findings.push(...suspiciousChars(v));
         }
@@ -518,7 +547,7 @@
      * @param {Object} args The arguments to render.
      * @returns {string} The rendered arguments string.
      */
-    const renderArgs = (args) => Object.entries(args || {})
+    const renderArgs = (args: unknown): string => Object.entries(args || {})
         .map(([k, v]) => `${k}:\n${typeof v === "string" ? v : JSON.stringify(v)}`)
         .join("\n\n");
 
@@ -530,7 +559,7 @@
      *
      * @param {{step: number, thought?: string, tool?: string, arguments?: Object, result?: string, elements?: Node[]}} ev The event data.
      */
-    const logStep = (ev) => ev.thought
+    const logStep = (ev: { step: number; thought?: string; tool?: string; arguments?: unknown; result?: string; elements?: Node[] }) => ev.thought
         ? console.log(`#${ev.step} 💭`, ev.thought)
         : console.log(`#${ev.step} ${ev.tool}`, ev.arguments, "→", String(ev.result), ...(ev.elements || []));
 
@@ -544,7 +573,7 @@
      * @param {{tool: string, arguments: Object}} req The approval request.
      * @returns {boolean} True if approved, false otherwise.
      */
-    const defaultApprove = ({ tool, arguments: args }) => {
+    const defaultApprove = ({ tool, arguments: args }: ApprovalRequest): boolean => {
         if (typeof window.confirm !== "function") return false;
         return window.confirm(
             `${suspiciousArgsWarning(args)}window.ml agent wants to run "${tool}":\n\n${renderArgs(args)}\n\nAllow this?`
@@ -563,13 +592,13 @@
      * @param {Object} orig The original arguments.
      * @returns {{approved: boolean, feedback: string|null, arguments: Object}} Normalized approval result.
      */
-    const normalizeApproval = (result, orig) => {
+    const normalizeApproval = (result: ApprovalDecision, orig: Record<string, unknown>): { approved: boolean; feedback: string | null; arguments: Record<string, unknown> } => {
         if (result && typeof result === "object") {
             const edited = result.approved && result.arguments && typeof result.arguments === "object";
             return {
                 approved: !!result.approved,
                 feedback: typeof result.feedback === "string" && result.feedback.trim() ? result.feedback.trim() : null,
-                arguments: edited ? result.arguments : orig
+                arguments: edited && result.arguments ? result.arguments : orig
             };
         }
         return { approved: !!result, feedback: null, arguments: orig };
@@ -605,7 +634,7 @@
          * @param {boolean} [options.save=false] Persist across reloads when debug sidebar is on.
          * @returns {{messages: Array<{role: string, content: string, images?: Array, sources?: Array}>, hash: string, model: string|null, think: boolean, cleanup: boolean, schema: Object|null, toolIds: string[]|null, maxTokens: number|null, save: boolean, chat: Function, fork: Function}} Chat session object.
          */
-        createChat: function({ system = null, model = null, think = false, cleanup = true, schema = null, toolIds = null, maxTokens = null, save = false } = {}) {
+        createChat: function({ system = null, model = null, think = false, cleanup = true, schema = null, toolIds = null, maxTokens = null, save = false }: Pick<ChatOptions, "system" | "model" | "think" | "cleanup" | "schema" | "toolIds" | "maxTokens"> & { save?: boolean } = {}): MlHistory {
             const ml = this;
             return {
                 messages: system ? [{ role: "system", content: system }] : [],
@@ -635,21 +664,31 @@
                  * @param {(delta: string, full: string) => void} [options.onToken=null] Streaming callback.
                  * @returns {Promise<string|Object>} The model's reply (parsed if schema set).
                  */
-                chat: async function(prompt, { images = [], model = this.model, think = this.think, cleanup = this.cleanup, schema = this.schema, toolIds = this.toolIds, maxTokens = this.maxTokens, save = this.save, onToken = null } = {}) {
-                    const userMessage = { role: "user", content: prompt };
+                chat: async function(this: MlHistory, prompt: string, { images = [], model = this.model, think = this.think, cleanup = this.cleanup, schema = this.schema, toolIds = this.toolIds, maxTokens = this.maxTokens, save = this.save, onToken }: {
+                    images?: (string | HTMLImageElement)[];
+                    model?: string | null;
+                    think?: boolean | null;
+                    cleanup?: boolean;
+                    schema?: JsonSchema | null;
+                    toolIds?: string[] | null;
+                    maxTokens?: number | null;
+                    save?: boolean;
+                    onToken?: (delta: string, full: string) => void;
+                } = {}): Promise<string | Record<string, unknown>> {
+                    const userMessage: NeutralMessage = { role: "user", content: prompt };
                     if (images.length) {
                         userMessage.images = await Promise.all(
                             images.map(image => ml._imageToDataUrl(image))
                         );
                     }
 
-                    const requestPayload = { "messages": [...this.messages, userMessage], "think": think, "model": model, "schema": schema, "toolIds": toolIds, "maxTokens": maxTokens };
+                    const requestPayload: FetchLlmPayload = { "messages": [...this.messages, userMessage], "think": think, "model": model, "schema": schema, "toolIds": toolIds, "maxTokens": maxTokens };
                     // Debug sidebar: announce the request (no-op unless the sidebar is on).
                     const debug = debugId();
                     // Group turns of THIS conversation by the session hash; `turn` is
                     // this turn's 0-based index (prior user messages). Fixes the
                     // "each follow-up spawns a new block" bug in the sidebar.
-                    const session = { hash: this.hash, turn: this.messages.filter(m => m.role === "user").length };
+                    const session: SessionRef = { hash: this.hash, turn: this.messages.filter(m => m.role === "user").length };
                     emitDebug({ kind: "chat", id: debug, ts: Date.now(), save, session, streaming: typeof onToken === "function" && !schema, request: {
                         model: model || null,
                         messages: requestPayload.messages,
@@ -665,13 +704,13 @@
                             ? await makeStreamingTaskPromise(requestPayload, onToken)
                             : await makeChatRequest(requestPayload));
                     } catch (err) {
-                        emitDebug({ kind: "chat-error", id: debug, ts: Date.now(), save, session, error: String((err && err.message) || err) });
+                        emitDebug({ kind: "chat-error", id: debug, ts: Date.now(), save, session, error: String((err as Error).message || err) });
                         throw err;
                     }
                     let reply = content;
                     if (cleanup) reply = reply.replace(/^<think>[\s\S]*?<\/think>\s*/i, '');
 
-                    const assistantMessage = { role: "assistant", content: reply };
+                    const assistantMessage: NeutralMessage = { role: "assistant", content: reply };
                     if (sources && sources.length) assistantMessage.sources = sources;
                     this.messages.push(userMessage, assistantMessage);
                     emitDebug({ kind: "chat-result", id: debug, ts: Date.now(), save, session, content: reply, sources: (sources && sources.length) ? sources : null, structured: !!schema });
@@ -682,7 +721,7 @@
                  *
                  * @returns {{messages: Array, hash: string, model: string|null, think: boolean, cleanup: boolean, schema: Object|null, toolIds: string[]|null, maxTokens: number|null, save: boolean, chat: Function, fork: Function}} A new chat session with cloned messages.
                  */
-                fork: function() {
+                fork: function(this: MlHistory): MlHistory {
                     const copy = ml.createChat({ model: this.model, think: this.think, cleanup: this.cleanup, schema: this.schema, toolIds: this.toolIds, maxTokens: this.maxTokens, save: this.save });
                     copy.messages = structuredClone(this.messages);
                     return copy;
@@ -697,7 +736,7 @@
          * @param {Object} [options] Chat options (same as createChat).
          * @returns {Promise<string|Object>} The model's reply.
          */
-        chat: async function(prompt, options = {}) {
+        chat: async function(prompt: string, options: ChatOptions = {}): Promise<string | unknown> {
             return this.createChat(options).chat(prompt, options);
         },
         /**
@@ -715,7 +754,11 @@
          * @param {boolean} [options.think=null] Thinking flag; null omits it.
          * @returns {Promise<{content: string, tool_calls: Array<{id?: string, name: string, arguments: Object}>}>} The assistant message with tool calls.
          */
-        step: async function(messages, { tools = [], model = null, think = null } = {}) {
+        step: async function(messages: NeutralMessage[], { tools = [], model = null, think = null }: {
+            tools?: unknown[];
+            model?: string | null;
+            think?: boolean | null;
+        } = {}): Promise<{ content: string; tool_calls: ToolCall[] }> {
             return makeBackgroundTaskPromise(
                 "LLM_REQUEST",
                 "LLM_RESPONSE",
@@ -751,7 +794,7 @@
          * @returns {MlTool} The tool with defaults filled in.
          * @throws {Error} If `name` or a `run` function is missing.
          */
-        defineTool: function({ name, description = "", parameters = { type: "object", properties: {} }, run, requiresApproval = false, capabilities = [] } = {}) {
+        defineTool: function({ name, description = "", parameters = { type: "object", properties: {} }, run, requiresApproval = false, capabilities = [] }: Partial<MlTool> = {}): MlTool {
             if (!name || typeof run !== "function") {
                 throw new Error("ml.defineTool needs a name and a run(args) function");
             }
@@ -806,7 +849,20 @@
          *   `elements` is the live DOM node(s) the model designated via an
          *   `answer`-capable tool (empty for tasks that just act on the page).
          */
-        agent: async function(task, { tools = null, extraTools = [], system = null, hints = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false } = {}) {
+        agent: async function(task: string, { tools = null, extraTools = [], system = null, hints = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false }: {
+            tools?: MlTool[] | null;
+            extraTools?: MlTool[];
+            system?: string | null;
+            hints?: string | null;
+            maxSteps?: number;
+            model?: string | null;
+            think?: boolean | null;
+            approve?: (req: ApprovalRequest) => boolean | ApprovalDecision | Promise<boolean | ApprovalDecision>;
+            onStep?: ((ev: { step: number; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: Node[] }) => void) | null;
+            env?: boolean;
+            vision?: boolean | string | null;
+            logDebug?: boolean;
+        } = {}): Promise<AgentResult> {
             const toolset = [...(tools || this.domTools), ...extraTools];
             // #8 + #3: give the agent eyes with no wiring, preferring NATIVE vision.
             // If the agent's OWN model is vision-capable, register a capture-only
@@ -834,7 +890,7 @@
                 type: "function",
                 function: { name: t.name, description: t.description, parameters: t.parameters }
             }));
-            const hasCap = (cap) => toolset.some(t => t.capabilities && t.capabilities.includes(cap));
+            const hasCap = (cap: string) => toolset.some(t => t.capabilities && t.capabilities.includes(cap));
             let systemPrompt = system || AGENT_SYSTEM;
             if (!system) {
                 // Adapt the default prompt to what the toolset can actually do.
@@ -846,18 +902,18 @@
                 const ctx = pageContext();
                 if (ctx) systemPrompt += `\n\nCurrent page context:\n${ctx}`;
             }
-            const messages = [
+            const messages: NeutralMessage[] = [
                 { role: "system", content: systemPrompt },
                 { role: "user", content: task }
             ];
-            const transcript = [];
-            const answered = [];   // element(s) designated via an `answer`-capable tool
-            const emit = (event) => {
+            const transcript: AgentTranscriptEntry[] = [];
+            const answered: Node[] = [];   // element(s) designated via an `answer`-capable tool
+            const emit = (event: { step: number; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: Node[] }) => {
                 if (logDebug) logStep(event);
                 if (!onStep) return;
                 try { onStep(event); } catch (e) { console.error("ml.agent onStep threw:", e); }
             };
-            const stripThink = (s) => (s || "").replace(/^<think>[\s\S]*?<\/think>\s*/i, "").trim();
+            const stripThink = (s: string) => (s || "").replace(/^<think>[\s\S]*?<\/think>\s*/i, "").trim();
 
             for (let step = 1; step <= maxSteps; step++) {
                 const msg = await this.step(messages, { tools: toolDefs, model, think });
@@ -872,13 +928,13 @@
                     transcript.push({ thought });
                     emit({ step, thought });
                 }
-                messages.push({ role: "assistant", content: msg.content || "", tool_calls: msg.tool_calls });
+                messages.push({ role: "assistant" as const, content: msg.content || "", tool_calls: msg.tool_calls });
 
                 // Run a tool, unwrapping its { content, elements } envelope. A tool
                 // may return a plain string, or { content, elements } to also hand
                 // back real DOM nodes — routed to onStep/the transcript for hovering
                 // in devtools, never to the model.
-                const runTool = async (tool, args) => {
+                const runTool = async (tool: MlTool, args: Record<string, unknown>) => {
                     try {
                         const raw = await tool.run(args);
                         // A tool may also hand back { image, imageLabel } — a screenshot
@@ -914,7 +970,7 @@
                         ({ result, elements, image, imageLabel } = await runTool(tool, args));
                     }
                     result = String(result);
-                    const entry = { tool: call.name, arguments: args, result };
+                    const entry: AgentTranscriptEntry = { tool: call.name, arguments: args, result };
                     if (elements && elements.length) entry.elements = elements;
                     transcript.push(entry);
                     emit({ step, ...entry });
@@ -922,7 +978,7 @@
                     if (tool && tool.capabilities && tool.capabilities.includes("answer") && elements && elements.length) {
                         answered.push(...elements);
                     }
-                    messages.push({ role: "tool", tool_call_id: call.id, content: result });
+                    messages.push({ role: "tool" as const, tool_call_id: call.id, content: result });
                     if (image) pendingImages.push({ image, label: imageLabel || "screenshot" });
                 }
 
@@ -935,7 +991,7 @@
                 if (pendingImages.length) {
                     const labels = pendingImages.map(p => p.label).join(", ");
                     messages.push({
-                        role: "user",
+                        role: "user" as const,
                         content: `Screenshot${pendingImages.length > 1 ? "s" : ""} you requested (${labels}). ` +
                             "Describe what you see, then take the next action — or give your final answer if the task is done.",
                         images: pendingImages.map(p => p.image)
@@ -954,9 +1010,9 @@
          *   ml.agent(task, { approve: ml.approveOnce() })
          * @returns {(req: {tool: string, arguments: Object}) => boolean}
          */
-        approveOnce: function() {
-            const remembered = {};   // (tool + args) key -> remembered decision
-            return ({ tool, arguments: args }) => {
+        approveOnce: function(): (req: ApprovalRequest) => boolean {
+            const remembered: Record<string, boolean> = {};   // (tool + args) key -> remembered decision
+            return ({ tool, arguments: args }: ApprovalRequest): boolean => {
                 let key;
                 try { key = tool + " " + JSON.stringify(args); }
                 catch { key = tool + " " + String(args); }
@@ -976,7 +1032,7 @@
          * @param {Object} [options] Chat options.
          * @returns {Promise<string>} The model's concise reply.
          */
-        chatShort: async function(prompt, options) {
+        chatShort: async function(prompt: string, options: ChatOptions): Promise<string> {
             return this.chat(`${prompt}. Short and concise:`, options);
         },
         // OCR: transcribe baked-in text from an image to a plain string, using
@@ -996,13 +1052,13 @@
          * @param {string} [options.prompt=null] Override the default transcription prompt.
          * @returns {Promise<string>} The transcribed text.
          */
-        read: async function(image, { model = null, prompt = null } = {}) {
+        read: async function(image: string | HTMLImageElement, { model = null, prompt = null }: { model?: string | null; prompt?: string | null } = {}): Promise<string> {
             const dataUrl = await this._imageToDataUrl(image);
             const instruction = prompt ||
                 "Transcribe all text in this image exactly as it appears, " +
                 "preserving reading order. Output only the transcribed text — " +
                 "no commentary, no descriptions, no markdown.";
-            const reply = await makeBackgroundTaskPromise(
+            const reply = await makeBackgroundTaskPromise<string>(
                 "LLM_REQUEST",
                 "LLM_RESPONSE",
                 {
@@ -1032,8 +1088,8 @@
          * @param {number} [options.index=0] Which match of a selector to shoot (0-based).
          * @returns {Promise<string>} The screenshot as a PNG data URL.
          */
-        screenshot: async function(target = null, { scroll = true, fullPage = false, index = 0 } = {}) {
-            const viewport = () => makeBackgroundTaskPromise("CAPTURE_TAB_REQUEST", "CAPTURE_TAB_RESPONSE", {});
+        screenshot: async function(target: string | Element | null = null, { scroll = true, fullPage = false, index = 0 }: { scroll?: boolean; fullPage?: boolean; index?: number } = {}): Promise<string> {
+            const viewport = () => makeBackgroundTaskPromise<string>("CAPTURE_TAB_REQUEST", "CAPTURE_TAB_RESPONSE", {});
             if (target == null) return fullPage ? this._stitchFullPage(viewport) : viewport();
 
             let el = target;
@@ -1068,20 +1124,20 @@
          * @param {Function} capture The capture function that returns a viewport screenshot.
          * @returns {Promise<string>} The stitched full-page screenshot as a PNG data URL.
          */
-        _stitchFullPage: async function(capture) {
+        _stitchFullPage: async function(capture: () => Promise<string>): Promise<string> {
             const dpr = window.devicePixelRatio || 1;
             const vh = window.innerHeight;
             // Cap at ~8 screens so the image stays sane
             const total = Math.min(document.documentElement.scrollHeight, vh * 8);
             const startY = window.scrollY;
-            const shots = [];
+            const shots: { y: number; url: string }[] = [];
 
             for (let y = 0; y < total; y += vh) {
                 window.scrollTo(0, y);
                 // Wait for the browser to actually paint the new scroll position
                 await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
 
-                let url = null;
+                let url: string | null = null;
                 let retries = 3;
 
                 while (retries > 0 && !url) {
@@ -1091,7 +1147,7 @@
                         url = await capture();
                     } catch (e) {
                         // If we still hit the quota, back off for a full second and retry
-                        if (e.message && e.message.includes("MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND")) {
+                        if ((e as Error).message && (e as Error).message.includes("MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND")) {
                             console.warn(`Hit Chrome capture limit at scroll ${y}, backing off...`);
                             await new Promise(r => setTimeout(r, 1000));
                             retries--;
@@ -1108,13 +1164,13 @@
 
             return new Promise((resolve, reject) => {
                 if (!shots.length) return reject(new Error("nothing captured"));
-                const imgs = [];
+                const imgs: HTMLImageElement[] = [];
                 let loaded = 0;
                 const done = () => {
                     const canvas = document.createElement("canvas");
                     canvas.width = imgs[0].naturalWidth;
                     canvas.height = Math.round(total * dpr);
-                    const ctx = canvas.getContext("2d");
+                    const ctx = canvas.getContext("2d")!;
                     shots.forEach((s, i) => ctx.drawImage(imgs[i], 0, Math.round(s.y * dpr)));
                     resolve(canvas.toDataURL("image/png"));
                 };
@@ -1142,7 +1198,7 @@
          * @param {number} [options.maxTokens=512] Hard cap on the description length.
          * @returns {MlTool} A tool with `name: "look"` and `capabilities: ["vision"]`.
          */
-        lookTool: function({ model = null, maxTokens = 512 } = {}) {
+        lookTool: function({ model = null, maxTokens = 512 }: { model?: string | null; maxTokens?: number } = {}): MlTool {
             const ml = this;
             return ml.defineTool({
                 name: "look",
@@ -1167,7 +1223,7 @@
                         index: { type: "integer", description: "Which match of the selector to look at (0-based); iterate a grid with 0,1,2,…" }
                     }
                 },
-                run: async ({ selector, question, scope, index } = {}) => {
+                run: async ({ selector, question, scope, index }: { selector?: string; question?: string; scope?: "viewport" | "page"; index?: number } = {}) => {
                     const fullPage = scope === "page" && !selector;
                     let shot;
                     try { shot = await ml.screenshot(selector || null, { fullPage, index: index || 0 }); }
@@ -1211,7 +1267,7 @@
          *
          * @returns {MlTool} A tool with `name: "click"` and `requiresApproval: true`.
          */
-        clickTool: function() {
+        clickTool: function(): MlTool {
             const ml = this;
             return ml.defineTool({
                 name: "click",
@@ -1229,14 +1285,14 @@
                     },
                     required: ["selector"]
                 },
-                run: async ({ selector, index = 0 } = {}) => {
-                    let el;
+                run: async ({ selector, index = 0 }: { selector: string; index?: number }): Promise<string> => {
+                    let el: Element | undefined;
                     try { el = queryAll(selector)[index]; }
-                    catch (e) { return selectorError(selector, e); }
+                    catch (e) { return selectorError(selector, e as Error); }
                     if (!el) return `No element matches "${selector}"${index ? ` at index ${index}` : ""}.`;
                     const before = (typeof location !== "undefined" && location.href) || "";
                     try { el.scrollIntoView({ block: "center", inline: "center" }); } catch {}
-                    el.click();
+                    (el as HTMLElement).click();
                     await settle(80);   // let navigation / DOM updates begin
                     const after = (typeof location !== "undefined" && location.href) || "";
                     const nav = after && after !== before ? ` Navigated to ${after}.` : "";
@@ -1253,7 +1309,7 @@
          *
          * @returns {MlTool} A tool with `name: "type"` and `requiresApproval: true`.
          */
-        typeTool: function() {
+        typeTool: function(): MlTool {
             const ml = this;
             return ml.defineTool({
                 name: "type",
@@ -1274,17 +1330,18 @@
                     },
                     required: ["selector", "text"]
                 },
-                run: async ({ selector, text = "", index = 0, append = false, submit = false } = {}) => {
-                    let el;
+                run: async ({ selector, text = "", index = 0, append = false, submit = false }: { selector: string; text?: string; index?: number; append?: boolean; submit?: boolean }): Promise<string> => {
+                    let el: Element | undefined;
                     try { el = queryAll(selector)[index]; }
-                    catch (e) { return selectorError(selector, e); }
+                    catch (e) { return selectorError(selector, e as Error); }
                     if (!el) return `No element matches "${selector}"${index ? ` at index ${index}` : ""}.`;
+                    const input = el as HTMLInputElement;
                     const editable = "value" in el;
-                    const cur = editable ? el.value : (el.textContent || "");
+                    const cur = editable ? input.value : (el.textContent || "");
                     const next = append ? cur + text : text;
-                    if (editable) el.value = next; else el.textContent = next;
+                    if (editable) input.value = next; else el.textContent = next;
                     // Fire the events frameworks listen for so the field isn't "empty" to them.
-                    try { el.focus(); } catch {}
+                    try { (el as HTMLElement).focus(); } catch {}
                     for (const type of ["input", "change"]) {
                         try { el.dispatchEvent(new Event(type, { bubbles: true })); } catch {}
                     }
@@ -1293,11 +1350,11 @@
                         for (const type of ["keydown", "keyup"]) {
                             try { el.dispatchEvent(new KeyboardEvent(type, { key: "Enter", code: "Enter", keyCode: 13, bubbles: true })); } catch {}
                         }
-                        if (el.form && typeof el.form.requestSubmit === "function") { try { el.form.requestSubmit(); } catch {} }
+                        if (input.form && typeof input.form.requestSubmit === "function") { try { input.form.requestSubmit(); } catch {} }
                         await settle(80);
                         note = " Submitted (Enter).";
                     }
-                    const shown = editable ? el.value : (el.textContent || "");
+                    const shown = editable ? input.value : (el.textContent || "");
                     return `Typed into ${elLine(el)}. Value now: "${truncate(shown, 100)}".${note} ` +
                         "Re-run look/findByText to see the result.";
                 }
@@ -1316,9 +1373,9 @@
          * @param {string|boolean|null} [vision] Vision option from ml.agent options.
          * @returns {Promise<string|null>} A vision-capable model id, or null.
          */
-        _resolveVisionModel: async function(agentModel, vision) {
+        _resolveVisionModel: async function(agentModel: string | null, vision: boolean | string | null): Promise<string | null> {
             if (typeof vision === "string" && vision) return vision;   // forced
-            let cfg;
+            let cfg: MlPublicConfig | null;
             try { cfg = await this.config(); } catch (e) { cfg = null; }
             const primary = agentModel || (cfg && cfg.model);
             if (await this._modelSees(primary)) return primary;
@@ -1334,9 +1391,9 @@
          * @param {string|null} model The model id to check.
          * @returns {Promise<boolean>} True if the model has vision capability.
          */
-        _modelSees: async function(model) {
+        _modelSees: async function(model: string | null): Promise<boolean> {
             if (!model) return false;
-            let caps;
+            let caps: string[] | null;
             try { caps = await this.capabilities(model); } catch (e) { return false; }
             return Array.isArray(caps) && caps.includes("vision");
         },
@@ -1349,7 +1406,7 @@
          * @returns {MlTool} A tool with `name: "look"`, `capabilities: ["vision"]`, returning
          *   `{ content, image, imageLabel, elements }` for inline vision.
          */
-        _nativeLookTool: function() {
+        _nativeLookTool: function(): MlTool {
             const ml = this;
             return ml.defineTool({
                 name: "look",
@@ -1370,7 +1427,7 @@
                         index: { type: "integer", description: "Which match of the selector to look at (0-based); iterate a grid with 0,1,2,…" }
                     }
                 },
-                run: async ({ selector, scope, index } = {}) => {
+                run: async ({ selector, scope, index }: { selector?: string; scope?: "viewport" | "page"; index?: number } = {}): Promise<string | ToolResult> => {
                     const fullPage = scope === "page" && !selector;
                     let shot;
                     try { shot = await ml.screenshot(selector || null, { fullPage, index: index || 0 }); }
@@ -1411,13 +1468,13 @@
          * @returns {Object} The parsed JSON object.
          * @throws {Error} If the text is not valid JSON.
          */
-        _parseJSON: function(text) {
+        _parseJSON: function(text: string): unknown {
             const stripped = text.trim().replace(/^```(?:json)?\s*|\s*```$/g, "");
             try {
                 return JSON.parse(stripped);
             } catch (err) {
                 throw new Error(
-                    `schema was set but the reply wasn't valid JSON (${err.message}). ` +
+                    `schema was set but the reply wasn't valid JSON (${(err as Error).message}). ` +
                     `Got: ${text.slice(0, 200)}`
                 );
             }
@@ -1431,7 +1488,7 @@
          * @param {string|HTMLImageElement} image A URL string or <img> element.
          * @returns {Promise<string>} The image as a data URL.
          */
-        _imageToDataUrl: async function(image) {
+        _imageToDataUrl: async function(image: string | HTMLImageElement): Promise<string> {
             let url = "";
 
             if (typeof image === "string") {
@@ -1458,10 +1515,10 @@
                         .then(r => r.blob())
                         .then(blob => {
                             const reader = new FileReader();
-                            reader.onloadend = () => resolve(reader.result);
+                            reader.onloadend = () => resolve(reader.result as string);
                             reader.readAsDataURL(blob);
                         })
-                        .catch(e => reject("Failed to read Blob: " + e.message));
+                        .catch(e => reject("Failed to read Blob: " + (e as Error).message));
                 });
             }
 
@@ -1477,7 +1534,7 @@
          * @param {string} url The image URL to fetch.
          * @returns {Promise<string>} The image as a base64 data URL.
          */
-        _fetchImageBase64: async function(url) {
+        _fetchImageBase64: async function(url: string): Promise<string> {
             return makeBackgroundTaskPromise(
                 "B64_REQUEST",
                 "B64_RESPONSE",
@@ -1489,7 +1546,7 @@
          *
          * @returns {Promise<string[]>} Array of model ids.
          */
-        models: async function() {
+        models: async function(): Promise<string[]> {
             return makeBackgroundTaskPromise("LIST_MODELS_REQUEST", "LIST_MODELS_RESPONSE", {});
         },
         /**
@@ -1502,7 +1559,7 @@
          * @param {string} [model=null] The model id (omitted = saved default).
          * @returns {Promise<string[]|null>} Array of capabilities, or null if undeterminable.
          */
-        capabilities: async function(model = null) {
+        capabilities: async function(model: string | null = null): Promise<string[] | null> {
             return makeBackgroundTaskPromise("CAPS_REQUEST", "CAPS_RESPONSE", { "model": model });
         },
         /**
@@ -1510,7 +1567,7 @@
          *
          * @returns {Promise<string|null>} The model id.
          */
-        getModel: async function() {
+        getModel: async function(): Promise<string | null> {
             return makeBackgroundTaskPromise("GET_MODEL_REQUEST", "GET_MODEL_RESPONSE", {});
         },
         /**
@@ -1521,7 +1578,7 @@
          *
          * @returns {Promise<{model: string, ocrModel: string, apiFormat: string}>} The config object.
          */
-        config: async function() {
+        config: async function(): Promise<MlPublicConfig> {
             return makeBackgroundTaskPromise("CONFIG_REQUEST", "CONFIG_RESPONSE", {});
         },
         /**
@@ -1531,7 +1588,7 @@
          * @param {string} model The model id to set.
          * @returns {Promise<string>} The newly set model id.
          */
-        setModel: async function(model) {
+        setModel: async function(model: string): Promise<string> {
             return makeBackgroundTaskPromise("SET_MODEL_REQUEST", "SET_MODEL_RESPONSE", { "model": model });
         },
         /**
@@ -1539,7 +1596,7 @@
          *
          * @returns {Promise<Array<{model: string, vramGB: number, expiresAt: number}>>} Array of loaded models.
          */
-        ps: async function() {
+        ps: async function(): Promise<LoadedModel[]> {
             return makeBackgroundTaskPromise("PS_REQUEST", "PS_RESPONSE", {});
         },
         /**
@@ -1549,7 +1606,7 @@
          * @param {string} [model] The model id to evict; omitted = evict all.
          * @returns {Promise<string[]>} The unloaded models.
          */
-        unload: async function(model = null) {
+        unload: async function(model: string | null = null): Promise<string[]> {
             return makeBackgroundTaskPromise("UNLOAD_REQUEST", "UNLOAD_RESPONSE", { "model": model });
         },
         /**
@@ -1558,7 +1615,7 @@
          * @param {string} prompt The user prompt.
          * @param {Object} [options] Chat options.
          */
-        logChat: async function(prompt, options) {
+        logChat: async function(prompt: string, options: ChatOptions): Promise<void> {
             const response = await this.chat(prompt, options);
             console.log(response);
         },
@@ -1568,7 +1625,7 @@
          * @param {string} prompt The user prompt.
          * @param {Object} [options] Chat options.
          */
-        logChatShort: async function(prompt, options) {
+        logChatShort: async function(prompt: string, options: ChatOptions): Promise<void> {
             const response = await this.chatShort(prompt, options);
             console.log(response);
         },
@@ -1593,7 +1650,7 @@
                 },
                 required: ["text"]
             },
-            run: ({ text, limit = 10 }) => {
+            run: ({ text, limit = 10 }: { text: string; limit?: number }): string | ToolResult => {
                 if (!text) return "Provide `text` to search for.";
                 const wanted = String(text).toLowerCase();
                 const out = [], els = [];
@@ -1626,10 +1683,10 @@
                 },
                 required: ["selector"]
             },
-            run: ({ selector, depth = 2 }) => {
-                let el;
+            run: ({ selector, depth = 2 }: { selector: string; depth?: number }): string | ToolResult => {
+                let el: Element | undefined;
                 try { el = queryAll(selector)[0]; }
-                catch (e) { return selectorError(selector, e); }
+                catch (e) { return selectorError(selector, e as Error); }
                 if (!el) return `No element matches "${selector}".`;
                 return { content: describeSkeleton(el, Math.min(Math.max(depth, 0), 4)), elements: [el] };
             }
@@ -1645,15 +1702,15 @@
                 properties: { selector: { type: "string", description: "CSS selector; the first match's ancestors are listed." } },
                 required: ["selector"]
             },
-            run: ({ selector }) => {
-                let el;
+            run: ({ selector }: { selector: string }): string | ToolResult => {
+                let el: Element | undefined;
                 try { el = queryAll(selector)[0]; }
-                catch (e) { return selectorError(selector, e); }
+                catch (e) { return selectorError(selector, e as Error); }
                 if (!el) return `No element matches "${selector}".`;
-                const chain = [];
-                let node = el, i = 0;
+                const chain: string[] = [];
+                let node: Node | null = el, i = 0;
                 while (node && node.nodeType === 1 && node !== document.documentElement && i < 15) {
-                    chain.push(`[${i}] ${elLine(node)}`);
+                    chain.push(`[${i}] ${elLine(node as Element)}`);
                     node = node.parentElement;
                     i++;
                 }
@@ -1669,10 +1726,10 @@
                 properties: { selector: { type: "string" } },
                 required: ["selector"]
             },
-            run: ({ selector }) => {
-                let els;
+            run: ({ selector }: { selector: string }): string | ToolResult => {
+                let els: Element[];
                 try { els = queryAll(selector); }
-                catch (e) { return selectorError(selector, e); }
+                catch (e) { return selectorError(selector, e as Error); }
                 return { content: String(els.length), elements: els.slice(0, 50) };
             }
         }),
@@ -1688,15 +1745,15 @@
                 },
                 required: ["selector"]
             },
-            run: ({ selector, n = 5 }) => {
-                let els;
+            run: ({ selector, n = 5 }: { selector: string; n?: number }): string | ToolResult => {
+                let els: Element[];
                 try { els = queryAll(selector); }
-                catch (e) { return selectorError(selector, e); }
+                catch (e) { return selectorError(selector, e as Error); }
                 if (!els.length) return `No element matches "${selector}".`;
                 const count = Math.min(n, els.length);
-                const out = [], sampled = [];
+                const out: string[] = [], sampled: Element[] = [];
                 for (let i = 0; i < count; i++) {
-                    out.push(`#${i}: ${truncate(els[i].innerText || els[i].textContent, 120)}`);
+                    out.push(`#${i}: ${truncate((els[i] as HTMLElement).innerText || els[i].textContent, 120)}`);
                     sampled.push(els[i]);
                 }
                 if (els.length > count) out.push(`…(${count} of ${els.length} shown)`);
@@ -1716,26 +1773,27 @@
                 properties: { js: { type: "string", description: "JavaScript to run. console.log to print observations and/or end with an expression to return its value." } },
                 required: ["js"]
             },
-            run: async ({ js }) => {
+            run: async ({ js }: { js: string }): Promise<string | ToolResult> => {
                 // The model can't see the page's console, and expressions like
                 // forEach(...) evaluate to undefined — so it often console.logs to
                 // "read" data and gets nothing back. Capture console output during
                 // the eval and return it too, so that pattern still works.
-                const logs = [];
-                const methods = ["log", "info", "warn", "error", "debug"];
-                const saved = {};
+                const logs: string[] = [];
+                const methods = ["log", "info", "warn", "error", "debug"] as const;
+                const saved: Record<string, typeof console.log> = {};
                 for (const m of methods) {
                     saved[m] = console[m];
-                    console[m] = (...a) => logs.push(a.map(x => {
+                    console[m] = (...a: unknown[]) => logs.push(a.map(x => {
                         if (typeof x === "string") return x;
                         try { return JSON.stringify(x); } catch { return String(x); }
                     }).join(" "));
                 }
 
-                let result, failed;
+                let result: unknown;
+                let failed: unknown;
                 try {
                     result = (0, eval)(js);
-                    if (result && typeof result.then === "function") result = await result;
+                    if (result && typeof (result as Promise<unknown>).then === "function") result = await result;
                 } catch (e) {
                     failed = e;
                 } finally {
@@ -1744,9 +1802,9 @@
 
                 // Prefix any captured console output onto the returned value.
                 const logged = logs.length ? `console:\n${truncate(logs.join("\n"), 500)}` : "";
-                const withLogs = (value) => logged ? `${logged}\n\nvalue: ${value}` : value;
+                const withLogs = (value: string) => logged ? `${logged}\n\nvalue: ${value}` : value;
 
-                if (failed) return withLogs(`Error: ${failed.message}`);
+                if (failed) return withLogs(`Error: ${(failed as Error).message}`);
 
                 // DOM node results come back hoverable (see the loop's envelope).
                 if (typeof Element !== "undefined" && result instanceof Element) {
@@ -1756,13 +1814,13 @@
                     (typeof NodeList !== "undefined" && result instanceof NodeList) ||
                     (typeof HTMLCollection !== "undefined" && result instanceof HTMLCollection) ||
                     (Array.isArray(result) && result.length > 0 &&
-                        result.every(n => typeof Element !== "undefined" && n instanceof Element))
+                        result.every((n: unknown) => typeof Element !== "undefined" && n instanceof Element))
                 );
                 if (isNodes) {
-                    return { content: withLogs(`${result.length} element(s)`), elements: [...result].slice(0, 50) };
+                    return { content: withLogs(`${(result as NodeListOf<Node>).length} element(s)`), elements: [...(result as NodeListOf<Node>)].slice(0, 50) };
                 }
 
-                let value;
+                let value: string;
                 if (result === undefined) value = "(undefined)";
                 else if (typeof result === "object") {
                     try { value = truncate(JSON.stringify(result), 500); }
@@ -1777,7 +1835,7 @@
                 "date/time + locale/timezone. Use it to ground time-relative tasks (what counts as " +
                 "'today'?) and to confirm the site and language before matching text.",
             parameters: { type: "object", properties: {} },
-            run: () => pageContext()
+            run: (): string => pageContext()
         }),
         T({
             name: "scroll",
@@ -1793,17 +1851,17 @@
                     by: { type: "integer", description: "Scroll by this many pixels instead (negative = up)." }
                 }
             },
-            run: async ({ to, selector, by } = {}) => {
+            run: async ({ to, selector, by }: { to?: "bottom" | "top" | "element"; selector?: string; by?: number } = {}): Promise<string> => {
                 const doc = document.scrollingElement || document.documentElement || document.body;
-                let note;
+                let note: string;
                 if (typeof by === "number") {
                     window.scrollBy(0, by);
                     note = `Scrolled by ${by}px`;
                 } else if (to === "element" || selector) {
                     if (!selector) return "Provide `selector` to scroll to an element.";
-                    let el;
+                    let el: Element | undefined;
                     try { el = queryAll(selector)[0]; }
-                    catch (e) { return selectorError(selector, e); }
+                    catch (e) { return selectorError(selector, e as Error); }
                     if (!el) return `No element matches "${selector}".`;
                     el.scrollIntoView({ block: "center", inline: "center" });
                     note = `Scrolled "${selector}" into view`;
@@ -1842,10 +1900,10 @@
                 },
                 required: ["selector"]
             },
-            run: ({ selector, index, note }) => {
-                let els;
+            run: ({ selector, index, note }: { selector: string; index?: number; note?: string }): string | ToolResult => {
+                let els: Element[];
                 try { els = queryAll(selector); }
-                catch (e) { return selectorError(selector, e); }
+                catch (e) { return selectorError(selector, e as Error); }
                 if (index != null) {
                     const el = els[index];
                     if (!el) return `No element at index ${index} for "${selector}" (${els.length} match(es)).`;

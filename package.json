@@ -13,5 +13,10 @@
         "esbuild": "^0.28.1",
         "jsdom": "^29.1.1",
         "typescript": "^7.0.2"
+    },
+    "dependencies": {
+        "@preact/signals": "^2.9.3",
+        "highlight.js": "^11.11.1",
+        "preact": "^10.29.7"
     }
 }

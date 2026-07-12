@@ -281,4 +281,42 @@ function loadDomWorld(html = "") {
     return { ml: win.ml, window: win, document: win.document };
 }
 
-module.exports = { jsonResponse, htmlResponse, streamResponse, loadBackground, loadPageWorld, loadDomWorld, loadDotEnv };
+// Boots the BUILT sidebar (dist/sidebar.js, a Preact bundle) over a jsdom window
+// with mocked chrome/fetch/matchMedia, so we can drive it with __mlDebug events
+// and assert on the rendered shadow DOM. Independent of injected.js.
+async function loadSidebarWorld({ sync = {}, local = {} } = {}) {
+    const dom = new JSDOM(`<!doctype html><html><body></body></html>`, { runScripts: "outside-only", pretendToBeVisual: true });
+    const win = dom.window;
+    const syncStore = { sidebar: true, theme: "auto", ...sync };
+    const localStore = { ml_debug_width: 0, ...local };
+    const changeListeners = [];
+    win.chrome = {
+        runtime: { getURL: (f) => f },
+        storage: {
+            sync: { get: (defaults, cb) => cb({ ...defaults, ...syncStore }) },
+            local: {
+                get: (defaults, cb) => cb({ ...defaults, ...localStore }),
+                set: (obj) => Object.assign(localStore, obj)
+            },
+            onChanged: { addListener: (fn) => changeListeners.push(fn) }
+        }
+    };
+    win.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+    // The sidebar only fetches sidebar.css (its shell/markup is Preact JSX).
+    win.fetch = async () => ({ text: async () => fs.readFileSync(path.join(DIST, "sidebar.css"), "utf8") });
+    win.eval(fs.readFileSync(path.join(DIST, "sidebar.js"), "utf8"));
+
+    const tick = () => new Promise((r) => win.setTimeout(r, 0));   // flush async mount / Preact renders
+    for (let i = 0; i < 60 && !win.document.getElementById("ml-debug-sidebar-host"); i++) await tick();
+    const hostEl = win.document.getElementById("ml-debug-sidebar-host");
+    const shadow = hostEl && hostEl.shadowRoot;
+    const dispatch = async (ev) => {
+        const e = new win.MessageEvent("message", { data: { __mlDebug: ev } });
+        Object.defineProperty(e, "source", { value: win });   // sidebar checks e.source === window
+        win.dispatchEvent(e);
+        await tick();
+    };
+    return { window: win, shadow, dispatch, tick, changeListeners, syncStore, localStore };
+}
+
+module.exports = { jsonResponse, htmlResponse, streamResponse, loadBackground, loadPageWorld, loadDomWorld, loadSidebarWorld, loadDotEnv };

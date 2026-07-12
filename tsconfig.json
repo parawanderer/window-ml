@@ -4,6 +4,8 @@
         "lib": ["ES2022", "DOM", "DOM.Iterable"],
         "module": "ES2022",
         "moduleResolution": "bundler",
+        "jsx": "react-jsx",
+        "jsxImportSource": "preact",
         "strict": true,
         "noImplicitAny": true,
         "allowJs": true,
@@ -14,6 +16,6 @@
         "isolatedModules": true,
         "forceConsistentCasingInFileNames": true
     },
-    "include": ["**/*.ts", "**/*.js"],
+    "include": ["**/*.ts", "**/*.tsx", "**/*.js"],
     "exclude": ["node_modules", "dist", "tests"]
 }

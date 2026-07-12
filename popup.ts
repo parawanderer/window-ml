@@ -1,55 +1,54 @@
-// Must match DEFAULT_CONFIG in background.js
-const DEFAULT_CONFIG = {
+// Settings popup: reads/writes the extension config (chrome.storage.sync), the
+// model picker, Save & Test, VRAM readout, and the theme. Talks to background.ts
+// via chrome.runtime for privileged work.
+import type { MlConfig, Theme, LoadedModel } from "./contract";
+
+// Must match DEFAULT_CONFIG in background.ts.
+const DEFAULT_CONFIG: MlConfig = {
     chatUrl: "http://localhost:3000/api/chat/completions",
     apiKey: "",
     model: "",
     apiFormat: "openai",
     ocrModel: "",
     sidebar: false,
-    theme: "auto"
+    theme: "auto",
 };
 
 // Text/select inputs, read via .value. Booleans are handled separately (CHECKBOXES).
-const FIELDS = ["chatUrl", "apiKey", "model", "apiFormat", "ocrModel", "theme"];
-const CHECKBOXES = ["sidebar"];
+const FIELDS: (keyof MlConfig)[] = ["chatUrl", "apiKey", "model", "apiFormat", "ocrModel", "theme"];
+const CHECKBOXES: (keyof MlConfig)[] = ["sidebar"];
 
-const $ = (id) => document.getElementById(id);
+// Every referenced element is an <input>/<select> (or close enough for the props
+// we touch: value/checked/textContent/className/style/replaceChildren).
+const $ = (id: string) => document.getElementById(id) as HTMLInputElement;
 const statusEl = () => $("status");
 
 // --- theme: light/dark/auto → a data-theme attribute the CSS variables key on ---
 const themeMedia = window.matchMedia("(prefers-color-scheme: dark)");
-const resolveTheme = (pref) =>
+const resolveTheme = (pref: Theme): "dark" | "light" =>
     (pref === "light" || pref === "dark") ? pref : (themeMedia.matches ? "dark" : "light");
-const applyTheme = (pref) => { document.documentElement.dataset.theme = resolveTheme(pref); };
+const applyTheme = (pref: Theme) => { document.documentElement.dataset.theme = resolveTheme(pref); };
 // Re-resolve on OS change while in "auto".
 themeMedia.addEventListener("change", () => {
     if (($("theme").value || "auto") === "auto") applyTheme("auto");
 });
 
-function setStatus(text, kind) {
+function setStatus(text: string, kind?: string) {
     statusEl().textContent = text;
     statusEl().className = kind || "";
 }
 
-function readForm() {
-    const config = {};
-    for (const field of FIELDS) {
-        config[field] = $(field).value.trim();
-    }
-    for (const box of CHECKBOXES) {
-        config[box] = $(box).checked;
-    }
+function readForm(): Record<string, string | boolean> {
+    const config: Record<string, string | boolean> = {};
+    for (const field of FIELDS) config[field] = $(field).value.trim();
+    for (const box of CHECKBOXES) config[box] = $(box).checked;
     return config;
 }
 
 async function loadForm() {
-    const config = await chrome.storage.sync.get(DEFAULT_CONFIG);
-    for (const field of FIELDS) {
-        $(field).value = config[field];
-    }
-    for (const box of CHECKBOXES) {
-        $(box).checked = !!config[box];
-    }
+    const config = await chrome.storage.sync.get(DEFAULT_CONFIG) as MlConfig;
+    for (const field of FIELDS) $(field).value = config[field] as string;
+    for (const box of CHECKBOXES) $(box).checked = !!config[box];
     applyTheme(config.theme);
 }
 
@@ -58,7 +57,7 @@ async function save() {
     setStatus("Saved.", "ok");
 }
 
-// Model-list fetching lives in background.js (listAvailableModels); the
+// Model-list fetching lives in background.ts (listAvailableModels); the
 // current form values are passed as overrides so Load works before saving.
 function loadModels() {
     const { chatUrl, apiKey } = readForm();
@@ -66,7 +65,7 @@ function loadModels() {
 
     chrome.runtime.sendMessage(
         { type: "LIST_MODELS", payload: { chatUrl, apiKey } },
-        (response) => {
+        (response: any) => {
             if (chrome.runtime.lastError) {
                 setStatus(`Failed to load models: ${chrome.runtime.lastError.message}`, "err");
                 return;
@@ -76,7 +75,7 @@ function loadModels() {
                 return;
             }
 
-            const models = response.data;
+            const models: string[] = response.data;
             const list = $("modelList");
             list.replaceChildren(...models.map(id => {
                 const opt = document.createElement("option");
@@ -95,7 +94,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "sync") return;
     for (const field of FIELDS) {
         if (changes[field] && changes[field].newValue !== undefined) {
-            $(field).value = changes[field].newValue;
+            $(field).value = changes[field].newValue as string;
         }
     }
     for (const box of CHECKBOXES) {
@@ -103,7 +102,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
             $(box).checked = !!changes[box].newValue;
         }
     }
-    if (changes.theme && changes.theme.newValue !== undefined) applyTheme(changes.theme.newValue);
+    if (changes.theme && changes.theme.newValue !== undefined) applyTheme(changes.theme.newValue as Theme);
 });
 
 async function saveAndTest() {
@@ -112,7 +111,7 @@ async function saveAndTest() {
 
     chrome.runtime.sendMessage(
         { type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "Reply with exactly: OK" }] } },
-        (response) => {
+        (response: any) => {
             if (chrome.runtime.lastError) {
                 setStatus(`Test failed: ${chrome.runtime.lastError.message}`, "err");
             } else if (response && response.error) {
@@ -128,7 +127,7 @@ async function freeVram() {
     await chrome.storage.sync.set(readForm());
     setStatus("Unloading models…", "busy");
 
-    chrome.runtime.sendMessage({ type: "OLLAMA_UNLOAD", payload: {} }, async (response) => {
+    chrome.runtime.sendMessage({ type: "OLLAMA_UNLOAD", payload: {} }, async (response: any) => {
         if (chrome.runtime.lastError) {
             setStatus(`Unload failed: ${chrome.runtime.lastError.message}`, "err");
         } else if (response && response.error) {
@@ -151,7 +150,7 @@ async function freeVram() {
 
 // Renders per-model VRAM usage from Ollama's /api/ps (used only — Ollama's API
 // doesn't report total GPU capacity, so there's no denominator to show).
-function renderVram(models) {
+function renderVram(models: LoadedModel[]) {
     if (!models.length) {
         $("vram").textContent = "Nothing loaded.";
         return;
@@ -163,9 +162,9 @@ function renderVram(models) {
 
 // Resolves to the loaded-model list (so callers can poll after an unload), or
 // null when there's no Ollama backend to report on.
-function refreshVram() {
+function refreshVram(): Promise<LoadedModel[] | null> {
     return new Promise((resolve) => {
-        chrome.runtime.sendMessage({ type: "OLLAMA_PS", payload: {} }, (response) => {
+        chrome.runtime.sendMessage({ type: "OLLAMA_PS", payload: {} }, (response: any) => {
             // No Ollama backend (e.g. a cloud-only setup) — hide the section
             // entirely rather than showing an error for something that doesn't apply.
             if (chrome.runtime.lastError || (response && response.error)) {
@@ -174,14 +173,14 @@ function refreshVram() {
                 return;
             }
             $("vramSection").style.display = "block";
-            const models = response.data || [];
+            const models: LoadedModel[] = response.data || [];
             renderVram(models);
             resolve(models);
         });
     });
 }
 
-$("theme").addEventListener("change", () => applyTheme($("theme").value));   // live preview
+$("theme").addEventListener("change", () => applyTheme($("theme").value as Theme));   // live preview
 $("save").addEventListener("click", save);
 $("unload").addEventListener("click", freeVram);
 $("test").addEventListener("click", saveAndTest);

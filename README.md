@@ -43,7 +43,23 @@ await h.chat("Now explain it like I'm five");
 > Step-by-step walkthrough (install, minimum config, troubleshooting): [docs/SETUP.md](docs/SETUP.md)
 
 
-1. `chrome://extensions` → Developer mode → **Load unpacked** → this directory.
+1. **Get a built extension in `dist/`.** The extension is TypeScript and must be
+   compiled — you load `dist/`, *not* the repo root (the root has no built JS, so
+   Chrome will error with `Could not load JavaScript 'content.js'`). Two ways:
+
+   - **Build it yourself** (needs Node ≥ 20):
+     ```bash
+     npm install
+     npm run build      # → writes dist/   (npm run watch to rebuild on save)
+     ```
+   - **No Node?** Grab the prebuilt bundle from CI: the repo's GitHub Actions
+     **build artifact** (Actions tab → latest run → *Artifacts* →
+     `window-ml-extension`) is a zip of `dist/` you can unzip and load directly.
+     `dist/` is not committed to git, so cloning alone won't give you a loadable
+     extension.
+
+   Then: `chrome://extensions` → Developer mode → **Load unpacked** → select the
+   **`dist/`** folder.
 2. Recommended: set the extension's **Site access** to **On click** or whitelist specific trusted sites only, so
    `window.ml` only exists on pages where you've clicked the extension icon.
 3. Open the popup (extension icon):

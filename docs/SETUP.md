@@ -16,13 +16,26 @@ ollama pull llama3.2            # or: docker exec ollama ollama pull llama3.2
 
 ## 1. Install the extension
 
-There's no store listing — it loads as an unpacked extension:
+There's no store listing — it loads as an unpacked extension. The extension is
+TypeScript, so it has to be built first; you load the generated **`dist/`**
+folder, not the repo root (loading the root fails with `Could not load
+JavaScript 'content.js'`).
 
-1. `git clone https://github.com/parawanderer/window-ml.git` (or download the
-   ZIP via GitHub's **Code** button and extract it).
+1. Get a built `dist/`, either way:
+   - **Build it** (needs Node ≥ 20):
+     ```bash
+     git clone https://github.com/parawanderer/window-ml.git
+     cd window-ml
+     npm install
+     npm run build      # writes dist/  (npm run watch to rebuild on save)
+     ```
+   - **No Node?** Download the prebuilt bundle from CI: the repo's GitHub
+     Actions **build artifact** (Actions tab → latest run → *Artifacts* →
+     `window-ml-extension`) is a zip of `dist/`. Unzip it and load that folder.
+     `dist/` isn't committed to git, so a plain clone/ZIP won't contain it.
 2. Open `chrome://extensions` (Edge: `edge://extensions`).
 3. Enable **Developer mode** (toggle in the corner).
-4. Click **Load unpacked** and select the cloned folder.
+4. Click **Load unpacked** and select the **`dist/`** folder.
 
 Recommended: on the extension's details page, set **Site access** to
 **On click**. Then `window.ml` only exists on pages where you've clicked the

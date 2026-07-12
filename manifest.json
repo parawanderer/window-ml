@@ -21,7 +21,7 @@
     ],
     "web_accessible_resources": [
       {
-        "resources": ["injected.js", "sidebar.html", "sidebar.css"],
+        "resources": ["injected.js", "sidebar.css"],
         "matches": ["<all_urls>"]
       }
     ]

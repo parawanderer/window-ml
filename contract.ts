@@ -118,6 +118,24 @@ export interface ChatOptions {
     onToken?: (delta: string, full: string) => void;
 }
 
+/** A stateful multi-turn chat (the object ml.createChat returns). Its methods'
+ *  `this` is the history object itself — annotate ml.createChat's return type as
+ *  `MlHistory` so `this.model` / `this.messages` resolve (do NOT rewrite `this`
+ *  to the captured `ml`; that's window.ml, a different object). */
+export interface MlHistory {
+    messages: NeutralMessage[];
+    hash: string;
+    model: string | null;
+    think: boolean | null;
+    cleanup: boolean;
+    schema: JsonSchema | null;
+    toolIds: string[] | null;
+    maxTokens: number | null;
+    save: boolean;
+    chat(this: MlHistory, prompt: string, opts?: ChatOptions): Promise<string | Record<string, unknown>>;
+    fork(this: MlHistory): MlHistory;
+}
+
 /* ------------------- relay contract (page ⇄ content ⇄ background) ------------------- */
 
 /** Page-side request types posted over window.postMessage (content.js maps
@@ -186,3 +204,12 @@ export type MlDebugEvent = DebugChatStart | DebugChatResult | DebugChatError;
 /** Window-bus envelopes between the core (main world) and the sidebar. */
 export interface MlDebugMessage { __mlDebug: MlDebugEvent; }
 export interface MlSidebarReady { __mlSidebar: "ready"; }
+
+/* --------------------------- global augmentation -------------------------- */
+// injected.js defines window.ml (the whole public API) on the page's main world.
+// Typed `any` for now — a precise `MlApi` interface is a separate deliverable;
+// this just lets injected.ts reference window.ml without an error.
+declare global {
+    interface Window { ml: any; }
+}
+export {};

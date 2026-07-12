@@ -11,28 +11,33 @@ import { cpSync, rmSync, mkdirSync } from "node:fs";
 // output name (dist/<name>.js)  ->  source entry
 const ENTRIES = {
     injected: "injected.ts",
-    content: "content.js",
-    background: "background.js",
-    popup: "popup.js",
-    sidebar: "sidebar/sidebar.js",
+    content: "content.ts",
+    background: "background.ts",
+    popup: "popup.ts",
+    sidebar: "sidebar/sidebar.tsx",
 };
 
 // [source, dist-relative dest] — copied verbatim next to the bundles.
 const ASSETS = [
     ["manifest.json", "manifest.json"],
     ["popup.html", "popup.html"],
-    ["sidebar/sidebar.html", "sidebar.html"],
     ["sidebar/sidebar.css", "sidebar.css"],
 ];
 
 const watch = process.argv.includes("--watch");
 
-const buildOpts = {
-    entryPoints: ENTRIES,
+// Core (injected/content/background/popup) is left UNminified so injected.js
+// stays readable when inspected in devtools. The sidebar is a compiled app (not
+// meant to be read) and pulls in highlight.js, so it's minified.
+const { sidebar, ...coreEntries } = ENTRIES;
+const base = {
     outdir: "dist",
     bundle: true,
     format: "iife",      // classic scripts — required for content/injected scripts
     target: ["chrome114"],
+    jsx: "automatic",    // the sidebar entry is Preact TSX
+    jsxImportSource: "preact",
+    loader: { ".css": "text" },   // import highlight.js theme CSS as a string (injected into the shadow root)
     logLevel: "info",
 };
 
@@ -44,17 +49,15 @@ rmSync("dist", { recursive: true, force: true });
 mkdirSync("dist", { recursive: true });
 
 if (watch) {
-    const ctx = await esbuild.context({
-        ...buildOpts,
-        plugins: [{
-            name: "copy-assets",
-            setup(b) { b.onEnd(() => copyAssets()); },
-        }],
-    });
-    await ctx.watch();
+    const copyPlugin = { name: "copy-assets", setup(b) { b.onEnd(() => copyAssets()); } };
+    const coreCtx = await esbuild.context({ ...base, entryPoints: coreEntries, plugins: [copyPlugin] });
+    const sidebarCtx = await esbuild.context({ ...base, entryPoints: { sidebar }, minify: true, plugins: [copyPlugin] });
+    await coreCtx.watch();
+    await sidebarCtx.watch();
     console.log("watching… (dist/)");
 } else {
-    await esbuild.build(buildOpts);
+    await esbuild.build({ ...base, entryPoints: coreEntries });
+    await esbuild.build({ ...base, entryPoints: { sidebar }, minify: true });
     copyAssets();
     console.log("built dist/");
 }
