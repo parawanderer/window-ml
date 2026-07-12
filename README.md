@@ -83,6 +83,31 @@ await h.chat("Now explain it like I'm five");
 There is **no** root-level `/v1/chat/completions` on OpenWebUI (tested 0.9.5
 and 0.10.2) — unknown routes return the frontend HTML page.
 
+### Feature support by API format
+
+The **API format** is one global switch, and two capability sets live on
+different endpoints — so no single format does everything:
+
+| Feature | OpenWebUI (`openai`) | Ollama-native (`ollama`) |
+| --- | :---: | :---: |
+| Chat · streaming (`onToken`) · structured output (`schema`) | ✅ | ✅ |
+| `think` · `maxTokens` · vision/OCR (`ml.read`) · client-side tools (`ml.step`/`ml.agent`) | ✅ | ✅ |
+| Server-side tools (`toolIds`) · RAG · web search · `sources` provenance | ✅ | ❌ |
+| `numCtx` (context window) · `numGpu:0` (Force-CPU, incl. `extend:"utility"`) | ❌ | ✅ |
+| VRAM readout / evict (`ml.ps` / `ml.unload`) | ✅¹ | ✅¹ |
+
+<sup>¹ requires a reachable Ollama backend (OpenWebUI proxies `/ollama/api/ps`).</sup>
+
+- **Server-side agents/tools, RAG, or web search?** → OpenWebUI's OpenAI endpoint
+  (`…/api/chat/completions`, format `openai`).
+- **Runtime tuning (context window, Force-CPU)?** → the Ollama-native format —
+  direct Ollama *or* OpenWebUI's `/ollama/api/chat` passthrough.
+
+`numCtx`/`numGpu` are Ollama `options`; OpenWebUI's OpenAI route has no reliable
+per-request equivalent (set context per-model in OpenWebUI's **Advanced Params**
+UI instead). Because `apiFormat` is global, the utility model's Force-CPU only
+takes effect when the whole extension is on the `ollama` format.
+
 **Cloud/commercial models** (Claude, GPT, OpenRouter) work with no extension
 changes — add them as a Connection in OpenWebUI and they appear in the model
 list. See [docs/CLOUD-MODELS.md](docs/CLOUD-MODELS.md).
@@ -96,7 +121,7 @@ list. See [docs/CLOUD-MODELS.md](docs/CLOUD-MODELS.md).
 | `ml.createChat(options?)` | Multi-turn history object (below). |
 | `ml.models()` | Available model ids on the server. |
 | `ml.getModel()` / `ml.setModel(id)` | Read / persistently switch the default model. `setModel` validates against the server list and syncs the popup. |
-| `ml.config()` | Read all exposed configuration parameters for the extension (main model default, OCR model, apiFormat) |
+| `ml.config()` | Read the non-secret config the page may see: `model`, `ocrModel`, `apiFormat`, and the utility-model fields (`utilityModel`, `utilityNumCtx`, `utilityForceCpu`). Never the URL or key. |
 | `ml.ps()` | Models loaded in VRAM: `[{ model, vramGB, expiresAt }]`. |
 | `ml.unload(model?)` | Evict a model from VRAM (`keep_alive: 0`); no argument = evict all. |
 | `ml.read(image, { model?, prompt? })` | OCR — transcribe baked-in text from an `<img>` or URL to a plain string, using the configured OCR (vision) model. See [OCR](#ocr). |
@@ -118,6 +143,16 @@ Options (all optional, both for `chat` and `createChat`):
 - `maxTokens` — hard cap on generated tokens (OpenAI `max_tokens` / Ollama
   `num_predict`); `null` omits it. Bounds a runaway generation so it can't peg
   the model. `ml.agent`'s auto-wired vision tool caps itself this way by default.
+- `extend` — config profile this call inherits: `"default"` (the saved default
+  model — same as omitting it) or `"utility"` (the small **utility model** plus
+  its saved context/Force-CPU). Works as `{ ...profile, ...explicit }`: an
+  explicit `model`/`numCtx`/… still wins, and `"utility"` falls back to the
+  default model when none is configured. Throws on any other value.
+- `numCtx` — Ollama context window (`num_ctx`); `null` omits it (Ollama's
+  default). **Ollama-format only** (see the support table) — silently skipped on
+  the OpenAI format.
+- `numGpu` — Ollama `num_gpu` (model layers on the GPU); `0` forces CPU.
+  Ollama-format only. `extend:"utility"` sets this to `0` when Force-CPU is on.
 - `onToken` — `(delta, full) => {}`. Stream the reply token-by-token (for a live
   "typing" effect) while the call still resolves to the full string and history
   updates as usual. Text-only, so it's ignored when `schema` is set. Works with

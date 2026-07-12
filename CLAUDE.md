@@ -42,8 +42,9 @@ Existing message types: `FETCH_LLM`, `LIST_MODELS`, `GET_MODEL`, `GET_CONFIG`,
 `SET_MODEL`, `MODEL_CAPS`, `OLLAMA_PS`, `OLLAMA_UNLOAD`, `FETCH_IMAGE_B64`.
 
 `GET_CONFIG` (`ml.config()`) returns the **non-secret** config subset
-`{ model, ocrModel, apiFormat }` — the URL and API key are never exposed to the
-page. `ml.agent` uses it to auto-wire a vision (`look`) tool from the OCR model.
+`{ model, ocrModel, apiFormat, utilityModel, utilityNumCtx, utilityForceCpu }` —
+the URL and API key are never exposed to the page. `ml.agent` uses it to
+auto-wire a vision (`look`) tool from the OCR model.
 
 `MODEL_CAPS` (`ml.capabilities(model)`) reads Ollama `/api/show` capabilities
 (`["completion","tools","vision","thinking"]`); `modelSupportsVision` is derived
@@ -87,8 +88,12 @@ tool_call_id? }` shape; each format converts to its wire form.
 
 `FETCH_LLM` payload gained `tools` (client-side defs → `body.tools`), `toolIds`
 (OpenWebUI server-side tools → `body.tool_ids`, rejected on the `ollama`
-format), and `raw` (return `{ content, tool_calls }` instead of the content
-string, skipping the null-content error). Sending `toolIds` forces
+format), `raw` (return `{ content, tool_calls }` instead of the content
+string, skipping the null-content error), `extend` (`"utility"` resolves the
+utility model + its `num_ctx`/`num_gpu` in `prepareRequest`, right beside the
+`ocr`/default model resolution; validated client-side in `injected.ts`), and
+`numCtx`/`numGpu` (Ollama `options`, **ollama-format only** — skipped on
+`openai`; explicit values override the `extend` profile). Sending `toolIds` forces
 `body.params.function_calling` to OpenWebUI's server-side execution loop so it
 runs the tool and returns finished content; without it, the `native` mode
 (OpenWebUI's default since v0.10.0) hands back an unexecuted `tool_call` (empty

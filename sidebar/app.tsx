@@ -474,10 +474,15 @@ function testOne(key: keyof MlConfig): void {
     if (!name) return;
     setTest(key, { status: "loading" });
 
+    // The utility model is tested through its own profile (extend:"utility") so
+    // the check exercises its real num_ctx + Force-CPU config, not just the name.
+    const ping = { role: "user", content: "Reply with exactly: OK" };
     const img = key === "ocrModel" ? ocrTestImage() : null;
     const payload = img
         ? { messages: [{ role: "user", content: "Transcribe the characters in this image. Output only the characters.", images: [img.dataUrl] }], model: name, ocr: true }
-        : { messages: [{ role: "user", content: "Reply with exactly: OK" }], model: name };
+        : key === "utilityModel"
+            ? { messages: [ping], extend: "utility" }
+            : { messages: [ping], model: name };
 
     chrome.runtime.sendMessage({ type: "FETCH_LLM", payload }, (resp: any) => {
         const err = chrome.runtime.lastError?.message || (resp && resp.error);
@@ -578,6 +583,7 @@ function Settings() {
                 <input {...text("model", { list: "ml-models", placeholder: "e.g. qwen3:14b" })} /></label>
             <label class="set-field"><Lbl tip={TIP.ocrModel}>OCR model (optional)</Lbl>
                 <input {...text("ocrModel", { list: "ml-models", placeholder: "e.g. qwen2.5vl" })} /></label>
+            <div class="set-note">If you set a utility model, then you can use it by using the shorthand: <br/><code>ml.chat("...", &#123; extend: "utility" &#125;);</code>.</div>
             <label class="set-field"><Lbl tip={TIP.utilityModel}>Utility model (optional)</Lbl>
                 <input {...text("utilityModel", { list: "ml-models", placeholder: "blank = use main model" })} /></label>
             <label class="set-field"><Lbl tip={TIP.utilityNumCtx}>Utility model context size</Lbl>
