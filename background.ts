@@ -343,7 +343,7 @@ async function prepareRequest(payload: FetchLlmPayload) {
         return stream ? res : res.json();
     };
 
-    return { config, format, body, send };
+    return { config, format, body, send, model };
 }
 
 const HANDBACK_ERROR =
@@ -353,7 +353,7 @@ const HANDBACK_ERROR =
     '"Default" on older builds), or check that the tool id is correct.';
 
 async function fetchLLM(payload: FetchLlmPayload): Promise<LlmResult | { content: string | null; tool_calls: ToolCall[] }> {
-    const { config, format, body, send } = await prepareRequest(payload);
+    const { config, format, body, send, model } = await prepareRequest(payload);
 
     let data: any;
     if (payload.toolIds?.length && !payload.raw) {
@@ -393,7 +393,7 @@ async function fetchLLM(payload: FetchLlmPayload): Promise<LlmResult | { content
 
     // sources: server-side tool / RAG provenance (OpenWebUI attaches it top-level
     // when a tool runs). Absent on plain chats and the Ollama-native format.
-    return { content, sources: Array.isArray(data.sources) ? data.sources : [] };
+    return { content, sources: Array.isArray(data.sources) ? data.sources : [], model };
 }
 
 // Streaming variant of fetchLLM: reads the SSE/NDJSON response and calls
@@ -401,8 +401,8 @@ async function fetchLLM(payload: FetchLlmPayload): Promise<LlmResult | { content
 // Text-only — no schema/raw/tools; toolIds is supported (streams each
 // server-side mode; a handed-back attempt streams no content, so nothing is
 // emitted to the caller before we retry the next mode).
-async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: string) => void): Promise<{ content: string; sources: unknown[] }> {
-    const { format, body, send } = await prepareRequest(payload);
+async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: string) => void): Promise<{ content: string; sources: unknown[]; model: string }> {
+    const { format, body, send, model } = await prepareRequest(payload);
 
     const consume = async (res: Response) => {
         const reader = res.body!.getReader();
@@ -436,13 +436,13 @@ async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: string) => v
         for (const mode of SERVER_TOOL_MODES) {
             body.params = { ...body.params, function_calling: mode };
             const { content, sawToolCall, sources } = await consume(await send(body, true));
-            if (content.trim() || !sawToolCall) return { content, sources };   // real answer, or a plain empty completion
+            if (content.trim() || !sawToolCall) return { content, sources, model };   // real answer, or a plain empty completion
         }
         throw new Error(HANDBACK_ERROR);
     }
 
     const { content, sources } = await consume(await send(body, true));
-    return { content, sources };
+    return { content, sources, model };
 }
 
 function authHeaders(config: MlConfig): Record<string, string> {
@@ -569,7 +569,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             // returns the content string, with sources alongside only when present.
             .then((result: any) => {
                 if (message.payload.raw) return sendResponse({ data: result });
-                const resp: any = { data: result.content };
+                const resp: any = { data: result.content, model: result.model ?? null };
                 if (result.sources && result.sources.length) resp.sources = result.sources;
                 sendResponse(resp);
             })
@@ -662,13 +662,13 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
 // Streaming uses a Port instead of the one-shot sendMessage/sendResponse, so
 // tokens can arrive as many messages. The content script opens the port and
 // posts { payload }; we stream { type: "chunk", delta } and finish with
-// { type: "done", content, sources } or { type: "error", error }. A connected
+// { type: "done", content, sources, model } or { type: "error", error }. A connected
 // port also keeps the MV3 service worker alive for the request's duration.
 chrome.runtime.onConnect.addListener((port) => {
     if (port.name !== "LLM_STREAM") return;
     port.onMessage.addListener((message: any) => {
         streamLLM(message.payload, (delta) => port.postMessage({ type: "chunk", delta }))
-            .then(({ content, sources }) => port.postMessage({ type: "done", content, sources }))
+            .then(({ content, sources, model }) => port.postMessage({ type: "done", content, sources, model }))
             .catch((err) => port.postMessage({ type: "error", error: err.message }));
     });
 });

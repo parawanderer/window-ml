@@ -121,6 +121,14 @@ as `.sources`. Only OpenWebUI built-in **web search is UI-only** and never
 reaches the API — use a web-search *workspace tool* (see
 `examples/searxng_search.py`), which does.
 
+**Resolved model (provenance).** The same return/relay channel also carries the
+**resolved** `model` (`prepareRequest`'s model after the extend/ocr/default
+resolution). `fetchLLM`/`streamLLM` return it, the `FETCH_LLM` response +
+stream `done` + `content.js` relay pass it through, and `injected.js` puts it
+(with the `extend` profile) on the `chat-result` debug event. The sidebar shows
+it + a `utility` badge — so a session that ran on `extend:"utility"` (whose
+client-side `request.model` is `null`) displays the real model, not `default`.
+
 ## Conventions
 
 - **Plain JS in docs/examples** — `document.querySelector`, never jQuery-style

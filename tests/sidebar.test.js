@@ -11,7 +11,9 @@ const chatStart = (hash, turn, user, opts = {}) => ({
     kind: "chat", id: `${hash}-${turn}`, ts: Date.now() + turn, save: !!opts.save,
     session: { hash, turn }, streaming: false,
     request: {
-        model: opts.model || "m",
+        // Explicit null passes through (caller didn't name a model → default/utility).
+        model: "model" in opts ? opts.model : "m",
+        extend: opts.extend ?? null,
         messages: [...(opts.system ? [{ role: "system", content: opts.system }] : []), { role: "user", content: user }],
         images: opts.images || null, toolIds: null, schema: false, think: null, maxTokens: null
     },
@@ -22,7 +24,8 @@ const chatStart = (hash, turn, user, opts = {}) => ({
 });
 const chatResult = (hash, turn, content, opts = {}) => ({
     kind: "chat-result", id: `${hash}-${turn}`, ts: Date.now() + turn, save: !!opts.save,
-    session: { hash, turn }, content, sources: opts.sources || null, structured: !!opts.structured
+    session: { hash, turn }, content, sources: opts.sources || null, structured: !!opts.structured,
+    model: opts.model ?? null, extend: opts.extend ?? null
 });
 
 test("sidebar mounts and shows the empty state", async () => {
@@ -208,6 +211,65 @@ test("an error result marks the turn (and session) failed", async () => {
     w.shadow.querySelector(".row").click();
     await w.tick();
     assert.match(w.shadow.querySelector(".msg.asst.err .errtext").textContent, /HTTP 500/);
+});
+
+test("provenance: a utility-profile call shows the resolved model in the row, header, and per-reply chip", async () => {
+    const w = await loadSidebarWorld();
+    // extend:"utility" → the client-side request.model is null, but the server
+    // resolves + reports the real model on the result.
+    await w.dispatch(chatStart("prov", 0, "summarise this", { model: null }));
+    await w.dispatch(chatResult("prov", 0, "a title", { model: "qwen3:0.5b", extend: "utility" }));
+
+    const row = w.shadow.querySelector(".row");
+    assert.equal(row.querySelector(".model").textContent, "qwen3:0.5b", "row shows the resolved model, not 'default'");
+    assert.ok(row.querySelector(".profile"), "row shows the utility badge");
+
+    row.click();
+    await w.tick();
+    assert.match(w.shadow.querySelector(".head-model").textContent, /qwen3:0\.5b/, "header shows the model that responds next");
+    assert.match(w.shadow.querySelector(".head .profile-inline").textContent, /utility/, "header carries the (utility) tag too");
+    // The reply carries a click-to-copy model chip + a (utility) tag.
+    const chip = w.shadow.querySelector(".msg.asst .model-name");
+    assert.equal(chip.textContent, "qwen3:0.5b", "per-reply chip shows the resolved model");
+    assert.match(w.shadow.querySelector(".msg.asst .profile-inline").textContent, /utility/, "per-reply (utility) tag");
+});
+
+test("provenance: a pending turn resolves its model from the config (not 'default')", async () => {
+    const w = await loadSidebarWorld({ sync: { model: "gemma4:31b", utilityModel: "qwen3:0.5b" } });
+    // Two just-created (still pending) turns — no results yet.
+    await w.dispatch(chatStart("pend", 0, "hi", { model: null }));                    // default profile
+    await w.dispatch(chatStart("pendu", 0, "hi", { model: null, extend: "utility" })); // utility profile
+
+    // The list rows already resolve the pending model from config (not "default").
+    const rows = [...w.shadow.querySelectorAll(".row")];
+    const models = rows.map(r => r.querySelector(".model").textContent);
+    assert.ok(models.includes("gemma4:31b"), "pending default row shows the configured default model");
+    assert.ok(models.includes("qwen3:0.5b"), "pending utility row shows the utility model");
+
+    // Header resolves it too. Open the default one (find by its resolved model).
+    rows.find(r => r.querySelector(".model").textContent === "gemma4:31b").click();
+    await w.tick();
+    assert.match(w.shadow.querySelector(".head-model").textContent, /gemma4:31b/);
+    assert.match(w.shadow.querySelector(".head .profile-inline").textContent, /default/);
+});
+
+test("provenance: an explicitly-requested model gets no (default)/(utility) tag", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(chatStart("exp", 0, "hello", { model: "llama3:70b" }));
+    await w.dispatch(chatResult("exp", 0, "hi", { model: "llama3:70b", extend: null }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    assert.equal(w.shadow.querySelector(".msg.asst .model-name").textContent, "llama3:70b");
+    assert.equal(w.shadow.querySelector(".msg.asst .profile-inline"), null, "no profile tag when the model was explicit");
+});
+
+test("provenance: a default-resolved reply is tagged (default)", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(chatStart("def", 0, "hello", { model: null }));
+    await w.dispatch(chatResult("def", 0, "hi", { model: "default-model", extend: null }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    assert.match(w.shadow.querySelector(".msg.asst .profile-inline").textContent, /default/);
 });
 
 test("detail: an assistant reply collapses to its first line and expands again", async () => {

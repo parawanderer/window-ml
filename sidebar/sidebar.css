@@ -110,14 +110,24 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .tag { font-size: 0.75em; font-weight: 700; letter-spacing: .04em; padding: 1px 5px; border-radius: 999px; text-transform: uppercase; }
 .tag.session { background: var(--panel-2); color: var(--fg-dim); }
 .tag.saved { background: var(--accent-strong); color: var(--accent-fg); }
+/* "utility" provenance badge — the session ran on the utility model. */
+.profile { font-size: 0.75em; font-weight: 700; letter-spacing: .04em; padding: 1px 5px; border-radius: 999px; text-transform: uppercase; background: transparent; color: var(--accent); border: 1px solid var(--accent); }
+/* Per-reply model chip: outlined, click-to-copy (see CopyModel). */
+.model-name { background: transparent; border: 1px solid var(--border); color: var(--fg-dim); border-radius: 4px; padding: 0 6px; font: 0.85em ui-monospace, SFMono-Regular, Menlo, monospace; cursor: pointer; }
+.model-name:hover { color: var(--fg); border-color: var(--fg-dim); }
+.profile-inline { color: var(--fg-faint); font-size: 0.82em; }
+/* Header model reads as "responds next" — hover for the definition. A <span>
+   (not <b>) so the `.head b { overflow:hidden }` ellipsis rule can't clip the
+   tooltip pop; matches the title's weight/size manually. */
+.head-model { cursor: help; font-weight: 700; font-size: 1.08em; }
 .model { color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 120px; }
 .time { color: var(--fg-faint); font-size: 0.83em; }
 .hash {
     color: var(--fg-dim); font: 0.83em ui-monospace, SFMono-Regular, Menlo, monospace;
-    background: var(--panel-2); padding: 1px 4px; border-radius: 4px;
+    background: transparent; border: 1px solid var(--border); padding: 0 7px; border-radius: 999px;
 }
 .hash.copyable { cursor: pointer; }
-.hash.copyable:hover { color: var(--fg); }
+.hash.copyable:hover { color: var(--fg); border-color: var(--fg-dim); }
 
 /* --------------------------- tooltip primitive -------------------------- */
 /* Wrap a trigger + a .tt-pop; the pop shows on hover. Default = right-anchored
@@ -169,6 +179,8 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 }
 .row:hover { border-color: var(--accent); }
 .row-title { flex: 1; min-width: 0; font-size: 1em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Transparent wrapper (holds the rev subscription) — no layout effect. */
+.list { display: contents; }
 .row-meta { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
 
 /* ----------------------------- detail view ------------------------------ */

@@ -34,7 +34,7 @@ test("FETCH_LLM builds an OpenAI body and extracts the reply", async () => {
         type: "FETCH_LLM",
         payload: { messages: [{ role: "user", content: "hi" }], think: false }
     });
-    assert.deepEqual(res, { data: "yo" });
+    assert.deepEqual(res, { data: "yo", model: "default-model" });
 });
 
 test("FETCH_LLM omits think unless it is a boolean", async () => {
@@ -88,10 +88,11 @@ test("FETCH_LLM extend:'utility' resolves the utility model + num_ctx/num_gpu (o
         config: baseConfig({ apiFormat: "ollama", chatUrl: "http://host/ollama/api/chat", model: "big:70b", utilityModel: "small:0.8b", utilityNumCtx: 2048, utilityForceCpu: true }),
         onFetch: (call) => { sawBody = call.body; return jsonResponse({ message: { content: "ok" } }); }
     });
-    await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }], extend: "utility" } });
+    const res = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }], extend: "utility" } });
     assert.equal(sawBody.model, "small:0.8b", "utility model");
     assert.equal(sawBody.options.num_ctx, 2048);
     assert.equal(sawBody.options.num_gpu, 0, "force CPU → num_gpu 0");
+    assert.equal(res.model, "small:0.8b", "response reports the resolved (utility) model for the sidebar");
 });
 
 test("FETCH_LLM extend:'utility' falls back to the default model when unset", async () => {
@@ -777,7 +778,7 @@ test("FETCH_LLM omits sources when there are none", async () => {
     });
 
     const res = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "q" }] } });
-    assert.deepEqual(res, { data: "hi" });     // no sources key on a plain chat
+    assert.deepEqual(res, { data: "hi", model: "default-model" });   // resolved model rides along; no sources key on a plain chat
 });
 
 test("streaming delivers sources (their own SSE line) on the done message", async () => {

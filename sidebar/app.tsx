@@ -7,7 +7,7 @@
 import { render } from "preact";
 import { useState, useEffect } from "preact/hooks";
 import { signal } from "@preact/signals";
-import type { MlDebugEvent, DebugSessionConfig, NeutralMessage, MlConfig, ApiFormat, Theme, LoadedModel } from "../contract";
+import type { MlDebugEvent, DebugSessionConfig, NeutralMessage, MlConfig, ApiFormat, Theme, LoadedModel, ExtendProfile } from "../contract";
 import { DEFAULT_CONFIG } from "../contract";
 // Syntax highlighting — highlight.js core + a focused set of languages, and the
 // Atom One themes (imported as CSS text, injected into the shadow root).
@@ -35,6 +35,9 @@ type Status = "pending" | "ok" | "err";
 interface Turn {
     id: string; ts: number; user: string; images: string[] | null;
     assistant?: string; sources?: unknown[] | null; structured?: boolean; error?: string; status: Status;
+    reqModel?: string | null;   // the model the caller explicitly requested (null = fell back to default/utility)
+    model?: string | null;      // the model that actually produced this reply (resolved server-side)
+    extend?: ExtendProfile | null;  // which profile resolved it — marks (default) vs (utility)
 }
 interface Session {
     hash: string; model: string | null; tag: "session" | "saved";
@@ -145,7 +148,7 @@ function onDebug(ev: MlDebugEvent): void {
         // re-rendering a child whose props are referentially unchanged, so a
         // turn we later update MUST become a new object or its (stateful)
         // AssistantBody won't re-render — the "stale …thinking" bug.
-        const turn: Turn = { id: ev.id, ts: ev.ts, user: lastUser(ev.request.messages), images: ev.request.images, status: "pending" };
+        const turn: Turn = { id: ev.id, ts: ev.ts, user: lastUser(ev.request.messages), images: ev.request.images, status: "pending", reqModel: ev.request.model, extend: ev.request.extend };
         s.turns = [...s.turns, turn];
         s.lastTs = ev.ts; s.status = "pending";
     } else {
@@ -156,7 +159,7 @@ function onDebug(ev: MlDebugEvent): void {
         // Replace the turn with a NEW object (see note above) so the open detail
         // view re-renders it live instead of only after a re-navigation/reload.
         const updated: Turn = ev.kind === "chat-result"
-            ? { ...prev, assistant: ev.content, sources: ev.sources, structured: ev.structured, status: "ok", ts: ev.ts }
+            ? { ...prev, assistant: ev.content, sources: ev.sources, structured: ev.structured, status: "ok", ts: ev.ts, model: ev.model, extend: ev.extend }
             : { ...prev, error: ev.error, status: "err", ts: ev.ts };
         s.turns = s.turns.map((x, idx) => idx === i ? updated : x);
         s.lastTs = ev.ts; s.status = rollupStatus(s);
@@ -378,6 +381,45 @@ function OptionsBlock({ s }: { s: Session }) {
     );
 }
 
+// Which profile produced a turn, for the (default)/(utility) tag beside the
+// model name. An explicitly-requested model gets no tag — only a fell-back-to
+// resolution is worth flagging.
+function turnProfile(t: Turn): "utility" | "default" | null {
+    if (t.reqModel) return null;
+    return t.extend === "utility" ? "utility" : "default";
+}
+// Predict a turn's model from the config the same way the background resolves it,
+// so a *pending* turn shows the real model (not "default") before its result
+// lands — we already know the config client-side.
+function resolveModel(reqModel?: string | null, extend?: ExtendProfile | null): string {
+    if (reqModel) return reqModel;
+    if (extend === "utility") return config.value.utilityModel || config.value.model || "default";
+    return config.value.model || "default";
+}
+// A session's model/profile follows its latest turn (the best predictor of what
+// responds next). Turn-based so it distinguishes an explicit model (no tag) from
+// a default fallback, and it works for a pending turn too.
+const shownModel = (s: Session): string => {
+    const last = s.turns[s.turns.length - 1];
+    if (last?.status === "ok" && last.model) return last.model;   // actually resolved
+    return last ? resolveModel(last.reqModel, last.extend) : resolveModel(s.config.model, null);
+};
+function sessionProfile(s: Session): "utility" | "default" | null {
+    const last = s.turns[s.turns.length - 1];
+    return last ? turnProfile(last) : null;
+}
+
+// The model that produced a reply, as a click-to-copy chip (handy for debugging).
+function CopyModel({ model }: { model: string }) {
+    const { copied, copy } = useCopy();
+    return (
+        <span class="tt">
+            <button class="model-name" onClick={(e) => { e.stopPropagation(); copy(model); }}>{model}</button>
+            <span class="tt-pop" role="tooltip">{copied ? "copied!" : "copy model name"}</span>
+        </span>
+    );
+}
+
 // Assistant reply: no visible box around the text (#5). The markdown⇄raw toggle
 // and a copy button (copies raw markdown, #6) sit on the right of the header row.
 function AssistantBody({ t }: { t: Turn }) {
@@ -396,6 +438,9 @@ function AssistantBody({ t }: { t: Turn }) {
                         <span class="who">assistant</span>
                     </button>
                     : <span class="who">assistant</span>}
+                {/* The model that produced this reply + its (default)/(utility) profile. */}
+                {done && t.model ? <CopyModel model={t.model} /> : null}
+                {done && t.model && turnProfile(t) ? <span class="profile-inline">({turnProfile(t)})</span> : null}
                 <span class="sp" />
                 {done
                     ? <>
@@ -434,7 +479,15 @@ function MessageTurn({ t }: { t: Turn }) {
     );
 }
 
-function SessionRow({ s }: { s: Session }) {
+// A "utility" badge marks a session that ran on the utility profile.
+const ProfileBadge = ({ profile }: { profile?: ExtendProfile | null }) =>
+    profile === "utility" ? <span class="profile">utility</span> : null;
+
+// Presentational — model/profile arrive as plain props (resolved in ListView).
+// It must NOT read a signal itself: @preact/signals auto-memoizes a
+// signal-reading child, which (with our in-place session mutation → unchanged
+// `s` reference) would make it skip the parent re-render and freeze on pending.
+function SessionRow({ s, model, profile }: { s: Session; model: string; profile: "utility" | "default" | null }) {
     const title = s.title || s.turns[0]?.user || "(no prompt)";
     return (
         <button class="row" onClick={() => (view.value = { name: "detail", hash: s.hash })}>
@@ -443,7 +496,8 @@ function SessionRow({ s }: { s: Session }) {
             <b class="row-title">{truncate(title, 80)}</b>
             <div class="row-meta">
                 <TagBadge tag={s.tag} />
-                <span class="model">{s.model || "default"}</span>
+                <ProfileBadge profile={profile} />
+                <span class="model">{model}</span>
                 <Hash hash={s.hash} stop />
             </div>
         </button>
@@ -451,10 +505,13 @@ function SessionRow({ s }: { s: Session }) {
 }
 
 function ListView() {
-    rev.value; // subscribe to session changes
+    // `r` subscribes this view to session changes AND resolving model/profile
+    // here (reads config) keeps that signal read out of SessionRow. Retained in
+    // data-rev so the subscription survives minification.
+    const r = rev.value;
     const list = [...sessionMap.values()].sort((a, b) => b.lastTs - a.lastTs);
-    if (!list.length) return <div class="empty">No ml calls yet. Run one in the console.</div>;
-    return <>{list.map(s => <SessionRow key={s.hash} s={s} />)}</>;
+    if (!list.length) return <div class="empty" data-rev={r}>No ml calls yet. Run one in the console.</div>;
+    return <div class="list" data-rev={r}>{list.map(s => <SessionRow key={s.hash} s={s} model={shownModel(s)} profile={sessionProfile(s)} />)}</div>;
 }
 
 function DetailView({ hash }: { hash: string }) {
@@ -765,6 +822,7 @@ function App() {
     // The iframe body IS the panel; the slide-out shell (tab/resize/container)
     // lives in the content-script host (sidebar/shell.ts), not here.
     const inSettings = v.name === "settings";
+    const detailSession = v.name === "detail" ? sessionMap.get(v.hash) : null;
     // Lazily summarise session titles whenever the data or open-state changes.
     // `open` is read (not just used in deps) so App re-renders on open/close.
     const open = sidebarOpen.value;
@@ -775,7 +833,13 @@ function App() {
         <div class="app">
             <div class="head">
                 {v.name !== "list" ? <button class="nav" title="Back to sessions" onClick={() => (view.value = { name: "list" })}>‹</button> : null}
-                <b>{v.name === "detail" ? (sessionMap.get(v.hash)?.model || "default") : inSettings ? "Settings" : `Sessions (${sessionMap.size})`}</b>
+                {/* TODO: status circle (model-load state) goes left of the model name. */}
+                {detailSession
+                    ? <>
+                        <span class="tt head-model">{shownModel(detailSession)}<span class="tt-pop left" role="tooltip">The model that will respond to your next message in this session (changes with the utility/default profile).</span></span>
+                        {sessionProfile(detailSession) ? <span class="profile-inline">({sessionProfile(detailSession)})</span> : null}
+                    </>
+                    : <b>{inSettings ? "Settings" : `Sessions (${sessionMap.size})`}</b>}
                 <span class="sp" />
                 {v.name === "detail" ? <Hash hash={v.hash} /> : null}
                 {!inSettings ? <button class={`hbtn${vramOpen.value ? " on" : ""}`} title="VRAM monitor" onClick={() => (vramOpen.value = !vramOpen.value)}><IconVram /></button> : null}
