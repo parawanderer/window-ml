@@ -74,6 +74,8 @@ test(
     }
 );
 
+// note: this test only seems to work with beefier models, e.g. gemma4:31b
+// qwen3.5:0.8b tends to hang with it
 test(
     "live: structured output honors a json schema",
     { skip: skipLive || (!MODEL && "set OPENWEBUI_MODEL (loads that model into VRAM)"), timeout: 120_000 },
