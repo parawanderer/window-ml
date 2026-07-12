@@ -1,0 +1,89 @@
+/* Theme tokens. Default (no data-theme) = dark; :host([data-theme]) switches them.
+   sidebar.js sets data-theme on the host from the saved theme (auto → OS).
+   Note: `all: initial` does NOT reset custom properties, so the vars below stand. */
+:host {
+    all: initial;
+    --bg: #1e1f24; --panel: #27272a; --panel-2: #3f3f46; --panel-2-hover: #52525b;
+    --border: #3f3f46; --fg: #e4e4e7; --fg-dim: #a1a1aa; --fg-faint: #71717a;
+    --accent: #6366f1; --accent-strong: #4f46e5; --accent-fg: #ffffff;
+    --ok: #4ade80; --err: #f87171; --warn: #eab308; --err-border: #7f1d1d; --kind: #c7d2fe;
+}
+:host([data-theme="light"]) {
+    --bg: #ffffff; --panel: #f4f4f5; --panel-2: #e4e4e7; --panel-2-hover: #d4d4d8;
+    --border: #d4d4d8; --fg: #18181b; --fg-dim: #52525b; --fg-faint: #a1a1aa;
+    --accent: #6366f1; --accent-strong: #4f46e5; --accent-fg: #ffffff;
+    --ok: #16a34a; --err: #dc2626; --warn: #ca8a04; --err-border: #fecaca; --kind: #4338ca;
+}
+* { box-sizing: border-box; }
+
+.wrap {
+    position: fixed; top: 0; right: 0; height: 100vh; width: 400px;
+    display: flex; z-index: 2147483000;
+    font: 12px/1.5 system-ui, -apple-system, sans-serif; color: var(--fg);
+    transform: translateX(calc(100% - 34px)); transition: transform .22s ease;
+}
+.wrap.open { transform: translateX(0); }
+
+.tab {
+    width: 34px; flex: 0 0 34px; cursor: pointer; border: none;
+    background: var(--accent-strong); color: var(--accent-fg); writing-mode: vertical-rl;
+    text-orientation: mixed; letter-spacing: .08em; font-weight: 600;
+    padding: 10px 0; border-radius: 6px 0 0 6px; align-self: center;
+    height: 150px; box-shadow: -2px 0 8px rgba(0,0,0,.35);
+}
+.tab:hover { background: var(--accent); }
+
+.body {
+    position: relative;
+    flex: 1; min-width: 0; height: 100%; display: flex; flex-direction: column;
+    background: var(--bg); border-left: 1px solid var(--border); box-shadow: -4px 0 20px rgba(0,0,0,.4);
+}
+/* Drag handle on the body's left edge — resize like Claude Code. */
+.resize {
+    position: absolute; left: -3px; top: 0; width: 7px; height: 100%;
+    cursor: ew-resize; z-index: 1;
+}
+.resize:hover, .resize.dragging { background: var(--accent); opacity: .5; }
+
+.head {
+    display: flex; align-items: center; gap: 8px; padding: 10px 12px;
+    border-bottom: 1px solid var(--border); flex: 0 0 auto;
+}
+.head b { font-size: 13px; }
+.head .sp { flex: 1; }
+.head button {
+    background: var(--panel-2); color: var(--fg); border: none; border-radius: 5px;
+    padding: 4px 8px; font-size: 11px; cursor: pointer;
+}
+.head button:hover { background: var(--panel-2-hover); }
+
+.log { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 8px; }
+.empty { color: var(--fg-faint); padding: 16px 8px; text-align: center; }
+
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: 7px; overflow: hidden; }
+.card.err { border-color: var(--err-border); }
+.crow { display: flex; align-items: center; gap: 6px; padding: 7px 9px; }
+.kind { font-weight: 600; color: var(--kind); }
+.model { color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 130px; }
+.crow .sp { flex: 1; }
+.time { color: var(--fg-faint); font-size: 10px; }
+
+.tag { font-size: 9px; font-weight: 700; letter-spacing: .04em; padding: 1px 5px; border-radius: 999px; text-transform: uppercase; }
+.tag.session { background: var(--panel-2); color: var(--fg-dim); }
+.tag.saved { background: var(--accent-strong); color: var(--accent-fg); }
+
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+.dot.pending { background: var(--warn); animation: pulse 1s infinite; }
+.dot.ok { background: var(--ok); }
+.dot.err { background: var(--err); }
+@keyframes pulse { 50% { opacity: .3; } }
+
+details { border-top: 1px solid var(--border); }
+summary { cursor: pointer; padding: 5px 9px; color: var(--fg-dim); font-size: 11px; user-select: none; }
+summary:hover { color: var(--fg); }
+pre {
+    margin: 0; padding: 6px 9px 10px; white-space: pre-wrap; word-break: break-word;
+    color: var(--fg); font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.thumbs { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 9px 10px; }
+.thumbs img { max-width: 90px; max-height: 90px; border-radius: 4px; border: 1px solid var(--border); }

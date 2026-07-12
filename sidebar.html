@@ -1,0 +1,17 @@
+<!-- Static shell for the window.ml debug sidebar. Loaded into a shadow root by
+     sidebar.js; log entries are rendered dynamically in JS. -->
+<div class="wrap" id="wrap">
+    <button class="tab" id="tab" title="window.ml debug">ml · debug</button>
+    <div class="body">
+        <div class="resize" id="resize" title="Drag to resize"></div>
+        <div class="head">
+            <b>window.ml</b>
+            <span class="tag session">debug</span>
+            <span class="sp"></span>
+            <button id="clear">Clear</button>
+        </div>
+        <div class="log" id="log">
+            <div class="empty">No ml calls yet. Run one in the console.</div>
+        </div>
+    </div>
+</div>

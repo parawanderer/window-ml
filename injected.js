@@ -2,6 +2,23 @@
 
 (function() {
 
+    // ---- Debug sidebar event stream (see sidebar.js) ----
+    // The opt-in sidebar lives in the isolated content-script world; it can't read
+    // this main-world `ml` state directly, so we push a one-way event stream to it
+    // via window.postMessage. Emission is gated on a handshake: the sidebar posts
+    // `{ __mlSidebar: "ready" }` when it mounts, so there's zero cost when it's off.
+    let debugEnabled = false;
+    window.addEventListener("message", (event) => {
+        if (event.source === window && event.data && event.data.__mlSidebar === "ready") {
+            debugEnabled = true;
+        }
+    });
+    const emitDebug = (event) => {
+        if (!debugEnabled) return;
+        try { window.postMessage({ __mlDebug: event }, "*"); } catch (e) { /* non-cloneable — ignore */ }
+    };
+    const debugId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+
     const makeBackgroundTaskPromise = (requestType, responseType, payload, callbackOnResponseSuccess) => {
         return new Promise((resolve, reject) => {
             const requestId = Math.random().toString(36).substring(7);
@@ -445,10 +462,12 @@
         // maxTokens: hard cap on generated tokens (openai max_tokens / ollama
         //          num_predict); null omits it. Stops a runaway generation from
         //          pegging the model — used to bound vision calls (see ml.lookTool).
+        // save:    when the debug sidebar is on, persist this call across reloads
+        //          and tag it [saved] (vs the default ephemeral [session]).
         // onToken: (delta, full) => {} streams the reply token-by-token (text only,
         //          ignored when a schema is set); the call still resolves to the full string.
-        // history.chat() accepts { images, model, think, cleanup, schema, toolIds, maxTokens, onToken } per turn.
-        createChat: function({ system = null, model = null, think = false, cleanup = true, schema = null, toolIds = null, maxTokens = null } = {}) {
+        // history.chat() accepts { images, model, think, cleanup, schema, toolIds, maxTokens, save, onToken } per turn.
+        createChat: function({ system = null, model = null, think = false, cleanup = true, schema = null, toolIds = null, maxTokens = null, save = false } = {}) {
             const ml = this;
             return {
                 messages: system ? [{ role: "system", content: system }] : [],
@@ -458,12 +477,13 @@
                 schema,
                 toolIds,
                 maxTokens,
+                save,
                 // onToken(delta, full): stream the reply token-by-token. The call
                 // still resolves to the full string (and history updates as usual).
                 // Streaming is text-only, so it's skipped when a schema is set.
                 // Any server-side tool / RAG sources are attached to the stored
                 // assistant message as `.sources` (read history.messages.at(-1)).
-                chat: async function(prompt, { images = [], model = this.model, think = this.think, cleanup = this.cleanup, schema = this.schema, toolIds = this.toolIds, maxTokens = this.maxTokens, onToken = null } = {}) {
+                chat: async function(prompt, { images = [], model = this.model, think = this.think, cleanup = this.cleanup, schema = this.schema, toolIds = this.toolIds, maxTokens = this.maxTokens, save = this.save, onToken = null } = {}) {
                     const userMessage = { role: "user", content: prompt };
                     if (images.length) {
                         userMessage.images = await Promise.all(
@@ -472,26 +492,44 @@
                     }
 
                     const requestPayload = { "messages": [...this.messages, userMessage], "think": think, "model": model, "schema": schema, "toolIds": toolIds, "maxTokens": maxTokens };
-                    const { content, sources } = (typeof onToken === "function" && !schema)
-                        ? await makeStreamingTaskPromise(requestPayload, onToken)
-                        : await makeChatRequest(requestPayload);
+                    // Debug sidebar: announce the request (no-op unless the sidebar is on).
+                    const debug = debugId();
+                    emitDebug({ kind: "chat", id: debug, ts: Date.now(), save, streaming: typeof onToken === "function" && !schema, request: {
+                        model: model || null,
+                        messages: requestPayload.messages,
+                        images: userMessage.images || null,
+                        toolIds: toolIds || null,
+                        schema: !!schema,
+                        think: (think === true || think === false) ? think : null,
+                        maxTokens: maxTokens ?? null
+                    } });
+                    let content, sources;
+                    try {
+                        ({ content, sources } = (typeof onToken === "function" && !schema)
+                            ? await makeStreamingTaskPromise(requestPayload, onToken)
+                            : await makeChatRequest(requestPayload));
+                    } catch (err) {
+                        emitDebug({ kind: "chat-error", id: debug, ts: Date.now(), save, error: String((err && err.message) || err) });
+                        throw err;
+                    }
                     let reply = content;
                     if (cleanup) reply = reply.replace(/^<think>[\s\S]*?<\/think>\s*/i, '');
 
                     const assistantMessage = { role: "assistant", content: reply };
                     if (sources && sources.length) assistantMessage.sources = sources;
                     this.messages.push(userMessage, assistantMessage);
+                    emitDebug({ kind: "chat-result", id: debug, ts: Date.now(), save, content: reply, sources: (sources && sources.length) ? sources : null, structured: !!schema });
                     return schema ? ml._parseJSON(reply) : reply;
                 },
                 fork: function() {
-                    const copy = ml.createChat({ model: this.model, think: this.think, cleanup: this.cleanup, schema: this.schema, toolIds: this.toolIds, maxTokens: this.maxTokens });
+                    const copy = ml.createChat({ model: this.model, think: this.think, cleanup: this.cleanup, schema: this.schema, toolIds: this.toolIds, maxTokens: this.maxTokens, save: this.save });
                     copy.messages = structuredClone(this.messages);
                     return copy;
                 }
             };
         },
         // One-shot chat — a throwaway single-turn history.
-        // Options: { system, think, cleanup, images, model, schema, toolIds, maxTokens, onToken } as in createChat.
+        // Options: { system, think, cleanup, images, model, schema, toolIds, maxTokens, save, onToken } as in createChat.
         chat: async function(prompt, options = {}) {
             return this.createChat(options).chat(prompt, options);
         },

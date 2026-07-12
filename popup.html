@@ -3,88 +3,58 @@
 <head>
 <meta charset="utf-8">
 <style>
+    /* Theme tokens. Default (no data-theme) = dark; [data-theme] switches them.
+       popup.js sets <html data-theme> from the saved theme (auto → prefers-color-scheme). */
+    :root {
+        --bg: #1e1f24; --panel: #27272a; --panel-2: #3f3f46; --panel-2-hover: #52525b;
+        --border: #3f3f46; --fg: #e4e4e7; --fg-dim: #a1a1aa; --fg-faint: #71717a;
+        --accent: #6366f1; --accent-strong: #4f46e5; --accent-fg: #ffffff;
+        --ok: #4ade80; --err: #f87171;
+    }
+    :root[data-theme="light"] {
+        --bg: #ffffff; --panel: #f4f4f5; --panel-2: #e4e4e7; --panel-2-hover: #d4d4d8;
+        --border: #d4d4d8; --fg: #18181b; --fg-dim: #52525b; --fg-faint: #a1a1aa;
+        --accent: #6366f1; --accent-strong: #4f46e5; --accent-fg: #ffffff;
+        --ok: #16a34a; --err: #dc2626;
+    }
     body {
         font-family: system-ui, -apple-system, sans-serif;
-        font-size: 13px;
-        width: 340px;
-        margin: 0;
-        padding: 14px;
-        background: #1e1f24;
-        color: #e4e4e7;
+        font-size: 13px; width: 340px; margin: 0; padding: 14px;
+        background: var(--bg); color: var(--fg);
     }
-    h1 {
-        font-size: 14px;
-        margin: 0 0 12px;
-    }
-    label {
-        display: block;
-        margin: 10px 0 3px;
-        color: #a1a1aa;
-    }
+    h1 { font-size: 14px; margin: 0 0 12px; }
+    label { display: block; margin: 10px 0 3px; color: var(--fg-dim); }
     input, select {
-        width: 100%;
-        box-sizing: border-box;
-        padding: 6px 8px;
-        border: 1px solid #3f3f46;
-        border-radius: 5px;
-        background: #27272a;
-        color: #e4e4e7;
-        font-size: 13px;
+        width: 100%; box-sizing: border-box; padding: 6px 8px;
+        border: 1px solid var(--border); border-radius: 5px;
+        background: var(--panel); color: var(--fg); font-size: 13px;
     }
-    input:focus, select:focus {
-        outline: none;
-        border-color: #6366f1;
-    }
-    .row {
-        display: flex;
-        gap: 6px;
-        align-items: flex-end;
-    }
-    .row input {
-        flex: 1;
-    }
-    .hint {
-        font-size: 11px;
-        color: #71717a;
-        margin-top: 2px;
-    }
+    input:focus, select:focus { outline: none; border-color: var(--accent); }
+    .row { display: flex; gap: 6px; align-items: flex-end; }
+    .row input { flex: 1; }
+    .hint { font-size: 11px; color: var(--fg-faint); margin-top: 2px; }
     button {
-        padding: 6px 12px;
-        border: none;
-        border-radius: 5px;
-        background: #3f3f46;
-        color: #e4e4e7;
-        font-size: 13px;
-        cursor: pointer;
-        white-space: nowrap;
+        padding: 6px 12px; border: none; border-radius: 5px;
+        background: var(--panel-2); color: var(--fg); font-size: 13px;
+        cursor: pointer; white-space: nowrap;
     }
-    button:hover {
-        background: #52525b;
-    }
-    button.primary {
-        background: #4f46e5;
-        color: #fff;
-    }
-    button.primary:hover {
-        background: #6366f1;
-    }
-    .actions {
-        display: flex;
-        gap: 6px;
-        margin-top: 16px;
-    }
+    button:hover { background: var(--panel-2-hover); }
+    button.primary { background: var(--accent-strong); color: var(--accent-fg); }
+    button.primary:hover { background: var(--accent); }
+    .actions { display: flex; gap: 6px; margin-top: 16px; }
     #status {
-        margin-top: 10px;
-        font-size: 12px;
-        white-space: pre-wrap;
-        word-break: break-word;
-        max-height: 90px;
-        overflow-y: auto;
+        margin-top: 10px; font-size: 12px; white-space: pre-wrap;
+        word-break: break-word; max-height: 90px; overflow-y: auto;
     }
-    #status.ok { color: #4ade80; }
-    #status.err { color: #f87171; }
-    #status.busy { color: #a1a1aa; }
+    #status.ok { color: var(--ok); }
+    #status.err { color: var(--err); }
+    #status.busy { color: var(--fg-dim); }
     #vram { white-space: pre-wrap; }
+    .check {
+        display: flex; align-items: center; gap: 8px;
+        margin: 14px 0 2px; color: var(--fg); cursor: pointer;
+    }
+    .check input { width: auto; margin: 0; }
 </style>
 </head>
 <body>
@@ -115,6 +85,19 @@
     <label for="ocrModel">OCR model (optional)</label>
     <input id="ocrModel" type="text" list="modelList" placeholder="e.g. qwen2.5vl">
     <div class="hint">Vision model ml.read() uses for OCR — kept separate from the chat model</div>
+
+    <label for="theme">Theme</label>
+    <select id="theme">
+        <option value="auto">Auto (follow system)</option>
+        <option value="dark">Dark</option>
+        <option value="light">Light</option>
+    </select>
+
+    <label class="check" for="sidebar">
+        <input id="sidebar" type="checkbox">
+        Enable debug sidebar
+    </label>
+    <div class="hint">A slide-out panel that logs your ml calls on each page (for debugging).</div>
 
     <div id="vramSection" style="display:none">
         <label>VRAM usage</label>

@@ -12,7 +12,12 @@ const DEFAULT_CONFIG = {
     apiFormat: "openai",
     // Vision model ml.read() uses for OCR, independent of `model` so a text-only
     // reasoning model can stay the default. Empty = fall back to `model`.
-    ocrModel: ""
+    ocrModel: "",
+    // Opt-in debug sidebar (sidebar.js): a slide-out panel that logs ml calls.
+    // Off by default; toggled from the popup. Read by content-world sidebar.js.
+    sidebar: false,
+    // UI theme for the popup + sidebar: "auto" (follow the OS), "dark", or "light".
+    theme: "auto"
 };
 
 // OpenAI serves tool-call arguments as a JSON string; Ollama as an object.

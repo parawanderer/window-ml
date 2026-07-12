@@ -4,13 +4,27 @@ const DEFAULT_CONFIG = {
     apiKey: "",
     model: "",
     apiFormat: "openai",
-    ocrModel: ""
+    ocrModel: "",
+    sidebar: false,
+    theme: "auto"
 };
 
-const FIELDS = ["chatUrl", "apiKey", "model", "apiFormat", "ocrModel"];
+// Text/select inputs, read via .value. Booleans are handled separately (CHECKBOXES).
+const FIELDS = ["chatUrl", "apiKey", "model", "apiFormat", "ocrModel", "theme"];
+const CHECKBOXES = ["sidebar"];
 
 const $ = (id) => document.getElementById(id);
 const statusEl = () => $("status");
+
+// --- theme: light/dark/auto → a data-theme attribute the CSS variables key on ---
+const themeMedia = window.matchMedia("(prefers-color-scheme: dark)");
+const resolveTheme = (pref) =>
+    (pref === "light" || pref === "dark") ? pref : (themeMedia.matches ? "dark" : "light");
+const applyTheme = (pref) => { document.documentElement.dataset.theme = resolveTheme(pref); };
+// Re-resolve on OS change while in "auto".
+themeMedia.addEventListener("change", () => {
+    if (($("theme").value || "auto") === "auto") applyTheme("auto");
+});
 
 function setStatus(text, kind) {
     statusEl().textContent = text;
@@ -22,6 +36,9 @@ function readForm() {
     for (const field of FIELDS) {
         config[field] = $(field).value.trim();
     }
+    for (const box of CHECKBOXES) {
+        config[box] = $(box).checked;
+    }
     return config;
 }
 
@@ -30,6 +47,10 @@ async function loadForm() {
     for (const field of FIELDS) {
         $(field).value = config[field];
     }
+    for (const box of CHECKBOXES) {
+        $(box).checked = !!config[box];
+    }
+    applyTheme(config.theme);
 }
 
 async function save() {
@@ -77,6 +98,12 @@ chrome.storage.onChanged.addListener((changes, area) => {
             $(field).value = changes[field].newValue;
         }
     }
+    for (const box of CHECKBOXES) {
+        if (changes[box] && changes[box].newValue !== undefined) {
+            $(box).checked = !!changes[box].newValue;
+        }
+    }
+    if (changes.theme && changes.theme.newValue !== undefined) applyTheme(changes.theme.newValue);
 });
 
 async function saveAndTest() {
@@ -154,6 +181,7 @@ function refreshVram() {
     });
 }
 
+$("theme").addEventListener("change", () => applyTheme($("theme").value));   // live preview
 $("save").addEventListener("click", save);
 $("unload").addEventListener("click", freeVram);
 $("test").addEventListener("click", saveAndTest);

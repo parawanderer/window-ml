@@ -103,6 +103,30 @@ test("ml.chat forwards a maxTokens cap in the request payload", async () => {
     assert.equal(out, "ok");
 });
 
+test("debug stream is silent until the sidebar handshakes, then emits chat events with the save flag", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: () => ({ data: "hi there" }) });
+    const win = world.context.window;
+    const events = [];
+    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+
+    // No sidebar mounted yet → emission is gated off entirely.
+    await world.ml.chat("before");
+    assert.equal(events.length, 0, "silent until the sidebar handshakes");
+
+    // Sidebar mounts and announces itself → injected.js starts emitting.
+    win.postMessage({ __mlSidebar: "ready" });
+    await new Promise(r => setTimeout(r, 0));
+
+    await world.ml.chat("hello", { save: true });
+    const start = events.find(e => e.kind === "chat");
+    const done = events.find(e => e.kind === "chat-result");
+    assert.ok(start && done, events.map(e => e.kind).join());
+    assert.equal(start.save, true);                                   // save flag threads through
+    assert.equal(start.request.messages.at(-1).content, "hello");     // request snapshot carried
+    assert.equal(done.content, "hi there");                           // reply carried on settle
+    assert.equal(done.save, true);
+});
+
 test("ml.chat forwards toolIds for server-side tools", async () => {
     const world = loadPageWorld({
         onRuntimeMessage: (msg) => {
