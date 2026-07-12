@@ -101,8 +101,9 @@ different endpoints — so no single format does everything:
 native route reads an `options` object; OpenWebUI's OpenAI route reads a
 request-body **`params`** object (which it maps into Ollama's options — the same
 channel `function_calling` uses; a direct `options` object there is *overwritten*
-and top-level fields dropped, confirmed in OpenWebUI's source). Applies to
-Ollama-backed models; `num_gpu` takes effect at model **load** (evict first).</sup>
+and top-level fields dropped — confirmed in OpenWebUI's source and verified
+against **v0.10.2**). Applies to Ollama-backed models; `num_gpu` takes effect at
+model **load** (evict first).</sup>
 
 The real split is **server-side tools / RAG / web search** — those are
 OpenWebUI's OpenAI endpoint only. The Ollama runtime knobs (`numCtx` / `numGpu` /
