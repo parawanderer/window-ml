@@ -82,6 +82,61 @@ test("FETCH_LLM maxTokens becomes options.num_predict on the ollama format", asy
     assert.equal(sawBody.options.num_predict, 256);
 });
 
+test("FETCH_LLM extend:'utility' resolves the utility model + num_ctx/num_gpu (ollama)", async () => {
+    let sawBody;
+    const bg = loadBackground({
+        config: baseConfig({ apiFormat: "ollama", chatUrl: "http://host/ollama/api/chat", model: "big:70b", utilityModel: "small:0.8b", utilityNumCtx: 2048, utilityForceCpu: true }),
+        onFetch: (call) => { sawBody = call.body; return jsonResponse({ message: { content: "ok" } }); }
+    });
+    await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }], extend: "utility" } });
+    assert.equal(sawBody.model, "small:0.8b", "utility model");
+    assert.equal(sawBody.options.num_ctx, 2048);
+    assert.equal(sawBody.options.num_gpu, 0, "force CPU → num_gpu 0");
+});
+
+test("FETCH_LLM extend:'utility' falls back to the default model when unset", async () => {
+    let sawBody;
+    const bg = loadBackground({
+        config: baseConfig({ apiFormat: "ollama", chatUrl: "http://host/ollama/api/chat", model: "big:70b", utilityModel: "" }),
+        onFetch: (call) => { sawBody = call.body; return jsonResponse({ message: { content: "ok" } }); }
+    });
+    await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }], extend: "utility" } });
+    assert.equal(sawBody.model, "big:70b");
+});
+
+test("FETCH_LLM explicit model + numCtx override the extend profile ({...profile, ...explicit})", async () => {
+    let sawBody;
+    const bg = loadBackground({
+        config: baseConfig({ apiFormat: "ollama", chatUrl: "http://host/ollama/api/chat", utilityModel: "small:0.8b", utilityNumCtx: 2048 }),
+        onFetch: (call) => { sawBody = call.body; return jsonResponse({ message: { content: "ok" } }); }
+    });
+    await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }], extend: "utility", model: "mid:14b", numCtx: 8192 } });
+    assert.equal(sawBody.model, "mid:14b", "explicit model wins");
+    assert.equal(sawBody.options.num_ctx, 8192, "explicit numCtx wins");
+});
+
+test("FETCH_LLM num_ctx/num_gpu are skipped on the openai format", async () => {
+    let sawBody;
+    const bg = loadBackground({
+        config: baseConfig({ apiFormat: "openai", utilityModel: "small", utilityNumCtx: 2048, utilityForceCpu: true }),
+        onFetch: (call) => { sawBody = call.body; return jsonResponse({ choices: [{ message: { content: "ok" } }] }); }
+    });
+    await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }], extend: "utility" } });
+    assert.equal(sawBody.model, "small", "utility model still applies");
+    assert.equal(sawBody.options, undefined, "no ollama options on the openai format");
+});
+
+test("GET_CONFIG exposes the utility-model fields", async () => {
+    const bg = loadBackground({
+        config: baseConfig({ utilityModel: "small:0.8b", utilityNumCtx: 2048, utilityForceCpu: true }),
+        onFetch: () => jsonResponse({})
+    });
+    const resp = await bg.send({ type: "GET_CONFIG", payload: {} });
+    assert.equal(resp.data.utilityModel, "small:0.8b");
+    assert.equal(resp.data.utilityNumCtx, 2048);
+    assert.equal(resp.data.utilityForceCpu, true);
+});
+
 test("FETCH_LLM honors a per-call model override", async () => {
     const bg = loadBackground({
         config: baseConfig(),
@@ -254,7 +309,10 @@ test("GET_CONFIG returns the model/ocrModel/apiFormat and withholds the URL and 
     });
 
     const res = await bg.send({ type: "GET_CONFIG", payload: {} });
-    assert.deepEqual(res.data, { model: "qwen3:235b", ocrModel: "qwen2.5vl", apiFormat: "ollama" });
+    assert.deepEqual(res.data, {
+        model: "qwen3:235b", ocrModel: "qwen2.5vl", apiFormat: "ollama",
+        utilityModel: "", utilityNumCtx: 4096, utilityForceCpu: false,
+    });
     // The page must never see the server URL or API key (security invariant).
     assert.ok(!("chatUrl" in res.data) && !("apiKey" in res.data), Object.keys(res.data).join());
 });

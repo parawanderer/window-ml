@@ -103,6 +103,21 @@ test("ml.chat forwards a maxTokens cap in the request payload", async () => {
     assert.equal(out, "ok");
 });
 
+test("ml.chat forwards the extend profile in the request payload", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: (msg) => {
+            assert.equal(msg.payload.extend, "utility");
+            return { data: "ok" };
+        }
+    });
+    assert.equal(await world.ml.chat("hi", { extend: "utility" }), "ok");
+});
+
+test("ml.chat rejects an invalid extend value", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: () => assert.fail("no request should be sent") });
+    await assert.rejects(world.ml.chat("hi", { extend: "bogus" }), /invalid extend/);
+});
+
 test("debug stream is silent until the sidebar handshakes, then emits chat events with the save flag", async () => {
     const world = loadPageWorld({ onRuntimeMessage: () => ({ data: "hi there" }) });
     const win = world.context.window;

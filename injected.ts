@@ -17,6 +17,7 @@ import type {
     DebugSessionConfig,
     FetchLlmPayload,
     ChatOptions,
+    ExtendProfile,
     JsonSchema,
     ToolCall,
     LoadedModel,
@@ -65,6 +66,12 @@ import type {
             const b = new Uint8Array(4); crypto.getRandomValues(b);
             return [...b].map(x => x.toString(16).padStart(2, "0")).join("");
         } catch { return Math.random().toString(16).slice(2, 10); }
+    };
+
+    // Validate the `extend` profile option — throw on anything but a known value.
+    const validateExtend = (extend: ExtendProfile | null | undefined): void => {
+        if (extend != null && extend !== "default" && extend !== "utility")
+            throw new Error(`ml: invalid extend "${extend}" — use "default" or "utility".`);
     };
 
     /**
@@ -635,7 +642,8 @@ import type {
          * @param {boolean} [options.save=false] Persist across reloads when debug sidebar is on.
          * @returns {{messages: Array<{role: string, content: string, images?: Array, sources?: Array}>, hash: string, model: string|null, think: boolean, cleanup: boolean, schema: Object|null, toolIds: string[]|null, maxTokens: number|null, save: boolean, chat: Function, fork: Function}} Chat session object.
          */
-        createChat: function({ system = null, model = null, think = false, cleanup = true, schema = null, toolIds = null, maxTokens = null, save = false }: Pick<ChatOptions, "system" | "model" | "think" | "cleanup" | "schema" | "toolIds" | "maxTokens"> & { save?: boolean } = {}): MlHistory {
+        createChat: function({ system = null, model = null, extend = null, numCtx = null, numGpu = null, think = false, cleanup = true, schema = null, toolIds = null, maxTokens = null, save = false }: Pick<ChatOptions, "system" | "model" | "extend" | "numCtx" | "numGpu" | "think" | "cleanup" | "schema" | "toolIds" | "maxTokens"> & { save?: boolean } = {}): MlHistory {
+            validateExtend(extend);
             const ml = this;
             return {
                 messages: system ? [{ role: "system", content: system }] : [],
@@ -643,6 +651,9 @@ import type {
                 // history object (history.hash) to identify / later resume a chat.
                 hash: shortHash(),
                 model,
+                extend,
+                numCtx,
+                numGpu,
                 think,
                 cleanup,
                 schema,
@@ -665,9 +676,12 @@ import type {
                  * @param {(delta: string, full: string) => void} [options.onToken=null] Streaming callback.
                  * @returns {Promise<string|Object>} The model's reply (parsed if schema set).
                  */
-                chat: async function(this: MlHistory, prompt: string, { images = [], model = this.model, think = this.think, cleanup = this.cleanup, schema = this.schema, toolIds = this.toolIds, maxTokens = this.maxTokens, save = this.save, onToken }: {
+                chat: async function(this: MlHistory, prompt: string, { images = [], model = this.model, extend = this.extend, numCtx = this.numCtx, numGpu = this.numGpu, think = this.think, cleanup = this.cleanup, schema = this.schema, toolIds = this.toolIds, maxTokens = this.maxTokens, save = this.save, onToken }: {
                     images?: (string | HTMLImageElement)[];
                     model?: string | null;
+                    extend?: ExtendProfile | null;
+                    numCtx?: number | null;
+                    numGpu?: number | null;
                     think?: boolean | null;
                     cleanup?: boolean;
                     schema?: JsonSchema | null;
@@ -676,6 +690,7 @@ import type {
                     save?: boolean;
                     onToken?: (delta: string, full: string) => void;
                 } = {}): Promise<string | Record<string, unknown>> {
+                    validateExtend(extend);
                     const userMessage: NeutralMessage = { role: "user", content: prompt };
                     if (images.length) {
                         userMessage.images = await Promise.all(
@@ -683,7 +698,7 @@ import type {
                         );
                     }
 
-                    const requestPayload: FetchLlmPayload = { "messages": [...this.messages, userMessage], "think": think, "model": model, "schema": schema, "toolIds": toolIds, "maxTokens": maxTokens };
+                    const requestPayload: FetchLlmPayload = { "messages": [...this.messages, userMessage], "think": think, "model": model, "extend": extend, "numCtx": numCtx, "numGpu": numGpu, "schema": schema, "toolIds": toolIds, "maxTokens": maxTokens };
                     // Debug sidebar: announce the request (no-op unless the sidebar is on).
                     const debug = debugId();
                     // Group turns of THIS conversation by the session hash; `turn` is
@@ -738,7 +753,7 @@ import type {
                  * @returns {{messages: Array, hash: string, model: string|null, think: boolean, cleanup: boolean, schema: Object|null, toolIds: string[]|null, maxTokens: number|null, save: boolean, chat: Function, fork: Function}} A new chat session with cloned messages.
                  */
                 fork: function(this: MlHistory): MlHistory {
-                    const copy = ml.createChat({ model: this.model, think: this.think, cleanup: this.cleanup, schema: this.schema, toolIds: this.toolIds, maxTokens: this.maxTokens, save: this.save });
+                    const copy = ml.createChat({ model: this.model, extend: this.extend, numCtx: this.numCtx, numGpu: this.numGpu, think: this.think, cleanup: this.cleanup, schema: this.schema, toolIds: this.toolIds, maxTokens: this.maxTokens, save: this.save });
                     copy.messages = structuredClone(this.messages);
                     return copy;
                 }

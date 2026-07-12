@@ -46,7 +46,8 @@ export const DEFAULT_CONFIG: MlConfig = {
 };
 
 /** The non-secret subset GET_CONFIG exposes to the page (never the URL/key). */
-export type MlPublicConfig = Pick<MlConfig, "model" | "ocrModel" | "apiFormat">;
+export type MlPublicConfig = Pick<MlConfig,
+    "model" | "ocrModel" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu">;
 
 /* --------------------------- chat wire shapes -------------------------- */
 
@@ -131,9 +132,18 @@ export interface AgentResult {
 
 /* ----------------------------- call options ---------------------------- */
 
+/** Config "profile" a call extends. "utility" pulls model + num_ctx/num_gpu
+ *  from the saved utility-model config (falling back to the default model when
+ *  none is set); "default"/omitted is the plain default-model behaviour.
+ *  Explicit options always override the profile ({ ...profile, ...explicit }). */
+export type ExtendProfile = "default" | "utility";
+
 export interface ChatOptions {
     system?: string | null;
     model?: string | null;
+    extend?: ExtendProfile | null;
+    numCtx?: number | null;     // Ollama num_ctx (context window); ollama format only
+    numGpu?: number | null;     // Ollama num_gpu (0 = force CPU); ollama format only
     think?: boolean | null;
     cleanup?: boolean;
     images?: (string | HTMLImageElement)[];
@@ -152,6 +162,9 @@ export interface MlHistory {
     messages: NeutralMessage[];
     hash: string;
     model: string | null;
+    extend: ExtendProfile | null;
+    numCtx: number | null;
+    numGpu: number | null;
     think: boolean | null;
     cleanup: boolean;
     schema: JsonSchema | null;
@@ -180,6 +193,9 @@ export type BackgroundMessageType =
 export interface FetchLlmPayload {
     messages: NeutralMessage[];
     model?: string | null;
+    extend?: ExtendProfile | null;   // resolved server-side from the utility-model config
+    numCtx?: number | null;
+    numGpu?: number | null;
     think?: boolean | null;
     schema?: JsonSchema | null;
     toolIds?: string[] | null;

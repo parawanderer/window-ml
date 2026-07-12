@@ -217,15 +217,21 @@ async function prepareRequest(payload: FetchLlmPayload) {
     const config = await getConfig();
     const headers = authHeaders(config);
 
-    // ml.read() sets ocr:true so OCR resolves to the dedicated ocrModel first,
-    // keeping the reasoning model (config.model) free of image tokens.
-    const model = payload.model || (payload.ocr && config.ocrModel) || config.model;
+    // Model resolution, in priority order: an explicit model always wins; then
+    // the extend:"utility" profile's utilityModel; then the OCR model (ml.read
+    // sets ocr:true, keeping the reasoning model free of image tokens); then the
+    // default. utility/ocr fall back to the default model when unset.
+    const useUtility = payload.extend === "utility";
+    const model = payload.model
+        || (useUtility && config.utilityModel)
+        || (payload.ocr && config.ocrModel)
+        || config.model;
     if (!model) {
         throw new Error(
             payload.ocr
-                ? "No OCR model configured. Set an OCR model (a vision model like " +
-                  "qwen2.5vl) in the extension popup."
-                : "No model configured. Open the extension popup and use Load to pick one."
+                ? "No OCR model configured. Set an OCR (vision) model like qwen2.5vl " +
+                  "in the popup or the sidebar settings."
+                : "No model configured. Set a Model in the popup or the sidebar settings."
         );
     }
 
@@ -274,6 +280,17 @@ async function prepareRequest(payload: FetchLlmPayload) {
     // bounds vision calls where this has bitten.
     if (typeof payload.maxTokens === "number" && Number.isInteger(payload.maxTokens) && payload.maxTokens > 0) {
         format.applyMaxTokens(body, payload.maxTokens);
+    }
+
+    // Ollama runtime options: context window (num_ctx) + GPU layers (num_gpu, 0 =
+    // force CPU). extend:"utility" fills these from the utility-model config;
+    // explicit numCtx/numGpu override. Ollama-specific — the OpenAI format has no
+    // equivalent, so these are silently skipped there.
+    if (config.apiFormat === "ollama") {
+        const numCtx = payload.numCtx ?? (useUtility ? config.utilityNumCtx : undefined);
+        const numGpu = payload.numGpu ?? (useUtility && config.utilityForceCpu ? 0 : undefined);
+        if (typeof numCtx === "number") body.options = { ...body.options, num_ctx: numCtx };
+        if (typeof numGpu === "number") body.options = { ...body.options, num_gpu: numGpu };
     }
 
     // Client-side tool definitions (ml.step): passed through to the model, which
@@ -562,7 +579,10 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // Non-secret config the page may read (model/OCR model/format). The URL
         // and API key are deliberately withheld — see the security invariants.
         getConfig()
-            .then(config => sendResponse({ data: { model: config.model, ocrModel: config.ocrModel, apiFormat: config.apiFormat } }))
+            .then(config => sendResponse({ data: {
+                model: config.model, ocrModel: config.ocrModel, apiFormat: config.apiFormat,
+                utilityModel: config.utilityModel, utilityNumCtx: config.utilityNumCtx, utilityForceCpu: config.utilityForceCpu,
+            } }))
             .catch(err => sendResponse({ error: err.message }));
         return true;
 
