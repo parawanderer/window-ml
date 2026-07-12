@@ -92,22 +92,22 @@ test("status dot goes pending → ok, and a save:true call is tagged saved", asy
 
 test("settings: the font-size stepper scales --fs and persists it", async () => {
     const w = await loadSidebarWorld();
-    const host = w.window.document.getElementById("ml-debug-sidebar-host");
+    const html = w.window.document.documentElement;
     w.shadow.querySelector(".gear").click();                // open settings
     await w.tick();
     assert.ok(w.shadow.querySelector(".settings"), "settings panel opens");
 
     w.shadow.querySelectorAll(".stepper button")[1].click();   // the "+" button
     await w.tick();
-    assert.equal(host.style.getPropertyValue("--fs"), "13.20px", "12 × 1.1");
+    assert.equal(html.style.getPropertyValue("--fs"), "13.20px", "12 × 1.1");
     assert.equal(w.localStore.ml_debug_fontscale, 1.1, "persisted");
     assert.match(w.shadow.querySelector(".set-val").textContent, /110%/);
 });
 
 test("settings: a saved font scale is applied on mount", async () => {
     const w = await loadSidebarWorld({ local: { ml_debug_fontscale: 1.3 } });
-    const host = w.window.document.getElementById("ml-debug-sidebar-host");
-    assert.equal(host.style.getPropertyValue("--fs"), "15.60px", "12 × 1.3 applied from storage");
+    const html = w.window.document.documentElement;
+    assert.equal(html.style.getPropertyValue("--fs"), "15.60px", "12 × 1.3 applied from storage");
 });
 
 test("an error result marks the turn (and session) failed", async () => {

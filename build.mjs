@@ -14,22 +14,27 @@ const ENTRIES = {
     content: "content.ts",
     background: "background.ts",
     popup: "popup.ts",
-    sidebar: "sidebar/sidebar.tsx",
+    // Content-script shell (hosts the iframe) + the Preact app that runs inside
+    // the sidebar.html iframe.
+    "sidebar-shell": "sidebar/shell.ts",
+    "sidebar-app": "sidebar/app.tsx",
 };
 
 // [source, dist-relative dest] — copied verbatim next to the bundles.
 const ASSETS = [
     ["manifest.json", "manifest.json"],
     ["popup.html", "popup.html"],
+    ["sidebar/sidebar.html", "sidebar.html"],
     ["sidebar/sidebar.css", "sidebar.css"],
 ];
 
 const watch = process.argv.includes("--watch");
 
-// Core (injected/content/background/popup) is left UNminified so injected.js
-// stays readable when inspected in devtools. The sidebar is a compiled app (not
-// meant to be read) and pulls in highlight.js, so it's minified.
-const { sidebar, ...coreEntries } = ENTRIES;
+// Core (injected/content/background/popup/sidebar-shell) is left UNminified so
+// injected.js stays readable when inspected in devtools. The sidebar app is a
+// compiled Preact bundle (not meant to be read) and pulls in highlight.js, so
+// it's minified.
+const { "sidebar-app": sidebarApp, ...coreEntries } = ENTRIES;
 const base = {
     outdir: "dist",
     bundle: true,
@@ -51,13 +56,13 @@ mkdirSync("dist", { recursive: true });
 if (watch) {
     const copyPlugin = { name: "copy-assets", setup(b) { b.onEnd(() => copyAssets()); } };
     const coreCtx = await esbuild.context({ ...base, entryPoints: coreEntries, plugins: [copyPlugin] });
-    const sidebarCtx = await esbuild.context({ ...base, entryPoints: { sidebar }, minify: true, plugins: [copyPlugin] });
+    const sidebarCtx = await esbuild.context({ ...base, entryPoints: { "sidebar-app": sidebarApp }, minify: true, plugins: [copyPlugin] });
     await coreCtx.watch();
     await sidebarCtx.watch();
     console.log("watching… (dist/)");
 } else {
     await esbuild.build({ ...base, entryPoints: coreEntries });
-    await esbuild.build({ ...base, entryPoints: { sidebar }, minify: true });
+    await esbuild.build({ ...base, entryPoints: { "sidebar-app": sidebarApp }, minify: true });
     copyAssets();
     console.log("built dist/");
 }

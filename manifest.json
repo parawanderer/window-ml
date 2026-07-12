@@ -16,12 +16,12 @@
     "content_scripts": [
       {
         "matches": ["<all_urls>"],
-        "js": ["content.js", "sidebar.js"]
+        "js": ["content.js", "sidebar-shell.js"]
       }
     ],
     "web_accessible_resources": [
       {
-        "resources": ["injected.js", "sidebar.css"],
+        "resources": ["injected.js", "sidebar.html", "sidebar-app.js", "sidebar.css"],
         "matches": ["<all_urls>"]
       }
     ]

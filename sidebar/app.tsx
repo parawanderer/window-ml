@@ -27,9 +27,7 @@ for (const [name, lang] of [
     ["bash", bash], ["xml", xml], ["css", cssLang], ["markdown", mdLang],
 ] as const) hljs.registerLanguage(name, lang);
 
-const WIDTH_KEY = "ml_debug_width";
 const FONT_KEY = "ml_debug_fontscale";
-const MIN_W = 280, TAB_W = 34;
 const BASE_FS = 12, MIN_FS = 0.8, MAX_FS = 1.6;   // font-scale bounds (× BASE_FS px)
 
 type Status = "pending" | "ok" | "err";
@@ -47,8 +45,6 @@ interface Session {
 const sessionMap = new Map<string, Session>();
 const rev = signal(0);
 const view = signal<{ name: "list" } | { name: "detail"; hash: string }>({ name: "list" });
-const open = signal(false);
-const width = signal<number | null>(null);
 const fontScale = signal(1);
 const settingsOpen = signal(false);
 
@@ -388,23 +384,6 @@ function DetailView({ hash }: { hash: string }) {
     return <><OptionsBlock s={s} />{s.turns.map(t => <MessageTurn key={t.id} t={t} />)}</>;
 }
 
-function Resize() {
-    const onDown = (e: PointerEvent) => {
-        e.preventDefault();
-        const handle = e.currentTarget as HTMLElement;
-        handle.setPointerCapture(e.pointerId);
-        const onMove = (ev: PointerEvent) => { width.value = Math.max(MIN_W, Math.min(window.innerWidth * 0.95, window.innerWidth - ev.clientX + TAB_W)); };
-        const onUp = () => {
-            handle.removeEventListener("pointermove", onMove);
-            handle.removeEventListener("pointerup", onUp);
-            if (width.value) chrome.storage.local.set({ [WIDTH_KEY]: Math.round(width.value) });
-        };
-        handle.addEventListener("pointermove", onMove);
-        handle.addEventListener("pointerup", onUp);
-    };
-    return <div class="resize" title="Drag to resize" onPointerDown={onDown} />;
-}
-
 const IconGear = () => (
     <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3">
         <circle cx="8" cy="8" r="2.1" />
@@ -446,28 +425,29 @@ function App() {
     // the detail view subscribed to nothing, so a result that arrives while it's
     // open updates the turn's data but never re-renders (stale "…thinking").
     const r = rev.value;
+    // The iframe body IS the panel; the slide-out shell (tab/resize/container)
+    // lives in the content-script host (sidebar/shell.ts), not here.
     return (
-        <div class={`wrap${open.value ? " open" : ""}`} style={width.value ? { width: `${width.value}px` } : undefined}>
-            <button class="tab" title="window.ml debug" onClick={() => (open.value = !open.value)}>ml · debug</button>
-            <div class="body">
-                <Resize />
-                <div class="head">
-                    {v.name === "detail" ? <button class="nav" title="Back to sessions" onClick={() => (view.value = { name: "list" })}>‹</button> : null}
-                    <b>{v.name === "detail" ? (sessionMap.get(v.hash)?.model || "default") : `Sessions (${sessionMap.size})`}</b>
-                    <span class="sp" />
-                    {v.name === "detail" ? <Hash hash={v.hash} /> : null}
-                    <button class={`gear${settingsOpen.value ? " on" : ""}`} title="Settings" onClick={() => (settingsOpen.value = !settingsOpen.value)}><IconGear /></button>
-                </div>
-                {settingsOpen.value ? <Settings /> : null}
-                <div class="view" data-rev={r}>{v.name === "list" ? <ListView /> : <DetailView hash={v.hash} />}</div>
+        <div class="app">
+            <div class="head">
+                {v.name === "detail" ? <button class="nav" title="Back to sessions" onClick={() => (view.value = { name: "list" })}>‹</button> : null}
+                <b>{v.name === "detail" ? (sessionMap.get(v.hash)?.model || "default") : `Sessions (${sessionMap.size})`}</b>
+                <span class="sp" />
+                {v.name === "detail" ? <Hash hash={v.hash} /> : null}
+                <button class={`gear${settingsOpen.value ? " on" : ""}`} title="Settings" onClick={() => (settingsOpen.value = !settingsOpen.value)}><IconGear /></button>
             </div>
+            {settingsOpen.value ? <Settings /> : null}
+            <div class="view" data-rev={r}>{v.name === "list" ? <ListView /> : <DetailView hash={v.hash} />}</div>
         </div>
     );
 }
 
-/* --------------------------------- mount --------------------------------- */
-let hostEl: HTMLElement | null = null;
-let mountPoint: HTMLElement | null = null;
+/* --------------------------------- mount ---------------------------------
+ * This runs INSIDE the sidebar iframe (an extension page — sidebar.html), which
+ * the host web page can't read across the origin boundary. The content-script
+ * shell (sidebar/shell.ts) hosts the iframe, relays each `__mlDebug` event in
+ * via postMessage, and owns the slide-out container/tab/resize.
+ */
 let hljsStyleEl: HTMLStyleElement | null = null;   // holds the active Atom One theme
 const themeMedia = window.matchMedia("(prefers-color-scheme: dark)");
 let themePref = "auto";
@@ -475,66 +455,36 @@ const resolveTheme = (): "dark" | "light" =>
     (themePref === "light" || themePref === "dark") ? themePref : (themeMedia.matches ? "dark" : "light");
 const applyTheme = () => {
     const t = resolveTheme();
-    hostEl?.setAttribute("data-theme", t);
+    document.documentElement.setAttribute("data-theme", t);
     if (hljsStyleEl) hljsStyleEl.textContent = t === "dark" ? atomOneDark : atomOneLight;
 };
 themeMedia.addEventListener("change", applyTheme);
-// Font scale → the --fs custom property the content sizes key off (see .wrap in
-// sidebar.css). `all: initial` on the host doesn't reset custom properties.
-const applyFont = () => hostEl?.style.setProperty("--fs", `${(BASE_FS * fontScale.value).toFixed(2)}px`);
+// Font scale → the --fs custom property the content sizes key off.
+const applyFont = () => document.documentElement.style.setProperty("--fs", `${(BASE_FS * fontScale.value).toFixed(2)}px`);
 
+// Debug events are relayed in from the shell (the parent window); a bare page
+// can't reach this iframe's message bus across the extension-origin boundary.
 function onMessage(e: MessageEvent): void {
     const d = e.data as any;
-    if (e.source !== window || !d || !d.__mlDebug) return;
+    if (e.source !== window.parent || !d || !d.__mlDebug) return;
     onDebug(d.__mlDebug as MlDebugEvent);
 }
 
-async function mount(): Promise<void> {
-    if (hostEl) return;
-    hostEl = document.createElement("div");
-    hostEl.id = "ml-debug-sidebar-host";
-    hostEl.style.cssText = "all: initial;";
+function mount(): void {
+    hljsStyleEl = document.createElement("style");
+    document.head.append(hljsStyleEl);
+    const root = document.getElementById("root") || document.body;
+    chrome.storage.sync.get({ theme: "auto" }, (cfg: any) => { themePref = cfg.theme || "auto"; applyTheme(); });
+    chrome.storage.local.get({ [FONT_KEY]: 1 }, (d: any) => { if (d[FONT_KEY]) fontScale.value = d[FONT_KEY]; applyFont(); });
     applyTheme();
-    const root = hostEl.attachShadow({ mode: "open" });
-
-    let css = "";
-    try { css = await fetch(chrome.runtime.getURL("sidebar.css")).then(r => r.text()); }
-    catch (e) { console.error("ml debug sidebar: failed to load css", e); hostEl = null; return; }
-    if (!hostEl) return;
-
-    const style = document.createElement("style"); style.textContent = css; root.append(style);
-    hljsStyleEl = document.createElement("style"); root.append(hljsStyleEl); applyTheme();   // Atom One theme for highlighted code
-    mountPoint = document.createElement("div"); root.append(mountPoint);
-    chrome.storage.local.get({ [WIDTH_KEY]: 0, [FONT_KEY]: 1 }, (d: any) => {
-        if (d[WIDTH_KEY]) width.value = d[WIDTH_KEY];
-        if (d[FONT_KEY]) fontScale.value = d[FONT_KEY];
-        applyFont();
-    });
-    render(<App />, mountPoint);
-    (document.documentElement || document.body).append(hostEl);
+    render(<App />, root);
 
     window.addEventListener("message", onMessage);
-    window.postMessage({ __mlSidebar: "ready" }, "*");   // handshake → injected.js emits
+    chrome.storage.onChanged.addListener((changes, area) => {
+        if (area === "sync" && changes.theme) { themePref = (changes.theme.newValue as string) || "auto"; applyTheme(); }
+    });
+    // Tell the shell we're listening; it then handshakes injected.js on the page.
+    window.parent.postMessage({ __mlSidebarApp: "ready" }, "*");
 }
 
-function unmount(): void {
-    if (!hostEl) return;
-    window.removeEventListener("message", onMessage);
-    if (mountPoint) render(null, mountPoint);
-    hostEl.remove();
-    hostEl = mountPoint = hljsStyleEl = null;
-    sessionMap.clear();
-    view.value = { name: "list" };
-    rev.value++;
-}
-
-/* ----------------------- config gate + live toggle ----------------------- */
-chrome.storage.sync.get({ sidebar: false, theme: "auto" }, (cfg: any) => {
-    themePref = cfg.theme || "auto";
-    if (cfg.sidebar) mount();
-});
-chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== "sync") return;
-    if (changes.theme) { themePref = (changes.theme.newValue as string) || "auto"; applyTheme(); }
-    if (changes.sidebar) { if (changes.sidebar.newValue) mount(); else unmount(); }
-});
+mount();

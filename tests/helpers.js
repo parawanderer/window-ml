@@ -281,14 +281,18 @@ function loadDomWorld(html = "") {
     return { ml: win.ml, window: win, document: win.document };
 }
 
-// Boots the BUILT sidebar (dist/sidebar.js, a Preact bundle) over a jsdom window
-// with mocked chrome/fetch/matchMedia, so we can drive it with __mlDebug events
+// Boots the BUILT sidebar app (dist/sidebar-app.js, a Preact bundle) over a jsdom
+// window with mocked chrome/matchMedia, so we can drive it with __mlDebug events
 // and assert on the rendered shadow DOM. Independent of injected.js.
+// Loads the sidebar APP bundle (dist/sidebar-app.js) as if it were the iframe
+// document (sidebar.html): renders into #root, no shadow root. In the real
+// extension the content-script shell relays __mlDebug in from the parent window;
+// in jsdom window.parent === window, so dispatch posts with source: win.
 async function loadSidebarWorld({ sync = {}, local = {} } = {}) {
-    const dom = new JSDOM(`<!doctype html><html><body></body></html>`, { runScripts: "outside-only", pretendToBeVisual: true });
+    const dom = new JSDOM(`<!doctype html><html><body><div id="root"></div></body></html>`, { runScripts: "outside-only", pretendToBeVisual: true });
     const win = dom.window;
     const syncStore = { sidebar: true, theme: "auto", ...sync };
-    const localStore = { ml_debug_width: 0, ...local };
+    const localStore = { ml_debug_fontscale: 1, ...local };
     const changeListeners = [];
     win.chrome = {
         runtime: { getURL: (f) => f },
@@ -302,21 +306,17 @@ async function loadSidebarWorld({ sync = {}, local = {} } = {}) {
         }
     };
     win.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
-    // The sidebar only fetches sidebar.css (its shell/markup is Preact JSX).
-    win.fetch = async () => ({ text: async () => fs.readFileSync(path.join(DIST, "sidebar.css"), "utf8") });
-    win.eval(fs.readFileSync(path.join(DIST, "sidebar.js"), "utf8"));
+    win.eval(fs.readFileSync(path.join(DIST, "sidebar-app.js"), "utf8"));
 
     const tick = () => new Promise((r) => win.setTimeout(r, 0));   // flush async mount / Preact renders
-    for (let i = 0; i < 60 && !win.document.getElementById("ml-debug-sidebar-host"); i++) await tick();
-    const hostEl = win.document.getElementById("ml-debug-sidebar-host");
-    const shadow = hostEl && hostEl.shadowRoot;
+    for (let i = 0; i < 60 && !win.document.querySelector(".app"); i++) await tick();
     const dispatch = async (ev) => {
         const e = new win.MessageEvent("message", { data: { __mlDebug: ev } });
-        Object.defineProperty(e, "source", { value: win });   // sidebar checks e.source === window
+        Object.defineProperty(e, "source", { value: win });   // app checks e.source === window.parent (=== window in jsdom)
         win.dispatchEvent(e);
         await tick();
     };
-    return { window: win, shadow, dispatch, tick, changeListeners, syncStore, localStore };
+    return { window: win, shadow: win.document, dispatch, tick, changeListeners, syncStore, localStore };
 }
 
 module.exports = { jsonResponse, htmlResponse, streamResponse, loadBackground, loadPageWorld, loadDomWorld, loadSidebarWorld, loadDotEnv };
