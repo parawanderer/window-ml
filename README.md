@@ -93,19 +93,21 @@ different endpoints — so no single format does everything:
 | Chat · streaming (`onToken`) · structured output (`schema`) | ✅ | ✅ |
 | `think` · `maxTokens` · vision/OCR (`ml.read`) · client-side tools (`ml.step`/`ml.agent`) | ✅ | ✅ |
 | Server-side tools (`toolIds`) · RAG · web search · `sources` provenance | ✅ | ❌ |
-| `numCtx` (context window) · `numGpu:0` (Force-CPU, incl. `extend:"utility"`) | ✅² | ✅ |
+| `numCtx` (context window) · `numGpu:0` (Force-CPU, incl. `extend:"utility"`) | ⚠️² | ✅ |
 | VRAM readout / evict (`ml.ps` / `ml.unload`) | ✅¹ | ✅¹ |
 
 <sup>¹ requires a reachable Ollama backend (OpenWebUI proxies `/ollama/api/ps`).</sup>
-<sup>² sent as a request-body `options` object — Ollama honors it natively, and
-OpenWebUI forwards it to Ollama on `/api/chat/completions` too (a model param set
-in OpenWebUI's UI can override it). A non-OpenWebUI OpenAI server ignores it.</sup>
+<sup>² Placement differs by backend, and the extension sends each correctly:
+Ollama's native route reads an `options` object; OpenWebUI's OpenAI route
+**ignores `options`** and takes `num_ctx`/`num_gpu` as **top-level** fields.
+Confirmed working on the Ollama route (incl. OpenWebUI's `/ollama/api/chat`
+passthrough — context *and* Force-CPU); on OpenWebUI's OpenAI route it's
+version-dependent.</sup>
 
 The real split is **server-side tools / RAG / web search** — those are
-OpenWebUI's OpenAI endpoint only. So use format `openai`
-(`…/api/chat/completions`) for the agentic ecosystem; the Ollama runtime knobs
-(`numCtx`/`numGpu`) work either way as long as OpenWebUI (or Ollama) is behind the
-endpoint.
+OpenWebUI's OpenAI endpoint only. For the Ollama runtime knobs (`numCtx` /
+`numGpu` / Force-CPU), the **Ollama passthrough** (`…/ollama/api/chat`,
+format `ollama`) is the guaranteed path — same OpenWebUI, same key.
 
 **Cloud/commercial models** (Claude, GPT, OpenRouter) work with no extension
 changes — add them as a Connection in OpenWebUI and they appear in the model
@@ -148,12 +150,13 @@ Options (all optional, both for `chat` and `createChat`):
   explicit `model`/`numCtx`/… still wins, and `"utility"` falls back to the
   default model when none is configured. Throws on any other value.
 - `numCtx` — Ollama context window (`num_ctx`); `null` omits it (Ollama's
-  default). Sent as a request-body `options` object — Ollama honors it natively
-  and OpenWebUI forwards it on its OpenAI route too (a model param set in
-  OpenWebUI's UI can override it; a non-OpenWebUI OpenAI server ignores it).
+  default). Placed where each backend reads it (`options` object on the Ollama
+  route, top-level on OpenAI) — see the support table; guaranteed on the Ollama
+  format.
 - `numGpu` — Ollama `num_gpu` (model layers on the GPU); `0` forces CPU. Same
-  `options`-body path as `numCtx`. `extend:"utility"` sets it to `0` when
-  Force-CPU is on.
+  placement as `numCtx`. `extend:"utility"` sets it to `0` when Force-CPU is on.
+  Note `num_gpu` applies at model **load** — evict a GPU-resident model
+  (`ml.unload`) so it reloads on CPU.
 - `onToken` — `(delta, full) => {}`. Stream the reply token-by-token (for a live
   "typing" effect) while the call still resolves to the full string and history
   updates as usual. Text-only, so it's ignored when `schema` is set. Works with

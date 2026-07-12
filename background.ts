@@ -13,7 +13,9 @@ interface ChatBody {
     response_format?: unknown;
     format?: unknown;
     max_tokens?: number;
-    options?: Record<string, unknown>;
+    options?: Record<string, unknown>;      // Ollama runtime opts live here (ollama format)
+    num_ctx?: number;                        // …but top-level on the OpenAI-compat format
+    num_gpu?: number;
     tools?: unknown[];
     tool_ids?: string[];
     params?: Record<string, unknown>;
@@ -26,6 +28,10 @@ interface ApiFormatHandler {
     expectedShape: string;
     applyFormat(body: ChatBody, schema: JsonSchema): void;
     applyMaxTokens(body: ChatBody, n: number): void;
+    // num_ctx / num_gpu placement differs by backend: Ollama's native route reads
+    // an `options` object; OpenWebUI's OpenAI route ignores `options` and expects
+    // these as TOP-LEVEL fields (the OpenAI-compatible convention).
+    applyRuntimeOptions(body: ChatBody, opts: { numCtx?: number; numGpu?: number }): void;
     streamChunk(line: string): { delta: string; toolCall: boolean; sources?: unknown[] | null } | null;
 }
 
@@ -102,6 +108,12 @@ const API_FORMATS: Record<ApiFormat, ApiFormatHandler> = {
         },
         // Cap generated tokens (OpenAI-compatible field).
         applyMaxTokens(body, n) { body.max_tokens = n; },
+        // OpenWebUI's OpenAI route ignores an `options` object — pass these
+        // top-level (the OpenAI-compatible convention).
+        applyRuntimeOptions(body, { numCtx, numGpu }) {
+            if (typeof numCtx === "number") body.num_ctx = numCtx;
+            if (typeof numGpu === "number") body.num_gpu = numGpu;
+        },
         // Parse one line of a streamed SSE response into { delta, toolCall }, or
         // null to skip (comments, blanks, the [DONE] sentinel, non-JSON).
         streamChunk(line) {
@@ -150,6 +162,11 @@ const API_FORMATS: Record<ApiFormat, ApiFormatHandler> = {
         },
         // Cap generated tokens (Ollama's num_predict lives under options).
         applyMaxTokens(body, n) { body.options = { ...body.options, num_predict: n }; },
+        // Ollama reads runtime options from the `options` object (native route).
+        applyRuntimeOptions(body, { numCtx, numGpu }) {
+            if (typeof numCtx === "number") body.options = { ...body.options, num_ctx: numCtx };
+            if (typeof numGpu === "number") body.options = { ...body.options, num_gpu: numGpu };
+        },
         // Ollama streams newline-delimited JSON objects ({ message.content,
         // done }); each whole line is a chunk.
         streamChunk(line) {
@@ -284,15 +301,16 @@ async function prepareRequest(payload: FetchLlmPayload) {
 
     // Ollama runtime options: context window (num_ctx) + GPU layers (num_gpu, 0 =
     // force CPU). extend:"utility" fills these from the utility-model config;
-    // explicit numCtx/numGpu override. Sent as a request-body `options` object,
-    // which Ollama honors natively AND OpenWebUI forwards to Ollama on its
-    // /api/chat/completions route (a UI-set model param can still override it; a
-    // non-OpenWebUI OpenAI server ignores the extra key). These are opt-in, so
-    // they're only present when a caller/extend asks for them.
+    // explicit numCtx/numGpu override. Opt-in, so only present when asked. The
+    // format handler puts them where each backend reads them (Ollama `options` vs
+    // OpenAI-compat top-level) — OpenWebUI's OpenAI route ignores an options
+    // object, so mis-placing them silently dropped Force-CPU / context.
     const numCtx = payload.numCtx ?? (useUtility ? config.utilityNumCtx : undefined);
     const numGpu = payload.numGpu ?? (useUtility && config.utilityForceCpu ? 0 : undefined);
-    if (typeof numCtx === "number") body.options = { ...body.options, num_ctx: numCtx };
-    if (typeof numGpu === "number") body.options = { ...body.options, num_gpu: numGpu };
+    format.applyRuntimeOptions(body, {
+        numCtx: typeof numCtx === "number" ? numCtx : undefined,
+        numGpu: typeof numGpu === "number" ? numGpu : undefined,
+    });
 
     // Client-side tool definitions (ml.step): passed through to the model, which
     // may reply with tool_calls. Same schema shape for both backends.
