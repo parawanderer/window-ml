@@ -188,13 +188,28 @@ export interface DebugChatRequest {
     maxTokens: number | null;
 }
 
+/** The session's creation config — the options passed to createChat (à la
+ *  `ml.createChat({ think: true })`). This is what the sidebar shows as the
+ *  "options" block, kept distinct from the per-turn request + message history
+ *  (full history is a separate export feature). */
+export interface DebugSessionConfig {
+    system: string | null;
+    model: string | null;
+    think: boolean | null;
+    cleanup: boolean;
+    schema: boolean;
+    toolIds: string[] | null;
+    maxTokens: number | null;
+    save: boolean;
+}
+
 interface DebugBase {
     id: string;                     // correlates start ↔ result/error
     ts: number;
     save: boolean;
     session: SessionRef;
 }
-export interface DebugChatStart extends DebugBase { kind: "chat"; streaming: boolean; request: DebugChatRequest; }
+export interface DebugChatStart extends DebugBase { kind: "chat"; streaming: boolean; request: DebugChatRequest; config: DebugSessionConfig; }
 export interface DebugChatResult extends DebugBase { kind: "chat-result"; content: string; sources: unknown[] | null; structured: boolean; }
 export interface DebugChatError extends DebugBase { kind: "chat-error"; error: string; }
 

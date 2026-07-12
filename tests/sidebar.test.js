@@ -10,6 +10,10 @@ const chatStart = (hash, turn, user, opts = {}) => ({
         model: opts.model || "m",
         messages: [...(opts.system ? [{ role: "system", content: opts.system }] : []), { role: "user", content: user }],
         images: opts.images || null, toolIds: null, schema: false, think: null, maxTokens: null
+    },
+    config: {
+        system: opts.system || null, model: opts.model || "m", think: opts.think ?? null,
+        cleanup: opts.cleanup ?? true, schema: false, toolIds: null, maxTokens: null, save: !!opts.save
     }
 });
 const chatResult = (hash, turn, content, opts = {}) => ({
@@ -47,6 +51,8 @@ test("detail shows the options-first-message and renders assistant markdown with
     w.shadow.querySelector(".row").click();
     await w.tick();
 
+    w.shadow.querySelector(".block .block-head").click();  // options is collapsed by default
+    await w.tick();
     const opts = w.shadow.querySelector(".block .opts");   // the "first message" = options
     assert.match(opts.textContent, /model: qwen/);
     assert.match(opts.textContent, /system: be terse/);
@@ -60,6 +66,18 @@ test("detail shows the options-first-message and renders assistant markdown with
     assert.match(w.shadow.querySelector(".msg.asst .code").textContent, /\*\*bold\*\*/);
 });
 
+test("a result arriving while the detail view is OPEN re-renders it live (no stale …thinking)", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(chatStart("eee", 0, "q"));
+    w.shadow.querySelector(".row").click();                 // open detail while the turn is pending
+    await w.tick();
+    assert.ok(w.shadow.querySelector(".msg.asst .pending-note"), "shows …thinking while pending");
+
+    await w.dispatch(chatResult("eee", 0, "the answer"));   // result lands WITHOUT re-navigating
+    assert.ok(!w.shadow.querySelector(".pending-note"), "…thinking cleared live");
+    assert.match(w.shadow.querySelector(".msg.asst .md").innerHTML, /the answer/);
+});
+
 test("status dot goes pending → ok, and a save:true call is tagged saved", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(chatStart("ccc", 0, "hi", { save: true }));
@@ -70,6 +88,26 @@ test("status dot goes pending → ok, and a save:true call is tagged saved", asy
     await w.dispatch(chatResult("ccc", 0, "done", { save: true }));
     row = w.shadow.querySelector(".row");
     assert.ok(row.querySelector(".dot.ok"), "ok after the result settles");
+});
+
+test("settings: the font-size stepper scales --fs and persists it", async () => {
+    const w = await loadSidebarWorld();
+    const host = w.window.document.getElementById("ml-debug-sidebar-host");
+    w.shadow.querySelector(".gear").click();                // open settings
+    await w.tick();
+    assert.ok(w.shadow.querySelector(".settings"), "settings panel opens");
+
+    w.shadow.querySelectorAll(".stepper button")[1].click();   // the "+" button
+    await w.tick();
+    assert.equal(host.style.getPropertyValue("--fs"), "13.20px", "12 × 1.1");
+    assert.equal(w.localStore.ml_debug_fontscale, 1.1, "persisted");
+    assert.match(w.shadow.querySelector(".set-val").textContent, /110%/);
+});
+
+test("settings: a saved font scale is applied on mount", async () => {
+    const w = await loadSidebarWorld({ local: { ml_debug_fontscale: 1.3 } });
+    const host = w.window.document.getElementById("ml-debug-sidebar-host");
+    assert.equal(host.style.getPropertyValue("--fs"), "15.60px", "12 × 1.3 applied from storage");
 });
 
 test("an error result marks the turn (and session) failed", async () => {

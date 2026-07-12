@@ -14,6 +14,7 @@ import type {
     DebugChatStart,
     DebugChatResult,
     DebugChatError,
+    DebugSessionConfig,
     FetchLlmPayload,
     ChatOptions,
     JsonSchema,
@@ -689,7 +690,22 @@ import type {
                     // this turn's 0-based index (prior user messages). Fixes the
                     // "each follow-up spawns a new block" bug in the sidebar.
                     const session: SessionRef = { hash: this.hash, turn: this.messages.filter(m => m.role === "user").length };
-                    emitDebug({ kind: "chat", id: debug, ts: Date.now(), save, session, streaming: typeof onToken === "function" && !schema, request: {
+                    // The session's creation config (createChat options) — what
+                    // the sidebar's "options" block shows, distinct from the
+                    // per-turn request/messages below. Sourced from the history
+                    // (this.*) + the closed-over `system`, so it reflects the
+                    // createChat instantiation, not any per-turn overrides.
+                    const config: DebugSessionConfig = {
+                        system,
+                        model: this.model,
+                        think: (this.think === true || this.think === false) ? this.think : null,
+                        cleanup: this.cleanup,
+                        schema: !!this.schema,
+                        toolIds: this.toolIds || null,
+                        maxTokens: this.maxTokens ?? null,
+                        save: this.save
+                    };
+                    emitDebug({ kind: "chat", id: debug, ts: Date.now(), save, session, streaming: typeof onToken === "function" && !schema, config, request: {
                         model: model || null,
                         messages: requestPayload.messages,
                         images: userMessage.images || null,
