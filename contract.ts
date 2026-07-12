@@ -17,7 +17,33 @@ export interface MlConfig {
     ocrModel: string;
     sidebar: boolean;
     theme: Theme;
+    // Small "utility" model for cheap side tasks (e.g. session-title summaries).
+    // Empty → fall back to the main `model`. numCtx/forceCpu apply only when set.
+    utilityModel: string;
+    utilityNumCtx: number;      // context window for the utility model (Ollama num_ctx)
+    utilityForceCpu: boolean;   // run it on CPU (num_gpu: 0) so it can't evict the main model
 }
+
+/** Single source of truth for config defaults — imported by background.ts,
+ *  popup.ts, and the sidebar app so the three can't drift.
+ *  - chatUrl: OpenWebUI's OpenAI-compatible endpoint. No root /v1 alias (tested
+ *    0.9.5/0.10.2); /api/chat/completions is broken on 0.9.5 (issue #24550).
+ *  - apiKey: bearer token (OpenWebUI → Settings → Account).
+ *  - ocrModel/utilityModel: empty → fall back to `model`.
+ *  - utilityForceCpu: run the utility model on CPU (num_gpu: 0) so it can't
+ *    evict the main model from VRAM. */
+export const DEFAULT_CONFIG: MlConfig = {
+    chatUrl: "http://localhost:3000/api/chat/completions",
+    apiKey: "",
+    model: "",
+    apiFormat: "openai",
+    ocrModel: "",
+    sidebar: false,
+    theme: "auto",
+    utilityModel: "",
+    utilityNumCtx: 4096,
+    utilityForceCpu: false,
+};
 
 /** The non-secret subset GET_CONFIG exposes to the page (never the URL/key). */
 export type MlPublicConfig = Pick<MlConfig, "model" | "ocrModel" | "apiFormat">;

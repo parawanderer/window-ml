@@ -110,6 +110,55 @@ test("settings: a saved font scale is applied on mount", async () => {
     assert.equal(html.style.getPropertyValue("--fs"), "15.60px", "12 × 1.3 applied from storage");
 });
 
+test("settings view: loads config, populates the model datalist, gates + persists utility fields", async () => {
+    const w = await loadSidebarWorld({ sync: { chatUrl: "http://host/api" }, models: ["qwen3:14b", "qwen3.5:0.8b"] });
+    w.shadow.querySelector(".gear").click();
+    await w.tick();
+
+    assert.equal(w.shadow.querySelector('input[type="text"]').value, "http://host/api", "chatUrl loaded from storage.sync");
+    assert.equal(w.shadow.querySelectorAll("#ml-models option").length, 2, "model datalist populated from LIST_MODELS");
+    assert.ok(w.shadow.querySelector('input[type="number"]').disabled, "utility context disabled until a utility model is set");
+
+    const util = w.shadow.querySelector('input[placeholder="blank = use main model"]');
+    util.value = "qwen3.5:0.8b";
+    util.dispatchEvent(new w.window.Event("input", { bubbles: true }));
+    util.dispatchEvent(new w.window.Event("change", { bubbles: true }));
+    await w.tick();
+    assert.equal(w.syncStore.utilityModel, "qwen3.5:0.8b", "utility model persisted to storage.sync");
+    assert.ok(!w.shadow.querySelector('input[type="number"]').disabled, "utility context enabled once a model is set");
+});
+
+test("settings: Test models runs a per-model liveness check (set models pass, unset stays '—')", async () => {
+    const w = await loadSidebarWorld({ sync: { model: "qwen3:14b", utilityModel: "gemma:2b" }, models: ["qwen3:14b"] });
+    w.shadow.querySelector(".gear").click();
+    await w.tick();
+    assert.equal(w.shadow.querySelectorAll(".test-row").length, 3, "one row per model role");
+
+    w.shadow.querySelector(".test-btn").click();
+    await w.tick();
+    assert.equal(w.shadow.querySelectorAll(".test-ic.ok").length, 2, "the two set models pass");
+    assert.equal(w.shadow.querySelectorAll(".test-ic.unset").length, 1, "the unset OCR model stays not-set");
+});
+
+test("settings: a failing model test shows the error", async () => {
+    const w = await loadSidebarWorld({ sync: { model: "badmodel" }, fetchLlm: () => ({ error: "model not found" }) });
+    w.shadow.querySelector(".gear").click();
+    await w.tick();
+    w.shadow.querySelector(".test-btn").click();
+    await w.tick();
+    assert.ok(w.shadow.querySelector(".test-ic.err"), "error icon shown");
+    assert.match(w.shadow.querySelector(".test-err").textContent, /model not found/);
+});
+
+test("settings view live-syncs a config change made elsewhere (e.g. the popup)", async () => {
+    const w = await loadSidebarWorld();
+    w.shadow.querySelector(".gear").click();
+    await w.tick();
+    w.window.chrome.storage.sync.set({ model: "llama3:70b" });   // popup edit → storage.onChanged
+    await w.tick();
+    assert.equal(w.shadow.querySelector('input[placeholder="e.g. qwen3:14b"]').value, "llama3:70b");
+});
+
 test("an error result marks the turn (and session) failed", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(chatStart("ddd", 0, "boom"));

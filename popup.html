@@ -69,11 +69,9 @@
     <div class="hint">OpenWebUI &rarr; Settings &rarr; Account &rarr; API keys</div>
 
     <label for="model">Model</label>
-    <div class="row">
-        <input id="model" type="text" list="modelList" placeholder="e.g. qwen3:14b">
-        <button id="loadModels" title="Fetch model list from the server">Load</button>
-    </div>
+    <input id="model" type="text" list="modelList" placeholder="e.g. qwen3:14b">
     <datalist id="modelList"></datalist>
+    <div class="hint">The model list loads automatically — start typing to pick one.</div>
 
     <label for="apiFormat">API format</label>
     <select id="apiFormat">
@@ -85,6 +83,22 @@
     <label for="ocrModel">OCR model (optional)</label>
     <input id="ocrModel" type="text" list="modelList" placeholder="e.g. qwen2.5vl">
     <div class="hint">Vision model ml.read() uses for OCR — kept separate from the chat model</div>
+
+    <label for="utilityModel">Utility model (optional)</label>
+    <input id="utilityModel" type="text" list="modelList" placeholder="e.g. qwen3.5:0.8b (small) — blank = use the main model">
+    <div class="hint">A small, cheap model for side tasks like session-title summaries. Leave blank to reuse the main model. Suggestions: <code>qwen3.5:0.8b</code> for an average machine, a <code>gemma3:e2b</code>-class model for a beefier one.</div>
+
+    <label for="utilityNumCtx">Utility context size</label>
+    <input id="utilityNumCtx" type="number" min="512" step="512" placeholder="4096"
+        title="Context window (num_ctx) for the utility model. Summarising needs little context — keep this small on modest hardware; larger just uses more KV-cache memory.">
+    <div class="hint">Summarising needs little context — 4096 is plenty. Only used when a utility model is set.</div>
+
+    <label class="check" for="utilityForceCpu"
+        title="Run the utility model on CPU (num_gpu: 0) so it never competes with your main model for VRAM. Recommended when both run on one GPU.">
+        <input id="utilityForceCpu" type="checkbox">
+        Force utility model onto CPU
+    </label>
+    <div class="hint">Keeps the utility model off the GPU so it can't evict your main model. Only used when a utility model is set.</div>
 
     <label for="theme">Theme</label>
     <select id="theme">

@@ -288,16 +288,33 @@ function loadDomWorld(html = "") {
 // document (sidebar.html): renders into #root, no shadow root. In the real
 // extension the content-script shell relays __mlDebug in from the parent window;
 // in jsdom window.parent === window, so dispatch posts with source: win.
-async function loadSidebarWorld({ sync = {}, local = {} } = {}) {
+async function loadSidebarWorld({ sync = {}, local = {}, models = [], fetchLlm = () => ({ data: "OK" }) } = {}) {
     const dom = new JSDOM(`<!doctype html><html><body><div id="root"></div></body></html>`, { runScripts: "outside-only", pretendToBeVisual: true });
     const win = dom.window;
     const syncStore = { sidebar: true, theme: "auto", ...sync };
     const localStore = { ml_debug_fontscale: 1, ...local };
     const changeListeners = [];
+    // Fire storage.onChanged like Chrome does, so cross-context (popup↔sidebar)
+    // config sync is exercised. `set` merges then notifies.
+    const syncSet = (obj) => {
+        const changes = {};
+        for (const k of Object.keys(obj)) changes[k] = { oldValue: syncStore[k], newValue: obj[k] };
+        Object.assign(syncStore, obj);
+        for (const fn of changeListeners) fn(changes, "sync");
+    };
     win.chrome = {
-        runtime: { getURL: (f) => f },
+        runtime: {
+            getURL: (f) => f,
+            lastError: undefined,
+            sendMessage: (msg, cb) => {
+                if (!cb) return;
+                if (msg && msg.type === "LIST_MODELS") cb({ data: models });
+                else if (msg && msg.type === "FETCH_LLM") cb(fetchLlm(msg.payload));
+                else cb({ data: null });
+            },
+        },
         storage: {
-            sync: { get: (defaults, cb) => cb({ ...defaults, ...syncStore }) },
+            sync: { get: (defaults, cb) => cb({ ...defaults, ...syncStore }), set: syncSet },
             local: {
                 get: (defaults, cb) => cb({ ...defaults, ...localStore }),
                 set: (obj) => Object.assign(localStore, obj)

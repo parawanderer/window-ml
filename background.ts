@@ -3,28 +3,7 @@
 // server JSON is genuinely opaque, so it's typed `any`; our own data uses the
 // shared contract types.
 import type { MlConfig, ApiFormat, NeutralMessage, ToolCall, FetchLlmPayload, LlmResult, LoadedModel, JsonSchema } from "./contract";
-
-const DEFAULT_CONFIG: MlConfig = {
-    // OpenWebUI's OpenAI-compatible chat completions endpoint. There is no
-    // root-level /v1 alias (tested on 0.9.5 and 0.10.2); external API clients
-    // use /api/chat/completions, which is broken on 0.9.5 (issue #24550,
-    // fixed by 0.10.x) — the /ollama/api/chat passthrough works around that.
-    chatUrl: "http://localhost:3000/api/chat/completions",
-    // Bearer token, generated in OpenWebUI under Settings -> Account.
-    apiKey: "",
-    // Model id as listed by GET /v1/models.
-    model: "",
-    // Request body + response shape, see API_FORMATS.
-    apiFormat: "openai",
-    // Vision model ml.read() uses for OCR, independent of `model` so a text-only
-    // reasoning model can stay the default. Empty = fall back to `model`.
-    ocrModel: "",
-    // Opt-in debug sidebar (sidebar.js): a slide-out panel that logs ml calls.
-    // Off by default; toggled from the popup. Read by content-world sidebar.js.
-    sidebar: false,
-    // UI theme for the popup + sidebar: "auto" (follow the OS), "dark", or "light".
-    theme: "auto",
-};
+import { DEFAULT_CONFIG } from "./contract";   // single source of truth (see contract.ts)
 
 // The wire body we assemble for a chat request (grows per format/options).
 interface ChatBody {

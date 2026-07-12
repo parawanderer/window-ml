@@ -7,7 +7,8 @@
 import { render } from "preact";
 import { useState } from "preact/hooks";
 import { signal } from "@preact/signals";
-import type { MlDebugEvent, DebugSessionConfig, NeutralMessage } from "../contract";
+import type { MlDebugEvent, DebugSessionConfig, NeutralMessage, MlConfig, ApiFormat, Theme } from "../contract";
+import { DEFAULT_CONFIG } from "../contract";
 // Syntax highlighting — highlight.js core + a focused set of languages, and the
 // Atom One themes (imported as CSS text, injected into the shadow root).
 import hljs from "highlight.js/lib/core";
@@ -44,9 +45,10 @@ interface Session {
 // --- state: a Map (O(1) lookup) + a version signal to notify Preact of changes ---
 const sessionMap = new Map<string, Session>();
 const rev = signal(0);
-const view = signal<{ name: "list" } | { name: "detail"; hash: string }>({ name: "list" });
+const view = signal<{ name: "list" } | { name: "detail"; hash: string } | { name: "settings" }>({ name: "list" });
 const fontScale = signal(1);
-const settingsOpen = signal(false);
+const config = signal<MlConfig>(DEFAULT_CONFIG);   // live mirror of chrome.storage.sync
+const models = signal<string[]>([]);               // server model ids (for the datalists)
 
 /* -------------------------------- helpers -------------------------------- */
 const pretty = (v: unknown, max = 6000): string => {
@@ -384,27 +386,125 @@ function DetailView({ hash }: { hash: string }) {
     return <><OptionsBlock s={s} />{s.turns.map(t => <MessageTurn key={t.id} t={t} />)}</>;
 }
 
+// Gear — Heroicons "cog-6-tooth" (MIT, https://heroicons.com).
 const IconGear = () => (
-    <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.3">
-        <circle cx="8" cy="8" r="2.1" />
-        <path d="M8 1.5v1.4M8 13.1v1.4M14.5 8h-1.4M2.9 8H1.5M12.6 3.4l-1 1M4.4 11.6l-1 1M12.6 12.6l-1-1M4.4 4.4l-1-1" />
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.24-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
+        <path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
     </svg>
 );
 
-// Settings panel (toggled from the header gear). Font size scales the readable
-// content; persisted to chrome.storage.local like the panel width.
+// Fetch the server's model list via the background worker (privileged fetch);
+// degrade silently if unreachable. Populates the datalists.
+function fetchModels(): void {
+    chrome.runtime.sendMessage({ type: "LIST_MODELS", payload: {} }, (resp: any) => {
+        if (chrome.runtime.lastError || !resp || resp.error) return;
+        models.value = resp.data || [];
+    });
+}
+
+// Update one config field: mirror it into the signal (live UI), optionally
+// persist to chrome.storage.sync (which the popup also reads → they sync).
+function setField(key: keyof MlConfig, value: string | number | boolean, persist = true): void {
+    config.value = { ...config.value, [key]: value };
+    if (persist) chrome.storage.sync.set({ [key]: value });
+    if (key === "theme") applyTheme();
+}
+
+// Clarification text — same wording as the popup's hints (keep in sync).
+const TIP = {
+    apiFormat: "Request and response shape — match it to the URL above.",
+    model: "The model list loads automatically — start typing to pick one.",
+    ocrModel: "Vision model ml.read() uses for OCR — kept separate from the chat model.",
+    utilityModel: "A small, cheap model for side tasks like session-title summaries. Leave blank to reuse the main model. Suggestions: qwen3.5:0.8b for an average machine, a gemma4:e2b-class model for a beefier one.",
+    utilityNumCtx: "Context window (num_ctx) for the utility model. Summarising needs little context — keep it small on modest hardware; larger just uses more KV-cache memory. Only used when a utility model is set.",
+    utilityForceCpu: "Run the utility model on CPU (num_gpu: 0) so it never competes with your main model for VRAM. Only used when a utility model is set.",
+};
+
+// Field label with an optional hover tooltip. Left-anchored (.left) so it opens
+// rightward into the panel — far-left labels would clip a centered pop.
+const Lbl = ({ children, tip }: { children: string; tip?: string }) =>
+    tip
+        ? <span class="tt">{children}<span class="tt-pop left" role="tooltip">{tip}</span></span>
+        : <span>{children}</span>;
+
+// --- model liveness test (per model) ---
+type TestState = { status: "loading" | "ok" | "err"; error?: string };
+const modelTests = signal<Record<string, TestState | undefined>>({});
+const MODEL_ROLES: { key: keyof MlConfig; label: string }[] = [
+    { key: "model", label: "Model" },
+    { key: "ocrModel", label: "OCR" },
+    { key: "utilityModel", label: "Utility" },
+];
+
+// Fire a trivial chat at one model (via the background) and record ok/err.
+function testOne(key: keyof MlConfig): void {
+    const name = (config.value[key] as string).trim();
+    if (!name) return;
+    modelTests.value = { ...modelTests.value, [key]: { status: "loading" } };
+    chrome.runtime.sendMessage(
+        { type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "Reply with exactly: OK" }], model: name } },
+        (resp: any) => {
+            const err = chrome.runtime.lastError?.message || (resp && resp.error);
+            modelTests.value = { ...modelTests.value, [key]: err ? { status: "err", error: String(err) } : { status: "ok" } };
+        },
+    );
+}
+const testModels = () => { for (const { key } of MODEL_ROLES) testOne(key); };
+
+const TestIcon = ({ state }: { state: "idle" | "unset" | "loading" | "ok" | "err" }) => (
+    <span class={`test-ic ${state}`}>
+        {state === "ok" ? <IconCheck /> : state === "err" ? "✕" : state === "loading" ? "…" : state === "unset" ? "—" : ""}
+    </span>
+);
+
+// "Test models" button + a per-model status row (loading/ok/err/not-set), errors below.
+function ModelTests() {
+    const t = modelTests.value;
+    return (
+        <div class="set-test">
+            <button class="test-btn" onClick={testModels}>Test models</button>
+            {MODEL_ROLES.map(({ key, label }) => {
+                const name = (config.value[key] as string).trim();
+                const state = !name ? "unset" : (t[key]?.status ?? "idle");
+                return (
+                    <div class="test-row" key={key}>
+                        <TestIcon state={state} />
+                        <span class="role">{label}</span>
+                        <span class="name">{name || "not set"}</span>
+                    </div>
+                );
+            })}
+            {MODEL_ROLES.map(({ key }) => t[key]?.error
+                ? <div class="test-err" key={key}>{truncate(t[key]!.error!, 160)}</div> : null)}
+        </div>
+    );
+}
+
+// Full settings view (mirrors the popup). Reads/writes chrome.storage.sync
+// directly — safe because this runs in the extension-origin iframe, not the
+// page DOM — so edits sync live with the popup. Text fields persist on change
+// (blur) to avoid chatty storage writes; the signal updates on input for a
+// responsive UI + the utility-field enable gating.
 function Settings() {
+    const c = config.value;
+    const utilOn = !!c.utilityModel.trim();
     const pct = Math.round(fontScale.value * 100);
     const setScale = (s: number) => {
         fontScale.value = Math.min(MAX_FS, Math.max(MIN_FS, Math.round(s * 20) / 20));
         applyFont();
         chrome.storage.local.set({ [FONT_KEY]: fontScale.value });
     };
+    const text = (key: keyof MlConfig, extra?: Record<string, unknown>) => ({
+        type: "text", value: c[key] as string,
+        onInput: (e: any) => setField(key, e.target.value, false),
+        onChange: (e: any) => setField(key, e.target.value),
+        ...extra,
+    });
     return (
         <div class="settings">
-            <div class="set-row">
-                <span class="set-label">Font size</span>
-                <span class="sp" />
+
+            <div class="set-field"><span>Font size</span>
                 <div class="stepper">
                     <button title="Smaller" onClick={() => setScale(fontScale.value - 0.1)}>−</button>
                     <span class="set-val">{pct}%</span>
@@ -412,6 +512,50 @@ function Settings() {
                     <button class="reset" title="Reset to 100%" onClick={() => setScale(1)}>reset</button>
                 </div>
             </div>
+
+            <datalist id="ml-models">{models.value.map(m => <option key={m} value={m} />)}</datalist>
+
+            <div class="set-group">Connection</div>
+            <div class="set-note">Point this at <b>OpenWebUI</b> for the full feature set — server-side (Python) tools, RAG, and web search all route through it. A direct <b>Ollama</b> URL works but only gives the plain text-chat subset.</div>
+            <label class="set-field"><span>Chat completions URL</span>
+                <input {...text("chatUrl")} class={c.chatUrl.trim() ? "" : "err"} />
+                {c.chatUrl.trim() ? null : <div class="set-err">Required — the extension won't work without this.</div>}
+            </label>
+            <label class="set-field"><span>API key</span>
+                <input {...text("apiKey")} type="password" placeholder="OpenWebUI → Settings → Account" />
+                <div class="set-hint">Generate one in OpenWebUI → Settings → Account → API keys.</div>
+            </label>
+            <label class="set-field"><Lbl tip={TIP.apiFormat}>API format</Lbl>
+                <select value={c.apiFormat} onChange={(e: any) => setField("apiFormat", e.target.value as ApiFormat)}>
+                    <option value="openai">OpenAI (…/chat/completions)</option>
+                    <option value="ollama">Ollama native (…/api/chat)</option>
+                </select></label>
+
+            <div class="set-group">Models</div>
+            <div class="set-note">These are the defaults <code>ml.chat</code> / <code>ml.createChat</code> use when you don't pass a <code>model</code>. With no default <b>Model</b> set, you must specify one on every call.</div>
+            <label class="set-field"><Lbl tip={TIP.model}>Model</Lbl>
+                <input {...text("model", { list: "ml-models", placeholder: "e.g. qwen3:14b" })} /></label>
+            <label class="set-field"><Lbl tip={TIP.ocrModel}>OCR model (optional)</Lbl>
+                <input {...text("ocrModel", { list: "ml-models", placeholder: "e.g. qwen2.5vl" })} /></label>
+            <label class="set-field"><Lbl tip={TIP.utilityModel}>Utility model (optional)</Lbl>
+                <input {...text("utilityModel", { list: "ml-models", placeholder: "blank = use main model" })} /></label>
+            <label class="set-field"><Lbl tip={TIP.utilityNumCtx}>Utility model context size</Lbl>
+                <input type="number" min="512" step="512" value={c.utilityNumCtx} disabled={!utilOn}
+                    onChange={(e: any) => setField("utilityNumCtx", parseInt(e.target.value, 10) || DEFAULT_CONFIG.utilityNumCtx)} /></label>
+            <label class={`set-check${utilOn ? "" : " off"}`}>
+                <input type="checkbox" checked={c.utilityForceCpu} disabled={!utilOn}
+                    onChange={(e: any) => setField("utilityForceCpu", e.target.checked)} />
+                <Lbl tip={TIP.utilityForceCpu}>Force onto CPU</Lbl>
+            </label>
+            <ModelTests />
+
+            <div class="set-group">Appearance</div>
+            <label class="set-field"><span>Theme</span>
+                <select value={c.theme} onChange={(e: any) => setField("theme", e.target.value as Theme)}>
+                    <option value="auto">Auto (system)</option>
+                    <option value="dark">Dark</option>
+                    <option value="light">Light</option>
+                </select></label>
         </div>
     );
 }
@@ -427,17 +571,21 @@ function App() {
     const r = rev.value;
     // The iframe body IS the panel; the slide-out shell (tab/resize/container)
     // lives in the content-script host (sidebar/shell.ts), not here.
+    const inSettings = v.name === "settings";
     return (
         <div class="app">
             <div class="head">
-                {v.name === "detail" ? <button class="nav" title="Back to sessions" onClick={() => (view.value = { name: "list" })}>‹</button> : null}
-                <b>{v.name === "detail" ? (sessionMap.get(v.hash)?.model || "default") : `Sessions (${sessionMap.size})`}</b>
+                {v.name !== "list" ? <button class="nav" title="Back to sessions" onClick={() => (view.value = { name: "list" })}>‹</button> : null}
+                <b>{v.name === "detail" ? (sessionMap.get(v.hash)?.model || "default") : inSettings ? "Settings" : `Sessions (${sessionMap.size})`}</b>
                 <span class="sp" />
                 {v.name === "detail" ? <Hash hash={v.hash} /> : null}
-                <button class={`gear${settingsOpen.value ? " on" : ""}`} title="Settings" onClick={() => (settingsOpen.value = !settingsOpen.value)}><IconGear /></button>
+                {!inSettings ? <button class="gear" title="Settings" onClick={() => { fetchModels(); view.value = { name: "settings" }; }}><IconGear /></button> : null}
             </div>
-            {settingsOpen.value ? <Settings /> : null}
-            <div class="view" data-rev={r}>{v.name === "list" ? <ListView /> : <DetailView hash={v.hash} />}</div>
+            <div class="view" data-rev={r}>
+                {v.name === "settings" ? <Settings />
+                    : v.name === "list" ? <ListView />
+                        : <DetailView hash={v.hash} />}
+            </div>
         </div>
     );
 }
@@ -450,9 +598,10 @@ function App() {
  */
 let hljsStyleEl: HTMLStyleElement | null = null;   // holds the active Atom One theme
 const themeMedia = window.matchMedia("(prefers-color-scheme: dark)");
-let themePref = "auto";
-const resolveTheme = (): "dark" | "light" =>
-    (themePref === "light" || themePref === "dark") ? themePref : (themeMedia.matches ? "dark" : "light");
+const resolveTheme = (): "dark" | "light" => {
+    const t = config.value.theme;
+    return (t === "light" || t === "dark") ? t : (themeMedia.matches ? "dark" : "light");
+};
 const applyTheme = () => {
     const t = resolveTheme();
     document.documentElement.setAttribute("data-theme", t);
@@ -474,14 +623,20 @@ function mount(): void {
     hljsStyleEl = document.createElement("style");
     document.head.append(hljsStyleEl);
     const root = document.getElementById("root") || document.body;
-    chrome.storage.sync.get({ theme: "auto" }, (cfg: any) => { themePref = cfg.theme || "auto"; applyTheme(); });
+    chrome.storage.sync.get(DEFAULT_CONFIG, (cfg: any) => { config.value = cfg as MlConfig; applyTheme(); });
     chrome.storage.local.get({ [FONT_KEY]: 1 }, (d: any) => { if (d[FONT_KEY]) fontScale.value = d[FONT_KEY]; applyFont(); });
     applyTheme();
+    fetchModels();
     render(<App />, root);
 
     window.addEventListener("message", onMessage);
+    // Live-sync config edits made elsewhere (e.g. the popup) into the settings form.
     chrome.storage.onChanged.addListener((changes, area) => {
-        if (area === "sync" && changes.theme) { themePref = (changes.theme.newValue as string) || "auto"; applyTheme(); }
+        if (area !== "sync") return;
+        const patch: Record<string, unknown> = {};
+        for (const k in changes) patch[k] = changes[k].newValue;
+        config.value = { ...config.value, ...patch };
+        if (changes.theme) applyTheme();
     });
     // Tell the shell we're listening; it then handshakes injected.js on the page.
     window.parent.postMessage({ __mlSidebarApp: "ready" }, "*");

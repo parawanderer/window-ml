@@ -2,21 +2,13 @@
 // model picker, Save & Test, VRAM readout, and the theme. Talks to background.ts
 // via chrome.runtime for privileged work.
 import type { MlConfig, Theme, LoadedModel } from "./contract";
+import { DEFAULT_CONFIG } from "./contract";   // single source of truth (see contract.ts)
 
-// Must match DEFAULT_CONFIG in background.ts.
-const DEFAULT_CONFIG: MlConfig = {
-    chatUrl: "http://localhost:3000/api/chat/completions",
-    apiKey: "",
-    model: "",
-    apiFormat: "openai",
-    ocrModel: "",
-    sidebar: false,
-    theme: "auto",
-};
-
-// Text/select inputs, read via .value. Booleans are handled separately (CHECKBOXES).
-const FIELDS: (keyof MlConfig)[] = ["chatUrl", "apiKey", "model", "apiFormat", "ocrModel", "theme"];
-const CHECKBOXES: (keyof MlConfig)[] = ["sidebar"];
+// Text/select inputs, read via .value. Numbers (NUMBERS) and booleans
+// (CHECKBOXES) are handled separately.
+const FIELDS: (keyof MlConfig)[] = ["chatUrl", "apiKey", "model", "apiFormat", "ocrModel", "theme", "utilityModel"];
+const NUMBERS: (keyof MlConfig)[] = ["utilityNumCtx"];
+const CHECKBOXES: (keyof MlConfig)[] = ["sidebar", "utilityForceCpu"];
 
 // Every referenced element is an <input>/<select> (or close enough for the props
 // we touch: value/checked/textContent/className/style/replaceChildren).
@@ -38,9 +30,10 @@ function setStatus(text: string, kind?: string) {
     statusEl().className = kind || "";
 }
 
-function readForm(): Record<string, string | boolean> {
-    const config: Record<string, string | boolean> = {};
+function readForm(): Record<string, string | number | boolean> {
+    const config: Record<string, string | number | boolean> = {};
     for (const field of FIELDS) config[field] = $(field).value.trim();
+    for (const num of NUMBERS) config[num] = parseInt($(num).value, 10) || (DEFAULT_CONFIG[num] as number);
     for (const box of CHECKBOXES) config[box] = $(box).checked;
     return config;
 }
@@ -48,8 +41,17 @@ function readForm(): Record<string, string | boolean> {
 async function loadForm() {
     const config = await chrome.storage.sync.get(DEFAULT_CONFIG) as MlConfig;
     for (const field of FIELDS) $(field).value = config[field] as string;
+    for (const num of NUMBERS) $(num).value = String(config[num]);
     for (const box of CHECKBOXES) $(box).checked = !!config[box];
     applyTheme(config.theme);
+    syncUtilityEnabled();
+}
+
+// num_ctx / force-CPU only apply when a utility model is set — disable them otherwise.
+function syncUtilityEnabled() {
+    const on = !!$("utilityModel").value.trim();
+    $("utilityNumCtx").disabled = !on;
+    $("utilityForceCpu").disabled = !on;
 }
 
 async function save() {
@@ -97,12 +99,18 @@ chrome.storage.onChanged.addListener((changes, area) => {
             $(field).value = changes[field].newValue as string;
         }
     }
+    for (const num of NUMBERS) {
+        if (changes[num] && changes[num].newValue !== undefined) {
+            $(num).value = String(changes[num].newValue);
+        }
+    }
     for (const box of CHECKBOXES) {
         if (changes[box] && changes[box].newValue !== undefined) {
             $(box).checked = !!changes[box].newValue;
         }
     }
     if (changes.theme && changes.theme.newValue !== undefined) applyTheme(changes.theme.newValue as Theme);
+    if (changes.utilityModel && changes.utilityModel.newValue !== undefined) syncUtilityEnabled();
 });
 
 async function saveAndTest() {
@@ -184,8 +192,10 @@ $("theme").addEventListener("change", () => applyTheme($("theme").value as Theme
 $("save").addEventListener("click", save);
 $("unload").addEventListener("click", freeVram);
 $("test").addEventListener("click", saveAndTest);
-$("loadModels").addEventListener("click", loadModels);
 $("refreshVram").addEventListener("click", refreshVram);
+$("utilityModel").addEventListener("input", syncUtilityEnabled);
 
-loadForm();
+// Populate the form, then auto-fetch the model list (no Load button — the
+// datalist just fills in). refreshVram in parallel.
+loadForm().then(loadModels);
 refreshVram();
