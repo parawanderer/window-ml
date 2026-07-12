@@ -437,18 +437,49 @@ const MODEL_ROLES: { key: keyof MlConfig; label: string }[] = [
     { key: "utilityModel", label: "Utility" },
 ];
 
-// Fire a trivial chat at one model (via the background) and record ok/err.
+const setTest = (key: keyof MlConfig, state: TestState) => { modelTests.value = { ...modelTests.value, [key]: state }; };
+
+// A generated PNG with a known short code — for genuinely testing OCR (a text
+// ping would pass on ANY model without exercising vision). null if no canvas.
+function ocrTestImage(): { dataUrl: string; token: string } | null {
+    try {
+        const alpha = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";   // no ambiguous 0/O/1/I/L
+        let token = "";
+        for (let i = 0; i < 4; i++) token += alpha[Math.floor(Math.random() * alpha.length)];
+        const cv = document.createElement("canvas");
+        cv.width = 240; cv.height = 96;
+        const ctx = cv.getContext("2d");
+        if (!ctx) return null;
+        ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
+        ctx.fillStyle = "#000"; ctx.font = "bold 60px monospace"; ctx.textBaseline = "middle";
+        ctx.fillText(token, 20, 50);
+        return { dataUrl: cv.toDataURL("image/png"), token };
+    } catch { return null; }
+}
+
+// Test one model via the background. Text models get a trivial ping; the OCR
+// model actually transcribes a generated image and we verify the code returns.
 function testOne(key: keyof MlConfig): void {
     const name = (config.value[key] as string).trim();
     if (!name) return;
-    modelTests.value = { ...modelTests.value, [key]: { status: "loading" } };
-    chrome.runtime.sendMessage(
-        { type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "Reply with exactly: OK" }], model: name } },
-        (resp: any) => {
-            const err = chrome.runtime.lastError?.message || (resp && resp.error);
-            modelTests.value = { ...modelTests.value, [key]: err ? { status: "err", error: String(err) } : { status: "ok" } };
-        },
-    );
+    setTest(key, { status: "loading" });
+
+    const img = key === "ocrModel" ? ocrTestImage() : null;
+    const payload = img
+        ? { messages: [{ role: "user", content: "Transcribe the characters in this image. Output only the characters.", images: [img.dataUrl] }], model: name, ocr: true }
+        : { messages: [{ role: "user", content: "Reply with exactly: OK" }], model: name };
+
+    chrome.runtime.sendMessage({ type: "FETCH_LLM", payload }, (resp: any) => {
+        const err = chrome.runtime.lastError?.message || (resp && resp.error);
+        if (err) return setTest(key, { status: "err", error: String(err) });
+        if (img) {
+            const got = String(resp.data || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+            return setTest(key, got.includes(img.token)
+                ? { status: "ok" }
+                : { status: "err", error: `read "${truncate(String(resp.data || ""), 40)}" — expected ${img.token}` });
+        }
+        setTest(key, { status: "ok" });
+    });
 }
 const testModels = () => { for (const { key } of MODEL_ROLES) testOne(key); };
 
@@ -545,7 +576,7 @@ function Settings() {
             <label class={`set-check${utilOn ? "" : " off"}`}>
                 <input type="checkbox" checked={c.utilityForceCpu} disabled={!utilOn}
                     onChange={(e: any) => setField("utilityForceCpu", e.target.checked)} />
-                <Lbl tip={TIP.utilityForceCpu}>Force onto CPU</Lbl>
+                <Lbl tip={TIP.utilityForceCpu}>Force utility onto CPU</Lbl>
             </label>
             <ModelTests />
 
