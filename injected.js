@@ -13,17 +13,51 @@
             debugEnabled = true;
         }
     });
+    /**
+     * Emit a debug event to the sidebar via postMessage.
+     * No-op when debugging is disabled; catches non-cloneable errors silently.
+     *
+     * @param {Object} event The event data to send.
+     */
     const emitDebug = (event) => {
         if (!debugEnabled) return;
         try { window.postMessage({ __mlDebug: event }, "*"); } catch (e) { /* non-cloneable — ignore */ }
     };
+    /**
+     * Generate a short unique id from timestamp and random bits.
+     * Used for labeling individual chat requests in the debug stream.
+     *
+     * @returns {string} A short unique identifier.
+     */
     const debugId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+    /**
+     * Generate a stable short hex id per session.
+     * Uses crypto.getRandomValues when available, falls back to Math.random.
+     * Shown in the debug sidebar and used to resume a conversation.
+     *
+     * @returns {string} A short hex identifier.
+     */
+    const shortHash = () => {
+        try {
+            const b = new Uint8Array(4); crypto.getRandomValues(b);
+            return [...b].map(x => x.toString(16).padStart(2, "0")).join("");
+        } catch { return Math.random().toString(16).slice(2, 10); }
+    };
 
+    /**
+     * Make a background task promise that communicates with the content script via postMessage.
+     * Posts a request and waits for the matching response, resolving with the result or rejecting with an error.
+     *
+     * @param {string} requestType The type of request to send.
+     * @param {string} responseType The type of response to listen for.
+     * @param {Object} payload The request payload.
+     * @param {(result: any) => any} [callbackOnResponseSuccess] Optional callback to transform the result before resolving.
+     * @returns {Promise<any>} The task result.
+     */
     const makeBackgroundTaskPromise = (requestType, responseType, payload, callbackOnResponseSuccess) => {
         return new Promise((resolve, reject) => {
             const requestId = Math.random().toString(36).substring(7);
 
-            // Define a one-time listener for the response
             function handleResponse(event) {
                 if (event.data.type === responseType && event.data.requestId === requestId) {
                     window.removeEventListener("message", handleResponse);
@@ -39,7 +73,6 @@
 
             window.addEventListener("message", handleResponse);
 
-            // Send the request out to the Content Script
             window.postMessage({
                 type: requestType,
                 requestId: requestId,
@@ -48,8 +81,13 @@
         });
     };
 
-    // A chat request that resolves { content, sources } — the content string plus
-    // any server-side tool / RAG provenance the backend attached (empty otherwise).
+    /**
+     * Make a chat request that resolves { content, sources }.
+     * The content string plus any server-side tool / RAG provenance the backend attached (empty otherwise).
+     *
+     * @param {Object} payload The chat request payload.
+     * @returns {Promise<{content: string, sources: Array}>} The chat response.
+     */
     const makeChatRequest = (payload) => {
         return new Promise((resolve, reject) => {
             const requestId = Math.random().toString(36).substring(7);
@@ -65,9 +103,15 @@
         });
     };
 
-    // Streaming counterpart: fires onToken(delta, full) for each streamed chunk
-    // and resolves { content, sources } once done. Rides a Port on the
-    // content-script side (many messages), vs the one-shot request/response above.
+    /**
+     * Make a streaming chat request that fires onToken(delta, full) for each streamed chunk
+     * and resolves { content, sources } once done. Rides a Port on the
+     * content-script side (many messages), vs the one-shot request/response above.
+     *
+     * @param {Object} payload The chat request payload.
+     * @param {(delta: string, full: string) => void} onToken Callback fired for each streamed token.
+     * @returns {Promise<{content: string, sources: Array}>} The chat response.
+     */
     const makeStreamingTaskPromise = (payload, onToken) => {
         return new Promise((resolve, reject) => {
             const requestId = Math.random().toString(36).substring(7);
@@ -100,19 +144,37 @@
     // iterate with cheap probes instead of dumping HTML into the model's
     // context. Every helper truncates hard and never returns outerHTML.
 
+    /**
+     * Truncate a string to n characters, replacing with ellipsis if needed.
+     * Normalizes whitespace first (collapses to single spaces, trims).
+     *
+     * @param {*} str The value to truncate (coerced to string).
+     * @param {number} n Max characters before truncation.
+     * @returns {string} The truncated string.
+     */
     const truncate = (str, n) => {
         str = String(str == null ? "" : str).replace(/\s+/g, " ").trim();
         return str.length > n ? str.slice(0, n) + "…" : str;
     };
 
-    // Message for a caught throw. Background tasks reject with a plain STRING
-    // (not an Error), so `e.message` would be undefined — fall back to the value.
+    /**
+     * Extract error text from a caught throw.
+     * Background tasks reject with a plain STRING (not an Error), so `e.message` would be undefined — fall back to the value.
+     *
+     * @param {*} e The caught error value.
+     * @returns {string} The error message text.
+     */
     const errText = (e) => (e && e.message) ? e.message : String(e);
 
-    // A compact structural path for an element:
-    //   body > div#main > div.card > h2.title
-    // Tag + id + up to 4 classes per ancestor, capped at 8 hops — enough for the
-    // model to recognise the repeating container, small enough to stay cheap.
+    /**
+     * Build a compact structural path for an element.
+     * Format: body > div#main > div.card > h2.title
+     * Tag + id + up to 4 classes per ancestor, capped at 8 hops — enough for the
+     * model to recognise the repeating container, small enough to stay cheap.
+     *
+     * @param {Element} el The element to build a path for.
+     * @returns {string} The structural path string.
+     */
     const elPath = (el) => {
         const parts = [];
         let node = el, hops = 0;
@@ -129,11 +191,16 @@
         return parts.join(" > ");
     };
 
-    // A skeleton of an element and its descendants to `depth`: tags, ids,
-    // classes, data-* attributes, and each element's OWN text only — never the
-    // text of descendants (that's what the tree shows) and never innerHTML.
-    // One compact line for an element: tag#id.classes [data-*] "own text". No
-    // children — shared by describeSkeleton (per node) and the ancestors tool.
+    /**
+     * Build a skeleton line for an element and its descendants to `depth`: tags, ids,
+     * classes, data-* attributes, and each element's OWN text only — never the
+     * text of descendants (that's what the tree shows) and never innerHTML.
+     * One compact line for an element: tag#id.classes [data-*] "own text". No
+     * children — shared by describeSkeleton (per node) and the ancestors tool.
+     *
+     * @param {Element} el The element to build a line for.
+     * @returns {string} The skeleton line string.
+     */
     const elLine = (el) => {
         let seg = el.tagName.toLowerCase();
         if (el.id) seg += "#" + el.id;
@@ -152,6 +219,15 @@
         return seg;
     };
 
+    /**
+     * Build a skeleton tree of an element and its descendants to a given depth.
+     * Format: tag#id.classes [data-*] "own text" per line, indented by hierarchy.
+     *
+     * @param {Element} el The element to describe.
+     * @param {number} depth How many levels of children to include.
+     * @param {string} [indent=""] Current indentation level.
+     * @returns {string} The skeleton tree as a newline-separated string.
+     */
     const describeSkeleton = (el, depth, indent = "") => {
         let out = indent + elLine(el);
         if (el.children.length && depth > 0) {
@@ -185,6 +261,15 @@
     const TRAILING_TEXT_PSEUDO = /^([\s\S]*):(?:contains|has-text)\(\s*(['"]?)([\s\S]*?)\2\s*\)\s*$/i;
     const TRAILING_EQ_PSEUDO = /^([\s\S]*):eq\(\s*(\d+)\s*\)\s*$/i;
     const TRAILING_NTH_NATIVE = /^([\s\S]*):nth-(?:of-type|child)\(\s*(\d+)\s*\)\s*$/i;
+
+    /**
+     * Query all elements matching a selector, with jQuery-style pseudo-selector support.
+     * Resolves trailing :contains(), :has-text(), :eq(n), and :nth-of-type(n)/:nth-child(n) fallbacks.
+     * Returns an array of matching elements.
+     *
+     * @param {string} selector The CSS selector (possibly with pseudo-selectors).
+     * @returns {Element[]} Array of matching elements (may be empty).
+     */
     const queryAll = (selector) => {
         let base = String(selector).trim();
         const texts = [];
@@ -224,9 +309,15 @@
         return els;
     };
 
-    // Turn a querySelector failure into a useful message. If the model used a text
-    // pseudo-selector mid-selector (queryAll only supports it at the END), say so;
-    // otherwise surface the raw error.
+    /**
+     * Turn a querySelector failure into a useful message.
+     * If the model used a text pseudo-selector mid-selector (queryAll only supports it at the END), say so;
+     * otherwise surface the raw error.
+     *
+     * @param {string} selector The selector that failed.
+     * @param {Error} err The caught error.
+     * @returns {string} A helpful error message.
+     */
     const selectorError = (selector, err) => {
         if (/:has-text\s*\(|:contains\s*\(/i.test(selector)) {
             return "Invalid selector: :contains()/:has-text() text predicates are only supported at " +
@@ -236,11 +327,15 @@
         return `Invalid selector: ${err.message}`;
     };
 
-    // A compact "where and when am I" snapshot: URL, title, page language, and the
-    // current date/time + locale/timezone. ml.agent injects this by default (so the
-    // model is oriented — and knows what "today" is, and that a site like amazon.nl
-    // implies Dutch), and the pageInfo tool exposes it on demand. Guarded so it
-    // degrades gracefully when a global is missing (e.g. in tests).
+    /**
+     * Build a compact "where and when am I" snapshot: URL, title, page language, and the
+     * current date/time + locale/timezone. ml.agent injects this by default (so the
+     * model is oriented — and knows what "today" is, and that a site like amazon.nl
+     * implies Dutch), and the pageInfo tool exposes it on demand. Guarded so it
+     * degrades gracefully when a global is missing (e.g. in tests).
+     *
+     * @returns {string} A formatted string with page context info.
+     */
     const pageContext = () => {
         const parts = [];
         try { if (typeof location !== "undefined" && location.href) parts.push(`URL: ${location.href}`); } catch {}
@@ -258,9 +353,14 @@
         return parts.join("\n");
     };
 
-    // Await a short beat so a click/submit's navigation or DOM update can begin
-    // before we read the result. Guarded: where setTimeout is absent (the jsdom
-    // test sandbox) it resolves immediately rather than throwing.
+    /**
+     * Await a short beat so a click/submit's navigation or DOM update can begin
+     * before we read the result. Guarded: where setTimeout is absent (the jsdom
+     * test sandbox) it resolves immediately rather than throwing.
+     *
+     * @param {number} ms Milliseconds to wait (passed to setTimeout).
+     * @returns {Promise<void>} Resolves after the delay (or immediately in test sandbox).
+     */
     const settle = (ms) => new Promise(r => (typeof setTimeout === "function" ? setTimeout(r, ms) : r()));
 
     // Smallest CSS-px width/height an element may have and still be worth
@@ -269,11 +369,18 @@
     // Kept tiny so genuinely small-but-real targets (icons, badges) still pass.
     const MIN_SHOT_PX = 4;
 
-    // Crop a full-viewport PNG data URL down to an element's rect. Runs page-side
-    // because a data: image doesn't taint the canvas (the cross-origin-taint
-    // gotcha only bites remote images), so pixel readback works. rect is in CSS
-    // px; the captured PNG is at devicePixelRatio, so scale by dpr and clamp to
-    // the image bounds (an element taller than the viewport gets clipped).
+    /**
+     * Crop a full-viewport PNG data URL down to an element's rect. Runs page-side
+     * because a data: image doesn't taint the canvas (the cross-origin-taint
+     * gotcha only bites remote images), so pixel readback works. rect is in CSS
+     * px; the captured PNG is at devicePixelRatio, so scale by dpr and clamp to
+     * the image bounds (an element taller than the viewport gets clipped).
+     *
+     * @param {string} dataUrl The full-viewport PNG data URL.
+     * @param {DOMRect} rect The element's bounding rectangle.
+     * @param {number} dpr The device pixel ratio.
+     * @returns {Promise<string>} The cropped image as a data URL.
+     */
     const cropDataUrl = (dataUrl, rect, dpr) => new Promise((resolve, reject) => {
         const img = new Image();
         img.onload = () => {
@@ -362,8 +469,14 @@
         0xFEFF: "ZERO WIDTH NO-BREAK SPACE (BOM)", 0x00AD: "SOFT HYPHEN",
         0x180E: "MONGOLIAN VOWEL SEPARATOR"
     };
-    // Scan a string for those characters; returns [{ index, code, name }]. Also
-    // flags other C0/C1 control chars (except tab/newline/CR, which are normal).
+    /**
+     * Scan a string for suspicious/bidi/format-control characters.
+     * Returns [{ index, code, name }]. Also flags other C0/C1 control chars
+     * (except tab/newline/CR, which are normal).
+     *
+     * @param {string} str The string to scan.
+     * @returns {Array<{index: number, code: string, name: string}>} Array of findings.
+     */
     const suspiciousChars = (str) => {
         const out = [];
         const s = String(str == null ? "" : str);
@@ -378,7 +491,12 @@
         }
         return out;
     };
-    // A banner for the approval prompt when any string arg hides suspicious chars.
+    /**
+     * Generate a warning banner for the approval prompt when any string arg hides suspicious chars.
+     *
+     * @param {Object} args The arguments object to check.
+     * @returns {string} Warning banner if suspicious chars found, empty string otherwise.
+     */
     const suspiciousArgsWarning = (args) => {
         const findings = [];
         for (const v of Object.values(args || {})) {
@@ -390,26 +508,40 @@
             `— possible prompt-injection. Inspect carefully before allowing.\n\n`;
     };
 
-    // Render a tool's arguments for an approval prompt: string values shown raw
-    // (real newlines — so an exec `js` blob is readable, not escaped JSON), others
-    // as compact JSON.
+    /**
+     * Render a tool's arguments for an approval prompt.
+     * String values shown raw (real newlines — so an exec `js` blob is readable, not escaped JSON),
+     * others as compact JSON.
+     *
+     * @param {Object} args The arguments to render.
+     * @returns {string} The rendered arguments string.
+     */
     const renderArgs = (args) => Object.entries(args || {})
         .map(([k, v]) => `${k}:\n${typeof v === "string" ? v : JSON.stringify(v)}`)
         .join("\n\n");
 
-    // Built-in onStep tracer for ml.agent({ logDebug: true }): one console line
-    // per event — the model's reasoning, or a tool call with its args, result,
-    // and any live DOM nodes (logged as real objects so they're hoverable in
-    // devtools). Exposed as ml._logStep so you can also pass it as onStep yourself.
+    /**
+     * Built-in onStep tracer for ml.agent({ logDebug: true }).
+     * One console line per event — the model's reasoning, or a tool call with its args, result,
+     * and any live DOM nodes (logged as real objects so they're hoverable in devtools).
+     * Exposed as ml._logStep so you can also pass it as onStep yourself.
+     *
+     * @param {{step: number, thought?: string, tool?: string, arguments?: Object, result?: string, elements?: Node[]}} ev The event data.
+     */
     const logStep = (ev) => ev.thought
         ? console.log(`#${ev.step} 💭`, ev.thought)
         : console.log(`#${ev.step} ${ev.tool}`, ev.arguments, "→", String(ev.result), ...(ev.elements || []));
 
-    // Default approval gate for tools flagged requiresApproval (e.g. exec): a
-    // blocking page confirm() showing the tool and its arguments. Console-first,
-    // so a native prompt is the right "pause and force approval". If confirm
-    // isn't available (non-interactive context) it fails safe to DENY — pass a
-    // custom `approve` to ml.agent for headless/automated use.
+    /**
+     * Default approval gate for tools flagged requiresApproval (e.g. exec).
+     * A blocking page confirm() showing the tool and its arguments. Console-first,
+     * so a native prompt is the right "pause and force approval". If confirm
+     * isn't available (non-interactive context) it fails safe to DENY — pass a
+     * custom `approve` to ml.agent for headless/automated use.
+     *
+     * @param {{tool: string, arguments: Object}} req The approval request.
+     * @returns {boolean} True if approved, false otherwise.
+     */
     const defaultApprove = ({ tool, arguments: args }) => {
         if (typeof window.confirm !== "function") return false;
         return window.confirm(
@@ -417,12 +549,18 @@
         );
     };
 
-    // Normalize what an `approve` gate returned into { approved, feedback, arguments }.
-    // The contract accepts a plain boolean OR a rich object so an approval UI can:
-    //   • feed a rejection COMMENT back to the model (`feedback`) instead of the
-    //     fixed "Denied" string, and
-    //   • EDIT the arguments before the tool runs (`arguments`, only on approval).
-    // `orig` is the model-proposed arguments — the fallback when none were edited.
+    /**
+     * Normalize what an `approve` gate returned into { approved, feedback, arguments }.
+     * The contract accepts a plain boolean OR a rich object so an approval UI can:
+     *   • feed a rejection COMMENT back to the model (`feedback`) instead of the
+     *     fixed "Denied" string, and
+     *   • EDIT the arguments before the tool runs (`arguments`, only on approval).
+     * `orig` is the model-proposed arguments — the fallback when none were edited.
+     *
+     * @param {boolean|{approved: boolean, feedback?: string, arguments?: Object}} result The approval result.
+     * @param {Object} orig The original arguments.
+     * @returns {{approved: boolean, feedback: string|null, arguments: Object}} Normalized approval result.
+     */
     const normalizeApproval = (result, orig) => {
         if (result && typeof result === "object") {
             const edited = result.approved && result.arguments && typeof result.arguments === "object";
@@ -436,41 +574,42 @@
     };
 
     window.ml = {
-        // Stateful multi-turn chat:
-        //
-        //   const history = ml.createChat({ system, model, think, cleanup });
-        //   await history.chat("first question", { images: [...] });
-        //   await history.chat("follow-up");
-        //   history.messages.at(-1)   // last message
-        //   history.fork()            // independent copy of the conversation
-        //
-        // history.messages is a plain [{ role, content, images? }] array —
-        // edit it freely (pop to retry, splice to prune, tweak .content).
-        // A failed request leaves the history untouched.
-        //
-        // system:  optional system prompt (first message).
-        // model:   default model for this chat; null uses the saved default.
-        // think:   true/false maps to Ollama's native "think" parameter
-        //          (forwarded by OpenWebUI); null omits it so the server default applies.
-        // cleanup: strip the <think>...</think> block from responses — also
-        //          before storing them, so it isn't resent as context.
-        // schema:  a JSON Schema object — constrains the reply to matching JSON
-        //          and returns it parsed (an object), not a string. History
-        //          still stores the raw JSON text so turns chain normally.
-        // toolIds: OpenWebUI server-side tool ids (e.g. ["web_search"]) — OpenWebUI
-        //          runs those tools and returns the finished answer. OpenWebUI only.
-        // maxTokens: hard cap on generated tokens (openai max_tokens / ollama
-        //          num_predict); null omits it. Stops a runaway generation from
-        //          pegging the model — used to bound vision calls (see ml.lookTool).
-        // save:    when the debug sidebar is on, persist this call across reloads
-        //          and tag it [saved] (vs the default ephemeral [session]).
-        // onToken: (delta, full) => {} streams the reply token-by-token (text only,
-        //          ignored when a schema is set); the call still resolves to the full string.
-        // history.chat() accepts { images, model, think, cleanup, schema, toolIds, maxTokens, save, onToken } per turn.
+        /**
+         * Create a stateful multi-turn chat session.
+         *
+         * Stateful multi-turn chat:
+         *
+         * ```js
+         *   const history = ml.createChat({ system, model, think, cleanup });
+         *   await history.chat("first question", { images: [...] });
+         *   await history.chat("follow-up");
+         *   history.messages.at(-1)   // last message
+         *   history.fork()            // independent copy of the conversation
+         *
+         * ```
+         *
+         * `history.messages` is a plain `[{ role, content, images? }]` array. You can
+         * edit it freely (pop to retry, splice to prune, tweak `.content`).
+         * A failed request leaves the history untouched.
+         *
+         * @param {Object} [options] Options object.
+         * @param {string} [options.system] Optional system prompt (first message).
+         * @param {string} [options.model] Default model for this chat; null uses the saved default.
+         * @param {boolean} [options.think=false] True/false maps to Ollama's "think" parameter; null omits it.
+         * @param {boolean} [options.cleanup=true] Strip thinking blocks from responses before storing.
+         * @param {Object} [options.schema] JSON Schema to constrain reply to matching JSON (returns parsed object).
+         * @param {string[]} [options.toolIds] OpenWebUI server-side tool ids (e.g. `["web_search"]`). OpenWebUI only.
+         * @param {number} [options.maxTokens] Hard cap on generated tokens; null omits it.
+         * @param {boolean} [options.save=false] Persist across reloads when debug sidebar is on.
+         * @returns {{messages: Array<{role: string, content: string, images?: Array, sources?: Array}>, hash: string, model: string|null, think: boolean, cleanup: boolean, schema: Object|null, toolIds: string[]|null, maxTokens: number|null, save: boolean, chat: Function, fork: Function}} Chat session object.
+         */
         createChat: function({ system = null, model = null, think = false, cleanup = true, schema = null, toolIds = null, maxTokens = null, save = false } = {}) {
             const ml = this;
             return {
                 messages: system ? [{ role: "system", content: system }] : [],
+                // Stable per-session id (see the debug sidebar). Read it off the
+                // history object (history.hash) to identify / later resume a chat.
+                hash: shortHash(),
                 model,
                 think,
                 cleanup,
@@ -478,11 +617,22 @@
                 toolIds,
                 maxTokens,
                 save,
-                // onToken(delta, full): stream the reply token-by-token. The call
-                // still resolves to the full string (and history updates as usual).
-                // Streaming is text-only, so it's skipped when a schema is set.
-                // Any server-side tool / RAG sources are attached to the stored
-                // assistant message as `.sources` (read history.messages.at(-1)).
+                /**
+                 * Send a turn in this chat session.
+                 *
+                 * @param {string} prompt The user prompt.
+                 * @param {Object} [options] Options object.
+                 * @param {Array} [options.images=[]] Images to include with the prompt.
+                 * @param {string} [options.model=this.model] Model override for this turn.
+                 * @param {boolean} [options.think=this.think] Thinking flag for this turn.
+                 * @param {boolean} [options.cleanup=this.cleanup] Strip thinking blocks from response.
+                 * @param {Object} [options.schema=this.schema] JSON Schema for structured output.
+                 * @param {string[]} [options.toolIds=this.toolIds] OpenWebUI server-side tool ids.
+                 * @param {number} [options.maxTokens=this.maxTokens] Token limit for this turn.
+                 * @param {boolean} [options.save=this.save] Persist this turn when sidebar is on.
+                 * @param {(delta: string, full: string) => void} [options.onToken=null] Streaming callback.
+                 * @returns {Promise<string|Object>} The model's reply (parsed if schema set).
+                 */
                 chat: async function(prompt, { images = [], model = this.model, think = this.think, cleanup = this.cleanup, schema = this.schema, toolIds = this.toolIds, maxTokens = this.maxTokens, save = this.save, onToken = null } = {}) {
                     const userMessage = { role: "user", content: prompt };
                     if (images.length) {
@@ -494,7 +644,11 @@
                     const requestPayload = { "messages": [...this.messages, userMessage], "think": think, "model": model, "schema": schema, "toolIds": toolIds, "maxTokens": maxTokens };
                     // Debug sidebar: announce the request (no-op unless the sidebar is on).
                     const debug = debugId();
-                    emitDebug({ kind: "chat", id: debug, ts: Date.now(), save, streaming: typeof onToken === "function" && !schema, request: {
+                    // Group turns of THIS conversation by the session hash; `turn` is
+                    // this turn's 0-based index (prior user messages). Fixes the
+                    // "each follow-up spawns a new block" bug in the sidebar.
+                    const session = { hash: this.hash, turn: this.messages.filter(m => m.role === "user").length };
+                    emitDebug({ kind: "chat", id: debug, ts: Date.now(), save, session, streaming: typeof onToken === "function" && !schema, request: {
                         model: model || null,
                         messages: requestPayload.messages,
                         images: userMessage.images || null,
@@ -509,7 +663,7 @@
                             ? await makeStreamingTaskPromise(requestPayload, onToken)
                             : await makeChatRequest(requestPayload));
                     } catch (err) {
-                        emitDebug({ kind: "chat-error", id: debug, ts: Date.now(), save, error: String((err && err.message) || err) });
+                        emitDebug({ kind: "chat-error", id: debug, ts: Date.now(), save, session, error: String((err && err.message) || err) });
                         throw err;
                     }
                     let reply = content;
@@ -518,9 +672,14 @@
                     const assistantMessage = { role: "assistant", content: reply };
                     if (sources && sources.length) assistantMessage.sources = sources;
                     this.messages.push(userMessage, assistantMessage);
-                    emitDebug({ kind: "chat-result", id: debug, ts: Date.now(), save, content: reply, sources: (sources && sources.length) ? sources : null, structured: !!schema });
+                    emitDebug({ kind: "chat-result", id: debug, ts: Date.now(), save, session, content: reply, sources: (sources && sources.length) ? sources : null, structured: !!schema });
                     return schema ? ml._parseJSON(reply) : reply;
                 },
+                /**
+                 * Create an independent copy of this chat session.
+                 *
+                 * @returns {{messages: Array, hash: string, model: string|null, think: boolean, cleanup: boolean, schema: Object|null, toolIds: string[]|null, maxTokens: number|null, save: boolean, chat: Function, fork: Function}} A new chat session with cloned messages.
+                 */
                 fork: function() {
                     const copy = ml.createChat({ model: this.model, think: this.think, cleanup: this.cleanup, schema: this.schema, toolIds: this.toolIds, maxTokens: this.maxTokens, save: this.save });
                     copy.messages = structuredClone(this.messages);
@@ -528,17 +687,32 @@
                 }
             };
         },
-        // One-shot chat — a throwaway single-turn history.
-        // Options: { system, think, cleanup, images, model, schema, toolIds, maxTokens, save, onToken } as in createChat.
+        /**
+         * One-shot chat — a throwaway single-turn history.
+         * Options: { system, think, cleanup, images, model, schema, toolIds, maxTokens, save, onToken } as in createChat.
+         *
+         * @param {string} prompt The user prompt.
+         * @param {Object} [options] Chat options (same as createChat).
+         * @returns {Promise<string|Object>} The model's reply.
+         */
         chat: async function(prompt, options = {}) {
             return this.createChat(options).chat(prompt, options);
         },
-        // Low-level single model turn WITH client-side tools. Returns the raw
-        // assistant message { content, tool_calls: [{ id, name, arguments }] } and
-        // hands control back to you: execute the calls, append the results as
-        // { role: "tool", tool_call_id, content }, and call ml.step again to
-        // continue. You own the loop (whitelist, limits, overseer — all yours).
-        // Works on both OpenWebUI and plain Ollama (wire differences normalized).
+        /**
+         * Low-level single model turn WITH client-side tools.
+         * Returns the raw assistant message { content, tool_calls: [{ id, name, arguments }] } and
+         * hands control back to you: execute the calls, append the results as
+         * { role: "tool", tool_call_id, content }, and call ml.step again to
+         * continue. You own the loop (whitelist, limits, overseer — all yours).
+         * Works on both OpenWebUI and plain Ollama (wire differences normalized).
+         *
+         * @param {Array<{role: string, content: string, tool_call_id?: string}>} messages The conversation messages.
+         * @param {Object} [options] Options object.
+         * @param {Array} [options.tools=[]] Client-side tool definitions.
+         * @param {string} [options.model=null] Model override.
+         * @param {boolean} [options.think=null] Thinking flag; null omits it.
+         * @returns {Promise<{content: string, tool_calls: Array<{id?: string, name: string, arguments: Object}>}>} The assistant message with tool calls.
+         */
         step: async function(messages, { tools = [], model = null, think = null } = {}) {
             return makeBackgroundTaskPromise(
                 "LLM_REQUEST",
@@ -793,6 +967,13 @@
                 return remembered[key];
             };
         },
+        /**
+         * One-shot chat with a "short and concise" modifier.
+         *
+         * @param {string} prompt The user prompt.
+         * @param {Object} [options] Chat options.
+         * @returns {Promise<string>} The model's concise reply.
+         */
         chatShort: async function(prompt, options) {
             return this.chat(`${prompt}. Short and concise:`, options);
         },
@@ -800,9 +981,19 @@
         // the dedicated OCR (vision) model — so the reasoning model never sees
         // image tokens. Composes with chat:
         //   await ml.chat("Summarize: " + await ml.read($0))
-        //   await Promise.all(imgs.map(i => ml.read(i)))
-        // image: <img> element or URL string. model: per-call override of the
-        // configured OCR model. prompt: override the default transcription prompt.
+        /**
+         * OCR: transcribe baked-in text from an image to a plain string, using
+         * the dedicated OCR (vision) model — so the reasoning model never sees
+         * image tokens. Composes with chat:
+         *   await ml.chat("Summarize: " + await ml.read($0))
+         *   await Promise.all(imgs.map(i => ml.read(i)))
+         *
+         * @param {string|HTMLImageElement} image An <img> element or URL string.
+         * @param {Object} [options] Options object.
+         * @param {string} [options.model=null] Per-call override of the configured OCR model.
+         * @param {string} [options.prompt=null] Override the default transcription prompt.
+         * @returns {Promise<string>} The transcribed text.
+         */
         read: async function(image, { model = null, prompt = null } = {}) {
             const dataUrl = await this._imageToDataUrl(image);
             const instruction = prompt ||
@@ -821,16 +1012,24 @@
             );
             return reply.replace(/^<think>[\s\S]*?<\/think>\s*/i, '').trim();
         },
-        // Screenshot to a PNG data URL. With no target, captures the whole visible
-        // viewport (use it to ORIENT — see the page like you would in devtools).
-        // With a target, scrolls it into view and crops to its rect. Feed either
-        // to a vision model:
-        //   await ml.chat("What does this show?", { images: [await ml.screenshot("#card")] })
-        //   await ml.chat("What page is this?", { images: [await ml.screenshot()] })
-        // target: a CSS selector, an Element, or null for the whole viewport.
-        // scroll: set false to skip scroll-into-view. index: which match of a
-        // selector to shoot (0-based) — iterate a grid with 0,1,2,… The capture is
-        // viewport-only, so a taller-than-screen element is clipped.
+        /**
+         * Screenshot to a PNG data URL. With no target, captures the whole visible
+         * viewport (use it to ORIENT — see the page like you would in devtools).
+         * With a target, scrolls it into view and crops to its rect. Feed either
+         * to a vision model:
+         *
+         * ```js
+         *   await ml.chat("What does this show?", { images: [await ml.screenshot("#card")] })
+         *   await ml.chat("What page is this?", { images: [await ml.screenshot()] })
+         *```
+         *
+         * @param {string|Element|null} [target=null] A CSS selector, an Element, or null for the whole viewport.
+         * @param {Object} [options] Options object.
+         * @param {boolean} [options.scroll=true] Set false to skip scroll-into-view.
+         * @param {boolean} [options.fullPage=false] Set true to capture the full page (stitched).
+         * @param {number} [options.index=0] Which match of a selector to shoot (0-based).
+         * @returns {Promise<string>} The screenshot as a PNG data URL.
+         */
         screenshot: async function(target = null, { scroll = true, fullPage = false, index = 0 } = {}) {
             const viewport = () => makeBackgroundTaskPromise("CAPTURE_TAB_REQUEST", "CAPTURE_TAB_RESPONSE", {});
             if (target == null) return fullPage ? this._stitchFullPage(viewport) : viewport();
@@ -859,9 +1058,14 @@
             }
             return cropDataUrl(await viewport(), rect, window.devicePixelRatio || 1);
         },
-        // Scroll the page in viewport-height steps, capture each, and stitch them
-        // vertically into one tall PNG data URL. Browser-only (canvas). Paces
-        // captures to respect captureVisibleTab's 2/sec limit, with backoff retries.
+        /**
+         * Scroll the page in viewport-height steps, capture each, and stitch them
+         * vertically into one tall PNG data URL. Browser-only (canvas). Paces
+         * captures to respect captureVisibleTab's 2/sec limit, with backoff retries.
+         *
+         * @param {Function} capture The capture function that returns a viewport screenshot.
+         * @returns {Promise<string>} The stitched full-page screenshot as a PNG data URL.
+         */
         _stitchFullPage: async function(capture) {
             const dpr = window.devicePixelRatio || 1;
             const vh = window.innerHeight;
@@ -920,16 +1124,22 @@
                 });
             });
         },
-        // Build a "look" agent tool: it screenshots an element and returns a
-        // vision-model *description* as text, so a text-only reasoning agent can
-        // still "see" (icons, badges, greyed-out/sponsored styling, layout). Not
-        // in ml.domTools by default because it needs a vision model and a capture
-        // round-trip — opt in by composing it:
-        //   ml.agent(task, { extraTools: [ml.lookTool({ model: "qwen2.5vl" })] })
-        // model: vision model for the description (null = the saved default).
-        // maxTokens: hard cap on the description length, so a runaway vision
-        //   generation can't peg the model for minutes (see roadmap #11 — the
-        //   "48-minute wedge"). A description needs few tokens; default 512.
+        /**
+         * Build a "look" agent tool: it screenshots an element and returns a
+         * vision-model *description* as text, so a text-only reasoning agent can
+         * still "see" (icons, badges, greyed-out/sponsored styling, layout). Not
+         * in ml.domTools by default because it needs a vision model and a capture
+         * round-trip — opt in by composing it:
+         *
+         * ```js
+         *   ml.agent(task, { extraTools: [ml.lookTool({ model: "qwen2.5vl" })] })
+         *```
+         *
+         * @param {Object} [options] Options object.
+         * @param {string} [options.model=null] Vision model for the description (null = the saved default).
+         * @param {number} [options.maxTokens=512] Hard cap on the description length.
+         * @returns {MlTool} A tool with `name: "look"` and `capabilities: ["vision"]`.
+         */
         lookTool: function({ model = null, maxTokens = 512 } = {}) {
             const ml = this;
             return ml.defineTool({
@@ -986,12 +1196,19 @@
                 }
             });
         },
-        // Interaction tools that DRIVE the page (real side effects), so they are
-        // `requiresApproval` and deliberately NOT in the default read-only domTools —
-        // opt in per task, gated by the approval flow:
-        //   ml.agent(task, { extraTools: [ml.clickTool(), ml.typeTool()] })
-        // clickTool: click a link/button/tab/result. Navigation, form submit,
-        // expand/collapse — irreversible, hence gated.
+        /**
+         * Build a "click" interaction tool: click a link/button/tab/result.
+         * Navigation, form submit, expand/collapse — irreversible, hence gated.
+         * Interaction tools that DRIVE the page (real side effects), so they are
+         * `requiresApproval` and deliberately NOT in the default read-only domTools —
+         * opt in per task, gated by the approval flow:
+         *
+         * ```js
+         *   ml.agent(task, { extraTools: [ml.clickTool(), ml.typeTool()] })
+         * ```
+         *
+         * @returns {MlTool} A tool with `name: "click"` and `requiresApproval: true`.
+         */
         clickTool: function() {
             const ml = this;
             return ml.defineTool({
@@ -1026,10 +1243,14 @@
                 }
             });
         },
-        // typeTool: type text into an input/textarea/contenteditable (e.g. a search
-        // box), firing input/change so the page's JS reacts. Side-effecting (it can
-        // trigger live search / autosave), so gated + opt-in like click. `submit`
-        // presses Enter afterwards, so "search for X" is one call without eval.
+        /**
+         * Build a "type" interaction tool: type text into an input/textarea/contenteditable (e.g. a search
+         * box), firing input/change so the page's JS reacts. Side-effecting (it can
+         * trigger live search / autosave), so gated + opt-in like click. `submit`
+         * presses Enter afterwards, so "search for X" is one call without eval.
+         *
+         * @returns {MlTool} A tool with `name: "type"` and `requiresApproval: true`.
+         */
         typeTool: function() {
             const ml = this;
             return ml.defineTool({
@@ -1080,14 +1301,19 @@
                 }
             });
         },
-        // #8: pick a vision model for the auto-registered `look` tool (see
-        // ml.agent's `vision` option). Returns a model id the agent can see with,
-        // or null. `agentModel` is the agent's own model (opts.model, or null =
-        // the saved default). A string `vision` forces that model; otherwise probe
-        // the agent's model, then the configured OCR model, accepting only a
-        // POSITIVE Ollama vision capability — unknown/null (cloud/non-Ollama) must
-        // NOT qualify, or we'd send image tokens to a text-only model. The caps
-        // probe is cached per service-worker lifetime in the background worker.
+        /**
+         * Pick a vision model for the auto-registered `look` tool (see ml.agent's `vision` option).
+         * Returns a model id the agent can see with, or null. `agentModel` is the agent's own model
+         * (opts.model, or null = the saved default). A string `vision` forces that model; otherwise
+         * probe the agent's model, then the configured OCR model, accepting only a POSITIVE Ollama
+         * vision capability — unknown/null (cloud/non-Ollama) must NOT qualify, or we'd send image
+         * tokens to a text-only model. The caps probe is cached per service-worker lifetime in the
+         * background worker.
+         *
+         * @param {string|null} agentModel The agent's model (or null for default).
+         * @param {string|boolean|null} [vision] Vision option from ml.agent options.
+         * @returns {Promise<string|null>} A vision-capable model id, or null.
+         */
         _resolveVisionModel: async function(agentModel, vision) {
             if (typeof vision === "string" && vision) return vision;   // forced
             let cfg;
@@ -1098,19 +1324,29 @@
             if (ocr && ocr !== primary && await this._modelSees(ocr)) return ocr;
             return null;
         },
-        // True only when `model` POSITIVELY reports Ollama vision capability.
-        // Unknown/null (cloud, non-Ollama, unreachable) is false — never send image
-        // tokens to a model we can't confirm sees. Caps are cached in the worker.
+        /**
+         * True only when `model` POSITIVELY reports vision capability.
+         * Unknown/null (cloud, non-Ollama, unreachable) is false — never send image
+         * tokens to a model we can't confirm sees. Caps are cached in the worker.
+         *
+         * @param {string|null} model The model id to check.
+         * @returns {Promise<boolean>} True if the model has vision capability.
+         */
         _modelSees: async function(model) {
             if (!model) return false;
             let caps;
             try { caps = await this.capabilities(model); } catch (e) { return false; }
             return Array.isArray(caps) && caps.includes("vision");
         },
-        // #3 inline vision: a capture-only `look` for a vision-capable AGENT model.
-        // It screenshots and hands the raw image back to ml.agent, which injects it
-        // into the model's OWN history so it reasons over the real pixels (vs the
-        // delegated lookTool, which returns a second model's text description).
+        /**
+         * Build a capture-only `look` tool for a vision-capable AGENT model.
+         * It screenshots and hands the raw image back to ml.agent, which injects it
+         * into the model's OWN history so it reasons over the real pixels (vs the
+         * delegated lookTool, which returns a second model's text description).
+         *
+         * @returns {MlTool} A tool with `name: "look"`, `capabilities: ["vision"]`, returning
+         *   `{ content, image, imageLabel, elements }` for inline vision.
+         */
         _nativeLookTool: function() {
             const ml = this;
             return ml.defineTool({
@@ -1165,6 +1401,14 @@
         _queryAll: queryAll,
         // Parses a structured-output reply, tolerating a stray ```json fence
         // and surfacing the raw text on failure for debugging.
+        /**
+         * Parse a structured-output reply, tolerating a stray ```json fence
+         * and surfacing the raw text on failure for debugging.
+         *
+         * @param {string} text The JSON text to parse.
+         * @returns {Object} The parsed JSON object.
+         * @throws {Error} If the text is not valid JSON.
+         */
         _parseJSON: function(text) {
             const stripped = text.trim().replace(/^```(?:json)?\s*|\s*```$/g, "");
             try {
@@ -1176,7 +1420,15 @@
                 );
             }
         },
-        // Accepts a URL string or <img> element, returns "data:image/...;base64,..."
+        /**
+         * Convert an image to a data URL.
+         * Accepts a URL string or <img> element, returns "data:image/...;base64,...".
+         * Handles data URIs (passed through), blob URIs (read via FileReader),
+         * and external URLs (delegated to background for CORS).
+         *
+         * @param {string|HTMLImageElement} image A URL string or <img> element.
+         * @returns {Promise<string>} The image as a data URL.
+         */
         _imageToDataUrl: async function(image) {
             let url = "";
 
@@ -1217,6 +1469,12 @@
             // We delegate the fetch to the background.
             return this._fetchImageBase64(url);
         },
+        /**
+         * Fetch an external image as base64 via the background worker (for CORS).
+         *
+         * @param {string} url The image URL to fetch.
+         * @returns {Promise<string>} The image as a base64 data URL.
+         */
         _fetchImageBase64: async function(url) {
             return makeBackgroundTaskPromise(
                 "B64_REQUEST",
@@ -1224,48 +1482,90 @@
                 { "url": url }
             );
         },
-        // Available model ids on the server.
+        /**
+         * Get available model ids on the server.
+         *
+         * @returns {Promise<string[]>} Array of model ids.
+         */
         models: async function() {
             return makeBackgroundTaskPromise("LIST_MODELS_REQUEST", "LIST_MODELS_RESPONSE", {});
         },
-        // Capability list for a model, read from Ollama's /api/show — e.g.
-        // ["completion", "tools", "vision", "thinking"]. Handy for feature
-        // gating (e.g. only offer server-side tools on a tool-capable model).
-        // Returns null when it can't be determined (cloud/non-Ollama model, old
-        // Ollama, unreachable) — treat null as "unknown", never as "no".
-        // model omitted = the saved default model.
+        /**
+         * Get capability list for a model, read from Ollama's /api/show.
+         * Returns e.g. ["completion", "tools", "vision", "thinking"]. Handy for feature
+         * gating (e.g. only offer server-side tools on a tool-capable model).
+         * Returns null when it can't be determined (cloud/non-Ollama model, old
+         * Ollama, unreachable) — treat null as "unknown", never as "no".
+         *
+         * @param {string} [model=null] The model id (omitted = saved default).
+         * @returns {Promise<string[]|null>} Array of capabilities, or null if undeterminable.
+         */
         capabilities: async function(model = null) {
             return makeBackgroundTaskPromise("CAPS_REQUEST", "CAPS_RESPONSE", { "model": model });
         },
-        // The saved default model.
+        /**
+         * Get the saved default model.
+         *
+         * @returns {Promise<string|null>} The model id.
+         */
         getModel: async function() {
             return makeBackgroundTaskPromise("GET_MODEL_REQUEST", "GET_MODEL_RESPONSE", {});
         },
-        // The non-secret saved config the page is allowed to read:
-        // { model, ocrModel, apiFormat }. The server URL and API key are never
-        // exposed to the page (see the security invariants in CLAUDE.md).
-        // ml.agent uses this to auto-wire a vision tool from the OCR model.
+        /**
+         * Get the non-secret saved config the page is allowed to read:
+         * { model, ocrModel, apiFormat }. The server URL and API key are never
+         * exposed to the page (see the security invariants in CLAUDE.md).
+         * ml.agent uses this to auto-wire a vision tool from the OCR model.
+         *
+         * @returns {Promise<{model: string, ocrModel: string, apiFormat: string}>} The config object.
+         */
         config: async function() {
             return makeBackgroundTaskPromise("CONFIG_REQUEST", "CONFIG_RESPONSE", {});
         },
-        // Persistently switch the default model (validated against the server;
-        // the settings popup picks it up automatically).
+        /**
+         * Persistently switch the default model (validated against the server;
+         * the settings popup picks it up automatically).
+         *
+         * @param {string} model The model id to set.
+         * @returns {Promise<string>} The newly set model id.
+         */
         setModel: async function(model) {
             return makeBackgroundTaskPromise("SET_MODEL_REQUEST", "SET_MODEL_RESPONSE", { "model": model });
         },
-        // Models currently loaded in VRAM: [{ model, vramGB, expiresAt }]
+        /**
+         * Get models currently loaded in VRAM.
+         *
+         * @returns {Promise<Array<{model: string, vramGB: number, expiresAt: number}>>} Array of loaded models.
+         */
         ps: async function() {
             return makeBackgroundTaskPromise("PS_REQUEST", "PS_RESPONSE", {});
         },
-        // Evict a model from VRAM (keep_alive: 0); no argument = evict all.
-        // Returns the list of models that were told to unload.
+        /**
+         * Evict a model from VRAM (keep_alive: 0).
+         * No argument = evict all. Returns the list of models that were told to unload.
+         *
+         * @param {string} [model] The model id to evict; omitted = evict all.
+         * @returns {Promise<string[]>} The unloaded models.
+         */
         unload: async function(model = null) {
             return makeBackgroundTaskPromise("UNLOAD_REQUEST", "UNLOAD_RESPONSE", { "model": model });
         },
+        /**
+         * Chat and log the response to the console.
+         *
+         * @param {string} prompt The user prompt.
+         * @param {Object} [options] Chat options.
+         */
         logChat: async function(prompt, options) {
             const response = await this.chat(prompt, options);
             console.log(response);
         },
+        /**
+         * Chat with a "short and concise" modifier and log the response.
+         *
+         * @param {string} prompt The user prompt.
+         * @param {Object} [options] Chat options.
+         */
         logChatShort: async function(prompt, options) {
             const response = await this.chatShort(prompt, options);
             console.log(response);
