@@ -92,8 +92,9 @@ format), `raw` (return `{ content, tool_calls }` instead of the content
 string, skipping the null-content error), `extend` (`"utility"` resolves the
 utility model + its `num_ctx`/`num_gpu` in `prepareRequest`, right beside the
 `ocr`/default model resolution; validated client-side in `injected.ts`), and
-`numCtx`/`numGpu` (Ollama `options`, **ollama-format only** — skipped on
-`openai`; explicit values override the `extend` profile). Sending `toolIds` forces
+`numCtx`/`numGpu` (a request-body `options` object — Ollama honors it natively
+and OpenWebUI forwards it on `/api/chat/completions` too, so it works on both
+formats; explicit values override the `extend` profile). Sending `toolIds` forces
 `body.params.function_calling` to OpenWebUI's server-side execution loop so it
 runs the tool and returns finished content; without it, the `native` mode
 (OpenWebUI's default since v0.10.0) hands back an unexecuted `tool_call` (empty

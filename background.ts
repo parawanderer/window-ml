@@ -284,14 +284,15 @@ async function prepareRequest(payload: FetchLlmPayload) {
 
     // Ollama runtime options: context window (num_ctx) + GPU layers (num_gpu, 0 =
     // force CPU). extend:"utility" fills these from the utility-model config;
-    // explicit numCtx/numGpu override. Ollama-specific — the OpenAI format has no
-    // equivalent, so these are silently skipped there.
-    if (config.apiFormat === "ollama") {
-        const numCtx = payload.numCtx ?? (useUtility ? config.utilityNumCtx : undefined);
-        const numGpu = payload.numGpu ?? (useUtility && config.utilityForceCpu ? 0 : undefined);
-        if (typeof numCtx === "number") body.options = { ...body.options, num_ctx: numCtx };
-        if (typeof numGpu === "number") body.options = { ...body.options, num_gpu: numGpu };
-    }
+    // explicit numCtx/numGpu override. Sent as a request-body `options` object,
+    // which Ollama honors natively AND OpenWebUI forwards to Ollama on its
+    // /api/chat/completions route (a UI-set model param can still override it; a
+    // non-OpenWebUI OpenAI server ignores the extra key). These are opt-in, so
+    // they're only present when a caller/extend asks for them.
+    const numCtx = payload.numCtx ?? (useUtility ? config.utilityNumCtx : undefined);
+    const numGpu = payload.numGpu ?? (useUtility && config.utilityForceCpu ? 0 : undefined);
+    if (typeof numCtx === "number") body.options = { ...body.options, num_ctx: numCtx };
+    if (typeof numGpu === "number") body.options = { ...body.options, num_gpu: numGpu };
 
     // Client-side tool definitions (ml.step): passed through to the model, which
     // may reply with tool_calls. Same schema shape for both backends.

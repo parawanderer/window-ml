@@ -115,15 +115,16 @@ test("FETCH_LLM explicit model + numCtx override the extend profile ({...profile
     assert.equal(sawBody.options.num_ctx, 8192, "explicit numCtx wins");
 });
 
-test("FETCH_LLM num_ctx/num_gpu are skipped on the openai format", async () => {
+test("FETCH_LLM num_ctx/num_gpu ride the options body on the openai format too (OpenWebUI forwards them)", async () => {
     let sawBody;
     const bg = loadBackground({
         config: baseConfig({ apiFormat: "openai", utilityModel: "small", utilityNumCtx: 2048, utilityForceCpu: true }),
         onFetch: (call) => { sawBody = call.body; return jsonResponse({ choices: [{ message: { content: "ok" } }] }); }
     });
     await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }], extend: "utility" } });
-    assert.equal(sawBody.model, "small", "utility model still applies");
-    assert.equal(sawBody.options, undefined, "no ollama options on the openai format");
+    assert.equal(sawBody.model, "small", "utility model applies");
+    assert.equal(sawBody.options.num_ctx, 2048);
+    assert.equal(sawBody.options.num_gpu, 0);
 });
 
 test("GET_CONFIG exposes the utility-model fields", async () => {
