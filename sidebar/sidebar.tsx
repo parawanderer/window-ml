@@ -362,12 +362,12 @@ function SessionRow({ s }: { s: Session }) {
     return (
         <button class="row" onClick={() => (view.value = { name: "detail", hash: s.hash })}>
             <Dot status={s.status} />
+            <Stamp ts={s.lastTs} />
             <b class="row-title">{truncate(title, 80)}</b>
             <div class="row-meta">
                 <TagBadge tag={s.tag} />
                 <span class="model">{s.model || "default"}</span>
                 <Hash hash={s.hash} stop />
-                <Stamp ts={s.lastTs} />
             </div>
         </button>
     );

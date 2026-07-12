@@ -88,7 +88,10 @@
 .tag.saved { background: var(--accent-strong); color: var(--accent-fg); }
 .model { color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 120px; }
 .time { color: var(--fg-faint); font-size: 10px; }
-.hash { color: var(--fg-faint); font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.hash {
+    color: var(--fg-dim); font: 10px ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: var(--panel-2); padding: 1px 4px; border-radius: 4px;
+}
 .hash.copyable { cursor: pointer; }
 .hash.copyable:hover { color: var(--fg); }
 
