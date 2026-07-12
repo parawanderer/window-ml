@@ -17,7 +17,26 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: npm
-      # The DOM-helper tests boot injected.js over jsdom (the one devDependency),
-      # so install it. Live tests still self-skip without OPENWEBUI_URL/KEY.
+      # Install devDeps (esbuild/typescript/jsdom). `npm test` runs `pretest`
+      # (npm run build) first, so tests exercise the built dist/. TS type errors
+      # are caught separately by `typecheck`. Live tests self-skip without keys.
       - run: npm ci
+      - run: npm run typecheck
       - run: npm test
+
+  # Build the loadable extension and upload it, so users can grab a ready-to-load
+  # dist/ from any run instead of building locally (the extension now needs a build).
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: window-ml-extension
+          path: dist/

@@ -2,9 +2,16 @@
     "name": "window-ml",
     "private": true,
     "scripts": {
+        "build": "node build.mjs",
+        "watch": "node build.mjs --watch",
+        "typecheck": "tsc --noEmit",
+        "pretest": "npm run build",
         "test": "node --test --test-concurrency=1 tests/*.test.js"
     },
     "devDependencies": {
-        "jsdom": "^29.1.1"
+        "@types/chrome": "^0.2.2",
+        "esbuild": "^0.28.1",
+        "jsdom": "^29.1.1",
+        "typescript": "^7.0.2"
     }
 }

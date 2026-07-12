@@ -7,6 +7,9 @@ const path = require("node:path");
 const { JSDOM } = require("jsdom");
 
 const ROOT = path.join(__dirname, "..");
+// Tests exercise the BUILT extension (esbuild output). `npm test` runs `pretest`
+// (npm run build) first, so dist/ is fresh. .env still lives at the repo root.
+const DIST = path.join(ROOT, "dist");
 
 // Loads KEY=VALUE pairs from a repo-root .env into process.env, for the opt-in
 // live tests. Zero-dependency (no `dotenv`); missing file is a no-op so CI and
@@ -116,7 +119,7 @@ function loadBackground({ config = {}, onFetch, onCaptureTab }) {
         }
     };
     vm.createContext(context);
-    vm.runInContext(fs.readFileSync(path.join(ROOT, "background.js"), "utf8"), context);
+    vm.runInContext(fs.readFileSync(path.join(DIST, "background.js"), "utf8"), context);
 
     return {
         calls,
@@ -243,8 +246,8 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps } = {}) {
         }
     };
     vm.createContext(context);
-    vm.runInContext(fs.readFileSync(path.join(ROOT, "content.js"), "utf8"), context);
-    vm.runInContext(fs.readFileSync(path.join(ROOT, "injected.js"), "utf8"), context);
+    vm.runInContext(fs.readFileSync(path.join(DIST, "content.js"), "utf8"), context);
+    vm.runInContext(fs.readFileSync(path.join(DIST, "injected.js"), "utf8"), context);
 
     return { ml: win.ml, runtimeCalls, context, dispatchedEvents };
 }
@@ -274,7 +277,7 @@ function loadDomWorld(html = "") {
         HTMLCollection: win.HTMLCollection
     };
     vm.createContext(context);
-    vm.runInContext(fs.readFileSync(path.join(ROOT, "injected.js"), "utf8"), context);
+    vm.runInContext(fs.readFileSync(path.join(DIST, "injected.js"), "utf8"), context);
     return { ml: win.ml, window: win, document: win.document };
 }
 

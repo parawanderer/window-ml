@@ -1,3 +1,5 @@
+// @ts-nocheck — TEMP during the JS→TS migration: injected.ts is being typed
+// against ./contract (janitor pass pending). Remove once fully annotated.
 // This runs in the "Main World" (same as the page JS)
 
 (function() {
