@@ -747,6 +747,14 @@ function Settings() {
 const VRAM_COLORS = ["#6366f1", "#22c55e", "#f59e0b", "#ec4899", "#06b6d4", "#a855f7", "#ef4444", "#84cc16"];
 const colorFor = (name: string) => VRAM_COLORS[[...name].reduce((a, c) => a + c.charCodeAt(0), 0) % VRAM_COLORS.length];
 const VRAM_HISTORY = 45, VRAM_POLL_MS = 2000;
+// Models the user has hidden from the totals/graph (session-only; a signal so it
+// survives VramPanel remounts). Immutable Set updates so the signal notifies.
+const hiddenModels = signal<Set<string>>(new Set());
+const toggleHidden = (model: string): void => {
+    const next = new Set(hiddenModels.value);
+    next.has(model) ? next.delete(model) : next.add(model);
+    hiddenModels.value = next;
+};
 
 const IconVram = () => (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
@@ -829,13 +837,16 @@ function ModelStatusDot({ model, inFlight }: { model: string; inFlight: boolean 
 // the sidebar is open) and accumulates the sparkline history locally.
 function VramPanel() {
     const loaded = loadedModels.value;
+    const hidden = hiddenModels.value;
     const err = psError.value;
     const [history, setHistory] = useState<number[]>([]);
+    // Sum only the models the user is watching (hidden ones excluded from totals).
+    const visibleTotal = (list: LoadedModel[]) =>
+        list.reduce((s, m) => s + (hidden.has(m.model) ? 0 : (m.vramGB || 0)), 0);
     useEffect(() => { pollPs(); }, []);   // immediate poll on open (don't wait for the interval)
     useEffect(() => {
         if (!loaded) return;
-        const total = loaded.reduce((s, m) => s + (m.vramGB || 0), 0);
-        setHistory(h => [...h, total].slice(-VRAM_HISTORY));
+        setHistory(h => [...h, visibleTotal(loaded)].slice(-VRAM_HISTORY));
     }, [loaded]);
 
     const evict = (model?: string) =>
@@ -843,9 +854,11 @@ function VramPanel() {
 
     if (err) return <div class="vram"><div class="vram-empty">VRAM unavailable — no Ollama backend.</div></div>;
 
-    // Total is the CURRENT resident set — read it straight from `loaded`, not the
-    // sparkline history (which lags a render and resets to 0 on every reopen).
-    const total = (loaded || []).reduce((s, m) => s + (m.vramGB || 0), 0);
+    // Total is the CURRENT visible resident set — read it straight from `loaded`,
+    // not the sparkline history (which lags a render and resets to 0 on reopen).
+    const total = loaded ? visibleTotal(loaded) : 0;
+    // Stable order so rows don't reshuffle as models load/evict.
+    const rows = loaded ? [...loaded].sort((a, b) => a.model.localeCompare(b.model)) : [];
     const W = 240, H = 34;
     const yMax = Math.max(1, ...history) * 1.15;
     const pts = history.length > 1
@@ -856,21 +869,25 @@ function VramPanel() {
             <div class="vram-head">
                 <span class="vram-total">{total.toFixed(1)} GB in use</span>
                 <span class="sp" />
-                {loaded && loaded.length ? <button class="vram-free" onClick={() => evict()}>Free VRAM</button> : null}
+                {rows.length ? <button class="vram-free" onClick={() => evict()}>Free VRAM</button> : null}
             </div>
             <svg class="vram-spark" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
                 {pts ? <polyline points={pts} fill="none" stroke="var(--accent)" stroke-width="1.5" /> : null}
             </svg>
-            {loaded && loaded.length
-                ? loaded.map(m => (
-                    <div class="vram-row" key={m.model}>
-                        <span class="vram-dot" style={{ background: colorFor(m.model) }} />
-                        <span class="vram-name">{m.model}</span>
-                        <span class="sp" />
-                        <span class="vram-gb">{m.vramGB != null ? `${m.vramGB} GB` : m.sizeGB != null ? `${m.sizeGB} GB (CPU)` : "?"}</span>
-                        <button class="vram-x" title="Evict from VRAM" onClick={() => evict(m.model)}>✕</button>
-                    </div>
-                ))
+            {rows.length
+                ? rows.map(m => {
+                    const off = hidden.has(m.model);
+                    return (
+                        <div class={`vram-row${off ? " off" : ""}`} key={m.model}>
+                            <button class="vram-dot" style={{ background: off ? "var(--fg-faint)" : colorFor(m.model) }}
+                                title={off ? "Show in totals" : "Hide from totals"} onClick={() => toggleHidden(m.model)} />
+                            <span class="vram-name">{m.model}</span>
+                            <span class="sp" />
+                            <span class="vram-gb">{m.vramGB != null ? `${m.vramGB} GB` : m.sizeGB != null ? `${m.sizeGB} GB (CPU)` : "?"}</span>
+                            <button class="vram-x" title="Evict from VRAM" onClick={() => evict(m.model)}>✕</button>
+                        </div>
+                    );
+                })
                 : <div class="vram-empty">Nothing loaded.</div>}
         </div>
     );

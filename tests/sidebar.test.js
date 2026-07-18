@@ -177,14 +177,38 @@ test("VRAM monitor lists loaded models with a total, and evicts one + all", asyn
 
     assert.equal(w.shadow.querySelectorAll(".vram-row").length, 2, "one row per loaded model");
     assert.match(w.shadow.querySelector(".vram-total").textContent, /10\.3 GB/, "total VRAM summed");
+    // Rows are sorted by name (stable order, no reshuffle on load/evict).
+    assert.deepEqual([...w.shadow.querySelectorAll(".vram-name")].map(n => n.textContent), ["glm-ocr", "qwen3:14b"]);
 
-    w.shadow.querySelector(".vram-row .vram-x").click();        // evict the first model
+    w.shadow.querySelector(".vram-row .vram-x").click();        // evict the first (glm-ocr, sorted)
     await w.tick();
-    assert.deepEqual(w.unloadCalls.at(-1), { model: "qwen3:14b" });
+    assert.deepEqual(w.unloadCalls.at(-1), { model: "glm-ocr" });
 
     w.shadow.querySelector(".vram-free").click();               // free all
     await w.tick();
     assert.deepEqual(w.unloadCalls.at(-1), {});
+});
+
+test("VRAM monitor: clicking a colour dot hides that model from the total", async () => {
+    const w = await loadSidebarWorld({ vram: [
+        { model: "qwen3:14b", vramGB: 8.2, expiresAt: null },
+        { model: "glm-ocr", vramGB: 2.1, expiresAt: null },
+    ] });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[title="VRAM monitor"]').click();
+    await w.flush();
+    assert.match(w.shadow.querySelector(".vram-total").textContent, /10\.3 GB/);
+
+    // Hide the first row (glm-ocr, 2.1) → total drops, row is marked off.
+    w.shadow.querySelector(".vram-row .vram-dot").click();
+    await w.tick();
+    assert.match(w.shadow.querySelector(".vram-total").textContent, /8\.2 GB/, "hidden model excluded from total");
+    assert.ok(w.shadow.querySelector(".vram-row.off"), "hidden row is dimmed");
+
+    // Click again → back in.
+    w.shadow.querySelector(".vram-row .vram-dot").click();
+    await w.tick();
+    assert.match(w.shadow.querySelector(".vram-total").textContent, /10\.3 GB/, "unhidden → back in total");
 });
 
 test("VRAM monitor pauses polling while the sidebar is slid closed", async () => {
