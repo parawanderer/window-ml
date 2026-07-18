@@ -206,10 +206,10 @@ function genTitle(hash: string, prompt: string): void {
 // Scan for sessions still needing a title and kick off generation. Called from
 // App's effect on every session change / open transition.
 function maybeGenerateTitles(): void {
-    // Opt-in: only when a utility model is configured. Without one, extend:"utility"
-    // would fall back to the (expensive) main model — a user who hasn't set a
-    // utility model hasn't asked for auto-titles, so don't spend their main model.
-    if (!sidebarOpen.value || !config.value.utilityModel.trim()) return;
+    // Opt-in: only when a utility model is configured AND auto-titles is on.
+    // Without a utility model, extend:"utility" would fall back to the (expensive)
+    // main model — a user who hasn't set one hasn't asked for auto-titles.
+    if (!sidebarOpen.value || !config.value.autoTitles || !config.value.utilityModel.trim()) return;
     for (const s of sessionMap.values()) {
         if (s.title || titleTried.has(s.hash)) continue;
         const first = s.turns[0];
@@ -558,6 +558,7 @@ const TIP = {
     utilityModel: "A small, cheap model for side tasks like session-title summaries. Leave blank to reuse the main model. Suggestions: qwen3.5:0.8b for an average machine, a gemma4:e2b-class model for a beefier one.",
     utilityNumCtx: "Context window (num_ctx) for the utility model. Summarising needs little context — keep it small on modest hardware; larger just uses more KV-cache memory. Only used when a utility model is set.",
     utilityForceCpu: "Run the utility model on CPU (num_gpu: 0) so it never competes with your main model for VRAM. Only used when a utility model is set.",
+    autoTitles: "Let the utility model generate a short title for each debug session. Off = sessions just show the first prompt. Only runs when a utility model is set and the panel is open.",
 };
 
 // Field label with an optional hover tooltip. Left-anchored (.left) so it opens
@@ -724,6 +725,11 @@ function Settings() {
                     onChange={(e: any) => setField("utilityForceCpu", e.target.checked)} />
                 <Lbl tip={TIP.utilityForceCpu}>Force utility onto CPU</Lbl>
             </label>
+            <label class={`set-check${utilOn ? "" : " off"}`}>
+                <input type="checkbox" checked={c.autoTitles} disabled={!utilOn}
+                    onChange={(e: any) => setField("autoTitles", e.target.checked)} />
+                <Lbl tip={TIP.autoTitles}>Summarise chat titles with the utility model</Lbl>
+            </label>
             <ModelTests />
 
             <div class="set-group">Appearance</div>
@@ -886,9 +892,10 @@ function App() {
     // Lazily summarise session titles whenever the data or open-state changes.
     // `open` is read (not just used in deps) so App re-renders on open/close.
     const open = sidebarOpen.value;
-    // `utilModel` is a dep so configuring one later backfills existing sessions.
+    // `utilModel`/`autoTitles` are deps so enabling them later backfills sessions.
     const utilModel = config.value.utilityModel;
-    useEffect(() => { maybeGenerateTitles(); }, [r, open, utilModel]);
+    const autoTitles = config.value.autoTitles;
+    useEffect(() => { maybeGenerateTitles(); }, [r, open, utilModel, autoTitles]);
     // Poll Ollama's resident set for the VRAM panel + the header status dot: a
     // steady interval, plus an immediate poll whenever the view/open-state
     // changes (so the dot resolves promptly on navigation). pollPs self-gates.

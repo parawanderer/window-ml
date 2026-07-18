@@ -22,6 +22,7 @@ export interface MlConfig {
     utilityModel: string;
     utilityNumCtx: number;      // context window for the utility model (Ollama num_ctx)
     utilityForceCpu: boolean;   // run it on CPU (num_gpu: 0) so it can't evict the main model
+    autoTitles: boolean;        // let the utility model summarise session titles in the debug sidebar
 }
 
 /** Single source of truth for config defaults — imported by background.ts,
@@ -43,6 +44,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     utilityModel: "",
     utilityNumCtx: 4096,
     utilityForceCpu: false,
+    autoTitles: true,
 };
 
 /** The non-secret subset GET_CONFIG exposes to the page (never the URL/key). */

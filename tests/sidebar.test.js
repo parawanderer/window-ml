@@ -407,6 +407,18 @@ test("session titles: no summary while the panel is slid closed (falls back to t
     assert.match(w.shadow.querySelector(".row-title").textContent, /some request text here/);
 });
 
+test("session titles: skipped when autoTitles is turned off in settings", async () => {
+    const calls = [];
+    const w = await loadSidebarWorld({ sync: { utilityModel: "qwen3:0.5b", autoTitles: false }, fetchLlm: (p) => { calls.push(p); return { data: "nope" }; } });
+    await w.raw({ __mlSidebarOpen: true });
+    await w.dispatch(chatStart("noauto", 0, "some request text here"));
+    await w.dispatch(chatResult("noauto", 0, "reply"));
+    await w.flush();
+
+    assert.ok(!calls.some(c => c.extend === "utility"), "no title call when autoTitles is off");
+    assert.match(w.shadow.querySelector(".row-title").textContent, /some request text here/);
+});
+
 test("session titles: skipped entirely when no utility model is configured (opt-in)", async () => {
     const calls = [];
     const w = await loadSidebarWorld({ fetchLlm: (p) => { calls.push(p); return { data: "unwanted" }; } });  // no utilityModel
