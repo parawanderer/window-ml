@@ -149,7 +149,6 @@ export interface ChatOptions {
     numCtx?: number | null;     // Ollama num_ctx (context window); ollama format only
     numGpu?: number | null;     // Ollama num_gpu (0 = force CPU); ollama format only
     think?: boolean | null;
-    cleanup?: boolean;
     images?: (string | HTMLImageElement)[];
     schema?: JsonSchema | null;
     toolIds?: string[] | null;
@@ -170,7 +169,6 @@ export interface MlHistory {
     numCtx: number | null;
     numGpu: number | null;
     think: boolean | null;
-    cleanup: boolean;
     schema: JsonSchema | null;
     toolIds: string[] | null;
     maxTokens: number | null;
@@ -246,7 +244,6 @@ export interface DebugSessionConfig {
     system: string | null;
     model: string | null;
     think: boolean | null;
-    cleanup: boolean;
     schema: boolean;
     toolIds: string[] | null;
     maxTokens: number | null;

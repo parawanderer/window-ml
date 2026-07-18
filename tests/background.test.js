@@ -24,7 +24,8 @@ test("FETCH_LLM builds an OpenAI body and extracts the reply", async () => {
             assert.equal(call.opts.headers["Authorization"], "Bearer sk-test");
             assert.equal(call.body.model, "default-model");
             assert.equal(call.body.stream, false);
-            assert.equal(call.body.think, false);
+            assert.equal(call.body.params.think, false, "openai: think goes in params, not top-level");
+            assert.equal(call.body.think, undefined, "not top-level (OpenWebUI drops it there)");
             assert.deepEqual(call.body.messages, [{ role: "user", content: "hi" }]);
             return jsonResponse({ choices: [{ message: { content: "yo" } }] });
         }
@@ -35,6 +36,19 @@ test("FETCH_LLM builds an OpenAI body and extracts the reply", async () => {
         payload: { messages: [{ role: "user", content: "hi" }], think: false }
     });
     assert.deepEqual(res, { data: "yo", model: "default-model" });
+});
+
+test("FETCH_LLM think:false goes in params (openai) / top-level (ollama)", async () => {
+    let sawO;
+    const bgO = loadBackground({ config: baseConfig(), onFetch: (c) => { sawO = c.body; return jsonResponse({ choices: [{ message: { content: "ok" } }] }); } });
+    await bgO.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }], think: false } });
+    assert.equal(sawO.params.think, false, "openai: in params (OpenWebUI's channel)");
+    assert.equal(sawO.think, undefined, "openai: not top-level");
+
+    let sawL;
+    const bgL = loadBackground({ config: baseConfig({ apiFormat: "ollama", chatUrl: "http://host/ollama/api/chat" }), onFetch: (c) => { sawL = c.body; return jsonResponse({ message: { content: "ok" } }); } });
+    await bgL.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }], think: false } });
+    assert.equal(sawL.think, false, "ollama: native top-level");
 });
 
 test("FETCH_LLM surfaces reasoning — reasoning_content (openai) and message.thinking (ollama)", async () => {

@@ -183,8 +183,7 @@ function onDebug(ev: MlDebugEvent): void {
 const titleTried = new Set<string>();
 
 function cleanTitle(raw: string): string {
-    const line = raw.replace(/<think>[\s\S]*?<\/think>/gi, "").trim()
-        .split("\n").map(s => s.trim()).filter(Boolean)[0] || "";
+    const line = raw.trim().split("\n").map(s => s.trim()).filter(Boolean)[0] || "";
     return truncate(line.replace(/^["'`*]+|["'`*.]+$/g, "").trim(), 60);
 }
 
@@ -334,7 +333,7 @@ const IconChevron = () => (
 // createChat defaults — values equal to these get a `// default` annotation in
 // the raw options view so it's obvious what the caller actually set.
 const CONFIG_DEFAULTS: Record<string, unknown> = {
-    system: null, model: null, think: false, cleanup: true, schema: false, toolIds: null, maxTokens: null, save: false,
+    system: null, model: null, think: false, schema: false, toolIds: null, maxTokens: null, save: false,
 };
 // Pretty JSON with a trailing `// default` on each line whose value matches the
 // default (rendered as JS so highlight.js styles the comments; the copy button
@@ -356,7 +355,6 @@ function OptionsBlock({ s }: { s: Session }) {
     const lines: string[] = [`model: ${c.model || "default"}`];
     if (c.system) lines.push(`system: ${truncate(c.system, 200)}`);
     if (c.think) lines.push("think: true");
-    if (!c.cleanup) lines.push("cleanup: false");
     if (c.schema) lines.push("schema: yes (structured output)");
     if (c.toolIds?.length) lines.push(`toolIds: ${c.toolIds.join(", ")}`);
     if (c.maxTokens != null) lines.push(`maxTokens: ${c.maxTokens}`);

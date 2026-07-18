@@ -33,6 +33,10 @@ interface ApiFormatHandler {
     // an `options` object; OpenWebUI's OpenAI route ignores `options` and expects
     // these as TOP-LEVEL fields (the OpenAI-compatible convention).
     applyRuntimeOptions(body: ChatBody, opts: { numCtx?: number; numGpu?: number }): void;
+    // Ollama's thinking toggle. Native route reads a top-level `think`; OpenWebUI's
+    // OpenAI route reads it from `params` (same channel as num_ctx) — a top-level
+    // `think` there is dropped, so `think:false` silently fails to disable it.
+    applyThink(body: ChatBody, think: boolean): void;
     streamChunk(line: string): { delta: string; reasoning?: string; toolCall: boolean; sources?: unknown[] | null } | null;
 }
 
@@ -121,6 +125,8 @@ const API_FORMATS: Record<ApiFormat, ApiFormatHandler> = {
             if (typeof numGpu === "number") p.num_gpu = numGpu;
             if (Object.keys(p).length) body.params = { ...body.params, ...p };
         },
+        // OpenWebUI reads `think` from params (same channel as num_ctx); top-level is dropped.
+        applyThink(body, think) { body.params = { ...body.params, think }; },
         // Parse one line of a streamed SSE response into { delta, toolCall }, or
         // null to skip (comments, blanks, the [DONE] sentinel, non-JSON).
         streamChunk(line) {
@@ -176,6 +182,8 @@ const API_FORMATS: Record<ApiFormat, ApiFormatHandler> = {
             if (typeof numCtx === "number") body.options = { ...body.options, num_ctx: numCtx };
             if (typeof numGpu === "number") body.options = { ...body.options, num_gpu: numGpu };
         },
+        // Ollama's native route reads a top-level `think`.
+        applyThink(body, think) { body.think = think; },
         // Ollama streams newline-delimited JSON objects ({ message.content,
         // done }); each whole line is a chunk.
         streamChunk(line) {
@@ -293,9 +301,10 @@ async function prepareRequest(payload: FetchLlmPayload) {
         model,
         messages: messages.map(m => format.buildMessage(m)),
     };
-    // Ollama's native thinking toggle, forwarded by OpenWebUI. Only sent when
-    // explicitly boolean — models without thinking support reject the param.
-    if (typeof payload.think === "boolean") body.think = payload.think;
+    // Ollama's thinking toggle. Only sent when explicitly boolean — models without
+    // thinking support reject the param. Placement is per-format (see applyThink):
+    // OpenWebUI's OpenAI route needs it in `params`, not top-level.
+    if (typeof payload.think === "boolean") format.applyThink(body, payload.think);
 
     // Structured output: constrain the reply to a JSON schema. The wire shape
     // differs per backend; the caller parses the returned JSON string.

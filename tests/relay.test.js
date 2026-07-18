@@ -6,11 +6,11 @@ const { loadPageWorld } = require("./helpers");
 
 const IMG = "data:image/png;base64,AAA";
 
-test("ml.chat travels the relay and strips the think block", async () => {
+test("ml.chat travels the relay and returns the reply verbatim", async () => {
     const world = loadPageWorld({
         onRuntimeMessage: (msg) => {
             assert.equal(msg.type, "FETCH_LLM");
-            return { data: "<think>meh</think>hello" };
+            return { data: "hello" };
         }
     });
 
@@ -19,15 +19,6 @@ test("ml.chat travels the relay and strips the think block", async () => {
     assert.deepEqual(world.runtimeCalls[0].payload.messages, [
         { role: "user", content: "hi" }
     ]);
-});
-
-test("ml.chat keeps the think block with cleanup: false", async () => {
-    const world = loadPageWorld({
-        onRuntimeMessage: () => ({ data: "<think>meh</think>hello" })
-    });
-
-    const out = await world.ml.chat("hi", { cleanup: false });
-    assert.equal(out, "<think>meh</think>hello");
 });
 
 test("ml.chat converts <img> elements to data URLs in the payload", async () => {
@@ -162,12 +153,12 @@ test("ml.read sends an OCR request and returns cleaned text", async () => {
             assert.equal(msg.payload.think, null);
             assert.deepEqual(msg.payload.messages[0].images, [IMG]);
             assert.match(msg.payload.messages[0].content, /transcribe/i);
-            return { data: "<think>reading</think>  Invoice #42  " };
+            return { data: "  Invoice #42  " };
         }
     });
 
     const text = await world.ml.read(IMG);
-    assert.equal(text, "Invoice #42"); // think stripped, trimmed
+    assert.equal(text, "Invoice #42"); // trimmed
 });
 
 test("ml.read passes a per-call model override", async () => {
@@ -184,7 +175,7 @@ test("ml.read passes a per-call model override", async () => {
 test("createChat accumulates history and resends it each turn", async () => {
     let n = 0;
     const world = loadPageWorld({
-        onRuntimeMessage: () => ({ data: `<think>t</think>r${++n}` })
+        onRuntimeMessage: () => ({ data: `r${++n}` })
     });
 
     const h = world.ml.createChat({ system: "sys" });
@@ -194,7 +185,7 @@ test("createChat accumulates history and resends it each turn", async () => {
     assert.deepEqual(h.messages, [
         { role: "system", content: "sys" },
         { role: "user", content: "a" },
-        { role: "assistant", content: "r1" }, // stored post-cleanup
+        { role: "assistant", content: "r1" },
         { role: "user", content: "b" },
         { role: "assistant", content: "r2" }
     ]);
@@ -307,19 +298,19 @@ test("ml.chat streams tokens via onToken and resolves the full string", async ()
     assert.equal(full, "Hello");
 });
 
-test("streaming onToken sees raw deltas but the resolved value is cleaned", async () => {
+test("streaming onToken sees each delta and the resolved value is the reply verbatim", async () => {
     const world = loadPageWorld({
         onStream: (msg, emit) => {
-            emit({ type: "chunk", delta: "<think>hmm</think>" });
             emit({ type: "chunk", delta: "Hi" });
-            emit({ type: "done", content: "<think>hmm</think>Hi" });
+            emit({ type: "chunk", delta: " there" });
+            emit({ type: "done", content: "Hi there" });
         }
     });
 
     const seen = [];
     const full = await world.ml.chat("q", { onToken: (t) => seen.push(t) });
-    assert.ok(seen.join("").includes("<think>"), "callback should see raw think tokens");
-    assert.equal(full, "Hi");                  // stored/returned value is cleaned
+    assert.deepEqual(seen, ["Hi", " there"]);
+    assert.equal(full, "Hi there");            // returned verbatim (no cleaning)
 });
 
 test("streaming updates history with the full reply for follow-ups", async () => {

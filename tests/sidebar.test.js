@@ -19,7 +19,7 @@ const chatStart = (hash, turn, user, opts = {}) => ({
     },
     config: {
         system: opts.system || null, model: opts.model || "m", think: opts.think ?? null,
-        cleanup: opts.cleanup ?? true, schema: false, toolIds: null, maxTokens: null, save: !!opts.save
+        schema: false, toolIds: null, maxTokens: null, save: !!opts.save
     }
 });
 const chatResult = (hash, turn, content, opts = {}) => ({

@@ -65,7 +65,7 @@ has a `streamChunk(line)` parser (OpenAI SSE vs Ollama NDJSON). Streaming is
 text-only (skipped when `schema` set) but supports `toolIds` — it streams each
 `SERVER_TOOL_MODES` attempt, and a handed-back attempt emits no content, so
 nothing reaches the caller before the retry. The call still resolves to the
-full string, so history/`cleanup` behave exactly as non-streaming.
+full string, so history behaves exactly as non-streaming.
 
 ## Config
 
@@ -134,10 +134,15 @@ model's separate thinking text (OpenAI `reasoning_content` / Ollama
 `message.thinking`; `streamChunk` accumulates the `reasoning_content` delta).
 `fetchLLM`/`streamLLM` return `reasoning`; it rides the `FETCH_LLM` response,
 stream `done`, and `content.js` relay, and `injected.js` puts it on the
-`chat-result` event — falling back to lifting a legacy inline `<think>…</think>`
-block out of the reply before `cleanup` strips it. The sidebar renders a
-collapsed "thinking" disclosure above the reply. Modern models use the separate
-field, not inline `<think>` (verified against the live server).
+`chat-result` event. The sidebar renders a collapsed "thinking" disclosure above
+the reply. Modern models return thinking in this separate field, not inline
+`<think>` (verified against the live server) — so there's no `<think>`-stripping
+or `cleanup` option anymore; the reply `content` is stored verbatim.
+
+**`think` placement (gotcha).** Like `num_ctx`, OpenWebUI's OpenAI route reads
+`think` from the request-body **`params`** object, not top-level — a top-level
+`think:false` is silently dropped (reasoning keeps coming). `applyThink` places
+it per format: `params.think` (openai) vs a top-level `think` (ollama native).
 
 ## Conventions
 

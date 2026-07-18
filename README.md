@@ -140,7 +140,6 @@ Options (all optional, both for `chat` and `createChat`):
   omits it (server default). Models that support thinking are asked not to
   by default. Sending images to a model without vision capability fails fast
   with a clear error (checked via `/api/show`).
-- `cleanup` — strip `<think>…</think>` from replies (default on).
 - `images` — (per-call) list of `<img>` elements and/or URL strings.
 - `maxTokens` — hard cap on generated tokens (OpenAI `max_tokens` / Ollama
   `num_predict`); `null` omits it. Bounds a runaway generation so it can't peg
@@ -196,8 +195,8 @@ Options (all optional, both for `chat` and `createChat`):
 ### History objects
 
 ```js
-const h = ml.createChat({ system, model, think, cleanup });
-await h.chat("prompt", { images, model, think, cleanup });  // per-turn overrides
+const h = ml.createChat({ system, model, think });
+await h.chat("prompt", { images, model, think });  // per-turn overrides
 
 h.messages          // plain [{ role, content, images? }] array — edit freely:
 h.messages.at(-1)   //   last message
@@ -205,8 +204,9 @@ h.messages.pop()    //   drop a turn to retry
 h.fork()            // independent deep copy of the conversation
 ```
 
-Design invariants: assistant replies are stored post-cleanup (thinking blocks
-are never resent as context) and a failed request leaves `messages` untouched.
+Design invariant: a failed request leaves `messages` untouched. (Reasoning
+models return their thinking in a separate field, so it never enters the
+stored `content` — no stripping needed.)
 
 **Sources.** When a server-side tool or RAG runs (e.g. `toolIds`), OpenWebUI
 attaches provenance, and `window.ml` surfaces it on the stored assistant message

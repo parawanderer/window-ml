@@ -619,7 +619,7 @@ import type {
          * Stateful multi-turn chat:
          *
          * ```js
-         *   const history = ml.createChat({ system, model, think, cleanup });
+         *   const history = ml.createChat({ system, model, think });
          *   await history.chat("first question", { images: [...] });
          *   await history.chat("follow-up");
          *   history.messages.at(-1)   // last message
@@ -635,14 +635,13 @@ import type {
          * @param {string} [options.system] Optional system prompt (first message).
          * @param {string} [options.model] Default model for this chat; null uses the saved default.
          * @param {boolean} [options.think=false] True/false maps to Ollama's "think" parameter; null omits it.
-         * @param {boolean} [options.cleanup=true] Strip thinking blocks from responses before storing.
          * @param {Object} [options.schema] JSON Schema to constrain reply to matching JSON (returns parsed object).
          * @param {string[]} [options.toolIds] OpenWebUI server-side tool ids (e.g. `["web_search"]`). OpenWebUI only.
          * @param {number} [options.maxTokens] Hard cap on generated tokens; null omits it.
          * @param {boolean} [options.save=false] Persist across reloads when debug sidebar is on.
-         * @returns {{messages: Array<{role: string, content: string, images?: Array, sources?: Array}>, hash: string, model: string|null, think: boolean, cleanup: boolean, schema: Object|null, toolIds: string[]|null, maxTokens: number|null, save: boolean, chat: Function, fork: Function}} Chat session object.
+         * @returns {{messages: Array<{role: string, content: string, images?: Array, sources?: Array}>, hash: string, model: string|null, think: boolean, schema: Object|null, toolIds: string[]|null, maxTokens: number|null, save: boolean, chat: Function, fork: Function}} Chat session object.
          */
-        createChat: function({ system = null, model = null, extend = null, numCtx = null, numGpu = null, think = false, cleanup = true, schema = null, toolIds = null, maxTokens = null, save = false }: Pick<ChatOptions, "system" | "model" | "extend" | "numCtx" | "numGpu" | "think" | "cleanup" | "schema" | "toolIds" | "maxTokens"> & { save?: boolean } = {}): MlHistory {
+        createChat: function({ system = null, model = null, extend = null, numCtx = null, numGpu = null, think = false, schema = null, toolIds = null, maxTokens = null, save = false }: Pick<ChatOptions, "system" | "model" | "extend" | "numCtx" | "numGpu" | "think" | "schema" | "toolIds" | "maxTokens"> & { save?: boolean } = {}): MlHistory {
             validateExtend(extend);
             const ml = this;
             return {
@@ -655,7 +654,6 @@ import type {
                 numCtx,
                 numGpu,
                 think,
-                cleanup,
                 schema,
                 toolIds,
                 maxTokens,
@@ -668,7 +666,6 @@ import type {
                  * @param {Array} [options.images=[]] Images to include with the prompt.
                  * @param {string} [options.model=this.model] Model override for this turn.
                  * @param {boolean} [options.think=this.think] Thinking flag for this turn.
-                 * @param {boolean} [options.cleanup=this.cleanup] Strip thinking blocks from response.
                  * @param {Object} [options.schema=this.schema] JSON Schema for structured output.
                  * @param {string[]} [options.toolIds=this.toolIds] OpenWebUI server-side tool ids.
                  * @param {number} [options.maxTokens=this.maxTokens] Token limit for this turn.
@@ -676,14 +673,13 @@ import type {
                  * @param {(delta: string, full: string) => void} [options.onToken=null] Streaming callback.
                  * @returns {Promise<string|Object>} The model's reply (parsed if schema set).
                  */
-                chat: async function(this: MlHistory, prompt: string, { images = [], model = this.model, extend = this.extend, numCtx = this.numCtx, numGpu = this.numGpu, think = this.think, cleanup = this.cleanup, schema = this.schema, toolIds = this.toolIds, maxTokens = this.maxTokens, save = this.save, onToken }: {
+                chat: async function(this: MlHistory, prompt: string, { images = [], model = this.model, extend = this.extend, numCtx = this.numCtx, numGpu = this.numGpu, think = this.think, schema = this.schema, toolIds = this.toolIds, maxTokens = this.maxTokens, save = this.save, onToken }: {
                     images?: (string | HTMLImageElement)[];
                     model?: string | null;
                     extend?: ExtendProfile | null;
                     numCtx?: number | null;
                     numGpu?: number | null;
                     think?: boolean | null;
-                    cleanup?: boolean;
                     schema?: JsonSchema | null;
                     toolIds?: string[] | null;
                     maxTokens?: number | null;
@@ -714,7 +710,6 @@ import type {
                         system,
                         model: this.model,
                         think: (this.think === true || this.think === false) ? this.think : null,
-                        cleanup: this.cleanup,
                         schema: !!this.schema,
                         toolIds: this.toolIds || null,
                         maxTokens: this.maxTokens ?? null,
@@ -739,15 +734,7 @@ import type {
                         emitDebug({ kind: "chat-error", id: debug, ts: Date.now(), save, session, error: String((err as Error).message || err) });
                         throw err;
                     }
-                    let reply = content;
-                    // Thinking text: the server's separate reasoning field, else lift a
-                    // legacy inline <think>…</think> block out of the reply before cleanup strips it.
-                    if (!reasoning) {
-                        const m = reply.match(/^<think>([\s\S]*?)<\/think>/i);
-                        if (m) reasoning = m[1].trim();
-                    }
-                    if (cleanup) reply = reply.replace(/^<think>[\s\S]*?<\/think>\s*/i, '');
-
+                    const reply = content;
                     const assistantMessage: NeutralMessage = { role: "assistant", content: reply };
                     if (sources && sources.length) assistantMessage.sources = sources;
                     this.messages.push(userMessage, assistantMessage);
@@ -757,10 +744,10 @@ import type {
                 /**
                  * Create an independent copy of this chat session.
                  *
-                 * @returns {{messages: Array, hash: string, model: string|null, think: boolean, cleanup: boolean, schema: Object|null, toolIds: string[]|null, maxTokens: number|null, save: boolean, chat: Function, fork: Function}} A new chat session with cloned messages.
+                 * @returns {{messages: Array, hash: string, model: string|null, think: boolean, schema: Object|null, toolIds: string[]|null, maxTokens: number|null, save: boolean, chat: Function, fork: Function}} A new chat session with cloned messages.
                  */
                 fork: function(this: MlHistory): MlHistory {
-                    const copy = ml.createChat({ model: this.model, extend: this.extend, numCtx: this.numCtx, numGpu: this.numGpu, think: this.think, cleanup: this.cleanup, schema: this.schema, toolIds: this.toolIds, maxTokens: this.maxTokens, save: this.save });
+                    const copy = ml.createChat({ model: this.model, extend: this.extend, numCtx: this.numCtx, numGpu: this.numGpu, think: this.think, schema: this.schema, toolIds: this.toolIds, maxTokens: this.maxTokens, save: this.save });
                     copy.messages = structuredClone(this.messages);
                     return copy;
                 }
@@ -768,7 +755,7 @@ import type {
         },
         /**
          * One-shot chat — a throwaway single-turn history.
-         * Options: { system, think, cleanup, images, model, schema, toolIds, maxTokens, save, onToken } as in createChat.
+         * Options: { system, think, images, model, schema, toolIds, maxTokens, save, onToken } as in createChat.
          *
          * @param {string} prompt The user prompt.
          * @param {Object} [options] Chat options (same as createChat).
@@ -876,8 +863,8 @@ import type {
          *   toolset already contains a vision-capable tool.
          * @param {(ev: {step: number, thought?: string, tool?: string, arguments?: Object, result?: string, elements?: Node[]}) => void} [opts.onStep]
          *   Live tracer: fires `{ step, thought }` with the model's reasoning
-         *   (its prose before the calls, plus any `<think>` block when `think:true`)
-         *   and `{ step, tool, arguments, result, elements? }` for each tool call —
+         *   (its prose before the calls) and `{ step, tool, arguments, result,
+         *   elements? }` for each tool call —
          *   `elements` holds real DOM nodes when the tool provided them (log them to
          *   hover in devtools).
          * @param {boolean} [opts.logDebug=false] Install a built-in console tracer
@@ -951,16 +938,13 @@ import type {
                 if (!onStep) return;
                 try { onStep(event); } catch (e) { console.error("ml.agent onStep threw:", e); }
             };
-            const stripThink = (s: string) => (s || "").replace(/^<think>[\s\S]*?<\/think>\s*/i, "").trim();
-
             for (let step = 1; step <= maxSteps; step++) {
                 const msg = await this.step(messages, { tools: toolDefs, model, think });
                 if (!msg.tool_calls || !msg.tool_calls.length) {
-                    return { summary: stripThink(msg.content), steps: step - 1, transcript, elements: answered };
+                    return { summary: (msg.content || "").trim(), steps: step - 1, transcript, elements: answered };
                 }
-                // Surface the model's reasoning (its prose before the tool calls,
-                // plus any <think> block when think:true) so callers can watch it
-                // think, not just navigate.
+                // Surface the model's reasoning (its prose before the tool calls)
+                // so callers can watch it think, not just navigate.
                 const thought = (msg.content || "").trim();
                 if (thought) {
                     transcript.push({ thought });
@@ -1106,7 +1090,7 @@ import type {
                     "ocr": true
                 }
             );
-            return reply.replace(/^<think>[\s\S]*?<\/think>\s*/i, '').trim();
+            return reply.trim();
         },
         /**
          * Screenshot to a PNG data URL. With no target, captures the whole visible
