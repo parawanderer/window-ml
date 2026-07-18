@@ -839,14 +839,18 @@ function VramPanel() {
     const loaded = loadedModels.value;
     const hidden = hiddenModels.value;
     const err = psError.value;
-    const [history, setHistory] = useState<number[]>([]);
-    // Sum only the models the user is watching (hidden ones excluded from totals).
-    const visibleTotal = (list: LoadedModel[]) =>
-        list.reduce((s, m) => s + (hidden.has(m.model) ? 0 : (m.vramGB || 0)), 0);
+    // Per-model snapshots (not pre-summed totals) so hiding/showing a model
+    // redraws the WHOLE line against the current visibility set, not just new
+    // points. (This is also the per-model VRAM log panel-v2 will build on.)
+    const [history, setHistory] = useState<Record<string, number>[]>([]);
+    const sumVisible = (snap: Record<string, number>) =>
+        Object.entries(snap).reduce((s, [m, v]) => s + (hidden.has(m) ? 0 : v), 0);
     useEffect(() => { pollPs(); }, []);   // immediate poll on open (don't wait for the interval)
     useEffect(() => {
         if (!loaded) return;
-        setHistory(h => [...h, visibleTotal(loaded)].slice(-VRAM_HISTORY));
+        const snap: Record<string, number> = {};
+        for (const m of loaded) snap[m.model] = m.vramGB || 0;
+        setHistory(h => [...h, snap].slice(-VRAM_HISTORY));
     }, [loaded]);
 
     const evict = (model?: string) =>
@@ -856,13 +860,16 @@ function VramPanel() {
 
     // Total is the CURRENT visible resident set — read it straight from `loaded`,
     // not the sparkline history (which lags a render and resets to 0 on reopen).
-    const total = loaded ? visibleTotal(loaded) : 0;
+    const total = loaded ? loaded.reduce((s, m) => s + (hidden.has(m.model) ? 0 : (m.vramGB || 0)), 0) : 0;
     // Stable order so rows don't reshuffle as models load/evict.
     const rows = loaded ? [...loaded].sort((a, b) => a.model.localeCompare(b.model)) : [];
+    // Recompute every point's visible-total each render, so toggling redraws the
+    // full line retroactively (not just going forward).
+    const series = history.map(sumVisible);
     const W = 240, H = 34;
-    const yMax = Math.max(1, ...history) * 1.15;
-    const pts = history.length > 1
-        ? history.map((v, i) => `${((i / (history.length - 1)) * W).toFixed(1)},${(H - (v / yMax) * H).toFixed(1)}`).join(" ")
+    const yMax = Math.max(1, ...series) * 1.15;
+    const pts = series.length > 1
+        ? series.map((v, i) => `${((i / (series.length - 1)) * W).toFixed(1)},${(H - (v / yMax) * H).toFixed(1)}`).join(" ")
         : "";
     return (
         <div class="vram">
