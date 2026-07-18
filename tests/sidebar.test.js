@@ -27,6 +27,10 @@ const chatResult = (hash, turn, content, opts = {}) => ({
     session: { hash, turn }, content, sources: opts.sources || null, structured: !!opts.structured,
     model: opts.model ?? null, extend: opts.extend ?? null, reasoning: opts.reasoning ?? null
 });
+// ml.agent run events (see contract.ts DebugAgent*).
+const agentStart = (hash, task, model = "m") => ({ kind: "agent", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, task, model });
+const agentStep = (hash, step, fields) => ({ kind: "agent-step", id: hash, ts: Date.now() + step, save: false, session: { hash, turn: step }, step, ...fields });
+const agentResult = (hash, summary, steps, hitCap = false) => ({ kind: "agent-result", id: hash, ts: Date.now() + 100, save: false, session: { hash, turn: steps }, summary, steps, hitCap });
 
 test("sidebar mounts and shows the empty state", async () => {
     const w = await loadSidebarWorld();
@@ -404,6 +408,49 @@ test("thinking: a reply with reasoning shows a collapsed thinking block; without
     [...w.shadow.querySelectorAll(".row")].find(r => /q2/.test(r.textContent))?.click();
     await w.tick();
     assert.equal(w.shadow.querySelector(".msg.asst details.thinking"), null, "no thinking block without reasoning");
+});
+
+test("agent runs render as their own session with steps + a final answer", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("ag1", "find the login button", "qwen3:14b"));
+    await w.dispatch(agentStep("ag1", 1, { thought: "Let me look at the page" }));
+    await w.dispatch(agentStep("ag1", 1, { tool: "look", arguments: { selector: "nav" }, result: "a top navigation bar", elements: 1 }));
+    await w.dispatch(agentResult("ag1", "The login button is top-right.", 2));
+
+    const row = w.shadow.querySelector(".row");
+    assert.ok(row.querySelector(".agent-badge"), "row shows the agent badge");
+    assert.match(row.querySelector(".row-title").textContent, /find the login button/);
+
+    row.click();
+    await w.tick();
+    assert.equal(w.shadow.querySelectorAll(".astep").length, 2, "two steps (a thought + a tool call)");
+    assert.match(w.shadow.querySelector(".astep.tool .tool-name").textContent, /look/);
+    assert.match(w.shadow.querySelector(".astep.tool .tool-result").textContent, /top navigation/);
+    assert.match(w.shadow.querySelector(".astep.tool .el-count").textContent, /1 el/);
+    assert.match(w.shadow.querySelector(".agent-summary").textContent, /login button is top-right/);
+});
+
+test("a running agent shows …running, then the answer arrives live", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("ag2", "do a thing"));
+    assert.ok(w.shadow.querySelector(".row .dot.pending"), "row pending while running");
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    assert.ok(w.shadow.querySelector(".pending-note"), "…running while in flight");
+
+    await w.dispatch(agentResult("ag2", "all done", 1));   // lands while detail is open
+    assert.ok(!w.shadow.querySelector(".pending-note"), "…running cleared live");
+    assert.match(w.shadow.querySelector(".agent-summary").textContent, /all done/);
+});
+
+test("an agent that hits the step cap is flagged as stopped/error", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("ag3", "endless task"));
+    await w.dispatch(agentResult("ag3", "Stopped at the 10-step cap without finishing.", 10, true));
+    assert.ok(w.shadow.querySelector(".row .dot.err"), "capped run marked error");
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    assert.match(w.shadow.querySelector(".agent-summary.capped").textContent, /step cap/);
 });
 
 test("detail: an assistant reply collapses to its first line and expands again", async () => {

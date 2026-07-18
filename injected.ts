@@ -43,8 +43,13 @@ import type {
      *
      * @param {MlDebugEvent} event The event data to send.
      */
+    // >0 while inside an ml.agent run, so chat calls the agent makes internally
+    // (e.g. the auto-wired `look` vision tool) don't spawn their own orphan
+    // sessions — their result already shows as the agent's tool step.
+    let inAgentRun = 0;
     const emitDebug = (event: MlDebugEvent) => {
         if (!debugEnabled) return;
+        if (inAgentRun && event.kind.startsWith("chat")) return;
         try { window.postMessage({ __mlDebug: event }, "*"); } catch (e) { /* non-cloneable — ignore */ }
     };
     /**
@@ -933,15 +938,31 @@ import type {
             ];
             const transcript: AgentTranscriptEntry[] = [];
             const answered: Node[] = [];   // element(s) designated via an `answer`-capable tool
+            // Debug sidebar: announce the run + each step. Its own session hash
+            // (an agent run isn't a createChat). elements can't cross the window
+            // bus — send a count; real nodes still reach onStep/the console.
+            const runHash = shortHash();
+            emitDebug({ kind: "agent", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, task, model: model || null });
             const emit = (event: { step: number; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: Node[] }) => {
                 if (logDebug) logStep(event);
+                emitDebug({
+                    kind: "agent-step", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: event.step },
+                    step: event.step, thought: event.thought, tool: event.tool, arguments: event.arguments,
+                    result: event.result, elements: event.elements ? event.elements.length : undefined,
+                });
                 if (!onStep) return;
                 try { onStep(event); } catch (e) { console.error("ml.agent onStep threw:", e); }
             };
+            const finish = (r: AgentResult): AgentResult => {
+                emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: r.steps }, summary: r.summary, steps: r.steps, hitCap: !!r.hitCap });
+                return r;
+            };
+            inAgentRun++;   // suppress orphan chat sessions from internal tool chats (see emitDebug); finally-decremented below
+            try {
             for (let step = 1; step <= maxSteps; step++) {
                 const msg = await this.step(messages, { tools: toolDefs, model, think });
                 if (!msg.tool_calls || !msg.tool_calls.length) {
-                    return { summary: (msg.content || "").trim(), steps: step - 1, transcript, elements: answered };
+                    return finish({ summary: (msg.content || "").trim(), steps: step - 1, transcript, elements: answered });
                 }
                 // Surface the model's reasoning (its prose before the tool calls)
                 // so callers can watch it think, not just navigate.
@@ -1020,7 +1041,8 @@ import type {
                     });
                 }
             }
-            return { summary: `Stopped at the ${maxSteps}-step cap without finishing.`, steps: maxSteps, transcript, elements: answered, hitCap: true };
+            return finish({ summary: `Stopped at the ${maxSteps}-step cap without finishing.`, steps: maxSteps, transcript, elements: answered, hitCap: true });
+            } finally { inAgentRun--; }
         },
         /**
          * A de-duplicating approval gate for {@link module:ml.agent}: prompts (via

@@ -502,6 +502,61 @@ test("agent surfaces the model's reasoning as thought events and transcript entr
     assert.ok(events.some(e => e.tool === "ping"));           // both kinds of events fire
 });
 
+test("agent emits debug events (start → steps → result) after the sidebar handshakes", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: scriptedModel([
+            { content: "Looking around.", tool_calls: [{ id: "c1", name: "ping", arguments: { x: 1 } }] },
+            reply("all done")
+        ])
+    });
+    const ping = world.ml.defineTool({ name: "ping", run: () => "pong" });
+    const win = world.context.window;
+    const events = [];
+    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    win.postMessage({ __mlSidebar: "ready" });
+    await new Promise(r => setTimeout(r, 0));
+
+    await world.ml.agent("find x", { tools: [ping], model: "qwen3:14b", vision: false });
+
+    const start = events.find(e => e.kind === "agent");
+    assert.ok(start, "agent start emitted");
+    assert.equal(start.task, "find x");
+    assert.equal(start.model, "qwen3:14b");
+    const steps = events.filter(e => e.kind === "agent-step");
+    assert.ok(steps.some(e => e.thought === "Looking around."), "thought step emitted");
+    const toolStep = steps.find(e => e.tool === "ping");
+    assert.deepEqual(toolStep.arguments, { x: 1 });
+    assert.equal(toolStep.result, "pong");
+    assert.ok(events.every(e => e.session.hash === start.session.hash), "all events share the run hash");
+    const done = events.find(e => e.kind === "agent-result");
+    assert.equal(done.summary, "all done");
+    assert.equal(done.hitCap, false);
+});
+
+test("agent suppresses orphan chat sessions from a tool's internal ml.chat", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: scriptedModel([
+            toolCall("askvision", {}, "c1"),   // agent step 1 → call the tool
+            reply("a description"),            // the tool's OWN internal ml.chat
+            reply("final answer")              // agent step 2 → done
+        ])
+    });
+    // A tool that itself calls ml.chat, like the auto-wired `look` vision tool.
+    const askvision = world.ml.defineTool({ name: "askvision", run: async () => world.ml.chat("describe") });
+    const win = world.context.window;
+    const events = [];
+    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    win.postMessage({ __mlSidebar: "ready" });
+    await new Promise(r => setTimeout(r, 0));
+
+    await world.ml.agent("x", { tools: [askvision], vision: false });
+
+    assert.ok(!events.some(e => e.kind === "chat" || e.kind === "chat-result"), "internal chat did not spawn its own session");
+    assert.ok(events.some(e => e.kind === "agent"), "agent events still emit");
+    // The description still surfaces — as the tool step's result.
+    assert.ok(events.some(e => e.kind === "agent-step" && e.result === "a description"), "vision result shows as the tool step");
+});
+
 test("agent routes a tool's DOM nodes to onStep/transcript but never to the model", async () => {
     const world = loadPageWorld({
         onRuntimeMessage: scriptedModel([toolCall("grab", {}, "c1"), reply("done")])

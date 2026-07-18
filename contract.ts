@@ -260,8 +260,19 @@ export interface DebugChatStart extends DebugBase { kind: "chat"; streaming: boo
 export interface DebugChatResult extends DebugBase { kind: "chat-result"; content: string; sources: unknown[] | null; structured: boolean; model: string | null; extend: ExtendProfile | null; reasoning: string | null; }
 export interface DebugChatError extends DebugBase { kind: "chat-error"; error: string; }
 
+/** ml.agent runs: a run-start, one event per step (a thought OR a tool call +
+ *  result), then a result. `elements` is a COUNT — real DOM nodes can't cross the
+ *  window bus (they reach the console via onStep instead). */
+export interface DebugAgentStart extends DebugBase { kind: "agent"; task: string; model: string | null; }
+export interface DebugAgentStep extends DebugBase {
+    kind: "agent-step"; step: number;
+    thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: number;
+}
+export interface DebugAgentResult extends DebugBase { kind: "agent-result"; summary: string; steps: number; hitCap: boolean; }
+
 /** The event stream injected.js emits over window.postMessage for the sidebar. */
-export type MlDebugEvent = DebugChatStart | DebugChatResult | DebugChatError;
+export type MlDebugEvent = DebugChatStart | DebugChatResult | DebugChatError
+    | DebugAgentStart | DebugAgentStep | DebugAgentResult;
 
 /** Window-bus envelopes between the core (main world) and the sidebar. */
 export interface MlDebugMessage { __mlDebug: MlDebugEvent; }

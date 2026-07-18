@@ -40,11 +40,18 @@ interface Turn {
     extend?: ExtendProfile | null;  // which profile resolved it — marks (default) vs (utility)
     reasoning?: string | null;  // separate thinking/reasoning text, if the model produced any
 }
+interface AgentStep { step: number; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: number; }
 interface Session {
     hash: string; model: string | null; tag: "session" | "saved";
     createdTs: number; lastTs: number; status: Status;
     config: DebugSessionConfig; turns: Turn[];
     title?: string;   // AI-summarised title (lazy; see title generation below)
+    // ml.agent runs (kind === "agent"): a task + a list of steps + a final summary.
+    kind?: "agent";
+    task?: string;
+    steps?: AgentStep[];
+    summary?: string;
+    hitCap?: boolean;
 }
 
 // --- state: a Map (O(1) lookup) + a version signal to notify Preact of changes ---
@@ -138,6 +145,27 @@ const rollupStatus = (s: Session): Status =>
     s.turns.some(t => t.status === "pending") ? "pending" : s.turns.some(t => t.status === "err") ? "err" : "ok";
 
 function onDebug(ev: MlDebugEvent): void {
+    // --- ml.agent runs (own session kind) ---
+    if (ev.kind === "agent") {
+        sessionMap.set(ev.session.hash, {
+            hash: ev.session.hash, model: ev.model, tag: "session", kind: "agent",
+            createdTs: ev.ts, lastTs: ev.ts, status: "pending", turns: [], steps: [], task: ev.task,
+            config: { system: null, model: ev.model, think: null, schema: false, toolIds: null, maxTokens: null, save: false },
+        });
+        rev.value++; return;
+    }
+    if (ev.kind === "agent-step") {
+        const s = sessionMap.get(ev.session.hash);
+        if (!s) return;
+        s.steps = [...(s.steps || []), { step: ev.step, thought: ev.thought, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: ev.elements }];
+        s.lastTs = ev.ts; rev.value++; return;
+    }
+    if (ev.kind === "agent-result") {
+        const s = sessionMap.get(ev.session.hash);
+        if (!s) return;
+        s.summary = ev.summary; s.hitCap = ev.hitCap; s.status = ev.hitCap ? "err" : "ok"; s.lastTs = ev.ts;
+        rev.value++; return;
+    }
     if (ev.kind === "chat") {
         let s = sessionMap.get(ev.session.hash);
         if (!s) {
@@ -492,20 +520,64 @@ const ProfileBadge = ({ profile }: { profile?: ExtendProfile | null }) =>
 // It must NOT read a signal itself: @preact/signals auto-memoizes a
 // signal-reading child, which (with our in-place session mutation → unchanged
 // `s` reference) would make it skip the parent re-render and freeze on pending.
+const AgentBadge = () => <span class="agent-badge">agent</span>;
+
 function SessionRow({ s, model, profile }: { s: Session; model: string; profile: "utility" | "default" | null }) {
-    const title = s.title || s.turns[0]?.user || "(no prompt)";
+    const title = s.title || s.task || s.turns[0]?.user || "(no prompt)";
     return (
         <button class="row" onClick={() => (view.value = { name: "detail", hash: s.hash })}>
             <Dot status={s.status} />
             <Stamp ts={s.lastTs} snap="right" />
             <b class="row-title">{truncate(title, 80)}</b>
             <div class="row-meta">
-                <TagBadge tag={s.tag} />
+                {s.kind === "agent" ? <AgentBadge /> : <TagBadge tag={s.tag} />}
                 <ProfileBadge profile={profile} />
                 <span class="model">{model}</span>
                 <Hash hash={s.hash} stop />
             </div>
         </button>
+    );
+}
+
+// One ml.agent step: a thought, or a tool call with its args + result.
+function AgentStepRow({ st }: { st: AgentStep }) {
+    if (st.tool) {
+        const args = st.arguments && Object.keys(st.arguments).length ? st.arguments : null;
+        return (
+            <div class="astep tool">
+                <div class="mrow">
+                    <span class="step-n">#{st.step}</span>
+                    <span class="tool-name">{st.tool}</span>
+                    {st.elements ? <span class="el-count" title="DOM nodes returned (hover them in the console via onStep)">{st.elements} el</span> : null}
+                </div>
+                {args ? <Code text={pretty(args)} lang="json" /> : null}
+                {st.result ? <div class="tool-result">{truncate(st.result, 2000)}</div> : null}
+            </div>
+        );
+    }
+    return (
+        <div class="astep thought">
+            <div class="mrow"><span class="step-n">#{st.step}</span><span class="who">thought</span></div>
+            <div class="md" dangerouslySetInnerHTML={{ __html: markdown(st.thought || "") }} />
+        </div>
+    );
+}
+
+function AgentRunView({ s }: { s: Session }) {
+    return (
+        <>
+            <div class="msg user">
+                <div class="mrow"><span class="who">task</span><span class="sp" /><Stamp ts={s.createdTs} /></div>
+                <div class="utext">{s.task}</div>
+            </div>
+            {(s.steps || []).map(st => <AgentStepRow key={`${st.step}-${st.tool || "t"}`} st={st} />)}
+            {s.summary != null
+                ? <div class={`agent-summary${s.hitCap ? " capped" : ""}`}>
+                    <div class="mrow"><Dot status={s.status} /><span class="who">{s.hitCap ? "stopped (step cap)" : "answer"}</span><span class="sp" /><Stamp ts={s.lastTs} /></div>
+                    <div class="md" dangerouslySetInnerHTML={{ __html: markdown(s.summary) }} />
+                </div>
+                : <div class="pending-note">…running ({(s.steps || []).length} steps)</div>}
+        </>
     );
 }
 
@@ -524,6 +596,7 @@ function DetailView({ hash }: { hash: string }) {
     // turn updates are immutable (see onDebug) so children re-render too.
     const s = sessionMap.get(hash);
     if (!s) return <div class="empty">Session not found.</div>;
+    if (s.kind === "agent") return <AgentRunView s={s} />;
     return <><OptionsBlock s={s} />{s.turns.map(t => <MessageTurn key={t.id} t={t} />)}</>;
 }
 
@@ -940,6 +1013,7 @@ function App() {
                         <ModelStatusDot model={shownModel(detailSession)} inFlight={detailSession.status === "pending"} />
                         <span class="tt head-model">{shownModel(detailSession)}<span class="tt-pop left" role="tooltip">The model that will respond to your next message in this session.</span></span>
                         <ProfileBadge profile={sessionProfile(detailSession)} />
+                        {detailSession.kind === "agent" ? <AgentBadge /> : null}
                     </>
                     : <b>{inSettings ? "Settings" : `Sessions (${sessionMap.size})`}</b>}
                 <span class="sp" />

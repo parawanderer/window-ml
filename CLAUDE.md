@@ -112,6 +112,18 @@ results). The **agent loop lives client-side** (`ml.step` in `injected.js`);
 the extension deliberately ships no loop/whitelist/overseer — callers compose
 those, keeping `window.ml` a primitive.
 
+**Agent runs in the debug sidebar.** `ml.agent` emits its own debug-event kinds
+(not `chat`): `agent` (run start: task + model), `agent-step` (one per step — a
+thought OR a tool call with args/result; `elements` is a **count**, since real
+DOM nodes can't cross the window bus — they still reach `onStep`), and
+`agent-result` (summary + steps + `hitCap`). All share the run's own session
+hash (an agent run isn't a `createChat`), so the sidebar renders it as a distinct
+"agent" session. It reuses `onStep`'s existing event stream — the tracer was
+already there, this just tees it to `emitDebug`. A depth counter (`inAgentRun`)
+suppresses `chat*` events while a run is in flight, so the auto-wired `look`
+tool's internal `ml.chat` doesn't spawn orphan chat sessions (its result already
+shows as the tool step).
+
 **Sources.** When a tool/RAG runs, OpenWebUI attaches provenance — top-level
 `data.sources` (non-stream) or its own SSE line `{ sources: [...] }` (stream,
 captured in `streamChunk`/`consume`). `fetchLLM`/`streamLLM` return
