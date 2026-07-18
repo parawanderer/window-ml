@@ -37,6 +37,32 @@ test("FETCH_LLM builds an OpenAI body and extracts the reply", async () => {
     assert.deepEqual(res, { data: "yo", model: "default-model" });
 });
 
+test("FETCH_LLM surfaces reasoning — reasoning_content (openai) and message.thinking (ollama)", async () => {
+    const bgO = loadBackground({
+        config: baseConfig(),
+        onFetch: () => jsonResponse({ choices: [{ message: { content: "42", reasoning_content: "6 times 7" } }] })
+    });
+    const rO = await bgO.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "6*7?" }] } });
+    assert.equal(rO.data, "42");
+    assert.equal(rO.reasoning, "6 times 7");
+
+    const bgL = loadBackground({
+        config: baseConfig({ apiFormat: "ollama", chatUrl: "http://host/ollama/api/chat" }),
+        onFetch: () => jsonResponse({ message: { content: "42", thinking: "6 times 7" } })
+    });
+    const rL = await bgL.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "6*7?" }] } });
+    assert.equal(rL.reasoning, "6 times 7");
+});
+
+test("FETCH_LLM omits the reasoning key when the model produced none", async () => {
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => jsonResponse({ choices: [{ message: { content: "hi" } }] })
+    });
+    const res = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "q" }] } });
+    assert.ok(!("reasoning" in res), "no reasoning key on a plain reply");
+});
+
 test("FETCH_LLM omits think unless it is a boolean", async () => {
     const bg = loadBackground({
         config: baseConfig(),

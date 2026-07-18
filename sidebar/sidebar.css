@@ -246,3 +246,8 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 
 details.sources { border-top: 1px solid var(--border); margin-top: 6px; }
 details.sources summary { cursor: pointer; padding: 5px 0; color: var(--fg-dim); font-size: 0.92em; }
+/* Reasoning/thinking disclosure — muted, sits above the reply. */
+details.thinking { border-left: 2px solid var(--border); padding-left: 8px; margin: 2px 0 8px; }
+details.thinking summary { cursor: pointer; color: var(--fg-faint); font-size: 0.9em; font-style: italic; }
+details.thinking[open] summary { margin-bottom: 4px; }
+details.thinking .md { color: var(--fg-dim); font-size: 0.95em; }

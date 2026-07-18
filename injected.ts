@@ -123,7 +123,7 @@ import type {
      * @param {FetchLlmPayload} payload The chat request payload.
      * @returns {Promise<{content: string, sources: Array}>} The chat response.
      */
-    const makeChatRequest = (payload: FetchLlmPayload): Promise<{ content: string; sources: unknown[]; model: string | null }> => {
+    const makeChatRequest = (payload: FetchLlmPayload): Promise<{ content: string; sources: unknown[]; model: string | null; reasoning: string | null }> => {
         return new Promise((resolve, reject) => {
             const requestId = Math.random().toString(36).substring(7);
             function handle(event: MessageEvent) {
@@ -131,7 +131,7 @@ import type {
                 if (!d || d.type !== "LLM_RESPONSE" || d.requestId !== requestId) return;
                 window.removeEventListener("message", handle);
                 if (d.error) reject(d.error);
-                else resolve({ content: d.result, sources: d.sources || [], model: d.model ?? null });
+                else resolve({ content: d.result, sources: d.sources || [], model: d.model ?? null, reasoning: d.reasoning ?? null });
             }
             window.addEventListener("message", handle);
             window.postMessage({ type: "LLM_REQUEST", requestId, payload }, "*");
@@ -150,7 +150,7 @@ import type {
     const makeStreamingTaskPromise = (
         payload: FetchLlmPayload,
         onToken: (delta: string, full: string) => void
-    ): Promise<{ content: string; sources: unknown[]; model: string | null }> => {
+    ): Promise<{ content: string; sources: unknown[]; model: string | null; reasoning: string | null }> => {
         return new Promise((resolve, reject) => {
             const requestId = Math.random().toString(36).substring(7);
             let full = "";
@@ -165,7 +165,7 @@ import type {
                     try { onToken(delta, full); } catch (e) { console.error("ml onToken threw:", e); }
                 } else if (d.type === "LLM_STREAM_DONE") {
                     window.removeEventListener("message", handle);
-                    resolve({ content: d.content != null ? d.content : full, sources: d.sources || [], model: d.model ?? null });
+                    resolve({ content: d.content != null ? d.content : full, sources: d.sources || [], model: d.model ?? null, reasoning: d.reasoning ?? null });
                 } else if (d.type === "LLM_STREAM_ERROR") {
                     window.removeEventListener("message", handle);
                     reject(d.error);
@@ -730,9 +730,9 @@ import type {
                         think: (think === true || think === false) ? think : null,
                         maxTokens: maxTokens ?? null
                     } });
-                    let content, sources, resolvedModel;
+                    let content, sources, resolvedModel, reasoning;
                     try {
-                        ({ content, sources, model: resolvedModel } = (typeof onToken === "function" && !schema)
+                        ({ content, sources, model: resolvedModel, reasoning } = (typeof onToken === "function" && !schema)
                             ? await makeStreamingTaskPromise(requestPayload, onToken)
                             : await makeChatRequest(requestPayload));
                     } catch (err) {
@@ -740,12 +740,18 @@ import type {
                         throw err;
                     }
                     let reply = content;
+                    // Thinking text: the server's separate reasoning field, else lift a
+                    // legacy inline <think>…</think> block out of the reply before cleanup strips it.
+                    if (!reasoning) {
+                        const m = reply.match(/^<think>([\s\S]*?)<\/think>/i);
+                        if (m) reasoning = m[1].trim();
+                    }
                     if (cleanup) reply = reply.replace(/^<think>[\s\S]*?<\/think>\s*/i, '');
 
                     const assistantMessage: NeutralMessage = { role: "assistant", content: reply };
                     if (sources && sources.length) assistantMessage.sources = sources;
                     this.messages.push(userMessage, assistantMessage);
-                    emitDebug({ kind: "chat-result", id: debug, ts: Date.now(), save, session, content: reply, sources: (sources && sources.length) ? sources : null, structured: !!schema, model: resolvedModel || model || null, extend: extend || null });
+                    emitDebug({ kind: "chat-result", id: debug, ts: Date.now(), save, session, content: reply, sources: (sources && sources.length) ? sources : null, structured: !!schema, model: resolvedModel || model || null, extend: extend || null, reasoning: reasoning || null });
                     return schema ? ml._parseJSON(reply) : reply;
                 },
                 /**

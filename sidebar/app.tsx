@@ -38,6 +38,7 @@ interface Turn {
     reqModel?: string | null;   // the model the caller explicitly requested (null = fell back to default/utility)
     model?: string | null;      // the model that actually produced this reply (resolved server-side)
     extend?: ExtendProfile | null;  // which profile resolved it — marks (default) vs (utility)
+    reasoning?: string | null;  // separate thinking/reasoning text, if the model produced any
 }
 interface Session {
     hash: string; model: string | null; tag: "session" | "saved";
@@ -162,7 +163,7 @@ function onDebug(ev: MlDebugEvent): void {
         // Replace the turn with a NEW object (see note above) so the open detail
         // view re-renders it live instead of only after a re-navigation/reload.
         const updated: Turn = ev.kind === "chat-result"
-            ? { ...prev, assistant: ev.content, sources: ev.sources, structured: ev.structured, status: "ok", ts: ev.ts, model: ev.model, extend: ev.extend }
+            ? { ...prev, assistant: ev.content, sources: ev.sources, structured: ev.structured, status: "ok", ts: ev.ts, model: ev.model, extend: ev.extend, reasoning: ev.reasoning }
             : { ...prev, error: ev.error, status: "err", ts: ev.ts };
         s.turns = s.turns.map((x, idx) => idx === i ? updated : x);
         s.lastTs = ev.ts; s.status = rollupStatus(s);
@@ -453,6 +454,10 @@ function AssistantBody({ t }: { t: Turn }) {
                     : null}
                 <Stamp ts={t.ts} />
             </div>
+            {/* Reasoning/thinking text (separate from the reply), collapsed by default. */}
+            {done && !collapsed && t.reasoning
+                ? <details class="thinking"><summary>thinking</summary><div class="md" dangerouslySetInnerHTML={{ __html: markdown(t.reasoning) }} /></details>
+                : null}
             {t.status === "pending"
                 ? <div class="pending-note">…thinking</div>
                 : t.status === "err"
@@ -936,7 +941,7 @@ function App() {
                     ? <>
                         <ModelStatusDot model={shownModel(detailSession)} inFlight={detailSession.status === "pending"} />
                         <span class="tt head-model">{shownModel(detailSession)}<span class="tt-pop left" role="tooltip">The model that will respond to your next message in this session.</span></span>
-                        {sessionProfile(detailSession) ? <span class="profile-inline">({sessionProfile(detailSession)})</span> : null}
+                        <ProfileBadge profile={sessionProfile(detailSession)} />
                     </>
                     : <b>{inSettings ? "Settings" : `Sessions (${sessionMap.size})`}</b>}
                 <span class="sp" />

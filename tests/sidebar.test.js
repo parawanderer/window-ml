@@ -25,7 +25,7 @@ const chatStart = (hash, turn, user, opts = {}) => ({
 const chatResult = (hash, turn, content, opts = {}) => ({
     kind: "chat-result", id: `${hash}-${turn}`, ts: Date.now() + turn, save: !!opts.save,
     session: { hash, turn }, content, sources: opts.sources || null, structured: !!opts.structured,
-    model: opts.model ?? null, extend: opts.extend ?? null
+    model: opts.model ?? null, extend: opts.extend ?? null, reasoning: opts.reasoning ?? null
 });
 
 test("sidebar mounts and shows the empty state", async () => {
@@ -251,7 +251,7 @@ test("provenance: a utility-profile call shows the resolved model in the row, he
     row.click();
     await w.tick();
     assert.match(w.shadow.querySelector(".head-model").textContent, /qwen3:0\.5b/, "header shows the model that responds next");
-    assert.match(w.shadow.querySelector(".head .profile-inline").textContent, /utility/, "header carries the (utility) tag too");
+    assert.match(w.shadow.querySelector(".head .profile").textContent, /utility/, "header carries the (utility) tag too");
     // The reply carries a click-to-copy model chip + a (utility) tag.
     const chip = w.shadow.querySelector(".msg.asst .model-name");
     assert.equal(chip.textContent, "qwen3:0.5b", "per-reply chip shows the resolved model");
@@ -274,7 +274,7 @@ test("provenance: a pending turn resolves its model from the config (not 'defaul
     rows.find(r => r.querySelector(".model").textContent === "gemma4:31b").click();
     await w.tick();
     assert.match(w.shadow.querySelector(".head-model").textContent, /gemma4:31b/);
-    assert.match(w.shadow.querySelector(".head .profile-inline").textContent, /default/);
+    assert.match(w.shadow.querySelector(".head .profile").textContent, /default/);
 });
 
 test("provenance: an explicitly-requested model gets no (default)/(utility) tag", async () => {
@@ -382,6 +382,28 @@ test("status dot: unknown (grey) when there's no Ollama backend", async () => {
     const w = await loadSidebarWorld({ psError: "no ollama" });
     const dot = await openDetail(w, "s5", "qwen3:14b");
     assert.ok(dot.classList.contains("unknown"), `expected unknown, got "${dot.className}"`);
+});
+
+test("thinking: a reply with reasoning shows a collapsed thinking block; without it, none", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(chatStart("th", 0, "q"));
+    await w.dispatch(chatResult("th", 0, "the answer", { reasoning: "let me consider the options carefully" }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+
+    const think = w.shadow.querySelector(".msg.asst details.thinking");
+    assert.ok(think, "thinking disclosure present");
+    assert.ok(!think.open, "collapsed by default");
+    assert.match(think.textContent, /consider the options/);
+
+    // A reply with no reasoning has no thinking block.
+    await w.dispatch(chatStart("th2", 0, "q2"));
+    await w.dispatch(chatResult("th2", 0, "plain answer"));
+    w.shadow.querySelector(".nav").click();                     // back to list
+    await w.tick();
+    [...w.shadow.querySelectorAll(".row")].find(r => /q2/.test(r.textContent))?.click();
+    await w.tick();
+    assert.equal(w.shadow.querySelector(".msg.asst details.thinking"), null, "no thinking block without reasoning");
 });
 
 test("detail: an assistant reply collapses to its first line and expands again", async () => {

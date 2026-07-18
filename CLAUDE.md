@@ -129,6 +129,16 @@ stream `done` + `content.js` relay pass it through, and `injected.js` puts it
 it + a `utility` badge — so a session that ran on `extend:"utility"` (whose
 client-side `request.model` is `null`) displays the real model, not `default`.
 
+**Reasoning (thinking).** Same channel again: `extractReasoning` reads the
+model's separate thinking text (OpenAI `reasoning_content` / Ollama
+`message.thinking`; `streamChunk` accumulates the `reasoning_content` delta).
+`fetchLLM`/`streamLLM` return `reasoning`; it rides the `FETCH_LLM` response,
+stream `done`, and `content.js` relay, and `injected.js` puts it on the
+`chat-result` event — falling back to lifting a legacy inline `<think>…</think>`
+block out of the reply before `cleanup` strips it. The sidebar renders a
+collapsed "thinking" disclosure above the reply. Modern models use the separate
+field, not inline `<think>` (verified against the live server).
+
 ## Conventions
 
 - **Plain JS in docs/examples** — `document.querySelector`, never jQuery-style

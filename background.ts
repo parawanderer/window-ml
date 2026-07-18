@@ -22,6 +22,9 @@ interface ChatBody {
 interface ApiFormatHandler {
     buildMessage(m: NeutralMessage): any;
     extractContent(data: any): string | null | undefined;
+    // The model's separate reasoning/thinking text (OpenAI reasoning_content /
+    // Ollama message.thinking), when present — kept out of `content`.
+    extractReasoning(data: any): string | null | undefined;
     extractToolCalls(data: any): ToolCall[];
     expectedShape: string;
     applyFormat(body: ChatBody, schema: JsonSchema): void;
@@ -30,7 +33,7 @@ interface ApiFormatHandler {
     // an `options` object; OpenWebUI's OpenAI route ignores `options` and expects
     // these as TOP-LEVEL fields (the OpenAI-compatible convention).
     applyRuntimeOptions(body: ChatBody, opts: { numCtx?: number; numGpu?: number }): void;
-    streamChunk(line: string): { delta: string; toolCall: boolean; sources?: unknown[] | null } | null;
+    streamChunk(line: string): { delta: string; reasoning?: string; toolCall: boolean; sources?: unknown[] | null } | null;
 }
 
 // OpenAI serves tool-call arguments as a JSON string; Ollama as an object.
@@ -91,6 +94,7 @@ const API_FORMATS: Record<ApiFormat, ApiFormatHandler> = {
             };
         },
         extractContent: (data: any) => data.choices?.[0]?.message?.content,
+        extractReasoning: (data: any) => data.choices?.[0]?.message?.reasoning_content,
         extractToolCalls: (data: any): ToolCall[] => (data.choices?.[0]?.message?.tool_calls || []).map((tc: any) => ({
             id: tc.id,
             name: tc.function?.name,
@@ -128,6 +132,7 @@ const API_FORMATS: Record<ApiFormat, ApiFormatHandler> = {
             const choice = obj.choices?.[0] || {};
             return {
                 delta: choice.delta?.content || "",
+                reasoning: choice.delta?.reasoning_content || "",
                 toolCall: choice.finish_reason === "tool_calls" || !!choice.delta?.tool_calls,
                 // OpenWebUI emits tool/RAG provenance on its own line: { sources: [...] }.
                 sources: Array.isArray(obj.sources) ? obj.sources : null,
@@ -153,6 +158,7 @@ const API_FORMATS: Record<ApiFormat, ApiFormatHandler> = {
             return message;
         },
         extractContent: (data: any) => data.message?.content,
+        extractReasoning: (data: any) => data.message?.thinking,
         extractToolCalls: (data: any): ToolCall[] => (data.message?.tool_calls || []).map((tc: any, i: number) => ({
             id: `call_${i}`,
             name: tc.function?.name,
@@ -175,7 +181,7 @@ const API_FORMATS: Record<ApiFormat, ApiFormatHandler> = {
         streamChunk(line) {
             let obj: any;
             try { obj = JSON.parse(line); } catch { return null; }
-            return { delta: obj.message?.content || "", toolCall: !!obj.message?.tool_calls };
+            return { delta: obj.message?.content || "", reasoning: obj.message?.thinking || "", toolCall: !!obj.message?.tool_calls };
         },
     },
 };
@@ -393,7 +399,7 @@ async function fetchLLM(payload: FetchLlmPayload): Promise<LlmResult | { content
 
     // sources: server-side tool / RAG provenance (OpenWebUI attaches it top-level
     // when a tool runs). Absent on plain chats and the Ollama-native format.
-    return { content, sources: Array.isArray(data.sources) ? data.sources : [], model };
+    return { content, sources: Array.isArray(data.sources) ? data.sources : [], model, reasoning: format.extractReasoning(data) || null };
 }
 
 // Streaming variant of fetchLLM: reads the SSE/NDJSON response and calls
@@ -401,18 +407,19 @@ async function fetchLLM(payload: FetchLlmPayload): Promise<LlmResult | { content
 // Text-only — no schema/raw/tools; toolIds is supported (streams each
 // server-side mode; a handed-back attempt streams no content, so nothing is
 // emitted to the caller before we retry the next mode).
-async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: string) => void): Promise<{ content: string; sources: unknown[]; model: string }> {
+async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: string) => void): Promise<{ content: string; sources: unknown[]; model: string; reasoning: string | null }> {
     const { format, body, send, model } = await prepareRequest(payload);
 
     const consume = async (res: Response) => {
         const reader = res.body!.getReader();
         const decoder = new TextDecoder();
-        let buffer = "", content = "", sawToolCall = false;
+        let buffer = "", content = "", reasoning = "", sawToolCall = false;
         let sources: unknown[] = [];
         const handleLine = (line: string) => {
             const chunk = format.streamChunk(line);
             if (!chunk) return;
             if (chunk.delta) { content += chunk.delta; onDelta(chunk.delta); }
+            if (chunk.reasoning) reasoning += chunk.reasoning;   // separate thinking stream (not emitted to the caller)
             if (chunk.toolCall) sawToolCall = true;
             // sources arrive on their own SSE line (no choices) — capture them.
             if (Array.isArray(chunk.sources)) sources = chunk.sources;
@@ -429,20 +436,20 @@ async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: string) => v
             }
         }
         if (buffer.trim()) handleLine(buffer.trim());
-        return { content, sawToolCall, sources };
+        return { content, sawToolCall, sources, reasoning: reasoning || null };
     };
 
     if (payload.toolIds?.length) {
         for (const mode of SERVER_TOOL_MODES) {
             body.params = { ...body.params, function_calling: mode };
-            const { content, sawToolCall, sources } = await consume(await send(body, true));
-            if (content.trim() || !sawToolCall) return { content, sources, model };   // real answer, or a plain empty completion
+            const { content, sawToolCall, sources, reasoning } = await consume(await send(body, true));
+            if (content.trim() || !sawToolCall) return { content, sources, model, reasoning };   // real answer, or a plain empty completion
         }
         throw new Error(HANDBACK_ERROR);
     }
 
-    const { content, sources } = await consume(await send(body, true));
-    return { content, sources, model };
+    const { content, sources, reasoning } = await consume(await send(body, true));
+    return { content, sources, model, reasoning };
 }
 
 function authHeaders(config: MlConfig): Record<string, string> {
@@ -590,6 +597,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 if (message.payload.raw) return sendResponse({ data: result });
                 const resp: any = { data: result.content, model: result.model ?? null };
                 if (result.sources && result.sources.length) resp.sources = result.sources;
+                if (result.reasoning) resp.reasoning = result.reasoning;
                 sendResponse(resp);
             })
             .catch(err => sendResponse({ error: err.message }));
@@ -687,7 +695,7 @@ chrome.runtime.onConnect.addListener((port) => {
     if (port.name !== "LLM_STREAM") return;
     port.onMessage.addListener((message: any) => {
         streamLLM(message.payload, (delta) => port.postMessage({ type: "chunk", delta }))
-            .then(({ content, sources, model }) => port.postMessage({ type: "done", content, sources, model }))
+            .then(({ content, sources, model, reasoning }) => port.postMessage({ type: "done", content, sources, model, reasoning }))
             .catch((err) => port.postMessage({ type: "error", error: err.message }));
     });
 });

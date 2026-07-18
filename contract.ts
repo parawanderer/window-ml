@@ -76,6 +76,7 @@ export interface LlmResult {
     content: string;
     sources?: unknown[] | null;
     model?: string | null;   // the model actually used, after server-side resolution (extend/ocr/default)
+    reasoning?: string | null;   // separate reasoning/thinking text (reasoning_content / message.thinking)
 }
 
 /* ----------------------------- tools / agent --------------------------- */
@@ -259,7 +260,7 @@ interface DebugBase {
     session: SessionRef;
 }
 export interface DebugChatStart extends DebugBase { kind: "chat"; streaming: boolean; request: DebugChatRequest; config: DebugSessionConfig; }
-export interface DebugChatResult extends DebugBase { kind: "chat-result"; content: string; sources: unknown[] | null; structured: boolean; model: string | null; extend: ExtendProfile | null; }
+export interface DebugChatResult extends DebugBase { kind: "chat-result"; content: string; sources: unknown[] | null; structured: boolean; model: string | null; extend: ExtendProfile | null; reasoning: string | null; }
 export interface DebugChatError extends DebugBase { kind: "chat-error"; error: string; }
 
 /** The event stream injected.js emits over window.postMessage for the sidebar. */
