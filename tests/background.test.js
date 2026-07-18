@@ -616,7 +616,34 @@ test("LIST_MODELS falls back across routes (HTML means wrong path)", async () =>
     });
 
     const res = await bg.send({ type: "LIST_MODELS" });
-    assert.deepEqual(res, { data: ["m1"] });
+    assert.deepEqual(res, { data: ["m1"], ollamaModels: ["m1"] });   // /api/tags → all local
+});
+
+test("LIST_MODELS marks Ollama-backed models (owned_by) vs external ones", async () => {
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => jsonResponse({ data: [
+            { id: "local:8b", owned_by: "ollama" },
+            { id: "gpt-4o", owned_by: "openai" },
+            { id: "arena", owned_by: "arena" },
+        ] })
+    });
+    const res = await bg.send({ type: "LIST_MODELS" });
+    assert.deepEqual(res.data, ["local:8b", "gpt-4o", "arena"]);
+    assert.deepEqual(res.ollamaModels, ["local:8b"], "only the ollama-owned model is local");
+});
+
+test("LIST_MODELS reports ollamaModels: null when the source can't tell (/v1/models)", async () => {
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            if (call.url === "http://host/api/models") return htmlResponse(200);
+            if (call.url === "http://host/v1/models") return jsonResponse({ data: [{ id: "x" }] });
+            assert.fail(`unexpected url ${call.url}`);
+        }
+    });
+    const res = await bg.send({ type: "LIST_MODELS" });
+    assert.deepEqual(res, { data: ["x"], ollamaModels: null });   // unknown, not "none"
 });
 
 test("LIST_MODELS ignores config overrides from page-originated messages", async () => {
@@ -633,7 +660,7 @@ test("LIST_MODELS ignores config overrides from page-originated messages", async
         { type: "LIST_MODELS", payload: { chatUrl: "http://evil:9/api/chat/completions" } },
         { tab: { id: 1 } }
     );
-    assert.deepEqual(res, { data: ["a"] });
+    assert.deepEqual(res, { data: ["a"], ollamaModels: [] });
 });
 
 test("LIST_MODELS honors overrides from the popup (no sender.tab)", async () => {
@@ -649,7 +676,7 @@ test("LIST_MODELS honors overrides from the popup (no sender.tab)", async () => 
         { type: "LIST_MODELS", payload: { chatUrl: "http://other:1/api/chat/completions" } },
         {}
     );
-    assert.deepEqual(res, { data: ["a"] });
+    assert.deepEqual(res, { data: ["a"], ollamaModels: [] });
 });
 
 test("OLLAMA_UNLOAD evicts every loaded model with keep_alive 0", async () => {
@@ -678,12 +705,12 @@ test("OLLAMA_PS reports loaded models with VRAM usage", async () => {
     const bg = loadBackground({
         config: baseConfig(),
         onFetch: () => jsonResponse({
-            models: [{ model: "a", size_vram: 21_400_000_000, expires_at: "soon" }]
+            models: [{ model: "a", size_vram: 21_400_000_000, size: 30_000_000_000, expires_at: "soon" }]
         })
     });
 
     const res = await bg.send({ type: "OLLAMA_PS", payload: {} });
-    assert.deepEqual(res, { data: [{ model: "a", vramGB: 21.4, expiresAt: "soon" }] });
+    assert.deepEqual(res, { data: [{ model: "a", vramGB: 21.4, sizeGB: 30, expiresAt: "soon" }] });
 });
 
 // A tiny helper: drains microtasks/macrotasks so port messages settle.

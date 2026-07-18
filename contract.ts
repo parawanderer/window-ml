@@ -206,10 +206,13 @@ export interface FetchLlmPayload {
     ocr?: boolean;
 }
 
-/** A model loaded in VRAM, from OLLAMA_PS. */
+/** A model resident in Ollama, from OLLAMA_PS. `vramGB` is the portion in VRAM
+ *  (null when fully on CPU); `sizeGB` is the total footprint — together they
+ *  reveal CPU-only (vram 0) vs partial offload (0 < vram < size) vs full GPU. */
 export interface LoadedModel {
     model: string;
     vramGB: number | null;
+    sizeGB: number | null;
     expiresAt: string | null;
 }
 

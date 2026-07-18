@@ -169,6 +169,13 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .dot.pending { background: var(--warn); animation: pulse 1s infinite; }
 .dot.ok { background: var(--ok); }
 .dot.err { background: var(--err); }
+/* model-load states (header status circle) */
+.dot.loaded { background: var(--ok); }                                  /* resident in VRAM */
+.dot.inflight { background: var(--warn); animation: pulse 1s infinite; } /* loading or generating */
+.dot.cold { background: #3b82f6; }                                      /* installed, not resident */
+.dot.unavailable { background: var(--err); }                            /* server doesn't list it */
+.dot.cloud { background: #a855f7; }                                     /* external API model (remote) */
+.dot.unknown { background: var(--fg-faint); }                           /* no load info / no Ollama */
 @keyframes pulse { 50% { opacity: .3; } }
 
 /* ------------------------------ list view ------------------------------- */

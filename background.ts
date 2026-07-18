@@ -455,7 +455,11 @@ function authHeaders(config: MlConfig): Record<string, string> {
 // serves /api/models, other OpenAI-compatible servers /v1/models, direct
 // Ollama /api/tags — and unknown GET routes on OpenWebUI return the frontend
 // HTML, so a non-JSON body just means "wrong path, try the next one".
-async function listAvailableModels(overrides: Partial<MlConfig> = {}): Promise<string[]> {
+// Returns the model ids plus, when the source reveals it, the subset that is
+// Ollama-backed (local). `ollamaModels` is null when the source can't tell
+// (e.g. /v1/models has no provenance) — callers must treat null as "unknown",
+// not "none", so a bare OpenAI-compat endpoint doesn't mark everything cloud.
+async function listAvailableModels(overrides: Partial<MlConfig> = {}): Promise<{ ids: string[]; ollamaModels: string[] | null }> {
     const config = { ...(await getConfig()), ...overrides };
     const origin = new URL(config.chatUrl).origin;
     const errors: string[] = [];
@@ -489,7 +493,21 @@ async function listAvailableModels(overrides: Partial<MlConfig> = {}): Promise<s
                 "model connection in OpenWebUI, then reload the list."
             );
         }
-        return list.map((m: any) => m.id || m.name).filter(Boolean);
+        const ids = list.map((m: any) => m.id || m.name).filter(Boolean);
+        // Provenance per source: /api/models (OpenWebUI) tags each model with
+        // owned_by/connection_type; /api/tags is Ollama's own endpoint (all
+        // local); /v1/models is opaque → unknown.
+        let ollamaModels: string[] | null;
+        if (path === "/api/tags") {
+            ollamaModels = ids;
+        } else if (path === "/v1/models") {
+            ollamaModels = null;
+        } else {
+            ollamaModels = list
+                .filter((m: any) => m.owned_by === "ollama" || m.connection_type === "local" || m.ollama != null)
+                .map((m: any) => m.id || m.name).filter(Boolean);
+        }
+        return { ids, ollamaModels };
     }
     throw new Error(errors.join("; "));
 }
@@ -500,9 +518,9 @@ async function setModel(model: unknown): Promise<string> {
     if (!model || typeof model !== "string") {
         throw new Error("setModel expects a model id string.");
     }
-    const models = await listAvailableModels();
-    if (!models.includes(model)) {
-        throw new Error(`Unknown model "${model}". Available: ${models.join(", ")}`);
+    const { ids } = await listAvailableModels();
+    if (!ids.includes(model)) {
+        throw new Error(`Unknown model "${model}". Available: ${ids.join(", ")}`);
     }
     await chrome.storage.sync.set({ model });
     return model;
@@ -533,6 +551,7 @@ async function listLoadedModels(): Promise<LoadedModel[]> {
     return loaded.map((m: any) => ({
         model: m.model || m.name,
         vramGB: m.size_vram ? +(m.size_vram / 1e9).toFixed(1) : null,
+        sizeGB: m.size ? +(m.size / 1e9).toFixed(1) : null,
         expiresAt: m.expires_at || null,
     }));
 }
@@ -581,7 +600,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // (popup); pages relaying through the content script (sender.tab set)
         // must not be able to point the saved API key at another host.
         listAvailableModels(sender.tab ? {} : (message.payload || {}))
-            .then(models => sendResponse({ data: models }))
+            .then(({ ids, ollamaModels }) => sendResponse({ data: ids, ollamaModels }))
             .catch(err => sendResponse({ error: err.message }));
         return true;
 

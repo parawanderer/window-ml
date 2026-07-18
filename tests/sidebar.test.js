@@ -272,6 +272,94 @@ test("provenance: a default-resolved reply is tagged (default)", async () => {
     assert.match(w.shadow.querySelector(".msg.asst .profile-inline").textContent, /default/);
 });
 
+// The header status dot reflects the "responds-next" model's load state. It
+// polls OLLAMA_PS only in detail view + slid-open, so each test opens the row.
+async function openDetail(w, hash, model, opts = {}) {
+    await w.raw({ __mlSidebarOpen: true });                 // slid open → polling allowed
+    await w.dispatch(chatStart(hash, 0, "q", { model: opts.pending ? null : model, ...opts.startExtend }));
+    if (!opts.pending) await w.dispatch(chatResult(hash, 0, "a", { model, extend: opts.extend ?? null }));
+    w.shadow.querySelector(".row").click();
+    await w.flush();
+    return w.shadow.querySelector(".head .dot");
+}
+
+test("status dot: loaded (green) when the model is resident in VRAM", async () => {
+    const w = await loadSidebarWorld({ vram: [{ model: "qwen3:14b", vramGB: 8, expiresAt: null }] });
+    const dot = await openDetail(w, "s1", "qwen3:14b");
+    assert.ok(dot.classList.contains("loaded"), `expected loaded, got "${dot.className}"`);
+});
+
+test("status dot: cold (blue) when installed but not resident", async () => {
+    const w = await loadSidebarWorld({ models: ["qwen3:14b"], vram: [] });   // in the list, not in /api/ps
+    const dot = await openDetail(w, "s2", "qwen3:14b");
+    assert.ok(dot.classList.contains("cold"), `expected cold, got "${dot.className}"`);
+});
+
+test("status dot: unavailable (red) when the server doesn't list the model", async () => {
+    const w = await loadSidebarWorld({ models: ["other:1b"], vram: [] });
+    const dot = await openDetail(w, "s3", "ghost:70b");
+    assert.ok(dot.classList.contains("unavailable"), `expected unavailable, got "${dot.className}"`);
+});
+
+test("status dot: in-flight (pulsing) while a turn is pending", async () => {
+    const w = await loadSidebarWorld({ vram: [{ model: "qwen3:14b", vramGB: 8, expiresAt: null }] });
+    const dot = await openDetail(w, "s4", "qwen3:14b", { pending: true });
+    assert.ok(dot.classList.contains("inflight"), `expected inflight, got "${dot.className}"`);
+});
+
+test("status dot: tooltip shows the RIGHT variant's VRAM when a family shares a base name", async () => {
+    const w = await loadSidebarWorld({ vram: [
+        { model: "gemma4:e2b", vramGB: null, expiresAt: null },   // CPU-resident, listed first
+        { model: "gemma4:31b", vramGB: 47.4, expiresAt: null },
+    ] });
+    const dot = await openDetail(w, "sv", "gemma4:31b");
+    assert.ok(dot.classList.contains("loaded"));
+    const tip = dot.parentElement.querySelector(".tt-pop").textContent;
+    assert.match(tip, /47\.4 GB VRAM/, `tooltip should show the 31b's VRAM, got "${tip}"`);
+});
+
+test("status dot: a CPU-resident model's tooltip says CPU, not a fake VRAM number", async () => {
+    const w = await loadSidebarWorld({ vram: [{ model: "gemma4:e2b", vramGB: null, sizeGB: 7.7, expiresAt: null }] });
+    const dot = await openDetail(w, "scpu", "gemma4:e2b");
+    const tip = dot.parentElement.querySelector(".tt-pop").textContent;
+    assert.match(tip, /on CPU \(7\.7 GB RAM\)/, `expected CPU RAM detail, got "${tip}"`);
+});
+
+test("status dot: tooltip flags partial CPU offload when size_vram < size", async () => {
+    const w = await loadSidebarWorld({ vram: [{ model: "big:70b", vramGB: 30, sizeGB: 45, expiresAt: null }] });
+    const dot = await openDetail(w, "spart", "big:70b");
+    assert.ok(dot.classList.contains("loaded"));
+    assert.match(dot.parentElement.querySelector(".tt-pop").textContent, /partial CPU offload/);
+});
+
+test("status dot: cloud (violet) for a listed-but-not-Ollama model", async () => {
+    const w = await loadSidebarWorld({ models: ["gpt-4o", "local:8b"], ollamaModels: ["local:8b"], vram: [] });
+    const dot = await openDetail(w, "scloud", "gpt-4o");
+    assert.ok(dot.classList.contains("cloud"), `expected cloud, got "${dot.className}"`);
+    assert.match(dot.parentElement.querySelector(".tt-pop").textContent, /External API/);
+});
+
+test("status dot: no cloud guess when provenance is unknown (ollamaModels null)", async () => {
+    const w = await loadSidebarWorld({ models: ["gpt-4o"], ollamaModels: null, vram: [] });
+    const dot = await openDetail(w, "sunk", "gpt-4o");
+    // Can't confirm it's external → falls back to cold, never mislabels as cloud.
+    assert.ok(dot.classList.contains("cold"), `expected cold, got "${dot.className}"`);
+});
+
+test("VRAM panel shows a CPU-resident model's RAM size, not '?'", async () => {
+    const w = await loadSidebarWorld({ vram: [{ model: "util:2b", vramGB: null, sizeGB: 7.7, expiresAt: null }] });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[title="VRAM monitor"]').click();
+    await w.flush();
+    assert.match(w.shadow.querySelector(".vram-gb").textContent, /7\.7 GB \(CPU\)/);
+});
+
+test("status dot: unknown (grey) when there's no Ollama backend", async () => {
+    const w = await loadSidebarWorld({ psError: "no ollama" });
+    const dot = await openDetail(w, "s5", "qwen3:14b");
+    assert.ok(dot.classList.contains("unknown"), `expected unknown, got "${dot.className}"`);
+});
+
 test("detail: an assistant reply collapses to its first line and expands again", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(chatStart("col", 0, "q"));

@@ -53,8 +53,11 @@ const view = signal<{ name: "list" } | { name: "detail"; hash: string } | { name
 const fontScale = signal(1);
 const config = signal<MlConfig>(DEFAULT_CONFIG);   // live mirror of chrome.storage.sync
 const models = signal<string[]>([]);               // server model ids (for the datalists)
+const ollamaIds = signal<string[] | null>(null);   // subset that's Ollama-backed (null = can't tell → skip cloud detection)
 const vramOpen = signal(false);                    // VRAM monitor panel toggled on?
 const sidebarOpen = signal(false);                 // is the shell slid open? (gates polling)
+const loadedModels = signal<LoadedModel[] | null>(null);   // OLLAMA_PS resident set (null until first poll)
+const psError = signal<string | null>(null);               // OLLAMA_PS failure (no Ollama backend)
 
 /* -------------------------------- helpers -------------------------------- */
 const pretty = (v: unknown, max = 6000): string => {
@@ -479,9 +482,8 @@ function MessageTurn({ t }: { t: Turn }) {
     );
 }
 
-// A "utility" badge marks a session that ran on the utility profile.
 const ProfileBadge = ({ profile }: { profile?: ExtendProfile | null }) =>
-    profile === "utility" ? <span class="profile">utility</span> : null;
+    profile !== null ? <span class="profile">{profile}</span> : null;
 
 // Presentational — model/profile arrive as plain props (resolved in ListView).
 // It must NOT read a signal itself: @preact/signals auto-memoizes a
@@ -536,6 +538,7 @@ function fetchModels(): void {
     chrome.runtime.sendMessage({ type: "LIST_MODELS", payload: {} }, (resp: any) => {
         if (chrome.runtime.lastError || !resp || resp.error) return;
         models.value = resp.data || [];
+        ollamaIds.value = resp.ollamaModels ?? null;   // null = provenance unknown (skip cloud detection)
     });
 }
 
@@ -745,41 +748,98 @@ const IconVram = () => (
     </svg>
 );
 
-// Live VRAM: a sparkline of total usage over time + a per-model legend with
-// evict controls. Polls OLLAMA_PS while mounted AND the sidebar is slid open
-// (gated on sidebarOpen so it never hammers Ollama in the background). No
-// manual refresh — that's the whole point.
-function VramPanel() {
-    const [loaded, setLoaded] = useState<LoadedModel[] | null>(null);
-    const [history, setHistory] = useState<number[]>([]);
-    const [err, setErr] = useState<string | null>(null);
+// Poll Ollama's resident-model set (/api/ps) into the shared signals, for BOTH
+// the VRAM panel and the header status dot. Gated so it never hammers Ollama in
+// the background: only while the shell is slid open AND something needs it (the
+// panel is up, or a detail header — the only place a status dot shows).
+function pollPs(): void {
+    if (!sidebarOpen.value) return;
+    if (!vramOpen.value && view.value.name !== "detail") return;
+    chrome.runtime.sendMessage({ type: "OLLAMA_PS", payload: {} }, (resp: any) => {
+        if (chrome.runtime.lastError || (resp && resp.error)) {
+            psError.value = (resp && resp.error) || chrome.runtime.lastError?.message || "unavailable";
+            loadedModels.value = []; return;
+        }
+        psError.value = null;
+        loadedModels.value = resp.data || [];
+    });
+}
 
-    const poll = () => {
-        if (!sidebarOpen.value) return;   // paused while slid closed
-        chrome.runtime.sendMessage({ type: "OLLAMA_PS", payload: {} }, (resp: any) => {
-            if (chrome.runtime.lastError || (resp && resp.error)) {
-                setErr((resp && resp.error) || chrome.runtime.lastError?.message || "unavailable");
-                setLoaded([]); return;
-            }
-            setErr(null);
-            const list: LoadedModel[] = resp.data || [];
-            setLoaded(list);
-            const total = list.reduce((s, m) => s + (m.vramGB || 0), 0);
-            setHistory(h => [...h, total].slice(-VRAM_HISTORY));
-        });
-    };
+// "expires in Xs/Xm" from an /api/ps expires_at ISO stamp (Ollama's TTL).
+function expiresIn(expiresAt: string | null): string | null {
+    if (!expiresAt) return null;
+    const ms = new Date(expiresAt).getTime() - Date.now();
+    if (isNaN(ms) || ms <= 0) return null;
+    const s = Math.round(ms / 1000);
+    return s < 90 ? `expires in ${s}s` : `expires in ${Math.round(s / 60)}m`;
+}
+
+// Live model-load state for the header's "responds-next" model, from /api/ps
+// (resident) + the installed list + our own in-flight flag. Five states, detail
+// in the tooltip (see SIDEBAR_UI_FEEDBACK.md). Reads signals directly so it
+// updates on each poll; model/inFlight arrive as plain props.
+type LoadState = "loaded" | "cold" | "inflight" | "unavailable" | "cloud" | "unknown";
+function modelLoadState(model: string, inFlight: boolean): { state: LoadState; tip: string } {
+    const ps = psError.value ? null : loadedModels.value;
+    // Match the FULL tagged name (only normalising :latest). A base-name match
+    // ("gemma4") picks the wrong variant when a family has several tags loaded
+    // — e.g. gemma4:31b would grab gemma4:e2b's (CPU, no-VRAM) row.
+    const norm = (m: string) => m.replace(/:latest$/, "");
+    const resident = ps?.find(m => m.model === model || norm(m.model) === norm(model)) || null;
+    if (inFlight) return { state: "inflight", tip: resident ? "Generating a response…" : "Loading the model into VRAM…" };
+    if (psError.value) return { state: "unknown", tip: "Load state unknown — no Ollama backend responding." };
+    if (ps == null) return { state: "unknown", tip: "Checking load state…" };
+    if (resident) {
+        // size_vram (vramGB) vs size (sizeGB) → fully-CPU / partial-offload / full-GPU.
+        const v = resident.vramGB, sz = resident.sizeGB;
+        const where = !v
+            ? (sz ? `on CPU (${sz} GB RAM)` : "on CPU (RAM)")
+            : (sz && v < sz - 0.1 ? `${v} of ${sz} GB in VRAM — partial CPU offload (slower)` : `${v} GB VRAM`);
+        const bits = [where, expiresIn(resident.expiresAt)].filter(Boolean);
+        return { state: "loaded", tip: `Loaded — ${bits.join(" · ")}.` };
+    }
+    // Not resident. An external (non-Ollama) model has no local load state at all.
+    const listed = models.value.includes(model);
+    const ollama = ollamaIds.value;   // null = provenance unknown → don't guess cloud
+    if (ollama && listed && !ollama.includes(model))
+        return { state: "cloud", tip: "External API model — runs remotely; no local VRAM or load state." };
+    if (listed) return { state: "cold", tip: "Idle — installed but not resident; loads on next use." };
+    if (models.value.length) return { state: "unavailable", tip: "Unavailable — the server doesn't list this model (not installed?)." };
+    return { state: "unknown", tip: "Load state unknown." };
+}
+
+function ModelStatusDot({ model, inFlight }: { model: string; inFlight: boolean }) {
+    const { state, tip } = modelLoadState(model, inFlight);
+    return (
+        <span class="tt">
+            <span class={`dot ${state}`} />
+            <span class="tt-pop left" role="tooltip">{tip}</span>
+        </span>
+    );
+}
+
+// Live VRAM: a sparkline of total usage over time + a per-model legend with
+// evict controls. Reads the shared OLLAMA_PS signals (polled at App level while
+// the sidebar is open) and accumulates the sparkline history locally.
+function VramPanel() {
+    const loaded = loadedModels.value;
+    const err = psError.value;
+    const [history, setHistory] = useState<number[]>([]);
+    useEffect(() => { pollPs(); }, []);   // immediate poll on open (don't wait for the interval)
     useEffect(() => {
-        poll();
-        const id = setInterval(poll, VRAM_POLL_MS);
-        return () => clearInterval(id);
-    }, []);
+        if (!loaded) return;
+        const total = loaded.reduce((s, m) => s + (m.vramGB || 0), 0);
+        setHistory(h => [...h, total].slice(-VRAM_HISTORY));
+    }, [loaded]);
 
     const evict = (model?: string) =>
-        chrome.runtime.sendMessage({ type: "OLLAMA_UNLOAD", payload: model ? { model } : {} }, () => poll());
+        chrome.runtime.sendMessage({ type: "OLLAMA_UNLOAD", payload: model ? { model } : {} }, () => pollPs());
 
     if (err) return <div class="vram"><div class="vram-empty">VRAM unavailable — no Ollama backend.</div></div>;
 
-    const total = history.length ? history[history.length - 1] : 0;
+    // Total is the CURRENT resident set — read it straight from `loaded`, not the
+    // sparkline history (which lags a render and resets to 0 on every reopen).
+    const total = (loaded || []).reduce((s, m) => s + (m.vramGB || 0), 0);
     const W = 240, H = 34;
     const yMax = Math.max(1, ...history) * 1.15;
     const pts = history.length > 1
@@ -801,7 +861,7 @@ function VramPanel() {
                         <span class="vram-dot" style={{ background: colorFor(m.model) }} />
                         <span class="vram-name">{m.model}</span>
                         <span class="sp" />
-                        <span class="vram-gb">{m.vramGB != null ? `${m.vramGB} GB` : "?"}</span>
+                        <span class="vram-gb">{m.vramGB != null ? `${m.vramGB} GB` : m.sizeGB != null ? `${m.sizeGB} GB (CPU)` : "?"}</span>
                         <button class="vram-x" title="Evict from VRAM" onClick={() => evict(m.model)}>✕</button>
                     </div>
                 ))
@@ -829,14 +889,22 @@ function App() {
     // `utilModel` is a dep so configuring one later backfills existing sessions.
     const utilModel = config.value.utilityModel;
     useEffect(() => { maybeGenerateTitles(); }, [r, open, utilModel]);
+    // Poll Ollama's resident set for the VRAM panel + the header status dot: a
+    // steady interval, plus an immediate poll whenever the view/open-state
+    // changes (so the dot resolves promptly on navigation). pollPs self-gates.
+    useEffect(() => {
+        const id = setInterval(pollPs, VRAM_POLL_MS);
+        return () => clearInterval(id);
+    }, []);
+    useEffect(() => { pollPs(); }, [v.name, vramOpen.value, open]);
     return (
         <div class="app">
             <div class="head">
                 {v.name !== "list" ? <button class="nav" title="Back to sessions" onClick={() => (view.value = { name: "list" })}>‹</button> : null}
-                {/* TODO: status circle (model-load state) goes left of the model name. */}
                 {detailSession
                     ? <>
-                        <span class="tt head-model">{shownModel(detailSession)}<span class="tt-pop left" role="tooltip">The model that will respond to your next message in this session (changes with the utility/default profile).</span></span>
+                        <ModelStatusDot model={shownModel(detailSession)} inFlight={detailSession.status === "pending"} />
+                        <span class="tt head-model">{shownModel(detailSession)}<span class="tt-pop left" role="tooltip">The model that will respond to your next message in this session.</span></span>
                         {sessionProfile(detailSession) ? <span class="profile-inline">({sessionProfile(detailSession)})</span> : null}
                     </>
                     : <b>{inSettings ? "Settings" : `Sessions (${sessionMap.size})`}</b>}
