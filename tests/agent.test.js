@@ -599,7 +599,7 @@ test("built-in exec renders the run JS as a javascript code descriptor", async (
     const exec = world.ml.domTools.find(t => t.name === "exec");
     await world.ml.agent("x", { tools: [exec], vision: false, approve: () => true });
     const step = events.find(e => e.kind === "agent-step" && e.tool === "exec");
-    assert.deepEqual(step.render, { type: "code", text: "1 + 1", lang: "javascript" });
+    assert.deepEqual(step.render, { type: "code", text: "1 + 1", lang: "javascript", target: "in" });
 });
 
 test("agent routes a tool's DOM nodes to onStep/transcript but never to the model", async () => {

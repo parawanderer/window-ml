@@ -142,6 +142,9 @@ details.io > summary { cursor: pointer; color: var(--fg-faint); font: 0.8em ui-m
 details.io > summary::-webkit-details-marker { display: none; }
 details.io > summary::before { content: "▸ "; }
 details.io[open] > summary::before { content: "▾ "; }
+/* grey inline preview, only while collapsed */
+.io-preview { color: var(--fg-faint); }
+details.io[open] > summary .io-preview { display: none; }
 .io-body { padding-left: 10px; }
 
 /* descriptor renderers */

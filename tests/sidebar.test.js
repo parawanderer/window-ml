@@ -461,10 +461,11 @@ test("agent tool steps render descriptors (image / elements / table)", async () 
     assert.equal(w.shadow.querySelectorAll(".r-table td").length, 4, "table cells rendered");
 });
 
-test("agent tool step with a descriptor has a rendered⇄raw toggle (raw shows In:/Out:)", async () => {
+test("agent tool step: descriptor renders its target block; the other stays raw (per-block)", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("agt", "run js"));
-    await w.dispatch(agentStep("agt", 1, { tool: "exec", arguments: { js: "1 + 1" }, result: "2", render: { type: "code", text: "1 + 1", lang: "javascript" } }));
+    // exec-style: the descriptor targets "in" (pretty JS); Out stays raw (the error/result).
+    await w.dispatch(agentStep("agt", 1, { tool: "exec", arguments: { js: "1 + 1" }, result: "2", render: { type: "code", text: "1 + 1", lang: "javascript", target: "in" } }));
     await w.dispatch(agentResult("agt", "done", 1));
 
     w.shadow.querySelector(".row").click();
@@ -472,15 +473,34 @@ test("agent tool step with a descriptor has a rendered⇄raw toggle (raw shows I
     const toolStep = w.shadow.querySelector(".astep.tool");
     toolStep.querySelector(".astep-head").click();   // expand
     await w.tick();
-    // Rendered by default: the code descriptor, no In:/Out: yet.
-    assert.ok(toolStep.querySelector(".code"), "rendered code descriptor shown");
-    assert.equal(toolStep.querySelector("details.io"), null, "no raw In:/Out: while rendered");
 
-    // Toggle to raw → In:/Out: appear.
-    [...toolStep.querySelectorAll(".rr-toggle button")].find(b => b.textContent === "raw").click();
+    const blocks = [...toolStep.querySelectorAll("details.io")];
+    assert.equal(blocks.length, 2, "In + Out blocks");
+    const [inB, outB] = blocks;
+    assert.ok(inB.querySelector(".rr-toggle"), "In (descriptor target) has the rendered/raw toggle");
+    assert.ok(inB.querySelector(".code"), "In renders the JS by default");
+    assert.equal(outB.querySelector(".rr-toggle"), null, "Out has no toggle — raw only");
+    assert.match(outB.textContent, /2/, "Out shows the raw result");
+
+    // Toggle In → raw → the JSON args.
+    [...inB.querySelectorAll(".rr-toggle button")].find(b => b.textContent === "raw").click();
     await w.tick();
-    assert.ok(toolStep.querySelector("details.io"), "raw view shows In:/Out:");
-    assert.match(toolStep.textContent, /"js"/, "raw In: shows the args");
+    assert.match(inB.textContent, /"js"/, "In raw shows the JSON args");
+});
+
+test("agent tool In/Out carry a grey inline preview (minified args / newline-collapsed output)", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("agp", "x"));
+    await w.dispatch(agentStep("agp", 1, { tool: "click", arguments: { selector: "button.like", index: 2 }, result: "Clicked the button.\nPage title: Foo." }));
+    await w.dispatch(agentResult("agp", "done", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const toolStep = w.shadow.querySelector(".astep.tool");
+    toolStep.querySelector(".astep-head").click();
+    await w.tick();
+    const [inB, outB] = [...toolStep.querySelectorAll("details.io")];
+    assert.match(inB.querySelector(".io-preview").textContent, /"selector": "button\.like"/, "In preview = minified args");
+    assert.match(outB.querySelector(".io-preview").textContent, /Clicked the button\. Page title: Foo\./, "Out preview collapses newlines");
 });
 
 test("agent thought + failed tool show status dots", async () => {

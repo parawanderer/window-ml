@@ -103,12 +103,15 @@ export interface ToolResult {
  *  UI (safe: only known `type`s render; unknown/absent → the default In:/Out:
  *  view). A tool's `render` produces one page-side; built-ins auto-derive
  *  image/elements from the envelope. */
-export type RenderDescriptor =
+export type RenderDescriptor = (
     | { type: "image"; src: string; label?: string }
     | { type: "code"; text: string; lang?: string }
     | { type: "table"; columns: string[]; rows: (string | number)[][] }
     | { type: "keyval"; pairs: [string, string][] }
-    | { type: "elements"; items: { path: string; text?: string; index?: number }[] };
+    | { type: "elements"; items: { path: string; text?: string; index?: number }[] }
+    // Which block the descriptor renders (default "out"). `exec` renders its "in"
+    // (the JS); output-derived descriptors (image/elements) render "out".
+) & { target?: "in" | "out" };
 
 /** Input to a tool's `render`: the run's stringified result + the raw envelope
  *  extras (live nodes/image), plus the call args. Runs page-side. */

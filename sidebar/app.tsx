@@ -579,17 +579,32 @@ function RenderPanel({ d }: { d: RenderDescriptor }) {
     }
 }
 
-// A Jupyter-style In:/Out: block — a left gutter label + content, collapsible on
-// its own (so a huge Out: can be folded even in an expanded step). `tip` explains
-// what In/Out mean on hover.
-function IoBlock({ label, tip, children }: { label: string; tip?: string; children: ComponentChildren }) {
+// A Jupyter-style In:/Out: block: a gutter label + content, collapsible on its
+// own (a grey inline preview shows when collapsed). If a descriptor targets THIS
+// block it renders by default with a per-block rendered⇄raw toggle (e.g. exec's
+// In renders pretty JS while its Out stays raw). `raw` is the plain fallback.
+function IoBlock({ label, tip, preview, render, raw }: { label: string; tip?: string; preview: string; render?: RenderDescriptor; raw: ComponentChildren }) {
+    const [showRaw, setShowRaw] = useState(false);   // rendered by default when a descriptor targets this block
     return (
         <details class="io" open>
-            <summary class="io-label" title={tip}>{label}:</summary>
-            <div class="io-body">{children}</div>
+            <summary class="io-label" title={tip}>{label}: <span class="io-preview">{preview}</span></summary>
+            <div class="io-body">
+                {render
+                    ? <>
+                        <div class="rr-toggle">
+                            <button class={showRaw ? "" : "on"} onClick={() => setShowRaw(false)}>rendered</button>
+                            <button class={showRaw ? "on" : ""} onClick={() => setShowRaw(true)}>raw</button>
+                        </div>
+                        {showRaw ? raw : <RenderPanel d={render} />}
+                    </>
+                    : raw}
+            </div>
         </details>
     );
 }
+// Grey one-line preview for a collapsed In/Out: minified args, or newline-collapsed output.
+const inlineJson = (v: unknown): string => truncate(pretty(v).replace(/\s+/g, " "), 64);
+const inlineText = (s: string): string => truncate(s.replace(/\s+/g, " ").trim(), 72);
 
 // A step of one ml.agent TURN (one LLM call): a thought + its batched tool calls.
 interface AgentTurnGroup { step: number; thought?: string; tools: AgentStep[]; }
@@ -633,16 +648,10 @@ const toolFailed = (result?: string): boolean => !!result && /^(Error:|Denied)/.
 // In:/Out: directly.
 function ToolStep({ st }: { st: AgentStep }) {
     const [open, setOpen] = useState(false);
-    const [raw, setRaw] = useState(false);
     const args = st.arguments && Object.keys(st.arguments).length ? st.arguments : null;
-    const io = (
-        <div class="io-blocks">
-            {args ? <IoBlock label="In" tip="The arguments the model passed to this tool call."><Code text={pretty(args)} lang="json" /></IoBlock> : null}
-            <IoBlock label="Out" tip="What the tool returned to the model.">
-                {st.result ? <Code text={st.result} lang="text" /> : <span class="dim">(no output)</span>}
-            </IoBlock>
-        </div>
-    );
+    // A descriptor renders the block it targets (default "out"); the other stays raw.
+    const inRender = st.render?.target === "in" ? st.render : undefined;
+    const outRender = st.render && st.render.target !== "in" ? st.render : undefined;
     return (
         <div class="astep tool">
             <button class="astep-head" onClick={() => setOpen(v => !v)}>
@@ -654,15 +663,13 @@ function ToolStep({ st }: { st: AgentStep }) {
             </button>
             {open
                 ? <div class="astep-body">
-                    {st.render
-                        ? <>
-                            <div class="rr-toggle">
-                                <button class={raw ? "" : "on"} onClick={() => setRaw(false)}>rendered</button>
-                                <button class={raw ? "on" : ""} onClick={() => setRaw(true)}>raw</button>
-                            </div>
-                            {raw ? io : <RenderPanel d={st.render} />}
-                        </>
-                        : io}
+                    {args
+                        ? <IoBlock label="In" tip="The arguments the model passed to this tool call."
+                            preview={inlineJson(args)} render={inRender} raw={<Code text={pretty(args)} lang="json" />} />
+                        : null}
+                    <IoBlock label="Out" tip="What the tool returned to the model."
+                        preview={inlineText(st.result || "")} render={outRender}
+                        raw={st.result ? <Code text={st.result} lang="text" /> : <span class="dim">(no output)</span>} />
                 </div>
                 : null}
         </div>
