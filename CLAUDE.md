@@ -162,13 +162,18 @@ reopens spans that straddle a newline — matching `<` first, so a text run like
 a line wraps because each source line is its own flex row.
 
 **Export log.** The detail-view header has an "Export log" button →
-`sessionToMarkdown(session)` → a downloaded `.md` (chat and agent both). It
-serialises the in-memory session (options, turns/steps, exec JS beautified,
+`serializeSession(session)` → `{ md, images }`, downloaded (chat and agent both).
+It serialises the in-memory session (options, turns/steps, exec JS beautified,
 results, model provenance, timestamps) — no new plumbing, it's all already in the
-`Session` object. Screenshots are **placeholders** (`_🖼️ …_`), because base64 in
-a text file is unreadable to a coding assistant; a future bundle export writes the
-PNGs as sidecars so they can be opened. The iframe can't touch the filesystem, so
-it downloads via a `Blob` + `<a download>` click.
+`Session` object. **Screenshots ship as real PNG sidecars**, because base64 in a
+text file is unreadable to a coding assistant but a `.png` can be opened: an
+`addImage` callback decodes each data-URL, and the markdown references
+`images/step-N.png`. A run with images downloads a **`.zip`** (`run.md` +
+`images/*.png`); a text-only run downloads a bare **`.md`**. The zip is written by
+a tiny dependency-free **store-method** `zipStore` (PNGs are already deflated, so
+no compression — local headers + central directory + a hand-rolled `crc32`). The
+iframe can't touch the filesystem, so it downloads via a `Blob` + `<a download>`
+click.
 
 **Sources.** When a tool/RAG runs, OpenWebUI attaches provenance — top-level
 `data.sources` (non-stream) or its own SSE line `{ sources: [...] }` (stream,

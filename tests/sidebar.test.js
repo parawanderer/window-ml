@@ -563,7 +563,7 @@ test("code display prefs: wrap⇄scroll + line-number toggles flip root attrs an
 
 // Capture what the "Export log" button downloads: stub the object-URL + anchor
 // click (jsdom has neither URL.createObjectURL nor real navigation) and read back
-// the Blob it built. Returns { name, text }.
+// the Blob it built. Returns { name, blob }.
 async function captureExport(w) {
     let blob = null, name = null;
     w.window.URL.createObjectURL = (b) => { blob = b; return "blob:mock"; };
@@ -571,27 +571,47 @@ async function captureExport(w) {
     w.window.HTMLAnchorElement.prototype.click = function () { name = this.download; };
     w.shadow.querySelector('[title="Export log"]').click();
     await w.tick();
-    return { name, text: blob ? await blob.text() : null };
+    return { name, blob };
 }
 
-test("export: an agent run downloads a markdown log (task, steps, exec code, answer)", async () => {
+test("export: an image-free agent run downloads a plain markdown log", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("expa", "hide slow items", "gemma4:31b", 60));
-    await w.dispatch(agentStep("expa", 1, { tool: "look", render: { type: "image", src: "data:image/png;base64,ZZZ", label: "viewport" } }));
     await w.dispatch(agentStep("expa", 2, { tool: "exec", arguments: { js: "items.forEach(i=>i.remove())" }, result: "Hidden 38 items.", render: { type: "code", text: "items.forEach(i=>i.remove())", lang: "javascript", target: "in", format: true } }));
     await w.dispatch(agentResult("expa", "I hid all slow items.", 2));
     w.shadow.querySelector(".row").click();
     await w.tick();
 
-    const { name, text } = await captureExport(w);
-    assert.equal(name, "ml-agent-expa.md", "named by kind + hash");
+    const { name, blob } = await captureExport(w);
+    const text = await blob.text();
+    assert.equal(name, "ml-agent-expa.md", "no images → a bare .md, named by kind + hash");
     assert.match(text, /# Agent run · gemma4:31b · expa/);
     assert.match(text, /\*\*Task:\*\* hide slow items/);
-    assert.match(text, /## Step 2 · exec/);
     assert.match(text, /items\.forEach\(i => i\.remove\(\)\)/, "exec JS is beautified in the log");
     assert.match(text, /Hidden 38 items\./, "tool result captured");
-    assert.match(text, /screenshot — viewport \(omitted/, "image steps noted as a placeholder");
     assert.match(text, /## Answer\n\nI hid all slow items\./);
+});
+
+test("export: a run with screenshots downloads a zip (run.md + png sidecars)", async () => {
+    // A real 1×1 PNG, so the decoded sidecar is genuine image bytes.
+    const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("expz", "look around", "gemma4:31b", 60));
+    await w.dispatch(agentStep("expz", 1, { tool: "look", render: { type: "image", src: "data:image/png;base64," + PNG, label: "viewport" }, result: "a page" }));
+    await w.dispatch(agentResult("expz", "done", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+
+    const { name, blob } = await captureExport(w);
+    assert.equal(name, "ml-agent-expz.zip", "images present → a .zip bundle");
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    assert.deepEqual([...bytes.slice(0, 4)], [0x50, 0x4b, 0x03, 0x04], "starts with the PK local-file signature");
+    // store method (no compression) → filenames + run.md text live verbatim in the bytes.
+    const latin1 = String.fromCharCode(...bytes);
+    assert.ok(latin1.includes("run.md"), "contains run.md");
+    assert.ok(latin1.includes("images/step-1.png"), "contains the png sidecar");
+    assert.match(latin1, /!\[step 1[^\]]*\]\(images\/step-1\.png\)/, "run.md references the sidecar, not a placeholder");
+    assert.ok(latin1.includes(String.fromCharCode(0x89) + "PNG"), "the real PNG bytes are embedded");
 });
 
 test("export: a chat session downloads a markdown log (options, turns, reply)", async () => {
@@ -601,7 +621,8 @@ test("export: a chat session downloads a markdown log (options, turns, reply)", 
     w.shadow.querySelector(".row").click();
     await w.tick();
 
-    const { name, text } = await captureExport(w);
+    const { name, blob } = await captureExport(w);
+    const text = await blob.text();
     assert.equal(name, "ml-chat-expc.md");
     assert.match(text, /# Chat · qwen3:14b · expc/);
     assert.match(text, /## Options/);
