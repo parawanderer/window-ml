@@ -5,9 +5,10 @@
 // render a list ⇄ detail UI. Bundled (Preact + signals) into dist/sidebar.js only
 // — the core primitive stays dependency-free.
 import { render } from "preact";
+import type { ComponentChildren } from "preact";
 import { useState, useEffect } from "preact/hooks";
 import { signal } from "@preact/signals";
-import type { MlDebugEvent, DebugSessionConfig, NeutralMessage, MlConfig, ApiFormat, Theme, LoadedModel, ExtendProfile } from "../contract";
+import type { MlDebugEvent, DebugSessionConfig, NeutralMessage, MlConfig, ApiFormat, Theme, LoadedModel, ExtendProfile, RenderDescriptor } from "../contract";
 import { DEFAULT_CONFIG } from "../contract";
 // Syntax highlighting — highlight.js core + a focused set of languages, and the
 // Atom One themes (imported as CSS text, injected into the shadow root).
@@ -40,7 +41,7 @@ interface Turn {
     extend?: ExtendProfile | null;  // which profile resolved it — marks (default) vs (utility)
     reasoning?: string | null;  // separate thinking/reasoning text, if the model produced any
 }
-interface AgentStep { step: number; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: number; }
+interface AgentStep { step: number; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: number; render?: RenderDescriptor; }
 interface Session {
     hash: string; model: string | null; tag: "session" | "saved";
     createdTs: number; lastTs: number; status: Status;
@@ -157,7 +158,7 @@ function onDebug(ev: MlDebugEvent): void {
     if (ev.kind === "agent-step") {
         const s = sessionMap.get(ev.session.hash);
         if (!s) return;
-        s.steps = [...(s.steps || []), { step: ev.step, thought: ev.thought, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: ev.elements }];
+        s.steps = [...(s.steps || []), { step: ev.step, thought: ev.thought, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: ev.elements, render: ev.render }];
         s.lastTs = ev.ts; rev.value++; return;
     }
     if (ev.kind === "agent-result") {
@@ -539,26 +540,89 @@ function SessionRow({ s, model, profile }: { s: Session; model: string; profile:
     );
 }
 
-// One ml.agent step: a thought, or a tool call with its args + result.
-function AgentStepRow({ st }: { st: AgentStep }) {
-    if (st.tool) {
-        const args = st.arguments && Object.keys(st.arguments).length ? st.arguments : null;
-        return (
-            <div class="astep tool">
-                <div class="mrow">
-                    <span class="step-n">#{st.step}</span>
-                    <span class="tool-name">{st.tool}</span>
-                    {st.elements ? <span class="el-count" title="DOM nodes returned (hover them in the console via onStep)">{st.elements} el</span> : null}
+// --- descriptor renderers: a serializable RenderDescriptor → a panel. The
+// registry is keyed by `type`; a tool supplies one (page-side) or we auto-derive
+// image/elements, else the default In:/Out: renders the raw result. ---
+function RenderElements({ items }: { items: { path: string; text?: string; index?: number }[] }) {
+    return (
+        <div class="r-elements">
+            {items.map((it, i) => (
+                <div class="r-el" key={it.index ?? i}>
+                    <span class="r-el-idx">#{it.index ?? i}</span>
+                    {it.text ? <span class="r-el-text">«{it.text}»</span> : null}
+                    <code class="r-el-path">{it.path}</code>
                 </div>
-                {args ? <Code text={pretty(args)} lang="json" /> : null}
-                {st.result ? <div class="tool-result">{truncate(st.result, 2000)}</div> : null}
+            ))}
+        </div>
+    );
+}
+function RenderTable({ columns, rows }: { columns: string[]; rows: (string | number)[][] }) {
+    return (
+        <div class="r-table-wrap">
+            <table class="r-table">
+                <thead><tr>{columns.map((c, i) => <th key={i}>{c}</th>)}</tr></thead>
+                <tbody>{rows.map((row, i) => <tr key={i}>{row.map((c, j) => <td key={j}>{String(c)}</td>)}</tr>)}</tbody>
+            </table>
+        </div>
+    );
+}
+function RenderPanel({ d }: { d: RenderDescriptor }) {
+    switch (d.type) {
+        case "image": return <div class="r-image"><img src={d.src} alt={d.label || "image"} />{d.label ? <div class="r-image-label">{d.label}</div> : null}</div>;
+        case "code": return <Code text={d.text} lang={d.lang} />;
+        case "table": return <RenderTable columns={d.columns} rows={d.rows} />;
+        case "keyval": return <div class="r-keyval">{d.pairs.map(([k, v], i) => <div class="r-kv" key={i}><span class="r-k">{k}</span><span class="r-v">{v}</span></div>)}</div>;
+        case "elements": return <RenderElements items={d.items} />;
+        default: return <Code text={pretty(d)} lang="json" />;   // unknown type → dump it
+    }
+}
+
+// A Jupyter-style In:/Out: block — a left gutter label + content, collapsible on
+// its own (so a huge Out: can be folded even in an expanded step).
+function IoBlock({ label, children }: { label: string; children: ComponentChildren }) {
+    return (
+        <details class="io" open>
+            <summary class="io-label">{label}:</summary>
+            <div class="io-body">{children}</div>
+        </details>
+    );
+}
+
+// One ml.agent step: a thought (first line + expand) or a tool call (collapsed
+// by default; expands to In: args + Out: descriptor-rendered result).
+function AgentStepRow({ st }: { st: AgentStep }) {
+    const [open, setOpen] = useState(false);
+    if (!st.tool) {
+        const p = collapsedPreview(st.thought || "");
+        return (
+            <div class="astep thought">
+                <button class="astep-head" onClick={() => setOpen(v => !v)}>
+                    <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
+                    <span class="step-n">#{st.step}</span><span class="who">thought</span>
+                    {!open ? <span class="astep-preview">{p.text}{p.more ? " …" : ""}</span> : null}
+                </button>
+                {open ? <div class="md astep-body" dangerouslySetInnerHTML={{ __html: markdown(st.thought || "") }} /> : null}
             </div>
         );
     }
+    const args = st.arguments && Object.keys(st.arguments).length ? st.arguments : null;
     return (
-        <div class="astep thought">
-            <div class="mrow"><span class="step-n">#{st.step}</span><span class="who">thought</span></div>
-            <div class="md" dangerouslySetInnerHTML={{ __html: markdown(st.thought || "") }} />
+        <div class="astep tool">
+            <button class="astep-head" onClick={() => setOpen(v => !v)}>
+                <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
+                <span class="step-n">#{st.step}</span>
+                <span class="tool-name">{st.tool}</span>
+                {st.elements ? <span class="el-count" title="DOM nodes returned (reach them in the console via onStep)">{st.elements} el</span> : null}
+                {!open ? <span class="astep-preview">{collapsedPreview(st.result || "").text}</span> : null}
+            </button>
+            {open
+                ? <div class="astep-body">
+                    {args ? <IoBlock label="In"><Code text={pretty(args)} lang="json" /></IoBlock> : null}
+                    <IoBlock label="Out">
+                        {st.render ? <RenderPanel d={st.render} /> : st.result ? <Code text={st.result} /> : <span class="dim">(no output)</span>}
+                    </IoBlock>
+                </div>
+                : null}
         </div>
     );
 }

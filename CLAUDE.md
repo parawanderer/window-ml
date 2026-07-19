@@ -124,6 +124,17 @@ suppresses `chat*` events while a run is in flight, so the auto-wired `look`
 tool's internal `ml.chat` doesn't spawn orphan chat sessions (its result already
 shows as the tool step).
 
+**Tool render descriptors.** A tool step can carry a `render`: a **serializable
+`RenderDescriptor`** (`image`/`code`/`table`/`keyval`/`elements`) — data, never
+code, since functions can't cross the window bus and page code must never run in
+the extension-origin iframe. A tool's optional `render(input, args)` runs
+**page-side** (where it still has the live DOM nodes) and returns a descriptor;
+else `descriptorFor` auto-derives `image`/`elements` from the tool envelope; else
+`undefined` → the sidebar's default In:/Out: view. The sidebar (`RenderPanel`) is
+a registry keyed by `type` + the default fallback — it owns all UI, so an unknown
+type just dumps as JSON. Custom-tool render is defensive (throw → fallback, never
+breaks the run).
+
 **Sources.** When a tool/RAG runs, OpenWebUI attaches provenance — top-level
 `data.sources` (non-stream) or its own SSE line `{ sources: [...] }` (stream,
 captured in `streamChunk`/`consume`). `fetchLLM`/`streamLLM` return

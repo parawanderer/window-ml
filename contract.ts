@@ -98,13 +98,37 @@ export interface ToolResult {
     imageLabel?: string;
 }
 
+/** A serializable description of how to render a tool step in the debug sidebar.
+ *  Data, never code — it crosses the window bus and the sidebar owns the actual
+ *  UI (safe: only known `type`s render; unknown/absent → the default In:/Out:
+ *  view). A tool's `render` produces one page-side; built-ins auto-derive
+ *  image/elements from the envelope. */
+export type RenderDescriptor =
+    | { type: "image"; src: string; label?: string }
+    | { type: "code"; text: string; lang?: string }
+    | { type: "table"; columns: string[]; rows: (string | number)[][] }
+    | { type: "keyval"; pairs: [string, string][] }
+    | { type: "elements"; items: { path: string; text?: string; index?: number }[] };
+
+/** Input to a tool's `render`: the run's stringified result + the raw envelope
+ *  extras (live nodes/image), plus the call args. Runs page-side. */
+export interface ToolRenderInput {
+    result: string;
+    elements?: Node[];
+    image?: string;
+    imageLabel?: string;
+}
+
 export interface MlTool {
     name: string;
     description: string;
     parameters: JsonSchema;
     run: (args: Record<string, any>) => string | ToolResult | Promise<string | ToolResult>;
     requiresApproval: boolean;
-    capabilities: string[];         // e.g. "vision" | "answer"
+    capabilities: ("vision"|"answer")[];         // e.g. "vision" | "answer"
+    // Optional page-side formatter → a serializable RenderDescriptor for the
+    // debug sidebar (null/throw → the default renderer). Never receives/returns code.
+    render?: (input: ToolRenderInput, args: Record<string, unknown>) => RenderDescriptor | null | undefined;
 }
 
 export interface ApprovalRequest {
@@ -132,6 +156,35 @@ export interface AgentResult {
     transcript: AgentTranscriptEntry[];
     elements: Node[];               // nodes designated via an answer-capable tool
     hitCap?: boolean;
+}
+
+/** One live tracer event from ml.agent's `onStep` (a transcript entry + the
+ *  step index). Also the shape ml._logStep consumes. */
+export interface AgentStepEvent extends AgentTranscriptEntry {
+    step: number;
+}
+
+/** Options for the low-level ml.step turn. */
+export interface StepOptions {
+    tools?: unknown[];              // client-side tool definitions
+    model?: string | null;
+    think?: boolean | null;
+}
+
+/** Options for ml.agent — the loop, whitelist, cap and approval gate. */
+export interface AgentOptions {
+    tools?: MlTool[] | null;        // tool registry (default ml.domTools)
+    extraTools?: MlTool[];          // appended to `tools`
+    system?: string | null;        // REPLACES the built-in preamble
+    hints?: string | null;         // APPENDED to the built-in preamble
+    maxSteps?: number;
+    model?: string | null;
+    think?: boolean | null;
+    approve?: (req: ApprovalRequest) => boolean | ApprovalDecision | Promise<boolean | ApprovalDecision>;
+    onStep?: ((ev: AgentStepEvent) => void) | null;
+    env?: boolean;                  // prepend page-context note to the system prompt
+    vision?: boolean | string | null;   // auto-wire a `look` tool (null = probe)
+    logDebug?: boolean;            // install the built-in console tracer
 }
 
 /* ----------------------------- call options ---------------------------- */
@@ -267,6 +320,7 @@ export interface DebugAgentStart extends DebugBase { kind: "agent"; task: string
 export interface DebugAgentStep extends DebugBase {
     kind: "agent-step"; step: number;
     thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: number;
+    render?: RenderDescriptor;   // tool-supplied or auto-derived rich render (else the default In:/Out:)
 }
 export interface DebugAgentResult extends DebugBase { kind: "agent-result"; summary: string; steps: number; hitCap: boolean; }
 
@@ -278,11 +332,83 @@ export type MlDebugEvent = DebugChatStart | DebugChatResult | DebugChatError
 export interface MlDebugMessage { __mlDebug: MlDebugEvent; }
 export interface MlSidebarReady { __mlSidebar: "ready"; }
 
+/* ------------------------------ the API ------------------------------- */
+
+/** The full `window.ml` surface — the fixed signature every caller (page
+ *  scripts, userscripts, the devtools console) type-checks against, and the
+ *  contract the object literal in injected.ts is verified against on build.
+ *
+ *  Underscore-prefixed members are internal plumbing exposed for debugging;
+ *  they are NOT part of the stable public API and may change. */
+export interface MlApi {
+    /* ---- chat ---- */
+    /** Create a stateful multi-turn chat session. */
+    createChat(opts?: ChatOptions & { save?: boolean }): MlHistory;
+    /** One-shot chat — a throwaway single-turn history. */
+    chat(prompt: string, options?: ChatOptions): Promise<string | unknown>;
+    /** One-shot chat that always returns a string (never a parsed schema). */
+    chatShort(prompt: string, options: ChatOptions): Promise<string>;
+    /** ml.chat but the reply is also console.logged. */
+    logChat(prompt: string, options: ChatOptions): Promise<void>;
+    /** ml.chatShort but the reply is also console.logged. */
+    logChatShort(prompt: string, options: ChatOptions): Promise<void>;
+
+    /* ---- tools / agent ---- */
+    /** Low-level single model turn WITH client-side tools; you own the loop. */
+    step(messages: NeutralMessage[], opts?: StepOptions): Promise<{ content: string; tool_calls: ToolCall[] }>;
+    /** Build one agent tool (JSON-schema signature + page-side run). */
+    defineTool(tool?: Partial<MlTool>): MlTool;
+    /** Run a full agent loop over a tool registry until it stops or hits maxSteps. */
+    agent(task: string, opts?: AgentOptions): Promise<AgentResult>;
+    /** An approve() gate that auto-approves the first call, then denies. */
+    approveOnce(): (req: ApprovalRequest) => boolean;
+    /** The default DOM tool registry (added right after injection). */
+    domTools?: MlTool[];
+
+    /** Built-in vision tool factory (OCR/screenshot look). */
+    lookTool(opts?: { model?: string | null; maxTokens?: number }): MlTool;
+    /** Built-in click tool factory. */
+    clickTool(): MlTool;
+    /** Built-in type tool factory. */
+    typeTool(): MlTool;
+
+    /* ---- vision / OCR / capture ---- */
+    /** OCR/describe an image (element, url or data URL). */
+    read(image: string | HTMLImageElement, opts?: { model?: string | null; prompt?: string | null }): Promise<string>;
+    /** Capture the tab (or an element) to a data URL. */
+    screenshot(target?: string | Element | null, opts?: { scroll?: boolean; fullPage?: boolean; index?: number }): Promise<string>;
+
+    /* ---- server / model management ---- */
+    models(): Promise<string[]>;
+    capabilities(model?: string | null): Promise<string[] | null>;
+    getModel(): Promise<string | null>;
+    config(): Promise<MlPublicConfig>;
+    setModel(model: string): Promise<string>;
+    ps(): Promise<LoadedModel[]>;
+    unload(model?: string | null): Promise<string[]>;
+
+    /** Resolves once window.ml is fully wired (synchronous; set right after
+     *  injection). See the `ml:ready` event for the pre-resolution hook. */
+    ready?: Promise<MlApi>;
+
+    /* ---- internal plumbing (underscore-prefixed; unstable) ---- */
+    _logStep(ev: AgentStepEvent): void;
+    _truncate(str: string, n: number): string;
+    _suspiciousChars(str: string): { index: number; code: string; name: string }[];
+    _elPath(el: Element): string;
+    _describeSkeleton(el: Element, depth: number, indent?: string): string;
+    _queryAll(selector: string): Element[];
+    _parseJSON(text: string): unknown;
+    _imageToDataUrl(image: string | HTMLImageElement): Promise<string>;
+    _stitchFullPage(capture: () => Promise<string>): Promise<string>;
+    _resolveVisionModel(agentModel: string | null, vision: boolean | string | null): Promise<string | null>;
+    _modelSees(model: string | null): Promise<boolean>;
+    _nativeLookTool(): MlTool;
+}
+
 /* --------------------------- global augmentation -------------------------- */
 // injected.js defines window.ml (the whole public API) on the page's main world.
-// Typed `any` for now — a precise `MlApi` interface is a separate deliverable;
-// this just lets injected.ts reference window.ml without an error.
 declare global {
-    interface Window { ml: any; }
+    interface Window { ml: MlApi; }
 }
 export {};

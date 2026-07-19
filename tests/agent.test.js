@@ -557,6 +557,38 @@ test("agent suppresses orphan chat sessions from a tool's internal ml.chat", asy
     assert.ok(events.some(e => e.kind === "agent-step" && e.result === "a description"), "vision result shows as the tool step");
 });
 
+// Capture the __mlDebug events emitted by an agent run over one tool.
+async function agentDebugEvents(tool) {
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall(tool.name, {}, "c1"), reply("done")]) });
+    const t = world.ml.defineTool(tool);
+    const win = world.context.window;
+    const events = [];
+    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    win.postMessage({ __mlSidebar: "ready" });
+    await new Promise(r => setTimeout(r, 0));
+    const res = await world.ml.agent("x", { tools: [t], vision: false });
+    return { events, res, step: events.find(e => e.kind === "agent-step" && e.tool === tool.name) };
+}
+
+test("a custom tool's render() emits a serializable descriptor on its step", async () => {
+    const { step } = await agentDebugEvents({
+        name: "stats", run: () => "3 items",
+        render: () => ({ type: "table", columns: ["k", "v"], rows: [["a", 1]] })
+    });
+    assert.deepEqual(step.render, { type: "table", columns: ["k", "v"], rows: [["a", 1]] });
+});
+
+test("a throwing/absent render() falls back to the default (never breaks the run)", async () => {
+    const { res, step } = await agentDebugEvents({ name: "boom", run: () => "ok", render: () => { throw new Error("nope"); } });
+    assert.equal(res.summary, "done", "run completed despite the throwing render");
+    assert.ok(!step.render, "no descriptor → sidebar uses the default In:/Out:");
+});
+
+test("agent auto-derives an image descriptor from a tool that returns a screenshot", async () => {
+    const { step } = await agentDebugEvents({ name: "shoot", run: () => ({ content: "shot", image: "data:image/png;base64,AAA", imageLabel: "viewport" }) });
+    assert.deepEqual(step.render, { type: "image", src: "data:image/png;base64,AAA", label: "viewport" });
+});
+
 test("agent routes a tool's DOM nodes to onStep/transcript but never to the model", async () => {
     const world = loadPageWorld({
         onRuntimeMessage: scriptedModel([toolCall("grab", {}, "c1"), reply("done")])

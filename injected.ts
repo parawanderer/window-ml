@@ -20,6 +20,8 @@ import type {
     ExtendProfile,
     JsonSchema,
     ToolCall,
+    RenderDescriptor,
+    ToolRenderInput,
     LoadedModel,
     MlHistory
 } from "./contract";
@@ -824,11 +826,11 @@ import type {
          * @returns {MlTool} The tool with defaults filled in.
          * @throws {Error} If `name` or a `run` function is missing.
          */
-        defineTool: function({ name, description = "", parameters = { type: "object", properties: {} }, run, requiresApproval = false, capabilities = [] }: Partial<MlTool> = {}): MlTool {
+        defineTool: function({ name, description = "", parameters = { type: "object", properties: {} }, run, requiresApproval = false, capabilities = [], render }: Partial<MlTool> = {}): MlTool {
             if (!name || typeof run !== "function") {
                 throw new Error("ml.defineTool needs a name and a run(args) function");
             }
-            return { name, description, parameters, run, requiresApproval, capabilities };
+            return { name, description, parameters, run, requiresApproval, capabilities, render };
         },
         /**
          * Run a full agent loop over a tool registry: the model calls tools, we
@@ -943,15 +945,33 @@ import type {
             // bus — send a count; real nodes still reach onStep/the console.
             const runHash = shortHash();
             emitDebug({ kind: "agent", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, task, model: model || null });
-            const emit = (event: { step: number; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: Node[] }) => {
+            const emit = (event: { step: number; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: Node[]; render?: RenderDescriptor }) => {
                 if (logDebug) logStep(event);
                 emitDebug({
                     kind: "agent-step", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: event.step },
                     step: event.step, thought: event.thought, tool: event.tool, arguments: event.arguments,
-                    result: event.result, elements: event.elements ? event.elements.length : undefined,
+                    result: event.result, elements: event.elements ? event.elements.length : undefined, render: event.render,
                 });
                 if (!onStep) return;
                 try { onStep(event); } catch (e) { console.error("ml.agent onStep threw:", e); }
+            };
+            // A serializable render descriptor for a tool step: the tool's own
+            // `render` (page-side, defensive) wins; else auto-derive image/elements
+            // from the envelope; else undefined → the sidebar's default In:/Out:.
+            const descriptorFor = (tool: MlTool | undefined, input: ToolRenderInput, args: Record<string, unknown>): RenderDescriptor | undefined => {
+                if (tool?.render) {
+                    try { const d = tool.render(input, args); if (d && d.type) return d; }
+                    catch (e) { console.error(`ml tool "${tool.name}" render threw:`, e); }
+                }
+                if (input.image) return { type: "image", src: input.image, label: input.imageLabel };
+                if (input.elements?.length) return {
+                    type: "elements",
+                    items: input.elements.slice(0, 50).map((el: Node, i: number) => ({
+                        path: (typeof Element !== "undefined" && el instanceof Element) ? elPath(el) : String(el.nodeName || "node"),
+                        text: truncate((el as Element).textContent || "", 60), index: i,
+                    })),
+                };
+                return undefined;
             };
             const finish = (r: AgentResult): AgentResult => {
                 emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: r.steps }, summary: r.summary, steps: r.steps, hitCap: !!r.hitCap });
@@ -1016,7 +1036,8 @@ import type {
                     const entry: AgentTranscriptEntry = { tool: call.name, arguments: args, result };
                     if (elements && elements.length) entry.elements = elements;
                     transcript.push(entry);
-                    emit({ step, ...entry });
+                    const render = descriptorFor(tool, { result, elements, image, imageLabel }, args);
+                    emit({ step, ...entry, render });
                     // An answer-capable tool designates the caller-facing result node(s).
                     if (tool && tool.capabilities && tool.capabilities.includes("answer") && elements && elements.length) {
                         answered.push(...elements);

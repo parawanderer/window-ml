@@ -424,10 +424,38 @@ test("agent runs render as their own session with steps + a final answer", async
     row.click();
     await w.tick();
     assert.equal(w.shadow.querySelectorAll(".astep").length, 2, "two steps (a thought + a tool call)");
-    assert.match(w.shadow.querySelector(".astep.tool .tool-name").textContent, /look/);
-    assert.match(w.shadow.querySelector(".astep.tool .tool-result").textContent, /top navigation/);
-    assert.match(w.shadow.querySelector(".astep.tool .el-count").textContent, /1 el/);
+    const toolStep = w.shadow.querySelector(".astep.tool");
+    assert.match(toolStep.querySelector(".tool-name").textContent, /look/);
+    assert.match(toolStep.querySelector(".el-count").textContent, /1 el/);
+    // Collapsed by default → shows a one-line preview of the result.
+    assert.match(toolStep.querySelector(".astep-preview").textContent, /top navigation/);
+
+    // Expand → In: args + Out: result.
+    toolStep.querySelector(".astep-head").click();
+    await w.tick();
+    assert.match(toolStep.textContent, /selector/, "In: shows the args");
+    assert.match(toolStep.textContent, /top navigation/, "Out: shows the result");
     assert.match(w.shadow.querySelector(".agent-summary").textContent, /login button is top-right/);
+});
+
+test("agent tool steps render descriptors (image / elements / table)", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("agr", "look at stuff"));
+    await w.dispatch(agentStep("agr", 1, { tool: "look", arguments: {}, render: { type: "image", src: "data:image/png;base64,AAA", label: "viewport" } }));
+    await w.dispatch(agentStep("agr", 2, { tool: "findByText", arguments: { text: "cat" }, elements: 2, render: { type: "elements", items: [{ path: "div.card", text: "Black cat", index: 0 }, { path: "div.card", text: "White cat", index: 1 }] } }));
+    await w.dispatch(agentStep("agr", 3, { tool: "stats", arguments: {}, render: { type: "table", columns: ["k", "v"], rows: [["a", 1], ["b", 2]] } }));
+    await w.dispatch(agentResult("agr", "done", 3));
+
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    for (const h of w.shadow.querySelectorAll(".astep.tool .astep-head")) h.click();   // expand all
+    await w.tick();
+
+    assert.equal(w.shadow.querySelector(".r-image img").getAttribute("src"), "data:image/png;base64,AAA");
+    assert.match(w.shadow.querySelector(".r-image-label").textContent, /viewport/);
+    assert.equal(w.shadow.querySelectorAll(".r-el").length, 2, "elements list rendered");
+    assert.match(w.shadow.querySelector(".r-el-text").textContent, /Black cat/);
+    assert.equal(w.shadow.querySelectorAll(".r-table td").length, 4, "table cells rendered");
 });
 
 test("a running agent shows …running, then the answer arrives live", async () => {

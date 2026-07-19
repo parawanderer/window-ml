@@ -118,12 +118,41 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .agent-badge { font-size: 0.75em; font-weight: 700; letter-spacing: .04em; padding: 1px 6px; border-radius: 999px; text-transform: uppercase; background: #a855f7; color: #fff; }
 
 /* ml.agent run view: a task, per-step thoughts/tool calls, and a final answer. */
-.astep { border-left: 2px solid var(--border); padding: 3px 0 6px 9px; margin-bottom: 6px; }
+.astep { border-left: 2px solid var(--border); padding-left: 9px; margin-bottom: 6px; }
 .astep.tool { border-left-color: var(--accent); }
-.astep .step-n { color: var(--fg-faint); font: 0.8em ui-monospace, SFMono-Regular, Menlo, monospace; }
-.astep .tool-name { font-weight: 700; color: var(--accent); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-.astep .el-count { color: var(--fg-faint); font-size: 0.8em; border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
-.tool-result { white-space: pre-wrap; word-break: break-word; color: var(--fg-dim); font-size: 0.92em; margin-top: 3px; }
+.astep-head { display: flex; align-items: center; gap: 6px; width: 100%; background: none; border: none; padding: 3px 0; cursor: pointer; text-align: left; color: inherit; }
+.astep-head:hover .tri { color: var(--fg); }
+.astep .step-n { color: var(--fg-faint); font: 0.8em ui-monospace, SFMono-Regular, Menlo, monospace; flex: 0 0 auto; }
+.astep .tool-name { font-weight: 700; color: var(--accent); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; flex: 0 0 auto; }
+.astep .el-count { color: var(--fg-faint); font-size: 0.8em; border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; flex: 0 0 auto; }
+.astep-preview { color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.astep-body { padding: 2px 0 4px; }
+
+/* Jupyter-style In:/Out: blocks (each collapsible). */
+details.io { margin: 2px 0; }
+details.io > summary { cursor: pointer; color: var(--fg-faint); font: 0.8em ui-monospace, SFMono-Regular, Menlo, monospace; list-style: none; padding: 1px 0; }
+details.io > summary::-webkit-details-marker { display: none; }
+details.io > summary::before { content: "▸ "; }
+details.io[open] > summary::before { content: "▾ "; }
+.io-body { padding-left: 10px; }
+
+/* descriptor renderers */
+.r-image img { max-width: 100%; border-radius: 6px; border: 1px solid var(--border); display: block; }
+.r-image-label { color: var(--fg-faint); font-size: 0.85em; margin-top: 2px; }
+.r-elements { display: flex; flex-direction: column; gap: 2px; }
+.r-el { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.r-el-idx { color: var(--fg-faint); font: 0.8em ui-monospace, SFMono-Regular, Menlo, monospace; flex: 0 0 auto; }
+.r-el-text { color: var(--fg); }
+.r-el-path { color: var(--fg-dim); font: 0.82em ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+.r-table-wrap { overflow-x: auto; }
+.r-table { border-collapse: collapse; font-size: 0.9em; }
+.r-table th, .r-table td { border: 1px solid var(--border); padding: 2px 7px; text-align: left; white-space: nowrap; }
+.r-table th { color: var(--fg-dim); font-weight: 600; }
+.r-keyval { display: grid; grid-template-columns: auto 1fr; gap: 1px 10px; font-size: 0.92em; }
+.r-k { color: var(--fg-dim); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.r-v { color: var(--fg); word-break: break-word; }
+.dim { color: var(--fg-faint); font-style: italic; }
+
 .agent-summary { border-top: 1px solid var(--border); margin-top: 6px; padding-top: 6px; }
 .agent-summary.capped .who { color: var(--warn); }
 /* Per-reply model chip: outlined, click-to-copy (see CopyModel). */
