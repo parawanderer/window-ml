@@ -682,6 +682,38 @@ test("agent adds tool-aware clauses to the DEFAULT prompt (vision/answer), not a
     assert.doesNotMatch(seen[2], /VISION tool/);
 });
 
+test("agent adds the async/wait clause when a wait tool is present", async () => {
+    const seen = [];
+    const world = loadPageWorld({
+        onRuntimeMessage: (m) => {
+            if (m.type === "GET_CONFIG" || m.type === "MODEL_CAPS") return undefined;
+            seen.push(m.payload.messages[0].content); return { data: reply("done") };
+        }
+    });
+    const wait = world.ml.domTools.find(t => t.name === "wait");
+    const plain = world.ml.defineTool({ name: "plain", run: () => "" });
+
+    await world.ml.agent("t", { tools: [wait], vision: false });
+    assert.match(seen[0], /updates ASYNCHRONOUSLY/);
+    assert.match(seen[0], /`wait`/);
+
+    await world.ml.agent("t", { tools: [plain], vision: false });   // no wait tool → no clause
+    assert.doesNotMatch(seen[1], /updates ASYNCHRONOUSLY/);
+});
+
+test("wait tool: fixed ms pause and wait-for-selector resolve", async () => {
+    const { ml, document } = loadDomWorld('<div id="present"></div>');
+    const wait = ml.domTools.find(t => t.name === "wait");
+    assert.ok(wait, "wait is a default domTool");
+
+    assert.match(await wait.run({ ms: 5 }), /Waited 5ms/);
+    assert.match(await wait.run({ selector: "#present" }), /appeared/);   // already there → resolves at once
+
+    // A selector that appears shortly after → the observer resolves it.
+    setTimeout(() => { const d = document.createElement("div"); d.id = "later"; document.body.appendChild(d); }, 5);
+    assert.match(await wait.run({ selector: "#later", timeout: 500 }), /appeared/);
+});
+
 test("hints append task facts while keeping the built-in workflow", async () => {
     const seen = [];
     const world = loadPageWorld({

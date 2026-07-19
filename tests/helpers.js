@@ -274,7 +274,10 @@ function loadDomWorld(html = "") {
         // DOM globals the agent tools reference (real in a browser main world).
         Element: win.Element,
         NodeList: win.NodeList,
-        HTMLCollection: win.HTMLCollection
+        HTMLCollection: win.HTMLCollection,
+        MutationObserver: win.MutationObserver,
+        setTimeout: win.setTimeout.bind(win),
+        clearTimeout: win.clearTimeout.bind(win)
     };
     vm.createContext(context);
     vm.runInContext(fs.readFileSync(path.join(DIST, "injected.js"), "utf8"), context);

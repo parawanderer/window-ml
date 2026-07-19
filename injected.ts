@@ -499,6 +499,12 @@ import type {
         "\n\nIf the task asks you to FIND / LOCATE / return an element (rather than change " +
         "the page), designate it with the answer tool (by selector) so the actual element " +
         "is handed back to the caller.";
+    const WAIT_CLAUSE =
+        "\n\nThe page updates ASYNCHRONOUSLY — clicks, typing, navigation and lazy-loading take " +
+        "effect after a delay, NOT instantly. So after any action that triggers an update, use the " +
+        "`wait` tool BEFORE you look/read again, and use it GENEROUSLY: prefer `wait({ selector })` " +
+        "to wait until a specific element appears (the page has settled), or `wait({ ms })` for a " +
+        "fixed pause. Reading a mid-update page gives stale results and wastes steps — waiting is cheap.";
 
     // Invisible / bidi / format-control characters that never legitimately appear
     // in code but are the vector for Trojan-Source and homoglyph prompt-injection
@@ -928,6 +934,7 @@ import type {
                 // Adapt the default prompt to what the toolset can actually do.
                 if (hasCap("vision")) systemPrompt += VISION_CLAUSE;
                 if (hasCap("answer")) systemPrompt += ANSWER_CLAUSE;
+                if (toolset.some(t => t.name === "wait")) systemPrompt += WAIT_CLAUSE;
             }
             if (hints) systemPrompt += `\n\nTask-specific notes:\n${hints}`;
             if (env) {
@@ -1963,6 +1970,42 @@ import type {
                 const atBottom = max === 0 || y >= max - 2;
                 return `${note}. Position y=${y}/${max}${atBottom ? " (at bottom)" : ""}. ` +
                     "Re-run look/countMatches/findByText to see any newly loaded content.";
+            }
+        }),
+        T({
+            name: "wait",
+            description: "Wait for the page to settle after an async update (a click/type/navigation " +
+                "takes effect after a delay, not instantly). Pass `selector` to wait until an element " +
+                "APPEARS (best — waits exactly as long as needed), or `ms` for a fixed pause. Use it " +
+                "generously before you look/read again; reading a mid-update page gives stale results.",
+            parameters: {
+                type: "object",
+                properties: {
+                    selector: { type: "string", description: "Wait until an element matching this appears (up to `timeout`)." },
+                    ms: { type: "integer", description: "Fixed pause in milliseconds (used when no selector; default 500)." },
+                    timeout: { type: "integer", description: "Max wait for a selector, in ms (default 5000)." }
+                }
+            },
+            run: async ({ selector, ms, timeout = 5000 }: { selector?: string; ms?: number; timeout?: number } = {}): Promise<string> => {
+                if (selector) {
+                    const cap = Math.min(Math.max(timeout | 0, 0) || 5000, 30000);
+                    const has = () => { try { return queryAll(selector).length > 0; } catch { return false; } };
+                    const start = Date.now();
+                    const appeared = has() || await new Promise<boolean>(resolve => {
+                        let done = false;
+                        const finish = (v: boolean) => { if (done) return; done = true; try { obs.disconnect(); } catch {} clearTimeout(timer); resolve(v); };
+                        const obs = new MutationObserver(() => { if (has()) finish(true); });
+                        try { obs.observe(document.documentElement || document, { childList: true, subtree: true, attributes: true }); }
+                        catch { finish(false); return; }
+                        const timer = setTimeout(() => finish(false), cap);
+                    });
+                    return appeared
+                        ? `"${selector}" appeared after ${Date.now() - start}ms. Re-run look/findByText to see the updated page.`
+                        : `Timed out after ${cap}ms waiting for "${selector}" — it did not appear.`;
+                }
+                const dur = Math.min(typeof ms === "number" && ms > 0 ? ms : 500, 30000);
+                await new Promise(r => setTimeout(r, dur));
+                return `Waited ${dur}ms. Re-run look/findByText to see any updates.`;
             }
         }),
         T({
