@@ -105,7 +105,7 @@ export interface ToolResult {
  *  image/elements from the envelope. */
 export type RenderDescriptor = (
     | { type: "image"; src: string; label?: string }
-    | { type: "code"; text: string; lang?: string }
+    | { type: "code"; text: string; lang?: string; format?: boolean }   // format: let the sidebar beautify the source (e.g. exec's JS)
     | { type: "table"; columns: string[]; rows: (string | number)[][] }
     | { type: "keyval"; pairs: [string, string][] }
     | { type: "elements"; items: { path: string; text?: string; index?: number }[] }

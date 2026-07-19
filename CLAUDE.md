@@ -149,7 +149,16 @@ else `descriptorFor` auto-derives `image`/`elements` from the tool envelope; els
 `undefined` → the sidebar's default In:/Out: view. The sidebar (`RenderPanel`) is
 a registry keyed by `type` + the default fallback — it owns all UI, so an unknown
 type just dumps as JSON. Custom-tool render is defensive (throw → fallback, never
-breaks the run).
+breaks the run). A `code` descriptor may set `format: true` (the `exec` tool does)
+→ the sidebar beautifies the JS with **js-beautify** before highlighting (bundled
+into `sidebar-app` only, from the standalone `js-beautify/js/lib/beautify.js` —
+the npm deps are CLI-only). Two sidebar-only code-block display prefs live in
+`chrome.storage.local` (like the font scale, not in `MlConfig`): `ml_debug_codewrap`
+(wrap ⇄ horizontal-scroll) and `ml_debug_codelines` (a line-number gutter). Both
+ride `<html>` data-attributes (`data-codewrap`/`data-codelines`) so every code
+block reacts at once; the gutter re-splits highlighted HTML per line (`htmlLines`
+reopens spans that straddle a newline), and numbers stay aligned even when a line
+wraps because each source line is its own flex row.
 
 **Sources.** When a tool/RAG runs, OpenWebUI attaches provenance — top-level
 `data.sources` (non-stream) or its own SSE line `{ sources: [...] }` (stream,

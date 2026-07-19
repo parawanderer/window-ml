@@ -300,6 +300,22 @@ details.io[open] > summary .io-preview { display: none; }
 }
 .md pre.code code { background: none; padding: 0; }
 
+/* Wrap ⇄ scroll (root attr set by the sidebar; the hljs theme already puts
+   overflow-x:auto on code.hljs, so flipping white-space is enough). */
+:root[data-codewrap="off"] .code, :root[data-codewrap="off"] .md pre.code { white-space: pre; word-break: normal; }
+
+/* Line-number gutter. Each source line is its own flex row so the number stays
+   aligned even when a long line wraps (align to the first visual row). */
+pre.code.numbered code.hljs { display: block; padding-left: 0; }
+.cline { display: flex; align-items: flex-start; }
+:root[data-codewrap="off"] .cline { width: max-content; min-width: 100%; }
+.cline .lno {
+    flex: 0 0 auto; width: 2.2em; padding-right: 8px; margin-right: 8px;
+    text-align: right; color: var(--fg-faint); opacity: 0.75; user-select: none;
+    border-right: 1px solid var(--border); position: sticky; left: 0;
+}
+.cline .lcode { flex: 1 1 auto; min-width: 0; white-space: inherit; }
+
 .thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .thumbs img { max-width: 90px; max-height: 90px; border-radius: 4px; border: 1px solid var(--border); }
 img.zoomable { cursor: zoom-in; }

@@ -488,6 +488,62 @@ test("agent tool step: descriptor renders its target block; the other stays raw 
     assert.match(inB.textContent, /"js"/, "In raw shows the JSON args");
 });
 
+test("exec code is beautified for display when the descriptor sets format", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("bty", "run js"));
+    const ugly = "[...document.querySelectorAll('a')].map(x=>{const y=x.href;return {y}})";
+    await w.dispatch(agentStep("bty", 1, { tool: "exec", arguments: { js: ugly }, result: "ok", render: { type: "code", text: ugly, lang: "javascript", target: "in", format: true } }));
+    await w.dispatch(agentResult("bty", "done", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    w.shadow.querySelector(".astep.tool .astep-head").click();
+    await w.tick();
+
+    const code = w.shadow.querySelector("details.io .code").textContent;
+    assert.match(code, /=> \{/, "arrow body spaced out by the beautifier");
+    assert.ok(code.split("\n").length >= 3, "reflowed onto multiple lines (source was one line)");
+});
+
+test("code line-number gutter: off by default, toggled on via settings, applied from storage", async () => {
+    // Applied from storage on mount.
+    const w = await loadSidebarWorld({ local: { ml_debug_codelines: true } });
+    const html = w.window.document.documentElement;
+    assert.equal(html.getAttribute("data-codelines"), "on", "gutter attr set from storage.local");
+    await w.dispatch(agentStart("ln", "x"));
+    await w.dispatch(agentStep("ln", 1, { tool: "exec", arguments: { js: "a;\nb;\nc;" }, result: "ok", render: { type: "code", text: "a;\nb;\nc;", lang: "javascript", target: "in" } }));
+    await w.dispatch(agentResult("ln", "done", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    w.shadow.querySelector(".astep.tool .astep-head").click();
+    await w.tick();
+    const inB = w.shadow.querySelector(".astep.tool details.io");   // the In block (the JS)
+    const nos = [...inB.querySelectorAll(".code.numbered .cline .lno")].map(n => n.textContent);
+    assert.deepEqual(nos, ["1", "2", "3"], "one right-aligned number per source line");
+});
+
+test("code display prefs: wrap⇄scroll + line-number toggles flip root attrs and persist", async () => {
+    const w = await loadSidebarWorld();
+    const html = w.window.document.documentElement;
+    assert.equal(html.getAttribute("data-codewrap"), "on", "wrap on by default");
+    assert.equal(html.getAttribute("data-codelines"), "off", "gutter off by default");
+
+    w.shadow.querySelector('[title="Settings"]').click();
+    await w.tick();
+
+    const sel = [...w.shadow.querySelectorAll(".settings select")].find(s => [...s.options].some(o => o.value === "scroll"));
+    sel.value = "scroll";
+    sel.dispatchEvent(new w.window.Event("change", { bubbles: true }));
+    await w.tick();
+    assert.equal(html.getAttribute("data-codewrap"), "off", "wrap → scroll");
+    assert.equal(w.localStore.ml_debug_codewrap, false, "scroll persisted");
+
+    const chk = [...w.shadow.querySelectorAll('.settings input[type="checkbox"]')].pop();
+    chk.click();
+    await w.tick();
+    assert.equal(html.getAttribute("data-codelines"), "on", "line numbers toggled on");
+    assert.equal(w.localStore.ml_debug_codelines, true, "line numbers persisted");
+});
+
 test("clicking a debug image opens the full-window lightbox (posts src to the shell)", async () => {
     const w = await loadSidebarWorld();
     let posted = null;

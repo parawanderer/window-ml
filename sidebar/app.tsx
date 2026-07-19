@@ -23,6 +23,9 @@ import cssLang from "highlight.js/lib/languages/css";
 import mdLang from "highlight.js/lib/languages/markdown";
 import atomOneDark from "highlight.js/styles/atom-one-dark.css";
 import atomOneLight from "highlight.js/styles/atom-one-light.css";
+// Standalone JS beautifier (self-contained UMD; the js-beautify npm deps are
+// CLI-only). Used to reflow the model's often-cramped exec source before display.
+import { js_beautify } from "js-beautify/js/lib/beautify.js";
 
 for (const [name, lang] of [
     ["json", json], ["javascript", javascript], ["typescript", typescript], ["python", python],
@@ -31,6 +34,10 @@ for (const [name, lang] of [
 
 const FONT_KEY = "ml_debug_fontscale";
 const BASE_FS = 12, MIN_FS = 0.8, MAX_FS = 1.6;   // font-scale bounds (× BASE_FS px)
+// Sidebar-only code-block display prefs (storage.local, like fontScale — not part
+// of the ml config the popup/background share).
+const WRAP_KEY = "ml_debug_codewrap";     // true = break-line (default); false = horizontal scroll
+const LINES_KEY = "ml_debug_codelines";   // line-number gutter on code blocks
 
 type Status = "pending" | "ok" | "err";
 interface Turn {
@@ -62,6 +69,8 @@ const sessionMap = new Map<string, Session>();
 const rev = signal(0);
 const view = signal<{ name: "list" } | { name: "detail"; hash: string } | { name: "settings" }>({ name: "list" });
 const fontScale = signal(1);
+const codeWrap = signal(true);          // wrap long code lines vs. horizontal scroll
+const codeLineNumbers = signal(false);  // show a line-number gutter on code blocks
 const config = signal<MlConfig>(DEFAULT_CONFIG);   // live mirror of chrome.storage.sync
 const models = signal<string[]>([]);               // server model ids (for the datalists)
 const ollamaIds = signal<string[] | null>(null);   // subset that's Ollama-backed (null = can't tell → skip cloud detection)
@@ -107,6 +116,39 @@ function highlight(code: string, lang?: string): string {
         if (lang && hljs.getLanguage(lang)) return hljs.highlight(code, { language: lang }).value;
         return hljs.highlightAuto(code).value;
     } catch { return escapeHtml(code); }
+}
+
+// Reflow cramped/minified JS for display (the model's exec source, mostly).
+// Best-effort: on any parse trouble, fall back to the original text unchanged.
+function beautifyJs(code: string): string {
+    try {
+        return js_beautify(code, { indent_size: 2, end_with_newline: false, preserve_newlines: true, max_preserve_newlines: 2 });
+    } catch { return code; }
+}
+
+// Split highlight.js token HTML into one fragment per source line, reopening any
+// spans that straddle a newline so every line stays valid HTML (for the gutter).
+// hljs output only ever contains <span class="…">, </span>, and escaped text.
+function htmlLines(html: string): string[] {
+    const lines: string[] = [];
+    const open: string[] = [];   // stack of currently-open <span …> opening tags
+    let cur = "";
+    const startLine = () => { cur = open.join(""); };
+    const pushLine = () => { lines.push(cur + "</span>".repeat(open.length)); };
+    startLine();
+    for (const tok of html.match(/<span [^>]*>|<\/span>|[^<]+/g) || []) {
+        if (tok[1] === "s") { open.push(tok); cur += tok; }          // <span …>
+        else if (tok[1] === "/") { open.pop(); cur += tok; }        // </span>
+        else {                                                       // text run
+            const parts = tok.split("\n");
+            for (let i = 0; i < parts.length; i++) {
+                if (i > 0) { pushLine(); startLine(); }
+                cur += parts[i];
+            }
+        }
+    }
+    pushLine();
+    return lines;
 }
 
 function markdown(src: string): string {
@@ -264,9 +306,25 @@ const Dot = ({ status }: { status: Status }) => (
     </span>
 );
 
-// Syntax-highlighted code block (highlight() returns safe token HTML).
-const Code = ({ text, lang }: { text: string; lang?: string }) =>
-    <pre class="code"><code class="hljs" dangerouslySetInnerHTML={{ __html: highlight(text, lang) }} /></pre>;
+// Syntax-highlighted code block (highlight() returns safe token HTML). `format`
+// beautifies JS first (exec source). Reads the codeLineNumbers signal so the
+// gutter toggle re-renders live; wrap vs. scroll is a global CSS attribute.
+const Code = ({ text, lang, format }: { text: string; lang?: string; format?: boolean }) => {
+    const src = format && (lang === "javascript" || lang === "js") ? beautifyJs(text) : text;
+    const html = highlight(src, lang);
+    if (!codeLineNumbers.value)
+        return <pre class="code"><code class="hljs" dangerouslySetInnerHTML={{ __html: html }} /></pre>;
+    return (
+        <pre class="code numbered"><code class="hljs">
+            {htmlLines(html).map((ln, i) => (
+                <span class="cline" key={i}>
+                    <span class="lno">{i + 1}</span>
+                    <span class="lcode" dangerouslySetInnerHTML={{ __html: ln || " " }} />
+                </span>
+            ))}
+        </code></pre>
+    );
+};
 
 // Copy to clipboard. Falls back to execCommand when the async Clipboard API is
 // unavailable (http pages) OR blocked — a host page's Permissions-Policy can
@@ -579,7 +637,7 @@ function RenderTable({ columns, rows }: { columns: string[]; rows: (string | num
 function RenderPanel({ d }: { d: RenderDescriptor }) {
     switch (d.type) {
         case "image": return <div class="r-image"><ClickableImg src={d.src} alt={d.label || "image"} />{d.label ? <div class="r-image-label">{d.label}</div> : null}</div>;
-        case "code": return <Code text={d.text} lang={d.lang} />;
+        case "code": return <Code text={d.text} lang={d.lang} format={d.format} />;
         case "table": return <RenderTable columns={d.columns} rows={d.rows} />;
         case "keyval": return <div class="r-keyval">{d.pairs.map(([k, v], i) => <div class="r-kv" key={i}><span class="r-k">{k}</span><span class="r-v">{v}</span></div>)}</div>;
         case "elements": return <RenderElements items={d.items} />;
@@ -985,6 +1043,19 @@ function Settings() {
                     <option value="dark">Dark</option>
                     <option value="light">Light</option>
                 </select></label>
+
+            <div class="set-group">Code blocks</div>
+            <label class="set-field"><span>Long lines</span>
+                <select value={codeWrap.value ? "wrap" : "scroll"}
+                    onChange={(e: any) => { codeWrap.value = e.target.value === "wrap"; applyCodePrefs(); chrome.storage.local.set({ [WRAP_KEY]: codeWrap.value }); }}>
+                    <option value="wrap">Wrap (break line)</option>
+                    <option value="scroll">Scroll horizontally</option>
+                </select></label>
+            <label class="set-check">
+                <input type="checkbox" checked={codeLineNumbers.value}
+                    onChange={(e: any) => { codeLineNumbers.value = e.target.checked; applyCodePrefs(); chrome.storage.local.set({ [LINES_KEY]: codeLineNumbers.value }); }} />
+                <span>Show line numbers</span>
+            </label>
         </div>
     );
 }
@@ -1221,6 +1292,12 @@ const applyTheme = () => {
 themeMedia.addEventListener("change", applyTheme);
 // Font scale → the --fs custom property the content sizes key off.
 const applyFont = () => document.documentElement.style.setProperty("--fs", `${(BASE_FS * fontScale.value).toFixed(2)}px`);
+// Code-block prefs ride root data-attributes (like the theme) so all code blocks
+// react at once; line numbers also need a signal, since it changes the markup.
+const applyCodePrefs = () => {
+    document.documentElement.setAttribute("data-codewrap", codeWrap.value ? "on" : "off");
+    document.documentElement.setAttribute("data-codelines", codeLineNumbers.value ? "on" : "off");
+};
 
 // Debug events are relayed in from the shell (the parent window); a bare page
 // can't reach this iframe's message bus across the extension-origin boundary.
@@ -1240,8 +1317,12 @@ function mount(): void {
     document.head.append(hljsStyleEl);
     const root = document.getElementById("root") || document.body;
     chrome.storage.sync.get(DEFAULT_CONFIG, (cfg: any) => { config.value = cfg as MlConfig; applyTheme(); });
-    chrome.storage.local.get({ [FONT_KEY]: 1 }, (d: any) => { if (d[FONT_KEY]) fontScale.value = d[FONT_KEY]; applyFont(); });
+    chrome.storage.local.get({ [FONT_KEY]: 1, [WRAP_KEY]: true, [LINES_KEY]: false }, (d: any) => {
+        if (d[FONT_KEY]) fontScale.value = d[FONT_KEY]; applyFont();
+        codeWrap.value = d[WRAP_KEY] !== false; codeLineNumbers.value = !!d[LINES_KEY]; applyCodePrefs();
+    });
     applyTheme();
+    applyCodePrefs();
     fetchModels();
     render(<App />, root);
 

@@ -4,3 +4,8 @@ declare module "*.css" {
     const content: string;
     export default content;
 }
+
+// Standalone js-beautify build (no @types for the deep path).
+declare module "js-beautify/js/lib/beautify.js" {
+    export function js_beautify(source: string, opts?: Record<string, unknown>): string;
+}

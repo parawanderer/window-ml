@@ -1948,7 +1948,7 @@ import type {
             requiresApproval: true,     // arbitrary eval — the agent gate confirms each call
             // Debug view: show the JS that ran as a highlighted code block (raw
             // toggle still reveals the underlying args/result).
-            render: (_input, args) => ({ type: "code", text: String((args as { js?: string }).js || ""), lang: "javascript", target: "in" }),
+            render: (_input, args) => ({ type: "code", text: String((args as { js?: string }).js || ""), lang: "javascript", target: "in", format: true }),
             parameters: {
                 type: "object",
                 properties: { js: { type: "string", description: "JavaScript to run. console.log to print observations and/or end with an expression to return its value." } },
