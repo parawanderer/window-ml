@@ -746,7 +746,7 @@ import type {
                     if (sources && sources.length) assistantMessage.sources = sources;
                     this.messages.push(userMessage, assistantMessage);
                     emitDebug({ kind: "chat-result", id: debug, ts: Date.now(), save, session, content: reply, sources: (sources && sources.length) ? sources : null, structured: !!schema, model: resolvedModel || model || null, extend: extend || null, reasoning: reasoning || null });
-                    return schema ? ml._parseJSON(reply) : reply;
+                    return (schema ? ml._parseJSON(reply) : reply) as string | Record<string, unknown>;
                 },
                 /**
                  * Create an independent copy of this chat session.
@@ -895,7 +895,7 @@ import type {
             vision?: boolean | string | null;
             logDebug?: boolean;
         } = {}): Promise<AgentResult> {
-            const toolset = [...(tools || this.domTools), ...extraTools];
+            const toolset = [...(tools || this.domTools || []), ...extraTools];
             // #8 + #3: give the agent eyes with no wiring, preferring NATIVE vision.
             // If the agent's OWN model is vision-capable, register a capture-only
             // `look` whose screenshot ml.agent injects straight into the model's
@@ -908,7 +908,7 @@ import type {
                 if (typeof vision === "string" && vision) {
                     toolset.push(this.lookTool({ model: vision }));
                 } else {
-                    const agentModel = model || ((await this.config().catch(() => null)) || {}).model;
+                    const agentModel = model || (await this.config().catch(() => null))?.model || null;
                     if (await this._modelSees(agentModel)) {
                         toolset.push(this._nativeLookTool());
                     } else {
@@ -922,7 +922,7 @@ import type {
                 type: "function",
                 function: { name: t.name, description: t.description, parameters: t.parameters }
             }));
-            const hasCap = (cap: string) => toolset.some(t => t.capabilities && t.capabilities.includes(cap));
+            const hasCap = (cap: "vision" | "answer") => toolset.some(t => t.capabilities && t.capabilities.includes(cap));
             let systemPrompt = system || AGENT_SYSTEM;
             if (!system) {
                 // Adapt the default prompt to what the toolset can actually do.
@@ -944,7 +944,7 @@ import type {
             // (an agent run isn't a createChat). elements can't cross the window
             // bus — send a count; real nodes still reach onStep/the console.
             const runHash = shortHash();
-            emitDebug({ kind: "agent", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, task, model: model || null });
+            emitDebug({ kind: "agent", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, task, model: model || null, maxSteps });
             const emit = (event: { step: number; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: Node[]; render?: RenderDescriptor }) => {
                 if (logDebug) logStep(event);
                 emitDebug({
@@ -1012,7 +1012,7 @@ import type {
                 const pendingImages = [];   // #3: screenshots captured this turn, injected below
                 for (const call of msg.tool_calls) {
                     const tool = byName[call.name];
-                    let args = call.arguments || {};
+                    let args = (call.arguments || {}) as Record<string, unknown>;
                     let result, elements, image, imageLabel;
                     if (!tool) {
                         result = `Error: no tool named "${call.name}".`;
@@ -1098,7 +1098,7 @@ import type {
          * @returns {Promise<string>} The model's concise reply.
          */
         chatShort: async function(prompt: string, options: ChatOptions): Promise<string> {
-            return this.chat(`${prompt}. Short and concise:`, options);
+            return (await this.chat(`${prompt}. Short and concise:`, options)) as string;
         },
         // OCR: transcribe baked-in text from an image to a plain string, using
         // the dedicated OCR (vision) model — so the reasoning model never sees
@@ -1309,7 +1309,7 @@ import type {
                         : "\n\nThen list a few EXACT on-screen text strings (quoted, verbatim — labels, " +
                           "badges, prices, delivery text) I could search for with findByText to locate " +
                           "the key items.";
-                    const description = await ml.chat(base + guidance, { images: [shot], model, maxTokens });
+                    const description = await ml.chat(base + guidance, { images: [shot], model, maxTokens }) as string;
                     // Attach the inspected element on the side-channel (debug-only,
                     // never to the model). Guarded so a stub-DOM/bad selector no-ops
                     // and the return stays a plain string for viewport/no-selector.
@@ -1835,6 +1835,9 @@ import type {
                 "(e.g. `const r = await fetch('/api').then(x => x.json()); return r.length`). " +
                 "Use only when the other tools can't answer; prefer them.",
             requiresApproval: true,     // arbitrary eval — the agent gate confirms each call
+            // Debug view: show the JS that ran as a highlighted code block (raw
+            // toggle still reveals the underlying args/result).
+            render: (_input, args) => ({ type: "code", text: String((args as { js?: string }).js || ""), lang: "javascript" }),
             parameters: {
                 type: "object",
                 properties: { js: { type: "string", description: "JavaScript to run. console.log to print observations and/or end with an expression to return its value." } },

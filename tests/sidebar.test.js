@@ -28,7 +28,7 @@ const chatResult = (hash, turn, content, opts = {}) => ({
     model: opts.model ?? null, extend: opts.extend ?? null, reasoning: opts.reasoning ?? null
 });
 // ml.agent run events (see contract.ts DebugAgent*).
-const agentStart = (hash, task, model = "m") => ({ kind: "agent", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, task, model });
+const agentStart = (hash, task, model = "m", maxSteps = 10) => ({ kind: "agent", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, task, model, maxSteps });
 const agentStep = (hash, step, fields) => ({ kind: "agent-step", id: hash, ts: Date.now() + step, save: false, session: { hash, turn: step }, step, ...fields });
 const agentResult = (hash, summary, steps, hitCap = false) => ({ kind: "agent-result", id: hash, ts: Date.now() + 100, save: false, session: { hash, turn: steps }, summary, steps, hitCap });
 
@@ -423,7 +423,10 @@ test("agent runs render as their own session with steps + a final answer", async
 
     row.click();
     await w.tick();
-    assert.equal(w.shadow.querySelectorAll(".astep").length, 2, "two steps (a thought + a tool call)");
+    // Both steps are turn 1 → grouped into one turn card (thought + the tool call).
+    assert.equal(w.shadow.querySelectorAll(".aturn").length, 1, "one turn group");
+    assert.match(w.shadow.querySelector(".step-pill").textContent, /step 1\/10/, "turn pill shows step/max");
+    assert.ok(w.shadow.querySelector(".athought"), "the turn's thought is shown");
     const toolStep = w.shadow.querySelector(".astep.tool");
     assert.match(toolStep.querySelector(".tool-name").textContent, /look/);
     assert.match(toolStep.querySelector(".el-count").textContent, /1 el/);
@@ -456,6 +459,41 @@ test("agent tool steps render descriptors (image / elements / table)", async () 
     assert.equal(w.shadow.querySelectorAll(".r-el").length, 2, "elements list rendered");
     assert.match(w.shadow.querySelector(".r-el-text").textContent, /Black cat/);
     assert.equal(w.shadow.querySelectorAll(".r-table td").length, 4, "table cells rendered");
+});
+
+test("agent tool step with a descriptor has a rendered⇄raw toggle (raw shows In:/Out:)", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("agt", "run js"));
+    await w.dispatch(agentStep("agt", 1, { tool: "exec", arguments: { js: "1 + 1" }, result: "2", render: { type: "code", text: "1 + 1", lang: "javascript" } }));
+    await w.dispatch(agentResult("agt", "done", 1));
+
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const toolStep = w.shadow.querySelector(".astep.tool");
+    toolStep.querySelector(".astep-head").click();   // expand
+    await w.tick();
+    // Rendered by default: the code descriptor, no In:/Out: yet.
+    assert.ok(toolStep.querySelector(".code"), "rendered code descriptor shown");
+    assert.equal(toolStep.querySelector("details.io"), null, "no raw In:/Out: while rendered");
+
+    // Toggle to raw → In:/Out: appear.
+    [...toolStep.querySelectorAll(".rr-toggle button")].find(b => b.textContent === "raw").click();
+    await w.tick();
+    assert.ok(toolStep.querySelector("details.io"), "raw view shows In:/Out:");
+    assert.match(toolStep.textContent, /"js"/, "raw In: shows the args");
+});
+
+test("agent thought + failed tool show status dots", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("agd", "thing"));
+    await w.dispatch(agentStep("agd", 1, { thought: "hmm" }));
+    await w.dispatch(agentStep("agd", 1, { tool: "click", arguments: {}, result: "Error: no element matches" }));
+    await w.dispatch(agentResult("agd", "done", 1));
+
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    assert.ok(w.shadow.querySelector(".athought .dot.ok"), "thought has an ok status dot");
+    assert.ok(w.shadow.querySelector(".astep.tool .dot.err"), "failed tool call flagged err");
 });
 
 test("a running agent shows …running, then the answer arrives live", async () => {

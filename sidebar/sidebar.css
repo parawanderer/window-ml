@@ -117,16 +117,24 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* "agent" badge — this session is an ml.agent run, not a chat. */
 .agent-badge { font-size: 0.75em; font-weight: 700; letter-spacing: .04em; padding: 1px 6px; border-radius: 999px; text-transform: uppercase; background: #a855f7; color: #fff; }
 
-/* ml.agent run view: a task, per-step thoughts/tool calls, and a final answer. */
-.astep { border-left: 2px solid var(--border); padding-left: 9px; margin-bottom: 6px; }
-.astep.tool { border-left-color: var(--accent); }
+/* ml.agent run view: a task, then one card per TURN (thought + batched tool
+   calls), then the final answer. */
+.aturn { border: 1px solid var(--border); border-radius: 7px; padding: 4px 8px 6px; margin-bottom: 8px; }
+.aturn-head { display: flex; align-items: center; margin-bottom: 2px; }
+.step-pill { font-size: 0.72em; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; color: var(--fg-dim); background: var(--panel-2); border-radius: 999px; padding: 1px 7px; }
+.athought, .astep { padding-left: 2px; }
+.astep.tool { border-left: 2px solid var(--accent); padding-left: 8px; margin: 4px 0; }
 .astep-head { display: flex; align-items: center; gap: 6px; width: 100%; background: none; border: none; padding: 3px 0; cursor: pointer; text-align: left; color: inherit; }
 .astep-head:hover .tri { color: var(--fg); }
-.astep .step-n { color: var(--fg-faint); font: 0.8em ui-monospace, SFMono-Regular, Menlo, monospace; flex: 0 0 auto; }
+.astep-head .dot { flex: 0 0 auto; }
 .astep .tool-name { font-weight: 700; color: var(--accent); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; flex: 0 0 auto; }
 .astep .el-count { color: var(--fg-faint); font-size: 0.8em; border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; flex: 0 0 auto; }
 .astep-preview { color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.astep-body { padding: 2px 0 4px; }
+.astep-body { padding: 2px 0 4px 4px; }
+/* rendered ⇄ raw toggle for a descriptor step */
+.rr-toggle { display: inline-flex; gap: 0; margin-bottom: 4px; border: 1px solid var(--border); border-radius: 5px; overflow: hidden; }
+.rr-toggle button { background: var(--panel); color: var(--fg-dim); border: none; padding: 1px 8px; font-size: 0.82em; cursor: pointer; }
+.rr-toggle button.on { background: var(--panel-2); color: var(--fg); }
 
 /* Jupyter-style In:/Out: blocks (each collapsible). */
 details.io { margin: 2px 0; }
@@ -153,7 +161,8 @@ details.io[open] > summary::before { content: "▾ "; }
 .r-v { color: var(--fg); word-break: break-word; }
 .dim { color: var(--fg-faint); font-style: italic; }
 
-.agent-summary { border-top: 1px solid var(--border); margin-top: 6px; padding-top: 6px; }
+.agent-summary { border: 1px solid var(--border); border-radius: 7px; margin-top: 8px; padding: 10px 12px 12px; }
+.agent-summary .mrow { margin-bottom: 6px; }
 .agent-summary.capped .who { color: var(--warn); }
 /* Per-reply model chip: outlined, click-to-copy (see CopyModel). */
 .model-name { background: transparent; border: 1px solid var(--border); color: var(--fg-dim); border-radius: 4px; padding: 0 6px; font: 0.85em ui-monospace, SFMono-Regular, Menlo, monospace; cursor: pointer; }

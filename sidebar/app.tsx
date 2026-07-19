@@ -53,6 +53,7 @@ interface Session {
     steps?: AgentStep[];
     summary?: string;
     hitCap?: boolean;
+    maxSteps?: number;
 }
 
 // --- state: a Map (O(1) lookup) + a version signal to notify Preact of changes ---
@@ -101,6 +102,7 @@ const escapeHtml = (s: string): string =>
 // is protected from inline formatting). Used via dangerouslySetInnerHTML.
 function highlight(code: string, lang?: string): string {
     try {
+        if (lang === "text" || lang === "plain") return escapeHtml(code);   // opt out of auto-detect
         if (lang && hljs.getLanguage(lang)) return hljs.highlight(code, { language: lang }).value;
         return hljs.highlightAuto(code).value;
     } catch { return escapeHtml(code); }
@@ -150,7 +152,7 @@ function onDebug(ev: MlDebugEvent): void {
     if (ev.kind === "agent") {
         sessionMap.set(ev.session.hash, {
             hash: ev.session.hash, model: ev.model, tag: "session", kind: "agent",
-            createdTs: ev.ts, lastTs: ev.ts, status: "pending", turns: [], steps: [], task: ev.task,
+            createdTs: ev.ts, lastTs: ev.ts, status: "pending", turns: [], steps: [], task: ev.task, maxSteps: ev.maxSteps,
             config: { system: null, model: ev.model, think: null, schema: false, toolIds: null, maxTokens: null, save: false },
         });
         rev.value++; return;
@@ -578,63 +580,115 @@ function RenderPanel({ d }: { d: RenderDescriptor }) {
 }
 
 // A Jupyter-style In:/Out: block — a left gutter label + content, collapsible on
-// its own (so a huge Out: can be folded even in an expanded step).
-function IoBlock({ label, children }: { label: string; children: ComponentChildren }) {
+// its own (so a huge Out: can be folded even in an expanded step). `tip` explains
+// what In/Out mean on hover.
+function IoBlock({ label, tip, children }: { label: string; tip?: string; children: ComponentChildren }) {
     return (
         <details class="io" open>
-            <summary class="io-label">{label}:</summary>
+            <summary class="io-label" title={tip}>{label}:</summary>
             <div class="io-body">{children}</div>
         </details>
     );
 }
 
-// One ml.agent step: a thought (first line + expand) or a tool call (collapsed
-// by default; expands to In: args + Out: descriptor-rendered result).
-function AgentStepRow({ st }: { st: AgentStep }) {
-    const [open, setOpen] = useState(false);
-    if (!st.tool) {
-        const p = collapsedPreview(st.thought || "");
-        return (
-            <div class="astep thought">
-                <button class="astep-head" onClick={() => setOpen(v => !v)}>
-                    <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
-                    <span class="step-n">#{st.step}</span><span class="who">thought</span>
-                    {!open ? <span class="astep-preview">{p.text}{p.more ? " …" : ""}</span> : null}
-                </button>
-                {open ? <div class="md astep-body" dangerouslySetInnerHTML={{ __html: markdown(st.thought || "") }} /> : null}
-            </div>
-        );
+// A step of one ml.agent TURN (one LLM call): a thought + its batched tool calls.
+interface AgentTurnGroup { step: number; thought?: string; tools: AgentStep[]; }
+function groupTurns(steps: AgentStep[]): AgentTurnGroup[] {
+    const byStep = new Map<number, AgentTurnGroup>();
+    const order: number[] = [];
+    for (const st of steps) {
+        let t = byStep.get(st.step);
+        if (!t) { t = { step: st.step, tools: [] }; byStep.set(st.step, t); order.push(st.step); }
+        if (st.thought != null) t.thought = st.thought;
+        if (st.tool) t.tools.push(st);
     }
+    return order.map(s => byStep.get(s)!);
+}
+
+const StepPill = ({ step, max }: { step: number; max?: number }) =>
+    <span class="step-pill">step {step}{max ? `/${max}` : ""}</span>;
+
+// The model's reasoning for a turn (an LLM completion → status dot). Collapses to
+// its first line.
+function ThoughtBlock({ thought }: { thought: string }) {
+    const [open, setOpen] = useState(false);
+    const p = collapsedPreview(thought);
+    return (
+        <div class="athought">
+            <button class="astep-head" onClick={() => setOpen(v => !v)}>
+                <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
+                <Dot status="ok" />
+                <span class="who">thought</span>
+                {!open ? <span class="astep-preview">{p.text}{p.more ? " …" : ""}</span> : null}
+            </button>
+            {open ? <div class="md astep-body" dangerouslySetInnerHTML={{ __html: markdown(thought) }} /> : null}
+        </div>
+    );
+}
+
+const toolFailed = (result?: string): boolean => !!result && /^(Error:|Denied)/.test(result);
+
+// One tool call: collapsed by default. Expanded, a descriptor renders by default
+// with a rendered⇄raw toggle (raw = the In:/Out: args+result); no descriptor →
+// In:/Out: directly.
+function ToolStep({ st }: { st: AgentStep }) {
+    const [open, setOpen] = useState(false);
+    const [raw, setRaw] = useState(false);
     const args = st.arguments && Object.keys(st.arguments).length ? st.arguments : null;
+    const io = (
+        <div class="io-blocks">
+            {args ? <IoBlock label="In" tip="The arguments the model passed to this tool call."><Code text={pretty(args)} lang="json" /></IoBlock> : null}
+            <IoBlock label="Out" tip="What the tool returned to the model.">
+                {st.result ? <Code text={st.result} lang="text" /> : <span class="dim">(no output)</span>}
+            </IoBlock>
+        </div>
+    );
     return (
         <div class="astep tool">
             <button class="astep-head" onClick={() => setOpen(v => !v)}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
-                <span class="step-n">#{st.step}</span>
+                <Dot status={toolFailed(st.result) ? "err" : "ok"} />
                 <span class="tool-name">{st.tool}</span>
                 {st.elements ? <span class="el-count" title="DOM nodes returned (reach them in the console via onStep)">{st.elements} el</span> : null}
                 {!open ? <span class="astep-preview">{collapsedPreview(st.result || "").text}</span> : null}
             </button>
             {open
                 ? <div class="astep-body">
-                    {args ? <IoBlock label="In"><Code text={pretty(args)} lang="json" /></IoBlock> : null}
-                    <IoBlock label="Out">
-                        {st.render ? <RenderPanel d={st.render} /> : st.result ? <Code text={st.result} /> : <span class="dim">(no output)</span>}
-                    </IoBlock>
+                    {st.render
+                        ? <>
+                            <div class="rr-toggle">
+                                <button class={raw ? "" : "on"} onClick={() => setRaw(false)}>rendered</button>
+                                <button class={raw ? "on" : ""} onClick={() => setRaw(true)}>raw</button>
+                            </div>
+                            {raw ? io : <RenderPanel d={st.render} />}
+                        </>
+                        : io}
                 </div>
                 : null}
         </div>
     );
 }
 
+// One turn = the pill + the thought + the tool calls it batched.
+function AgentTurn({ turn, max }: { turn: AgentTurnGroup; max?: number }) {
+    return (
+        <div class="aturn">
+            <div class="aturn-head"><StepPill step={turn.step} max={max} /></div>
+            {turn.thought ? <ThoughtBlock thought={turn.thought} /> : null}
+            {turn.tools.map((st, i) => <ToolStep key={`${st.tool}-${i}`} st={st} />)}
+        </div>
+    );
+}
+
 function AgentRunView({ s }: { s: Session }) {
+    const turns = groupTurns(s.steps || []);
     return (
         <>
             <div class="msg user">
                 <div class="mrow"><span class="who">task</span><span class="sp" /><Stamp ts={s.createdTs} /></div>
                 <div class="utext">{s.task}</div>
             </div>
-            {(s.steps || []).map(st => <AgentStepRow key={`${st.step}-${st.tool || "t"}`} st={st} />)}
+            {turns.map(t => <AgentTurn key={t.step} turn={t} max={s.maxSteps} />)}
             {s.summary != null
                 ? <div class={`agent-summary${s.hitCap ? " capped" : ""}`}>
                     <div class="mrow"><Dot status={s.status} /><span class="who">{s.hitCap ? "stopped (step cap)" : "answer"}</span><span class="sp" /><Stamp ts={s.lastTs} /></div>

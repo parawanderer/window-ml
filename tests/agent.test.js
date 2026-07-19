@@ -589,6 +589,19 @@ test("agent auto-derives an image descriptor from a tool that returns a screensh
     assert.deepEqual(step.render, { type: "image", src: "data:image/png;base64,AAA", label: "viewport" });
 });
 
+test("built-in exec renders the run JS as a javascript code descriptor", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall("exec", { js: "1 + 1" }, "c1"), reply("done")]) });
+    const win = world.context.window;
+    const events = [];
+    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    win.postMessage({ __mlSidebar: "ready" });
+    await new Promise(r => setTimeout(r, 0));
+    const exec = world.ml.domTools.find(t => t.name === "exec");
+    await world.ml.agent("x", { tools: [exec], vision: false, approve: () => true });
+    const step = events.find(e => e.kind === "agent-step" && e.tool === "exec");
+    assert.deepEqual(step.render, { type: "code", text: "1 + 1", lang: "javascript" });
+});
+
 test("agent routes a tool's DOM nodes to onStep/transcript but never to the model", async () => {
     const world = loadPageWorld({
         onRuntimeMessage: scriptedModel([toolCall("grab", {}, "c1"), reply("done")])

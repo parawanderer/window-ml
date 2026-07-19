@@ -123,7 +123,10 @@ export interface MlTool {
     name: string;
     description: string;
     parameters: JsonSchema;
-    run: (args: Record<string, any>) => string | ToolResult | Promise<string | ToolResult>;
+    // Args are model-supplied JSON, so tools may destructure a specific shape
+    // (`run({ selector }: { selector: string })`); typed `any` so those narrower
+    // signatures stay assignable to this contract.
+    run: (args: any) => string | ToolResult | Promise<string | ToolResult>;
     requiresApproval: boolean;
     capabilities: ("vision"|"answer")[];         // e.g. "vision" | "answer"
     // Optional page-side formatter → a serializable RenderDescriptor for the
@@ -316,7 +319,7 @@ export interface DebugChatError extends DebugBase { kind: "chat-error"; error: s
 /** ml.agent runs: a run-start, one event per step (a thought OR a tool call +
  *  result), then a result. `elements` is a COUNT — real DOM nodes can't cross the
  *  window bus (they reach the console via onStep instead). */
-export interface DebugAgentStart extends DebugBase { kind: "agent"; task: string; model: string | null; }
+export interface DebugAgentStart extends DebugBase { kind: "agent"; task: string; model: string | null; maxSteps: number; }
 export interface DebugAgentStep extends DebugBase {
     kind: "agent-step"; step: number;
     thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: number;
@@ -400,6 +403,7 @@ export interface MlApi {
     _queryAll(selector: string): Element[];
     _parseJSON(text: string): unknown;
     _imageToDataUrl(image: string | HTMLImageElement): Promise<string>;
+    _fetchImageBase64(url: string): Promise<string>;
     _stitchFullPage(capture: () => Promise<string>): Promise<string>;
     _resolveVisionModel(agentModel: string | null, vision: boolean | string | null): Promise<string | null>;
     _modelSees(model: string | null): Promise<boolean>;
