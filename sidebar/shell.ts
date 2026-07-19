@@ -23,15 +23,63 @@ const SHELL_CSS = `
 #ml-sb-resize { position: absolute; left: -3px; top: 0; width: 7px; height: 100%; cursor: ew-resize; z-index: 1; }
 #ml-sb-resize:hover, #ml-sb-resize.drag { background: #6366f1; opacity: .5; }
 #ml-sb-frame { display: block; width: 100%; height: 100%; border: 0; }
+/* Full-window image lightbox (a sibling of the panel, so no transformed
+   ancestor — position:fixed maps to the whole viewport). */
+#ml-lightbox { position: fixed; inset: 0; z-index: 2147483001; background: rgba(0,0,0,.82);
+  display: flex; align-items: center; justify-content: center; padding: 28px; cursor: zoom-out; }
+#ml-lightbox img { max-width: 100%; max-height: 100%; border-radius: 6px; box-shadow: 0 10px 50px rgba(0,0,0,.6); cursor: default; }
+#ml-lightbox-x { position: fixed; top: 12px; right: 16px; width: 32px; height: 32px; border-radius: 7px;
+  border: 1px solid rgba(255,255,255,.35); background: rgba(0,0,0,.5); color: #fff; font: 16px system-ui; cursor: pointer; }
+#ml-lightbox-x:hover { background: rgba(0,0,0,.85); }
 `;
 
 let shellHost: HTMLElement | null = null;   // shadow host in the page's light DOM
+let shadowRoot: ShadowRoot | null = null;
 let panel: HTMLElement | null = null;       // the sliding container, inside the shadow root
 let frame: HTMLIFrameElement | null = null;
+let lightbox: HTMLElement | null = null;
+
+function hideLightbox(): void {
+    lightbox?.remove(); lightbox = null;
+    window.removeEventListener("keydown", onLightboxKey);
+}
+function onLightboxKey(e: KeyboardEvent): void { if (e.key === "Escape") hideLightbox(); }
+// Full-window image lightbox (from the app's ClickableImg → __mlLightbox). Lives
+// in the shell so it fills the whole browser, not the ~sidebar-width iframe.
+function showLightbox(src: string): void {
+    if (!shadowRoot) return;
+    hideLightbox();
+    lightbox = document.createElement("div");
+    lightbox.id = "ml-lightbox";
+    lightbox.addEventListener("click", hideLightbox);   // backdrop click closes
+    const img = document.createElement("img");
+    img.src = src;
+    img.addEventListener("click", (e) => e.stopPropagation());
+    const x = document.createElement("button");
+    x.id = "ml-lightbox-x"; x.textContent = "✕"; x.title = "Close (Esc)";
+    x.addEventListener("click", hideLightbox);
+    lightbox.append(x, img);
+    shadowRoot.append(lightbox);
+    window.addEventListener("keydown", onLightboxKey);
+}
 
 function onWindowMessage(e: MessageEvent): void {
     const d = e.data;
     if (!d) return;
+    // injected.js asks us to hide the overlay for a screenshot (so the sidebar
+    // isn't captured into the agent's `look`). Hide, then ack after two frames so
+    // the hidden state has painted before the capture fires.
+    if (d.__mlSidebarShot === "hide") {
+        if (shellHost) shellHost.style.visibility = "hidden";
+        requestAnimationFrame(() => requestAnimationFrame(() => window.postMessage({ __mlSidebarShot: "hidden" }, "*")));
+        return;
+    }
+    if (d.__mlSidebarShot === "show") {
+        if (shellHost) shellHost.style.visibility = "";
+        return;
+    }
+    // The iframe app asks to open an image full-window (ClickableImg).
+    if (typeof d.__mlLightbox === "string" && frame && e.source === frame.contentWindow) { showLightbox(d.__mlLightbox); return; }
     // injected.js (page main world) → relay into the iframe app.
     if (d.__mlDebug && e.source === window) { frame?.contentWindow?.postMessage(d, "*"); return; }
     // The iframe app is listening → handshake injected.js so it starts emitting,
@@ -80,6 +128,7 @@ function mount(): void {
     shellHost.id = "ml-sb-root";
     shellHost.style.cssText = "all: initial;";
     const root = shellHost.attachShadow({ mode: "open" });
+    shadowRoot = root;
 
     const style = document.createElement("style");
     style.textContent = SHELL_CSS;
@@ -116,9 +165,10 @@ function mount(): void {
 
 function unmount(): void {
     if (!shellHost) return;
+    hideLightbox();
     window.removeEventListener("message", onWindowMessage);
     shellHost.remove();
-    shellHost = panel = frame = null;
+    shellHost = panel = frame = shadowRoot = null;
 }
 
 chrome.storage.sync.get({ sidebar: false }, (cfg) => { if (cfg.sidebar) mount(); });

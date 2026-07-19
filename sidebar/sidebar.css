@@ -296,6 +296,7 @@ details.io[open] > summary .io-preview { display: none; }
 
 .thumbs { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .thumbs img { max-width: 90px; max-height: 90px; border-radius: 4px; border: 1px solid var(--border); }
+img.zoomable { cursor: zoom-in; }
 
 details.sources { border-top: 1px solid var(--border); margin-top: 6px; }
 details.sources summary { cursor: pointer; padding: 5px 0; color: var(--fg-dim); font-size: 0.92em; }

@@ -295,6 +295,13 @@ function useCopy(): { copied: boolean; copy: (text: string) => void } {
     return { copied, copy };
 }
 
+// A debug image that opens full-window on click. The lightbox lives in the shell
+// (parent), not this iframe, so it fills the whole browser rather than the
+// ~sidebar-width frame — post the src up and the shell renders the overlay.
+const openLightbox = (src: string) => window.parent.postMessage({ __mlLightbox: src }, "*");
+const ClickableImg = ({ src, alt }: { src: string; alt?: string }) =>
+    <img class="zoomable" src={src} alt={alt} title="Click to view full size" onClick={() => openLightbox(src)} />;
+
 const IconCopy = () => (
     <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4">
         <rect x="5.5" y="5.5" width="8" height="8" rx="1.5" />
@@ -509,7 +516,7 @@ function MessageTurn({ t }: { t: Turn }) {
             <div class="msg user">
                 <div class="mrow"><span class="who">user</span><span class="sp" /><Stamp ts={t.ts} /></div>
                 <div class="utext">{t.user}</div>
-                {t.images?.length ? <div class="thumbs">{t.images.map((src, i) => <img key={i} src={src} />)}</div> : null}
+                {t.images?.length ? <div class="thumbs">{t.images.map((src, i) => <ClickableImg key={i} src={src} />)}</div> : null}
             </div>
             <div class={`msg asst ${t.status}`}><AssistantBody t={t} /></div>
         </>
@@ -570,7 +577,7 @@ function RenderTable({ columns, rows }: { columns: string[]; rows: (string | num
 }
 function RenderPanel({ d }: { d: RenderDescriptor }) {
     switch (d.type) {
-        case "image": return <div class="r-image"><img src={d.src} alt={d.label || "image"} />{d.label ? <div class="r-image-label">{d.label}</div> : null}</div>;
+        case "image": return <div class="r-image"><ClickableImg src={d.src} alt={d.label || "image"} />{d.label ? <div class="r-image-label">{d.label}</div> : null}</div>;
         case "code": return <Code text={d.text} lang={d.lang} />;
         case "table": return <RenderTable columns={d.columns} rows={d.rows} />;
         case "keyval": return <div class="r-keyval">{d.pairs.map(([k, v], i) => <div class="r-kv" key={i}><span class="r-k">{k}</span><span class="r-v">{v}</span></div>)}</div>;

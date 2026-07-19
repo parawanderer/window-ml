@@ -488,6 +488,25 @@ test("agent tool step: descriptor renders its target block; the other stays raw 
     assert.match(inB.textContent, /"js"/, "In raw shows the JSON args");
 });
 
+test("clicking a debug image opens the full-window lightbox (posts src to the shell)", async () => {
+    const w = await loadSidebarWorld();
+    let posted = null;
+    w.window.addEventListener("message", (e) => { if (e.data && e.data.__mlLightbox) posted = e.data.__mlLightbox; });
+    await w.dispatch(agentStart("img", "x"));
+    await w.dispatch(agentStep("img", 1, { tool: "look", render: { type: "image", src: "data:image/png;base64,ZZZ", label: "shot" } }));
+    await w.dispatch(agentResult("img", "done", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    w.shadow.querySelector(".astep.tool .astep-head").click();   // expand → Out renders the image
+    await w.tick();
+
+    const img = w.shadow.querySelector(".r-image img.zoomable");
+    assert.ok(img, "the descriptor image is a click-to-zoom image");
+    img.click();
+    await w.tick();
+    assert.equal(posted, "data:image/png;base64,ZZZ", "posts the src up to the shell for a full-window overlay");
+});
+
 test("agent tool In/Out carry a grey inline preview (minified args / newline-collapsed output)", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("agp", "x"));

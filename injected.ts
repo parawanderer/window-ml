@@ -75,6 +75,21 @@ import type {
         } catch { return Math.random().toString(16).slice(2, 10); }
     };
 
+    // Ask the debug sidebar shell to hide its overlay for a screenshot (so it
+    // isn't captured into the agent's `look`), resolving once it has painted the
+    // hidden state (the shell acks after two frames). No-op with no wait when the
+    // sidebar isn't mounted. The caller restores it with `{ __mlSidebarShot: "show" }`.
+    const hideSidebarForShot = (): Promise<void> => new Promise(resolve => {
+        const mounted = typeof document.getElementById === "function" && document.getElementById("ml-sb-root");
+        if (!mounted) return resolve();   // sidebar off → nothing to hide, no wait
+        let done = false;
+        const finish = () => { if (done) return; done = true; window.removeEventListener("message", onAck); clearTimeout(timer); resolve(); };
+        const onAck = (e: MessageEvent) => { if (e.data && e.data.__mlSidebarShot === "hidden") finish(); };
+        window.addEventListener("message", onAck);
+        const timer = setTimeout(finish, 200);   // safety net if the shell never acks
+        window.postMessage({ __mlSidebarShot: "hide" }, "*");
+    });
+
     // Validate the `extend` profile option — throw on anything but a known value.
     const validateExtend = (extend: ExtendProfile | null | undefined): void => {
         if (extend != null && extend !== "default" && extend !== "utility")
@@ -1161,7 +1176,14 @@ import type {
          * @returns {Promise<string>} The screenshot as a PNG data URL.
          */
         screenshot: async function(target: string | Element | null = null, { scroll = true, fullPage = false, index = 0 }: { scroll?: boolean; fullPage?: boolean; index?: number } = {}): Promise<string> {
-            const viewport = () => makeBackgroundTaskPromise<string>("CAPTURE_TAB_REQUEST", "CAPTURE_TAB_RESPONSE", {});
+            // Hide the debug sidebar overlay (if mounted) for the shot, so it isn't
+            // captured into the agent's `look`; restore after. No wait when the
+            // sidebar is off (no #ml-sb-root) — it's a no-op then.
+            const viewport = async (): Promise<string> => {
+                await hideSidebarForShot();
+                try { return await makeBackgroundTaskPromise<string>("CAPTURE_TAB_REQUEST", "CAPTURE_TAB_RESPONSE", {}); }
+                finally { window.postMessage({ __mlSidebarShot: "show" }, "*"); }
+            };
             if (target == null) return fullPage ? this._stitchFullPage(viewport) : viewport();
 
             let el = target;
