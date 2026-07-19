@@ -589,6 +589,41 @@ test("agent auto-derives an image descriptor from a tool that returns a screensh
     assert.deepEqual(step.render, { type: "image", src: "data:image/png;base64,AAA", label: "viewport" });
 });
 
+test("agent-start carries the resolved config (system prompt, tools, maxSteps)", async () => {
+    const { events } = await agentDebugEvents({ name: "ping", run: () => "pong" });
+    const start = events.find(e => e.kind === "agent");
+    assert.ok(start.config, "config emitted");
+    assert.match(start.config.system, /automation agent/, "the resolved system prompt");
+    assert.equal(start.config.customSystem, false);
+    assert.deepEqual(start.config.tools, [{ name: "ping", requiresApproval: false }]);
+    assert.equal(start.config.maxSteps, 10);
+});
+
+test("agent flags a tool call whose args don't match its parameter schema", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall("grab", { index: 2 }, "c1"), reply("done")]) });
+    const grab = world.ml.defineTool({
+        name: "grab",
+        parameters: { type: "object", properties: { selector: { type: "string" } }, required: ["selector"] },
+        run: () => "ok"
+    });
+    const win = world.context.window;
+    const events = [];
+    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    win.postMessage({ __mlSidebar: "ready" });
+    await new Promise(r => setTimeout(r, 0));
+    await world.ml.agent("x", { tools: [grab], vision: false });
+    const step = events.find(e => e.kind === "agent-step" && e.tool === "grab");
+    assert.ok(step.argIssues.some(s => /missing required "selector"/.test(s)));
+    assert.ok(step.argIssues.some(s => /unknown property "index"/.test(s)));
+});
+
+test("a valid tool call carries no argIssues", async () => {
+    const { step } = await agentDebugEvents({
+        name: "ok", parameters: { type: "object", properties: {} }, run: () => "fine"
+    });
+    assert.ok(!step.argIssues, "no issues → field omitted");
+});
+
 test("built-in exec renders the run JS as a javascript code descriptor", async () => {
     const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall("exec", { js: "1 + 1" }, "c1"), reply("done")]) });
     const win = world.context.window;

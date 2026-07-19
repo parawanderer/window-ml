@@ -135,6 +135,12 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rr-toggle { display: inline-flex; gap: 0; margin-bottom: 4px; border: 1px solid var(--border); border-radius: 5px; overflow: hidden; }
 .rr-toggle button { background: var(--panel); color: var(--fg-dim); border: none; padding: 1px 8px; font-size: 0.82em; cursor: pointer; }
 .rr-toggle button.on { background: var(--panel-2); color: var(--fg); }
+/* arg schema-check warnings */
+.arg-warn { color: var(--err); font-size: 0.8em; font-weight: 700; flex: 0 0 auto; }
+.arg-issues { color: var(--err); font-size: 0.9em; border-left: 2px solid var(--err); padding: 2px 8px; margin-bottom: 4px; word-break: break-word; }
+/* agent options: system-prompt reveal */
+.sys-block { margin-top: 4px; }
+.sys-block .raw-btn { margin-bottom: 4px; }
 
 /* Jupyter-style In:/Out: blocks (each collapsible). */
 details.io { margin: 2px 0; }

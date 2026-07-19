@@ -322,11 +322,23 @@ export interface DebugChatError extends DebugBase { kind: "chat-error"; error: s
 /** ml.agent runs: a run-start, one event per step (a thought OR a tool call +
  *  result), then a result. `elements` is a COUNT — real DOM nodes can't cross the
  *  window bus (they reach the console via onStep instead). */
-export interface DebugAgentStart extends DebugBase { kind: "agent"; task: string; model: string | null; maxSteps: number; }
+/** The agent run's resolved setup — for the sidebar's "agent options" block. */
+export interface DebugAgentConfig {
+    system: string;         // the resolved system prompt the model actually received
+    customSystem: boolean;  // caller supplied their own `system` (vs the built-in preamble)
+    tools: { name: string; requiresApproval: boolean }[];
+    maxSteps: number;
+    think: boolean | null;
+    env: boolean;
+    vision: boolean | string | null;
+    hints: string | null;
+}
+export interface DebugAgentStart extends DebugBase { kind: "agent"; task: string; model: string | null; maxSteps: number; config: DebugAgentConfig; }
 export interface DebugAgentStep extends DebugBase {
     kind: "agent-step"; step: number;
     thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: number;
     render?: RenderDescriptor;   // tool-supplied or auto-derived rich render (else the default In:/Out:)
+    argIssues?: string[];        // JSON-Schema mismatches between the args and the tool's parameters
 }
 export interface DebugAgentResult extends DebugBase { kind: "agent-result"; summary: string; steps: number; hitCap: boolean; }
 

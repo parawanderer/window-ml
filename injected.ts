@@ -90,6 +90,36 @@ import type {
         window.postMessage({ __mlSidebarShot: "hide" }, "*");
     });
 
+    // Minimal JSON-Schema check of a tool call's args vs the tool's `parameters`
+    // (required / type / enum / unknown-property) — catches the model sending a
+    // real tool the wrong shape. Not a full validator; enough to flag mistakes in
+    // the debug view. Returns human-readable issue strings ([] = clean).
+    const validateArgs = (schema: JsonSchema | undefined, args: Record<string, unknown>): string[] => {
+        if (!schema || schema.type !== "object" || !schema.properties) return [];
+        const props = schema.properties as Record<string, { type?: string; enum?: unknown[] }>;
+        const issues: string[] = [];
+        for (const req of (schema.required || [])) if (!(req in args)) issues.push(`missing required "${req}"`);
+        const jsType = (v: unknown): string => Array.isArray(v) ? "array" : v === null ? "null" : typeof v;
+        const okType = (v: unknown, t: string): boolean => {
+            switch (t) {
+                case "string": return typeof v === "string";
+                case "integer": return typeof v === "number" && Number.isInteger(v);
+                case "number": return typeof v === "number";
+                case "boolean": return typeof v === "boolean";
+                case "array": return Array.isArray(v);
+                case "object": return v != null && typeof v === "object" && !Array.isArray(v);
+                default: return true;
+            }
+        };
+        for (const [k, v] of Object.entries(args)) {
+            const spec = props[k];
+            if (!spec) { issues.push(`unknown property "${k}"`); continue; }
+            if (spec.type && !okType(v, spec.type)) issues.push(`"${k}" should be ${spec.type} (got ${jsType(v)})`);
+            if (Array.isArray(spec.enum) && !spec.enum.includes(v)) issues.push(`"${k}" not in [${spec.enum.join(", ")}]`);
+        }
+        return issues;
+    };
+
     // Validate the `extend` profile option — throw on anything but a known value.
     const validateExtend = (extend: ExtendProfile | null | undefined): void => {
         if (extend != null && extend !== "default" && extend !== "utility")
@@ -966,13 +996,18 @@ import type {
             // (an agent run isn't a createChat). elements can't cross the window
             // bus — send a count; real nodes still reach onStep/the console.
             const runHash = shortHash();
-            emitDebug({ kind: "agent", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, task, model: model || null, maxSteps });
-            const emit = (event: { step: number; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: Node[]; render?: RenderDescriptor }) => {
+            emitDebug({ kind: "agent", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, task, model: model || null, maxSteps, config: {
+                system: systemPrompt, customSystem: !!system,
+                tools: toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval })),
+                maxSteps, think: (think === true || think === false) ? think : null, env, vision: vision ?? null, hints: hints || null,
+            } });
+            const emit = (event: { step: number; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: Node[]; render?: RenderDescriptor; argIssues?: string[] }) => {
                 if (logDebug) logStep(event);
                 emitDebug({
                     kind: "agent-step", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: event.step },
                     step: event.step, thought: event.thought, tool: event.tool, arguments: event.arguments,
                     result: event.result, elements: event.elements ? event.elements.length : undefined, render: event.render,
+                    argIssues: event.argIssues && event.argIssues.length ? event.argIssues : undefined,
                 });
                 if (!onStep) return;
                 try { onStep(event); } catch (e) { console.error("ml.agent onStep threw:", e); }
@@ -1059,7 +1094,8 @@ import type {
                     if (elements && elements.length) entry.elements = elements;
                     transcript.push(entry);
                     const render = descriptorFor(tool, { result, elements, image, imageLabel }, args);
-                    emit({ step, ...entry, render });
+                    const argIssues = tool ? validateArgs(tool.parameters, args) : undefined;
+                    emit({ step, ...entry, render, argIssues });
                     // An answer-capable tool designates the caller-facing result node(s).
                     if (tool && tool.capabilities && tool.capabilities.includes("answer") && elements && elements.length) {
                         answered.push(...elements);

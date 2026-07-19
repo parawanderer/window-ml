@@ -122,7 +122,12 @@ hash (an agent run isn't a `createChat`), so the sidebar renders it as a distinc
 already there, this just tees it to `emitDebug`. A depth counter (`inAgentRun`)
 suppresses `chat*` events while a run is in flight, so the auto-wired `look`
 tool's internal `ml.chat` doesn't spawn orphan chat sessions (its result already
-shows as the tool step).
+shows as the tool step). `agent` also carries the run's resolved `config`
+(system prompt, tools, maxSteps, env/vision/hints) for the sidebar's "agent
+options" block, and each tool step carries `argIssues` — a minimal page-side
+JSON-Schema check (`validateArgs`: required/type/enum/unknown-prop) of the args
+against the tool's `parameters`, rendered as a red strip (flat tool schemas
+don't warrant ajv; swap it in there if a custom tool ships a complex schema).
 
 **Tool render descriptors.** A tool step can carry a `render`: a **serializable
 `RenderDescriptor`** (`image`/`code`/`table`/`keyval`/`elements`) — data, never

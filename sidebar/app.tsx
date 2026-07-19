@@ -8,7 +8,7 @@ import { render } from "preact";
 import type { ComponentChildren } from "preact";
 import { useState, useEffect } from "preact/hooks";
 import { signal } from "@preact/signals";
-import type { MlDebugEvent, DebugSessionConfig, NeutralMessage, MlConfig, ApiFormat, Theme, LoadedModel, ExtendProfile, RenderDescriptor } from "../contract";
+import type { MlDebugEvent, DebugSessionConfig, DebugAgentConfig, NeutralMessage, MlConfig, ApiFormat, Theme, LoadedModel, ExtendProfile, RenderDescriptor } from "../contract";
 import { DEFAULT_CONFIG } from "../contract";
 // Syntax highlighting — highlight.js core + a focused set of languages, and the
 // Atom One themes (imported as CSS text, injected into the shadow root).
@@ -41,7 +41,7 @@ interface Turn {
     extend?: ExtendProfile | null;  // which profile resolved it — marks (default) vs (utility)
     reasoning?: string | null;  // separate thinking/reasoning text, if the model produced any
 }
-interface AgentStep { step: number; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: number; render?: RenderDescriptor; }
+interface AgentStep { step: number; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: number; render?: RenderDescriptor; argIssues?: string[]; }
 interface Session {
     hash: string; model: string | null; tag: "session" | "saved";
     createdTs: number; lastTs: number; status: Status;
@@ -54,6 +54,7 @@ interface Session {
     summary?: string;
     hitCap?: boolean;
     maxSteps?: number;
+    agentConfig?: DebugAgentConfig;
 }
 
 // --- state: a Map (O(1) lookup) + a version signal to notify Preact of changes ---
@@ -152,7 +153,7 @@ function onDebug(ev: MlDebugEvent): void {
     if (ev.kind === "agent") {
         sessionMap.set(ev.session.hash, {
             hash: ev.session.hash, model: ev.model, tag: "session", kind: "agent",
-            createdTs: ev.ts, lastTs: ev.ts, status: "pending", turns: [], steps: [], task: ev.task, maxSteps: ev.maxSteps,
+            createdTs: ev.ts, lastTs: ev.ts, status: "pending", turns: [], steps: [], task: ev.task, maxSteps: ev.maxSteps, agentConfig: ev.config,
             config: { system: null, model: ev.model, think: null, schema: false, toolIds: null, maxTokens: null, save: false },
         });
         rev.value++; return;
@@ -160,7 +161,7 @@ function onDebug(ev: MlDebugEvent): void {
     if (ev.kind === "agent-step") {
         const s = sessionMap.get(ev.session.hash);
         if (!s) return;
-        s.steps = [...(s.steps || []), { step: ev.step, thought: ev.thought, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: ev.elements, render: ev.render }];
+        s.steps = [...(s.steps || []), { step: ev.step, thought: ev.thought, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: ev.elements, render: ev.render, argIssues: ev.argIssues }];
         s.lastTs = ev.ts; rev.value++; return;
     }
     if (ev.kind === "agent-result") {
@@ -659,6 +660,7 @@ function ToolStep({ st }: { st: AgentStep }) {
     // A descriptor renders the block it targets (default "out"); the other stays raw.
     const inRender = st.render?.target === "in" ? st.render : undefined;
     const outRender = st.render && st.render.target !== "in" ? st.render : undefined;
+    const issues = st.argIssues?.length ? st.argIssues : null;
     return (
         <div class="astep tool">
             <button class="astep-head" onClick={() => setOpen(v => !v)}>
@@ -666,10 +668,12 @@ function ToolStep({ st }: { st: AgentStep }) {
                 <Dot status={toolFailed(st.result) ? "err" : "ok"} />
                 <span class="tool-name">{st.tool}</span>
                 {st.elements ? <span class="el-count" title="DOM nodes returned (reach them in the console via onStep)">{st.elements} el</span> : null}
+                {issues ? <span class="arg-warn" title={issues.join("; ")}>⚠ {issues.length}</span> : null}
                 {!open ? <span class="astep-preview">{collapsedPreview(st.result || "").text}</span> : null}
             </button>
             {open
                 ? <div class="astep-body">
+                    {issues ? <div class="arg-issues" title="The args don't match this tool's parameter schema.">⚠ arg schema: {issues.join("; ")}</div> : null}
                     {args
                         ? <IoBlock label="In" tip="The arguments the model passed to this tool call."
                             preview={inlineJson(args)} render={inRender} raw={<Code text={pretty(args)} lang="json" />} />
@@ -694,6 +698,39 @@ function AgentTurn({ turn, max }: { turn: AgentTurnGroup; max?: number }) {
     );
 }
 
+// The agent run's setup (model, maxSteps, tools, env/vision/hints, + the resolved
+// system prompt) — a collapsed block at the top, the agent analogue of chat's
+// OptionsBlock.
+function AgentOptionsBlock({ s }: { s: Session }) {
+    const c = s.agentConfig;
+    const [open, setOpen] = useState(false);
+    const [showSys, setShowSys] = useState(false);
+    if (!c) return null;
+    const lines = [`model: ${s.model || "default"}`, `maxSteps: ${c.maxSteps}`];
+    if (c.think != null) lines.push(`think: ${c.think}`);
+    if (!c.env) lines.push("env: false");
+    if (c.vision != null && c.vision !== true) lines.push(`vision: ${JSON.stringify(c.vision)}`);
+    if (c.hints) lines.push(`hints: ${truncate(c.hints, 140)}`);
+    lines.push(`tools (${c.tools.length}): ${c.tools.map(t => t.name + (t.requiresApproval ? " ⚠" : "")).join(", ")}`);
+    return (
+        <div class="block">
+            <div class="block-head" role="button" onClick={() => setOpen(v => !v)}>
+                <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
+                <span class="block-label">agent options</span>
+            </div>
+            {open
+                ? <div class="tbody">
+                    <pre class="opts">{lines.join("\n")}</pre>
+                    <div class="sys-block">
+                        <button class="raw-btn" onClick={() => setShowSys(v => !v)}>{showSys ? "hide" : "show"} system prompt{c.customSystem ? " (custom)" : ""}</button>
+                        {showSys ? <Code text={c.system} lang="markdown" /> : null}
+                    </div>
+                </div>
+                : null}
+        </div>
+    );
+}
+
 function AgentRunView({ s }: { s: Session }) {
     const turns = groupTurns(s.steps || []);
     return (
@@ -702,6 +739,7 @@ function AgentRunView({ s }: { s: Session }) {
                 <div class="mrow"><span class="who">task</span><span class="sp" /><Stamp ts={s.createdTs} /></div>
                 <div class="utext">{s.task}</div>
             </div>
+            <AgentOptionsBlock s={s} />
             {turns.map(t => <AgentTurn key={t.step} turn={t} max={s.maxSteps} />)}
             {s.summary != null
                 ? <div class={`agent-summary${s.hitCap ? " capped" : ""}`}>

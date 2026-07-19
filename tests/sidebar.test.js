@@ -28,7 +28,7 @@ const chatResult = (hash, turn, content, opts = {}) => ({
     model: opts.model ?? null, extend: opts.extend ?? null, reasoning: opts.reasoning ?? null
 });
 // ml.agent run events (see contract.ts DebugAgent*).
-const agentStart = (hash, task, model = "m", maxSteps = 10) => ({ kind: "agent", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, task, model, maxSteps });
+const agentStart = (hash, task, model = "m", maxSteps = 10, config = null) => ({ kind: "agent", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, task, model, maxSteps, config });
 const agentStep = (hash, step, fields) => ({ kind: "agent-step", id: hash, ts: Date.now() + step, save: false, session: { hash, turn: step }, step, ...fields });
 const agentResult = (hash, summary, steps, hitCap = false) => ({ kind: "agent-result", id: hash, ts: Date.now() + 100, save: false, session: { hash, turn: steps }, summary, steps, hitCap });
 
@@ -533,6 +533,43 @@ test("agent thought + failed tool show status dots", async () => {
     await w.tick();
     assert.ok(w.shadow.querySelector(".athought .dot.ok"), "thought has an ok status dot");
     assert.ok(w.shadow.querySelector(".astep.tool .dot.err"), "failed tool call flagged err");
+});
+
+test("agent options block renders the config + reveals the system prompt", async () => {
+    const cfg = {
+        system: "You are an automation agent operating on the page.", customSystem: false,
+        tools: [{ name: "look", requiresApproval: false }, { name: "click", requiresApproval: true }],
+        maxSteps: 8, think: null, env: true, vision: null, hints: null,
+    };
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("ao", "task", "gemma", 8, cfg));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    assert.match(w.shadow.querySelector(".block .block-label").textContent, /agent options/);
+
+    w.shadow.querySelector(".block .block-head").click();   // expand
+    await w.tick();
+    assert.match(w.shadow.querySelector(".opts").textContent, /maxSteps: 8/);
+    assert.match(w.shadow.querySelector(".opts").textContent, /tools \(2\): look, click ⚠/);
+
+    w.shadow.querySelector(".sys-block .raw-btn").click();   // reveal the system prompt
+    await w.tick();
+    assert.match(w.shadow.querySelector(".sys-block .code").textContent, /automation agent/);
+});
+
+test("agent tool step flags args that don't match the schema", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("ai", "x"));
+    await w.dispatch(agentStep("ai", 1, { tool: "grab", arguments: { index: 2 }, argIssues: ['missing required "selector"', 'unknown property "index"'] }));
+    await w.dispatch(agentResult("ai", "done", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const toolStep = w.shadow.querySelector(".astep.tool");
+    assert.ok(toolStep.querySelector(".arg-warn"), "warning badge in the collapsed header");
+    toolStep.querySelector(".astep-head").click();
+    await w.tick();
+    assert.match(toolStep.querySelector(".arg-issues").textContent, /missing required "selector"/);
+    assert.match(toolStep.querySelector(".arg-issues").textContent, /unknown property "index"/);
 });
 
 test("a running agent shows …running, then the answer arrives live", async () => {
