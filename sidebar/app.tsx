@@ -137,9 +137,11 @@ function htmlLines(html: string): string[] {
     const pushLine = () => { lines.push(cur + "</span>".repeat(open.length)); };
     startLine();
     for (const tok of html.match(/<span [^>]*>|<\/span>|[^<]+/g) || []) {
-        if (tok[1] === "s") { open.push(tok); cur += tok; }          // <span …>
-        else if (tok[1] === "/") { open.pop(); cur += tok; }        // </span>
-        else {                                                       // text run
+        if (tok[0] === "<") {                                        // a tag, not text…
+            if (tok[1] === "/") open.pop();                          // </span>
+            else open.push(tok);                                     // <span …>
+            cur += tok;
+        } else {                                                     // text run (may span newlines)
             const parts = tok.split("\n");
             for (let i = 0; i < parts.length; i++) {
                 if (i > 0) { pushLine(); startLine(); }
@@ -443,6 +445,90 @@ function annotatedConfig(c: DebugSessionConfig): string {
         return `  ${JSON.stringify(k)}: ${val}${i < entries.length - 1 ? "," : ""}${isDefault ? "  // default" : ""}`;
     });
     return `{\n${body.join("\n")}\n}`;
+}
+
+// --- Export a session as a self-contained markdown log --------------------
+// Step 1: text only. Screenshots (image render descriptors / chat images) are
+// noted as placeholders — a future bundle export writes the PNGs as sidecars so
+// a coding assistant can actually see them (base64 in a text file is unreadable).
+// A fenced block whose fence is longer than any backtick run inside it.
+function fence(text: string, lang = ""): string {
+    let n = 3;
+    for (const run of text.match(/`+/g) || []) n = Math.max(n, run.length + 1);
+    const f = "`".repeat(n);
+    return `${f}${lang}\n${text}\n${f}`;
+}
+
+function agentToMarkdown(s: Session): string {
+    const o: string[] = [];
+    o.push(`# Agent run · ${s.model || "default"} · ${s.hash}`, "");
+    o.push(`- **Task:** ${s.task || ""}`);
+    o.push(`- **Started:** ${fullStamp(s.createdTs)}`);
+    o.push(`- **Finished:** ${fullStamp(s.lastTs)}`);
+    o.push(`- **Steps:** ${(s.steps || []).length}${s.maxSteps ? ` / ${s.maxSteps}` : ""}`);
+    o.push(`- **Outcome:** ${s.hitCap ? "stopped (step cap)" : s.status === "err" ? "error" : s.summary != null ? "answered" : "running"}`, "");
+    const c = s.agentConfig;
+    if (c) {
+        const lines = [`model: ${s.model || "default"}`, `maxSteps: ${c.maxSteps}`];
+        if (c.think != null) lines.push(`think: ${c.think}`);
+        if (!c.env) lines.push("env: false");
+        if (c.vision != null && c.vision !== true) lines.push(`vision: ${JSON.stringify(c.vision)}`);
+        if (c.hints) lines.push(`hints: ${c.hints}`);
+        lines.push(`tools (${c.tools.length}): ${c.tools.map(t => t.name + (t.requiresApproval ? " ⚠" : "")).join(", ")}`);
+        o.push("## Agent options", "", fence(lines.join("\n")), "");
+        o.push(`<details><summary>System prompt${c.customSystem ? " (custom)" : ""}</summary>`, "", fence(c.system), "", "</details>", "");
+    }
+    for (const st of s.steps || []) {
+        if (st.tool == null && st.thought != null) { o.push(`## Step ${st.step} · thought`, "", st.thought, ""); continue; }
+        o.push(`## Step ${st.step} · ${st.tool || "?"}`, "");
+        if (st.thought) o.push(st.thought, "");
+        if (st.arguments && Object.keys(st.arguments).length) {
+            const js = st.tool === "exec" && typeof st.arguments.js === "string" ? st.arguments.js : null;
+            o.push("**In:**", "", js ? fence(beautifyJs(js), "javascript") : fence(pretty(st.arguments), "json"), "");
+        }
+        if (st.argIssues && st.argIssues.length) o.push(`> ⚠ arg issues: ${st.argIssues.join("; ")}`, "");
+        if (st.render && st.render.type === "image") o.push(`_🖼️ screenshot${st.render.label ? ` — ${st.render.label}` : ""} (omitted in markdown export; use bundle export to include it)_`, "");
+        if (st.result != null && st.result !== "") o.push("**Out:**", "", fence(st.result), "");
+        else if (st.elements != null) o.push(`**Out:** ${st.elements} element(s)`, "");
+    }
+    o.push(`## ${s.hitCap ? "Stopped (step cap)" : "Answer"}`, "", s.summary || "_(no answer — run did not complete)_", "");
+    return o.join("\n");
+}
+
+function chatToMarkdown(s: Session): string {
+    const o: string[] = [];
+    o.push(`# Chat · ${shownModel(s)} · ${s.hash}`, "");
+    if (s.title) o.push(`- **Title:** ${s.title}`);
+    o.push(`- **Started:** ${fullStamp(s.createdTs)}`);
+    o.push(`- **Last activity:** ${fullStamp(s.lastTs)}`);
+    o.push(`- **Type:** ${s.tag}`, "");
+    o.push("## Options", "", fence(annotatedConfig(s.config), "javascript"), "");
+    s.turns.forEach((t, i) => {
+        o.push(`## Turn ${i + 1} · ${fullStamp(t.ts)}`, "");
+        o.push("**User:**", "", t.user || "", "");
+        if (t.images && t.images.length) o.push(`_🖼️ ${t.images.length} image(s) attached (omitted in markdown export)_`, "");
+        if (t.reasoning) o.push("<details><summary>Thinking</summary>", "", t.reasoning, "", "</details>", "");
+        if (t.status === "err") o.push(`**Error:** ${t.error || "(unknown)"}`, "");
+        else o.push(`**Assistant** (${t.model || resolveModel(t.reqModel, t.extend)}):`, "", t.assistant || "_(no reply)_", "");
+        if (t.sources && t.sources.length) o.push(`**Sources (${t.sources.length}):**`, "", fence(pretty(t.sources), "json"), "");
+    });
+    return o.join("\n");
+}
+
+const sessionToMarkdown = (s: Session): string => (s.kind === "agent" ? agentToMarkdown(s) : chatToMarkdown(s)) + "\n";
+
+// Trigger a client-side file download (the iframe can't touch the filesystem).
+function downloadText(name: string, text: string): void {
+    const url = URL.createObjectURL(new Blob([text], { type: "text/markdown" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = name;
+    document.body.append(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+function exportSession(hash: string): void {
+    const s = sessionMap.get(hash);
+    if (!s) return;
+    downloadText(`ml-${s.kind === "agent" ? "agent" : "chat"}-${hash}.md`, sessionToMarkdown(s));
 }
 
 // The session's createChat config (not the per-turn request/messages — full
@@ -833,6 +919,13 @@ const IconGear = () => (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
         <path d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.24-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
         <path d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+    </svg>
+);
+
+// Export — Heroicons "arrow-down-tray" (MIT, https://heroicons.com).
+const IconExport = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" />
     </svg>
 );
 
@@ -1259,6 +1352,7 @@ function App() {
                     : <b>{inSettings ? "Settings" : `Sessions (${sessionMap.size})`}</b>}
                 <span class="sp" />
                 {v.name === "detail" ? <Hash hash={v.hash} /> : null}
+                {v.name === "detail" ? <button class="hbtn" title="Export log" onClick={() => exportSession(v.hash)}><IconExport /></button> : null}
                 {!inSettings ? <button class={`hbtn${vramOpen.value ? " on" : ""}`} title="VRAM monitor" onClick={() => (vramOpen.value = !vramOpen.value)}><IconVram /></button> : null}
                 {!inSettings ? <button class="hbtn" title="Settings" onClick={() => { fetchModels(); view.value = { name: "settings" }; }}><IconGear /></button> : null}
             </div>

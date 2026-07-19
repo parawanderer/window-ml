@@ -521,6 +521,23 @@ test("code line-number gutter: off by default, toggled on via settings, applied 
     assert.deepEqual(nos, ["1", "2", "3"], "one right-aligned number per source line");
 });
 
+test("numbered gutter preserves line content — no spurious span-reopen prefix", async () => {
+    // Regression: a text token starting with " s" was misread as a <span> open and
+    // re-emitted on every following line (e.g. "searchResults = " leaking downward).
+    const w = await loadSidebarWorld({ local: { ml_debug_codelines: true } });
+    const js = "const searchResults = 1;\nconsole.log('n:', searchResults);\nreturn searchResults;";
+    await w.dispatch(agentStart("lnp", "x"));
+    await w.dispatch(agentStep("lnp", 1, { tool: "exec", arguments: { js }, result: "1", render: { type: "code", text: js, lang: "javascript", target: "in" } }));
+    await w.dispatch(agentResult("lnp", "done", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    w.shadow.querySelector(".astep.tool .astep-head").click();
+    await w.tick();
+    const inB = w.shadow.querySelector(".astep.tool details.io");
+    const lines = [...inB.querySelectorAll(".code.numbered .cline .lcode")].map(n => n.textContent);
+    assert.deepEqual(lines, js.split("\n"), "each rendered line matches its source line exactly");
+});
+
 test("code display prefs: wrap⇄scroll + line-number toggles flip root attrs and persist", async () => {
     const w = await loadSidebarWorld();
     const html = w.window.document.documentElement;
@@ -542,6 +559,55 @@ test("code display prefs: wrap⇄scroll + line-number toggles flip root attrs an
     await w.tick();
     assert.equal(html.getAttribute("data-codelines"), "on", "line numbers toggled on");
     assert.equal(w.localStore.ml_debug_codelines, true, "line numbers persisted");
+});
+
+// Capture what the "Export log" button downloads: stub the object-URL + anchor
+// click (jsdom has neither URL.createObjectURL nor real navigation) and read back
+// the Blob it built. Returns { name, text }.
+async function captureExport(w) {
+    let blob = null, name = null;
+    w.window.URL.createObjectURL = (b) => { blob = b; return "blob:mock"; };
+    w.window.URL.revokeObjectURL = () => {};
+    w.window.HTMLAnchorElement.prototype.click = function () { name = this.download; };
+    w.shadow.querySelector('[title="Export log"]').click();
+    await w.tick();
+    return { name, text: blob ? await blob.text() : null };
+}
+
+test("export: an agent run downloads a markdown log (task, steps, exec code, answer)", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("expa", "hide slow items", "gemma4:31b", 60));
+    await w.dispatch(agentStep("expa", 1, { tool: "look", render: { type: "image", src: "data:image/png;base64,ZZZ", label: "viewport" } }));
+    await w.dispatch(agentStep("expa", 2, { tool: "exec", arguments: { js: "items.forEach(i=>i.remove())" }, result: "Hidden 38 items.", render: { type: "code", text: "items.forEach(i=>i.remove())", lang: "javascript", target: "in", format: true } }));
+    await w.dispatch(agentResult("expa", "I hid all slow items.", 2));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+
+    const { name, text } = await captureExport(w);
+    assert.equal(name, "ml-agent-expa.md", "named by kind + hash");
+    assert.match(text, /# Agent run · gemma4:31b · expa/);
+    assert.match(text, /\*\*Task:\*\* hide slow items/);
+    assert.match(text, /## Step 2 · exec/);
+    assert.match(text, /items\.forEach\(i => i\.remove\(\)\)/, "exec JS is beautified in the log");
+    assert.match(text, /Hidden 38 items\./, "tool result captured");
+    assert.match(text, /screenshot — viewport \(omitted/, "image steps noted as a placeholder");
+    assert.match(text, /## Answer\n\nI hid all slow items\./);
+});
+
+test("export: a chat session downloads a markdown log (options, turns, reply)", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(chatStart("expc", 0, "what is 2+2", { model: "qwen3:14b" }));
+    await w.dispatch(chatResult("expc", 0, "It is **4**.", { model: "qwen3:14b" }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+
+    const { name, text } = await captureExport(w);
+    assert.equal(name, "ml-chat-expc.md");
+    assert.match(text, /# Chat · qwen3:14b · expc/);
+    assert.match(text, /## Options/);
+    assert.match(text, /## Turn 1 ·/);
+    assert.match(text, /\*\*User:\*\*\n\nwhat is 2\+2/);
+    assert.match(text, /\*\*Assistant\*\* \(qwen3:14b\):\n\nIt is \*\*4\*\*\./);
 });
 
 test("clicking a debug image opens the full-window lightbox (posts src to the shell)", async () => {

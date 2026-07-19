@@ -157,8 +157,18 @@ the npm deps are CLI-only). Two sidebar-only code-block display prefs live in
 (wrap ⇄ horizontal-scroll) and `ml_debug_codelines` (a line-number gutter). Both
 ride `<html>` data-attributes (`data-codewrap`/`data-codelines`) so every code
 block reacts at once; the gutter re-splits highlighted HTML per line (`htmlLines`
-reopens spans that straddle a newline), and numbers stay aligned even when a line
-wraps because each source line is its own flex row.
+reopens spans that straddle a newline — matching `<` first, so a text run like
+` searchResults` isn't misread as a `<span>`), and numbers stay aligned even when
+a line wraps because each source line is its own flex row.
+
+**Export log.** The detail-view header has an "Export log" button →
+`sessionToMarkdown(session)` → a downloaded `.md` (chat and agent both). It
+serialises the in-memory session (options, turns/steps, exec JS beautified,
+results, model provenance, timestamps) — no new plumbing, it's all already in the
+`Session` object. Screenshots are **placeholders** (`_🖼️ …_`), because base64 in
+a text file is unreadable to a coding assistant; a future bundle export writes the
+PNGs as sidecars so they can be opened. The iframe can't touch the filesystem, so
+it downloads via a `Blob` + `<a download>` click.
 
 **Sources.** When a tool/RAG runs, OpenWebUI attaches provenance — top-level
 `data.sources` (non-stream) or its own SSE line `{ sources: [...] }` (stream,
