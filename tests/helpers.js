@@ -82,6 +82,7 @@ function loadBackground({ config = {}, onFetch, onCaptureTab }) {
     const listeners = [];
     const connectListeners = [];
     const stored = { ...config };
+    const localStore = {};
 
     const context = {
         console,
@@ -102,6 +103,15 @@ function loadBackground({ config = {}, onFetch, onCaptureTab }) {
                 sync: {
                     get: async (defaults) => ({ ...defaults, ...stored }),
                     set: async (obj) => { Object.assign(stored, obj); }
+                },
+                local: {
+                    get: async (key) => {
+                        const keys = typeof key === "string" ? [key] : Array.isArray(key) ? key : Object.keys(key || {});
+                        const out = {};
+                        for (const k of keys) if (k in localStore) out[k] = localStore[k];
+                        return out;
+                    },
+                    set: async (obj) => { Object.assign(localStore, obj); }
                 }
             },
             runtime: {

@@ -22,6 +22,7 @@ import type {
     ToolCall,
     RenderDescriptor,
     ToolRenderInput,
+    StoredSession,
     LoadedModel,
     MlHistory
 } from "./contract";
@@ -74,6 +75,11 @@ import type {
             return [...b].map(x => x.toString(16).padStart(2, "0")).join("");
         } catch { return Math.random().toString(16).slice(2, 10); }
     };
+
+    // Live registry of this tab's chat sessions (by hash) so ml.resumeChat can
+    // continue one without a reload. Cross-reload/tab resume goes through storage
+    // ({ save:true } only). In-memory → cleared on reload.
+    const sessionRegistry = new Map<string, MlHistory>();
 
     // Ask the debug sidebar shell to hide its overlay for a screenshot (so it
     // isn't captured into the agent's `look`), resolving once it has painted the
@@ -702,7 +708,7 @@ import type {
         createChat: function({ system = null, model = null, extend = null, numCtx = null, numGpu = null, think = false, schema = null, toolIds = null, maxTokens = null, save = false }: Pick<ChatOptions, "system" | "model" | "extend" | "numCtx" | "numGpu" | "think" | "schema" | "toolIds" | "maxTokens"> & { save?: boolean } = {}): MlHistory {
             validateExtend(extend);
             const ml = this;
-            return {
+            const history: MlHistory = {
                 messages: system ? [{ role: "system", content: system }] : [],
                 // Stable per-session id (see the debug sidebar). Read it off the
                 // history object (history.hash) to identify / later resume a chat.
@@ -796,6 +802,16 @@ import type {
                     const assistantMessage: NeutralMessage = { role: "assistant", content: reply };
                     if (sources && sources.length) assistantMessage.sources = sources;
                     this.messages.push(userMessage, assistantMessage);
+                    // Persist { save:true } sessions so ml.resumeChat survives reloads/tabs
+                    // (fire-and-forget; no secrets in a session — just history + options).
+                    if (save) makeBackgroundTaskPromise("SAVE_SESSION_REQUEST", "SAVE_SESSION_RESPONSE", {
+                        hash: this.hash,
+                        session: {
+                            hash: this.hash, messages: this.messages, model: this.model, extend: this.extend,
+                            numCtx: this.numCtx, numGpu: this.numGpu, think: this.think, schema: this.schema,
+                            toolIds: this.toolIds, maxTokens: this.maxTokens, save: true,
+                        },
+                    }).catch(() => { /* storage full / unavailable — resume just won't have this turn */ });
                     emitDebug({ kind: "chat-result", id: debug, ts: Date.now(), save, session, content: reply, sources: (sources && sources.length) ? sources : null, structured: !!schema, model: resolvedModel || model || null, extend: extend || null, reasoning: reasoning || null });
                     return (schema ? ml._parseJSON(reply) : reply) as string | Record<string, unknown>;
                 },
@@ -810,6 +826,36 @@ import type {
                     return copy;
                 }
             };
+            sessionRegistry.set(history.hash, history);   // same-tab resume by hash
+            return history;
+        },
+        /**
+         * Resume a chat by its session hash (shown/copied in the debug sidebar).
+         * Same-tab sessions resume from an in-memory registry; across reloads or
+         * tabs only `{ save: true }` sessions survive (persisted to storage via
+         * the background). Returns a history you can `.chat()` on to continue it.
+         *
+         * @param {string} hash The session hash.
+         * @returns {Promise<Object>} A chat history continuing that conversation.
+         * @throws {Error} If no resumable session exists for the hash.
+         */
+        resumeChat: async function(hash: string): Promise<MlHistory> {
+            if (!hash || typeof hash !== "string") throw new Error("ml.resumeChat needs a session hash string.");
+            const live = sessionRegistry.get(hash);
+            if (live) return live;   // this tab → the same object, continue it
+            const stored = await makeBackgroundTaskPromise<StoredSession | null>("GET_SESSION_REQUEST", "GET_SESSION_RESPONSE", { hash });
+            if (!stored) throw new Error(
+                `No resumable session "${hash}". Session-local chats live only in the tab that made them; ` +
+                `pass { save: true } to ml.createChat for a chat that survives reloads/tabs.`
+            );
+            const h = this.createChat({
+                model: stored.model, extend: stored.extend, numCtx: stored.numCtx, numGpu: stored.numGpu,
+                think: stored.think, schema: stored.schema, toolIds: stored.toolIds, maxTokens: stored.maxTokens, save: stored.save,
+            });
+            h.messages = stored.messages || [];
+            h.hash = hash;                  // keep the original hash (createChat minted a fresh one)
+            sessionRegistry.set(hash, h);   // register the rehydrated session under its real hash
+            return h;
         },
         /**
          * One-shot chat — a throwaway single-turn history.

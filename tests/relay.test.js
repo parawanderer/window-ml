@@ -401,3 +401,54 @@ test("ml.screenshot() with no target returns the whole viewport uncropped", asyn
     // No target → no crop (no canvas), so this whole path is testable headless.
     assert.equal(await world.ml.screenshot(), "data:image/png;base64,VIEWPORT");
 });
+
+test("ml.resumeChat continues a same-tab session from memory (the same object)", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: () => ({ data: "reply" }) });
+    const h = world.ml.createChat({ model: "m" });
+    await h.chat("first");
+    const resumed = await world.ml.resumeChat(h.hash);
+    assert.equal(resumed, h, "same tab → the same history object");
+    assert.equal(resumed.messages.length, 2);   // user + assistant
+});
+
+test("ml.chat with save:true persists the session via SAVE_SESSION", async () => {
+    const saves = [];
+    const world = loadPageWorld({
+        onRuntimeMessage: (m) => {
+            if (m.type === "SAVE_SESSION") { saves.push(m.payload); return { data: true }; }
+            return { data: "reply" };
+        }
+    });
+    const h = world.ml.createChat({ model: "m", save: true });
+    await h.chat("hi");
+    await new Promise(r => setTimeout(r, 10));   // let the fire-and-forget save land
+    assert.equal(saves.length, 1);
+    assert.equal(saves[0].hash, h.hash);
+    assert.equal(saves[0].session.messages.length, 2);
+    assert.equal(saves[0].session.save, true);
+});
+
+test("ml.resumeChat rehydrates a saved session from storage and continues it", async () => {
+    const session = {
+        hash: "stored1", model: "saved-model", extend: null, numCtx: null, numGpu: null,
+        think: null, schema: null, toolIds: null, maxTokens: null, save: true,
+        messages: [{ role: "user", content: "old" }, { role: "assistant", content: "hi" }],
+    };
+    const world = loadPageWorld({
+        onRuntimeMessage: (m) => m.type === "GET_SESSION" ? { data: m.payload.hash === "stored1" ? session : null } : { data: "reply" }
+    });
+    const h = await world.ml.resumeChat("stored1");
+    assert.equal(h.hash, "stored1");
+    assert.equal(h.model, "saved-model");
+    assert.deepEqual(h.messages, session.messages);
+
+    await h.chat("next");   // continues with the full prior context
+    const sent = world.runtimeCalls.find(c => c.payload && c.payload.messages).payload.messages;
+    assert.ok(sent.some(msg => msg.content === "old"), "resent the rehydrated history");
+    assert.equal(h.messages.at(-2).content, "next");
+});
+
+test("ml.resumeChat throws for an unknown / session-local hash", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: (m) => m.type === "GET_SESSION" ? { data: null } : { data: "r" } });
+    await assert.rejects(world.ml.resumeChat("ghost"), /No resumable session/);
+});

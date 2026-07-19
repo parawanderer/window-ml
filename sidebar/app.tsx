@@ -735,11 +735,11 @@ function AgentRunView({ s }: { s: Session }) {
     const turns = groupTurns(s.steps || []);
     return (
         <>
+            <AgentOptionsBlock s={s} />
             <div class="msg user">
                 <div class="mrow"><span class="who">task</span><span class="sp" /><Stamp ts={s.createdTs} /></div>
                 <div class="utext">{s.task}</div>
             </div>
-            <AgentOptionsBlock s={s} />
             {turns.map(t => <AgentTurn key={t.step} turn={t} max={s.maxSteps} />)}
             {s.summary != null
                 ? <div class={`agent-summary${s.hitCap ? " capped" : ""}`}>

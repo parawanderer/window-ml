@@ -885,3 +885,17 @@ test("CAPTURE_TAB surfaces a capture failure as an error", async () => {
     const res = await bg.send({ type: "CAPTURE_TAB", payload: {} }, { tab: { windowId: 1 } });
     assert.match(res.error, /cannot capture/);
 });
+
+test("SAVE_SESSION persists a session that GET_SESSION reads back", async () => {
+    const bg = loadBackground({ config: baseConfig(), onFetch: () => jsonResponse({}) });
+    const session = { hash: "abc123", messages: [{ role: "user", content: "hi" }], model: "m", save: true };
+
+    const saved = await bg.send({ type: "SAVE_SESSION", payload: { hash: "abc123", session } });
+    assert.deepEqual(saved, { data: true });
+
+    const got = await bg.send({ type: "GET_SESSION", payload: { hash: "abc123" } });
+    assert.deepEqual(got.data, session);
+
+    const missing = await bg.send({ type: "GET_SESSION", payload: { hash: "nope" } });
+    assert.equal(missing.data, null);
+});

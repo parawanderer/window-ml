@@ -202,6 +202,21 @@ h.messages          // plain [{ role, content, images? }] array — edit freely:
 h.messages.at(-1)   //   last message
 h.messages.pop()    //   drop a turn to retry
 h.fork()            // independent deep copy of the conversation
+h.hash              // stable session id (shown/copyable in the debug sidebar)
+```
+
+**Resume by hash.** `ml.resumeChat(hash)` returns a history you can keep
+`.chat()`-ing on. Same-tab sessions resume from memory; to survive a reload or
+resume in another tab, create the chat with `{ save: true }` (persisted to the
+extension's local storage — no credentials are stored, only the messages +
+options):
+
+```js
+const h = ml.createChat({ save: true });
+await h.chat("...");            // h.hash — copy it from the sidebar
+// …later, after a reload or in another tab:
+const h2 = await ml.resumeChat("<hash>");
+await h2.chat("carry on");
 ```
 
 Design invariant: a failed request leaves `messages` untouched. (Reasoning

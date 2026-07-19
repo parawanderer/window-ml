@@ -23,6 +23,8 @@ const HANDLE_MAP: Partial<Record<PageRequestType, RelayEntry>> = {
     PS_REQUEST: { type: "OLLAMA_PS", responseType: "PS_RESPONSE" },
     UNLOAD_REQUEST: { type: "OLLAMA_UNLOAD", responseType: "UNLOAD_RESPONSE" },
     CAPTURE_TAB_REQUEST: { type: "CAPTURE_TAB", responseType: "CAPTURE_TAB_RESPONSE" },
+    SAVE_SESSION_REQUEST: { type: "SAVE_SESSION", responseType: "SAVE_SESSION_RESPONSE" },
+    GET_SESSION_REQUEST: { type: "GET_SESSION", responseType: "GET_SESSION_RESPONSE" },
 };
 
 interface BgResponse { data?: unknown; sources?: unknown; model?: unknown; reasoning?: unknown; error?: string; }

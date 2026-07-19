@@ -39,7 +39,18 @@ To add a new one, touch three files:
    or `sendResponse({ error })`; `return true` to keep the channel open.
 
 Existing message types: `FETCH_LLM`, `LIST_MODELS`, `GET_MODEL`, `GET_CONFIG`,
-`SET_MODEL`, `MODEL_CAPS`, `OLLAMA_PS`, `OLLAMA_UNLOAD`, `FETCH_IMAGE_B64`.
+`SET_MODEL`, `MODEL_CAPS`, `OLLAMA_PS`, `OLLAMA_UNLOAD`, `FETCH_IMAGE_B64`,
+`CAPTURE_TAB`, `SAVE_SESSION`, `GET_SESSION`.
+
+**Resume (`ml.resumeChat(hash)`).** Continue a chat by its session hash.
+Same-tab sessions resume from an in-memory `sessionRegistry` (every `createChat`
+registers itself by hash); across reloads/tabs only `{ save: true }` sessions
+survive — each turn persists via `SAVE_SESSION` → `chrome.storage.local`
+(`ml_session_<hash>`), and `resumeChat` rehydrates via `GET_SESSION`, rebuilding a
+history from the stored messages + createChat options (no secrets in a session).
+The main world can't touch storage, hence the round-trip. A saved session is
+readable by any page that knows its (random 8-hex) hash — fine for chat history,
+which holds no credentials.
 
 `GET_CONFIG` (`ml.config()`) returns the **non-secret** config subset
 `{ model, ocrModel, apiFormat, utilityModel, utilityNumCtx, utilityForceCpu }` —

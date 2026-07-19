@@ -243,12 +243,31 @@ export interface MlHistory {
 export type PageRequestType =
     | "LLM_REQUEST" | "LLM_STREAM_REQUEST" | "B64_REQUEST" | "LIST_MODELS_REQUEST"
     | "GET_MODEL_REQUEST" | "CONFIG_REQUEST" | "SET_MODEL_REQUEST" | "CAPS_REQUEST"
-    | "PS_REQUEST" | "UNLOAD_REQUEST" | "CAPTURE_TAB_REQUEST";
+    | "PS_REQUEST" | "UNLOAD_REQUEST" | "CAPTURE_TAB_REQUEST"
+    | "SAVE_SESSION_REQUEST" | "GET_SESSION_REQUEST";
 
 /** Message types the background worker's onMessage listener handles. */
 export type BackgroundMessageType =
     | "FETCH_LLM" | "FETCH_IMAGE_B64" | "LIST_MODELS" | "GET_MODEL" | "GET_CONFIG"
-    | "SET_MODEL" | "MODEL_CAPS" | "OLLAMA_PS" | "OLLAMA_UNLOAD" | "CAPTURE_TAB";
+    | "SET_MODEL" | "MODEL_CAPS" | "OLLAMA_PS" | "OLLAMA_UNLOAD" | "CAPTURE_TAB"
+    | "SAVE_SESSION" | "GET_SESSION";
+
+/** A resumable chat session persisted to chrome.storage.local for { save: true }
+ *  sessions (main world can't touch storage → background round-trip). No secrets:
+ *  just the message history + the createChat options needed to continue it. */
+export interface StoredSession {
+    hash: string;
+    messages: NeutralMessage[];
+    model: string | null;
+    extend: ExtendProfile | null;
+    numCtx: number | null;
+    numGpu: number | null;
+    think: boolean | null;
+    schema: JsonSchema | null;
+    toolIds: string[] | null;
+    maxTokens: number | null;
+    save: boolean;
+}
 
 /** FETCH_LLM payload (the main one). `save` is sidebar-only and stays page-side. */
 export interface FetchLlmPayload {
@@ -362,6 +381,10 @@ export interface MlApi {
     /* ---- chat ---- */
     /** Create a stateful multi-turn chat session. */
     createChat(opts?: ChatOptions & { save?: boolean }): MlHistory;
+    /** Resume a chat by its session hash (shown in the debug sidebar). Returns a
+     *  history you can `.chat()` on. Same-tab sessions resume from memory; across
+     *  reloads/tabs only `{ save: true }` sessions survive (persisted to storage). */
+    resumeChat(hash: string): Promise<MlHistory>;
     /** One-shot chat — a throwaway single-turn history. */
     chat(prompt: string, options?: ChatOptions): Promise<string | unknown>;
     /** One-shot chat that always returns a string (never a parsed schema). */

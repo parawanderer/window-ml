@@ -692,6 +692,24 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             .then(dataUrl => sendResponse({ data: dataUrl }))
             .catch(err => sendResponse({ error: err.message }));
         return true;
+
+    } else if (message.type === "SAVE_SESSION") {
+        // Persist a { save:true } chat session so ml.resumeChat can rehydrate it
+        // across reloads/tabs. Page-provided message history + createChat options
+        // — no secrets (URL/key never live in a session). Main world can't touch
+        // storage, hence this round-trip.
+        const { hash, session } = message.payload || {};
+        chrome.storage.local.set({ [`ml_session_${hash}`]: session })
+            .then(() => sendResponse({ data: true }))
+            .catch(err => sendResponse({ error: err.message }));
+        return true;
+
+    } else if (message.type === "GET_SESSION") {
+        const key = `ml_session_${(message.payload || {}).hash}`;
+        chrome.storage.local.get(key)
+            .then((d: any) => sendResponse({ data: d[key] || null }))
+            .catch(err => sendResponse({ error: err.message }));
+        return true;
     }
 });
 
