@@ -640,6 +640,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             .then(config => sendResponse({ data: {
                 model: config.model, ocrModel: config.ocrModel, apiFormat: config.apiFormat,
                 utilityModel: config.utilityModel, utilityNumCtx: config.utilityNumCtx, utilityForceCpu: config.utilityForceCpu,
+                autoApproveReadonly: config.autoApproveReadonly,
             } }))
             .catch(err => sendResponse({ error: err.message }));
         return true;

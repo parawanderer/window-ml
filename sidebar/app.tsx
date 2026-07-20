@@ -576,7 +576,7 @@ function zipStore(files: Sidecar[]): Blob {
     const enc = new TextEncoder();
     const u16 = (n: number) => [n & 0xFF, (n >>> 8) & 0xFF];
     const u32 = (n: number) => [n & 0xFF, (n >>> 8) & 0xFF, (n >>> 16) & 0xFF, (n >>> 24) & 0xFF];
-    const parts: BlobPart[] = [];
+    const parts: Uint8Array[] = [];
     const central: number[] = [];
     let offset = 0;
     for (const f of files) {
@@ -599,7 +599,7 @@ function zipStore(files: Sidecar[]): Blob {
         ...u32(central.length), ...u32(offset), ...u16(0),
     ];
     parts.push(new Uint8Array(central), new Uint8Array(end));
-    return new Blob(parts, { type: "application/zip" });
+    return new Blob(parts as BlobPart[], { type: "application/zip" });
 }
 
 // Trigger a client-side download (the iframe can't touch the filesystem).
@@ -1044,6 +1044,7 @@ const TIP = {
     utilityNumCtx: "Context window (num_ctx) for the utility model. Summarising needs little context — keep it small on modest hardware; larger just uses more KV-cache memory. Only used when a utility model is set.",
     utilityForceCpu: "Run the utility model on CPU (num_gpu: 0) so it never competes with your main model for VRAM. Only used when a utility model is set.",
     autoTitles: "Let the utility model generate a short title for each debug session. Off = sessions just show the first prompt. Only runs when a utility model is set and the panel is open.",
+    autoApproveReadonly: "Experimental. Run read-only exec surveys (querySelectorAll → filter → map, no mutation) without an approval prompt, via a mediated interpreter that can't reach window/fetch and never eval()s a string. Anything that mutates or isn't recognised still asks. Also lets these surveys run on Trusted-Types pages where eval is blocked.",
 };
 
 // Field label with an optional hover tooltip. Left-anchored (.left) so it opens
@@ -1236,6 +1237,14 @@ function Settings() {
                 <input type="checkbox" checked={codeLineNumbers.value}
                     onChange={(e: any) => { codeLineNumbers.value = e.target.checked; applyCodePrefs(); chrome.storage.local.set({ [LINES_KEY]: codeLineNumbers.value }); }} />
                 <span>Show line numbers</span>
+            </label>
+
+            <div class="set-group">Experimental</div>
+            <div class="set-note">Auto-approve <b>read-only</b> <code>exec</code> surveys (querySelectorAll → filter → map, no mutation). They run through a mediated interpreter that never touches <code>window</code>/<code>fetch</code> and never <code>eval</code>s a string (so it also works on Trusted-Types pages). Anything mutating or unrecognised still asks for approval.</div>
+            <label class="set-check">
+                <input type="checkbox" checked={c.autoApproveReadonly}
+                    onChange={(e: any) => setField("autoApproveReadonly", e.target.checked)} />
+                <Lbl tip={TIP.autoApproveReadonly}>Auto-approve read-only exec calls</Lbl>
             </label>
         </div>
     );

@@ -123,6 +123,25 @@ results). The **agent loop lives client-side** (`ml.step` in `injected.js`);
 the extension deliberately ships no loop/whitelist/overseer — callers compose
 those, keeping `window.ml` a primitive.
 
+**Read-only `exec` auto-approve (experimental).** `exec` is `requiresApproval`,
+but the config flag `autoApproveReadonly` (off by default) lets a **read-only DOM
+survey** (`querySelectorAll → filter → map`, no mutation) run with **no prompt**
+via a mediated mini-interpreter — `readonly-exec.ts` (`evalReadonly`), a
+dependency-free tokenizer + Pratt parser + tree-walker bundled into
+`injected.js`. It (1) *is* the whitelist — only the modeled dialect runs; (2)
+never compiles a string, so it clears **Trusted Types** (Gmail); (3) is safe by
+**mediation** — reads are denylisted (`constructor`/`ownerDocument`/`window`/…)
+and calls are allowlisted to read/query/pure methods only, so no effectful method
+(`fetch`/`click`/`setAttribute`/…) can be invoked even off a leaked `window`, and
+`Function`/`eval` are unreachable. The agent loop's approval branch *tries*
+`evalReadonly` and, on **any** `NotInDialect`/`Denied` throw, falls through to the
+normal approval + `eval` path — safe because the interpreter is side-effect-free,
+so a failed attempt does nothing observable. Deliberately incomplete: gaps
+degrade to "asks the human," never to "runs unsafely." Spec:
+`tmp/READONLY_EXEC_SPEC.md`; the interpreter is unit-tested standalone (built to
+`dist/readonly-exec.js`) against the two canonical surveys + a battery of escape
+attempts in `tests/readonly-exec.test.js`.
+
 **Agent runs in the debug sidebar.** `ml.agent` emits its own debug-event kinds
 (not `chat`): `agent` (run start: task + model), `agent-step` (one per step — a
 thought OR a tool call with args/result; `elements` is a **count**, since real

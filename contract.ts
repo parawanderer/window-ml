@@ -23,6 +23,7 @@ export interface MlConfig {
     utilityNumCtx: number;      // context window for the utility model (Ollama num_ctx)
     utilityForceCpu: boolean;   // run it on CPU (num_gpu: 0) so it can't evict the main model
     autoTitles: boolean;        // let the utility model summarise session titles in the debug sidebar
+    autoApproveReadonly: boolean;   // experimental: auto-approve read-only exec surveys via the mediated interpreter
 }
 
 /** Single source of truth for config defaults — imported by background.ts,
@@ -45,11 +46,12 @@ export const DEFAULT_CONFIG: MlConfig = {
     utilityNumCtx: 4096,
     utilityForceCpu: false,
     autoTitles: true,
+    autoApproveReadonly: false,
 };
 
 /** The non-secret subset GET_CONFIG exposes to the page (never the URL/key). */
 export type MlPublicConfig = Pick<MlConfig,
-    "model" | "ocrModel" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu">;
+    "model" | "ocrModel" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly">;
 
 /* --------------------------- chat wire shapes -------------------------- */
 

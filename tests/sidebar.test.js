@@ -554,7 +554,8 @@ test("code display prefs: wrap⇄scroll + line-number toggles flip root attrs an
     assert.equal(html.getAttribute("data-codewrap"), "off", "wrap → scroll");
     assert.equal(w.localStore.ml_debug_codewrap, false, "scroll persisted");
 
-    const chk = [...w.shadow.querySelectorAll('.settings input[type="checkbox"]')].pop();
+    const chk = [...w.shadow.querySelectorAll(".settings .set-check")]
+        .find(l => /line numbers/i.test(l.textContent)).querySelector("input");
     chk.click();
     await w.tick();
     assert.equal(html.getAttribute("data-codelines"), "on", "line numbers toggled on");
