@@ -93,10 +93,31 @@ for (const [name, js] of Object.entries(ESCAPES)) {
     });
 }
 
+// The spread + IIFE forms the models actually write for DOM surveys — these must
+// run in-dialect (before, they fell back to approval, which is the whole friction).
+test("spread over a NodeList runs in-dialect (the [...querySelectorAll(...)] form)", () => {
+    const doc = world();
+    const n = evalReadonly(`[...document.querySelectorAll("input")].filter(el => el.placeholder === 'Ask Gemini').map(el => el.id)`, doc).value;
+    assert.deepEqual(n, ["a"]);
+});
+
+test("function-expression IIFE runs in-dialect (the (function(){…})() form)", () => {
+    const doc = world();
+    const js = `(function(){
+        const items = [...document.querySelectorAll("input, textarea")];
+        return items.filter(el => el.id).map(el => ({ id: el.id, tag: el.tagName }));
+    })()`;
+    const out = evalReadonly(js, doc).value;
+    assert.ok(out.some(x => x.id === "a" && x.tag === "INPUT"));
+});
+
+test("spread in call args works (Math.max(...nums))", () => {
+    assert.equal(run("Math.max(...[3, 7, 2])").value, 7);
+});
+
 // --- out-of-dialect syntax must throw NotInDialect (fail closed, not crash) ---
 const OUT = {
     "for loop": `for (const x of []) { x }`,
-    "function expression": `(function(){ return 1 })()`,
     "assignment": `let x = 1; x = 2; x`,
     "new": `new Object()`,
     "template literal": "`hi ${1}`",

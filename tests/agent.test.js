@@ -709,7 +709,7 @@ test("autoApproveReadonly: a read-only exec survey runs with NO approval prompt"
 test("autoApproveReadonly: an out-of-dialect exec still goes through the approval gate", async () => {
     const world = loadPageWorld({
         config: { model: "", ocrModel: "", autoApproveReadonly: true },
-        onRuntimeMessage: scriptedModel([toolCall("exec", { js: "(function(){ return 42 })()" }, "c1"), reply("done")]),
+        onRuntimeMessage: scriptedModel([toolCall("exec", { js: "for (const x of [1]) { x }" }, "c1"), reply("done")]),
     });
     const win = world.context.window;
     const events = [];

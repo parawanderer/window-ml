@@ -138,7 +138,7 @@ and calls are allowlisted to read/query/pure methods only, so no effectful metho
 normal approval + `eval` path — safe because the interpreter is side-effect-free,
 so a failed attempt does nothing observable. Deliberately incomplete: gaps
 degrade to "asks the human," never to "runs unsafely." Spec:
-`tmp/READONLY_EXEC_SPEC.md`; the interpreter is unit-tested standalone (built to
+`docs/spec/READONLY_EXEC_SPEC.md`; the interpreter is unit-tested standalone (built to
 `dist/readonly-exec.js`) against the two canonical surveys + a battery of escape
 attempts in `tests/readonly-exec.test.js`.
 

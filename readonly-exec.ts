@@ -25,7 +25,7 @@ interface Tok { t: "num" | "str" | "name" | "punct" | "eof"; v: string; }
 
 // Multi-char punctuators, longest first so greedy matching is correct.
 const PUNCT = [
-    "===", "!==", "?.", "=>", "==", "!=", "<=", ">=", "&&", "||", "??",
+    "===", "!==", "...", "?.", "=>", "==", "!=", "<=", ">=", "&&", "||", "??",
     ".", ",", "(", ")", "[", "]", "{", "}", "?", ":", "!", "<", ">",
     "+", "-", "*", "/", "%", "=", ";",   // `=` only for `const x = …`; assignment expressions still fail closed
 ];
@@ -179,11 +179,33 @@ class Parser {
         this.eat("(");
         const args: Node[] = [];
         while (!this.is(")")) {
-            args.push(this.parseExpression());
+            if (this.is("...")) { this.i++; args.push({ type: "Spread", arg: this.parseExpression() }); }
+            else args.push(this.parseExpression());
             if (this.is(",")) this.i++; else break;
         }
         this.eat(")");
         return { type: "Call", callee, args, optional };
+    }
+    // function [name](params) { … }  — an anonymous/named function expression (the
+    // `(function(){ … })()` IIFE the models write constantly). Treated like an arrow.
+    parseFunction(): Node {
+        this.eat("function");
+        if (this.peek().t === "name") this.i++;   // optional name (ignored)
+        this.eat("(");
+        const params: string[] = [];
+        while (!this.is(")")) {
+            const n = this.next();
+            if (n.t !== "name") throw new NotInDialect("param");
+            params.push(n.v);
+            if (this.is(",")) this.i++; else break;
+        }
+        this.eat(")");
+        if (!this.is("{")) throw new NotInDialect("function body");
+        this.i++;
+        const body: Node[] = [];
+        while (!this.is("}")) body.push(this.parseStatement());
+        this.eat("}");
+        return { type: "Arrow", params, body: { type: "Block", body } };
     }
     parsePrimary(): Node {
         const t = this.peek();
@@ -194,6 +216,7 @@ class Parser {
             if (t.v === "false") { this.i++; return { type: "Lit", value: false }; }
             if (t.v === "null") { this.i++; return { type: "Lit", value: null }; }
             if (t.v === "undefined") { this.i++; return { type: "Lit", value: undefined }; }
+            if (t.v === "function") return this.parseFunction();   // (function(){ … })()
             // single-param arrow:  x => …
             if (this.peek(1).t === "punct" && this.peek(1).v === "=>") {
                 this.i++; this.eat("=>");
@@ -203,7 +226,11 @@ class Parser {
         }
         if (this.is("[")) {
             this.i++; const elements: Node[] = [];
-            while (!this.is("]")) { elements.push(this.parseExpression()); if (this.is(",")) this.i++; else break; }
+            while (!this.is("]")) {
+                if (this.is("...")) { this.i++; elements.push({ type: "Spread", arg: this.parseExpression() }); }
+                else elements.push(this.parseExpression());
+                if (this.is(",")) this.i++; else break;
+            }
             this.eat("]");
             return { type: "Array", elements };
         }
@@ -359,7 +386,14 @@ class Evaluator {
                 if (node.name in scope) return scope[node.name];
                 throw new Denied(`'${node.name}' is not available`);
             }
-            case "Array": return node.elements.map((e: Node) => this.eval(e, scope));
+            case "Array": {
+                const arr: unknown[] = [];
+                for (const e of node.elements) {
+                    if (e.type === "Spread") { for (const v of this.eval(e.arg, scope) as Iterable<unknown>) arr.push(v); }
+                    else arr.push(this.eval(e, scope));
+                }
+                return arr;
+            }
             case "Object": {
                 const o: Record<string, unknown> = {};
                 for (const p of node.props) o[p.key] = this.eval(p.value, scope);
@@ -410,6 +444,16 @@ class Evaluator {
         throw new NotInDialect(`node '${node.type}'`);
     }
 
+    // Evaluate call arguments, expanding spread (`f(...args)`).
+    private evalArgs(args: Node[], scope: any): unknown[] {
+        const out: unknown[] = [];
+        for (const a of args) {
+            if (a.type === "Spread") { for (const v of this.eval(a.arg, scope) as Iterable<unknown>) out.push(v); }
+            else out.push(this.eval(a, scope));
+        }
+        return out;
+    }
+
     private evalCall(node: Node, scope: any): unknown {
         const callee = node.callee;
         // obj.method(args) — the common case. Allowlisted method names only.
@@ -420,18 +464,17 @@ class Evaluator {
             if (!ALLOWED_METHODS.has(key)) throw new NotInDialect(`method '${key}' not allowed`);
             const fn = obj?.[key];
             if (typeof fn !== "function") throw new NotInDialect(`'${key}' is not callable`);
-            const args = node.args.map((a: Node) => this.eval(a, scope));
-            return fn.apply(obj, args);
+            return fn.apply(obj, this.evalArgs(node.args, scope));
         }
         // Ident(args) — only whitelisted coercion/parse builtins.
         if (callee.type === "Ident" && CALLABLE_ROOTS.has(callee.name) && callee.name in scope) {
             const fn = scope[callee.name] as Function;
-            return fn(...node.args.map((a: Node) => this.eval(a, scope)));
+            return fn(...this.evalArgs(node.args, scope));
         }
-        // (arrow)(args) / immediately-invoked arrow.
+        // (arrow)(args) / immediately-invoked arrow (or function expression).
         const fn = this.eval(callee, scope);
         if (typeof fn === "function" && this.ourFns.has(fn)) {
-            return (fn as Function)(...node.args.map((a: Node) => this.eval(a, scope)));
+            return (fn as Function)(...this.evalArgs(node.args, scope));
         }
         throw new NotInDialect("call target not allowed");
     }
