@@ -2083,9 +2083,12 @@ import { evalReadonly } from "./readonly-exec";
                     .find(d => !styleHidden(d) && !isFaded(d) && (!layout || d.getBoundingClientRect().height > 0) && d.querySelector(INTERACTIVE_SEL));
                 const main = document.querySelector('main, [role="main"]');
                 const tries: { root: Element | Document; skipNav: boolean; note: string }[] = [];
+                const skip = !includeNav;   // skip nav/sidebar in EVERY scope (a broad role="main"
+                const navNote = skip ? "(navigation/sidebar controls skipped — pass includeNav:true for them)\n" : "";
+                // can wrap the sidebar too), except inside a real modal where you want it all.
                 if (visibleModal) tries.push({ root: visibleModal, skipNav: false, note: "A modal dialog is open — listing its controls:\n" });
-                if (main && !styleHidden(main)) tries.push({ root: main, skipNav: false, note: "Listing the main content region's controls:\n" });
-                tries.push({ root: document, skipNav: !includeNav, note: includeNav ? "" : "(navigation/sidebar controls skipped — pass includeNav:true for them)\n" });
+                if (main && !styleHidden(main)) tries.push({ root: main, skipNav: skip, note: "Listing the main content region's controls:\n" + navNote });
+                tries.push({ root: document, skipNav: skip, note: navNote });
                 tries.push({ root: document, skipNav: false, note: "" });   // last resort: everything
                 let items: Item[] = [], note = "";
                 for (const t of tries) { items = collect(t.root, t.skipNav); if (items.length) { note = t.note; break; } }

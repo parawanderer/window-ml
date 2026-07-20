@@ -239,6 +239,13 @@ test("interactives skips the sidebar chrome and collapses flooded duplicates", (
     const { ml: ml2 } = loadDomWorld(sidebar + '<div><button aria-label="Good Response">Like</button></div>');
     const out2 = run(ml2, "interactives", { includeNav: true }).content;
     assert.match(out2, /"Chat Menu" ×8  →  button\[aria-label="Chat Menu"\] · index 0–7/);
+
+    // OpenWebUI case: a broad role="main" wraps BOTH the sidebar and the content —
+    // the sidebar must STILL be skipped (skipNav applies inside main too).
+    const { ml: ml3 } = loadDomWorld(`<div role="main">${sidebar}<div class="content"><button aria-label="Good Response">Like</button></div></div>`);
+    const out3 = run(ml3, "interactives", {}).content;
+    assert.match(out3, /"Good Response"/, "the real control surfaces");
+    assert.ok(!/Chat \d/.test(out3), "sidebar chats skipped even under role=main");
 });
 
 test("interactives finds the aria-labeled edit button and disambiguates duplicates by ordinal", () => {
