@@ -301,6 +301,9 @@ const ALLOWED_METHODS = new Set([
 const CALLABLE_ROOTS = new Set(["String", "Number", "Boolean", "parseInt", "parseFloat", "isNaN", "isFinite"]);
 
 const RETURN = Symbol("return");   // sentinel wrapper for a `return` value
+// Inert stand-in returned when code reads a method as a value (existence guards).
+// Truthy + typeof "function", but calling it throws → the real method never leaks.
+const METHOD_REF = function (): never { throw new NotInDialect("a method reference cannot be called indirectly"); };
 
 class Evaluator {
     private ourFns = new WeakSet<Function>();   // arrows we created — the only functions we'll invoke directly
@@ -313,14 +316,18 @@ class Evaluator {
         return k;
     }
 
-    // read a member (NOT in call position). A function-valued read is rejected —
-    // we don't let methods be pulled off and passed around past the call gate.
+    // read a member (NOT in call position). A function-valued read returns an
+    // INERT sentinel, never the real method — so the common existence-guard idiom
+    // `el.querySelector && el.querySelector('x')` stays in-dialect (the sentinel is
+    // truthy, typeof "function"), while a method still can't be pulled off and
+    // invoked past the call gate: calling the sentinel (directly or via .map)
+    // throws, dropping the whole survey back to approval.
     private readMember(node: Node, scope: any): unknown {
         const obj = this.eval(node.obj, scope);
         if (node.optional && obj == null) return undefined;
         const key = node.computed ? this.guardKey(this.eval(node.prop, scope)) : this.guardKey(node.prop);
         const v = (obj as any)?.[key];
-        if (typeof v === "function") throw new NotInDialect(`cannot read method '${key}' as a value`);
+        if (typeof v === "function") return METHOD_REF;
         return v;
     }
 

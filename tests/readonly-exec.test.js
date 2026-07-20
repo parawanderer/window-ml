@@ -42,6 +42,23 @@ test("canonical survey #2 (contenteditable/textarea) returns the summary", () =>
     assert.deepEqual(tags, ["DIV", "TEXTAREA"]);
 });
 
+test("method-existence guard idiom stays in-dialect (el.querySelector && el.querySelector(...))", () => {
+    const js = `Array.from(document.querySelectorAll("div, textarea, input"))
+      .filter(el => el.placeholder === 'Ask Gemini'
+                 || (el.querySelector && el.querySelector('div')?.textContent === 'x'))
+      .map(el => el.tagName + ' ' + el.className)`;
+    const { value } = run(js);   // must NOT throw — the bare `el.querySelector` read is now an inert sentinel
+    assert.ok(Array.isArray(value));
+    assert.ok(value.includes("INPUT x"), "the placeholder-matched input is summarised");
+});
+
+test("the method sentinel is inert — it can't be invoked to smuggle a call", () => {
+    // Reading a method then invoking the reference must fall back (NotInDialect),
+    // never actually run the method.
+    assert.throws(() => run(`const f = document.body.getAttribute; f('x')`), e => e instanceof NotInDialect || e instanceof Denied);
+    assert.throws(() => run(`[document.body].map(document.body.getAttribute)`), e => e instanceof NotInDialect || e instanceof Denied);
+});
+
 test("pure computation: arrows, ternary, optional chaining, template-free literals", () => {
     assert.equal(run("[1,2,3,4].map(x => x*2).filter(x => x > 4).reduce((a,b) => a+b, 0)").value, 14);
     assert.equal(run("const n = 5; n > 3 ? 'big' : 'small'").value, "big");
