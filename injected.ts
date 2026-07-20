@@ -303,6 +303,18 @@ import { evalReadonly } from "./readonly-exec";
         return parts.join(" > ");
     };
 
+    // Fold typographic punctuation + whitespace to ASCII so a search for
+    // "web-browser" matches a page that rendered "web‑browser" (non-breaking
+    // hyphen) — plus curly quotes, non-breaking spaces, ellipsis, full-width
+    // forms (NFKC). A model's own fancy hyphen in its output otherwise defeats its
+    // own later findByText/:contains search. Also lowercases for case-insensitivity.
+    const normalizeText = (s: string | null | undefined): string => (s || "")
+        .normalize("NFKC")
+        .replace(/[‐-―−⁃﹘﹣－]/g, "-")   // hyphens/dashes/minus → -
+        .replace(/[‘’‚‛′]/g, "'")               // curly / prime single quotes → '
+        .replace(/[“”„‟″]/g, '"')               // curly / prime double quotes → "
+        .replace(/\s+/g, " ").trim().toLowerCase();
+
     // --- Accessibility surface (the "screen reader" view) --------------------
     // The agent is in a blind user's position — it needs a controls list by ROLE +
     // ACCESSIBLE NAME, exactly what NVDA's Elements List / VoiceOver's Rotor read.
@@ -482,9 +494,9 @@ import { evalReadonly } from "./readonly-exec";
         const run = (sel: string): Element[] => {
             let els = [...document.querySelectorAll(sel || "*")];
             if (texts.length) {
-                const wanted = texts.map(t => t.toLowerCase());
+                const wanted = texts.map(normalizeText);
                 els = els.filter(el => {
-                    const tc = (el.textContent || "").toLowerCase();
+                    const tc = normalizeText(el.textContent);
                     return wanted.every(w => tc.includes(w));
                 });
             }
@@ -1977,15 +1989,15 @@ import { evalReadonly } from "./readonly-exec";
             },
             run: ({ text, limit = 10 }: { text: string; limit?: number }): string | ToolResult => {
                 if (!text) return "Provide `text` to search for.";
-                const wanted = String(text).toLowerCase();
+                const wanted = normalizeText(text);
                 const out = [], els = [];
                 for (const el of (document.body || document).querySelectorAll("*")) {
                     const tc = el.textContent;
-                    if (!tc || !tc.toLowerCase().includes(wanted)) continue;
+                    if (!tc || !normalizeText(tc).includes(wanted)) continue;
                     // Deepest match only: skip if a child element also contains it.
                     let childHas = false;
                     for (const c of el.children) {
-                        if (c.textContent && c.textContent.toLowerCase().includes(wanted)) { childHas = true; break; }
+                        if (c.textContent && normalizeText(c.textContent).includes(wanted)) { childHas = true; break; }
                     }
                     if (childHas) continue;
                     out.push(`#${els.length}: ${elPath(el)}  «${truncate(tc, 50)}»`);

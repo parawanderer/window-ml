@@ -186,6 +186,23 @@ test("findByText honours the limit and reports no matches", () => {
     assert.match(run(ml, "findByText", { text: "nope" }), /No elements contain "nope"/); // plain string
 });
 
+test("findByText normalizes typographic punctuation (ASCII query matches fancy page text)", () => {
+    // The real bug: a model's own answer rendered "web‑browser" (U+2011 non-breaking
+    // hyphen) but its later findByText used a plain "-", so the substring never matched.
+    const { ml } = loadDomWorld("<p>I could perform as a web‑browser agent</p>");
+    const res = run(ml, "findByText", { text: "web-browser agent" });   // ASCII hyphen
+    assert.ok(res.elements && res.elements.length === 1, "matched across the non-breaking hyphen");
+
+    // Curly apostrophe / NBSP in the DOM, straight ASCII + space in the query.
+    const { ml: ml2 } = loadDomWorld("<p>Don’t Save</p>");
+    assert.ok(run(ml2, "findByText", { text: "don't save" }).elements.length === 1);
+});
+
+test("queryAll :contains normalizes punctuation too (curly ↔ straight quotes)", () => {
+    const { ml } = loadDomWorld('<button class="x">Don’t Save</button><button class="x">Keep</button>');
+    assert.equal(ml._queryAll('button:contains("Don\'t Save")').length, 1);   // straight query, curly DOM
+});
+
 test("interactives lists controls by role + accessible name with a clickable selector", () => {
     const { ml } = loadDomWorld(
         '<nav><a href="/home">Home</a></nav>' +
