@@ -198,10 +198,30 @@ test("interactives lists controls by role + accessible name with a clickable sel
     );
     const out = run(ml, "interactives", {});
     assert.match(out.content, /\[button\] "Good response"\s+→\s+button\[aria-label="Good response"\]/);
-    assert.match(out.content, /\[link\] "Home"/);
     assert.match(out.content, /\[textbox\] "Send a Message"/);
     assert.match(out.content, /\[button\] "Copy"/);            // visible text is the accessible name
-    assert.ok(out.elements.length >= 5, "returns the real nodes too");
+    assert.ok(out.elements.length >= 4, "returns the real nodes too");
+    // The <nav> Home link is skipped by default (landmark navigation), unless asked for.
+    assert.ok(!/"Home"/.test(out.content), "navigation controls skipped by default");
+    assert.match(run(ml, "interactives", { includeNav: true }).content, /\[link\] "Home"/);
+});
+
+test("interactives skips the sidebar chrome and collapses flooded duplicates", () => {
+    // The OpenWebUI failure: a sidebar with N chats, each a link + a 'Chat Menu'
+    // button, drowning the message controls out of the list.
+    let sidebar = '<div id="sidebar">';
+    for (let i = 0; i < 8; i++) sidebar += `<a href="/c/${i}">Chat ${i}</a><button aria-label="Chat Menu"></button>`;
+    sidebar += "</div>";
+    const { ml } = loadDomWorld(sidebar + '<main><button aria-label="Good Response">Like</button></main>');
+    const out = run(ml, "interactives", {}).content;
+    assert.match(out, /Listing the main content region/);      // scoped to <main>
+    assert.match(out, /\[button\] "Good Response"/);           // the real target surfaces
+    assert.ok(!/Chat \d/.test(out), "sidebar chats not listed");
+
+    // Without a <main>, the sidebar is skipped and its 8 'Chat Menu' buttons collapse.
+    const { ml: ml2 } = loadDomWorld(sidebar + '<div><button aria-label="Good Response">Like</button></div>');
+    const out2 = run(ml2, "interactives", { includeNav: true }).content;
+    assert.match(out2, /"Chat Menu" ×8  →  button\[aria-label="Chat Menu"\] · index 0–7/);
 });
 
 test("interactives finds the aria-labeled edit button and disambiguates duplicates by ordinal", () => {
@@ -212,7 +232,7 @@ test("interactives finds the aria-labeled edit button and disambiguates duplicat
         '<button aria-label="Save" disabled>Save</button>'
     );
     const out = run(ml, "interactives", { contains: "edit" });
-    const lines = out.content.split("\n");
+    const lines = out.content.split("\n").filter(l => l.startsWith("#"));
     // visibility:hidden (hover-revealed) buttons must NOT be excluded — that's the fix.
     // (The "hidden until hover" label needs real layout; jsdom can't report it.)
     assert.equal(lines.length, 2, "both hover-hidden Edit buttons are listed");

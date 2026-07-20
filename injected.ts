@@ -2002,51 +2002,74 @@ import { evalReadonly } from "./readonly-exec";
                 "you can't anchor by visible text (icon buttons, toolbar actions, the like/menu buttons): read " +
                 "the list, pick the row whose name matches what you want, then click its selector — don't guess " +
                 "aria-labels via exec. Includes hover-revealed row actions (edit/delete). When a selector matches " +
-                "several (e.g. one Edit per message), the row shows 'index N of M' — pass N as click's `index`. If " +
-                "a modal/dialog is open, only ITS controls are listed. Defaults to the current viewport; pass " +
-                "scope:'page' for the whole document.",
+                "several (e.g. one Edit per message), the row shows 'index N of M' — pass N as click's `index`. " +
+                "Like landmark navigation, it scopes to the main content (an open modal, else <main>, else the page " +
+                "minus nav/sidebar chrome) so page content isn't drowned out — pass includeNav:true for nav/sidebar " +
+                "controls. Defaults to the current viewport; pass scope:'page' for the whole document.",
             parameters: {
                 type: "object",
                 properties: {
                     scope: { type: "string", enum: ["viewport", "page"], description: "Where to look (default 'viewport')." },
                     contains: { type: "string", description: "Optional: only controls whose accessible name contains this text (case-insensitive)." },
-                    limit: { type: "integer", description: "Max controls to return (default 40)." }
+                    limit: { type: "integer", description: "Max controls to return (default 40)." },
+                    includeNav: { type: "boolean", description: "Include navigation/sidebar controls too (default false — they're skipped so page content isn't drowned out)." }
                 }
             },
-            run: ({ scope = "viewport", contains = "", limit = 40 }: { scope?: string; contains?: string; limit?: number }): string | ToolResult => {
+            run: ({ scope = "viewport", contains = "", limit = 40, includeNav = false }: { scope?: string; contains?: string; limit?: number; includeNav?: boolean }): string | ToolResult => {
                 const layout = hasLayout();
-                // A screen reader jumps into an open modal — do the same: scope to it.
-                let root: Element | Document = document, note = "";
+                // Scope like a screen reader's landmark navigation: into an open modal;
+                // else the <main> content region; else the whole document MINUS the
+                // persistent nav/sidebar chrome (which otherwise floods the list).
+                let root: Element | Document = document, note = "", skipNav = false;
                 const modal = [...document.querySelectorAll('[aria-modal="true"], dialog[open], [role="dialog"]')]
                     .find(d => !styleHidden(d) && (!layout || d.getBoundingClientRect().height > 0));
+                const main = document.querySelector('main, [role="main"]');
                 if (modal) { root = modal; note = "A modal dialog is open — listing its controls:\n"; }
+                else if (main && !styleHidden(main)) { root = main; note = "Listing the main content region's controls:\n"; }
+                else skipNav = !includeNav;
+                const NAV_SEL = 'nav, aside, [role="navigation"], [role="complementary"], [role="banner"], #sidebar, [class*="sidebar" i]';
                 const inView = (el: Element): boolean => {
                     if (!layout || scope === "page") return true;
                     const r = el.getBoundingClientRect();
                     return r.width > 1 && r.height > 1 && r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth;
                 };
                 const want = String(contains).toLowerCase();
-                const out: string[] = [], els: Element[] = [];
+                // Collect, then group by (role, name) to collapse duplicates that share an
+                // aria-label (e.g. one "Chat Menu"/"Edit" per row) into a single line.
+                type Item = { el: Element; role: string; name: string; state: string; al: string | null };
+                const items: Item[] = [];
                 for (const el of root.querySelectorAll(INTERACTIVE_SEL)) {
                     if (styleHidden(el) || !inView(el)) continue;
+                    if (skipNav) { try { if (el.closest(NAV_SEL)) continue; } catch { /* invalid :i on old engines */ } }
                     const name = accessibleName(el);
                     if (want && !name.toLowerCase().includes(want)) continue;
-                    const st = [ariaState(el), isFaded(el) ? "hidden until hover" : ""].filter(Boolean).join(", ");
-                    // Prefer a clean, valid aria-label selector; append the ordinal when it
-                    // matches several (e.g. one Edit per message) so click({selector,index}) hits
-                    // the right one. Fall back to a structural path otherwise (may not be a
-                    // valid selector on obfuscated class names — it's a description then).
-                    const al = el.getAttribute("aria-label");
-                    let sel: string;
-                    if (al && !al.includes('"')) {
-                        sel = `${el.tagName.toLowerCase()}[aria-label="${al}"]`;
-                        try { const m = [...document.querySelectorAll(sel)]; if (m.length > 1) sel += ` · index ${m.indexOf(el)} of ${m.length}`; } catch { /* ignore */ }
-                    } else sel = elPath(el);
-                    out.push(`#${els.length} [${roleOf(el)}] ${name ? `"${truncate(name, 60)}"` : "(no accessible name)"}${st ? ` — ${st}` : ""}  →  ${sel}`);
-                    els.push(el);
-                    if (els.length >= limit) break;
+                    items.push({ el, role: roleOf(el), name, state: [ariaState(el), isFaded(el) ? "hidden until hover" : ""].filter(Boolean).join(", "), al: el.getAttribute("aria-label") });
+                    if (items.length >= 500) break;   // scan safety cap
+                }
+                const groups = new Map<string, Item[]>();
+                for (const it of items) { const k = it.role + " " + it.name; let g = groups.get(k); if (!g) groups.set(k, g = []); g.push(it); }
+                const out: string[] = [], els: Element[] = [];
+                let n = 0;
+                for (const grp of groups.values()) {
+                    if (out.length >= limit) break;
+                    const f = grp[0], label = f.name ? `"${truncate(f.name, 60)}"` : "(no accessible name)";
+                    const sameAl = !!f.al && !f.al.includes('"') && grp.every(g => g.al === f.al);
+                    if (grp.length > 3 && sameAl) {   // collapse only real floods; keep small dup sets (e.g. 2 Edits) itemised with per-element state
+                        out.push(`#${n++} [${f.role}] ${label} ×${grp.length}  →  ${f.el.tagName.toLowerCase()}[aria-label="${f.al}"] · index 0–${grp.length - 1}`);
+                        els.push(...grp.map(g => g.el));
+                    } else for (const it of grp) {
+                        if (out.length >= limit) break;
+                        let sel: string;
+                        if (it.al && !it.al.includes('"')) {
+                            sel = `${it.el.tagName.toLowerCase()}[aria-label="${it.al}"]`;
+                            try { const m = [...document.querySelectorAll(sel)]; if (m.length > 1) sel += ` · index ${m.indexOf(it.el)} of ${m.length}`; } catch { /* ignore */ }
+                        } else sel = elPath(it.el);
+                        out.push(`#${n++} [${it.role}] ${it.name ? `"${truncate(it.name, 60)}"` : "(no accessible name)"}${it.state ? ` — ${it.state}` : ""}  →  ${sel}`);
+                        els.push(it.el);
+                    }
                 }
                 if (!els.length) return contains ? `No interactive controls with a name containing "${contains}".` : "No interactive controls found in scope.";
+                if (skipNav) note = "(navigation/sidebar controls skipped — pass includeNav:true for them)\n";
                 return { content: note + out.join("\n"), elements: els };
             }
         }),
