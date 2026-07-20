@@ -241,6 +241,19 @@ test("interactives finds the aria-labeled edit button and disambiguates duplicat
     assert.ok(!/Save/.test(out.content), "contains-filter excludes non-matches");
 });
 
+test("interactives auto-broadens past an empty phantom modal (never dead-ends the model)", () => {
+    // OpenWebUI mounts a persistent, currently-empty dialog container. It must NOT
+    // capture the scope and return "nothing" while real controls exist elsewhere —
+    // that empty result is what sent one run into a 40-step exec meltdown.
+    const { ml } = loadDomWorld(
+        '<div role="dialog"></div>' +                                   // phantom modal, no controls
+        '<main><button aria-label="Good Response">Like</button></main>'
+    );
+    const out = run(ml, "interactives", {}).content;
+    assert.match(out, /"Good Response"/, "broadened past the empty dialog to the real control");
+    assert.ok(!/modal dialog is open/.test(out), "did not scope into the empty phantom modal");
+});
+
 test("interactives scopes to an open modal dialog (the rating popup case)", () => {
     const { ml } = loadDomWorld(
         '<button aria-label="Like">Like</button>' +

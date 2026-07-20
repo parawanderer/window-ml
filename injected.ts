@@ -2017,16 +2017,6 @@ import { evalReadonly } from "./readonly-exec";
             },
             run: ({ scope = "viewport", contains = "", limit = 40, includeNav = false }: { scope?: string; contains?: string; limit?: number; includeNav?: boolean }): string | ToolResult => {
                 const layout = hasLayout();
-                // Scope like a screen reader's landmark navigation: into an open modal;
-                // else the <main> content region; else the whole document MINUS the
-                // persistent nav/sidebar chrome (which otherwise floods the list).
-                let root: Element | Document = document, note = "", skipNav = false;
-                const modal = [...document.querySelectorAll('[aria-modal="true"], dialog[open], [role="dialog"]')]
-                    .find(d => !styleHidden(d) && (!layout || d.getBoundingClientRect().height > 0));
-                const main = document.querySelector('main, [role="main"]');
-                if (modal) { root = modal; note = "A modal dialog is open — listing its controls:\n"; }
-                else if (main && !styleHidden(main)) { root = main; note = "Listing the main content region's controls:\n"; }
-                else skipNav = !includeNav;
                 const NAV_SEL = 'nav, aside, [role="navigation"], [role="complementary"], [role="banner"], #sidebar, [class*="sidebar" i]';
                 const inView = (el: Element): boolean => {
                     if (!layout || scope === "page") return true;
@@ -2034,18 +2024,33 @@ import { evalReadonly } from "./readonly-exec";
                     return r.width > 1 && r.height > 1 && r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth;
                 };
                 const want = String(contains).toLowerCase();
-                // Collect, then group by (role, name) to collapse duplicates that share an
-                // aria-label (e.g. one "Chat Menu"/"Edit" per row) into a single line.
                 type Item = { el: Element; role: string; name: string; state: string; al: string | null };
-                const items: Item[] = [];
-                for (const el of root.querySelectorAll(INTERACTIVE_SEL)) {
-                    if (styleHidden(el) || !inView(el)) continue;
-                    if (skipNav) { try { if (el.closest(NAV_SEL)) continue; } catch { /* invalid :i on old engines */ } }
-                    const name = accessibleName(el);
-                    if (want && !name.toLowerCase().includes(want)) continue;
-                    items.push({ el, role: roleOf(el), name, state: [ariaState(el), isFaded(el) ? "hidden until hover" : ""].filter(Boolean).join(", "), al: el.getAttribute("aria-label") });
-                    if (items.length >= 500) break;   // scan safety cap
-                }
+                const collect = (from: Element | Document, skipNav: boolean): Item[] => {
+                    const acc: Item[] = [];
+                    for (const el of from.querySelectorAll(INTERACTIVE_SEL)) {
+                        if (styleHidden(el) || !inView(el)) continue;
+                        if (skipNav) { try { if (el.closest(NAV_SEL)) continue; } catch { /* invalid :i on old engines */ } }
+                        const name = accessibleName(el);
+                        if (want && !name.toLowerCase().includes(want)) continue;
+                        acc.push({ el, role: roleOf(el), name, state: [ariaState(el), isFaded(el) ? "hidden until hover" : ""].filter(Boolean).join(", "), al: el.getAttribute("aria-label") });
+                        if (acc.length >= 500) break;   // scan safety cap
+                    }
+                    return acc;
+                };
+                // Scope like a screen reader's landmark navigation, but AUTO-BROADEN so an
+                // empty region never dead-ends the model: a genuinely-open modal (visible +
+                // actually holds controls, so a phantom modal-mount is skipped) → <main> →
+                // the page minus nav/sidebar → the whole page. First non-empty wins.
+                const visibleModal = [...document.querySelectorAll('[aria-modal="true"], dialog[open], [role="dialog"]')]
+                    .find(d => !styleHidden(d) && !isFaded(d) && (!layout || d.getBoundingClientRect().height > 0) && d.querySelector(INTERACTIVE_SEL));
+                const main = document.querySelector('main, [role="main"]');
+                const tries: { root: Element | Document; skipNav: boolean; note: string }[] = [];
+                if (visibleModal) tries.push({ root: visibleModal, skipNav: false, note: "A modal dialog is open — listing its controls:\n" });
+                if (main && !styleHidden(main)) tries.push({ root: main, skipNav: false, note: "Listing the main content region's controls:\n" });
+                tries.push({ root: document, skipNav: !includeNav, note: includeNav ? "" : "(navigation/sidebar controls skipped — pass includeNav:true for them)\n" });
+                tries.push({ root: document, skipNav: false, note: "" });   // last resort: everything
+                let items: Item[] = [], note = "";
+                for (const t of tries) { items = collect(t.root, t.skipNav); if (items.length) { note = t.note; break; } }
                 const groups = new Map<string, Item[]>();
                 for (const it of items) { const k = it.role + " " + it.name; let g = groups.get(k); if (!g) groups.set(k, g = []); g.push(it); }
                 const out: string[] = [], els: Element[] = [];
@@ -2068,8 +2073,7 @@ import { evalReadonly } from "./readonly-exec";
                         els.push(it.el);
                     }
                 }
-                if (!els.length) return contains ? `No interactive controls with a name containing "${contains}".` : "No interactive controls found in scope.";
-                if (skipNav) note = "(navigation/sidebar controls skipped — pass includeNav:true for them)\n";
+                if (!els.length) return contains ? `No interactive controls with a name containing "${contains}". Try again without \`contains\` to list everything.` : "No interactive controls found.";
                 return { content: note + out.join("\n"), elements: els };
             }
         }),
