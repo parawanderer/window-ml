@@ -488,6 +488,25 @@ test("agent tool step: descriptor renders its target block; the other stays raw 
     assert.match(inB.textContent, /"js"/, "In raw shows the JSON args");
 });
 
+test("agent tool steps carry an approval provenance badge (auto/user green, denied red)", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("apv", "run"));
+    await w.dispatch(agentStep("apv", 1, { tool: "exec", arguments: { js: "1" }, result: "1", approval: "readonly", render: { type: "code", text: "1", lang: "javascript", target: "in" } }));
+    await w.dispatch(agentStep("apv", 2, { tool: "click", arguments: { selector: "b" }, result: "clicked", approval: "user" }));
+    await w.dispatch(agentStep("apv", 3, { tool: "exec", arguments: { js: "2" }, result: "Denied by the user.", approval: "denied" }));
+    await w.dispatch(agentResult("apv", "done", 3));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+
+    const steps = [...w.shadow.querySelectorAll(".astep.tool")];
+    assert.equal(steps.length, 3, "three tool steps");
+    assert.match(steps[0].querySelector(".appr.yes").textContent, /auto-approved/);
+    assert.ok(steps[0].classList.contains("appr-yes"), "auto-approved step gets the green outline");
+    assert.match(steps[1].querySelector(".appr.yes").textContent, /approved/);
+    assert.match(steps[2].querySelector(".appr.no").textContent, /denied/);
+    assert.ok(steps[2].classList.contains("appr-no"), "denied step gets the red outline");
+});
+
 test("exec code is beautified for display when the descriptor sets format", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("bty", "run js"));

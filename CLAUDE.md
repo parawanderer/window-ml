@@ -158,6 +158,10 @@ options" block, and each tool step carries `argIssues` — a minimal page-side
 JSON-Schema check (`validateArgs`: required/type/enum/unknown-prop) of the args
 against the tool's `parameters`, rendered as a red strip (flat tool schemas
 don't warrant ajv; swap it in there if a custom tool ships a complex schema).
+An approval-gated call also carries `approval` (`"readonly"` = auto-approved via
+the read-only interpreter · `"user"` = you approved · `"denied"` = you rejected),
+shown as a green/red **provenance badge** + a matching left-border outline on the
+step. That badge is the slot a future interactive-approval control resolves into.
 
 **Tool render descriptors.** A tool step can carry a `render`: a **serializable
 `RenderDescriptor`** (`image`/`code`/`table`/`keyval`/`elements`) — data, never

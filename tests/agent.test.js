@@ -653,6 +653,7 @@ test("autoApproveReadonly: a read-only exec survey runs with NO approval prompt"
     assert.equal(approvals, 0, "read-only survey was auto-approved (gate never called)");
     const step = events.find(e => e.kind === "agent-step" && e.tool === "exec");
     assert.match(step.result, /\[20,30\]/, "the interpreter actually ran it");
+    assert.equal(step.approval, "readonly", "step tagged as auto-approved");
 });
 
 test("autoApproveReadonly: an out-of-dialect exec still goes through the approval gate", async () => {
@@ -660,11 +661,30 @@ test("autoApproveReadonly: an out-of-dialect exec still goes through the approva
         config: { model: "", ocrModel: "", autoApproveReadonly: true },
         onRuntimeMessage: scriptedModel([toolCall("exec", { js: "(function(){ return 42 })()" }, "c1"), reply("done")]),
     });
+    const win = world.context.window;
+    const events = [];
+    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    win.postMessage({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
     const exec = world.ml.domTools.find(t => t.name === "exec");
     let approvals = 0;
     await world.ml.agent("x", { tools: [exec], vision: false, approve: () => { approvals++; return true; } });
     assert.equal(approvals, 1, "the IIFE isn't in the read-only dialect → normal approval");
+    assert.equal(events.find(e => e.kind === "agent-step" && e.tool === "exec").approval, "user", "tagged approved-by-user");
+});
+
+test("a denied exec call is tagged 'denied' in its step", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: scriptedModel([toolCall("exec", { js: "document.title" }, "c1"), reply("ok, stopped")]),
+    });
+    const win = world.context.window;
+    const events = [];
+    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    win.postMessage({ __mlSidebar: "ready" });
+    await new Promise(r => setTimeout(r, 0));
+    const exec = world.ml.domTools.find(t => t.name === "exec");
+    await world.ml.agent("x", { tools: [exec], vision: false, approve: () => false });
+    assert.equal(events.find(e => e.kind === "agent-step" && e.tool === "exec").approval, "denied");
 });
 
 test("autoApproveReadonly OFF: read-only exec still prompts (the flag gates it)", async () => {

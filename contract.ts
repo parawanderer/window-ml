@@ -360,6 +360,10 @@ export interface DebugAgentStep extends DebugBase {
     thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: number;
     render?: RenderDescriptor;   // tool-supplied or auto-derived rich render (else the default In:/Out:)
     argIssues?: string[];        // JSON-Schema mismatches between the args and the tool's parameters
+    // How an approval-gated tool call was decided (undefined for tools that don't
+    // require approval). The sidebar renders it as a green/red provenance badge —
+    // and it's the slot a future interactive-approval control resolves into.
+    approval?: "readonly" | "user" | "denied";
 }
 export interface DebugAgentResult extends DebugBase { kind: "agent-result"; summary: string; steps: number; hitCap: boolean; }
 

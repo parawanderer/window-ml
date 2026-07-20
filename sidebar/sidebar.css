@@ -127,10 +127,17 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .astep-head { display: flex; align-items: center; gap: 6px; width: 100%; background: none; border: none; padding: 3px 0; cursor: pointer; text-align: left; color: inherit; }
 .astep-head:hover .tri { color: var(--fg); }
 .astep-head .dot { flex: 0 0 auto; }
+.astep-head .tt { flex: 0 0 auto; }   /* the badge/dot tooltip wrappers must not shrink (they'd clip under the preview) */
 .astep .tool-name { font-weight: 700; color: var(--accent); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; flex: 0 0 auto; }
 .astep .el-count { color: var(--fg-faint); font-size: 0.8em; border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; flex: 0 0 auto; }
-.astep-preview { color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.astep-preview { color: var(--fg-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .astep-body { padding: 2px 0 4px 4px; }
+/* approval provenance — reuse the step's left border as a green/red outline + a pill. */
+.astep.tool.appr-yes { border-left-color: var(--ok); }
+.astep.tool.appr-no { border-left-color: var(--err); }
+.appr { font-size: 0.72em; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; padding: 0 6px; border-radius: 999px; border: 1px solid; flex: 0 0 auto; line-height: 1.6; }
+.appr.yes { color: var(--ok); border-color: var(--ok); }
+.appr.no { color: var(--err); border-color: var(--err); }
 /* rendered ⇄ raw toggle for a descriptor step */
 .rr-toggle { display: inline-flex; gap: 0; margin-bottom: 4px; border: 1px solid var(--border); border-radius: 5px; overflow: hidden; }
 .rr-toggle button { background: var(--panel); color: var(--fg-dim); border: none; padding: 1px 8px; font-size: 0.82em; cursor: pointer; }

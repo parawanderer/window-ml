@@ -1077,13 +1077,14 @@ import { evalReadonly } from "./readonly-exec";
                 tools: toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval })),
                 maxSteps, think: (think === true || think === false) ? think : null, env, vision: vision ?? null, hints: hints || null,
             } });
-            const emit = (event: { step: number; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: Node[]; render?: RenderDescriptor; argIssues?: string[] }) => {
+            const emit = (event: { step: number; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: Node[]; render?: RenderDescriptor; argIssues?: string[]; approval?: "readonly" | "user" | "denied" }) => {
                 if (logDebug) logStep(event);
                 emitDebug({
                     kind: "agent-step", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: event.step },
                     step: event.step, thought: event.thought, tool: event.tool, arguments: event.arguments,
                     result: event.result, elements: event.elements ? event.elements.length : undefined, render: event.render,
                     argIssues: event.argIssues && event.argIssues.length ? event.argIssues : undefined,
+                    approval: event.approval,
                 });
                 if (!onStep) return;
                 try { onStep(event); } catch (e) { console.error("ml.agent onStep threw:", e); }
@@ -1147,6 +1148,7 @@ import { evalReadonly } from "./readonly-exec";
                     const tool = byName[call.name];
                     let args = (call.arguments || {}) as Record<string, unknown>;
                     let result, elements, image, imageLabel;
+                    let approval: "readonly" | "user" | "denied" | undefined;
                     if (!tool) {
                         result = `Error: no tool named "${call.name}".`;
                     } else if (tool.requiresApproval) {
@@ -1161,6 +1163,7 @@ import { evalReadonly } from "./readonly-exec";
                                 const ro = evalReadonly((args as { js: string }).js, document);
                                 ({ result, elements } = formatReadonlyExec(ro.value, ro.logs));
                                 handled = true;
+                                approval = "readonly";
                             } catch { /* outside the dialect / blocked → normal approval path */ }
                         }
                         if (!handled) {
@@ -1169,10 +1172,12 @@ import { evalReadonly } from "./readonly-exec";
                             // can hand the model a comment, an approval can edit the args.
                             const decision = normalizeApproval(await approve({ tool: call.name, arguments: args }), args);
                             if (!decision.approved) {
+                                approval = "denied";
                                 result = decision.feedback
                                     ? `Denied by the user: ${decision.feedback}\nDo not retry this exact call unchanged; address the feedback or try another approach.`
                                     : "Denied by the user. Do not retry this exact call; try another approach.";
                             } else {
+                                approval = "user";
                                 args = decision.arguments;   // possibly caller-edited before running
                                 ({ result, elements, image, imageLabel } = await runTool(tool, args));
                             }
@@ -1186,7 +1191,7 @@ import { evalReadonly } from "./readonly-exec";
                     transcript.push(entry);
                     const render = descriptorFor(tool, { result, elements, image, imageLabel }, args);
                     const argIssues = tool ? validateArgs(tool.parameters, args) : undefined;
-                    emit({ step, ...entry, render, argIssues });
+                    emit({ step, ...entry, render, argIssues, approval });
                     // An answer-capable tool designates the caller-facing result node(s).
                     if (tool && tool.capabilities && tool.capabilities.includes("answer") && elements && elements.length) {
                         answered.push(...elements);

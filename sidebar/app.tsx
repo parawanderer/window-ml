@@ -48,7 +48,7 @@ interface Turn {
     extend?: ExtendProfile | null;  // which profile resolved it — marks (default) vs (utility)
     reasoning?: string | null;  // separate thinking/reasoning text, if the model produced any
 }
-interface AgentStep { step: number; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: number; render?: RenderDescriptor; argIssues?: string[]; }
+interface AgentStep { step: number; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: number; render?: RenderDescriptor; argIssues?: string[]; approval?: "readonly" | "user" | "denied"; }
 interface Session {
     hash: string; model: string | null; tag: "session" | "saved";
     createdTs: number; lastTs: number; status: Status;
@@ -205,7 +205,7 @@ function onDebug(ev: MlDebugEvent): void {
     if (ev.kind === "agent-step") {
         const s = sessionMap.get(ev.session.hash);
         if (!s) return;
-        s.steps = [...(s.steps || []), { step: ev.step, thought: ev.thought, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: ev.elements, render: ev.render, argIssues: ev.argIssues }];
+        s.steps = [...(s.steps || []), { step: ev.step, thought: ev.thought, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: ev.elements, render: ev.render, argIssues: ev.argIssues, approval: ev.approval }];
         s.lastTs = ev.ts; rev.value++; return;
     }
     if (ev.kind === "agent-result") {
@@ -499,6 +499,7 @@ function agentToMarkdown(s: Session, addImage: AddImage): string {
     for (const st of s.steps || []) {
         if (st.tool == null && st.thought != null) { o.push(`## Step ${st.step} · thought`, "", st.thought, ""); continue; }
         o.push(`## Step ${st.step} · ${st.tool || "?"}`, "");
+        if (st.approval) o.push(`> _${st.approval === "readonly" ? "auto-approved (read-only)" : st.approval === "user" ? "approved by user" : "denied by user"}_`, "");
         if (st.thought) o.push(st.thought, "");
         if (st.arguments && Object.keys(st.arguments).length) {
             const js = st.tool === "exec" && typeof st.arguments.js === "string" ? st.arguments.js : null;
@@ -886,6 +887,20 @@ const toolFailed = (result?: string): boolean => !!result && /^(Error:|Denied)/.
 // One tool call: collapsed by default. Expanded, a descriptor renders by default
 // with a rendered⇄raw toggle (raw = the In:/Out: args+result); no descriptor →
 // In:/Out: directly.
+// How an approval-gated call was decided — a green/red provenance pill. This is
+// also the slot a future interactive-approval control will resolve into.
+const APPROVAL = {
+    readonly: { label: "auto-approved", tip: "Auto-approved by the read-only exec setting." },
+    user: { label: "approved", tip: "Approved by you." },
+    denied: { label: "denied", tip: "Denied by you." },
+} as const;
+const ApprovalBadge = ({ approval }: { approval: "readonly" | "user" | "denied" }) => (
+    <span class="tt">
+        <span class={`appr ${approval === "denied" ? "no" : "yes"}`}>{APPROVAL[approval].label}</span>
+        <span class="tt-pop left" role="tooltip">{APPROVAL[approval].tip}</span>
+    </span>
+);
+
 function ToolStep({ st }: { st: AgentStep }) {
     const [open, setOpen] = useState(false);
     const args = st.arguments && Object.keys(st.arguments).length ? st.arguments : null;
@@ -894,11 +909,12 @@ function ToolStep({ st }: { st: AgentStep }) {
     const outRender = st.render && st.render.target !== "in" ? st.render : undefined;
     const issues = st.argIssues?.length ? st.argIssues : null;
     return (
-        <div class="astep tool">
+        <div class={`astep tool${st.approval ? (st.approval === "denied" ? " appr-no" : " appr-yes") : ""}`}>
             <button class="astep-head" onClick={() => setOpen(v => !v)}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
                 <Dot status={toolFailed(st.result) ? "err" : "ok"} />
                 <span class="tool-name">{st.tool}</span>
+                {st.approval ? <ApprovalBadge approval={st.approval} /> : null}
                 {st.elements ? <span class="el-count" title="DOM nodes returned (reach them in the console via onStep)">{st.elements} el</span> : null}
                 {issues ? <span class="arg-warn" title={issues.join("; ")}>⚠ {issues.length}</span> : null}
                 {!open ? <span class="astep-preview">{collapsedPreview(st.result || "").text}</span> : null}
