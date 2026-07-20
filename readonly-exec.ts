@@ -97,6 +97,16 @@ class Parser {
     }
     parseStatement(): Node {
         const t = this.peek();
+        if (this.is("{")) return this.parseBlock();   // a bare block (e.g. an if body)
+        if (t.t === "name" && t.v === "if") {
+            this.next(); this.eat("(");
+            const test = this.parseExpression();
+            this.eat(")");
+            const cons = this.parseStatement();
+            let alt: Node | null = null;
+            if (this.peek().t === "name" && this.peek().v === "else") { this.next(); alt = this.parseStatement(); }
+            return { type: "If", test, cons, alt };
+        }
         if (t.t === "name" && (t.v === "const" || t.v === "let" || t.v === "var")) {
             this.next();
             const id = this.next();
@@ -201,11 +211,7 @@ class Parser {
         }
         this.eat(")");
         if (!this.is("{")) throw new NotInDialect("function body");
-        this.i++;
-        const body: Node[] = [];
-        while (!this.is("}")) body.push(this.parseStatement());
-        this.eat("}");
-        return { type: "Arrow", params, body: { type: "Block", body } };
+        return { type: "Arrow", params, body: this.parseBlock() };
     }
     parsePrimary(): Node {
         const t = this.peek();
@@ -262,13 +268,15 @@ class Parser {
             return e;
         }
     }
+    parseBlock(): Node {
+        this.eat("{");
+        const body: Node[] = [];
+        while (!this.is("}")) body.push(this.parseStatement());
+        this.eat("}");
+        return { type: "Block", body };
+    }
     parseArrowBody(): Node {
-        if (this.is("{")) {
-            this.i++; const body: Node[] = [];
-            while (!this.is("}")) body.push(this.parseStatement());
-            this.eat("}");
-            return { type: "Block", body };
-        }
+        if (this.is("{")) return this.parseBlock();
         return { type: "ExprBody", expr: this.parseExpression() };
     }
     parseObject(): Node {
@@ -379,6 +387,12 @@ class Evaluator {
             }
             case "ExprBody": return this.eval(node.expr, scope);
             case "ExprStmt": return this.eval(node.expr, scope);
+            // A taken branch may `return` — pass its RETURN wrapper up to the block/program loop.
+            case "If": {
+                if (this.eval(node.test, scope)) return this.eval(node.cons, scope);
+                if (node.alt) return this.eval(node.alt, scope);
+                return undefined;
+            }
             case "VarDecl": { scope[node.name] = this.eval(node.init, scope); return undefined; }
             case "Return": return { [RETURN]: this.eval(node.arg, scope) };
             case "Lit": return node.value;

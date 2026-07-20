@@ -115,6 +115,23 @@ test("spread in call args works (Math.max(...nums))", () => {
     assert.equal(run("Math.max(...[3, 7, 2])").value, 7);
 });
 
+test("if-statement guard clauses run in-dialect (a very common survey shape)", () => {
+    const doc = new JSDOM('<div id="message-1"><button aria-label="A">x</button></div>' +
+        '<div id="message-2"><button aria-label="B">y</button><button aria-label="C">z</button></div>').window.document;
+    const js = `
+        const messages = document.querySelectorAll('[id^="message-"]');
+        const lastMessage = messages[messages.length - 1];
+        if (lastMessage) {
+          const buttons = [...lastMessage.querySelectorAll('button')];
+          return buttons.map(b => b.getAttribute('aria-label'));
+        }
+        return "No messages found";`;
+    assert.deepEqual(evalReadonly(js, doc).value, ["B", "C"]);
+    // else branch + single-statement guard return
+    assert.equal(run("const x = 3; if (x > 5) { return 'big' } else { return 'small' }").value, "small");
+    assert.equal(run("const a = [1, 2]; if (a.length === 0) return 'empty'; return a.length").value, 2);
+});
+
 // --- out-of-dialect syntax must throw NotInDialect (fail closed, not crash) ---
 const OUT = {
     "for loop": `for (const x of []) { x }`,

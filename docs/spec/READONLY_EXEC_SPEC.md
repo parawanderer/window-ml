@@ -64,12 +64,13 @@ returned value.
 Also supported (added after models kept falling back on them): **spread** in
 array literals and call args (`[...querySelectorAll(...)]`, `Math.max(...xs)`) and
 **function expressions / IIFEs** (`(function(){ … })()`, parsed to the same
-mediated closure as an arrow).
+mediated closure as an arrow), and **`if`/`else` statements** (guard clauses —
+control flow over read-only ops, still no effectful operations).
 
 **Explicitly NOT in dialect** (→ fall back to approval): assignment of any kind
-(`=` outside a declaration, `+=`, `++`), `new`, `delete`, `for`/`while`/`if`,
-`try`, rest/destructuring, regex literals, `await`, labeled/`this`. Add cases as
-they come up — each addition is opt-in and only *grows* the auto-approve surface.
+(`=` outside a declaration, `+=`, `++`), `new`, `delete`, `for`/`while`, `try`,
+rest/destructuring, regex literals, `await`, labeled/`this`. Add cases as they
+come up — each addition is opt-in and only *grows* the auto-approve surface.
 
 ## Mediation (the boundary)
 
