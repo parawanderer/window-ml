@@ -258,6 +258,17 @@ test("interactives finds the aria-labeled edit button and disambiguates duplicat
     assert.ok(!/Save/.test(out.content), "contains-filter excludes non-matches");
 });
 
+test("interactives selectors are short + valid: unique id anchor, else nth-of-type (no Tailwind spam)", () => {
+    const { ml } = loadDomWorld('<main><div class="wrap"><span><button id="menu-btn"><svg></svg></button></span></div></main>');
+    assert.match(run(ml, "interactives", {}).content, /→ {2}#menu-btn$/m, "unique id → one-segment selector");
+
+    // No id/aria → tag:nth-of-type, NOT a giant ancestor class chain.
+    const { ml: ml2 } = loadDomWorld('<main><div class="a b c d e"><button>A</button><button>B</button></div></main>');
+    const out = run(ml2, "interactives", {}).content;
+    assert.match(out, /→ {2}(main > )?button:nth-of-type\(1\)/);
+    assert.ok(!/> div\.a\.b/.test(out), "no class-chain ancestor path");
+});
+
 test("interactives auto-broadens past an empty phantom modal (never dead-ends the model)", () => {
     // OpenWebUI mounts a persistent, currently-empty dialog container. It must NOT
     // capture the scope and return "nothing" while real controls exist elsewhere —

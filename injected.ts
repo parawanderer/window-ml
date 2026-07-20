@@ -315,6 +315,32 @@ import { evalReadonly } from "./readonly-exec";
         .replace(/[“”„‟″]/g, '"')               // curly / prime double quotes → "
         .replace(/\s+/g, " ").trim().toLowerCase();
 
+    // Shortest VALID, unique CSS selector for an element — for lists whose
+    // selectors are meant to be CLICKED (interactives). Prefers a unique id (own
+    // or ancestor); else `tag:nth-of-type(n)` walking UP only until unique. Avoids
+    // elPath's giant, un-escapable Tailwind-class chains (which aren't even valid
+    // selectors). Falls through to a best-effort path if nothing resolves.
+    const clickSelector = (target: Element): string => {
+        const esc = (s: string) => typeof CSS !== "undefined" && CSS.escape ? CSS.escape(s) : s;
+        const uniq = (sel: string): boolean => { try { const m = document.querySelectorAll(sel); return m.length === 1 && m[0] === target; } catch { return false; } };
+        const idUnique = (el: Element) => !!el.id && (() => { try { return document.querySelectorAll("#" + esc(el.id)).length === 1; } catch { return false; } })();
+        if (idUnique(target)) return "#" + esc(target.id);
+        const parts: string[] = [];
+        let el: Element | null = target, hops = 0;
+        while (el && el.nodeType === 1 && el !== document.documentElement && hops < 12) {
+            if (idUnique(el)) parts.unshift("#" + esc(el.id));
+            else {
+                let seg = el.tagName.toLowerCase();
+                const p = el.parentElement;
+                if (p) { const sibs = [...p.children].filter(c => c.tagName === el!.tagName); if (sibs.length > 1) seg += `:nth-of-type(${sibs.indexOf(el) + 1})`; }
+                parts.unshift(seg);
+            }
+            if (uniq(parts.join(" > "))) return parts.join(" > ");
+            el = el.parentElement; hops++;
+        }
+        return parts.join(" > ") || target.tagName.toLowerCase();
+    };
+
     // --- Accessibility surface (the "screen reader" view) --------------------
     // The agent is in a blind user's position — it needs a controls list by ROLE +
     // ACCESSIBLE NAME, exactly what NVDA's Elements List / VoiceOver's Rotor read.
@@ -2080,7 +2106,7 @@ import { evalReadonly } from "./readonly-exec";
                         if (it.al && !it.al.includes('"')) {
                             sel = `${it.el.tagName.toLowerCase()}[aria-label="${it.al}"]`;
                             try { const m = [...document.querySelectorAll(sel)]; if (m.length > 1) sel += ` · index ${m.indexOf(it.el)} of ${m.length}`; } catch { /* ignore */ }
-                        } else sel = elPath(it.el);
+                        } else sel = clickSelector(it.el);
                         out.push(`#${n++} [${it.role}] ${it.name ? `"${truncate(it.name, 60)}"` : "(no accessible name)"}${it.state ? ` — ${it.state}` : ""}  →  ${sel}`);
                         els.push(it.el);
                     }
