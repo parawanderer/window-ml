@@ -161,6 +161,10 @@ function mount(): void {
 
     chrome.storage.local.get({ [WIDTH_KEY]: DEFAULT_W }, (d: any) => setWidth(d[WIDTH_KEY] || DEFAULT_W));
     window.addEventListener("message", onWindowMessage);
+    // Tell injected.js a sidebar now exists so it starts BUFFERING debug events
+    // immediately — before the iframe app finishes loading and handshakes `ready`.
+    // Events emitted in that load window get replayed on ready instead of dropped.
+    window.postMessage({ __mlSidebar: "present" }, "*");
 }
 
 function unmount(): void {

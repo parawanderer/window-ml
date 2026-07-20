@@ -35,10 +35,21 @@ import { evalReadonly } from "./readonly-exec";
     // this main-world `ml` state directly, so we push a one-way event stream to it
     // via window.postMessage. Emission is gated on a handshake: the sidebar posts
     // `{ __mlSidebar: "ready" }` when it mounts, so there's zero cost when it's off.
-    let debugEnabled = false;
+    let debugEnabled = false;   // live emission (after the iframe app handshakes)
+    let sidebarPresent = false;  // a sidebar shell exists at all — gates ALL buffering, so a
+    // disabled sidebar stays truly zero-cost. The shell posts `"present"` the moment it mounts
+    // (only when config.sidebar is on), then `"ready"` once the iframe app is listening.
+    // Ring buffer: the app handshakes only after it finishes loading, so ml calls in that window
+    // were emitted into the void. We buffer from "present" and REPLAY on "ready" — the app is
+    // freshly listening and got no live events before its own ready, so each lands exactly once.
+    const DEBUG_RING_MAX = 200;
+    const debugRing: MlDebugEvent[] = [];
     window.addEventListener("message", (event) => {
-        if (event.source === window && event.data && event.data.__mlSidebar === "ready") {
-            debugEnabled = true;
+        const d = event.source === window && event.data && event.data.__mlSidebar;
+        if (d === "present") { sidebarPresent = true; }
+        else if (d === "ready") {
+            sidebarPresent = debugEnabled = true;
+            for (const ev of debugRing) { try { window.postMessage({ __mlDebug: ev }, "*"); } catch { /* non-cloneable — ignore */ } }
         }
     });
     /**
@@ -52,8 +63,11 @@ import { evalReadonly } from "./readonly-exec";
     // sessions — their result already shows as the agent's tool step.
     let inAgentRun = 0;
     const emitDebug = (event: MlDebugEvent) => {
+        if (!sidebarPresent) return;   // no sidebar → do nothing (disabled = zero cost)
+        if (inAgentRun && event.kind.startsWith("chat")) return;   // never buffer/emit orphan internal chats
+        debugRing.push(event);
+        if (debugRing.length > DEBUG_RING_MAX) debugRing.shift();
         if (!debugEnabled) return;
-        if (inAgentRun && event.kind.startsWith("chat")) return;
         try { window.postMessage({ __mlDebug: event }, "*"); } catch (e) { /* non-cloneable — ignore */ }
     };
     /**

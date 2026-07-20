@@ -133,6 +133,38 @@ test("debug stream is silent until the sidebar handshakes, then emits chat event
     assert.equal(done.save, true);
 });
 
+test("debug events emitted between sidebar 'present' and 'ready' are buffered then replayed", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: () => ({ data: "hi" }) });
+    const win = world.context.window;
+    const events = [];
+    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+
+    // Shell mounts (config.sidebar on) → injected starts BUFFERING, but the iframe
+    // app hasn't handshaked, so nothing is emitted live yet.
+    win.postMessage({ __mlSidebar: "present" });
+    await new Promise(r => setTimeout(r, 0));
+    await world.ml.chat("early", { save: true });
+    assert.equal(events.length, 0, "buffered, not emitted, until the app is listening");
+
+    // The iframe app finishes loading and handshakes → the buffered turn replays.
+    win.postMessage({ __mlSidebar: "ready" });
+    await new Promise(r => setTimeout(r, 0));
+    assert.ok(events.find(e => e.kind === "chat" && e.request.messages.at(-1).content === "early"), "early chat replayed on ready (not dropped)");
+    assert.ok(events.find(e => e.kind === "chat-result"), "its result replayed too");
+});
+
+test("with no sidebar present, nothing is buffered (disabled = zero cost)", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: () => ({ data: "hi" }) });
+    const win = world.context.window;
+    const events = [];
+    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+
+    await world.ml.chat("x");                          // no shell → not buffered
+    win.postMessage({ __mlSidebar: "ready" });          // even a late handshake finds an empty ring
+    await new Promise(r => setTimeout(r, 0));
+    assert.equal(events.length, 0, "events before a sidebar existed are never retained");
+});
+
 test("ml.chat forwards toolIds for server-side tools", async () => {
     const world = loadPageWorld({
         onRuntimeMessage: (msg) => {
