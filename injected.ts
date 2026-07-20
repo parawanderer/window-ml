@@ -303,6 +303,88 @@ import { evalReadonly } from "./readonly-exec";
         return parts.join(" > ");
     };
 
+    // --- Accessibility surface (the "screen reader" view) --------------------
+    // The agent is in a blind user's position — it needs a controls list by ROLE +
+    // ACCESSIBLE NAME, exactly what NVDA's Elements List / VoiceOver's Rotor read.
+    // These are pragmatic subsets of the WAI-ARIA accname/role algorithms — enough
+    // for real controls, not spec-complete.
+    const INTERACTIVE_SEL = 'a[href], button, input:not([type="hidden"]), select, textarea, summary, ' +
+        '[role="button"], [role="link"], [role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"], ' +
+        '[role="tab"], [role="checkbox"], [role="radio"], [role="switch"], [role="option"], [role="combobox"], ' +
+        '[role="slider"], [role="textbox"], [role="searchbox"], [contenteditable="true"], [onclick], ' +
+        '[tabindex]:not([tabindex="-1"])';
+
+    const roleOf = (el: Element): string => {
+        const explicit = el.getAttribute("role");
+        if (explicit) return explicit.trim().split(/\s+/)[0];
+        const tag = el.tagName.toLowerCase();
+        if (tag === "a") return el.hasAttribute("href") ? "link" : "generic";
+        if (tag === "select") return "combobox";
+        if (tag === "textarea") return "textbox";
+        if (tag === "summary") return "button";
+        if (tag === "input") {
+            const t = (el.getAttribute("type") || "text").toLowerCase();
+            return ({ checkbox: "checkbox", radio: "radio", button: "button", submit: "button", reset: "button", image: "button", range: "slider", search: "searchbox" } as Record<string, string>)[t] || "textbox";
+        }
+        if ((el as HTMLElement).isContentEditable) return "textbox";
+        return tag;
+    };
+
+    // Accessible name: aria-labelledby → aria-label → alt/label/placeholder/value →
+    // visible text → title → a nested img alt / svg <title> (icon buttons).
+    const accessibleName = (el: Element): string => {
+        const norm = (s: string | null | undefined) => (s || "").replace(/\s+/g, " ").trim();
+        const lb = el.getAttribute("aria-labelledby");
+        if (lb) {
+            const txt = lb.split(/\s+/).map(id => norm(document.getElementById(id)?.textContent)).filter(Boolean).join(" ");
+            if (txt) return txt;
+        }
+        const al = norm(el.getAttribute("aria-label"));
+        if (al) return al;
+        const tag = el.tagName.toLowerCase();
+        if (tag === "img" || tag === "area") { const alt = norm(el.getAttribute("alt")); if (alt) return alt; }
+        if (tag === "input" || tag === "textarea" || tag === "select") {
+            if (el.id && typeof CSS !== "undefined") { const lab = document.querySelector(`label[for="${CSS.escape(el.id)}"]`); if (lab && norm(lab.textContent)) return norm(lab.textContent); }
+            const wrap = el.closest("label"); if (wrap && norm(wrap.textContent)) return norm(wrap.textContent);
+            const ph = norm(el.getAttribute("placeholder")); if (ph) return ph;
+            const val = norm((el as HTMLInputElement).value); if (val) return val;
+        }
+        const own = norm(el.textContent);
+        if (own) return own;
+        const title = norm(el.getAttribute("title")); if (title) return title;
+        const img = el.querySelector("img[alt]"); if (img && norm(img.getAttribute("alt"))) return norm(img.getAttribute("alt"));
+        const svgT = el.querySelector("svg title"); if (svgT && norm(svgT.textContent)) return norm(svgT.textContent);
+        return "";
+    };
+
+    // ARIA state suffix a screen reader would announce (disabled/checked/…).
+    const ariaState = (el: Element): string => {
+        const s: string[] = [];
+        if ((el as HTMLInputElement).disabled || el.getAttribute("aria-disabled") === "true") s.push("disabled");
+        const checked = el.getAttribute("aria-checked") ?? ((el as HTMLInputElement).type === "checkbox" || (el as HTMLInputElement).type === "radio" ? String((el as HTMLInputElement).checked) : null);
+        if (checked === "true") s.push("checked"); else if (checked === "false") s.push("unchecked");
+        if (el.getAttribute("aria-pressed") === "true") s.push("pressed");
+        if (el.getAttribute("aria-expanded")) s.push(el.getAttribute("aria-expanded") === "true" ? "expanded" : "collapsed");
+        if (el.getAttribute("aria-selected") === "true") s.push("selected");
+        return s.join(", ");
+    };
+
+    // Visible enough to announce. Rect checks only when layout exists (jsdom has
+    // none), so the tool still enumerates under test.
+    const hasLayout = (): boolean => { try { return document.documentElement.getBoundingClientRect().height > 0; } catch { return false; } };
+    // "Not there" = display:none / hidden / aria-hidden. Deliberately NOT
+    // visibility:hidden or opacity:0 — those are how row actions (edit/delete) are
+    // revealed on hover, and they're still programmatically clickable, so they're
+    // exactly the controls the agent can't otherwise find. `faded` flags them.
+    const styleHidden = (el: Element): boolean => {
+        if (el.hasAttribute("hidden") || el.getAttribute("aria-hidden") === "true") return true;
+        try { if (getComputedStyle(el).display === "none") return true; } catch { /* jsdom */ }
+        return false;
+    };
+    const isFaded = (el: Element): boolean => {
+        try { const cs = getComputedStyle(el); return cs.visibility === "hidden" || +cs.opacity === 0; } catch { return false; }
+    };
+
     /**
      * Build a skeleton line for an element and its descendants to `depth`: tags, ids,
      * classes, data-* attributes, and each element's OWN text only — never the
@@ -522,7 +604,10 @@ import { evalReadonly } from "./readonly-exec";
         "",
         "General method:",
         "1. ORIENT — get your bearings (what page is this, what's on it).",
-        "2. LOCATE — find a known bit of visible text to anchor on.",
+        "2. LOCATE — anchor on a known bit of visible text (findByText). For a control",
+        "   with NO visible text (icon buttons, toolbar/row actions like edit/like/menu),",
+        "   use `interactives` — it lists the controls by accessible name, like a screen",
+        "   reader, so you pick from the list instead of guessing selectors in exec.",
         "3. NAVIGATE the DOM — inspect an element's structure DOWN into its children",
         "   and UP through its ancestors to reach the repeating container, or the",
         "   specific element, you need.",
@@ -1908,6 +1993,61 @@ import { evalReadonly } from "./readonly-exec";
                     if (els.length >= limit) break;
                 }
                 return els.length ? { content: out.join("\n"), elements: els } : `No elements contain "${text}".`;
+            }
+        }),
+        T({
+            name: "interactives",
+            description: "List the page's interactive controls the way a SCREEN READER does — each by " +
+                "ROLE + ACCESSIBLE NAME (+ state), with a ready-to-use selector. Use this to LOCATE a control " +
+                "you can't anchor by visible text (icon buttons, toolbar actions, the like/menu buttons): read " +
+                "the list, pick the row whose name matches what you want, then click its selector — don't guess " +
+                "aria-labels via exec. Includes hover-revealed row actions (edit/delete). When a selector matches " +
+                "several (e.g. one Edit per message), the row shows 'index N of M' — pass N as click's `index`. If " +
+                "a modal/dialog is open, only ITS controls are listed. Defaults to the current viewport; pass " +
+                "scope:'page' for the whole document.",
+            parameters: {
+                type: "object",
+                properties: {
+                    scope: { type: "string", enum: ["viewport", "page"], description: "Where to look (default 'viewport')." },
+                    contains: { type: "string", description: "Optional: only controls whose accessible name contains this text (case-insensitive)." },
+                    limit: { type: "integer", description: "Max controls to return (default 40)." }
+                }
+            },
+            run: ({ scope = "viewport", contains = "", limit = 40 }: { scope?: string; contains?: string; limit?: number }): string | ToolResult => {
+                const layout = hasLayout();
+                // A screen reader jumps into an open modal — do the same: scope to it.
+                let root: Element | Document = document, note = "";
+                const modal = [...document.querySelectorAll('[aria-modal="true"], dialog[open], [role="dialog"]')]
+                    .find(d => !styleHidden(d) && (!layout || d.getBoundingClientRect().height > 0));
+                if (modal) { root = modal; note = "A modal dialog is open — listing its controls:\n"; }
+                const inView = (el: Element): boolean => {
+                    if (!layout || scope === "page") return true;
+                    const r = el.getBoundingClientRect();
+                    return r.width > 1 && r.height > 1 && r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth;
+                };
+                const want = String(contains).toLowerCase();
+                const out: string[] = [], els: Element[] = [];
+                for (const el of root.querySelectorAll(INTERACTIVE_SEL)) {
+                    if (styleHidden(el) || !inView(el)) continue;
+                    const name = accessibleName(el);
+                    if (want && !name.toLowerCase().includes(want)) continue;
+                    const st = [ariaState(el), isFaded(el) ? "hidden until hover" : ""].filter(Boolean).join(", ");
+                    // Prefer a clean, valid aria-label selector; append the ordinal when it
+                    // matches several (e.g. one Edit per message) so click({selector,index}) hits
+                    // the right one. Fall back to a structural path otherwise (may not be a
+                    // valid selector on obfuscated class names — it's a description then).
+                    const al = el.getAttribute("aria-label");
+                    let sel: string;
+                    if (al && !al.includes('"')) {
+                        sel = `${el.tagName.toLowerCase()}[aria-label="${al}"]`;
+                        try { const m = [...document.querySelectorAll(sel)]; if (m.length > 1) sel += ` · index ${m.indexOf(el)} of ${m.length}`; } catch { /* ignore */ }
+                    } else sel = elPath(el);
+                    out.push(`#${els.length} [${roleOf(el)}] ${name ? `"${truncate(name, 60)}"` : "(no accessible name)"}${st ? ` — ${st}` : ""}  →  ${sel}`);
+                    els.push(el);
+                    if (els.length >= limit) break;
+                }
+                if (!els.length) return contains ? `No interactive controls with a name containing "${contains}".` : "No interactive controls found in scope.";
+                return { content: note + out.join("\n"), elements: els };
             }
         }),
         T({

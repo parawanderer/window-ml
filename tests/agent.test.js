@@ -186,6 +186,56 @@ test("findByText honours the limit and reports no matches", () => {
     assert.match(run(ml, "findByText", { text: "nope" }), /No elements contain "nope"/); // plain string
 });
 
+test("interactives lists controls by role + accessible name with a clickable selector", () => {
+    const { ml } = loadDomWorld(
+        '<nav><a href="/home">Home</a></nav>' +
+        '<div class="toolbar">' +
+          '<button aria-label="Good response"><svg></svg></button>' +
+          '<button aria-label="Bad response"><svg></svg></button>' +
+          '<button>Copy</button>' +
+        '</div>' +
+        '<input type="text" aria-label="Send a Message">'
+    );
+    const out = run(ml, "interactives", {});
+    assert.match(out.content, /\[button\] "Good response"\s+→\s+button\[aria-label="Good response"\]/);
+    assert.match(out.content, /\[link\] "Home"/);
+    assert.match(out.content, /\[textbox\] "Send a Message"/);
+    assert.match(out.content, /\[button\] "Copy"/);            // visible text is the accessible name
+    assert.ok(out.elements.length >= 5, "returns the real nodes too");
+});
+
+test("interactives finds the aria-labeled edit button and disambiguates duplicates by ordinal", () => {
+    // The real failure case: an "Edit" icon button per message, hover-revealed.
+    const { ml } = loadDomWorld(
+        '<div class="msg"><button aria-label="Edit" style="visibility:hidden"><svg></svg></button></div>' +
+        '<div class="msg"><button aria-label="Edit" style="visibility:hidden"><svg></svg></button></div>' +
+        '<button aria-label="Save" disabled>Save</button>'
+    );
+    const out = run(ml, "interactives", { contains: "edit" });
+    const lines = out.content.split("\n");
+    // visibility:hidden (hover-revealed) buttons must NOT be excluded — that's the fix.
+    // (The "hidden until hover" label needs real layout; jsdom can't report it.)
+    assert.equal(lines.length, 2, "both hover-hidden Edit buttons are listed");
+    assert.match(lines[0], /"Edit".*→ +button\[aria-label="Edit"\] · index 0 of 2/);
+    assert.match(lines[1], /· index 1 of 2/);
+    assert.ok(!/Save/.test(out.content), "contains-filter excludes non-matches");
+});
+
+test("interactives scopes to an open modal dialog (the rating popup case)", () => {
+    const { ml } = loadDomWorld(
+        '<button aria-label="Like">Like</button>' +
+        '<div role="dialog" aria-modal="true">' +
+          '<button aria-label="Rate 10">10</button>' +
+          '<button>Save</button>' +
+        '</div>'
+    );
+    const out = run(ml, "interactives", {});
+    assert.match(out.content, /A modal dialog is open/);
+    assert.match(out.content, /"Rate 10"/);
+    assert.match(out.content, /\[button\] "Save"/);
+    assert.ok(!/"Like"/.test(out.content), "controls outside the modal are not listed");
+});
+
 test("describeElement describes the first match (+ node) and handles bad input", () => {
     const { ml } = loadDomWorld('<div class="card" data-id="7"><span>hi</span></div>');
     const res = run(ml, "describeElement", { selector: ".card", depth: 0 });
