@@ -20,10 +20,25 @@
   .icon:hover { background: #e4e4e8; }
   .icon svg { width: 24px; height: 24px; stroke: #333; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   #log { margin-top: 24px; font: 13px ui-monospace, monospace; color: #0a7; min-height: 1.4em; }
+  .hint { color: #888; font-size: 13px; }
   @media (prefers-color-scheme: dark) {
     body { background: #1b1b1f; color: #eee; } p { color: #bbb; }
     .icon { background: #2a2a30; } .icon:hover { background: #34343c; } .icon svg { stroke: #ddd; }
   }
+
+  /* --- the silly "YOU ARE WIN !" screen (classic bootleg-game Engrish) --- */
+  #win { position: fixed; inset: 0; z-index: 9999; display: none; place-items: center; overflow: hidden;
+    background: repeating-linear-gradient(45deg, #001a4d, #001a4d 40px, #002766 40px, #002766 80px); }
+  #win.show { display: grid; }
+  #win .msg { text-align: center; animation: pop .5s cubic-bezier(.2,1.6,.4,1) both; }
+  #win h2 { margin: 0; letter-spacing: 3px; font: 900 clamp(44px, 13vw, 150px)/1 "Impact", system-ui, sans-serif;
+    color: #ffd400; text-shadow: 4px 4px 0 #d40000, 8px 8px 0 rgba(0,0,0,.45); animation: hue 3s linear infinite; }
+  #win p { color: #fff; font: 700 18px system-ui, sans-serif; margin: 18px 0 0; }
+  #win small { display: block; margin-top: 10px; color: #bfe; font: 400 13px system-ui; }
+  .confetti { position: absolute; top: -24px; font-size: 26px; animation: fall linear infinite; }
+  @keyframes pop { from { transform: scale(0) rotate(-12deg); } }
+  @keyframes hue { to { filter: hue-rotate(360deg); } }
+  @keyframes fall { to { transform: translateY(110vh) rotate(720deg); } }
 </style>
 </head>
 <body>
@@ -57,13 +72,49 @@
   </div>
 
   <div id="log">Nothing clicked yet.</div>
+  <p class="hint">🎮 Secret combo: <b>⭐ ⭐ ❤️ ❤️ ⚙️</b> — click them in that order to win.
+     (Or make the agent do it: <code>ml.agent("click these icons in order: star, star, heart, heart, gear", { tools: [ml.clickTool()] })</code>)</p>
+
+  <!-- The victory screen. Hidden until the secret combo is entered. -->
+  <div id="win" title="click anywhere to play again">
+    <div class="msg">
+      <h2>YOU&nbsp;ARE&nbsp;WIN&nbsp;!</h2>
+      <p>The secret combo is complete. Congratulation!</p>
+      <small>(click anywhere to play again)</small>
+    </div>
+  </div>
 
   <script>
-    // Deliberately no labels on the elements — the "answer" only appears here,
-    // so you can confirm the agent clicked the RIGHT shape.
+    // Deliberately no labels on the elements — the "answer" only appears in the
+    // log, so you can confirm the agent clicked the RIGHT shape.
+    const SECRET = ["star", "star", "heart", "heart", "gear"];
+    const history = [];
+
     function pick(name) {
-      document.getElementById("log").textContent = "Clicked: " + name + "  (at " + new Date().toLocaleTimeString() + ")";
+      document.getElementById("log").textContent =
+        "Clicked: " + name + "  (at " + new Date().toLocaleTimeString() + ")";
+      history.push(name);
+      if (history.length > SECRET.length) history.shift();
+      if (history.length === SECRET.length && history.every((n, i) => n === SECRET[i])) youAreWin();
     }
+
+    function youAreWin() {
+      const win = document.getElementById("win");
+      if (win.classList.contains("show")) return;
+      const glyphs = ["🎉", "⭐", "🏆", "✨", "🎊", "💥", "❤️"];
+      for (let i = 0; i < 44; i++) {
+        const c = document.createElement("span");
+        c.className = "confetti";
+        c.textContent = glyphs[i % glyphs.length];
+        c.style.left = Math.random() * 100 + "vw";
+        c.style.animationDuration = (2 + Math.random() * 3).toFixed(2) + "s";
+        c.style.animationDelay = (Math.random() * 2).toFixed(2) + "s";
+        win.appendChild(c);
+      }
+      win.classList.add("show");
+    }
+
+    document.getElementById("win").addEventListener("click", () => location.reload());
   </script>
 </body>
 </html>
