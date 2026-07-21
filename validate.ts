@@ -16,7 +16,11 @@ import type { JsonSchema, ExtendProfile } from "./contract";
  * @returns {string[]} Human-readable issue strings ([] = clean).
  */
 export const validateArgs = (schema: JsonSchema | undefined, args: Record<string, unknown>): string[] => {
-    if (!schema || schema.type !== "object" || !schema.properties) return [];
+    // No object schema, or an EMPTY `properties` (defineTool's default when a tool
+    // declares none) → treat as "schema not specified" and skip: we can't know an
+    // arg is "unknown" against a tool that never declared its shape, and blocking on
+    // that would reject legitimate calls to schema-less tools.
+    if (!schema || schema.type !== "object" || !schema.properties || !Object.keys(schema.properties).length) return [];
     const props = schema.properties as Record<string, { type?: string; enum?: unknown[] }>;
     const issues: string[] = [];
     for (const req of (schema.required || [])) if (!(req in args)) issues.push(`missing required "${req}"`);

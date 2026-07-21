@@ -492,15 +492,29 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool } from ".
                 // back real DOM nodes — routed to onStep/the transcript for hovering
                 // in devtools, never to the model.
                 const runTool = async (tool: MlTool, args: Record<string, unknown>) => {
+                    // Check the model's args against the tool's schema (the same
+                    // validateArgs that feeds the debug ⚠ strip) and surface it to the
+                    // MODEL, not just the sidebar. A MISSING REQUIRED arg means the tool
+                    // can't run usefully — e.g. click with no `selector` returns a
+                    // baffling "No element matches undefined" — so short-circuit with the
+                    // schema error, which says what to fix. Softer issues (an unknown/
+                    // extra property, a bad enum, a type mismatch) don't block; the tool
+                    // runs and we PREPEND the note, so a lenient validator never rejects a
+                    // legitimate call.
+                    const issues = validateArgs(tool.parameters, args);
+                    if (issues.some(s => s.startsWith("missing required"))) {
+                        return { result: `Invalid arguments for "${tool.name}": ${issues.join("; ")}. Call it again with the correct argument name(s).` };
+                    }
+                    const note = issues.length ? `⚠ Argument schema issue(s): ${issues.join("; ")}\n\n` : "";
                     try {
                         const raw = await tool.run(args);
                         // A tool may also hand back { image, imageLabel } — a screenshot
                         // for #3 inline vision, injected into the model's own history.
                         if (raw && typeof raw === "object" && typeof raw.content === "string") {
-                            return { result: raw.content, elements: raw.elements, image: raw.image, imageLabel: raw.imageLabel, render: raw.render };
+                            return { result: note + raw.content, elements: raw.elements, image: raw.image, imageLabel: raw.imageLabel, render: raw.render };
                         }
-                        return { result: raw };
-                    } catch (e) { return { result: `Error: ${errText(e)}` }; }
+                        return { result: note + String(raw) };
+                    } catch (e) { return { result: note + `Error: ${errText(e)}` }; }
                 };
 
                 const pendingImages = [];   // #3: screenshots captured this turn, injected below

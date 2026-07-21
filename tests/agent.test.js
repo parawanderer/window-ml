@@ -512,6 +512,32 @@ test("agent runs a tool, feeds the result back, and stops on a plain reply", asy
     assert.deepEqual(sent.at(-1), { role: "tool", tool_call_id: "c1", content: "pong1" });
 });
 
+test("a tool call missing a required arg short-circuits with the schema error (tool NOT run)", async () => {
+    let ran = 0;
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall("needsIt", { y: 1 }, "c1"), reply("ok")]) });
+    const t = world.ml.defineTool({ name: "needsIt", parameters: { type: "object", properties: { x: { type: "string" } }, required: ["x"] }, run: () => { ran++; return "ran"; } });
+    const res = await world.ml.agent("x", { tools: [t], maxSteps: 3 });
+    assert.equal(ran, 0, "the tool never ran with a missing required arg");
+    // The MODEL sees the actual diagnosis, not a downstream symptom.
+    assert.match(res.transcript[0].result, /^Invalid arguments for "needsIt": missing required "x"; unknown property "y"/);
+});
+
+test("a soft schema issue (unknown extra prop) prepends a note but still runs the tool", async () => {
+    let ran = 0;
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall("t", { x: "a", extra: 1 }, "c1"), reply("ok")]) });
+    const t = world.ml.defineTool({ name: "t", parameters: { type: "object", properties: { x: { type: "string" } }, required: ["x"] }, run: () => { ran++; return "ran"; } });
+    const res = await world.ml.agent("x", { tools: [t], maxSteps: 3 });
+    assert.equal(ran, 1, "the tool still ran (a lenient validator must not block a legit call)");
+    assert.match(res.transcript[0].result, /^⚠ Argument schema issue\(s\): unknown property "extra"\n\nran$/);
+});
+
+test("a schema-less tool (no declared properties) is never flagged for its args", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall("bare", { anything: 1, more: "x" }, "c1"), reply("ok")]) });
+    const t = world.ml.defineTool({ name: "bare", run: () => "ran" });   // no parameters → default empty properties
+    const res = await world.ml.agent("x", { tools: [t], maxSteps: 3 });
+    assert.equal(res.transcript[0].result, "ran", "no false 'unknown property' note for an undeclared schema");
+});
+
 test("agent defaults to ml.domTools and lets you override the system prompt", async () => {
     const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("done")]) });
     await world.ml.agent("task", { system: "CUSTOM STRATEGY" });
