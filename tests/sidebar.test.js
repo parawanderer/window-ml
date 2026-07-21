@@ -32,6 +32,18 @@ const agentStart = (hash, task, model = "m", maxSteps = 10, config = null) => ({
 const agentStep = (hash, step, fields) => ({ kind: "agent-step", id: hash, ts: Date.now() + step, save: false, session: { hash, turn: step }, step, ...fields });
 const agentResult = (hash, summary, steps, hitCap = false) => ({ kind: "agent-result", id: hash, ts: Date.now() + 100, save: false, session: { hash, turn: steps }, summary, steps, hitCap });
 
+// Open the settings panel and optionally switch to a category tab (Connection /
+// Models / Appearance / Advanced). Controls are grouped under tabs, so a test that
+// touches e.g. the model fields must select the "Models" tab first.
+const openSettings = async (w, tab) => {
+    w.shadow.querySelector('[title="Settings"]').click();
+    await w.tick();
+    if (tab) {
+        [...w.shadow.querySelectorAll(".set-tab")].find(b => b.textContent.trim() === tab).click();
+        await w.tick();
+    }
+};
+
 test("sidebar mounts and shows the empty state", async () => {
     const w = await loadSidebarWorld();
     assert.ok(w.shadow, "shadow root mounted");
@@ -104,8 +116,7 @@ test("status dot goes pending → ok, and a save:true call is tagged saved", asy
 test("settings: the font-size stepper scales --fs and persists it", async () => {
     const w = await loadSidebarWorld();
     const html = w.window.document.documentElement;
-    w.shadow.querySelector('[title="Settings"]').click();                // open settings
-    await w.tick();
+    await openSettings(w, "Appearance");                                  // font size lives under Appearance
     assert.ok(w.shadow.querySelector(".settings"), "settings panel opens");
 
     w.shadow.querySelectorAll(".stepper button")[1].click();   // the "+" button
@@ -123,11 +134,13 @@ test("settings: a saved font scale is applied on mount", async () => {
 
 test("settings view: loads config, populates the model datalist, gates + persists utility fields", async () => {
     const w = await loadSidebarWorld({ sync: { chatUrl: "http://host/api" }, models: ["qwen3:14b", "qwen3.5:0.8b"] });
-    w.shadow.querySelector('[title="Settings"]').click();
-    await w.tick();
+    await openSettings(w, "Connection");
 
     assert.equal(w.shadow.querySelector('input[type="text"]').value, "http://host/api", "chatUrl loaded from storage.sync");
     assert.equal(w.shadow.querySelectorAll("#ml-models option").length, 2, "model datalist populated from LIST_MODELS");
+
+    [...w.shadow.querySelectorAll(".set-tab")].find(b => b.textContent.trim() === "Models").click();   // utility fields live under Models
+    await w.tick();
     assert.ok(w.shadow.querySelector('input[type="number"]').disabled, "utility context disabled until a utility model is set");
 
     const util = w.shadow.querySelector('input[placeholder="blank = use main model"]');
@@ -141,8 +154,7 @@ test("settings view: loads config, populates the model datalist, gates + persist
 
 test("settings: Test models runs a per-model liveness check (set models pass, unset stays '—')", async () => {
     const w = await loadSidebarWorld({ sync: { model: "qwen3:14b", utilityModel: "gemma:2b" }, models: ["qwen3:14b"] });
-    w.shadow.querySelector('[title="Settings"]').click();
-    await w.tick();
+    await openSettings(w, "Models");
     assert.equal(w.shadow.querySelectorAll(".test-row").length, 3, "one row per model role");
 
     w.shadow.querySelector(".test-btn").click();
@@ -153,8 +165,7 @@ test("settings: Test models runs a per-model liveness check (set models pass, un
 
 test("settings: a failing model test shows the error", async () => {
     const w = await loadSidebarWorld({ sync: { model: "badmodel" }, fetchLlm: () => ({ error: "model not found" }) });
-    w.shadow.querySelector('[title="Settings"]').click();
-    await w.tick();
+    await openSettings(w, "Models");
     w.shadow.querySelector(".test-btn").click();
     await w.tick();
     assert.ok(w.shadow.querySelector(".test-ic.err"), "error icon shown");
@@ -163,8 +174,7 @@ test("settings: a failing model test shows the error", async () => {
 
 test("settings view live-syncs a config change made elsewhere (e.g. the popup)", async () => {
     const w = await loadSidebarWorld();
-    w.shadow.querySelector('[title="Settings"]').click();
-    await w.tick();
+    await openSettings(w, "Models");
     w.window.chrome.storage.sync.set({ model: "llama3:70b" });   // popup edit → storage.onChanged
     await w.tick();
     assert.equal(w.shadow.querySelector('input[placeholder="e.g. qwen3:14b"]').value, "llama3:70b");
@@ -563,8 +573,7 @@ test("code display prefs: wrap⇄scroll + line-number toggles flip root attrs an
     assert.equal(html.getAttribute("data-codewrap"), "on", "wrap on by default");
     assert.equal(html.getAttribute("data-codelines"), "off", "gutter off by default");
 
-    w.shadow.querySelector('[title="Settings"]').click();
-    await w.tick();
+    await openSettings(w, "Appearance");
 
     const sel = [...w.shadow.querySelectorAll(".settings select")].find(s => [...s.options].some(o => o.value === "scroll"));
     sel.value = "scroll";

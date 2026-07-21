@@ -64,7 +64,18 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .vram-empty { color: var(--fg-faint); font-size: 0.83em; }
 
 /* settings view (full form, rendered in the scrolling .view area) */
-.settings { display: flex; flex-direction: column; gap: 6px; padding: 12px }
+.settings { display: flex; flex-direction: column; padding: 0; }
+/* Category tabs span the full panel width (no side padding); the content below
+   the nav carries the padding instead (.set-body). */
+.set-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); }
+.set-body { display: flex; flex-direction: column; gap: 6px; padding: 12px; }
+.set-tab {
+    flex: 1; padding: 7px 4px; background: none; border: none;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+    color: var(--fg-dim); font: inherit; font-size: 0.92em; cursor: pointer;
+}
+.set-tab:hover { color: var(--fg); }
+.set-tab.on { color: var(--fg); border-bottom-color: var(--accent); font-weight: 600; }
 .set-group { color: var(--fg-dim); font-size: 0.92em; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; margin: 10px 2px 2px; }
 .set-group:first-of-type { margin-top: 2px; }
 .set-field { display: flex; flex-direction: column; gap: 3px; }
