@@ -30,6 +30,8 @@ import { evalReadonly } from "./readonly-exec";
 import { INTERACTIVE_SEL, roleOf, accessibleName, ariaState, hasLayout, styleHidden, isFaded } from "./a11y";
 import { truncate, errText, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, selectorError } from "./dom";
 import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE } from "./prompts";
+import { pageContext, settle, cropDataUrl, MIN_SHOT_PX } from "./util";
+import { suspiciousArgsWarning, suspiciousChars } from "./security";
 
 (function() {
 
@@ -259,135 +261,6 @@ import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE } from "./promp
     // context. Every helper truncates hard and never returns outerHTML.
 
 
-    /**
-     * Build a compact "where and when am I" snapshot: URL, title, page language, and the
-     * current date/time + locale/timezone. ml.agent injects this by default (so the
-     * model is oriented — and knows what "today" is, and that a site like amazon.nl
-     * implies Dutch), and the pageInfo tool exposes it on demand. Guarded so it
-     * degrades gracefully when a global is missing (e.g. in tests).
-     *
-     * @returns {string} A formatted string with page context info.
-     */
-    const pageContext = (): string => {
-        const parts = [];
-        try { if (typeof location !== "undefined" && location.href) parts.push(`URL: ${location.href}`); } catch {}
-        try { if (typeof document !== "undefined" && document.title) parts.push(`Title: ${truncate(document.title, 80)}`); } catch {}
-        try {
-            const lang = (typeof document !== "undefined" && document.documentElement && document.documentElement.getAttribute)
-                ? document.documentElement.getAttribute("lang") : null;
-            if (lang) parts.push(`Page language: ${lang}`);
-        } catch {}
-        let locale, tz;
-        try { const o = Intl.DateTimeFormat().resolvedOptions(); locale = o.locale; tz = o.timeZone; } catch {}
-        const now = new Date();
-        parts.push(`Now: ${now.toLocaleString(locale)}${tz ? ` (${tz})` : ""} — ISO ${now.toISOString()}`);
-        if (locale) parts.push(`Locale: ${locale}`);
-        return parts.join("\n");
-    };
-
-    /**
-     * Await a short beat so a click/submit's navigation or DOM update can begin
-     * before we read the result. Guarded: where setTimeout is absent (the jsdom
-     * test sandbox) it resolves immediately rather than throwing.
-     *
-     * @param {number} ms Milliseconds to wait (passed to setTimeout).
-     * @returns {Promise<void>} Resolves after the delay (or immediately in test sandbox).
-     */
-    const settle = (ms: number): Promise<void> => new Promise(r => (typeof setTimeout === "function" ? setTimeout(r, ms) : r()));
-
-    // Smallest CSS-px width/height an element may have and still be worth
-    // screenshotting. Below this (a 1px spacer, a collapsed box) the crop is a
-    // useless sliver; ml.screenshot rejects instead of sending it (roadmap #10).
-    // Kept tiny so genuinely small-but-real targets (icons, badges) still pass.
-    const MIN_SHOT_PX = 4;
-
-    /**
-     * Crop a full-viewport PNG data URL down to an element's rect. Runs page-side
-     * because a data: image doesn't taint the canvas (the cross-origin-taint
-     * gotcha only bites remote images), so pixel readback works. rect is in CSS
-     * px; the captured PNG is at devicePixelRatio, so scale by dpr and clamp to
-     * the image bounds (an element taller than the viewport gets clipped).
-     *
-     * @param {string} dataUrl The full-viewport PNG data URL.
-     * @param {DOMRect} rect The element's bounding rectangle.
-     * @param {number} dpr The device pixel ratio.
-     * @returns {Promise<string>} The cropped image as a data URL.
-     */
-    const cropDataUrl = (dataUrl: string, rect: DOMRect, dpr: number): Promise<string> => new Promise((resolve, reject) => {
-        const img = new Image();
-        img.onload = () => {
-            const sx = Math.max(0, Math.round(rect.left * dpr));
-            const sy = Math.max(0, Math.round(rect.top * dpr));
-            const sw = Math.max(1, Math.min(Math.round(rect.width * dpr), img.naturalWidth - sx));
-            const sh = Math.max(1, Math.min(Math.round(rect.height * dpr), img.naturalHeight - sy));
-            const canvas = document.createElement("canvas");
-            canvas.width = sw;
-            canvas.height = sh;
-            canvas.getContext("2d")!.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
-            resolve(canvas.toDataURL("image/png"));
-        };
-        img.onerror = () => reject(new Error("failed to load the captured screenshot"));
-        img.src = dataUrl;
-    });
-
-    // Default system prompt for ml.agent. Deliberately generic — it describes the
-    // agent's situation and the discipline (iterate in small steps, verify before
-    // acting, one general rule over many actions), NOT any specific task or site.
-    // Pass your own `system` for task-specific strategy (see examples/).
-
-    // Invisible / bidi / format-control characters that never legitimately appear
-    // in code but are the vector for Trojan-Source and homoglyph prompt-injection
-    // attacks. Model-written scripts get scanned before you approve them.
-    const SUSPICIOUS_CHARS: { [key: number]: string } = {
-        0x202A: "LEFT-TO-RIGHT EMBEDDING", 0x202B: "RIGHT-TO-LEFT EMBEDDING",
-        0x202C: "POP DIRECTIONAL FORMATTING", 0x202D: "LEFT-TO-RIGHT OVERRIDE",
-        0x202E: "RIGHT-TO-LEFT OVERRIDE", 0x2066: "LEFT-TO-RIGHT ISOLATE",
-        0x2067: "RIGHT-TO-LEFT ISOLATE", 0x2068: "FIRST STRONG ISOLATE",
-        0x2069: "POP DIRECTIONAL ISOLATE", 0x200E: "LEFT-TO-RIGHT MARK",
-        0x200F: "RIGHT-TO-LEFT MARK", 0x061C: "ARABIC LETTER MARK",
-        0x200B: "ZERO WIDTH SPACE", 0x200C: "ZERO WIDTH NON-JOINER",
-        0x200D: "ZERO WIDTH JOINER", 0x2060: "WORD JOINER",
-        0xFEFF: "ZERO WIDTH NO-BREAK SPACE (BOM)", 0x00AD: "SOFT HYPHEN",
-        0x180E: "MONGOLIAN VOWEL SEPARATOR"
-    };
-    /**
-     * Scan a string for suspicious/bidi/format-control characters.
-     * Returns [{ index, code, name }]. Also flags other C0/C1 control chars
-     * (except tab/newline/CR, which are normal).
-     *
-     * @param {string} str The string to scan.
-     * @returns {Array<{index: number, code: string, name: string}>} Array of findings.
-     */
-    const suspiciousChars = (str: string): { index: number; code: string; name: string }[] => {
-        const out: { index: number; code: string; name: string }[] = [];
-        const s = String(str == null ? "" : str);
-        for (let i = 0; i < s.length; i++) {
-            const code = s.charCodeAt(i);
-            let name = SUSPICIOUS_CHARS[code];
-            if (!name && (code <= 0x08 || code === 0x0B || code === 0x0C ||
-                (code >= 0x0E && code <= 0x1F) || (code >= 0x7F && code <= 0x9F))) {
-                name = "CONTROL CHARACTER";
-            }
-            if (name) out.push({ index: i, code: "U+" + code.toString(16).toUpperCase().padStart(4, "0"), name });
-        }
-        return out;
-    };
-    /**
-     * Generate a warning banner for the approval prompt when any string arg hides suspicious chars.
-     *
-     * @param {Object} args The arguments object to check.
-     * @returns {string} Warning banner if suspicious chars found, empty string otherwise.
-     */
-    const suspiciousArgsWarning = (args: unknown): string => {
-        const findings: { index: number; code: string; name: string }[] = [];
-        for (const v of Object.values(args || {})) {
-            if (typeof v === "string") findings.push(...suspiciousChars(v));
-        }
-        if (!findings.length) return "";
-        const names = [...new Set(findings.map(f => f.name))].slice(0, 4).join(", ");
-        return `⚠ WARNING: ${findings.length} hidden/suspicious character(s) — ${names} ` +
-            `— possible prompt-injection. Inspect carefully before allowing.\n\n`;
-    };
 
     /**
      * Render a tool's arguments for an approval prompt.
