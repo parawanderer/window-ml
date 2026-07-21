@@ -2216,6 +2216,9 @@ import { evalReadonly } from "./readonly-exec";
                 "(e.g. `[...document.querySelectorAll('.card')].map(c => c.innerText.slice(0,80))`), " +
                 "or both. Async is supported: you may `await` inside and `return` a value " +
                 "(e.g. `const r = await fetch('/api').then(x => x.json()); return r.length`). " +
+                "The returned value AND the console output are EACH truncated to ~500 chars, so " +
+                "don't dump whole elements/pages — return a compact, filtered summary (counts, a " +
+                "handful of fields, the few items you actually need), not a full outerHTML dump. " +
                 "Use only when the other tools can't answer; prefer them.",
             requiresApproval: true,     // arbitrary eval — the agent gate confirms each call
             // Debug view: show the JS that ran as a highlighted code block (raw
@@ -2223,7 +2226,7 @@ import { evalReadonly } from "./readonly-exec";
             render: (_input, args) => ({ type: "code", text: String((args as { js?: string }).js || ""), lang: "javascript", target: "in", format: true }),
             parameters: {
                 type: "object",
-                properties: { js: { type: "string", description: "JavaScript to run. console.log to print observations and/or end with an expression to return its value." } },
+                properties: { js: { type: "string", description: "JavaScript to run. console.log to print observations and/or end with an expression to return its value. Output is truncated to ~500 chars — return a filtered summary, not a full dump." } },
                 required: ["js"]
             },
             run: async ({ js }: { js: string }): Promise<string | ToolResult> => {
