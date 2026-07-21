@@ -807,7 +807,7 @@ test("agent-start carries the resolved config (system prompt, tools, maxSteps)",
     assert.ok(start.config, "config emitted");
     assert.match(start.config.system, /automation agent/, "the resolved system prompt");
     assert.equal(start.config.customSystem, false);
-    assert.deepEqual(start.config.tools, [{ name: "ping", requiresApproval: false }]);
+    assert.deepEqual(start.config.tools, [{ name: "ping", requiresApproval: false, vision: false }]);
     assert.equal(start.config.maxSteps, 10);
 });
 

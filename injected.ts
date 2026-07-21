@@ -433,7 +433,7 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool } from ".
             const runHash = shortHash();
             emitDebug({ kind: "agent", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, task, model: model || null, maxSteps, config: {
                 system: systemPrompt, customSystem: !!system,
-                tools: toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval })),
+                tools: toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval, vision: !!(t.capabilities && t.capabilities.includes("vision")) })),
                 maxSteps, think: (think === true || think === false) ? think : null, env, vision: vision ?? null, hints: hints || null,
             } });
             const emit = (event: { step: number; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: Node[]; render?: RenderDescriptor; argIssues?: string[]; approval?: "readonly" | "user" | "denied" }) => {

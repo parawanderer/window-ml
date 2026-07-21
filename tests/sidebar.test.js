@@ -172,6 +172,33 @@ test("settings: a failing model test shows the error", async () => {
     assert.match(w.shadow.querySelector(".test-err").textContent, /model not found/);
 });
 
+test("settings: a vision-required role (OCR) fails RED when the model lacks vision capability", async () => {
+    const w = await loadSidebarWorld({
+        sync: { ocrModel: "text-only" },
+        caps: (m) => m === "text-only" ? ["completion"] : null,   // no "vision"
+        fetchLlm: () => ({ data: "OK" }),   // functional test would pass — but the cap gate stops it first
+    });
+    await openSettings(w, "Models");
+    w.shadow.querySelector(".test-btn").click();
+    await w.tick(); await w.tick();
+    assert.ok(w.shadow.querySelector(".test-ic.err"), "OCR flagged failed");
+    assert.match(w.shadow.querySelector(".test-err").textContent, /doesn't report vision capability/);
+});
+
+test("settings: unknown caps (cloud/non-Ollama) do NOT red a vision role — fall through to the functional test", async () => {
+    const w = await loadSidebarWorld({
+        sync: { ocrModel: "cloud-vlm" },
+        caps: () => null,   // unknown → must not block
+        fetchLlm: (p) => ({ data: p.messages[0].content.match(/[A-Z0-9]{4}/) ? "n/a" : "OK" }),
+    });
+    await openSettings(w, "Models");
+    w.shadow.querySelector(".test-btn").click();
+    await w.tick(); await w.tick();
+    // It got PAST the cap gate to the OCR image test (which fails on our stub reply),
+    // proving unknown caps didn't short-circuit to a capability error.
+    assert.doesNotMatch(w.shadow.querySelector(".test-err")?.textContent || "", /vision capability/);
+});
+
 test("settings view live-syncs a config change made elsewhere (e.g. the popup)", async () => {
     const w = await loadSidebarWorld();
     await openSettings(w, "Models");
@@ -727,6 +754,35 @@ test("agent options block renders the config + reveals the system prompt", async
     w.shadow.querySelector(".sys-block .raw-btn").click();   // reveal the system prompt
     await w.tick();
     assert.match(w.shadow.querySelector(".sys-block .code").textContent, /automation agent/);
+});
+
+test("agent options: warns when no vision model resolved (look/locate unavailable)", async () => {
+    const cfg = {
+        system: "s", customSystem: false,
+        tools: [{ name: "findByText", requiresApproval: false }],   // no vision tool
+        maxSteps: 10, think: null, env: true, vision: null, hints: null,
+    };
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("nv", "task", "text-model", 10, cfg));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    assert.match(w.shadow.querySelector(".block-head .arg-warn").textContent, /no vision/);
+    w.shadow.querySelector(".block .block-head").click();   // expand
+    await w.tick();
+    assert.match(w.shadow.querySelector(".arg-issues").textContent, /visual tools unavailable/);
+});
+
+test("agent options: no vision warning when a vision tool IS wired", async () => {
+    const cfg = {
+        system: "s", customSystem: false,
+        tools: [{ name: "look", requiresApproval: false, vision: true }],
+        maxSteps: 10, think: null, env: true, vision: null, hints: null,
+    };
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("hv", "task", "qwen2.5vl", 10, cfg));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    assert.equal(w.shadow.querySelector(".block-head .arg-warn"), null, "no warning when look is present");
 });
 
 test("agent tool step flags args that don't match the schema", async () => {

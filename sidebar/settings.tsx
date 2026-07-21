@@ -44,13 +44,28 @@ const Lbl = ({ children, tip }: { children: string; tip?: string }) =>
 // --- model liveness test (per model) ---
 type TestState = { status: "loading" | "ok" | "err"; error?: string };
 const modelTests = signal<Record<string, TestState | undefined>>({});
-const MODEL_ROLES: { key: keyof MlConfig; label: string }[] = [
+const MODEL_ROLES: { key: keyof MlConfig; label: string; vision?: boolean }[] = [
     { key: "model", label: "Model" },
-    { key: "ocrModel", label: "OCR" },
+    { key: "ocrModel", label: "OCR", vision: true },   // must be vision-capable
     { key: "utilityModel", label: "Utility" },
 ];
 
 const setTest = (key: keyof MlConfig, state: TestState) => { modelTests.value = { ...modelTests.value, [key]: state }; };
+
+// Probe a model's Ollama capabilities. Returns an error string if it POSITIVELY
+// lacks vision; null otherwise — including unknown/null (cloud, non-Ollama, or an
+// old Ollama), which we must NOT flag red (unknown ≠ "no").
+function visionGate(name: string): Promise<string | null> {
+    return new Promise(resolve => {
+        chrome.runtime.sendMessage({ type: "MODEL_CAPS", payload: { model: name } }, (resp: any) => {
+            if (chrome.runtime.lastError || !resp || resp.error) return resolve(null);
+            const caps = resp.data;
+            resolve(Array.isArray(caps) && !caps.includes("vision")
+                ? `"${name}" doesn't report vision capability — this role needs a vision model.`
+                : null);
+        });
+    });
+}
 
 // A generated PNG with a known short code — for genuinely testing OCR (a text
 // ping would pass on ANY model without exercising vision). null if no canvas.
@@ -77,26 +92,35 @@ function testOne(key: keyof MlConfig): void {
     if (!name) return;
     setTest(key, { status: "loading" });
 
-    // The utility model is tested through its own profile (extend:"utility") so
-    // the check exercises its real num_ctx + Force-CPU config, not just the name.
-    const ping = { role: "user", content: "Reply with exactly: OK" };
-    const img = key === "ocrModel" ? ocrTestImage() : null;
-    const payload = img
-        ? { messages: [{ role: "user", content: "Transcribe the characters in this image. Output only the characters.", images: [img.dataUrl] }], model: name, ocr: true }
-        : key === "utilityModel"
-            ? { messages: [ping], extend: "utility" }
-            : { messages: [ping], model: name };
+    // Vision-required roles (OCR, later grounding): first check the model actually
+    // reports vision — a clear "not a vision model" beats a confusing functional
+    // failure downstream. Unknown caps (cloud/non-Ollama) pass through to the test.
+    const role = MODEL_ROLES.find(r => r.key === key);
+    const gate = role?.vision ? visionGate(name) : Promise.resolve(null);
+    gate.then(capErr => {
+        if (capErr) return setTest(key, { status: "err", error: capErr });
 
-    chrome.runtime.sendMessage({ type: "FETCH_LLM", payload }, (resp: any) => {
-        const err = chrome.runtime.lastError?.message || (resp && resp.error);
-        if (err) return setTest(key, { status: "err", error: String(err) });
-        if (img) {
-            const got = String(resp.data || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-            return setTest(key, got.includes(img.token)
-                ? { status: "ok" }
-                : { status: "err", error: `read "${truncate(String(resp.data || ""), 40)}" — expected ${img.token}` });
-        }
-        setTest(key, { status: "ok" });
+        // The utility model is tested through its own profile (extend:"utility") so
+        // the check exercises its real num_ctx + Force-CPU config, not just the name.
+        const ping = { role: "user", content: "Reply with exactly: OK" };
+        const img = key === "ocrModel" ? ocrTestImage() : null;
+        const payload = img
+            ? { messages: [{ role: "user", content: "Transcribe the characters in this image. Output only the characters.", images: [img.dataUrl] }], model: name, ocr: true }
+            : key === "utilityModel"
+                ? { messages: [ping], extend: "utility" }
+                : { messages: [ping], model: name };
+
+        chrome.runtime.sendMessage({ type: "FETCH_LLM", payload }, (resp: any) => {
+            const err = chrome.runtime.lastError?.message || (resp && resp.error);
+            if (err) return setTest(key, { status: "err", error: String(err) });
+            if (img) {
+                const got = String(resp.data || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+                return setTest(key, got.includes(img.token)
+                    ? { status: "ok" }
+                    : { status: "err", error: `read "${truncate(String(resp.data || ""), 40)}" — expected ${img.token}` });
+            }
+            setTest(key, { status: "ok" });
+        });
     });
 }
 const testModels = () => { for (const { key } of MODEL_ROLES) testOne(key); };

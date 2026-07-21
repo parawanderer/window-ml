@@ -556,14 +556,19 @@ function AgentOptionsBlock({ s }: { s: Session }) {
     if (c.vision != null && c.vision !== true) lines.push(`vision: ${JSON.stringify(c.vision)}`);
     if (c.hints) lines.push(`hints: ${truncate(c.hints, 140)}`);
     lines.push(`tools (${c.tools.length}): ${c.tools.map(t => t.name + (t.requiresApproval ? " ⚠" : "")).join(", ")}`);
+    // Vision wasn't disabled, yet nothing vision-capable got wired → no reader
+    // resolved, so look/locate silently aren't available. Flag it.
+    const noVision = c.vision !== false && !c.tools.some(t => t.vision);
     return (
         <div class="block">
             <div class="block-head" role="button" onClick={() => setOpen(v => !v)}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
                 <span class="block-label">agent options</span>
+                {noVision ? <span class="arg-warn" title="No vision-capable model resolved (agent model → OCR model). The look and locate tools aren't available this run; set an OCR/vision model in Settings → Models."><IconWarn />no vision</span> : null}
             </div>
             {open
                 ? <div class="tbody">
+                    {noVision ? <div class="arg-issues" title="ml.agent couldn't resolve a vision reader, so look/locate weren't wired."><IconWarn /><span>visual tools unavailable — no vision model (set an OCR/vision model in Settings → Models)</span></div> : null}
                     <pre class="opts">{lines.join("\n")}</pre>
                     <div class="sys-block">
                         <button class="raw-btn" onClick={() => setShowSys(v => !v)}>{showSys ? "hide" : "show"} system prompt{c.customSystem ? " (custom)" : ""}</button>
