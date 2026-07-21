@@ -192,7 +192,7 @@ export function Settings() {
 
             {tab === "models" ? <>
                 <div class="set-note">These are the defaults <code>ml.chat</code> / <code>ml.createChat</code> use when you don't pass a <code>model</code>. With no default <b>Model</b> set, you must specify one on every call.</div>
-                <label class="set-field"><Lbl tip={TIP.model}>Default Model</Lbl>
+                <label class="set-field"><Lbl tip={TIP.model}>Default model</Lbl>
                     <input {...text("model", { list: "ml-models", placeholder: "e.g. qwen3:14b" })} /></label>
                 <label class="set-field"><Lbl tip={TIP.ocrModel}>OCR model (optional)</Lbl>
                     <input {...text("ocrModel", { list: "ml-models", placeholder: "e.g. qwen2.5vl" })} /></label>
