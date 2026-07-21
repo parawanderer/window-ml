@@ -445,6 +445,7 @@ export interface MlApi {
     _elPath(el: Element): string;
     _describeSkeleton(el: Element, depth: number, indent?: string): string;
     _queryAll(selector: string): Element[];
+    _selectorError(selector: string, err: Error): string;
     _parseJSON(text: string): unknown;
     _imageToDataUrl(image: string | HTMLImageElement): Promise<string>;
     _fetchImageBase64(url: string): Promise<string>;

@@ -2,41 +2,90 @@
 // jQuery-tolerant query engine, skeleton descriptions, text normalization. No
 // dependency on injected's closure state; only args + browser globals.
 
+/**
+ * Collapse whitespace, then truncate to a max length with a trailing ellipsis.
+ *
+ * @param {string} str The value to normalize (coerced; null/undefined → "").
+ * @param {number} n Max length before truncating.
+ * @returns {string} The collapsed string, ellipsized if it exceeded n.
+ */
 export const truncate = (str: string, n: number): string => {
     str = String(str == null ? "" : str).replace(/\s+/g, " ").trim();
     return str.length > n ? str.slice(0, n) + "…" : str;
 };
 
-// Extract error text from a caught throw. Background tasks reject with a plain
-// STRING (not an Error), so `e.message` would be undefined — fall back to String.
+/**
+ * Extract error text from a caught throw. Background tasks reject with a plain
+ * STRING (not an Error), so `e.message` would be undefined — fall back to String.
+ *
+ * @param {unknown} e The caught value (Error or bare string).
+ * @returns {string} A human-readable message.
+ */
 export const errText = (e: unknown): string => (e && (e as Error).message) ? (e as Error).message : String(e);
 
-// Compact structural path for an element: body > div#main > div.card > h2.title —
-// tag + id + up to 4 classes per ancestor, capped at 8 hops. A DESCRIPTION (shows
-// classes so the model sees structure), not necessarily a valid selector — for a
-// clickable selector use clickSelector.
+/**
+ * Escape an id/class token so it's a VALID CSS identifier. Tailwind classes are
+ * full of chars that are illegal unescaped in a selector — `/` (opacity, bg-black/5),
+ * `:` (variants, hover:bg-…), `[` `]` (arbitrary values, text-[10px]), `.` (size-8.5),
+ * `!` (important). Prefers the platform CSS.escape; falls back to a minimal escaper
+ * (backslash-prefix anything outside [A-Za-z0-9_-]) for environments without it
+ * (e.g. jsdom in the tests).
+ *
+ * @param {string} s The raw id or class token.
+ * @returns {string} The token, escaped so it's safe to splice into a selector.
+ */
+export const cssEsc = (s: string): string =>
+    typeof CSS !== "undefined" && CSS.escape ? CSS.escape(s) : s.replace(/[^a-zA-Z0-9_-]/g, m => "\\" + m);
+
+/**
+ * Build one `tag#id.class.class` selector segment for an element, with id +
+ * classes escaped so the segment is ALWAYS valid CSS. Shared by elPath / elLine
+ * so every path we hand the model is copy-paste-clickable, not a Tailwind-class
+ * string that throws in querySelector.
+ *
+ * @param {Element} el The element to describe.
+ * @param {number} maxClasses Cap on classes appended (keeps segments readable).
+ * @returns {string} A valid single-element selector segment.
+ */
+export const cssSegment = (el: Element, maxClasses: number): string => {
+    let seg = el.tagName.toLowerCase();
+    if (el.id) seg += "#" + cssEsc(el.id);
+    if (el.classList && el.classList.length) {
+        seg += "." + [...el.classList].slice(0, maxClasses).map(cssEsc).join(".");
+    }
+    return seg;
+};
+
+/**
+ * Compact structural path for an element: body > div#main > div.card > h2.title —
+ * tag + id + up to 4 classes per ancestor, capped at 8 hops. A DESCRIPTION (shows
+ * classes so the model sees structure) that is ALSO a valid selector (segments are
+ * escaped) — though a shorter clickSelector is preferred where brevity matters.
+ *
+ * @param {Element} el The leaf element to trace up from.
+ * @returns {string} A `>`-joined root→leaf selector path.
+ */
 export const elPath = (el: Element): string => {
     const parts: string[] = [];
     let node: Node | null = el, hops = 0;
     while (node && node.nodeType === 1 && node !== document.documentElement && hops < 8) {
-        const elem = node as Element;
-        let seg = elem.tagName.toLowerCase();
-        if (elem.id) seg += "#" + elem.id;
-        if (elem.classList && elem.classList.length) {
-            seg += "." + [...elem.classList].slice(0, 4).join(".");
-        }
-        parts.unshift(seg);
+        parts.unshift(cssSegment(node as Element, 4));
         node = node.parentElement;
         hops++;
     }
     return parts.join(" > ");
 };
 
-// Fold typographic punctuation + whitespace to ASCII so a search for
-// "web-browser" matches a page that rendered "web‑browser" (non-breaking
-// hyphen) — plus curly quotes, non-breaking spaces, ellipsis, full-width
-// forms (NFKC). A model's own fancy hyphen in its output otherwise defeats its
-// own later findByText/:contains search. Also lowercases for case-insensitivity.
+/**
+ * Fold typographic punctuation + whitespace to ASCII so a search for
+ * "web-browser" matches a page that rendered "web‑browser" (non-breaking
+ * hyphen) — plus curly quotes, non-breaking spaces, ellipsis, full-width
+ * forms (NFKC). A model's own fancy hyphen in its output otherwise defeats its
+ * own later findByText/:contains search. Also lowercases for case-insensitivity.
+ *
+ * @param {string|null|undefined} s The text to normalize.
+ * @returns {string} The normalized, lowercased text.
+ */
 export const normalizeText = (s: string | null | undefined): string => (s || "")
     .normalize("NFKC")
     .replace(/[‐-―−⁃﹘﹣－]/g, "-")   // hyphens/dashes/minus → -
@@ -44,12 +93,17 @@ export const normalizeText = (s: string | null | undefined): string => (s || "")
     .replace(/[“”„‟″]/g, '"')               // curly / prime double quotes → "
     .replace(/\s+/g, " ").trim().toLowerCase();
 
-// Shortest VALID, unique CSS selector for an element — for lists whose selectors
-// are meant to be CLICKED (interactives). Prefers a unique id (own or ancestor);
-// else `tag:nth-of-type(n)` walking UP only until unique. Avoids elPath's giant,
-// un-escapable Tailwind-class chains. Falls through to a best-effort path.
+/**
+ * Shortest VALID, unique CSS selector for an element — for lists whose selectors
+ * are meant to be CLICKED (interactives). Prefers a unique id (own or ancestor);
+ * else `tag:nth-of-type(n)` walking UP only until unique. Avoids elPath's giant,
+ * un-escapable Tailwind-class chains. Falls through to a best-effort path.
+ *
+ * @param {Element} target The element to build a selector for.
+ * @returns {string} A unique (where resolvable), valid selector.
+ */
 export const clickSelector = (target: Element): string => {
-    const esc = (s: string) => typeof CSS !== "undefined" && CSS.escape ? CSS.escape(s) : s;
+    const esc = cssEsc;
     const uniq = (sel: string): boolean => { try { const m = document.querySelectorAll(sel); return m.length === 1 && m[0] === target; } catch { return false; } };
     const idUnique = (el: Element) => !!el.id && (() => { try { return document.querySelectorAll("#" + esc(el.id)).length === 1; } catch { return false; } })();
     if (idUnique(target)) return "#" + esc(target.id);
@@ -69,13 +123,16 @@ export const clickSelector = (target: Element): string => {
     return parts.join(" > ") || target.tagName.toLowerCase();
 };
 
-// One compact line for an element: tag#id.classes [data-*] "own text" (own text
-// only — never descendants' text or innerHTML). Shared by describeSkeleton and
-// the ancestors tool.
+/**
+ * One compact line for an element: tag#id.classes [data-*] "own text" (own text
+ * only — never descendants' text or innerHTML). Shared by describeSkeleton and
+ * the ancestors tool.
+ *
+ * @param {Element} el The element to describe.
+ * @returns {string} A single descriptive line.
+ */
 export const elLine = (el: Element): string => {
-    let seg = el.tagName.toLowerCase();
-    if (el.id) seg += "#" + el.id;
-    if (el.classList && el.classList.length) seg += "." + [...el.classList].slice(0, 6).join(".");
+    let seg = cssSegment(el, 6);
     const dataAttrs = [...el.attributes]
         .filter(a => a.name.startsWith("data-"))
         .slice(0, 6)
@@ -90,7 +147,14 @@ export const elLine = (el: Element): string => {
     return seg;
 };
 
-// Skeleton tree of an element + descendants to a depth: elLine per node, indented.
+/**
+ * Skeleton tree of an element + descendants to a depth: elLine per node, indented.
+ *
+ * @param {Element} el The root element.
+ * @param {number} depth How many descendant levels to expand.
+ * @param {string} [indent=""] Current indentation prefix (used in recursion).
+ * @returns {string} A newline-joined, indented skeleton.
+ */
 export const describeSkeleton = (el: Element, depth: number, indent = ""): string => {
     let out = indent + elLine(el);
     if (el.children.length && depth > 0) {
@@ -122,6 +186,13 @@ const TRAILING_TEXT_PSEUDO = /^([\s\S]*):(?:contains|has-text)\(\s*(['"]?)([\s\S
 const TRAILING_EQ_PSEUDO = /^([\s\S]*):eq\(\s*(\d+)\s*\)\s*$/i;
 const TRAILING_NTH_NATIVE = /^([\s\S]*):nth-(?:of-type|child)\(\s*(\d+)\s*\)\s*$/i;
 
+/**
+ * Query the document with the jQuery-tolerant selector dialect described above
+ * (`:contains`/`:has-text`/`:eq`, plus the dead-`:nth-of-type` reinterpretation).
+ *
+ * @param {string} selector The (possibly predicate-carrying) selector.
+ * @returns {Element[]} Matching elements, after peeling + applying predicates.
+ */
 export const queryAll = (selector: string): Element[] => {
     let base = String(selector).trim();
     const texts: string[] = [];
@@ -161,11 +232,29 @@ export const queryAll = (selector: string): Element[] => {
     return els;
 };
 
-// Turn a querySelector failure into a useful message: if the model used a text
-// pseudo-selector mid-selector (queryAll only supports it at the END), say so;
-// otherwise surface the raw error.
+/**
+ * Turn a querySelector failure into a useful message. A text pseudo is only
+ * supported at the END (queryAll peels it there) — so blame placement ONLY when a
+ * `:contains`/`:has-text` genuinely survives mid-selector after peeling the trailing
+ * ones. Otherwise the throw was something else (e.g. an unescaped Tailwind `/` in a
+ * class) — surface the raw error instead of misdiagnosing it as a placement problem.
+ *
+ * @param {string} selector The selector that failed.
+ * @param {Error} err The caught querySelector error.
+ * @returns {string} A `Invalid selector: …` message to hand back to the model.
+ */
 export const selectorError = (selector: string, err: Error): string => {
-    if (/:has-text\s*\(|:contains\s*\(/i.test(selector)) {
+    // Peel trailing text/eq pseudos exactly as queryAll does, then see if a text
+    // predicate is still left mid-selector — that's the only real placement error.
+    let base = String(selector).trim();
+    for (let changed = true; changed; ) {
+        changed = false;
+        let m = base.match(TRAILING_EQ_PSEUDO);
+        if (m) { base = m[1].trim(); changed = true; continue; }
+        m = base.match(TRAILING_TEXT_PSEUDO);
+        if (m) { base = m[1].trim(); changed = true; }
+    }
+    if (/:has-text\s*\(|:contains\s*\(/i.test(base)) {
         return "Invalid selector: :contains()/:has-text() text predicates are only supported at " +
             'the END of a selector (e.g. `div.card:contains("text")`). Move it to the final part, ' +
             "or use exec for a text filter.";

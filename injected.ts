@@ -1461,6 +1461,7 @@ import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE } from "./promp
         _elPath: elPath,
         _describeSkeleton: describeSkeleton,
         _queryAll: queryAll,
+        _selectorError: selectorError,
         // Parses a structured-output reply, tolerating a stray ```json fence
         // and surfacing the raw text on failure for debugging.
         /**

@@ -57,6 +57,21 @@ test("_elPath caps the walk at 8 ancestors", () => {
     assert.equal(segs.at(-1), "div#d0");
 });
 
+test("_elPath escapes selector-illegal Tailwind classes → a VALID, queryable path", () => {
+    // The raw `/` (opacity), `[]` (arbitrary value) and `:` (variant) are illegal
+    // unescaped in a selector — pre-fix, elPath emitted them verbatim and the model's
+    // click threw. The escaped path must round-trip back through _queryAll to the node.
+    const { ml, document } = loadDomWorld(
+        '<button class="border-gray-100/30 text-[10px] hover:bg-black">8</button>'
+    );
+    const btn = document.querySelector("button");
+    const path = ml._elPath(btn);
+    assert.match(path, /border-gray-100\\\/30/);       // the `/` is backslash-escaped
+    const hit = ml._queryAll(path);                     // and the whole path resolves
+    assert.equal(hit.length, 1);
+    assert.equal(hit[0], btn);
+});
+
 // ---- queryAll (:contains / :has-text shim) ----
 
 test("_queryAll supports :contains and :has-text as a text filter on the base", () => {
@@ -311,6 +326,20 @@ test("describeElement describes the first match (+ node) and handles bad input",
     assert.equal(res.elements[0].tagName, "DIV");
     assert.match(run(ml, "describeElement", { selector: "((" }), /Invalid selector/);
     assert.match(run(ml, "describeElement", { selector: ".nope" }), /No element matches/);
+});
+
+test("selectorError blames :contains placement only when it truly survives mid-selector", () => {
+    // Pure function (jsdom's nwsapi swallows `:contains` instead of throwing, so we
+    // can't reach it through a tool here) — call it directly with a synthetic throw.
+    const { ml } = loadDomWorld("<button>8</button>");
+    const err = new Error("'x' is not a valid selector");
+    // Trailing :contains peels off cleanly; the throw is really the unescaped Tailwind
+    // `/`, NOT placement — surface the raw error, don't misdiagnose it (the run.md bug).
+    const trailing = ml._selectorError('button.border-gray-100/30:contains("8")', err);
+    assert.match(trailing, /is not a valid selector/);
+    assert.ok(!/only supported at/.test(trailing), "must not misblame :contains placement");
+    // A genuine mid-selector text predicate DOES earn the placement message.
+    assert.match(ml._selectorError('div:contains("x") > span', err), /only supported at the END/);
 });
 
 test("ancestors walks UP from a match, listing each ancestor by hop", () => {
