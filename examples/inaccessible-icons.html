@@ -21,6 +21,10 @@
   .icon svg { width: 24px; height: 24px; stroke: #333; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   #log { margin-top: 24px; font: 13px ui-monospace, monospace; color: #0a7; min-height: 1.4em; }
   .hint { color: #888; font-size: 13px; }
+  .mini { font: 12px system-ui, sans-serif; padding: 4px 10px; border-radius: 6px;
+    border: 1px solid #ccc; background: #fafafa; color: #333; cursor: pointer; }
+  .mini:hover { background: #f0f0f0; }
+  @media (prefers-color-scheme: dark) { .mini { background: #2a2a30; border-color: #444; color: #ddd; } .mini:hover { background: #34343c; } }
   @media (prefers-color-scheme: dark) {
     body { background: #1b1b1f; color: #eee; } p { color: #bbb; }
     .icon { background: #2a2a30; } .icon:hover { background: #34343c; } .icon svg { stroke: #ddd; }
@@ -72,7 +76,9 @@
   </div>
 
   <div id="log">Nothing clicked yet.</div>
-  <p class="hint">🎮 Secret combo: <b>⭐ ⭐ ❤️ ❤️ ⚙️</b> — click them in that order to win.
+  <p><button id="hintToggle" class="mini">Hide combo hint</button>
+     <span class="hint" style="margin-left:8px">— hide this before an agent run so it can't read the answer off the page.</span></p>
+  <p id="hint" class="hint">🎮 Secret combo: <b>⭐ ⭐ ❤️ ❤️ ⚙️</b> — click them in that order to win.
      (Or make the agent do it: <code>ml.agent("click these icons in order: star, star, heart, heart, gear", { tools: [ml.clickTool()] })</code>)</p>
 
   <!-- The victory screen. Hidden until the secret combo is entered. -->
@@ -115,6 +121,14 @@
     }
 
     document.getElementById("win").addEventListener("click", () => location.reload());
+
+    // Hide the combo hint so an agent run can't just read the answer off the page.
+    document.getElementById("hintToggle").addEventListener("click", (e) => {
+      const hint = document.getElementById("hint");
+      const showing = hint.style.display !== "none";
+      hint.style.display = showing ? "none" : "";
+      e.target.textContent = showing ? "Show combo hint" : "Hide combo hint";
+    });
   </script>
 </body>
 </html>
