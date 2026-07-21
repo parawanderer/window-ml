@@ -15,6 +15,21 @@ export const truncate = (str: string, n: number): string => {
 };
 
 /**
+ * Length-only truncate: cap to n chars with a trailing ellipsis, PRESERVING
+ * whitespace — newlines included. Use for multi-line output (e.g. exec's console
+ * capture) where {@link truncate}'s `\s+`→" " collapse would flatten the line
+ * breaks into spaces.
+ *
+ * @param {string} str The value to cap (coerced; null/undefined → "").
+ * @param {number} n Max length before truncating.
+ * @returns {string} The string, ellipsized if it exceeded n, whitespace intact.
+ */
+export const clip = (str: string, n: number): string => {
+    str = String(str == null ? "" : str);
+    return str.length > n ? str.slice(0, n) + "…" : str;
+};
+
+/**
  * Extract error text from a caught throw. Background tasks reject with a plain
  * STRING (not an Error), so `e.message` would be undefined — fall back to String.
  *

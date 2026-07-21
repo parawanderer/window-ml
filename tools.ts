@@ -5,7 +5,7 @@
 // (detached, `this`-free) `defineTool` and returns the array.
 
 import type { MlTool, ToolResult } from "./contract";
-import { truncate, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, selectorError } from "./dom";
+import { truncate, clip, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, selectorError } from "./dom";
 import { INTERACTIVE_SEL, roleOf, accessibleName, ariaState, hasLayout, styleHidden, isFaded } from "./a11y";
 import { pageContext } from "./util";
 
@@ -283,7 +283,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
                 }
 
                 // Prefix any captured console output onto the returned value.
-                const logged = logs.length ? `console:\n${truncate(logs.join("\n"), 500)}` : "";
+                const logged = logs.length ? `console:\n${clip(logs.join("\n"), 500)}` : "";
                 const withLogs = (value: string) => logged ? `${logged}\n\nvalue: ${value}` : value;
 
                 if (failed) return withLogs(`Error: ${(failed as Error).message}`);
@@ -305,9 +305,9 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
                 let value: string;
                 if (result === undefined) value = "(undefined)";
                 else if (typeof result === "object") {
-                    try { value = truncate(JSON.stringify(result), 500); }
-                    catch { value = truncate(String(result), 500); }
-                } else value = truncate(String(result), 500);
+                    try { value = clip(JSON.stringify(result), 500); }
+                    catch { value = clip(String(result), 500); }
+                } else value = clip(String(result), 500);
                 return withLogs(value);
             }
         }),

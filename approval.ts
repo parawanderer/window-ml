@@ -4,7 +4,7 @@
 // only imported dom/security helpers, no bus/ml state.
 
 import type { ApprovalRequest, ApprovalDecision } from "./contract";
-import { truncate, elPath } from "./dom";
+import { clip, elPath } from "./dom";
 import { suspiciousArgsWarning } from "./security";
 
 export const renderArgs = (args: unknown): string => Object.entries(args || {})
@@ -64,11 +64,12 @@ export const normalizeApproval = (result: ApprovalDecision, orig: Record<string,
     return { approved: !!result, feedback: null, arguments: orig };
 };
 
-// Format a read-only interpreter result the same way the `exec` tool does
-// (console-prefix + value / element-count envelope), for the auto-approve
-// fast-path in the agent loop.
+/** Format a read-only interpreter result the same way the `exec` tool does
+ * (console-prefix + value / element-count envelope), for the auto-approve
+ * fast-path in the agent loop.
+ */
 export function formatReadonlyExec(result: unknown, logs: string[]): { result: string; elements?: Node[] } {
-    const logged = logs.length ? `console:\n${truncate(logs.join("\n"), 500)}` : "";
+    const logged = logs.length ? `console:\n${clip(logs.join("\n"), 500)}` : "";
     const withLogs = (value: string) => logged ? `${logged}\n\nvalue: ${value}` : value;
     if (typeof Element !== "undefined" && result instanceof Element) {
         return { result: withLogs(elPath(result)), elements: [result] };
@@ -84,7 +85,7 @@ export function formatReadonlyExec(result: unknown, logs: string[]): { result: s
     }
     let value: string;
     if (result === undefined) value = "(undefined)";
-    else if (typeof result === "object") { try { value = truncate(JSON.stringify(result), 500); } catch { value = truncate(String(result), 500); } }
-    else value = truncate(String(result), 500);
+    else if (typeof result === "object") { try { value = clip(JSON.stringify(result), 500); } catch { value = clip(String(result), 500); } }
+    else value = clip(String(result), 500);
     return { result: withLogs(value) };
 }

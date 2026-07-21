@@ -386,6 +386,11 @@ test("exec evaluates expressions, serializes objects, and catches errors", async
     assert.equal(await run(ml, "exec", { js: "return await Promise.resolve(7)" }), "7");
     assert.equal(await run(ml, "exec", { js: "const x = await Promise.resolve(5); return x * 2" }), "10");
     assert.match(await run(ml, "exec", { js: "return (" }), /^Error:/); // genuine syntax error still reported
+    // Multi-line console output keeps its newlines — separate console.log calls
+    // join with \n, and the length cap must NOT collapse whitespace (regression:
+    // exec used dom.ts `truncate`, whose \s+→" " flattened every line into spaces).
+    const multi = await run(ml, "exec", { js: "for (let i = 1; i <= 3; i++) console.log('line ' + i);" });
+    assert.match(multi, /^console:\nline 1\nline 2\nline 3\n\nvalue: /);
 });
 
 test("selector tools accept end-position :contains/:has-text and explain mid-selector", () => {
