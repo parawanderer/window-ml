@@ -1,7 +1,9 @@
-// Shared interfaces for window.ml — the contracts the main-world primitive
-// (injected), the content-script relay (content), the background worker
-// (background), and the debug sidebar all agree on. Types only; erased at build.
-// Import with `import type { ... } from "./contract"` so nothing survives to JS.
+/**
+ * @file Shared interfaces for window.ml — the contracts the main-world primitive
+ * (injected), the content-script relay (content), the background worker
+ * (background), and the debug sidebar all agree on. Types only; erased at build.
+ * Import with `import type { ... } from "./contract"` so nothing survives to JS.
+ */
 
 /* ------------------------------- config ------------------------------- */
 
