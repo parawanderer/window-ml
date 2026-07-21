@@ -709,6 +709,38 @@ test("agent suppresses orphan chat sessions from a tool's internal ml.chat", asy
     assert.ok(events.some(e => e.kind === "agent-step" && e.result === "a description"), "vision result shows as the tool step");
 });
 
+// The `agent` debug event carries the resolved toolset (config.tools) after the
+// vision auto-wire, so we can assert what got wired without a real screenshot.
+async function agentToolNames(opts) {
+    const world = loadPageWorld({ ...opts, onRuntimeMessage: scriptedModel([reply("done")]) });
+    const win = world.context.window;
+    const events = [];
+    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    win.postMessage({ __mlSidebar: "ready" });
+    await new Promise(r => setTimeout(r, 0));
+    await world.ml.agent("find the like button", { tools: [] });
+    const agentEv = events.find(e => e.kind === "agent");
+    return (agentEv.config.tools || []).map(t => t.name);
+}
+
+test("agent auto-wires the delegated locate tool when a vision model resolves", async () => {
+    const names = await agentToolNames({
+        config: { model: "qwen2.5vl", ocrModel: "" },
+        caps: (m) => m === "qwen2.5vl" ? ["completion", "vision"] : [],
+    });
+    assert.ok(names.includes("locate"), "locate auto-wired alongside look");
+    assert.ok(names.includes("look"), "look still auto-wired");
+});
+
+test("locate is NOT wired when no vision model can be resolved", async () => {
+    const names = await agentToolNames({
+        config: { model: "text-only", ocrModel: "" },
+        caps: () => ["completion"],   // no vision capability anywhere
+    });
+    assert.ok(!names.includes("locate"), "no locate without a vision reader");
+    assert.ok(!names.includes("look"), "no look either");
+});
+
 // Capture the __mlDebug events emitted by an agent run over one tool.
 async function agentDebugEvents(tool) {
     const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall(tool.name, {}, "c1"), reply("done")]) });

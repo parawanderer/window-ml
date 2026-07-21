@@ -63,9 +63,11 @@ if (watch) {
 } else {
     await esbuild.build({ ...base, entryPoints: coreEntries });
     await esbuild.build({ ...base, entryPoints: { "sidebar-app": sidebarApp }, minify: true });
-    // Standalone CJS build of the read-only exec interpreter, for node unit tests
-    // (the same module is bundled into injected.js via its import).
+    // Standalone CJS builds for node unit tests (the same modules are bundled into
+    // injected.js via their imports): the read-only exec interpreter + the
+    // Set-of-Marks hit-test engine.
     await esbuild.build({ entryPoints: { "readonly-exec": "readonly-exec.ts" }, outdir: "dist", bundle: true, format: "cjs", platform: "node", logLevel: "info" });
+    await esbuild.build({ entryPoints: { "som": "som.ts" }, outdir: "dist", bundle: true, format: "cjs", platform: "node", logLevel: "info" });
     copyAssets();
     console.log("built dist/");
 }

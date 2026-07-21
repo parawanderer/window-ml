@@ -35,7 +35,7 @@ import { makeDomTools } from "./tools";
 import { hideSidebarForShot, makeBackgroundTaskPromise, makeChatRequest, makeStreamingTaskPromise } from "./bridge";
 import { validateArgs, validateExtend } from "./validate";
 import { renderArgs, logStep, defaultApprove, normalizeApproval, formatReadonlyExec } from "./approval";
-import { buildLookTool, buildClickTool, buildTypeTool } from "./builtin-tools";
+import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool } from "./builtin-tools";
 
 (function() {
 
@@ -386,16 +386,21 @@ import { buildLookTool, buildClickTool, buildTypeTool } from "./builtin-tools";
             // back to the delegated `lookTool` (#8). A forced `vision:"<model>"` is
             // always delegated (can't inline a model that isn't the agent's).
             if (vision !== false && !toolset.some(t => t.capabilities && t.capabilities.includes("vision"))) {
-                if (typeof vision === "string" && vision) {
-                    toolset.push(this.lookTool({ model: vision }));
-                } else {
-                    const agentModel = model || agentCfg?.model || null;
-                    if (await this._modelSees(agentModel)) {
+                const agentModel = model || agentCfg?.model || null;
+                // The model that will SEE: forced value → agent's own (if it reports
+                // vision) → the OCR model → null. `look` prefers NATIVE inline vision
+                // when the agent's own model can see; otherwise it's delegated. `locate`
+                // is ALWAYS delegated (it reads badges), so it just needs any resolved
+                // reader — added alongside look whenever one exists.
+                const visionModel = await this._resolveVisionModel(model, vision);
+                if (visionModel) {
+                    const forced = typeof vision === "string" && !!vision;
+                    if (!forced && await this._modelSees(agentModel)) {
                         toolset.push(this._nativeLookTool());
                     } else {
-                        const visionModel = await this._resolveVisionModel(model, vision);
-                        if (visionModel) toolset.push(this.lookTool({ model: visionModel }));
+                        toolset.push(this.lookTool({ model: visionModel }));
                     }
+                    toolset.push(this.locateTool({ model: visionModel }));
                 }
             }
             const byName = Object.fromEntries(toolset.map(t => [t.name, t]));
@@ -447,6 +452,7 @@ import { buildLookTool, buildClickTool, buildTypeTool } from "./builtin-tools";
             // `render` (page-side, defensive) wins; else auto-derive image/elements
             // from the envelope; else undefined → the sidebar's default In:/Out:.
             const descriptorFor = (tool: MlTool | undefined, input: ToolRenderInput, args: Record<string, unknown>): RenderDescriptor | undefined => {
+                if (input.render && input.render.type) return input.render;   // run() precomputed one (e.g. locate's marks)
                 if (tool?.render) {
                     try { const d = tool.render(input, args); if (d && d.type) return d; }
                     catch (e) { console.error(`ml tool "${tool.name}" render threw:`, e); }
@@ -491,7 +497,7 @@ import { buildLookTool, buildClickTool, buildTypeTool } from "./builtin-tools";
                         // A tool may also hand back { image, imageLabel } — a screenshot
                         // for #3 inline vision, injected into the model's own history.
                         if (raw && typeof raw === "object" && typeof raw.content === "string") {
-                            return { result: raw.content, elements: raw.elements, image: raw.image, imageLabel: raw.imageLabel };
+                            return { result: raw.content, elements: raw.elements, image: raw.image, imageLabel: raw.imageLabel, render: raw.render };
                         }
                         return { result: raw };
                     } catch (e) { return { result: `Error: ${errText(e)}` }; }
@@ -501,7 +507,7 @@ import { buildLookTool, buildClickTool, buildTypeTool } from "./builtin-tools";
                 for (const call of msg.tool_calls) {
                     const tool = byName[call.name];
                     let args = (call.arguments || {}) as Record<string, unknown>;
-                    let result, elements, image, imageLabel;
+                    let result, elements, image, imageLabel, toolRender;
                     let approval: "readonly" | "user" | "denied" | undefined;
                     if (!tool) {
                         result = `Error: no tool named "${call.name}".`;
@@ -533,17 +539,17 @@ import { buildLookTool, buildClickTool, buildTypeTool } from "./builtin-tools";
                             } else {
                                 approval = "user";
                                 args = decision.arguments;   // possibly caller-edited before running
-                                ({ result, elements, image, imageLabel } = await runTool(tool, args));
+                                ({ result, elements, image, imageLabel, render: toolRender } = await runTool(tool, args));
                             }
                         }
                     } else {
-                        ({ result, elements, image, imageLabel } = await runTool(tool, args));
+                        ({ result, elements, image, imageLabel, render: toolRender } = await runTool(tool, args));
                     }
                     result = String(result);
                     const entry: AgentTranscriptEntry = { tool: call.name, arguments: args, result };
                     if (elements && elements.length) entry.elements = elements;
                     transcript.push(entry);
-                    const render = descriptorFor(tool, { result, elements, image, imageLabel }, args);
+                    const render = descriptorFor(tool, { result, elements, image, imageLabel, render: toolRender }, args);
                     const argIssues = tool ? validateArgs(tool.parameters, args) : undefined;
                     emit({ step, ...entry, render, argIssues, approval });
                     // An answer-capable tool designates the caller-facing result node(s).
@@ -780,6 +786,19 @@ import { buildLookTool, buildClickTool, buildTypeTool } from "./builtin-tools";
          */
         lookTool: function(opts: { model?: string | null; maxTokens?: number } = {}): MlTool {
             return buildLookTool(this, opts);
+        },
+        /**
+         * Build a delegated Set-of-Marks `locate` tool (see builtin-tools/som): find
+         * an element by describing it, via a vision sub-call over a badged screenshot.
+         * Auto-wired into ml.agent alongside `look` when a vision model resolves.
+         *
+         * @param {Object} [opts]
+         * @param {string} [opts.model=null] Vision model that reads the badges.
+         * @param {number} [opts.maxTokens=64] Cap on the sub-call (it returns a number).
+         * @returns {MlTool} A tool with `name: "locate"` and `capabilities: ["vision"]`.
+         */
+        locateTool: function(opts: { model?: string | null; maxTokens?: number } = {}): MlTool {
+            return buildLocateTool(this, opts);
         },
         /**
          * Build a "click" interaction tool: click a link/button/tab/result.

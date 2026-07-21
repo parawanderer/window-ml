@@ -7,6 +7,7 @@
 import type { MlApi, MlTool } from "./contract";
 import { truncate, errText, elLine, queryAll, selectorError } from "./dom";
 import { settle } from "./util";
+import { collectCandidates, buildMarks, drawMarks, type MarkFilter } from "./som";
 
 export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512 }: { model?: string | null; maxTokens?: number } = {}): MlTool => {
     return ml.defineTool({
@@ -61,6 +62,64 @@ export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512 }: { mo
             if (selector) { try { const el = queryAll(selector)[index || 0]; if (el) elements = [el]; } catch {} }
             return elements ? { content: description, elements } : description;
         }
+    });
+};
+
+// Delegated Set-of-Marks locator (see docs/spec + som.ts). Screenshots the
+// viewport, hit-test-sweeps for candidate elements (works on non-semantic UIs),
+// draws numbered badges in memory, and asks a VISION model which badge matches the
+// caller's description. Delegated like buildLookTool: the badged image is seen only
+// by this sub-call + shown in the sidebar (via the `render` envelope) — it never
+// enters the driver's history, so a text-only driver can still use it. Returns the
+// chosen element's selector (stateless currency) for click/type/answer.
+export const buildLocateTool = (ml: MlApi, { model = null, maxTokens = 64 }: { model?: string | null; maxTokens?: number } = {}): MlTool => {
+    return ml.defineTool({
+        name: "locate",
+        capabilities: ["vision"],
+        description: "Find an on-screen control by DESCRIBING it — for unlabelled icon buttons, " +
+            "custom widgets, or pages with no accessibility markup, where you can't anchor by text or " +
+            "guess a selector. It screenshots the viewport, draws numbered badges over candidate " +
+            "elements (found by hit-testing, so it works even on non-semantic <div> UIs), and a vision " +
+            "model picks the badge matching your description. Returns that element's CSS selector to " +
+            "pass to click/type/answer, plus the full candidate list. Narrow with `filter` " +
+            "(clickables/inputs/images). Only sees the current viewport — if the target isn't found, " +
+            "scroll it into view, widen the filter, or refine the description and call again.",
+        parameters: {
+            type: "object",
+            properties: {
+                description: { type: "string", description: "What to find, e.g. \"the star/favourite icon next to the chat title\"." },
+                filter: { type: "string", enum: ["clickables", "inputs", "images", "all"], description: "Which elements to consider (default 'clickables')." },
+            },
+            required: ["description"],
+        },
+        run: async ({ description, filter = "clickables" }: { description: string; filter?: MarkFilter }) => {
+            if (!description) return "Provide a `description` of the element to find.";
+            const cands = collectCandidates(filter);
+            if (!cands.length) return `No ${filter} candidates visible in the viewport. Scroll the target into view, widen the filter (try 'all'), then call again.`;
+            const marks = buildMarks(cands);
+            const listing = marks.map(m => `#${m.id} [${m.role}] ${m.name ? `"${truncate(m.name, 50)}"` : "(no accessible name)"}  →  ${m.selector}`).join("\n");
+            let badged: string;
+            try {
+                const shot = await ml.screenshot(null, {});   // viewport PNG (hides our sidebar)
+                badged = await drawMarks(shot, marks, window.devicePixelRatio || 1);
+            } catch (e) { return `Error capturing/marking the screenshot: ${errText(e)}`; }
+            const prompt = `The screenshot has numbered red badges (#1–#${marks.length}) drawn over candidate ` +
+                `elements. Which single badge number best matches this element: "${description}"? ` +
+                `Reply with ONLY the number, or "NONE" if none match.`;
+            const answer = String(await ml.chat(prompt, { images: [badged], model, maxTokens })).trim();
+            const pick = (answer.match(/\d+/) || [])[0];
+            const chosen = pick ? marks.find(m => m.id === Number(pick)) : undefined;
+            const render = { type: "image" as const, src: badged, label: chosen ? `Set-of-Marks · #${chosen.id}` : "Set-of-Marks" };
+            if (!chosen) {
+                return { content: `No badge matched "${description}" (model replied "${truncate(answer, 40)}"). Candidates:\n${listing}`, elements: cands.slice(0, 50), render };
+            }
+            return {
+                content: `Matched "${description}" → #${chosen.id} [${chosen.role}]` +
+                    `${chosen.name ? ` "${chosen.name}"` : ""}\nselector: ${chosen.selector}\n(click/type/answer with this selector)\n\nAll candidates:\n${listing}`,
+                elements: [chosen.el],
+                render,
+            };
+        },
     });
 };
 

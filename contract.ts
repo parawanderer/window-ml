@@ -94,12 +94,16 @@ export interface JsonSchema {
 }
 
 /** A tool's return: a string, or an envelope also carrying live DOM nodes
- *  (`elements`, debug-only) and/or a screenshot (`image`, inline vision). */
+ *  (`elements`, debug-only) and/or a screenshot (`image`, inline vision). A tool
+ *  that computes its own visualization (e.g. `locate`'s badged Set-of-Marks
+ *  image) returns a `render` descriptor directly — shown in the sidebar but, unlike
+ *  `image`, NOT injected into the model's history (it's a debug artifact). */
 export interface ToolResult {
     content: string;
     elements?: Node[];
     image?: string;
     imageLabel?: string;
+    render?: RenderDescriptor;
 }
 
 /** A serializable description of how to render a tool step in the debug sidebar.
@@ -124,6 +128,7 @@ export interface ToolRenderInput {
     elements?: Node[];
     image?: string;
     imageLabel?: string;
+    render?: RenderDescriptor;   // a render the tool's run() precomputed (wins over auto-derive)
 }
 
 export interface MlTool {
@@ -416,6 +421,8 @@ export interface MlApi {
 
     /** Built-in vision tool factory (OCR/screenshot look). */
     lookTool(opts?: { model?: string | null; maxTokens?: number }): MlTool;
+    /** Built-in delegated Set-of-Marks locator factory (find an element by describing it). */
+    locateTool(opts?: { model?: string | null; maxTokens?: number }): MlTool;
     /** Built-in click tool factory. */
     clickTool(): MlTool;
     /** Built-in type tool factory. */

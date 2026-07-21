@@ -142,6 +142,27 @@ degrade to "asks the human," never to "runs unsafely." Spec:
 `dist/readonly-exec.js`) against the two canonical surveys + a battery of escape
 attempts in `tests/readonly-exec.test.js`.
 
+**Visual element location (`locate` / Set-of-Marks).** For controls text/ARIA can't
+reach — unlabelled icon buttons, or pages built with no accessibility markup at all
+(a bare `<div>` with a synthetic click handler) — `ml.locateTool` finds an element by
+**describing** it. Engine (`som.ts`): the accessibility-agnostic primitive is
+`document.elementFromPoint` (hit-testing), NOT selector matching — `collectCandidates`
+sweeps the viewport on a grid, takes the topmost element at each point (so occluded
+ones are excluded for free), and climbs each to its representative (`representativeFor`:
+nearest semantic-interactive ancestor, else the `cursor:pointer` boundary — the one
+convention non-semantic UIs keep, since click handlers are invisible to the DOM on
+React/synthetic-event pages). Candidates get numbered badges drawn onto the screenshot
+in memory (`drawMarks`, dpr-scaled like `cropDataUrl` — zero DOM pollution). It's
+**delegated** like `buildLookTool`: a vision sub-call ("which badge is <description>?")
+sees the badged image and returns a number; only the chosen element's `clickSelector`
+(stateless currency for click/type/answer) re-enters the driver's thread, so a
+text-only driver can use it. The badged image rides `ToolResult.render` → sidebar only,
+never history. Auto-wired into `ml.agent` alongside `look` whenever `_resolveVisionModel`
+resolves a reader (agent-model-if-vision → OCR model). `som.ts` is unit-tested standalone
+(`dist/som.js`, `tests/som.test.js`) for the walk-up core (`elementFromPoint` is a jsdom
+no-op). Slice 1 of `tmp/visual_element_selection_design.md`; grid + grounding-VLM
+mechanisms are later slices.
+
 **Agent runs in the debug sidebar.** `ml.agent` emits its own debug-event kinds
 (not `chat`): `agent` (run start: task + model), `agent-step` (one per step — a
 thought OR a tool call with args/result; `elements` is a **count**, since real
@@ -166,10 +187,12 @@ step. That badge is the slot a future interactive-approval control resolves into
 **Tool render descriptors.** A tool step can carry a `render`: a **serializable
 `RenderDescriptor`** (`image`/`code`/`table`/`keyval`/`elements`) — data, never
 code, since functions can't cross the window bus and page code must never run in
-the extension-origin iframe. A tool's optional `render(input, args)` runs
-**page-side** (where it still has the live DOM nodes) and returns a descriptor;
-else `descriptorFor` auto-derives `image`/`elements` from the tool envelope; else
-`undefined` → the sidebar's default In:/Out: view. The sidebar (`RenderPanel`) is
+the extension-origin iframe. `descriptorFor` resolves it in priority order: a
+`render` descriptor the tool's **`run()` returned directly** on its `ToolResult`
+(for a visualization computed at run-time, e.g. `locate`'s badged image — shown in
+the sidebar but, unlike `image`, NOT injected into the model's history) → the tool's
+optional **`render(input, args)`** method (runs page-side, e.g. `exec`) → auto-derive
+`image`/`elements` from the envelope → `undefined` (the default In:/Out: view). The sidebar (`RenderPanel`) is
 a registry keyed by `type` + the default fallback — it owns all UI, so an unknown
 type just dumps as JSON. Custom-tool render is defensive (throw → fallback, never
 breaks the run). A `code` descriptor may set `format: true` (the `exec` tool does)
