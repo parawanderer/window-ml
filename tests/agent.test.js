@@ -518,8 +518,9 @@ test("a tool call missing a required arg short-circuits with the schema error (t
     const t = world.ml.defineTool({ name: "needsIt", parameters: { type: "object", properties: { x: { type: "string" } }, required: ["x"] }, run: () => { ran++; return "ran"; } });
     const res = await world.ml.agent("x", { tools: [t], maxSteps: 3 });
     assert.equal(ran, 0, "the tool never ran with a missing required arg");
-    // The MODEL sees the actual diagnosis, not a downstream symptom.
-    assert.match(res.transcript[0].result, /^Invalid arguments for "needsIt": missing required "x"; unknown property "y"/);
+    // The MODEL sees the actual diagnosis, not a downstream symptom — and the
+    // "Error:" prefix makes the sidebar mark the step failed (red dot), not green.
+    assert.match(res.transcript[0].result, /^Error: invalid arguments for "needsIt" — missing required "x"; unknown property "y"/);
 });
 
 test("a soft schema issue (unknown extra prop) prepends a note but still runs the tool", async () => {
@@ -528,7 +529,8 @@ test("a soft schema issue (unknown extra prop) prepends a note but still runs th
     const t = world.ml.defineTool({ name: "t", parameters: { type: "object", properties: { x: { type: "string" } }, required: ["x"] }, run: () => { ran++; return "ran"; } });
     const res = await world.ml.agent("x", { tools: [t], maxSteps: 3 });
     assert.equal(ran, 1, "the tool still ran (a lenient validator must not block a legit call)");
-    assert.match(res.transcript[0].result, /^⚠ Argument schema issue\(s\): unknown property "extra"\n\nran$/);
+    // Note APPENDS, so a real Error:/Denied prefix would stay at position 0.
+    assert.match(res.transcript[0].result, /^ran\n\n⚠ Argument schema issue\(s\): unknown property "extra"$/);
 });
 
 test("a schema-less tool (no declared properties) is never flagged for its args", async () => {

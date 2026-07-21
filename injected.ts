@@ -503,18 +503,22 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool } from ".
                     // legitimate call.
                     const issues = validateArgs(tool.parameters, args);
                     if (issues.some(s => s.startsWith("missing required"))) {
-                        return { result: `Invalid arguments for "${tool.name}": ${issues.join("; ")}. Call it again with the correct argument name(s).` };
+                        // "Error:" so the sidebar's toolFailed marks the step failed (red
+                        // dot), not a green "completed" — the tool never ran.
+                        return { result: `Error: invalid arguments for "${tool.name}" — ${issues.join("; ")}. Call it again with the correct argument name(s).` };
                     }
-                    const note = issues.length ? `⚠ Argument schema issue(s): ${issues.join("; ")}\n\n` : "";
+                    // Soft issues APPEND (not prepend), so a real "Error:"/"Denied" prefix
+                    // stays at position 0 where toolFailed can see it.
+                    const note = issues.length ? `\n\n⚠ Argument schema issue(s): ${issues.join("; ")}` : "";
                     try {
                         const raw = await tool.run(args);
                         // A tool may also hand back { image, imageLabel } — a screenshot
                         // for #3 inline vision, injected into the model's own history.
                         if (raw && typeof raw === "object" && typeof raw.content === "string") {
-                            return { result: note + raw.content, elements: raw.elements, image: raw.image, imageLabel: raw.imageLabel, render: raw.render };
+                            return { result: raw.content + note, elements: raw.elements, image: raw.image, imageLabel: raw.imageLabel, render: raw.render };
                         }
-                        return { result: note + String(raw) };
-                    } catch (e) { return { result: note + `Error: ${errText(e)}` }; }
+                        return { result: String(raw) + note };
+                    } catch (e) { return { result: `Error: ${errText(e)}` + note }; }
                 };
 
                 const pendingImages = [];   // #3: screenshots captured this turn, injected below
