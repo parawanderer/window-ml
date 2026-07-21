@@ -12,6 +12,14 @@ export const IconCheck = () => (
         <path d="M3 8.5l3.5 3.5L13 4.5" />
     </svg>
 );
+// Warning triangle (an SVG — the native ⚠ emoji renders inconsistently and off-baseline).
+export const IconWarn = () => (
+    <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M8 2 15 14H1z" />
+        <path d="M8 6.3v3.4" />
+        <path d="M8 12h0.01" />
+    </svg>
+);
 // Disclosure chevron (the ▸ glyph renders tiny; an SVG is crisp and scalable).
 export const IconChevron = () => (
     <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.9">

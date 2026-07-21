@@ -20,7 +20,7 @@ import { pretty, shortStamp, fullStamp, truncate, collapsedPreview, highlight, b
 import { annotatedConfig, turnProfile, shownModel, sessionProfile } from "./model";
 import { exportSession } from "./export";
 import { applyTheme, applyFont, applyCodePrefs, initThemeStyle } from "./prefs";
-import { IconCopy, IconCheck, IconChevron, IconGear, IconExport, IconVram } from "./icons";
+import { IconCopy, IconCheck, IconWarn, IconChevron, IconGear, IconExport, IconVram } from "./icons";
 import { Settings } from "./settings";
 
 function onDebug(ev: MlDebugEvent): void {
@@ -512,12 +512,12 @@ function ToolStep({ st }: { st: AgentStep }) {
                 <span class="tool-name">{st.tool}</span>
                 {st.approval ? <ApprovalBadge approval={st.approval} /> : null}
                 {st.elements ? <span class="el-count" title="DOM nodes returned (reach them in the console via onStep)">{st.elements} el</span> : null}
-                {issues ? <span class="arg-warn" title={issues.join("; ")}>⚠ {issues.length}</span> : null}
+                {issues ? <span class="arg-warn" title={issues.join("; ")}><IconWarn />{issues.length}</span> : null}
                 {!open ? <span class="astep-preview">{collapsedPreview(st.result || "").text}</span> : null}
             </button>
             {open
                 ? <div class="astep-body">
-                    {issues ? <div class="arg-issues" title="The args don't match this tool's parameter schema.">⚠ arg schema: {issues.join("; ")}</div> : null}
+                    {issues ? <div class="arg-issues" title="The args don't match this tool's parameter schema."><IconWarn /><span>arg schema: {issues.join("; ")}</span></div> : null}
                     {args
                         ? <IoBlock label="In" tip="The arguments the model passed to this tool call."
                             preview={inlineJson(args)} render={inRender} raw={<Code text={pretty(args)} lang="json" />} />
