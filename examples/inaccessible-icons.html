@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Inaccessible icon toolbar — a test bed for ml.locate</title>
+<style>
+  body { font: 15px system-ui, sans-serif; margin: 40px; color: #111; }
+  h1 { font-size: 18px; }
+  p { max-width: 60ch; color: #444; }
+  /* An icon "toolbar" built the WRONG way: bare <div>s with a synthetic click
+     handler and a pointer cursor — no <button>, no role, no tabindex, no
+     aria-label, and the only visible mark is an unlabelled inline <svg>. So
+     findByText finds nothing, and interactives lists them all as
+     "(no accessible name)". The shapes are the ONLY distinguisher → ml.locate. */
+  .toolbar { display: flex; gap: 14px; margin: 28px 0; }
+  .icon {
+    width: 44px; height: 44px; display: grid; place-items: center;
+    border-radius: 10px; background: #f2f2f4; cursor: pointer; user-select: none;
+  }
+  .icon:hover { background: #e4e4e8; }
+  .icon svg { width: 24px; height: 24px; stroke: #333; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  #log { margin-top: 24px; font: 13px ui-monospace, monospace; color: #0a7; min-height: 1.4em; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #1b1b1f; color: #eee; } p { color: #bbb; }
+    .icon { background: #2a2a30; } .icon:hover { background: #34343c; } .icon svg { stroke: #ddd; }
+  }
+</style>
+</head>
+<body>
+  <h1>Inaccessible icon toolbar</h1>
+  <p>Every button below is a bare <code>&lt;div&gt;</code> with a click handler and
+     <code>cursor: pointer</code> — no role, no label, no text. Text/ARIA tools can't
+     tell them apart; only their <em>shape</em> can. Ask the agent to click one:</p>
+  <p><code>ml.agent("click the trash / delete icon", { tools: [ml.clickTool()] })</code></p>
+
+  <div class="toolbar" id="bar">
+    <!-- star -->
+    <div class="icon" data-name="star" onclick="pick('star')">
+      <svg viewBox="0 0 24 24"><path d="M12 2l3 6.5 7 .9-5 4.8 1.2 7-6.4-3.4L5.6 21l1.2-7-5-4.8 7-.9z"/></svg>
+    </div>
+    <!-- trash -->
+    <div class="icon" data-name="trash" onclick="pick('trash')">
+      <svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/></svg>
+    </div>
+    <!-- heart -->
+    <div class="icon" data-name="heart" onclick="pick('heart')">
+      <svg viewBox="0 0 24 24"><path d="M12 21s-7-4.5-9.5-9A5 5 0 0 1 12 6a5 5 0 0 1 9.5 6c-2.5 4.5-9.5 9-9.5 9z"/></svg>
+    </div>
+    <!-- gear -->
+    <div class="icon" data-name="gear" onclick="pick('gear')">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/></svg>
+    </div>
+    <!-- download -->
+    <div class="icon" data-name="download" onclick="pick('download')">
+      <svg viewBox="0 0 24 24"><path d="M12 3v12M7 11l5 4 5-4M4 20h16"/></svg>
+    </div>
+  </div>
+
+  <div id="log">Nothing clicked yet.</div>
+
+  <script>
+    // Deliberately no labels on the elements — the "answer" only appears here,
+    // so you can confirm the agent clicked the RIGHT shape.
+    function pick(name) {
+      document.getElementById("log").textContent = "Clicked: " + name + "  (at " + new Date().toLocaleTimeString() + ")";
+    }
+  </script>
+</body>
+</html>
