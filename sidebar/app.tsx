@@ -10,6 +10,12 @@ import { useState, useEffect } from "preact/hooks";
 import { signal } from "@preact/signals";
 import type { MlDebugEvent, DebugSessionConfig, DebugAgentConfig, NeutralMessage, MlConfig, ApiFormat, Theme, LoadedModel, ExtendProfile, RenderDescriptor } from "../contract";
 import { DEFAULT_CONFIG } from "../contract";
+import {
+    FONT_KEY, BASE_FS, MIN_FS, MAX_FS, WRAP_KEY, LINES_KEY,
+    sessionMap, rev, view, fontScale, codeWrap, codeLineNumbers, config, models,
+    ollamaIds, vramOpen, sidebarOpen, loadedModels, psError,
+} from "./store";
+import type { Status, Turn, AgentStep, Session } from "./store";
 // Syntax highlighting — highlight.js core + a focused set of languages, and the
 // Atom One themes (imported as CSS text, injected into the shadow root).
 import hljs from "highlight.js/lib/core";
@@ -32,52 +38,6 @@ for (const [name, lang] of [
     ["bash", bash], ["xml", xml], ["css", cssLang], ["markdown", mdLang],
 ] as const) hljs.registerLanguage(name, lang);
 
-const FONT_KEY = "ml_debug_fontscale";
-const BASE_FS = 12, MIN_FS = 0.8, MAX_FS = 1.6;   // font-scale bounds (× BASE_FS px)
-// Sidebar-only code-block display prefs (storage.local, like fontScale — not part
-// of the ml config the popup/background share).
-const WRAP_KEY = "ml_debug_codewrap";     // true = break-line (default); false = horizontal scroll
-const LINES_KEY = "ml_debug_codelines";   // line-number gutter on code blocks
-
-type Status = "pending" | "ok" | "err";
-interface Turn {
-    id: string; ts: number; user: string; images: string[] | null;
-    assistant?: string; sources?: unknown[] | null; structured?: boolean; error?: string; status: Status;
-    reqModel?: string | null;   // the model the caller explicitly requested (null = fell back to default/utility)
-    model?: string | null;      // the model that actually produced this reply (resolved server-side)
-    extend?: ExtendProfile | null;  // which profile resolved it — marks (default) vs (utility)
-    reasoning?: string | null;  // separate thinking/reasoning text, if the model produced any
-}
-interface AgentStep { step: number; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: number; render?: RenderDescriptor; argIssues?: string[]; approval?: "readonly" | "user" | "denied"; }
-interface Session {
-    hash: string; model: string | null; tag: "session" | "saved";
-    createdTs: number; lastTs: number; status: Status;
-    config: DebugSessionConfig; turns: Turn[];
-    title?: string;   // AI-summarised title (lazy; see title generation below)
-    // ml.agent runs (kind === "agent"): a task + a list of steps + a final summary.
-    kind?: "agent";
-    task?: string;
-    steps?: AgentStep[];
-    summary?: string;
-    hitCap?: boolean;
-    maxSteps?: number;
-    agentConfig?: DebugAgentConfig;
-}
-
-// --- state: a Map (O(1) lookup) + a version signal to notify Preact of changes ---
-const sessionMap = new Map<string, Session>();
-const rev = signal(0);
-const view = signal<{ name: "list" } | { name: "detail"; hash: string } | { name: "settings" }>({ name: "list" });
-const fontScale = signal(1);
-const codeWrap = signal(true);          // wrap long code lines vs. horizontal scroll
-const codeLineNumbers = signal(false);  // show a line-number gutter on code blocks
-const config = signal<MlConfig>(DEFAULT_CONFIG);   // live mirror of chrome.storage.sync
-const models = signal<string[]>([]);               // server model ids (for the datalists)
-const ollamaIds = signal<string[] | null>(null);   // subset that's Ollama-backed (null = can't tell → skip cloud detection)
-const vramOpen = signal(false);                    // VRAM monitor panel toggled on?
-const sidebarOpen = signal(false);                 // is the shell slid open? (gates polling)
-const loadedModels = signal<LoadedModel[] | null>(null);   // OLLAMA_PS resident set (null until first poll)
-const psError = signal<string | null>(null);               // OLLAMA_PS failure (no Ollama backend)
 
 /* -------------------------------- helpers -------------------------------- */
 const pretty = (v: unknown, max = 6000): string => {
