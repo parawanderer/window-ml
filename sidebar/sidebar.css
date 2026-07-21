@@ -306,6 +306,9 @@ details.io[open] > summary .io-preview { display: none; }
     color: var(--fg); font: 0.92em/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .md pre.code code { background: none; padding: 0; }
+/* Assistant-reply code blocks get breathing room; the bare `.code` exec
+   previews (not inside `.md`) stay tight. */
+.md pre.code { padding: 0.75em; }
 
 /* Wrap ⇄ scroll (root attr set by the sidebar; the hljs theme already puts
    overflow-x:auto on code.hljs, so flipping white-space is enough). */
