@@ -10,7 +10,6 @@ import type {
     AgentResult,
     AgentTranscriptEntry,
     SessionRef,
-    MlDebugEvent,
     DebugChatStart,
     DebugChatResult,
     DebugChatError,
@@ -32,74 +31,9 @@ import { truncate, errText, elPath, normalizeText, clickSelector, elLine, descri
 import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE } from "./prompts";
 import { pageContext, settle, cropDataUrl, MIN_SHOT_PX } from "./util";
 import { suspiciousArgsWarning, suspiciousChars } from "./security";
+import { emitDebug, debugId, shortHash, sessionRegistry, enterAgentRun, exitAgentRun } from "./bus";
 
 (function() {
-
-    // ---- Debug sidebar event stream (see sidebar.js) ----
-    // The opt-in sidebar lives in the isolated content-script world; it can't read
-    // this main-world `ml` state directly, so we push a one-way event stream to it
-    // via window.postMessage. Emission is gated on a handshake: the sidebar posts
-    // `{ __mlSidebar: "ready" }` when it mounts, so there's zero cost when it's off.
-    let debugEnabled = false;   // live emission (after the iframe app handshakes)
-    let sidebarPresent = false;  // a sidebar shell exists at all — gates ALL buffering, so a
-    // disabled sidebar stays truly zero-cost. The shell posts `"present"` the moment it mounts
-    // (only when config.sidebar is on), then `"ready"` once the iframe app is listening.
-    // Ring buffer: the app handshakes only after it finishes loading, so ml calls in that window
-    // were emitted into the void. We buffer from "present" and REPLAY on "ready" — the app is
-    // freshly listening and got no live events before its own ready, so each lands exactly once.
-    const DEBUG_RING_MAX = 200;
-    const debugRing: MlDebugEvent[] = [];
-    window.addEventListener("message", (event) => {
-        const d = event.source === window && event.data && event.data.__mlSidebar;
-        if (d === "present") { sidebarPresent = true; }
-        else if (d === "ready") {
-            sidebarPresent = debugEnabled = true;
-            for (const ev of debugRing) { try { window.postMessage({ __mlDebug: ev }, "*"); } catch { /* non-cloneable — ignore */ } }
-        }
-    });
-    /**
-     * Emit a debug event to the sidebar via postMessage.
-     * No-op when debugging is disabled; catches non-cloneable errors silently.
-     *
-     * @param {MlDebugEvent} event The event data to send.
-     */
-    // >0 while inside an ml.agent run, so chat calls the agent makes internally
-    // (e.g. the auto-wired `look` vision tool) don't spawn their own orphan
-    // sessions — their result already shows as the agent's tool step.
-    let inAgentRun = 0;
-    const emitDebug = (event: MlDebugEvent) => {
-        if (!sidebarPresent) return;   // no sidebar → do nothing (disabled = zero cost)
-        if (inAgentRun && event.kind.startsWith("chat")) return;   // never buffer/emit orphan internal chats
-        debugRing.push(event);
-        if (debugRing.length > DEBUG_RING_MAX) debugRing.shift();
-        if (!debugEnabled) return;
-        try { window.postMessage({ __mlDebug: event }, "*"); } catch (e) { /* non-cloneable — ignore */ }
-    };
-    /**
-     * Generate a short unique id from timestamp and random bits.
-     * Used for labeling individual chat requests in the debug stream.
-     *
-     * @returns {string} A short unique identifier.
-     */
-    const debugId = (): string => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
-    /**
-     * Generate a stable short hex id per session.
-     * Uses crypto.getRandomValues when available, falls back to Math.random.
-     * Shown in the debug sidebar and used to resume a conversation.
-     *
-     * @returns {string} A short hex identifier.
-     */
-    const shortHash = (): string => {
-        try {
-            const b = new Uint8Array(4); crypto.getRandomValues(b);
-            return [...b].map(x => x.toString(16).padStart(2, "0")).join("");
-        } catch { return Math.random().toString(16).slice(2, 10); }
-    };
-
-    // Live registry of this tab's chat sessions (by hash) so ml.resumeChat can
-    // continue one without a reload. Cross-reload/tab resume goes through storage
-    // ({ save:true } only). In-memory → cleared on reload.
-    const sessionRegistry = new Map<string, MlHistory>();
 
     // Ask the debug sidebar shell to hide its overlay for a screenshot (so it
     // isn't captured into the agent's `look`), resolving once it has painted the
@@ -761,7 +695,7 @@ import { suspiciousArgsWarning, suspiciousChars } from "./security";
                 emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: r.steps }, summary: r.summary, steps: r.steps, hitCap: !!r.hitCap });
                 return r;
             };
-            inAgentRun++;   // suppress orphan chat sessions from internal tool chats (see emitDebug); finally-decremented below
+            enterAgentRun();   // suppress orphan chat sessions from internal tool chats (see emitDebug); finally-decremented below
             try {
             for (let step = 1; step <= maxSteps; step++) {
                 const msg = await this.step(messages, { tools: toolDefs, model, think });
@@ -867,7 +801,7 @@ import { suspiciousArgsWarning, suspiciousChars } from "./security";
                 }
             }
             return finish({ summary: `Stopped at the ${maxSteps}-step cap without finishing.`, steps: maxSteps, transcript, elements: answered, hitCap: true });
-            } finally { inAgentRun--; }
+            } finally { exitAgentRun(); }
         },
         /**
          * A de-duplicating approval gate for {@link module:ml.agent}: prompts (via
