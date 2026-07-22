@@ -187,6 +187,8 @@ export const describeSkeleton = (el: Element, depth: number, indent = ""): strin
 
 // Resolve a selector that MAY carry a jQuery/Sizzle/Playwright predicate the model
 // reaches for but native `querySelectorAll` lacks:
+//   • Playwright `text=Foo` engine (whole selector): match by visible text, keeping the
+//     smallest/leaf-most element (so a click hits the button, not <body>).
 //   • text — `:contains("x")` / `:has-text("x")`: peel OFF THE END, run the
 //     (native) base, filter by textContent (case-insensitive, all required).
 //   • positional — `:eq(n)` (jQuery, 0-based): peel and pick the nth match.
@@ -212,6 +214,13 @@ export const queryAll = (selector: string): Element[] => {
     let base = String(selector).trim();
     const texts: string[] = [];
     let eqIndex: number | null = null;   // trailing :eq(n) → jQuery-style 0-based positional pick
+    // Playwright's `text=Foo` / `text="Foo"` engine (a common model reflex): match by
+    // visible text, case-insensitive substring. Playwright targets the SMALLEST element
+    // with the text, so we run "*" + the text filter and keep only the leaf-most matches
+    // (below) — otherwise every ancestor (body/…) would match and click the wrong thing.
+    let deepest = false;
+    const tm = /^text=\s*(['"]?)([\s\S]+?)\1\s*$/i.exec(base);
+    if (tm) { texts.push(tm[2]); base = "*"; deepest = true; }
     // Peel trailing :eq and text predicates (loop for chained/mixed ones). :eq
     // comes off FIRST each pass: the text regex's optional-quote branch would
     // otherwise greedily swallow a following `:eq(1)` into its match text.
@@ -234,7 +243,10 @@ export const queryAll = (selector: string): Element[] => {
         }
         return els;
     };
-    const els = run(base);
+    let els = run(base);
+    // `text=` → keep only the deepest text carriers (drop matching ancestors), so a click
+    // lands on the actual button, not <body>.
+    if (deepest && els.length > 1) els = els.filter(el => !els.some(o => o !== el && el.contains(o)));
     if (eqIndex !== null) return els[eqIndex] ? [els[eqIndex]] : [];
     if (!els.length) {
         const m = base.match(TRAILING_NTH_NATIVE);

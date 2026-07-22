@@ -104,6 +104,18 @@ test("_queryAll allows a bare text predicate (empty base → *) and plain select
     assert.equal(ml._queryAll('a:contains("keep") > b').length, 0);
 });
 
+test("_queryAll supports Playwright text=Foo → the smallest element with that text", () => {
+    const { ml } = loadDomWorld('<p>wrap <button id="b">Show hint</button></p><a>Show more</a>');
+    // text=Show hint → the <button>, NOT the ancestor <p>/<body> that also contain the text.
+    const r = ml._queryAll("text=Show hint");
+    assert.equal(r.length, 1);
+    assert.equal(r[0].id, "b");
+    // case-insensitive + quoted form both work
+    assert.equal(ml._queryAll('text="show HINT"')[0].id, "b");
+    // substring match against the leaf; "Show" alone matches both leaf carriers
+    assert.deepEqual(ml._queryAll("text=Show").map(e => e.tagName).sort(), ["A", "BUTTON"]);
+});
+
 test("_queryAll supports :eq(n) as a 0-based positional pick", () => {
     const { ml } = loadDomWorld('<p class="x">a</p><p class="x">b</p><p class="x">c</p>');
     assert.equal(ml._queryAll(".x:eq(0)")[0].textContent, "a");
