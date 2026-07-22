@@ -839,6 +839,28 @@ test("export: a grounding locate step serialises the full debug view (both image
     assert.match(latin1, /Prompt to the model/, "the VLM prompt is included");
 });
 
+test("export: an auto-fallback locate step serialises the grounding attempt + the marks pass", async () => {
+    const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    const url = "data:image/png;base64," + PNG;
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("expf", "find the star", "gemma4:31b", 10));
+    await w.dispatch(agentStep("expf", 1, { tool: "locate", arguments: { description: "star" }, elements: 1, render: {
+        type: "locate", mode: "marks", model: "gemma4:31b",
+        resultImage: url, picked: "#2 [button] → #bar > div:nth-of-type(2)",
+        fallbackNote: "returned no box", fallbackImage: url,
+    } }));
+    await w.dispatch(agentResult("expf", "clicked star", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+
+    const { blob } = await captureExport(w);
+    const latin1 = String.fromCharCode(...new Uint8Array(await blob.arrayBuffer()));
+    assert.ok(latin1.includes("images/step-1-grounding-attempt.png"), "grounding-attempt sidecar");
+    assert.ok(latin1.includes("images/step-1-element-location.png"), "the marks pass sidecar");
+    assert.match(latin1, /Grounding returned no box .{1,4} fell back to Set-of-Marks/, "the fallback note");
+    assert.match(latin1, /Model picked:.*nth-of-type\(2\)/, "marks pick");
+});
+
 test("export: a chat session downloads a markdown log (options, turns, reply)", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(chatStart("expc", 0, "what is 2+2", { model: "qwen3:14b" }));
