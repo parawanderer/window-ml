@@ -57,19 +57,11 @@ export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512 }: { mo
     return ml.defineTool({
         name: "look",
         capabilities: ["vision"],
-        description: "See the page visually and get a vision-model description. Call it with " +
-            "NO selector to screenshot the viewport and ORIENT yourself when the task is " +
-            "vague — seeing the page often makes the intended edit obvious. Pass a selector " +
-            "to inspect one element (icons, badges, images, or whether something looks " +
-            "sponsored / greyed-out / out of stock). By default you see only the current " +
-            "viewport; pass scope:'page' (with no selector) to scroll the whole page and " +
-            "stitch it into one tall image when what you need is below the fold — but that " +
-            "image is DOWNSCALED, so use it for layout/orientation, not for reading small text. " +
-            "To CLASSIFY items in a grid/list (which posts show a cat?), give the item selector " +
-            "and iterate `index` (0,1,2,…) — one tight, high-res crop per item, decisive and " +
-            "bound to that exact element. You can also pass an `@pt:…` point token from locate to " +
-            "VERIFY a canvas click target BEFORE clicking — it crops and marks the exact spot so " +
-            "you can confirm what you're about to hit.",
+        description: "See the page (or one element) visually. No selector → screenshot the viewport " +
+            "to orient. A selector → inspect that element; iterate `index` (0,1,2,…) to judge items in " +
+            "a grid/list one sharp crop at a time. scope:'page' stitches the whole page (downscaled — " +
+            "layout only, not small text). An `@pt:…` token from locate → a marked crop of that canvas " +
+            "click point, to VERIFY before clicking.",
         parameters: {
             type: "object",
             properties: {
@@ -136,19 +128,10 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
     return ml.defineTool({
         name: "locate",
         capabilities: ["vision"],
-        description: "Find an on-screen control by DESCRIBING it — for unlabelled icon buttons, " +
-            "custom widgets, or pages with no accessibility markup, where you can't anchor by text or " +
-            "guess a selector. A vision model finds it in a screenshot (via a grounding model's " +
-            "coordinates when configured, else numbered Set-of-Marks badges), and the box is snapped to " +
-            "the real DOM node by hit-testing (so it works even on non-semantic <div> UIs). Returns that " +
-            "element's CSS selector to pass to click/type/answer, plus nearby candidates. Narrow with " +
-            "`filter` (clickables/inputs/images), or SCOPE the search to a container with `selector` " +
-            "(+`index`) — the region is cropped and searched on its own, which is far more reliable for a " +
-            "small target in a busy page (one row of a list, a toolbar, a card). Only sees the current " +
-            "viewport — if the target isn't found, scroll it into view, widen the filter, or refine the " +
-            "description and call again. A visual pick CAN be wrong, so ALWAYS VERIFY the returned " +
-            "selector with look({ selector }) before you click/type/act on it — confirm it's the thing " +
-            "you meant; if not, refine and locate again.",
+        description: "Find an on-screen control by DESCRIBING how it looks — for unlabelled icons, " +
+            "custom widgets, canvas, or any UI you can't reach by text or a guessed selector. Returns a " +
+            "CSS selector (or an `@pt:…` coordinate, for canvas) to pass to click/type/answer. Sees only " +
+            "the current viewport (scroll the target into view first).",
         parameters: {
             type: "object",
             properties: {
@@ -167,7 +150,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 },
                 selector: {
                     type: "string",
-                    description: "Optional: CSS selector of a PARENT CONTAINER element (e.g. '.modal', 'tr:nth-child(2)') to restrict visual scanning to that box. Its region is cropped and searched alone. Do NOT pass the target element's selector here — this is only for the outer box. FOR ANYTHING ON A <canvas>/WebGL surface, FIRST find the canvas's selector (interactives/describeElement, or just 'canvas' / its id) and pass it here — the search then covers only the canvas, giving tighter cells and exact coordinates."
+                    description: "Optional CONTAINER selector to crop scanning to (a modal, a list row) — better for a small target in a busy area. For a target on a <canvas>, pass the canvas's selector here. NOT the target's own selector."
                 },
                 index: {
                     type: "integer",
@@ -175,16 +158,16 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 },
                 margin: {
                     type: "integer",
-                    description: "Optional: grow the predicted box by this many pixels before matching. Use it when GROUNDING returned a box but snapped to the WRONG element (the box narrowly missed) — call again with the SAME description and a margin like 40–120; it reuses the cached box and re-scans a wider area. It does NOT help when grounding returned no box at all — then re-describe the element, scroll it into view, or use strategy 'marks'."
+                    description: "For 'grounding': grow the predicted box by N px (try 40–120) and re-match — when a box snapped to the WRONG element. Reuses the cached box (no 2nd vision call)."
                 },
                 strategy: {
                     type: "string",
                     enum: ["auto", "grounding", "marks", "grid"],
-                    description: "How to find it (default 'auto'). 'grounding' = a coordinate model points at it directly (needs a grounding model configured; fast, best for a described spot). 'marks' = numbered badges over every candidate and the model picks by number (robust; use when grounding missed or you want to choose among cluttered candidates). 'grid' = an N×N numbered grid is drawn and the model picks the CELL holding the target — no coordinate training needed, so it works with any vision model and stays robust on cluttered pages; zoom in by re-running with the returned `cell`, or raise `gridSize` for finer cells. 'auto' tries grounding first, then falls back to marks."
+                    description: "Default 'auto'. 'grounding' = a coordinate model points at it (needs one configured; best for a clear spot). 'marks' = numbered badges, model picks by number (robust when cluttered). 'grid' = a numbered grid, model picks the CELL (any vision model; zoom with `cells` or raise `gridSize`). 'auto' = grounding then marks."
                 },
                 gridSize: {
                     type: "integer",
-                    description: "For strategy 'grid': the base cell count (default 4, 2–8). The grid is aspect-matched (a wide toolbar gets more columns than rows), so this sets the ballpark, not a literal N×N. Larger = finer cells. ON A CANVAS the returned point is the picked cell's CENTRE — so if a click lands slightly OFF a target you can clearly SEE, retry the same grid call with a LARGER gridSize (smaller cells → the centre lands closer to it), or zoom in with `cells`."
+                    description: "For 'grid': base cell count (default 4, 2–8); larger = finer cells."
                 },
                 cells: {
                     type: "array",
@@ -268,6 +251,10 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             }
             const regionBox: Box = { left: region.left, top: region.top, right: region.left + region.width, bottom: region.top + region.height };
             const scopeNote = scopeSel ? ` within "${scopeSel}"${index ? ` (#${index})` : ""}` : "";
+            // Tips disclosed IN the results (kept out of the tool description, which the model
+            // half-reads) so each fires exactly when it applies.
+            const actHint = "(verify it with look() first, then click/type/answer with this selector)";
+            const canvasScopeTip = scopeSel ? "" : " For tighter coordinates, first scope to the canvas by passing its selector to locate.";
 
             // Mechanism #3 — grid: draw an aspect-matched numbered grid, ask which CELL(S)
             // hold the target (multiple-choice → no coordinate hallucination). The model may
@@ -333,7 +320,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                         const token = mintPoint(cpt.x, cpt.y);
                         const ptImg = await annotate(shot, [{ rect: rectOf(cellBox), color: YELLOW, label: cellNote }, { rect: { left: cpt.x - 11, top: cpt.y - 11, width: 22, height: 22 }, color: RED, label: "point" }], dpr);
                         return {
-                            content: `Grid ${cellNote}${scopeNote} is on a <canvas> — no DOM element, so this is a COORDINATE: ${token} at (${Math.round(cpt.x)}, ${Math.round(cpt.y)}). Click it verbatim: click({ selector: "${token}" }). For a PRECISE point, first zoom so the target fills a cell: ${refineHint} (re-centres the point) — or use strategy 'grounding' for an exact point.`,
+                            content: `Grid ${cellNote}${scopeNote} is on a <canvas> — no DOM element, so this is a COORDINATE: ${token} at (${Math.round(cpt.x)}, ${Math.round(cpt.y)}). Verify by look()ing at it, then click({ selector: "${token}" }). If it lands slightly OFF the target: retry with a LARGER gridSize (finer cells → the centre lands closer), or zoom in — ${refineHint} — or use strategy 'grounding' for an exact point.${canvasScopeTip}`,
                             render: gridResult([cellStep, { label: "Canvas point · in the cell", image: ptImg }], { picked: `${token} @ (${Math.round(cpt.x)}, ${Math.round(cpt.y)})`, pickedBy: "snap" }),
                         };
                     }
@@ -346,7 +333,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                     const picked = marks[0], pk = pickedStr(picked);
                     const snapImg = await annotate(shot, [{ rect: rectOf(cellBox), color: YELLOW, label: cellNote }, { rect: picked.rect, color: RED, badge: 1 }], dpr);
                     return {
-                        content: `Grid ${cellNote}${scopeNote} → ${pk}\n(click/type/answer with this selector)\n\n${refineHint}\n\nCandidates in that region:\n${listOf(marks)}`,
+                        content: `Grid ${cellNote}${scopeNote} → ${pk}\n${actHint}\n\n${refineHint}\n\nCandidates in that region:\n${listOf(marks)}`,
                         elements: [picked.el, ...found.filter(e => e !== picked.el)].slice(0, 50),
                         render: gridResult([cellStep, { label: "DOM snap · single element in the cell", image: snapImg }], { picked: pk, pickedBy: "snap" }),
                     };
@@ -364,7 +351,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 const pk = `#${chosen.id} ${pickedStr(chosen)}`;   // the badge the model chose
                 const viz = await highlightPick(raw, chosen, rectOf(cellBox));
                 return {
-                    content: `Grid ${cellNote}${scopeNote} → badged ${found.length} candidates → model picked ${pk}\n(click/type/answer with this selector)\n\n${refineHint}\n\nCandidates in that region:\n${listOf(marks)}`,
+                    content: `Grid ${cellNote}${scopeNote} → badged ${found.length} candidates → model picked ${pk}\n${actHint}\n\n${refineHint}\n\nCandidates in that region:\n${listOf(marks)}`,
                     elements: [chosen.el, ...found.filter(e => e !== chosen.el)].slice(0, 50),
                     render: gridResult([cellStep, { label: somLabel(found.length, chosen), note: handoffNote, prompt: somPrompt, output: answer, rawImage: raw, image: viz }], { picked: pk, pickedBy: "model" }),
                 };
@@ -425,7 +412,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                             const dot = { left: cpt.x - 11, top: cpt.y - 11, width: 22, height: 22 };
                             const ptImg = await annotate(shot, [{ rect: rectOf(b), color: YELLOW, label: "grounded region" }, { rect: dot, color: RED, label: "click point" }], dpr);
                             return {
-                                content: `Grounded "${description}"${scopeNote} on a <canvas> — no DOM element, so this is a COORDINATE: ${token} at (${Math.round(cpt.x)}, ${Math.round(cpt.y)}). Click it verbatim: click({ selector: "${token}" }).`,
+                                content: `Grounded "${description}"${scopeNote} on a <canvas> — no DOM element, so this is a COORDINATE: ${token} at (${Math.round(cpt.x)}, ${Math.round(cpt.y)}). Verify by look()ing at it, then click({ selector: "${token}" }).${canvasScopeTip}`,
                                 render: groundResult([boxStep, { label: "Canvas point (no DOM element)", image: ptImg }], { picked: `${token} @ (${Math.round(cpt.x)}, ${Math.round(cpt.y)})`, pickedBy: "snap" }),
                             };
                         }
@@ -441,7 +428,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                         if (chosen) {
                             const picked = pickedStr(marks[0]);
                             return {
-                                content: `Grounded "${description}"${scopeNote}${margin ? ` (margin ${margin}px)` : ""} → ${picked}\n(click/type/answer with this selector)\n\nOther elements in that region:\n${listOf(marks)}`,
+                                content: `Grounded "${description}"${scopeNote}${margin ? ` (margin ${margin}px)` : ""} → ${picked}\n${actHint}\n\nOther elements in that region:\n${listOf(marks)}`,
                                 elements: ordered.slice(0, 50),
                                 render: groundResult([boxStep, snapStep], { picked, pickedBy: "snap" }),
                             };
@@ -449,7 +436,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                         // A box was returned but nothing interactive sits under it — here a
                         // larger `margin` genuinely helps (it expands a real box).
                         if (strategy === "grounding") {
-                            return { content: `Grounding located a region for "${description}" but no ${filter} element is under it. Retry with a larger \`margin\`, or use strategy 'marks'.`, render: groundResult([boxStep, { ...snapStep, label: "DOM snap · no element in the box" }]) };
+                            return { content: `Grounding located a region for "${description}" but no ${filter} element is under it. Retry with a larger \`margin\` (e.g. 40–120) — cheap, it reuses this box with no 2nd vision call — or use strategy 'marks'.`, render: groundResult([boxStep, { ...snapStep, label: "DOM snap · no element in the box" }]) };
                         }
                         priorSubsteps.push(boxStep, { ...snapStep, label: "DOM snap · no element in the box" });
                         fallbackNote = `Grounding found a region but no ${filter} element under it — fell back to Set-of-Marks.`;
@@ -508,7 +495,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 return { content: `${prefix}No badge matched "${description}" (model replied "${truncate(answer, 40)}"). Candidates:\n${listOf(marks)}${densityWarn}`, elements: cands.slice(0, 50), render: marksResult() };
             }
             return {
-                content: `${prefix}Matched "${description}" → #${chosen.id} ${pickedStr(chosen)}\n(click/type/answer with this selector)\n\nAll candidates:\n${listOf(marks)}${densityWarn}`,
+                content: `${prefix}Matched "${description}" → #${chosen.id} ${pickedStr(chosen)}\n${actHint}\n\nAll candidates:\n${listOf(marks)}${densityWarn}`,
                 elements: [chosen.el],
                 render: marksResult({ picked: `#${chosen.id} ${pickedStr(chosen)}`, pickedBy: "model" }),
             };
