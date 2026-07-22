@@ -71,6 +71,22 @@ function agentToMarkdown(s: Session, addImage: AddImage): string {
             const label = st.render.label ? ` — ${st.render.label}` : "";
             const ref = addImage(st.render.src, `step-${st.step}`);
             o.push(ref ? `![step ${st.step}${label}](${ref})` : `_🖼️ screenshot${label} (image unavailable)_`, "");
+        } else if (st.render && st.render.type === "locate") {
+            // The full grounding/SoM debug view, mirroring the sidebar's locate render.
+            const r = st.render;
+            o.push(`> _${r.mode === "grounding" ? "Grounding" : "Set-of-Marks"} · ${r.model}_`, "");
+            if (r.mode === "grounding") {
+                if (r.prompt) o.push("<details><summary>Prompt to the model</summary>", "", fence(r.prompt), "", "</details>", "");
+                const gref = r.groundingImage && addImage(r.groundingImage, `step-${st.step}-model-output`);
+                o.push(`**Model output**${r.gaveBox ? ` — box ${r.boxCoords}` : " — no box returned"}:`, "");
+                o.push(gref ? `![step ${st.step} model output](${gref})` : "_🖼️ (image unavailable)_", "");
+            }
+            const eref = r.resultImage && addImage(r.resultImage, `step-${st.step}-element-location`);
+            if (eref) {
+                o.push(`**Element location**${r.margin ? ` — +${r.margin}px search margin` : ""}:`, "");
+                o.push(`![step ${st.step} element location](${eref})`, "");
+            }
+            o.push(`**Picked:** ${r.picked || "_(none)_"}`, "");
         }
         if (st.result != null && st.result !== "") o.push("**Out:**", "", fence(st.result), "");
         else if (st.elements != null) o.push(`**Out:** ${st.elements} element(s)`, "");

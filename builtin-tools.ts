@@ -136,7 +136,9 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 if (cached) {
                     const { nums, square, prompt } = cached;
                     const R = groundingRange || DEFAULT_GROUNDING_RANGE;
-                    const coords = nums ? nums.join(",") : "";
+                    // Comma-SPACE separated, floats to 1 decimal with a `.` — so a
+                    // range-1 (0–1) model reads "0.3, 0.2, 0.5, 0.6", not "0,3,0,2,…".
+                    const coords = nums ? nums.map(n => Number.isInteger(n) ? String(n) : (Math.round(n * 10) / 10).toString()).join(", ") : "";
                     // The square the model saw, annotated with ITS box (in square px).
                     const groundingImage = nums
                         ? await annotate(square, [{ rect: rectOf(viewportBox(nums, R, DEFAULT_GROUNDING_RANGE, DEFAULT_GROUNDING_RANGE)), color: RED, label: coords }], 1)

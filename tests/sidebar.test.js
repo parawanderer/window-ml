@@ -794,6 +794,32 @@ test("export: a run with screenshots downloads a zip (run.md + png sidecars)", a
     assert.ok(latin1.includes(String.fromCharCode(0x89) + "PNG"), "the real PNG bytes are embedded");
 });
 
+test("export: a grounding locate step serialises the full debug view (both images + prompt/box/pick)", async () => {
+    const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    const url = "data:image/png;base64," + PNG;
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("expl", "find the star", "gemma4:31b", 10));
+    await w.dispatch(agentStep("expl", 1, { tool: "locate", arguments: { description: "star" }, elements: 1, render: {
+        type: "locate", mode: "grounding", model: "qwen2.5vl:7b", prompt: "Locate \"star\" …",
+        groundingImage: url, gaveBox: true, boxCoords: "28, 242, 45, 264", margin: 40,
+        resultImage: url, picked: "[button] \"Star\" → #bar > div:nth-of-type(1)",
+    } }));
+    await w.dispatch(agentResult("expl", "clicked star", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+
+    const { name, blob } = await captureExport(w);
+    assert.equal(name, "ml-agent-expl.zip");
+    const latin1 = String.fromCharCode(...new Uint8Array(await blob.arrayBuffer()));
+    assert.ok(latin1.includes("images/step-1-model-output.png"), "grounding image sidecar");
+    assert.ok(latin1.includes("images/step-1-element-location.png"), "element-location image sidecar");
+    assert.match(latin1, /Grounding.{1,4}qwen2\.5vl:7b/, "model + mode (· is multibyte in latin1)");
+    assert.match(latin1, /box 28, 242, 45, 264/, "box coords");
+    assert.match(latin1, /\+40px search margin/, "margin");
+    assert.match(latin1, /Picked:.*nth-of-type\(1\)/, "picked element");
+    assert.match(latin1, /Prompt to the model/, "the VLM prompt is included");
+});
+
 test("export: a chat session downloads a markdown log (options, turns, reply)", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(chatStart("expc", 0, "what is 2+2", { model: "qwen3:14b" }));
