@@ -16,21 +16,35 @@ function world(html) {
     return dom.window.document;
 }
 const som = require("../dist/som.js");
-const { representativeFor, isClickish, buildMarks, viewportBox, formatBox, projectFromSquare, gridCellBox } = som;
+const { representativeFor, isClickish, buildMarks, viewportBox, formatBox, projectFromSquare, gridDims, validateCells, cellsBox } = som;
 
-test("gridCellBox maps a 1-based cell (row-major) to its viewport box, within a region", () => {
-    const full = { left: 0, top: 0, width: 1600, height: 900 };
-    // 4×4 over the full viewport: cell 1 is the top-left 400×225 tile.
-    assert.deepEqual(gridCellBox(1, 4, 4, full), { left: 0, top: 0, right: 400, bottom: 225 });
-    // cell 6 = row 1, col 1 (0-based) → offset by one tile on each axis.
-    assert.deepEqual(gridCellBox(6, 4, 4, full), { left: 400, top: 225, right: 800, bottom: 450 });
-    // cell 16 = the bottom-right tile.
-    assert.deepEqual(gridCellBox(16, 4, 4, full), { left: 1200, top: 675, right: 1600, bottom: 900 });
-    // Within a scoped/zoomed region the offset carries through.
-    const region = { left: 100, top: 200, width: 400, height: 400 };
-    assert.deepEqual(gridCellBox(1, 2, 2, region), { left: 100, top: 200, right: 300, bottom: 400 });
-    // Out-of-range cells clamp instead of producing a NaN box.
-    assert.deepEqual(gridCellBox(99, 2, 2, region), gridCellBox(4, 2, 2, region));
+test("gridDims matches the grid to the region aspect (a wide strip gets more cols than rows)", () => {
+    assert.deepEqual(gridDims({ width: 1000, height: 1000 }, 4), { cols: 4, rows: 4 });   // square → N×N
+    const wide = gridDims({ width: 1200, height: 150 }, 4);                                // a toolbar strip
+    assert.ok(wide.cols > wide.rows, "wide region → more columns than rows");
+    assert.ok(wide.rows >= 2, "rows clamped to a floor of 2");
+    const tall = gridDims({ width: 150, height: 1200 }, 4);
+    assert.ok(tall.rows > tall.cols, "tall region → more rows than columns");
+});
+
+test("validateCells accepts 1 / 2-adjacent / 2×2, rejects non-adjacent, L-shapes, and 3-cell picks", () => {
+    // In a 4×4 grid: 1 is (0,0), 2 is (0,1), 5 is (1,0), 6 is (1,1).
+    assert.ok(validateCells([6], 4, 4).ok);
+    assert.ok(validateCells([1, 2], 4, 4).ok, "horizontal neighbours");
+    assert.ok(validateCells([2, 6], 4, 4).ok, "vertical neighbours");
+    assert.ok(validateCells([1, 2, 5, 6], 4, 4).ok, "a 2×2 block");
+    assert.ok(!validateCells([1, 3], 4, 4).ok, "not adjacent (a gap)");
+    assert.ok(!validateCells([1, 6], 4, 4).ok, "diagonal, not edge-adjacent");
+    assert.ok(!validateCells([1, 2, 5], 4, 4).ok, "3 cells is never valid");
+    assert.ok(!validateCells([1, 2, 3, 4], 4, 4).ok, "a 1×4 row is not a 2×2 block");
+    assert.ok(!validateCells([0], 4, 4).ok, "out of range");
+});
+
+test("cellsBox unions a cell selection into the bounding rectangle", () => {
+    const region = { left: 0, top: 0, width: 400, height: 400 };   // 4×4 → 100px cells
+    assert.deepEqual(cellsBox([1], 4, 4, region), { left: 0, top: 0, right: 100, bottom: 100 });
+    assert.deepEqual(cellsBox([2, 3], 4, 4, region), { left: 100, top: 0, right: 300, bottom: 100 });
+    assert.deepEqual(cellsBox([1, 2, 5, 6], 4, 4, region), { left: 0, top: 0, right: 200, bottom: 200 });
 });
 
 test("projectFromSquare inverts a letterbox: ONE scale (max side) on both axes, + region offset", () => {

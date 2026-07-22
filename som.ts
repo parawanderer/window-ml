@@ -311,16 +311,51 @@ export function drawGrid(dataUrl: string, cols: number, rows: number, scale: num
 }
 
 /**
- * The viewport Box of a 1-based grid cell (numbered left-to-right, top-to-bottom) in a
- * `cols`×`rows` grid laid over `region`. Inverse of drawGrid's numbering — snaps the
- * model's chosen cell to a DOM sweep, and lets a cell become the next region (zoom).
+ * Grid dimensions matched to a region's ASPECT so cells stay roughly square — a wide
+ * toolbar gets more columns than rows instead of a square grid wasting its empty rows.
+ * `base` (~gridSize) sets the ballpark cell count (base²); the split follows √aspect.
  */
-export function gridCellBox(cell: number, cols: number, rows: number, region: { left: number; top: number; width: number; height: number }): Box {
-    const i = Math.max(1, Math.min(cols * rows, Math.round(cell))) - 1;
-    const col = i % cols, row = Math.floor(i / cols);
+export function gridDims(region: { width: number; height: number }, base = 4): { cols: number; rows: number } {
+    const aspect = region.height > 0 ? region.width / region.height : 1;
+    const clamp = (n: number) => Math.max(2, Math.min(12, Math.round(n)));
+    return { cols: clamp(base * Math.sqrt(aspect)), rows: clamp(base / Math.sqrt(aspect)) };
+}
+
+/**
+ * A grid-cell SELECTION the model may return: 1 cell, 2 edge-adjacent cells (a target
+ * straddling a boundary), or 4 cells forming a 2×2 block. Rejects anything else
+ * (non-adjacent, an L-shape, 3 cells) so a follow-up never unions a disjoint region.
+ * Cells are 1-based, numbered left-to-right, top-to-bottom.
+ */
+export function validateCells(cells: number[], cols: number, rows: number): { ok: boolean; reason?: string } {
+    const n = cells.length;
+    if (n !== 1 && n !== 2 && n !== 4) return { ok: false, reason: "select 1, 2 (adjacent), or 4 (a 2×2 block) cells" };
+    if (cells.some(c => !Number.isInteger(c) || c < 1 || c > cols * rows)) return { ok: false, reason: `cells must be 1–${cols * rows}` };
+    if (new Set(cells).size !== n) return { ok: false, reason: "cells must be distinct" };
+    const rc = cells.map(c => ({ r: Math.floor((c - 1) / cols), c: (c - 1) % cols }));
+    const minR = Math.min(...rc.map(p => p.r)), maxR = Math.max(...rc.map(p => p.r));
+    const minC = Math.min(...rc.map(p => p.c)), maxC = Math.max(...rc.map(p => p.c));
+    if (n === 1) return { ok: true };
+    if (n === 2) {
+        const [a, b] = rc;
+        const adjacent = (a.r === b.r && Math.abs(a.c - b.c) === 1) || (a.c === b.c && Math.abs(a.r - b.r) === 1);
+        return adjacent ? { ok: true } : { ok: false, reason: "2 cells must share an edge (left-right or top-bottom neighbours)" };
+    }
+    // n === 4 → exactly the 2×2 block spanning [minR..minR+1]×[minC..minC+1].
+    const isBlock = maxR - minR === 1 && maxC - minC === 1;
+    return isBlock ? { ok: true } : { ok: false, reason: "4 cells must form a 2×2 block" };
+}
+
+/** Union Box of a (validated-adjacent) cell selection — the rectangle they bound. */
+export function cellsBox(cells: number[], cols: number, rows: number, region: { left: number; top: number; width: number; height: number }): Box {
+    const rc = cells.map(c => ({ r: Math.floor((c - 1) / cols), c: (c - 1) % cols }));
+    const minR = Math.min(...rc.map(p => p.r)), maxR = Math.max(...rc.map(p => p.r));
+    const minC = Math.min(...rc.map(p => p.c)), maxC = Math.max(...rc.map(p => p.c));
     const cw = region.width / cols, ch = region.height / rows;
-    const left = region.left + col * cw, top = region.top + row * ch;
-    return { left, top, right: left + cw, bottom: top + ch };
+    return {
+        left: region.left + minC * cw, right: region.left + (maxC + 1) * cw,
+        top: region.top + minR * ch, bottom: region.top + (maxR + 1) * ch,
+    };
 }
 
 /** The representative interactive element painted at a viewport point (CSS px). */

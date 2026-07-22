@@ -641,11 +641,12 @@ test("locate render: auto-fallback surfaces the grounding attempt above the Set-
     assert.deepEqual(imgs, ["data:image/png;base64,GROUND", "data:image/png;base64,MARKS"], "grounding attempt first, then marks");
 });
 
-test("locate render: grid mode shows the numbered grid + picked cell, then the DOM snap", async () => {
+test("locate render: grid mode shows the aspect grid + selected cells, then the DOM snap", async () => {
     const w = await loadSidebarWorld();
-    await w.dispatch(agentStart("lgr", "find it"));
+    // Driver model == the sub-call model → the "standalone sub-call" note should show.
+    await w.dispatch(agentStart("lgr", "find it", "gemma4:31b", 10));
     await w.dispatch(agentStep("lgr", 1, { tool: "locate", arguments: { description: "star", strategy: "grid" }, elements: 1, render: {
-        type: "locate", mode: "grid", model: "gemma4:31b", gridSize: 4, cell: 6,
+        type: "locate", mode: "grid", model: "gemma4:31b", cols: 4, rows: 4, cells: [2, 3],
         griddedImage: "data:image/png;base64,GRID", resultImage: "data:image/png;base64,SNAP",
         picked: "[button] → #bar > div:nth-of-type(3)", prompt: "This image is divided into a 4×4 …",
     } }));
@@ -656,11 +657,26 @@ test("locate render: grid mode shows the numbered grid + picked cell, then the D
     await w.tick();
     const loc = w.shadow.querySelector(".r-locate");
     assert.match(loc.querySelector(".r-loc-head").textContent, /Grid · gemma4:31b/);
-    assert.match([...loc.querySelectorAll(".r-loc-cap")].map(c => c.textContent).join(" "), /Grid 4×4 · picked cell 6/);
+    assert.match(loc.querySelector(".r-loc-delegated").textContent, /standalone sub-call/);
+    assert.match([...loc.querySelectorAll(".r-loc-cap")].map(c => c.textContent).join(" "), /Grid 4×4 · cells 2,3/);
     const imgs = [...loc.querySelectorAll(".r-loc-stage img")].map(i => i.getAttribute("src"));
     assert.deepEqual(imgs, ["data:image/png;base64,GRID", "data:image/png;base64,SNAP"], "grid image then the snap");
-    // Grid snaps to the DOM (the model chose a cell, not the element) → "Snapped to".
+    // Grid snaps to the DOM (the model chose cells, not the element) → "Snapped to".
     assert.match(loc.querySelector(".r-loc-picked").textContent, /Snapped to:.*nth-of-type\(3\)/);
+});
+
+test("locate render: no delegated note when the sub-call model differs from the driver", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("lgd", "find it", "qwen3:14b", 10));   // driver ≠ reader
+    await w.dispatch(agentStep("lgd", 1, { tool: "locate", arguments: { description: "star" }, elements: 1, render: {
+        type: "locate", mode: "marks", model: "gemma4:31b", resultImage: "data:image/png;base64,MARKS", picked: "#1 [button] → #b",
+    } }));
+    await w.dispatch(agentResult("lgd", "done", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    for (const h of w.shadow.querySelectorAll(".astep.tool .astep-head")) h.click();
+    await w.tick();
+    assert.equal(w.shadow.querySelector(".r-loc-delegated"), null, "different model → no standalone-note");
 });
 
 test("agent tool step: descriptor renders its target block; the other stays raw (per-block)", async () => {
@@ -889,7 +905,7 @@ test("export: a grid locate step serialises the numbered grid + the DOM snap", a
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("expg", "find the star", "gemma4:31b", 10));
     await w.dispatch(agentStep("expg", 1, { tool: "locate", arguments: { description: "star", strategy: "grid" }, elements: 1, render: {
-        type: "locate", mode: "grid", model: "gemma4:31b", gridSize: 4, cell: 6,
+        type: "locate", mode: "grid", model: "gemma4:31b", cols: 4, rows: 4, cells: [2, 3],
         griddedImage: url, resultImage: url, picked: "[button] → #bar > div:nth-of-type(3)", prompt: "This image is divided into a 4×4 …",
     } }));
     await w.dispatch(agentResult("expg", "clicked star", 1));
@@ -901,7 +917,8 @@ test("export: a grid locate step serialises the numbered grid + the DOM snap", a
     assert.ok(latin1.includes("images/step-1-grid.png"), "grid image sidecar");
     assert.ok(latin1.includes("images/step-1-element-location.png"), "the DOM-snap sidecar");
     assert.match(latin1, /Grid.{1,4}gemma4:31b/, "mode + model");
-    assert.match(latin1, /picked cell 6/, "picked cell");
+    assert.match(latin1, /standalone sub-call/, "delegated note (same model as driver)");
+    assert.match(latin1, /cells 2,3/, "selected cells");
     assert.match(latin1, /Snapped to:.*nth-of-type\(3\)/, "grid snaps to the DOM");
 });
 

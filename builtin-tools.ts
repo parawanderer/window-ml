@@ -8,7 +8,7 @@ import type { MlApi, MlTool } from "./contract";
 import { DEFAULT_GROUNDING_RANGE } from "./contract";
 import { truncate, errText, elLine, queryAll, selectorError } from "./dom";
 import { settle, VISION_NUM_CTX, cropDataUrl, MIN_SHOT_PX } from "./util";
-import { collectCandidates, buildMarks, drawMarks, annotate, formatBox, letterboxToSquare, projectFromSquare, drawGrid, gridCellBox, collectInBox, elementAtPoint, viewportBox, type MarkFilter, type Box } from "./som";
+import { collectCandidates, buildMarks, drawMarks, annotate, formatBox, letterboxToSquare, projectFromSquare, drawGrid, gridDims, validateCells, cellsBox, collectInBox, elementAtPoint, viewportBox, type MarkFilter, type Box, type Mark } from "./som";
 
 export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512 }: { model?: string | null; maxTokens?: number } = {}): MlTool => {
     return ml.defineTool({
@@ -109,7 +109,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 },
                 selector: {
                     type: "string",
-                    description: "Optional: a CSS selector for a CONTAINER to scope the search to (its region is cropped and searched alone). Use it to pin down a target inside one known area — a specific list row, a toolbar, a card. Scrolls the container into view first."
+                    description: "Optional: CSS selector of a PARENT CONTAINER element (e.g. '.modal', 'tr:nth-child(2)') to restrict visual scanning to that box. Its region is cropped and searched alone. Do NOT pass the target element's selector here — this is only for the outer box."
                 },
                 index: {
                     type: "integer",
@@ -126,22 +126,42 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 },
                 gridSize: {
                     type: "integer",
-                    description: "For strategy 'grid': the grid is gridSize×gridSize (default 4, 2–8). Larger = finer cells."
+                    description: "For strategy 'grid': the base cell count (default 4, 2–8). The grid is aspect-matched (a wide toolbar gets more columns than rows), so this sets the ballpark, not a literal N×N. Larger = finer cells."
                 },
-                cell: {
-                    type: "integer",
-                    description: "For strategy 'grid': zoom into a previously-returned cell number and draw a fresh grid inside it (hierarchical refine)."
+                cells: {
+                    type: "array",
+                    items: { type: "integer" },
+                    description: "For strategy 'grid': zoom into a previously-returned cell selection (1, 2 adjacent, or a 2×2 block of 4) and draw a fresh grid inside it (hierarchical refine)."
                 },
             },
             required: ["description"],
         },
-        run: async ({ description, filter = "clickables", margin = 0, strategy = "auto", selector, index = 0, gridSize, cell }: { description: string; filter?: MarkFilter; margin?: number; strategy?: "auto" | "grounding" | "marks" | "grid"; selector?: string; index?: number; gridSize?: number; cell?: number }) => {
+        run: async ({ description, filter = "clickables", margin = 0, strategy = "auto", selector, index = 0, gridSize, cells }: { description: string; filter?: MarkFilter; margin?: number; strategy?: "auto" | "grounding" | "marks" | "grid"; selector?: string; index?: number; gridSize?: number; cells?: number[] }) => {
             if (!description) return "Provide a `description` of the element to find.";
             const dpr = window.devicePixelRatio || 1;
             const RED = "#ff2d55", YELLOW = "#eab308";
             const rectOf = (b: Box) => ({ left: b.left, top: b.top, width: b.right - b.left, height: b.bottom - b.top });
             const pickedStr = (m: { role: string; name: string; selector: string }) => `[${m.role}]${m.name ? ` "${m.name}"` : ""} → ${m.selector}`;
             let shot: string | undefined;   // captured once, shared between mechanisms
+
+            // Draw numbered badges over `marks` — full-frame, or translated onto a crop of
+            // `crop` (a scoped/grid-cell view, for a tighter, more legible image). Shared by
+            // strategy 'marks' and grid's in-cell disambiguation.
+            const badgeMarks = async (marks: Mark[], crop?: { left: number; top: number; width: number; height: number }): Promise<string> => {
+                if (!shot) shot = await ml.screenshot(null, {});
+                if (!crop) return drawMarks(shot, marks, dpr);
+                return annotate(await cropDataUrl(shot, crop, dpr), marks.map(m => ({ rect: { left: m.rect.left - crop.left, top: m.rect.top - crop.top, width: m.rect.width, height: m.rect.height }, color: RED, badge: m.id })), dpr);
+            };
+            // Ask the vision reader which badge matches the description; returns the chosen
+            // mark (or none) + the raw answer.
+            const askMarks = async (marks: Mark[], badged: string, reader: string | null, note = ""): Promise<{ chosen?: Mark; answer: string }> => {
+                const prompt = `The screenshot has numbered red badges (#1–#${marks.length}) drawn over candidate ` +
+                    `elements. Which single badge number best matches this element: "${description}"${note}? ` +
+                    `Reply with ONLY the number, or "NONE" if none match.`;
+                const answer = String(await ml.chat(prompt, { images: [badged], model: reader, numCtx: VISION_NUM_CTX, maxTokens })).trim();
+                const pick = (answer.match(/\d+/) || [])[0];
+                return { chosen: pick ? marks.find(m => m.id === Number(pick)) : undefined, answer };
+            };
 
             if (strategy === "grounding" && !groundingModel) {
                 return "No grounding model is configured — use strategy 'marks' (or leave it 'auto').";
@@ -173,50 +193,76 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             const regionBox: Box = { left: region.left, top: region.top, right: region.left + region.width, bottom: region.top + region.height };
             const scopeNote = scopeSel ? ` within "${scopeSel}"${index ? ` (#${index})` : ""}` : "";
 
-            // Mechanism #3 — grid: draw an N×N numbered grid, ask which CELL holds the
-            // target (multiple-choice → no coordinate hallucination), snap the cell to the
-            // DOM by the same sweep. `cell` zooms into a prior pick (hierarchical refine).
+            // Mechanism #3 — grid: draw an aspect-matched numbered grid, ask which CELL(S)
+            // hold the target (multiple-choice → no coordinate hallucination). The model may
+            // pick 1, 2 (adjacent), or 4 (a 2×2 block) cells so a target straddling a grid
+            // line is fully covered; we union them, sweep the DOM, and — when the region
+            // still holds several candidates — hand off to marks WITHIN it rather than
+            // guessing the first. `cells` zooms into a prior selection (hierarchical refine).
             if (strategy === "grid") {
                 const reader = model || groundingModel;
                 if (!reader) return "No vision model is available to read the grid.";
-                const N = Math.max(2, Math.min(8, Math.round(gridSize || 4)));
-                const effRect = cell ? rectOf(gridCellBox(cell, N, N, region)) : region;
-                if (effRect.width < MIN_SHOT_PX || effRect.height < MIN_SHOT_PX) {
-                    return `Cell ${cell} is too small to subdivide further. Use the returned selectors, or switch strategy.`;
+                const base = Math.max(2, Math.min(8, Math.round(gridSize || 4)));
+                // A driver zoom: narrow to a previously-returned, validated cell selection.
+                let gRegion = region;
+                if (cells && cells.length) {
+                    const prev = gridDims(region, base);
+                    const v = validateCells(cells, prev.cols, prev.rows);
+                    if (!v.ok) return `Invalid \`cells\` ${JSON.stringify(cells)} — ${v.reason}.`;
+                    gRegion = rectOf(cellsBox(cells, prev.cols, prev.rows, region));
                 }
+                if (gRegion.width < MIN_SHOT_PX || gRegion.height < MIN_SHOT_PX) {
+                    return `That region is too small to subdivide further. Use the returned selectors, or switch strategy.`;
+                }
+                const { cols, rows } = gridDims(gRegion, base);   // aspect-matched — no wasted rows
                 if (!shot) shot = await ml.screenshot(null, {});
                 let gridded: string;
-                try { gridded = await drawGrid(await cropDataUrl(shot, effRect, dpr), N, N, dpr); }
+                try { gridded = await drawGrid(await cropDataUrl(shot, gRegion, dpr), cols, rows, dpr); }
                 catch (e) { return `Error drawing the grid: ${errText(e)}`; }
-                const gprompt = `This image is divided into a ${N}×${N} numbered grid (cells 1–${N * N}, numbered left-to-right, top-to-bottom). ` +
-                    `Which single cell contains ${description}${scopeNote}${cell ? ` (zoomed into cell ${cell})` : ""}? Reply with ONLY the cell number, or "NONE".`;
+                const gprompt = `This image is divided into a ${cols}×${rows} numbered grid (cells 1–${cols * rows}, numbered left-to-right, top-to-bottom). ` +
+                    `Which cell contains ${description}${scopeNote}? If the target sits ON a grid line or spans more than one cell, reply with the 2 adjacent cells (or a 2×2 block of 4) that cover it; otherwise the single cell. ` +
+                    `Reply with ONLY the cell number(s), comma-separated, or "NONE".`;
                 const ans = String(await ml.chat(gprompt, { images: [gridded], model: reader, numCtx: VISION_NUM_CTX, maxTokens })).trim();
-                const pickN = (ans.match(/\d+/) || [])[0];
-                const picked = pickN ? Math.max(1, Math.min(N * N, Number(pickN))) : null;
-                const base = { type: "locate" as const, mode: "grid" as const, model: String(reader), prompt: gprompt, gridSize: N, cell: picked || undefined };
-                if (!picked) {
-                    return { content: `The model matched no grid cell for "${description}"${scopeNote} (replied "${truncate(ans, 40)}"). Re-run with a larger gridSize, refine the description, or switch strategy.`, render: { ...base, griddedImage: gridded } };
+                const sel = [...new Set((ans.match(/\d+/g) || []).map(Number).filter(n => n >= 1 && n <= cols * rows))].slice(0, 4);
+                const desc = { type: "locate" as const, mode: "grid" as const, model: String(reader), prompt: gprompt, cols, rows, cells: sel.length ? sel : undefined };
+                if (!sel.length) {
+                    return { content: `The model matched no grid cell for "${description}"${scopeNote} (replied "${truncate(ans, 40)}"). Raise gridSize, refine the description, or switch strategy.`, render: { ...desc, griddedImage: gridded } };
                 }
-                // Highlight the picked cell on the grid the model saw (crop-local coords).
-                const cellLocal = gridCellBox(picked, N, N, { left: 0, top: 0, width: effRect.width, height: effRect.height });
-                const griddedImage = await annotate(gridded, [{ rect: rectOf(cellLocal), color: "#22c55e", label: `cell ${picked}` }], dpr);
-                // Snap the chosen cell to the DOM — the same sweep grounding uses on its box.
-                const box = gridCellBox(picked, N, N, effRect);
-                const primary = elementAtPoint((box.left + box.right) / 2, (box.top + box.bottom) / 2, filter);
-                const nearby = collectInBox(box, filter);
-                const chosen = primary || nearby[0];
-                const ordered = chosen ? [chosen, ...nearby.filter(e => e !== chosen)].slice(0, 12) : nearby.slice(0, 12);
-                const marks = buildMarks(ordered);
-                const resultImage = await annotate(shot, [{ rect: rectOf(box), color: YELLOW, label: `cell ${picked}` }, ...marks.map(m => ({ rect: m.rect, color: RED, badge: m.id }))], dpr);
-                if (chosen) {
-                    const pk = pickedStr(marks[0]);
-                    return {
-                        content: `Grid picked cell ${picked}/${N * N}${scopeNote} → ${pk}\n(click/type/answer with this selector)\n\nTo narrow further, re-run with cell:${picked} (draws a fresh grid inside it). Other elements in that cell:\n${listOf(marks)}`,
-                        elements: ordered.slice(0, 50),
-                        render: { ...base, griddedImage, resultImage, picked: pk },
-                    };
+                const valid = validateCells(sel, cols, rows);
+                if (!valid.ok) {
+                    return { content: `The model selected cells ${JSON.stringify(sel)}, not a valid pick (${valid.reason}). Ask it again, or switch strategy.`, render: { ...desc, griddedImage: gridded } };
                 }
-                return { content: `Grid cell ${picked} for "${description}"${scopeNote} has no ${filter} element under it. Zoom in with cell:${picked}, raise gridSize, or switch strategy.`, render: { ...base, griddedImage, resultImage } };
+                const cellNote = `cell${sel.length > 1 ? "s" : ""} ${sel.join(",")}`;
+                // Highlight the selection on the grid the model saw (crop-local coords).
+                const localBox = cellsBox(sel, cols, rows, { left: 0, top: 0, width: gRegion.width, height: gRegion.height });
+                const griddedImage = await annotate(gridded, [{ rect: rectOf(localBox), color: "#22c55e", label: cellNote }], dpr);
+                // Snap the unioned selection to the DOM.
+                const cellBox = cellsBox(sel, cols, rows, gRegion);
+                const found = collectInBox(cellBox, filter, { max: 20 });
+                if (!found.length) {
+                    return { content: `Grid ${cellNote} for "${description}"${scopeNote} has no ${filter} element under it. Re-pick, raise gridSize, or switch strategy.`, render: { ...desc, griddedImage, resultImage: await annotate(shot, [{ rect: rectOf(cellBox), color: YELLOW, label: cellNote }], dpr) } };
+                }
+                const marks = buildMarks(found);
+                let picked: Mark, resultImage: string;
+                if (found.length === 1) {
+                    picked = marks[0];
+                    resultImage = await annotate(shot, [{ rect: rectOf(cellBox), color: YELLOW, label: cellNote }, { rect: picked.rect, color: RED, badge: 1 }], dpr);
+                } else {
+                    // Several candidates in the region → let the reader pick by badge (SoM on
+                    // just the selected cells), instead of snapping to the first.
+                    resultImage = await badgeMarks(marks, rectOf(cellBox));
+                    const { chosen, answer } = await askMarks(marks, resultImage, reader, scopeNote);
+                    if (!chosen) {
+                        return { content: `Grid narrowed "${description}"${scopeNote} to ${cellNote} (${found.length} candidates) but couldn't pick one (replied "${truncate(answer, 40)}"). Candidates:\n${listOf(marks)}`, elements: found.slice(0, 50), render: { ...desc, griddedImage, resultImage } };
+                    }
+                    picked = chosen;
+                }
+                const pk = pickedStr(picked);
+                return {
+                    content: `Grid ${cellNote}${scopeNote} → ${pk}\n(click/type/answer with this selector)\n\nTo narrow further, re-run with cells:[${sel.join(",")}] (fresh grid inside). Candidates in that region:\n${listOf(marks)}`,
+                    elements: [picked.el, ...found.filter(e => e !== picked.el)].slice(0, 50),
+                    render: { ...desc, griddedImage, resultImage, picked: pk },
+                };
             }
 
             // If 'auto' tries grounding and it misses, we still surface that attempt on

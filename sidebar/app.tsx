@@ -409,9 +409,18 @@ function RenderTable({ columns, rows }: { columns: string[]; rows: (string | num
 // square the model saw with its box, and the element-location pass; (marks) just the
 // badged shot. Picked element at the bottom.
 function LocateRender({ d }: { d: Extract<RenderDescriptor, { type: "locate" }> }) {
+    // Is this vision sub-call's model the SAME as the agent driver's? If so, flag that
+    // it still ran standalone (its image + reply never entered the driver's context) —
+    // otherwise the matching name reads as if the driver itself saw and answered.
+    rev.value;   // reactive: re-read when sessions change
+    const driverModel = view.value.name === "detail" ? sessionMap.get(view.value.hash)?.model : undefined;
+    const sameAsDriver = !!driverModel && d.model === driverModel;
     return (
         <div class="r-locate">
-            <div class="r-loc-head">{d.mode === "grounding" ? "Grounding" : d.mode === "grid" ? "Grid" : "Set-of-Marks"} · <b>{d.model}</b></div>
+            <div class="r-loc-head">
+                {d.mode === "grounding" ? "Grounding" : d.mode === "grid" ? "Grid" : "Set-of-Marks"} · <b>{d.model}</b>
+                {sameAsDriver ? <span class="r-loc-delegated" title="This vision sub-call ran on its own — its image and reply were NOT added to the agent driver's conversation, even though it's the same model."> (standalone sub-call · not in the agent's context)</span> : null}
+            </div>
             {d.mode === "grounding" ? <>
                 {d.prompt ? <details class="r-loc-prompt"><summary>prompt to the model</summary><Code text={d.prompt} lang="text" /></details> : null}
                 {d.groundingImage ? <div class="r-loc-stage">
@@ -426,7 +435,7 @@ function LocateRender({ d }: { d: Extract<RenderDescriptor, { type: "locate" }> 
             </> : d.mode === "grid" ? <>
                 {d.prompt ? <details class="r-loc-prompt"><summary>prompt to the model</summary><Code text={d.prompt} lang="text" /></details> : null}
                 {d.griddedImage ? <div class="r-loc-stage">
-                    <div class="r-loc-cap">Grid{d.gridSize ? ` ${d.gridSize}×${d.gridSize}` : ""}{d.cell ? ` · picked cell ${d.cell}` : " · no cell"}</div>
+                    <div class="r-loc-cap">Grid{d.cols && d.rows ? ` ${d.cols}×${d.rows}` : ""}{d.cells?.length ? ` · cell${d.cells.length > 1 ? "s" : ""} ${d.cells.join(",")}` : " · no cell"}</div>
                     <ClickableImg src={d.griddedImage} alt="the numbered grid the model saw" />
                 </div> : null}
                 {d.resultImage ? <div class="r-loc-stage">

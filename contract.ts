@@ -153,11 +153,12 @@ export type RenderDescriptor = (
         gaveBox?: boolean;               // grounding: did the model return a box?
         boxCoords?: string;              // grounding: the raw coords it gave, for display
         margin?: number;                 // grounding: the search-area expansion applied
-        // grid: the numbered grid the model saw (picked cell highlighted), which cell it
-        // chose, and the grid resolution.
+        // grid: the numbered grid the model saw (selected cell(s) highlighted), which
+        // cell(s) it chose, and the aspect-matched grid dimensions.
         griddedImage?: string;
-        cell?: number;
-        gridSize?: number;
+        cells?: number[];
+        cols?: number;
+        rows?: number;
         // marks: when 'auto' tried grounding and it missed, why (+ what it saw), so the
         // fallback still shows the grounding attempt instead of hiding it.
         fallbackNote?: string;

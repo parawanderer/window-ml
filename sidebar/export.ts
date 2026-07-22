@@ -74,7 +74,10 @@ function agentToMarkdown(s: Session, addImage: AddImage): string {
         } else if (st.render && st.render.type === "locate") {
             // The full grounding/SoM debug view, mirroring the sidebar's locate render.
             const r = st.render;
-            o.push(`> _${r.mode === "grounding" ? "Grounding" : r.mode === "grid" ? "Grid" : "Set-of-Marks"} · ${r.model}_`, "");
+            // Flag a sub-call that ran on the SAME model as the driver — it was still
+            // standalone (image + reply not in the driver's context).
+            const delegated = r.model && r.model === s.model ? " · standalone sub-call (not in the agent's context)" : "";
+            o.push(`> _${r.mode === "grounding" ? "Grounding" : r.mode === "grid" ? "Grid" : "Set-of-Marks"} · ${r.model}${delegated}_`, "");
             if (r.mode === "grounding") {
                 if (r.prompt) o.push("<details><summary>Prompt to the model</summary>", "", fence(r.prompt), "", "</details>", "");
                 const gref = r.groundingImage && addImage(r.groundingImage, `step-${st.step}-model-output`);
@@ -83,7 +86,7 @@ function agentToMarkdown(s: Session, addImage: AddImage): string {
             } else if (r.mode === "grid") {
                 if (r.prompt) o.push("<details><summary>Prompt to the model</summary>", "", fence(r.prompt), "", "</details>", "");
                 const gref = r.griddedImage && addImage(r.griddedImage, `step-${st.step}-grid`);
-                o.push(`**Grid**${r.gridSize ? ` ${r.gridSize}×${r.gridSize}` : ""}${r.cell ? ` — picked cell ${r.cell}` : " — no cell"}:`, "");
+                o.push(`**Grid**${r.cols && r.rows ? ` ${r.cols}×${r.rows}` : ""}${r.cells?.length ? ` — cell${r.cells.length > 1 ? "s" : ""} ${r.cells.join(",")}` : " — no cell"}:`, "");
                 o.push(gref ? `![step ${st.step} grid](${gref})` : "_🖼️ (image unavailable)_", "");
             }
             if (r.fallbackNote) {

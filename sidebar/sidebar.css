@@ -184,6 +184,7 @@ details.io[open] > summary .io-preview { display: none; }
 /* locate debug view: model/mode header, per-stage captioned images, picked footer. */
 .r-locate { display: flex; flex-direction: column; gap: 9px; }
 .r-loc-head { color: var(--fg-dim); font-size: 0.9em; }
+.r-loc-delegated { color: var(--fg-faint); font-style: italic; }
 .r-loc-prompt > summary { color: var(--fg-dim); font-size: 0.85em; cursor: pointer; margin-bottom: 4px; }
 .r-loc-stage { display: flex; flex-direction: column; gap: 3px; }
 .r-loc-cap { color: var(--fg-faint); font-size: 0.8em; letter-spacing: .02em; text-transform: uppercase; }
