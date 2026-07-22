@@ -184,7 +184,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 },
                 gridSize: {
                     type: "integer",
-                    description: "For strategy 'grid': the base cell count (default 4, 2–8). The grid is aspect-matched (a wide toolbar gets more columns than rows), so this sets the ballpark, not a literal N×N. Larger = finer cells."
+                    description: "For strategy 'grid': the base cell count (default 4, 2–8). The grid is aspect-matched (a wide toolbar gets more columns than rows), so this sets the ballpark, not a literal N×N. Larger = finer cells. ON A CANVAS the returned point is the picked cell's CENTRE — so if a click lands slightly OFF a target you can clearly SEE, retry the same grid call with a LARGER gridSize (smaller cells → the centre lands closer to it), or zoom in with `cells`."
                 },
                 cells: {
                     type: "array",
