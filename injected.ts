@@ -442,7 +442,11 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool } from ".
             // (an agent run isn't a createChat). elements can't cross the window
             // bus — send a count; real nodes still reach onStep/the console.
             const runHash = shortHash();
-            emitDebug({ kind: "agent", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, task, model: model || null, maxSteps, config: {
+            // Resolve the driver model to the config default when none was passed, so the
+            // sidebar shows the REAL model (not "default") and can tell when a vision
+            // sub-call reused it (its `model` matches this) vs. ran on a different one.
+            const runModel = model || agentCfg?.model || null;
+            emitDebug({ kind: "agent", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, task, model: runModel, maxSteps, config: {
                 system: systemPrompt, customSystem: !!system,
                 tools: toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval, vision: !!(t.capabilities && t.capabilities.includes("vision")) })),
                 maxSteps, think: (think === true || think === false) ? think : null, env, vision: vision ?? null, hints: hints || null,

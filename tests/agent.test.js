@@ -238,6 +238,15 @@ test("interactives lists controls by role + accessible name with a clickable sel
     assert.match(run(ml, "interactives", { includeNav: true }).content, /\[link\] "Home"/);
 });
 
+test("interactives only notes the nav skip when the page actually HAS nav/sidebar landmarks", () => {
+    // A page with a <nav> → the skip note appears.
+    const { ml } = loadDomWorld('<nav><a href="/">Home</a></nav><button>Go</button>');
+    assert.match(run(ml, "interactives", {}).content, /navigation\/sidebar controls skipped/);
+    // A plain page with NO nav/aside/sidebar → nothing was skipped, so no misleading note.
+    const { ml: ml2 } = loadDomWorld('<div><button>A</button><button>B</button></div>');
+    assert.ok(!/navigation\/sidebar controls skipped/.test(run(ml2, "interactives", {}).content), "no note without nav/sidebar");
+});
+
 test("interactives skips the sidebar chrome and collapses flooded duplicates", () => {
     // The OpenWebUI failure: a sidebar with N chats, each a link + a 'Chat Menu'
     // button, drowning the message controls out of the list.
@@ -739,17 +748,33 @@ test("agent suppresses orphan chat sessions from a tool's internal ml.chat", asy
 
 // The `agent` debug event carries the resolved toolset (config.tools) after the
 // vision auto-wire, so we can assert what got wired without a real screenshot.
-async function agentToolNames(opts) {
+async function agentStartEvent(opts, agentOpts = { tools: [] }) {
     const world = loadPageWorld({ ...opts, onRuntimeMessage: scriptedModel([reply("done")]) });
     const win = world.context.window;
     const events = [];
     win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
     win.postMessage({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
-    await world.ml.agent("find the like button", { tools: [] });
-    const agentEv = events.find(e => e.kind === "agent");
+    await world.ml.agent("find the like button", agentOpts);
+    return events.find(e => e.kind === "agent");
+}
+async function agentToolNames(opts) {
+    const agentEv = await agentStartEvent(opts);
     return (agentEv.config.tools || []).map(t => t.name);
 }
+
+test("agent event resolves the driver model to the config default when none is passed", async () => {
+    // No explicit model → the run still reports the concrete default (gemma-vision),
+    // NOT null/'default', so the sidebar can tell a vision sub-call reused the driver's
+    // model (its render.model === this) vs. ran on a different one.
+    const ev = await agentStartEvent({ config: { model: "gemma-vision", ocrModel: "" }, caps: () => ["completion", "vision"] });
+    assert.equal(ev.model, "gemma-vision", "unspecified model resolves to the config default (not null/'default')");
+});
+
+test("agent event keeps an explicitly-passed model over the config default", async () => {
+    const ev = await agentStartEvent({ config: { model: "gemma-vision", ocrModel: "" }, caps: () => ["completion", "vision"] }, { tools: [], model: "qwen3:14b" });
+    assert.equal(ev.model, "qwen3:14b");
+});
 
 test("agent auto-wires the delegated locate tool when a vision model resolves", async () => {
     const names = await agentToolNames({

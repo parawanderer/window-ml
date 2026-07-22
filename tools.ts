@@ -98,8 +98,11 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
                 const main = document.querySelector('main, [role="main"]');
                 const tries: { root: Element | Document; skipNav: boolean; note: string }[] = [];
                 const skip = !includeNav;   // skip nav/sidebar in EVERY scope (a broad role="main"
-                const navNote = skip ? "(navigation/sidebar controls skipped — pass includeNav:true for them)\n" : "";
                 // can wrap the sidebar too), except inside a real modal where you want it all.
+                // Only NOTE the skip when the page actually HAS nav/sidebar landmarks —
+                // otherwise nothing was skipped and the note is misleading noise.
+                const hasNav = (() => { try { return !!document.querySelector(NAV_SEL); } catch { return false; } })();
+                const navNote = skip && hasNav ? "(navigation/sidebar controls skipped — pass includeNav:true for them)\n" : "";
                 if (visibleModal) tries.push({ root: visibleModal, skipNav: false, note: "A modal dialog is open — listing its controls:\n" });
                 if (main && !styleHidden(main)) tries.push({ root: main, skipNav: skip, note: "Listing the main content region's controls:\n" + navNote });
                 tries.push({ root: document, skipNav: skip, note: navNote });
