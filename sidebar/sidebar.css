@@ -101,7 +101,8 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .test-btn { align-self: flex-end; background: var(--panel-2); color: var(--fg); border: none; border-radius: 5px; padding: 4px 12px; font-size: 0.92em; cursor: pointer; }
 .test-btn:hover { background: var(--panel-2-hover); }
 .test-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 16px; }
-.test-row { display: flex; align-items: center; gap: 7px; font-size: 0.92em; min-width: 0; }
+.test-row { display: flex; align-items: center; gap: 7px; font-size: 0.92em; min-width: 0; position: relative; }
+.test-row:hover .tt-pop { opacity: 1; }
 .test-row .role { color: var(--fg-dim); min-width: 62px; flex: 0 0 auto; }
 .test-row .name { color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .test-ic { width: 14px; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; }

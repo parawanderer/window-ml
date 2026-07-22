@@ -163,6 +163,21 @@ test("settings: Test models runs a per-model liveness check (set models pass, un
     assert.equal(w.shadow.querySelectorAll(".test-ic.unset").length, 2, "the unset OCR + grounding stay not-set");
 });
 
+test("settings: Test models unloads only the models it freshly loaded (leaves already-warm ones)", async () => {
+    const w = await loadSidebarWorld({
+        sync: { model: "gemma4:31b", ocrModel: "qwen2.5vl:7b" },
+        models: ["gemma4:31b", "qwen2.5vl:7b"],
+        vram: [{ model: "gemma4:31b", vramGB: 20, sizeGB: 20, expiresAt: null }],   // default already resident
+        caps: () => ["completion", "vision"],
+    });
+    await openSettings(w, "Models");
+    w.shadow.querySelector(".test-btn").click();
+    await w.tick(); await w.tick(); await w.tick();
+    const unloaded = w.unloadCalls.map(c => c.model);
+    assert.ok(unloaded.includes("qwen2.5vl:7b"), "the freshly-loaded OCR model was unloaded");
+    assert.ok(!unloaded.includes("gemma4:31b"), "the already-warm default model was left resident");
+});
+
 test("settings: a failing model test shows the error", async () => {
     const w = await loadSidebarWorld({ sync: { model: "badmodel" }, fetchLlm: () => ({ error: "model not found" }) });
     await openSettings(w, "Models");

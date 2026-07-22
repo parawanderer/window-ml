@@ -4,7 +4,7 @@
 // with the popup. Text fields persist on change (blur) to avoid chatty writes; the
 // signal updates on input for a responsive UI + the utility-field enable gating.
 import { signal } from "@preact/signals";
-import type { MlConfig, ApiFormat, Theme } from "../contract";
+import type { MlConfig, ApiFormat, Theme, LoadedModel } from "../contract";
 import { DEFAULT_CONFIG } from "../contract";
 import {
     config, models, fontScale, codeWrap, codeLineNumbers,
@@ -60,8 +60,11 @@ const Lbl = ({ children, tip }: { children: string; tip?: string }) =>
 // --- model liveness test (per model) ---
 // `model` records which model this result is for, so a row auto-invalidates (shows
 // as not-tested) when you change the field; `at` timestamps it for the hover.
-type TestState = { status: "loading" | "ok" | "err"; error?: string; at?: number; model?: string; image?: string };
+type TestState = { status: "loading" | "ok" | "err"; error?: string; detail?: string; at?: number; model?: string; image?: string };
 const modelTests = signal<Record<string, TestState | undefined>>({});
+
+// Name the quadrant of a point in 0–1000 coordinate space (image y-down: 0=top).
+const areaName = (x: number, y: number) => `${y > 500 ? "bottom" : "top"}-${x > 500 ? "right" : "left"}`;
 const MODEL_ROLES: { key: keyof MlConfig; label: string; vision?: boolean }[] = [
     { key: "model", label: "Default" },
     { key: "ocrModel", label: "OCR", vision: true },   // must be vision-capable
@@ -112,22 +115,32 @@ function ocrTestImage(): { dataUrl: string; token: string } | null {
 }
 
 // A white PNG with ONE red dot in a random quadrant — a mini VISUAL GROUNDING task:
-// can the model point at where something is? Returns the dot's quadrant (qx/qy ∈
-// {0,1}) to check against the model's normalized coordinates. null if no canvas.
-function groundingTestImage(): { dataUrl: string; qx: 0 | 1; qy: 0 | 1 } | null {
+// can the model point at where something is? Uses a 1000×1000 canvas so the dot's
+// centre coords (250/750) match the 0–1000 answer space whether the model returns
+// pixels (qwen2.5vl's native absolute output) or normalized values — sidestepping
+// the pixel-vs-normalized ambiguity. Returns the dot's centre (cx/cy) to grade.
+function groundingTestImage(): { dataUrl: string; cx: number; cy: number } | null {
     try {
-        const W = 400, H = 300;
-        const qx = (Math.random() < 0.5 ? 0 : 1) as 0 | 1;
-        const qy = (Math.random() < 0.5 ? 0 : 1) as 0 | 1;
-        const cx = qx ? W * 0.75 : W * 0.25, cy = qy ? H * 0.75 : H * 0.25;
+        const cx = Math.random() < 0.5 ? 250 : 750;
+        const cy = Math.random() < 0.5 ? 250 : 750;
         const cv = document.createElement("canvas");
-        cv.width = W; cv.height = H;
+        cv.width = 1000; cv.height = 1000;
         const ctx = cv.getContext("2d");
         if (!ctx) return null;
-        ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
-        ctx.fillStyle = "#e11d48"; ctx.beginPath(); ctx.arc(cx, cy, 26, 0, Math.PI * 2); ctx.fill();
-        return { dataUrl: cv.toDataURL("image/png"), qx, qy };
+        ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, 1000, 1000);
+        ctx.fillStyle = "#e11d48"; ctx.beginPath(); ctx.arc(cx, cy, 70, 0, Math.PI * 2); ctx.fill();
+        return { dataUrl: cv.toDataURL("image/png"), cx, cy };
     } catch { return null; }
+}
+
+// Snapshot of models resident BEFORE a Test run (from OLLAMA_PS). null = unknown
+// (probe failed / non-Ollama) → we don't auto-unload, to avoid evicting a warm one.
+let loadedBefore: Set<string> | null = null;
+// Free a model the TEST loaded (not one already resident) so a smoke-test stays
+// VRAM-neutral — the point of keeping the grounding model opt-in.
+function unloadIfFresh(model: string): void {
+    if (!loadedBefore || loadedBefore.has(model)) return;
+    chrome.runtime.sendMessage({ type: "OLLAMA_UNLOAD", payload: { model } }, () => { /* best-effort */ });
 }
 
 // Test one model. Text models get a trivial ping; OCR transcribes a code image
@@ -139,7 +152,7 @@ function testOne(key: keyof MlConfig): void {
     const name = roleModel(key);
     if (!name) return;
     setTest(key, { status: "loading", model: name });
-    const done = (s: Omit<TestState, "model" | "at">) => setTest(key, { ...s, model: name, at: Date.now() });
+    const done = (s: Omit<TestState, "model" | "at">) => { setTest(key, { ...s, model: name, at: Date.now() }); unloadIfFresh(name); };
 
     // Vision-required roles (OCR, grounding): first check the model actually reports
     // vision — a clear "not a vision model" beats a confusing functional failure
@@ -156,7 +169,7 @@ function testOne(key: keyof MlConfig): void {
         const payload = img
             ? { messages: [{ role: "user", content: "Transcribe the single word shown in this image. Output ONLY that word — no punctuation or explanation.", images: [img.dataUrl] }], model: name, ocr: true }
             : gimg
-                ? { messages: [{ role: "user", content: "This image is white with ONE red dot. Reply with ONLY the dot's centre as two integers `x,y` in NORMALISED 0-1000 coordinates (x: 0=left … 1000=right; y: 0=top … 1000=bottom). Example: 250,750", images: [gimg.dataUrl] }], model: name }
+                ? { messages: [{ role: "user", content: "The image is 1000×1000 pixels, white, with ONE red dot. Reply with ONLY the dot's centre coordinates as `x,y` — x from 0 (left edge) to 1000 (right edge), y from 0 (top edge) to 1000 (bottom edge). Example: 250,750", images: [gimg.dataUrl] }], model: name }
                 : key === "utilityModel"
                     ? { messages: [ping], extend: "utility" }
                     : { messages: [ping], model: name };
@@ -167,23 +180,33 @@ function testOne(key: keyof MlConfig): void {
             if (img) {
                 const got = String(resp.data || "").toLowerCase().replace(/[^a-z]/g, "");
                 return done(got.includes(img.token)
-                    ? { status: "ok", image: shot }
+                    ? { status: "ok", detail: `read "${img.token}" correctly`, image: shot }
                     : { status: "err", error: `read "${truncate(String(resp.data || ""), 40)}" — expected "${img.token}"`, image: shot });
             }
             if (gimg) {
+                const dot = areaName(gimg.cx, gimg.cy);
                 const m = String(resp.data || "").match(/(\d{1,4})\s*[,;xX× ]\s*(\d{1,4})/);
                 if (!m) return done({ status: "err", error: `no coordinates in reply: "${truncate(String(resp.data || ""), 40)}"`, image: shot });
                 const gx = +m[1], gy = +m[2];
-                const side = (q: 0 | 1, a: string, b: string) => q ? b : a;
-                return done((gx > 500 ? 1 : 0) === gimg.qx && (gy > 500 ? 1 : 0) === gimg.qy
-                    ? { status: "ok", image: shot }
-                    : { status: "err", error: `pointed to ${gx},${gy} — the dot was ${side(gimg.qy, "top", "bottom")}-${side(gimg.qx, "left", "right")}`, image: shot });
+                const hit = (gx > 500 ? 1 : 0) === (gimg.cx > 500 ? 1 : 0) && (gy > 500 ? 1 : 0) === (gimg.cy > 500 ? 1 : 0);
+                return done(hit
+                    ? { status: "ok", detail: `dot was ${dot} (≈${gimg.cx},${gimg.cy}); model said ${gx},${gy}`, image: shot }
+                    : { status: "err", error: `model said ${gx},${gy} (${areaName(gx, gy)}) — dot was ${dot} (≈${gimg.cx},${gimg.cy})`, image: shot });
             }
             done({ status: "ok" });
         });
     });
 }
-const testModels = () => { for (const { key } of MODEL_ROLES) testOne(key); };
+// Snapshot the resident models first (so unloadIfFresh only frees what THIS run
+// loads), then test each. A failed/absent OLLAMA_PS → unknown → no auto-unload.
+const testModels = () => {
+    chrome.runtime.sendMessage({ type: "OLLAMA_PS", payload: {} }, (resp: any) => {
+        loadedBefore = (resp && !resp.error && Array.isArray(resp.data))
+            ? new Set(resp.data.map((m: LoadedModel) => m.model))
+            : null;
+        for (const { key } of MODEL_ROLES) testOne(key);
+    });
+};
 
 const TestIcon = ({ state }: { state: "idle" | "unset" | "loading" | "ok" | "err" }) => (
     <span class={`test-ic ${state}`}>
@@ -208,13 +231,14 @@ function ModelTests() {
                     const title = !name ? "Not set"
                         : !fresh ? "Not tested yet"
                         : st!.status === "loading" ? "Testing…"
-                        : st!.status === "ok" ? `Passed${st!.at ? ` at ${new Date(st!.at).toLocaleTimeString()}` : ""}`
+                        : st!.status === "ok" ? `Passed${st!.at ? ` at ${new Date(st!.at).toLocaleTimeString()}` : ""}${st!.detail ? ` · ${st!.detail}` : ""}`
                         : st!.error || "Failed";
                     return (
-                        <div class="test-row" key={key} title={title}>
+                        <div class="test-row" key={key}>
                             <TestIcon state={state} />
                             <span class="role">{label}</span>
                             <span class="name">{name || "not set"}</span>
+                            <span class="tt-pop left" role="tooltip">{title}</span>
                         </div>
                     );
                 })}
