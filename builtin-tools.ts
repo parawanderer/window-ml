@@ -10,6 +10,44 @@ import { truncate, errText, elLine, queryAll, selectorError } from "./dom";
 import { settle, VISION_NUM_CTX, cropDataUrl, MIN_SHOT_PX } from "./util";
 import { collectCandidates, buildMarks, annotate, formatBox, letterboxToSquare, projectFromSquare, drawGrid, gridDims, validateCells, cellsBox, collectInBox, elementAtPoint, viewportBox, colorWordHues, pickOverlayColor, pickAccentColor, type MarkFilter, type Box, type Mark } from "./som";
 
+// --- Coordinate targets (canvas / WebGL) -----------------------------------
+// A <canvas> has NO sub-node to snap to, so `locate` mints an OPAQUE point token that
+// the `click` tool resolves — the driver copies the token verbatim, never authoring
+// coordinates (the whole point). The registry lives for the page's lifetime (tokens
+// are a few bytes; a run mints only a handful). Shared here because both tools are in
+// this module.
+const pointRegistry = new Map<string, { x: number; y: number }>();
+const POINT_RE = /^@pt:([0-9a-f]{1,12})$/;
+const mintPoint = (x: number, y: number): string => {
+    const id = Math.random().toString(16).slice(2, 10);
+    pointRegistry.set(id, { x: Math.round(x), y: Math.round(y) });
+    return `@pt:${id}`;
+};
+const resolvePoint = (token: string): { x: number; y: number } | null => {
+    const m = POINT_RE.exec((token || "").trim());
+    return m ? pointRegistry.get(m[1]) || null : null;
+};
+/** The <canvas> at a viewport point, if the topmost element there is one (or inside one). */
+const canvasAt = (x: number, y: number): Element | null => {
+    let el: Element | null = null;
+    try { el = document.elementFromPoint(x, y); } catch { return null; }
+    return el ? el.closest("canvas") : null;
+};
+/** Synthesize a real click at a viewport coordinate (for canvas surfaces): the full
+ *  pointer/mouse sequence at (x,y) on the topmost element there. */
+const clickAt = (x: number, y: number): Element | null => {
+    const el = canvasAt(x, y) || (() => { try { return document.elementFromPoint(x, y); } catch { return null; } })();
+    if (!el) return null;
+    const base: MouseEventInit = { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, view: window };
+    const hasPointer = typeof PointerEvent === "function";
+    if (hasPointer) el.dispatchEvent(new PointerEvent("pointerdown", { ...base, pointerId: 1, isPrimary: true }));
+    el.dispatchEvent(new MouseEvent("mousedown", base));
+    if (hasPointer) el.dispatchEvent(new PointerEvent("pointerup", { ...base, pointerId: 1, isPrimary: true }));
+    el.dispatchEvent(new MouseEvent("mouseup", base));
+    el.dispatchEvent(new MouseEvent("click", base));
+    return el;
+};
+
 export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512 }: { model?: string | null; maxTokens?: number } = {}): MlTool => {
     return ml.defineTool({
         name: "look",
@@ -266,6 +304,17 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 const cellStep: LocateSubstep = { label: cellLabel(`model chose ${cellNote}`), prompt: gprompt, output: ans, rawImage: gridded, image: griddedImage };
                 // Snap the unioned selection to the DOM.
                 const cellBox = cellsBox(sel, cols, rows, gRegion);
+                const ccx = (cellBox.left + cellBox.right) / 2, ccy = (cellBox.top + cellBox.bottom) / 2;
+                // Canvas/WebGL cell → no DOM node. Return the cell CENTRE as an @pt point; the
+                // driver zooms (cells:[…]) to place it precisely, or uses grounding for an exact one.
+                if (canvasAt(ccx, ccy)) {
+                    const token = mintPoint(ccx, ccy);
+                    const ptImg = await annotate(shot, [{ rect: rectOf(cellBox), color: YELLOW, label: cellNote }, { rect: { left: ccx - 11, top: ccy - 11, width: 22, height: 22 }, color: RED, label: "point" }], dpr);
+                    return {
+                        content: `Grid ${cellNote}${scopeNote} is on a <canvas> — no DOM element, so this is a COORDINATE: ${token} at the cell centre (${Math.round(ccx)}, ${Math.round(ccy)}). Click it verbatim: click({ selector: "${token}" }). For a PRECISE point, first zoom so the target fills a cell: ${refineHint} (re-centres the point) — or use strategy 'grounding' for an exact point.`,
+                        render: gridResult([cellStep, { label: "Canvas point · cell centre", image: ptImg }], { picked: `${token} @ (${Math.round(ccx)}, ${Math.round(ccy)})`, pickedBy: "snap" }),
+                    };
+                }
                 const found = collectInBox(cellBox, filter, { max: 20 });
                 if (!found.length) {
                     const snapImg = await annotate(shot, [{ rect: rectOf(cellBox), color: YELLOW, label: cellNote }], dpr);
@@ -345,7 +394,20 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                     const box = nums ? projectFromSquare(nums, R, region) : null;
                     if (box) {
                         const b: Box = margin > 0 ? { left: box.left - margin, top: box.top - margin, right: box.right + margin, bottom: box.bottom + margin } : box;
-                        const primary = elementAtPoint((b.left + b.right) / 2, (b.top + b.bottom) / 2, filter);
+                        const cx = (b.left + b.right) / 2, cy = (b.top + b.bottom) / 2;
+                        // Canvas/WebGL surface → no DOM node to snap to. Return the box centre as
+                        // an @pt point token (grounding gives a PRECISE point — its whole strength).
+                        if (canvasAt(cx, cy)) {
+                            if (!shot) shot = await ml.screenshot(null, {});
+                            const token = mintPoint(cx, cy);
+                            const dot = { left: cx - 11, top: cy - 11, width: 22, height: 22 };
+                            const ptImg = await annotate(shot, [{ rect: rectOf(b), color: YELLOW, label: "grounded region" }, { rect: dot, color: RED, label: "click point" }], dpr);
+                            return {
+                                content: `Grounded "${description}"${scopeNote} on a <canvas> — no DOM element, so this is a COORDINATE: ${token} at (${Math.round(cx)}, ${Math.round(cy)}). Click it verbatim: click({ selector: "${token}" }).`,
+                                render: groundResult([boxStep, { label: "Canvas point (no DOM element)", image: ptImg }], { picked: `${token} @ (${Math.round(cx)}, ${Math.round(cy)})`, pickedBy: "snap" }),
+                            };
+                        }
+                        const primary = elementAtPoint(cx, cy, filter);
                         const nearby = collectInBox(b, filter);
                         const chosen = primary || nearby[0];
                         const ordered = chosen ? [chosen, ...nearby.filter(e => e !== chosen)].slice(0, 12) : nearby.slice(0, 12);
@@ -397,6 +459,9 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             const cands = allCands.slice(0, SOM_BADGE_CAP);
             const prefix = fallbackNote ? "(Grounding missed — used Set-of-Marks.) " : "";
             if (!cands.length) return `${prefix}No ${filter} candidates visible${scopeNote || " in the viewport"}. Scroll the target into view, widen the filter (try 'all'), then call again.`;
+            // A <canvas>/WebGL surface has no sub-elements to badge — Set-of-Marks can't pick
+            // inside it. Steer to the coordinate mechanisms instead of a useless single badge.
+            if (cands.every(c => c.tagName === "CANVAS")) return `${prefix}"${description}" is on a <canvas> — Set-of-Marks can't pick inside it (it has no sub-elements). Use strategy 'grounding' for an exact point, or 'grid' and zoom in — either returns an @pt coordinate token to click.`;
             // Dense pages break Set-of-Marks (badges overlap, the model misreads) AND we
             // only badge the first SOM_BADGE_CAP — say both, and steer to a better tool.
             const densityWarn = allCands.length > SOM_DENSE
@@ -435,18 +500,31 @@ export const buildClickTool = (ml: MlApi): MlTool => {
         requiresApproval: true,
         description: "Click an element (link, button, tab, search result). REAL SIDE EFFECTS — " +
             "may navigate, submit a form, or expand/collapse. Pass a CSS selector (supports " +
-            ":contains()/:has-text()/:eq()); `index` picks the Nth match (0-based). Orient with " +
-            "scroll/look/findByText FIRST so you click the right thing. Returns the resulting " +
-            "URL/title so you can confirm what happened.",
+            ":contains()/:has-text()/:eq()); `index` picks the Nth match (0-based). It also accepts " +
+            "an `@pt:…` point token returned by locate for a CANVAS/WebGL target (no DOM node) — " +
+            "pass it VERBATIM to click that coordinate. Orient with scroll/look/findByText FIRST so " +
+            "you click the right thing. Returns the resulting URL/title so you can confirm what happened.",
         parameters: {
             type: "object",
             properties: {
-                selector: { type: "string", description: "CSS selector of the element to click." },
+                selector: { type: "string", description: "CSS selector of the element to click, or an `@pt:…` point token from locate (canvas targets)." },
                 index: { type: "integer", description: "Which match to click (0-based); default 0." }
             },
             required: ["selector"]
         },
         run: async ({ selector, index = 0 }: { selector: string; index?: number }): Promise<string> => {
+            // A canvas point token from locate → synthesize a click at that coordinate.
+            if (POINT_RE.test((selector || "").trim())) {
+                const pt = resolvePoint(selector);
+                if (!pt) return `Unknown point token "${selector}" — it may be stale (from an earlier page/run). Re-run locate to get a fresh one.`;
+                const before = (typeof location !== "undefined" && location.href) || "";
+                const hit = clickAt(pt.x, pt.y);
+                if (!hit) return `Nothing is at point (${pt.x}, ${pt.y}) — it may have scrolled off-screen. Re-run locate.`;
+                await settle(80);
+                const after = (typeof location !== "undefined" && location.href) || "";
+                const nav = after && after !== before ? ` Navigated to ${after}.` : "";
+                return `Clicked at (${pt.x}, ${pt.y}) on ${elLine(hit)}.${nav} Page title: ${truncate(document.title || "", 80)}. Re-run look to see the result.`;
+            }
             let el: Element | undefined;
             try { el = queryAll(selector)[index]; }
             catch (e) { return selectorError(selector, e as Error); }

@@ -794,6 +794,14 @@ test("locate is NOT wired when no vision model can be resolved", async () => {
     assert.ok(!names.includes("look"), "no look either");
 });
 
+test("click: an @pt point token is decoded (not treated as a CSS selector), unknown → clear error", async () => {
+    const { ml } = loadDomWorld('<button>x</button>');
+    // A stale/unknown token: recognised as a point (not run through queryAll), rejected clearly.
+    const out = await ml.clickTool().run({ selector: "@pt:deadbeef" });
+    assert.match(String(out), /Unknown point token/);
+    assert.ok(!/No element matches/.test(String(out)), "not mistaken for a CSS selector");
+});
+
 test("locate scoping: a missing container selector short-circuits (no screenshot attempt)", async () => {
     const { ml } = loadDomWorld('<div id="box">hi</div>');
     const out = await ml.locateTool({ model: "vlm" }).run({ description: "the star", selector: "#nope" });

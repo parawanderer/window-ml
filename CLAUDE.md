@@ -245,9 +245,20 @@ its image + reply never enter the driver's context. When the sub-call's model **
 agent driver's** (so the matching name could read as "the driver saw this"), the sidebar
 head and the export add a "· standalone sub-call (not in the agent's context)" note.
 
-This is slice 3's **DOM-first** half; the canvas/WebGL half (a cell over a bare `<canvas>`
-has no sub-node → an opaque coordinate currency + a coordinate-click primitive) is a
-deliberate follow-up.
+**Canvas/WebGL — the coordinate half (slice 3, part 2).** A `<canvas>` has **no sub-node
+to snap to**, so when a pick's centre lands on one (`canvasAt` = `elementFromPoint().closest
+("canvas")`), `locate` mints an **opaque point token** `@pt:<hex>` (a per-page `pointRegistry`
+maps it to `{x,y}`) and returns *that* as the currency instead of the useless `#canvas`
+selector — the driver copies the token **verbatim**, never authoring coordinates. Grounding
+gives a **precise** point (its box centre — its whole strength on a canvas); grid gives the
+**cell centre** + a zoom hint (`cells:[…]` re-centres it); marks refuses (nothing to badge)
+and steers to those two. The **`click` tool decodes `@pt:`** → `clickAt(x,y)` synthesizes the
+full pointer/mouse sequence (`pointerdown`/`mousedown`/`pointerup`/`mouseup`/`click`) at that
+viewport coordinate — canvas games read `clientX-rect.left`, which the synthetic `clientX`
+satisfies. A stale/unknown token fails cleanly ("re-run locate"). Demo:
+`examples/find-waldo.html` — a whole-scene `<canvas>` (zero DOM children) where only
+vision + `@pt` click can win. Point decode is unit-tested (`tests/agent.test.js`); the
+dispatch is a browser op (jsdom `elementFromPoint` is a no-op).
 
 **Scope to a container (`selector`/`index`).** `locate({ selector, index })` crops the
 search to one element's region (a list row, a toolbar, a card) — far more reliable for a

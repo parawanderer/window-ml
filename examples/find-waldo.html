@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Find Waldo — a &lt;canvas&gt; torture game for ml.locate (coordinate click)</title>
+<style>
+  body { font: 15px system-ui, sans-serif; margin: 28px 32px; color: #111; }
+  h1 { font-size: 18px; margin-bottom: 6px; }
+  p { max-width: 78ch; color: #444; }
+  code { font: 12px ui-monospace, monospace; background: #f0f0f2; padding: 1px 5px; border-radius: 4px; }
+
+  /* The WHOLE scene is painted on ONE <canvas> — so there are NO DOM sub-nodes at all.
+     findByText/interactives/exec find nothing (one <canvas>, zero children); a hit-test
+     sweep bottoms out on the canvas itself. The ONLY way in is to SEE the target and
+     click its PIXEL — ml.locate returns an `@pt:…` coordinate token, click() fires a
+     synthetic click there. cursor:pointer marks it interactive. */
+  #scene { display: block; width: 100%; height: 68vh; border-radius: 10px; cursor: pointer;
+    background: #17171b; border: 1px solid #2a2a30; }
+
+  #log { margin-top: 16px; font: 13px ui-monospace, monospace; color: #0a7; min-height: 1.4em; }
+  .hint { color: #888; font-size: 13px; }
+  .mini { font: 12px system-ui, sans-serif; padding: 4px 10px; border-radius: 6px;
+    border: 1px solid #ccc; background: #fafafa; color: #333; cursor: pointer; }
+  .mini:hover { background: #f0f0f0; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #1b1b1f; color: #eee; } p { color: #bbb; } code { background: #2a2a30; }
+    .mini { background: #2a2a30; border-color: #444; color: #ddd; } .mini:hover { background: #34343c; }
+  }
+
+  /* --- the silly "YOU ARE WIN !" screen --- */
+  #win { position: fixed; inset: 0; z-index: 9999; display: none; place-items: center; overflow: hidden;
+    background: repeating-linear-gradient(45deg, #4d3800, #4d3800 40px, #664b00 40px, #664b00 80px); }
+  #win.show { display: grid; }
+  #win .msg { text-align: center; animation: pop .5s cubic-bezier(.2,1.6,.4,1) both; }
+  #win h2 { margin: 0; letter-spacing: 3px; font: 900 clamp(44px, 13vw, 150px)/1 "Impact", system-ui, sans-serif;
+    color: #ffd400; text-shadow: 4px 4px 0 #d40000, 8px 8px 0 rgba(0,0,0,.45); animation: hue 3s linear infinite; }
+  #win p { color: #fff; font: 700 18px system-ui, sans-serif; margin: 18px 0 0; }
+  #win small { display: block; margin-top: 10px; color: #ffe; font: 400 13px system-ui; }
+  .confetti { position: absolute; top: -24px; font-size: 26px; animation: fall linear infinite; }
+  @keyframes pop { from { transform: scale(0) rotate(-12deg); } }
+  @keyframes hue { to { filter: hue-rotate(360deg); } }
+  @keyframes fall { to { transform: translateY(110vh) rotate(720deg); } }
+</style>
+</head>
+<body>
+  <h1>Find Waldo 🔴🎯</h1>
+  <p>The entire scene is painted on <b>one <code>&lt;canvas&gt;</code></b> — there are <b>no DOM elements</b>
+     to find or click. <code>findByText</code>, <code>interactives</code>, and <code>exec</code> surveys all
+     come up empty. The agent has to SEE the target and click its <em>pixel</em>:</p>
+  <p><code>ml.agent("click the target to win", { tools: [ml.clickTool()], hints: "It's all on a canvas — use locate({ strategy: 'grounding' }) (or 'grid', zooming in), then click the @pt:… token it returns." })</code></p>
+
+  <canvas id="scene"></canvas>
+
+  <div id="log">Nothing clicked yet.</div>
+  <p><button id="hintToggle" class="mini">Hide hint</button>
+     <span class="hint" style="margin-left:8px">— hide this before an agent run so it can't cheat.</span></p>
+  <p id="hint" class="hint">🎯 Target: the <b>bright red bullseye</b> (concentric red rings) hidden among the grey icons.
+     It's drawn once at a random spot. Click it (within a few px) to win.</p>
+
+  <div id="win" title="click anywhere to play again">
+    <div class="msg">
+      <h2>YOU&nbsp;ARE&nbsp;WIN&nbsp;!</h2>
+      <p>You clicked the pixel. On a canvas. Congratulation!</p>
+      <small>(click anywhere to scramble and play again)</small>
+    </div>
+  </div>
+
+<script>
+  const canvas = document.getElementById('scene');
+  const ctx = canvas.getContext('2d');
+  const log = document.getElementById('log');
+  const win = document.getElementById('win');
+
+  // --- grey decoy icons (Feather-ish), drawn straight onto the canvas ---
+  const MUTED = ['#7d7d86', '#6f7c8b', '#827a6d', '#71827a', '#847580', '#767884'];
+  const SHAPES = ['circle', 'square', 'triangle', 'cross', 'bolt', 'ring', 'diamond'];
+  const rnd = (a) => a[Math.floor(Math.random() * a.length)];
+
+  function drawShape(kind, x, y, s, color) {
+    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.beginPath();
+    const h = s / 2;
+    if (kind === 'circle' || kind === 'ring') { ctx.arc(x, y, h, 0, Math.PI * 2); ctx.stroke(); if (kind === 'ring') { ctx.beginPath(); ctx.arc(x, y, h * 0.5, 0, Math.PI * 2); ctx.stroke(); } }
+    else if (kind === 'square') { ctx.strokeRect(x - h, y - h, s, s); }
+    else if (kind === 'diamond') { ctx.moveTo(x, y - h); ctx.lineTo(x + h, y); ctx.lineTo(x, y + h); ctx.lineTo(x - h, y); ctx.closePath(); ctx.stroke(); }
+    else if (kind === 'triangle') { ctx.moveTo(x, y - h); ctx.lineTo(x + h, y + h); ctx.lineTo(x - h, y + h); ctx.closePath(); ctx.stroke(); }
+    else if (kind === 'cross') { ctx.moveTo(x - h, y - h); ctx.lineTo(x + h, y + h); ctx.moveTo(x + h, y - h); ctx.lineTo(x - h, y + h); ctx.stroke(); }
+    else if (kind === 'bolt') { ctx.moveTo(x + h * 0.3, y - h); ctx.lineTo(x - h * 0.4, y + h * 0.1); ctx.lineTo(x + h * 0.1, y + h * 0.1); ctx.lineTo(x - h * 0.3, y + h); ctx.stroke(); }
+  }
+
+  // The TARGET: a bright red bullseye (concentric rings) — distinctive and describable,
+  // but it exists only as pixels (its position lives in JS, never in the DOM).
+  function drawBullseye(x, y, s) {
+    const h = s / 2;
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = '#ff2d2d'; ctx.beginPath(); ctx.arc(x, y, h, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeStyle = '#ff8a8a'; ctx.beginPath(); ctx.arc(x, y, h * 0.62, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = '#ff2d2d'; ctx.beginPath(); ctx.arc(x, y, h * 0.26, 0, Math.PI * 2); ctx.fill();
+  }
+
+  let target = { x: 0, y: 0, r: 22 };   // CSS px; r = win tolerance radius
+  let wrong = 0;
+
+  function build() {
+    wrong = 0;
+    // Size the backing store to the device pixels, but draw + hit-test in CSS px.
+    const dpr = window.devicePixelRatio || 1;
+    const w = canvas.clientWidth, hgt = canvas.clientHeight;
+    canvas.width = Math.round(w * dpr); canvas.height = Math.round(hgt * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, hgt);
+
+    // scatter decoys on a jittered grid so they don't overlap the target much
+    const step = 46, pad = 26;
+    const spots = [];
+    for (let y = pad; y < hgt - pad; y += step) for (let x = pad; x < w - pad; x += step) {
+      spots.push({ x: x + (Math.random() - 0.5) * 16, y: y + (Math.random() - 0.5) * 16 });
+    }
+    // reserve one spot for Waldo
+    const ti = Math.floor(Math.random() * spots.length);
+    target = { x: spots[ti].x, y: spots[ti].y, r: 22 };
+    spots.forEach((p, i) => {
+      if (i === ti) return;
+      drawShape(rnd(SHAPES), p.x, p.y, 22 + Math.random() * 6, rnd(MUTED));
+    });
+    drawBullseye(target.x, target.y, 34);
+
+    log.textContent = 'Nothing clicked yet.';
+    // Console breadcrumb for humans (NOT visible to any DOM/text scan — canvas has none).
+    console.log(`[find-waldo] bullseye at (${Math.round(target.x)}, ${Math.round(target.y)}) — click within ${target.r}px to win.`);
+  }
+
+  canvas.addEventListener('click', (e) => {
+    const r = canvas.getBoundingClientRect();
+    const x = e.clientX - r.left, y = e.clientY - r.top;
+    if (Math.hypot(x - target.x, y - target.y) <= target.r) return victory();
+    wrong++;
+    log.textContent = `❌ Missed — (${Math.round(x)}, ${Math.round(y)}) isn't the bullseye. (${wrong} wrong click${wrong === 1 ? '' : 's'})`;
+  });
+
+  function victory() {
+    win.classList.add('show');
+    for (let i = 0; i < 60; i++) {
+      const c = document.createElement('div');
+      c.className = 'confetti';
+      c.textContent = rnd(['🎯', '🔴', '🎉', '🏆', '⭐']);
+      c.style.left = Math.random() * 100 + 'vw';
+      c.style.animationDuration = (2 + Math.random() * 2.5) + 's';
+      c.style.animationDelay = (Math.random() * 1.5) + 's';
+      win.appendChild(c);
+    }
+  }
+  win.addEventListener('click', () => { win.classList.remove('show'); win.querySelectorAll('.confetti').forEach(c => c.remove()); build(); });
+
+  document.getElementById('hintToggle').addEventListener('click', (e) => {
+    const hint = document.getElementById('hint');
+    const showing = hint.style.display !== 'none';
+    hint.style.display = showing ? 'none' : '';
+    e.target.textContent = showing ? 'Show hint' : 'Hide hint';
+  });
+
+  window.addEventListener('resize', build);
+  build();
+</script>
+</body>
+</html>
