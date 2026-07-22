@@ -320,7 +320,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                         const token = mintPoint(cpt.x, cpt.y);
                         const ptImg = await annotate(shot, [{ rect: rectOf(cellBox), color: YELLOW, label: cellNote }, { rect: { left: cpt.x - 11, top: cpt.y - 11, width: 22, height: 22 }, color: RED, label: "point" }], dpr);
                         return {
-                            content: `Grid ${cellNote}${scopeNote} is on a <canvas> — no DOM element, so this is a COORDINATE: ${token} at (${Math.round(cpt.x)}, ${Math.round(cpt.y)}). Verify by look()ing at it, then click({ selector: "${token}" }). If it lands slightly OFF the target: retry with a LARGER gridSize (finer cells → the centre lands closer), or zoom in — ${refineHint} — or use strategy 'grounding' for an exact point.${canvasScopeTip}`,
+                            content: `Grid ${cellNote}${scopeNote} is on a <canvas> — no DOM element, so this is a COORDINATE: ${token} at (${Math.round(cpt.x)}, ${Math.round(cpt.y)}). First verify, then click: look({ selector: "${token}" }) → click({ selector: "${token}" }). If it lands slightly OFF the target: retry with a LARGER gridSize (finer cells → the centre lands closer), or zoom in — ${refineHint} — or use strategy 'grounding' for an exact point.${canvasScopeTip}`,
                             render: gridResult([cellStep, { label: "Canvas point · in the cell", image: ptImg }], { picked: `${token} @ (${Math.round(cpt.x)}, ${Math.round(cpt.y)})`, pickedBy: "snap" }),
                         };
                     }
@@ -412,7 +412,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                             const dot = { left: cpt.x - 11, top: cpt.y - 11, width: 22, height: 22 };
                             const ptImg = await annotate(shot, [{ rect: rectOf(b), color: YELLOW, label: "grounded region" }, { rect: dot, color: RED, label: "click point" }], dpr);
                             return {
-                                content: `Grounded "${description}"${scopeNote} on a <canvas> — no DOM element, so this is a COORDINATE: ${token} at (${Math.round(cpt.x)}, ${Math.round(cpt.y)}). Verify by look()ing at it, then click({ selector: "${token}" }).${canvasScopeTip}`,
+                                content: `Grounded "${description}"${scopeNote} on a <canvas> — no DOM element, so this is a COORDINATE: ${token} at (${Math.round(cpt.x)}, ${Math.round(cpt.y)}). First verify, then click: look({ selector: "${token}" }) → click({ selector: "${token}" }).${canvasScopeTip}`,
                                 render: groundResult([boxStep, { label: "Canvas point (no DOM element)", image: ptImg }], { picked: `${token} @ (${Math.round(cpt.x)}, ${Math.round(cpt.y)})`, pickedBy: "snap" }),
                             };
                         }
