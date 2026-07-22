@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Map pin — a realistic &lt;canvas&gt; case for ml.locate (coordinate click)</title>
+<style>
+  body { font: 15px system-ui, sans-serif; margin: 28px 32px; color: #111; }
+  h1 { font-size: 18px; margin-bottom: 6px; }
+  p { max-width: 78ch; color: #444; }
+  code { font: 12px ui-monospace, monospace; background: #f0f0f2; padding: 1px 5px; border-radius: 4px; }
+  /* A slippy-map style canvas: roads, parks, water, blocks — all pixels, no DOM. The
+     one interactive-looking thing (a location pin) has no element behind it, so the
+     only way to click it is to SEE it and fire at its coordinate (locate → @pt → click). */
+  #map { display: block; width: 100%; height: 70vh; border-radius: 10px; cursor: crosshair;
+    border: 1px solid #cfcabf; }
+  #log { margin-top: 16px; font: 13px ui-monospace, monospace; color: #0a7; min-height: 1.4em; }
+  .hint { color: #888; font-size: 13px; }
+  .mini { font: 12px system-ui, sans-serif; padding: 4px 10px; border-radius: 6px;
+    border: 1px solid #ccc; background: #fafafa; color: #333; cursor: pointer; }
+  .mini:hover { background: #f0f0f0; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #1b1b1f; color: #eee; } p { color: #bbb; } code { background: #2a2a30; }
+    .mini { background: #2a2a30; border-color: #444; color: #ddd; } .mini:hover { background: #34343c; }
+  }
+  #win { position: fixed; inset: 0; z-index: 9999; display: none; place-items: center; overflow: hidden;
+    background: repeating-linear-gradient(45deg, #063d2f, #063d2f 40px, #095040 40px, #095040 80px); }
+  #win.show { display: grid; }
+  #win .msg { text-align: center; animation: pop .5s cubic-bezier(.2,1.6,.4,1) both; }
+  #win h2 { margin: 0; letter-spacing: 3px; font: 900 clamp(40px, 12vw, 140px)/1 "Impact", system-ui, sans-serif;
+    color: #ffd400; text-shadow: 4px 4px 0 #d40000, 8px 8px 0 rgba(0,0,0,.45); animation: hue 3s linear infinite; }
+  #win p { color: #fff; font: 700 18px system-ui, sans-serif; margin: 18px 0 0; }
+  #win small { display: block; margin-top: 10px; color: #dfe; font: 400 13px system-ui; }
+  .confetti { position: absolute; top: -24px; font-size: 26px; animation: fall linear infinite; }
+  @keyframes pop { from { transform: scale(0) rotate(-12deg); } }
+  @keyframes hue { to { filter: hue-rotate(360deg); } }
+  @keyframes fall { to { transform: translateY(110vh) rotate(720deg); } }
+</style>
+</head>
+<body>
+  <h1>Drop point 📍</h1>
+  <p>A slippy-map (roads, parks, water, city blocks) drawn on <b>one <code>&lt;canvas&gt;</code></b> — the
+     kind of surface Google/Mapbox/Leaflet paint. There is <b>no DOM element</b> for the pin, so
+     <code>findByText</code>/<code>interactives</code>/<code>exec</code> can't reach it. The agent must SEE it
+     and click its pixel:</p>
+  <p><code>ml.agent("click the location pin on the map", { tools: [ml.clickTool()], hints: "It's a canvas map — use locate({ strategy: 'grounding' }), then click the @pt:… token it returns." })</code></p>
+
+  <canvas id="map"></canvas>
+
+  <div id="log">Nothing clicked yet.</div>
+  <p><button id="hintToggle" class="mini">Hide hint</button>
+     <span class="hint" style="margin-left:8px">— realistic case: a single salient pin on a busy map.</span></p>
+  <p id="hint" class="hint">📍 Target: the <b>red location pin</b> (teardrop marker with a white dot). It's dropped at a
+     random spot each reload. Click its head to confirm the location.</p>
+
+  <div id="win" title="click anywhere to play again">
+    <div class="msg">
+      <h2>PIN&nbsp;DROPPED&nbsp;!</h2>
+      <p>You clicked a marker painted on a canvas. Nice.</p>
+      <small>(click anywhere to move the pin and play again)</small>
+    </div>
+  </div>
+
+<script>
+  const canvas = document.getElementById('map');
+  const ctx = canvas.getContext('2d');
+  const log = document.getElementById('log');
+  const win = document.getElementById('win');
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+  let pin = { x: 0, y: 0, r: 16 };   // pin HEAD centre + hit radius, in CSS px
+  let wrong = 0;
+
+  function build() {
+    wrong = 0;
+    const dpr = window.devicePixelRatio || 1;
+    const W = canvas.clientWidth, H = canvas.clientHeight;
+    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    // --- base land ---
+    ctx.fillStyle = '#eceae3'; ctx.fillRect(0, 0, W, H);
+
+    // --- water: a river band + a lake, on a random side ---
+    ctx.fillStyle = '#a7d3ea';
+    const flip = Math.random() < 0.5;
+    ctx.beginPath();
+    let ry = rand(H * 0.2, H * 0.7);
+    ctx.moveTo(-10, ry);
+    for (let x = 0; x <= W + 10; x += 60) ctx.lineTo(x, ry + Math.sin(x / 90 + (flip ? 1 : 0)) * 24);
+    ctx.lineTo(W + 10, ry + 60);
+    for (let x = W + 10; x >= -10; x -= 60) ctx.lineTo(x, ry + 60 + Math.sin(x / 90) * 24);
+    ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(rand(W * 0.1, W * 0.9), rand(H * 0.1, H * 0.9), rand(50, 110), rand(35, 80), 0, 0, Math.PI * 2); ctx.fill();
+
+    // --- parks ---
+    ctx.fillStyle = '#c6e3b8';
+    for (let i = 0; i < 5; i++) roundRect(rand(0, W - 140), rand(0, H - 120), rand(70, 150), rand(60, 120), 10, true);
+
+    // --- road grid (casing then fill), jittered ---
+    const vs = [], hs = [];
+    for (let x = rand(30, 90); x < W; x += rand(90, 160)) vs.push(x);
+    for (let y = rand(30, 90); y < H; y += rand(90, 160)) hs.push(y);
+    const roads = (width, color) => {
+      ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineCap = 'round';
+      vs.forEach(x => { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x + rand(-8, 8), H); ctx.stroke(); });
+      hs.forEach(y => { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y + rand(-8, 8)); ctx.stroke(); });
+    };
+    roads(10, '#d8d3c6'); roads(6, '#ffffff');   // casing then white road
+
+    // --- a couple of grey building blocks + faint street labels for texture ---
+    ctx.fillStyle = 'rgba(150,146,136,0.28)';
+    for (let i = 0; i < 14; i++) ctx.fillRect(rand(0, W - 60), rand(0, H - 40), rand(24, 60), rand(18, 40));
+    ctx.fillStyle = 'rgba(90,86,80,0.5)'; ctx.font = '11px system-ui';
+    const streets = ['Main St', 'Oak Ave', '3rd St', 'Elm Rd', 'Park Way', 'River Rd', 'Hill St', 'Bay Dr'];
+    for (let i = 0; i < 6; i++) ctx.fillText(pick(streets), rand(20, W - 80), rand(20, H - 20));
+
+    // --- THE PIN (teardrop marker) at a random spot ---
+    const tipX = rand(W * 0.12, W * 0.88), tipY = rand(H * 0.22, H * 0.9);
+    const s = 42, r = s * 0.42, headY = tipY - s * 0.92;
+    drawPin(tipX, tipY, s);
+    pin = { x: tipX, y: headY, r: r + 8 };   // click the head (generous radius)
+
+    log.textContent = 'Nothing clicked yet.';
+    console.log(`[map-pin] pin head at (${Math.round(tipX)}, ${Math.round(headY)}) — click within ${pin.r}px to win.`);
+  }
+
+  function roundRect(x, y, w, h, rad, fill) {
+    ctx.beginPath();
+    ctx.moveTo(x + rad, y);
+    ctx.arcTo(x + w, y, x + w, y + h, rad); ctx.arcTo(x + w, y + h, x, y + h, rad);
+    ctx.arcTo(x, y + h, x, y, rad); ctx.arcTo(x, y, x + w, y, rad);
+    ctx.closePath(); if (fill) ctx.fill(); else ctx.stroke();
+  }
+
+  function drawPin(tipX, tipY, s) {
+    const r = s * 0.42, cx = tipX, cy = tipY - s * 0.92;
+    // ground shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.beginPath(); ctx.ellipse(tipX, tipY, r * 0.7, r * 0.24, 0, 0, Math.PI * 2); ctx.fill();
+    // teardrop body (point + head)
+    ctx.fillStyle = '#e23b3b';
+    ctx.beginPath();
+    ctx.moveTo(tipX, tipY);
+    ctx.lineTo(cx - r * 0.78, cy + r * 0.5);
+    ctx.lineTo(cx + r * 0.78, cy + r * 0.5);
+    ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+    // darker rim + white hole
+    ctx.strokeStyle = '#b22'; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(cx, cy, r * 0.42, 0, Math.PI * 2); ctx.fill();
+  }
+
+  canvas.addEventListener('click', (e) => {
+    const b = canvas.getBoundingClientRect();
+    const x = e.clientX - b.left, y = e.clientY - b.top;
+    if (Math.hypot(x - pin.x, y - pin.y) <= pin.r) return victory();
+    wrong++;
+    log.textContent = `❌ (${Math.round(x)}, ${Math.round(y)}) isn't the pin. (${wrong} wrong click${wrong === 1 ? '' : 's'})`;
+  });
+
+  function victory() {
+    win.classList.add('show');
+    for (let i = 0; i < 60; i++) {
+      const c = document.createElement('div');
+      c.className = 'confetti';
+      c.textContent = pick(['📍', '🗺️', '🎉', '🧭', '⭐']);
+      c.style.left = Math.random() * 100 + 'vw';
+      c.style.animationDuration = (2 + Math.random() * 2.5) + 's';
+      c.style.animationDelay = (Math.random() * 1.5) + 's';
+      win.appendChild(c);
+    }
+  }
+  win.addEventListener('click', () => { win.classList.remove('show'); win.querySelectorAll('.confetti').forEach(c => c.remove()); build(); });
+
+  document.getElementById('hintToggle').addEventListener('click', (e) => {
+    const hint = document.getElementById('hint');
+    const showing = hint.style.display !== 'none';
+    hint.style.display = showing ? 'none' : '';
+    e.target.textContent = showing ? 'Show hint' : 'Hide hint';
+  });
+
+  window.addEventListener('resize', build);
+  build();
+</script>
+</body>
+</html>
