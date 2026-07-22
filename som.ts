@@ -216,9 +216,54 @@ export function resizeToSquare(dataUrl: string, size = 1000): Promise<string> {
 }
 
 /**
+ * Fit a screenshot into a `size`×`size` square PRESERVING aspect (letterbox): scale
+ * to fit the longer side, draw at the top-left, pad the remainder. Unlike
+ * resizeToSquare's stretch, this never distorts the image — essential once the source
+ * is an arbitrary-aspect crop (a wide banner, a tall column), where a stretch mangles
+ * the target. The square still lets ONE `range` divisor cover every coordinate
+ * convention (the model sees size×size); projectFromSquare inverts the uniform scale
+ * and the padding. The pad colour is a neutral dark so it reads as "no content".
+ */
+export function letterboxToSquare(dataUrl: string, size = 1000, pad = "#141414"): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+            const cv = document.createElement("canvas");
+            cv.width = size; cv.height = size;
+            const ctx = cv.getContext("2d");
+            if (!ctx) return reject(new Error("no 2d canvas context for grounding letterbox"));
+            ctx.fillStyle = pad; ctx.fillRect(0, 0, size, size);
+            const s = size / Math.max(img.naturalWidth, img.naturalHeight);
+            ctx.drawImage(img, 0, 0, img.naturalWidth * s, img.naturalHeight * s);
+            resolve(cv.toDataURL("image/png"));
+        };
+        img.onerror = () => reject(new Error("failed to load screenshot for grounding"));
+        img.src = dataUrl;
+    });
+}
+
+/**
+ * Invert letterboxToSquare: map a grounding box [x1,y1,x2,y2] (each 0..range, in the
+ * size×size square the model saw) back to a viewport Box in CSS px. The letterbox
+ * fits by the LONGER side, so both axes share one scale — `max(rect.width,
+ * rect.height)` — unlike viewportBox's per-axis stretch inverse. `rect` is the region
+ * that was cropped + letterboxed (the whole viewport when no selector scopes it); a
+ * coord that lands in the padding clamps to that region's edge.
+ */
+export function projectFromSquare(coords: number[], range: number, rect: { left: number; top: number; width: number; height: number }): Box {
+    const R = range || 1000;
+    const M = Math.max(rect.width, rect.height);   // the letterbox fit dimension — uniform on both axes
+    const [x1, y1, x2, y2] = coords;
+    const cx = (f: number) => Math.max(rect.left, Math.min(rect.left + rect.width, rect.left + f / R * M));
+    const cy = (f: number) => Math.max(rect.top, Math.min(rect.top + rect.height, rect.top + f / R * M));
+    return { left: cx(Math.min(x1, x2)), right: cx(Math.max(x1, x2)), top: cy(Math.min(y1, y2)), bottom: cy(Math.max(y1, y2)) };
+}
+
+/**
  * Map a grounding model's [x1,y1,x2,y2] (each in 0..range) to a viewport box in CSS
  * px. Per-axis `coord/range` fraction — the 1000×1000 square makes `range` cover
- * every convention (see resizeToSquare). Corners are min/max-normalized.
+ * every convention (see resizeToSquare). Corners are min/max-normalized. Still used to
+ * draw the model's box onto the square it saw (square px == same on both axes).
  */
 export function viewportBox(coords: number[], range: number, w: number, h: number): Box {
     const R = range || 1000;

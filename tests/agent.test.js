@@ -769,6 +769,20 @@ test("locate is NOT wired when no vision model can be resolved", async () => {
     assert.ok(!names.includes("look"), "no look either");
 });
 
+test("locate scoping: a missing container selector short-circuits (no screenshot attempt)", async () => {
+    const { ml } = loadDomWorld('<div id="box">hi</div>');
+    const out = await ml.locateTool({ model: "vlm" }).run({ description: "the star", selector: "#nope" });
+    assert.match(String(out), /No element matches "#nope"/);
+});
+
+test("locate scoping: a zero/sliver-size container is rejected with an actionable message", async () => {
+    const { ml } = loadDomWorld('<div id="box">hi</div>');
+    // jsdom reports 0×0 rects, so the too-small guard fires — same path a collapsed
+    // container takes in the browser — before any capture/canvas work.
+    const out = await ml.locateTool({ model: "vlm" }).run({ description: "the star", selector: "#box" });
+    assert.match(String(out), /too small to search within/);
+});
+
 // Capture the __mlDebug events emitted by an agent run over one tool.
 async function agentDebugEvents(tool) {
     const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall(tool.name, {}, "c1"), reply("done")]) });

@@ -7,8 +7,8 @@
 import type { MlApi, MlTool } from "./contract";
 import { DEFAULT_GROUNDING_RANGE } from "./contract";
 import { truncate, errText, elLine, queryAll, selectorError } from "./dom";
-import { settle, VISION_NUM_CTX } from "./util";
-import { collectCandidates, buildMarks, drawMarks, annotate, formatBox, resizeToSquare, collectInBox, elementAtPoint, viewportBox, type MarkFilter, type Box } from "./som";
+import { settle, VISION_NUM_CTX, cropDataUrl, MIN_SHOT_PX } from "./util";
+import { collectCandidates, buildMarks, drawMarks, annotate, formatBox, letterboxToSquare, projectFromSquare, collectInBox, elementAtPoint, viewportBox, type MarkFilter, type Box } from "./som";
 
 export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512 }: { model?: string | null; maxTokens?: number } = {}): MlTool => {
     return ml.defineTool({
@@ -90,19 +90,24 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             "coordinates when configured, else numbered Set-of-Marks badges), and the box is snapped to " +
             "the real DOM node by hit-testing (so it works even on non-semantic <div> UIs). Returns that " +
             "element's CSS selector to pass to click/type/answer, plus nearby candidates. Narrow with " +
-            "`filter` (clickables/inputs/images). Only sees the current viewport — if the target isn't " +
-            "found, scroll it into view, widen the filter, or refine the description and call again.",
+            "`filter` (clickables/inputs/images), or SCOPE the search to a container with `selector` " +
+            "(+`index`) — the region is cropped and searched on its own, which is far more reliable for a " +
+            "small target in a busy page (one row of a list, a toolbar, a card). Only sees the current " +
+            "viewport — if the target isn't found, scroll it into view, widen the filter, or refine the " +
+            "description and call again.",
         parameters: {
             type: "object",
             properties: {
                 description: { type: "string", description: "What to find, e.g. \"the star/favourite icon next to the chat title\"." },
                 filter: { type: "string", enum: ["clickables", "inputs", "images", "all"], description: "Which elements to consider (default 'clickables')." },
+                selector: { type: "string", description: "Optional: a CSS selector for a CONTAINER to scope the search to (its region is cropped and searched alone). Use it to pin down a target inside one known area — a specific list row, a toolbar, a card. Scrolls the container into view first." },
+                index: { type: "integer", description: "Which match of `selector` to scope to (0-based); default 0." },
                 margin: { type: "integer", description: "Optional: grow the predicted box by this many pixels before matching. Use it when GROUNDING returned a box but snapped to the WRONG element (the box narrowly missed) — call again with the SAME description and a margin like 40–120; it reuses the cached box (no second vision call) and re-scans a wider area. It does NOT help when grounding returned no box at all — then re-describe the element, scroll it into view, or use strategy 'marks'." },
                 strategy: { type: "string", enum: ["auto", "grounding", "marks"], description: "How to find it (default 'auto'). 'grounding' = a coordinate model points at it directly (needs a grounding model configured; fast, best for a described spot). 'marks' = numbered badges over every candidate and the model picks by number (robust; use when grounding missed or you want to choose among cluttered candidates). 'auto' tries grounding first, then falls back to marks." },
             },
             required: ["description"],
         },
-        run: async ({ description, filter = "clickables", margin = 0, strategy = "auto" }: { description: string; filter?: MarkFilter; margin?: number; strategy?: "auto" | "grounding" | "marks" }) => {
+        run: async ({ description, filter = "clickables", margin = 0, strategy = "auto", selector, index = 0 }: { description: string; filter?: MarkFilter; margin?: number; strategy?: "auto" | "grounding" | "marks"; selector?: string; index?: number }) => {
             if (!description) return "Provide a `description` of the element to find.";
             const dpr = window.devicePixelRatio || 1;
             const RED = "#ff2d55", YELLOW = "#eab308";
@@ -114,6 +119,32 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 return "No grounding model is configured — use strategy 'marks' (or leave it 'auto').";
             }
 
+            // Optional `selector` scoping: crop and search a container's region on its own.
+            // Scrolls it into view first (like look/click), then clips to the viewport so the
+            // cropped pixels and the coordinate projection stay in lockstep.
+            let region = { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+            let scopeSel = "";
+            if (selector) {
+                let matches: Element[];
+                try { matches = queryAll(selector); } catch (e) { return selectorError(selector, e as Error); }
+                const el = matches[index];
+                if (!(el instanceof Element)) return `No element matches "${selector}"${index ? ` at index ${index}` : ""}${matches.length ? ` (only ${matches.length} match${matches.length === 1 ? "" : "es"})` : ""}. Scroll it into view or refine the selector, then call locate again.`;
+                try { el.scrollIntoView({ block: "center", inline: "center" }); } catch { /* detached/older engine */ }
+                // Let the scroll paint before we measure/capture (guarded for non-visual envs).
+                await new Promise<void>(res => typeof requestAnimationFrame === "function"
+                    ? requestAnimationFrame(() => requestAnimationFrame(() => res()))
+                    : res());
+                const r = el.getBoundingClientRect();
+                if (r.width < MIN_SHOT_PX || r.height < MIN_SHOT_PX) {
+                    return `The container "${selector}"${index ? ` (match #${index})` : ""} is ${Math.round(r.width)}×${Math.round(r.height)}px — too small to search within (hidden, collapsed, or a sliver?). Target a larger container, or drop \`selector\` to search the whole viewport.`;
+                }
+                const left = Math.max(0, r.left), top = Math.max(0, r.top);
+                region = { left, top, width: Math.min(window.innerWidth, r.right) - left, height: Math.min(window.innerHeight, r.bottom) - top };
+                scopeSel = selector;
+            }
+            const regionBox: Box = { left: region.left, top: region.top, right: region.left + region.width, bottom: region.top + region.height };
+            const scopeNote = scopeSel ? ` within "${scopeSel}"${index ? ` (#${index})` : ""}` : "";
+
             // If 'auto' tries grounding and it misses, we still surface that attempt on
             // the Set-of-Marks fallback (why it missed + what the model saw) instead of
             // silently discarding it.
@@ -123,13 +154,17 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             // hit-testing. Sent as a 1000×1000 square so `coord/groundingRange` is a
             // per-axis fraction for ANY convention.
             if (groundingModel && strategy !== "marks") {
-                const key = `${filter}\x00${description}`;
+                const key = `${filter}\x00${scopeSel}\x00${index}\x00${description}`;
                 let cached = groundCache.get(key);   // reuse this run's prediction (for a margin retry)
                 if (cached === undefined) {
                     try {
                         shot = await ml.screenshot(null, {});
-                        const square = await resizeToSquare(shot, DEFAULT_GROUNDING_RANGE);
-                        const gp = `Locate "${description}" in this image. Reply with ONLY its bounding box as four numbers ` +
+                        // Crop to the scoped region (the whole viewport when unscoped), then
+                        // LETTERBOX to a square — aspect-preserving, so an arbitrary-shaped crop
+                        // isn't distorted the way a stretch mangles it.
+                        const cropped = await cropDataUrl(shot, region, dpr);
+                        const square = await letterboxToSquare(cropped, DEFAULT_GROUNDING_RANGE);
+                        const gp = `Locate "${description}"${scopeNote} in this image. Reply with ONLY its bounding box as four numbers ` +
                             `x1,y1,x2,y2 — top-left then bottom-right corner, each from 0 to ${groundingRange} ` +
                             `(x: 0=left→${groundingRange}=right; y: 0=top→${groundingRange}=bottom). If it isn't visible, reply "NONE".`;
                         const ans = String(await ml.chat(gp, { images: [square], model: groundingModel, numCtx: VISION_NUM_CTX, maxTokens })).trim();
@@ -150,7 +185,8 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                         ? await annotate(square, [{ rect: rectOf(viewportBox(nums, R, DEFAULT_GROUNDING_RANGE, DEFAULT_GROUNDING_RANGE)), color: RED, corners: fb.corners }], 1)
                         : square;
                     const base = { type: "locate" as const, mode: "grounding" as const, model: groundingModel, prompt, groundingImage, gaveBox: !!nums, boxCoords: coords, margin: margin || undefined };
-                    const box = nums ? viewportBox(nums, R, window.innerWidth, window.innerHeight) : null;
+                    // Invert the letterbox back to the scoped region (uniform scale + offset).
+                    const box = nums ? projectFromSquare(nums, R, region) : null;
                     if (box) {
                         const b: Box = margin > 0 ? { left: box.left - margin, top: box.top - margin, right: box.right + margin, bottom: box.bottom + margin } : box;
                         const primary = elementAtPoint((b.left + b.right) / 2, (b.top + b.bottom) / 2, filter);
@@ -164,7 +200,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                         if (chosen) {
                             const picked = pickedStr(marks[0]);
                             return {
-                                content: `Grounded "${description}"${margin ? ` (margin ${margin}px)` : ""} → ${picked}\n(click/type/answer with this selector)\n\nOther elements in that region:\n${listOf(marks)}`,
+                                content: `Grounded "${description}"${scopeNote}${margin ? ` (margin ${margin}px)` : ""} → ${picked}\n(click/type/answer with this selector)\n\nOther elements in that region:\n${listOf(marks)}`,
                                 elements: ordered.slice(0, 50),
                                 render: { ...base, resultImage, picked },
                             };
@@ -195,17 +231,21 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
 
             // Mechanism #2 — Set-of-Marks (default, and the 'auto' grounding fallback).
             const somReader = model || groundingModel;   // a grounding model can read badges too
-            const cands = collectCandidates(filter);
+            // Scoped → only the container's candidates, on a crop of just that region.
+            const cands = scopeSel ? collectInBox(regionBox, filter, { max: 40 }) : collectCandidates(filter);
             const gp = fbNote ? `(Grounding ${fbNote}.) ` : "";   // let the model know grounding was tried
-            if (!cands.length) return `${gp}No ${filter} candidates visible in the viewport. Scroll the target into view, widen the filter (try 'all'), then call again.`;
+            if (!cands.length) return `${gp}No ${filter} candidates visible${scopeNote || " in the viewport"}. Scroll the target into view, widen the filter (try 'all'), then call again.`;
             const marks = buildMarks(cands);
             let badged: string;
             try {
                 if (!shot) shot = await ml.screenshot(null, {});   // viewport PNG (hides our sidebar)
-                badged = await drawMarks(shot, marks, dpr);
+                badged = scopeSel
+                    // Badge on the cropped region — translate each mark into crop-local coords.
+                    ? await annotate(await cropDataUrl(shot, region, dpr), marks.map(m => ({ rect: { left: m.rect.left - region.left, top: m.rect.top - region.top, width: m.rect.width, height: m.rect.height }, color: RED, badge: m.id })), dpr)
+                    : await drawMarks(shot, marks, dpr);
             } catch (e) { return `Error capturing/marking the screenshot: ${errText(e)}`; }
             const somPrompt = `The screenshot has numbered red badges (#1–#${marks.length}) drawn over candidate ` +
-                `elements. Which single badge number best matches this element: "${description}"? ` +
+                `elements. Which single badge number best matches this element: "${description}"${scopeNote}? ` +
                 `Reply with ONLY the number, or "NONE" if none match.`;
             const answer = String(await ml.chat(somPrompt, { images: [badged], model: somReader, numCtx: VISION_NUM_CTX, maxTokens })).trim();
             const pick = (answer.match(/\d+/) || [])[0];

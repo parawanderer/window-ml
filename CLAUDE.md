@@ -163,19 +163,38 @@ resolves a reader (agent-model-if-vision → OCR model).
 **Two mechanisms, driver picks (`strategy`).** `locate({ strategy })` — `"marks"` (above),
 `"grounding"` (a coordinate VLM points at it), or `"auto"` (grounding-first, marks
 fallback). Grounding is **opt-in** config (`groundingEnabled`/`groundingModel`, off by
-default — it loads a 3rd model into VRAM): the screenshot is sent as a **1000×1000
-square** so one configurable **`groundingRange`** (the coord divisor, default 1000)
-covers every convention at once — 0–1000 normalized, qwen2.5vl's absolute-pixels-of-the
--sent-image (now == 0–1000), 100 (Molmo %), 1024 (PaliGemma), 1 (0–1 floats). The box is
-snapped to the DOM by the same `elementFromPoint` sweep (`collectInBox`), so the model
-only has to be directionally right. `margin` grows the box on a retry, reusing a
-**per-run box cache** (the VLM call is the cost; re-sweeping is free). Delegated vision
-sub-calls (OCR, grounding, delegated `look`) cap `num_ctx` at `VISION_NUM_CTX` (util.ts)
-so a vision model's huge default context doesn't pre-allocate tens of GB of KV cache and
-OOM modest cards — NOT the native look (that reuses the agent's own model). `som.ts`
-unit-tested standalone (`dist/som.js`, `tests/som.test.js`: `representativeFor` walk-up +
-`viewportBox` coord mapping; `elementFromPoint`/canvas are jsdom no-ops). Slices 1–2 of
-`tmp/visual_element_selection_design.md`; grid mechanism is later.
+default — it loads a 3rd model into VRAM): the search region is **letterboxed** into a
+**1000×1000 square** (`letterboxToSquare` — aspect-preserving; a stretch mangles an
+arbitrary-shaped crop) so one configurable **`groundingRange`** (the coord divisor, default
+1000) covers every convention at once — 0–1000 normalized, qwen2.5vl's
+absolute-pixels-of-the-sent-image (now == 0–1000), 100 (Molmo %), 1024 (PaliGemma), 1 (0–1
+floats). The inverse is `projectFromSquare` (**one** scale = the region's longer side on
+both axes, + the region's viewport offset; padding-coords clamp to the region edge) — NOT
+`viewportBox`'s per-axis stretch inverse, which survives only to draw the model's box onto
+the square it saw. The box is snapped to the DOM by the same `elementFromPoint` sweep
+(`collectInBox`), so the model only has to be directionally right. `margin` grows the box on
+a retry, reusing a **per-run box cache** (the VLM call is the cost; re-sweeping is free) —
+and it only helps a *returned* box that missed, so a no-box retry with a margin is refused
+with that explanation. An **`auto` grounding miss** isn't discarded: the marks fallback
+render carries `fallbackNote`/`fallbackImage` (why it missed + what the model saw), and the
+model-facing result gets a short "(Grounding …)" prefix.
+
+**Scope to a container (`selector`/`index`).** `locate({ selector, index })` crops the
+search to one element's region (a list row, a toolbar, a card) — far more reliable for a
+small target in a busy page. It scrolls the container into view first (like look/click),
+clips the rect to the viewport (so the crop pixels and `projectFromSquare` stay in sync),
+and rejects a not-found selector / a sub-`MIN_SHOT_PX` sliver with an actionable message
+*before* any capture. Both mechanisms honour it: grounding crops+letterboxes the region;
+marks runs `collectInBox(region)` and badges a **crop** of just that region (marks
+translated to crop-local coords).
+
+Delegated vision sub-calls (OCR, grounding, delegated `look`) cap `num_ctx` at
+`VISION_NUM_CTX` (util.ts) so a vision model's huge default context doesn't pre-allocate tens
+of GB of KV cache and OOM modest cards — NOT the native look (that reuses the agent's own
+model). `som.ts` unit-tested standalone (`dist/som.js`, `tests/som.test.js`:
+`representativeFor` walk-up + `viewportBox`/`projectFromSquare` coord mapping;
+`elementFromPoint`/canvas are jsdom no-ops); scoping guards in `tests/agent.test.js`. Slices
+1–2 of `tmp/visual_element_selection_design.md`; grid mechanism is later.
 
 **Agent runs in the debug sidebar.** `ml.agent` emits its own debug-event kinds
 (not `chat`): `agent` (run start: task + model), `agent-step` (one per step — a

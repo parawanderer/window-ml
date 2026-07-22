@@ -64,7 +64,7 @@ export const VISION_NUM_CTX = 8192;
  * @param {number} dpr The device pixel ratio.
  * @returns {Promise<string>} The cropped image as a data URL.
  */
-export const cropDataUrl = (dataUrl: string, rect: DOMRect, dpr: number): Promise<string> => new Promise((resolve, reject) => {
+export const cropDataUrl = (dataUrl: string, rect: { left: number; top: number; width: number; height: number }, dpr: number): Promise<string> => new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
         const sx = Math.max(0, Math.round(rect.left * dpr));

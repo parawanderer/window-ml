@@ -16,7 +16,25 @@ function world(html) {
     return dom.window.document;
 }
 const som = require("../dist/som.js");
-const { representativeFor, isClickish, buildMarks, viewportBox, formatBox } = som;
+const { representativeFor, isClickish, buildMarks, viewportBox, formatBox, projectFromSquare } = som;
+
+test("projectFromSquare inverts a letterbox: ONE scale (max side) on both axes, + region offset", () => {
+    // Full viewport 1600×900, range 1000. Letterbox fits by the long side (1600), so
+    // BOTH axes divide by 1600 — unlike viewportBox's per-axis stretch. y past the
+    // content (900/1600 of the square) lands in the padding and clamps to the edge.
+    const full = { left: 0, top: 0, width: 1600, height: 900 };
+    assert.deepEqual(projectFromSquare([250, 250, 750, 750], 1000, full),
+        { left: 400, top: 400, right: 1200, bottom: 900 });   // bottom clamps (750 → padding)
+    // A scoped region: 400×100 at (100,200). max side = 400; the 100px height maps to
+    // the top 250 of the square, so model-y 250 == the region's bottom edge.
+    const region = { left: 100, top: 200, width: 400, height: 100 };
+    assert.deepEqual(projectFromSquare([0, 0, 1000, 250], 1000, region),
+        { left: 100, top: 200, right: 500, bottom: 300 });
+    // A square region degenerates to the same mapping as viewportBox (offset aside).
+    const sq = { left: 0, top: 0, width: 500, height: 500 };
+    assert.deepEqual(projectFromSquare([100, 200, 300, 400], 1000, sq),
+        { left: 50, top: 100, right: 150, bottom: 200 });
+});
 
 test("formatBox renders a box as two (x,y) pairs — ints stay ints, floats round to 1dp", () => {
     assert.deepEqual(formatBox([28, 242, 45, 264]),
