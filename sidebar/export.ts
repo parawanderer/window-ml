@@ -72,38 +72,31 @@ function agentToMarkdown(s: Session, addImage: AddImage): string {
             const ref = addImage(st.render.src, `step-${st.step}`);
             o.push(ref ? `![step ${st.step}${label}](${ref})` : `_🖼️ screenshot${label} (image unavailable)_`, "");
         } else if (st.render && st.render.type === "locate") {
-            // The full grounding/SoM debug view, mirroring the sidebar's locate render.
+            // The full locate debug view as substeps, mirroring the sidebar's render.
             const r = st.render;
             // Flag a sub-call that ran on the SAME model as the driver — it was still
             // standalone (image + reply not in the driver's context).
             const delegated = r.model && r.model === s.model ? " · standalone sub-call (not in the agent's context)" : "";
             o.push(`> _${r.mode === "grounding" ? "Grounding" : r.mode === "grid" ? "Grid" : "Set-of-Marks"} · ${r.model}${delegated}_`, "");
-            if (r.mode === "grounding") {
-                if (r.prompt) o.push("<details><summary>Prompt to the model</summary>", "", fence(r.prompt), "", "</details>", "");
-                const gref = r.groundingImage && addImage(r.groundingImage, `step-${st.step}-model-output`);
-                o.push(`**Model output**${r.gaveBox ? ` — box ${r.boxCoords}` : " — no box returned"}:`, "");
-                o.push(gref ? `![step ${st.step} model output](${gref})` : "_🖼️ (image unavailable)_", "");
-            } else if (r.mode === "grid") {
-                if (r.prompt) o.push("<details><summary>Prompt to the model</summary>", "", fence(r.prompt), "", "</details>", "");
-                const gref = r.griddedImage && addImage(r.griddedImage, `step-${st.step}-grid`);
-                o.push(`**1 · Cell pick**${r.cols && r.rows ? ` — grid ${r.cols}×${r.rows}` : ""}${r.cells?.length ? ` — model chose cell${r.cells.length > 1 ? "s" : ""} ${r.cells.join(",")}` : " — no cell"}:`, "");
-                o.push(gref ? `![step ${st.step} grid](${gref})` : "_🖼️ (image unavailable)_", "");
-                if (r.handoff) o.push(`> _The cell held ${r.handoff} elements → re-badged → a **second** vision call picked one (Set-of-Marks)._`, "");
-            }
-            if (r.fallbackNote) {
-                o.push(`> _Grounding ${r.fallbackNote} — fell back to Set-of-Marks._`, "");
-                const fref = r.fallbackImage && addImage(r.fallbackImage, `step-${st.step}-grounding-attempt`);
-                if (fref) o.push(`**Grounding attempt:**`, "", `![step ${st.step} grounding attempt](${fref})`, "");
-            }
-            const eref = r.resultImage && addImage(r.resultImage, `step-${st.step}-element-location`);
-            if (eref) {
-                const cap = r.mode === "grid" && r.handoff ? `2 · Set-of-Marks pick (1 of ${r.handoff})`
-                    : r.mode === "marks" && r.fallbackNote ? "Set-of-Marks"
-                    : "Element location";
-                o.push(`**${cap}**${r.margin ? ` — +${r.margin}px search margin` : ""}:`, "");
-                o.push(`![step ${st.step} element location](${eref})`, "");
-            }
-            o.push(`**${r.mode === "marks" || (r.mode === "grid" && r.handoff) ? "Model picked" : "Snapped to"}:** ${r.picked || "_(none)_"}`, "");
+            r.substeps.forEach((sub, i) => {
+                if (sub.note) o.push(`> _${sub.note}_`, "");
+                o.push(`**${i + 1} · ${sub.label}**`, "");
+                if (sub.prompt) o.push("<details><summary>In (prompt)</summary>", "", fence(sub.prompt), "", "</details>", "");
+                const iref = sub.image && addImage(sub.image, `step-${st.step}-sub${i + 1}`);
+                if (iref) o.push(`![step ${st.step} sub-step ${i + 1}](${iref})`, "");
+                // The exact image sent to the model (raw), when it differs from the overlay.
+                const rref = sub.rawImage && sub.rawImage !== sub.image && addImage(sub.rawImage, `step-${st.step}-sub${i + 1}-raw`);
+                if (rref) o.push(`<details><summary>raw (image sent to the model)</summary>`, "", `![step ${st.step} sub-step ${i + 1} raw](${rref})`, "", "</details>", "");
+                // Out: inline for a short, backtick-free one-liner; otherwise a fenced block
+                // (multi-line / long / contains backticks). `fence` sizes its fence longer than
+                // any backtick run inside, so raw model output is preserved verbatim — never
+                // stripped — which is the whole point of showing Out in a debug view.
+                if (sub.output != null && sub.output !== "") {
+                    if (/[\n`]/.test(sub.output) || sub.output.length > 80) o.push("**Out:**", "", fence(sub.output), "");
+                    else o.push(`**Out:** \`${sub.output}\``, "");
+                }
+            });
+            o.push(`**${r.pickedBy === "model" ? "Model picked" : "Snapped to"}:** ${r.picked || "_(none)_"}`, "");
         }
         if (st.result != null && st.result !== "") o.push("**Out:**", "", fence(st.result), "");
         else if (st.elements != null) o.push(`**Out:** ${st.elements} element(s)`, "");

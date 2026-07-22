@@ -4,11 +4,11 @@
 // window.ml keeps thin delegating method wrappers. Not in the default read-only
 // domTools; opt in via extraTools, gated by the approval flow.
 
-import type { MlApi, MlTool } from "./contract";
+import type { MlApi, MlTool, LocateSubstep } from "./contract";
 import { DEFAULT_GROUNDING_RANGE } from "./contract";
 import { truncate, errText, elLine, queryAll, selectorError } from "./dom";
 import { settle, VISION_NUM_CTX, cropDataUrl, MIN_SHOT_PX } from "./util";
-import { collectCandidates, buildMarks, annotate, formatBox, letterboxToSquare, projectFromSquare, drawGrid, gridDims, validateCells, cellsBox, collectInBox, elementAtPoint, viewportBox, colorWordHues, pickOverlayColor, type MarkFilter, type Box, type Mark } from "./som";
+import { collectCandidates, buildMarks, annotate, formatBox, letterboxToSquare, projectFromSquare, drawGrid, gridDims, validateCells, cellsBox, collectInBox, elementAtPoint, viewportBox, colorWordHues, pickOverlayColor, pickAccentColor, type MarkFilter, type Box, type Mark } from "./som";
 
 export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512 }: { model?: string | null; maxTokens?: number } = {}): MlTool => {
     return ml.defineTool({
@@ -79,7 +79,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
     // Per-run cache of the grounding call (undefined = not asked; null = it errored).
     // The tool lives for one ml.agent run, so a `margin` retry reuses the cached
     // coords + prompt/image and re-runs only the cheap DOM sweep — no 2nd VLM call.
-    type GroundCache = { nums: number[] | null; square: string; prompt: string };
+    type GroundCache = { nums: number[] | null; square: string; prompt: string; answer: string };
     const groundCache = new Map<string, GroundCache | null>();
     return ml.defineTool({
         name: "locate",
@@ -94,7 +94,9 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             "(+`index`) — the region is cropped and searched on its own, which is far more reliable for a " +
             "small target in a busy page (one row of a list, a toolbar, a card). Only sees the current " +
             "viewport — if the target isn't found, scroll it into view, widen the filter, or refine the " +
-            "description and call again.",
+            "description and call again. A visual pick CAN be wrong, so ALWAYS VERIFY the returned " +
+            "selector with look({ selector }) before you click/type/act on it — confirm it's the thing " +
+            "you meant; if not, refine and locate again.",
         parameters: {
             type: "object",
             properties: {
@@ -142,6 +144,9 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             const RED = "#ff2d55", YELLOW = "#eab308";
             const rectOf = (b: Box) => ({ left: b.left, top: b.top, width: b.right - b.left, height: b.bottom - b.top });
             const pickedStr = (m: { role: string; name: string; selector: string }) => `[${m.role}]${m.name ? ` "${m.name}"` : ""} → ${m.selector}`;
+            // One phrasing for the Set-of-Marks substep, whether it's the primary mechanism
+            // or the grid hand-off's second stage.
+            const somLabel = (n: number, chosen?: Mark) => `Set-of-Marks · ${n} candidate${n === 1 ? "" : "s"}${chosen ? ` · model chose #${chosen.id}` : ""}`;
             let shot: string | undefined;   // captured once, shared between mechanisms
             const avoidHues = colorWordHues(description);   // don't overlay the target's own colour
 
@@ -156,16 +161,27 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 const box = (m: Mark) => crop ? { left: m.rect.left - crop.left, top: m.rect.top - crop.top, width: m.rect.width, height: m.rect.height } : m.rect;
                 return annotate(src, marks.map(m => ({ rect: box(m), color, badge: m.id })), dpr);
             };
-            // Ask the vision reader which badge matches the description; returns the chosen
-            // mark (or none) + the raw answer.
-            const askMarks = async (marks: Mark[], badged: string, reader: string | null, note = ""): Promise<{ chosen?: Mark; answer: string }> => {
-                const prompt = `The screenshot has numbered red badges (#1–#${marks.length}) drawn over candidate ` +
+            // Ask the vision reader which badge matches; returns the chosen mark (or none),
+            // the raw answer, and the prompt sent (for the substep's In/Out debug view).
+            const askMarks = async (marks: Mark[], badged: string, reader: string | null, note = ""): Promise<{ chosen?: Mark; answer: string; prompt: string }> => {
+                const prompt = `The screenshot has numbered badges (#1–#${marks.length}) drawn over candidate ` +
                     `elements. Which single badge number best matches this element: "${description}"${note}? ` +
                     `Reply with ONLY the number, or "NONE" if none match.`;
                 const answer = String(await ml.chat(prompt, { images: [badged], model: reader, numCtx: VISION_NUM_CTX, maxTokens })).trim();
                 const pick = (answer.match(/\d+/) || [])[0];
-                return { chosen: pick ? marks.find(m => m.id === Number(pick)) : undefined, answer };
+                return { chosen: pick ? marks.find(m => m.id === Number(pick)) : undefined, answer, prompt };
             };
+            // Draw a green ring on the chosen badge — the human "visualise" view of a
+            // Set-of-Marks pick (the model saw the plain badged `raw` image).
+            const highlightPick = async (badged: string, mark: Mark, crop?: { left: number; top: number; width: number; height: number }): Promise<string> => {
+                const rect = crop ? { left: mark.rect.left - crop.left, top: mark.rect.top - crop.top, width: mark.rect.width, height: mark.rect.height } : mark.rect;
+                // Sample the BADGED image (not the shot) so the highlight avoids the badge
+                // colour too — otherwise both can land in the page's emptiest hue and clash.
+                return annotate(badged, [{ rect, color: await pickAccentColor(badged, avoidHues), label: `#${mark.id}` }], dpr);
+            };
+            // Substeps accumulated by an EARLIER mechanism (an 'auto' grounding attempt that
+            // missed) so the Set-of-Marks fallback still shows what grounding saw.
+            const priorSubsteps: LocateSubstep[] = [];
 
             if (strategy === "grounding" && !groundingModel) {
                 return "No grounding model is configured — use strategy 'marks' (or leave it 'auto').";
@@ -228,54 +244,66 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                     `Reply with ONLY the cell number(s), comma-separated, or "NONE".`;
                 const ans = String(await ml.chat(gprompt, { images: [gridded], model: reader, numCtx: VISION_NUM_CTX, maxTokens })).trim();
                 const sel = [...new Set((ans.match(/\d+/g) || []).map(Number).filter(n => n >= 1 && n <= cols * rows))].slice(0, 4);
-                const desc = { type: "locate" as const, mode: "grid" as const, model: String(reader), prompt: gprompt, cols, rows, cells: sel.length ? sel : undefined };
+                const gmodel = String(reader);
+                const cellLabel = (chose: string) => `Cell pick · grid ${cols}×${rows} · ${chose}`;
+                const gridResult = (substeps: LocateSubstep[], extra: { picked?: string; pickedBy?: "model" | "snap" } = {}) =>
+                    ({ type: "locate" as const, mode: "grid" as const, model: gmodel, substeps, ...extra });
                 if (!sel.length) {
-                    return { content: `The model matched no grid cell for "${description}"${scopeNote} (replied "${truncate(ans, 40)}"). Raise gridSize, refine the description, or switch strategy.`, render: { ...desc, griddedImage: gridded } };
+                    return { content: `The model matched no grid cell for "${description}"${scopeNote} (replied "${truncate(ans, 40)}"). Raise gridSize, refine the description, or switch strategy.`, render: gridResult([{ label: cellLabel("no cell matched"), prompt: gprompt, output: ans, image: gridded }]) };
                 }
                 const valid = validateCells(sel, cols, rows);
                 if (!valid.ok) {
-                    return { content: `The model selected cells ${JSON.stringify(sel)}, not a valid pick (${valid.reason}). Ask it again, or switch strategy.`, render: { ...desc, griddedImage: gridded } };
+                    return { content: `The model selected cells ${JSON.stringify(sel)}, not a valid pick (${valid.reason}). Ask it again, or switch strategy.`, render: gridResult([{ label: cellLabel(`chose cells ${sel.join(",")} (invalid)`), prompt: gprompt, output: ans, image: gridded }]) };
                 }
                 const cellNote = `cell${sel.length > 1 ? "s" : ""} ${sel.join(",")}`;
-                // Highlight the selection on the grid the model saw (crop-local coords).
+                // A concrete call so the model knows `cells` is a locate arg (reuse the same
+                // description + strategy), not a bare fragment.
+                const refineHint = `To zoom in, call locate again with those cells: locate({ description: "${truncate(description, 50)}", strategy: "grid", cells: [${sel.join(",")}] }) — it draws a fresh grid inside them.`;
+                // Highlight the selection on the grid the model saw (crop-local coords) — the
+                // human "visualise" view; the model saw the plain `gridded` (rawImage).
                 const localBox = cellsBox(sel, cols, rows, { left: 0, top: 0, width: gRegion.width, height: gRegion.height });
-                const griddedImage = await annotate(gridded, [{ rect: rectOf(localBox), color: "#22c55e", label: cellNote }], dpr);
+                const griddedImage = await annotate(gridded, [{ rect: rectOf(localBox), color: await pickAccentColor(gridded, avoidHues), label: cellNote }], dpr);
+                const cellStep: LocateSubstep = { label: cellLabel(`model chose ${cellNote}`), prompt: gprompt, output: ans, rawImage: gridded, image: griddedImage };
                 // Snap the unioned selection to the DOM.
                 const cellBox = cellsBox(sel, cols, rows, gRegion);
                 const found = collectInBox(cellBox, filter, { max: 20 });
                 if (!found.length) {
-                    return { content: `Grid ${cellNote} for "${description}"${scopeNote} has no ${filter} element under it. Re-pick, raise gridSize, or switch strategy.`, render: { ...desc, griddedImage, resultImage: await annotate(shot, [{ rect: rectOf(cellBox), color: YELLOW, label: cellNote }], dpr) } };
+                    const snapImg = await annotate(shot, [{ rect: rectOf(cellBox), color: YELLOW, label: cellNote }], dpr);
+                    return { content: `Grid ${cellNote} for "${description}"${scopeNote} has no ${filter} element under it. Re-pick, raise gridSize, or switch strategy.`, render: gridResult([cellStep, { label: "DOM snap · no element under the cell", image: snapImg }]) };
                 }
                 const marks = buildMarks(found);
-                let picked: Mark, resultImage: string, pk: string, handoff: number | undefined;
                 if (found.length === 1) {
                     // Exactly one element under the cell → snap to it directly (no 2nd call).
-                    picked = marks[0];
-                    pk = pickedStr(picked);
-                    resultImage = await annotate(shot, [{ rect: rectOf(cellBox), color: YELLOW, label: cellNote }, { rect: picked.rect, color: RED, badge: 1 }], dpr);
-                } else {
-                    // Several candidates in the region → a SECOND vision sub-call picks by badge
-                    // (Set-of-Marks on just the selected cells), instead of snapping to the first.
-                    resultImage = await badgeMarks(marks, rectOf(cellBox));
-                    const { chosen, answer } = await askMarks(marks, resultImage, reader, scopeNote);
-                    if (!chosen) {
-                        return { content: `Grid narrowed "${description}"${scopeNote} to ${cellNote} (${found.length} candidates) but couldn't pick one (replied "${truncate(answer, 40)}"). Candidates:\n${listOf(marks)}`, elements: found.slice(0, 50), render: { ...desc, griddedImage, resultImage, handoff: found.length } };
-                    }
-                    picked = chosen;
-                    pk = `#${picked.id} ${pickedStr(picked)}`;   // the badge the model chose
-                    handoff = found.length;
+                    const picked = marks[0], pk = pickedStr(picked);
+                    const snapImg = await annotate(shot, [{ rect: rectOf(cellBox), color: YELLOW, label: cellNote }, { rect: picked.rect, color: RED, badge: 1 }], dpr);
+                    return {
+                        content: `Grid ${cellNote}${scopeNote} → ${pk}\n(click/type/answer with this selector)\n\n${refineHint}\n\nCandidates in that region:\n${listOf(marks)}`,
+                        elements: [picked.el, ...found.filter(e => e !== picked.el)].slice(0, 50),
+                        render: gridResult([cellStep, { label: "DOM snap · single element in the cell", image: snapImg }], { picked: pk, pickedBy: "snap" }),
+                    };
                 }
+                // Several candidates → a SECOND vision sub-call picks by badge (Set-of-Marks on
+                // just the selected cells), instead of snapping to the first.
+                const raw = await badgeMarks(marks, rectOf(cellBox));
+                const { chosen, answer, prompt: somPrompt } = await askMarks(marks, raw, reader, scopeNote);
+                const handoffNote = `The cell held ${found.length} elements, so they were re-badged and a second vision call picked one (Set-of-Marks).`;
+                if (!chosen) {
+                    // NONE from the hand-off means the target isn't among this cell's elements
+                    // → the CELL was likely wrong. Do NOT zoom into it (futile); re-pick or switch.
+                    return { content: `None of ${cellNote}'s ${found.length} candidates matched "${description}" (model replied "${truncate(answer, 40)}") — the target is probably NOT in that cell, so do NOT zoom into it. Re-run grid for a fresh cell pick (optionally a larger gridSize), or switch to strategy 'marks'. You can also look() at these to double-check:\n${listOf(marks)}`, elements: found.slice(0, 50), render: gridResult([cellStep, { label: somLabel(found.length), note: handoffNote, prompt: somPrompt, output: answer, rawImage: raw, image: raw }]) };
+                }
+                const pk = `#${chosen.id} ${pickedStr(chosen)}`;   // the badge the model chose
+                const viz = await highlightPick(raw, chosen, rectOf(cellBox));
                 return {
-                    content: `Grid ${cellNote}${scopeNote}${handoff ? ` → badged ${handoff} candidates → model picked ${pk}` : ` → ${pk}`}\n(click/type/answer with this selector)\n\nTo narrow further, re-run with cells:[${sel.join(",")}] (fresh grid inside). Candidates in that region:\n${listOf(marks)}`,
-                    elements: [picked.el, ...found.filter(e => e !== picked.el)].slice(0, 50),
-                    render: { ...desc, griddedImage, resultImage, picked: pk, handoff },
+                    content: `Grid ${cellNote}${scopeNote} → badged ${found.length} candidates → model picked ${pk}\n(click/type/answer with this selector)\n\n${refineHint}\n\nCandidates in that region:\n${listOf(marks)}`,
+                    elements: [chosen.el, ...found.filter(e => e !== chosen.el)].slice(0, 50),
+                    render: gridResult([cellStep, { label: somLabel(found.length, chosen), note: handoffNote, prompt: somPrompt, output: answer, rawImage: raw, image: viz }], { picked: pk, pickedBy: "model" }),
                 };
             }
 
-            // If 'auto' tries grounding and it misses, we still surface that attempt on
-            // the Set-of-Marks fallback (why it missed + what the model saw) instead of
-            // silently discarding it.
-            let fbNote: string | undefined, fbImage: string | undefined;
+            // A note carried onto the Set-of-Marks substep when 'auto' tried grounding and
+            // it missed (the grounding attempt's own substeps are in priorSubsteps).
+            let fallbackNote: string | undefined;
 
             // Mechanism #1 — grounding VLM: ask for a box, snap it to the DOM by
             // hit-testing. Sent as a 1000×1000 square so `coord/groundingRange` is a
@@ -296,22 +324,23 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                             `(x: 0=left→${groundingRange}=right; y: 0=top→${groundingRange}=bottom). If it isn't visible, reply "NONE".`;
                         const ans = String(await ml.chat(gp, { images: [square], model: groundingModel, numCtx: VISION_NUM_CTX, maxTokens })).trim();
                         const parsed = (ans.match(/\d+(?:\.\d+)?/g) || []).map(Number);
-                        cached = { nums: parsed.length >= 4 ? parsed.slice(0, 4) : null, square, prompt: gp };
+                        cached = { nums: parsed.length >= 4 ? parsed.slice(0, 4) : null, square, prompt: gp, answer: ans };
                         groundCache.set(key, cached);
                     } catch { cached = null; }   // transient failure → leave uncached, fall through
                 }
+                const groundResult = (substeps: LocateSubstep[], extra: { picked?: string; pickedBy?: "model" | "snap" } = {}) =>
+                    ({ type: "locate" as const, mode: "grounding" as const, model: String(groundingModel), substeps, ...extra });
                 if (cached) {
-                    const { nums, square, prompt } = cached;
+                    const { nums, square, prompt, answer } = cached;
                     const R = groundingRange || DEFAULT_GROUNDING_RANGE;
                     // Two (x,y) pairs — "(x1, y1) → (x2, y2)" text + per-corner overlay labels.
                     const fb = nums ? formatBox(nums) : null;
-                    const coords = fb ? fb.text : "";
-                    // The square the model saw, annotated with ITS box (in square px),
-                    // labelling the two corners with their coordinates.
+                    // The square the model saw, annotated with ITS box (visualise view; the
+                    // model saw the plain `square` = rawImage).
                     const groundingImage = nums && fb
                         ? await annotate(square, [{ rect: rectOf(viewportBox(nums, R, DEFAULT_GROUNDING_RANGE, DEFAULT_GROUNDING_RANGE)), color: RED, corners: fb.corners }], 1)
                         : square;
-                    const base = { type: "locate" as const, mode: "grounding" as const, model: groundingModel, prompt, groundingImage, gaveBox: !!nums, boxCoords: coords, margin: margin || undefined };
+                    const boxStep: LocateSubstep = { label: `Grounding${nums && fb ? ` · box ${fb.text}` : " · no box returned"}`, prompt, output: answer, rawImage: nums ? square : undefined, image: groundingImage };
                     // Invert the letterbox back to the scoped region (uniform scale + offset).
                     const box = nums ? projectFromSquare(nums, R, region) : null;
                     if (box) {
@@ -323,45 +352,56 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                         const marks = buildMarks(ordered);
                         if (!shot) shot = await ml.screenshot(null, {});   // a cache-hit skipped the capture
                         // Element-location pass: the search area in YELLOW, candidates in RED.
-                        const resultImage = await annotate(shot, [{ rect: rectOf(b), color: YELLOW, label: margin ? `search +${margin}px` : "search area" }, ...marks.map(m => ({ rect: m.rect, color: RED, badge: m.id }))], dpr);
+                        const snapImg = await annotate(shot, [{ rect: rectOf(b), color: YELLOW, label: margin ? `search +${margin}px` : "search area" }, ...marks.map(m => ({ rect: m.rect, color: RED, badge: m.id }))], dpr);
+                        const snapStep: LocateSubstep = { label: `DOM snap${margin ? ` · +${margin}px search margin` : " · nearest element in the box"}`, image: snapImg };
                         if (chosen) {
                             const picked = pickedStr(marks[0]);
                             return {
                                 content: `Grounded "${description}"${scopeNote}${margin ? ` (margin ${margin}px)` : ""} → ${picked}\n(click/type/answer with this selector)\n\nOther elements in that region:\n${listOf(marks)}`,
                                 elements: ordered.slice(0, 50),
-                                render: { ...base, resultImage, picked },
+                                render: groundResult([boxStep, snapStep], { picked, pickedBy: "snap" }),
                             };
                         }
                         // A box was returned but nothing interactive sits under it — here a
                         // larger `margin` genuinely helps (it expands a real box).
                         if (strategy === "grounding") {
-                            return { content: `Grounding located a region for "${description}" but no ${filter} element is under it. Retry with a larger \`margin\`, or use strategy 'marks'.`, render: { ...base, resultImage } };
+                            return { content: `Grounding located a region for "${description}" but no ${filter} element is under it. Retry with a larger \`margin\`, or use strategy 'marks'.`, render: groundResult([boxStep, { ...snapStep, label: "DOM snap · no element in the box" }]) };
                         }
-                        fbNote = `found a region but no ${filter} element under it`; fbImage = resultImage;
+                        priorSubsteps.push(boxStep, { ...snapStep, label: "DOM snap · no element in the box" });
+                        fallbackNote = `Grounding found a region but no ${filter} element under it — fell back to Set-of-Marks.`;
                     } else {
                         // No box at all — a `margin` can't expand what doesn't exist, so say so
                         // explicitly rather than let the model waste a step retrying with one.
                         if (strategy === "grounding") {
                             const m = margin ? " A `margin` can't help without a box — " : " ";
-                            return { content: `The grounding model returned no box for "${description}".${m}It may not be visible: scroll it into view, re-describe it, or use strategy 'marks'.`, render: { ...base } };
+                            return { content: `The grounding model returned no box for "${description}".${m}It may not be visible: scroll it into view, re-describe it, or use strategy 'marks'.`, render: groundResult([boxStep]) };
                         }
-                        fbNote = "returned no box"; fbImage = groundingImage;
+                        priorSubsteps.push(boxStep);
+                        fallbackNote = "Grounding returned no box — fell back to Set-of-Marks.";
                     }
                 } else {
                     if (strategy === "grounding") {
                         return `Grounding failed for "${description}" (the vision call errored). Try again, or use strategy 'marks'.`;
                     }
-                    fbNote = "the vision call errored";
+                    fallbackNote = "The grounding vision call errored — fell back to Set-of-Marks.";
                 }
-                // strategy 'auto' → fall through to Set-of-Marks (carrying fbNote/fbImage).
+                // strategy 'auto' → fall through to Set-of-Marks (carrying priorSubsteps).
             }
 
             // Mechanism #2 — Set-of-Marks (default, and the 'auto' grounding fallback).
             const somReader = model || groundingModel;   // a grounding model can read badges too
-            // Scoped → only the container's candidates, on a crop of just that region.
-            const cands = scopeSel ? collectInBox(regionBox, filter, { max: 40 }) : collectCandidates(filter);
-            const gp = fbNote ? `(Grounding ${fbNote}.) ` : "";   // let the model know grounding was tried
-            if (!cands.length) return `${gp}No ${filter} candidates visible${scopeNote || " in the viewport"}. Scroll the target into view, widen the filter (try 'all'), then call again.`;
+            // Scan wider than we'll badge, so we can report the TRUE candidate count and cap
+            // the badges at a legible number (badging 100 elements overlaps into mush).
+            const SOM_BADGE_CAP = 40, SOM_DENSE = 30;
+            const allCands = scopeSel ? collectInBox(regionBox, filter, { max: 150 }) : collectCandidates(filter, { max: 150 });
+            const cands = allCands.slice(0, SOM_BADGE_CAP);
+            const prefix = fallbackNote ? "(Grounding missed — used Set-of-Marks.) " : "";
+            if (!cands.length) return `${prefix}No ${filter} candidates visible${scopeNote || " in the viewport"}. Scroll the target into view, widen the filter (try 'all'), then call again.`;
+            // Dense pages break Set-of-Marks (badges overlap, the model misreads) AND we
+            // only badge the first SOM_BADGE_CAP — say both, and steer to a better tool.
+            const densityWarn = allCands.length > SOM_DENSE
+                ? `\n\n⚠ ${allCands.length}${allCands.length >= 150 ? "+" : ""} ${filter} candidates${allCands.length > SOM_BADGE_CAP ? ` (only the first ${SOM_BADGE_CAP} are badged/pickable here)` : ""} — Set-of-Marks is unreliable at this density: badges overlap and the wrong one is easily picked. Prefer strategy 'grid' (it narrows the region first), or scope with a \`selector\`. Before acting on any pick from here, verify it with look({ selector: "…" }).`
+                : "";
             const marks = buildMarks(cands);
             let badged: string;
             try {
@@ -369,20 +409,21 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 // page-contrasting colour that avoids the target's own colour).
                 badged = await badgeMarks(marks, scopeSel ? region : undefined);
             } catch (e) { return `Error capturing/marking the screenshot: ${errText(e)}`; }
-            const somPrompt = `The screenshot has numbered red badges (#1–#${marks.length}) drawn over candidate ` +
-                `elements. Which single badge number best matches this element: "${description}"${scopeNote}? ` +
-                `Reply with ONLY the number, or "NONE" if none match.`;
-            const answer = String(await ml.chat(somPrompt, { images: [badged], model: somReader, numCtx: VISION_NUM_CTX, maxTokens })).trim();
-            const pick = (answer.match(/\d+/) || [])[0];
-            const chosen = pick ? marks.find(m => m.id === Number(pick)) : undefined;
-            const render = { type: "locate" as const, mode: "marks" as const, model: String(somReader || "default"), resultImage: badged, picked: chosen ? `#${chosen.id} ${pickedStr(chosen)}` : undefined, fallbackNote: fbNote, fallbackImage: fbImage };
+            const { chosen, answer, prompt: somPrompt } = await askMarks(marks, badged, somReader, scopeNote);
+            const marksStep: LocateSubstep = {
+                label: somLabel(marks.length, chosen),
+                note: fallbackNote, prompt: somPrompt, output: answer, rawImage: badged,
+                image: chosen ? await highlightPick(badged, chosen, scopeSel ? region : undefined) : badged,
+            };
+            const marksResult = (extra: { picked?: string; pickedBy?: "model" | "snap" } = {}) =>
+                ({ type: "locate" as const, mode: "marks" as const, model: String(somReader || "default"), substeps: [...priorSubsteps, marksStep], ...extra });
             if (!chosen) {
-                return { content: `${gp}No badge matched "${description}" (model replied "${truncate(answer, 40)}"). Candidates:\n${listOf(marks)}`, elements: cands.slice(0, 50), render };
+                return { content: `${prefix}No badge matched "${description}" (model replied "${truncate(answer, 40)}"). Candidates:\n${listOf(marks)}${densityWarn}`, elements: cands.slice(0, 50), render: marksResult() };
             }
             return {
-                content: `${gp}Matched "${description}" → #${chosen.id} ${pickedStr(chosen)}\n(click/type/answer with this selector)\n\nAll candidates:\n${listOf(marks)}`,
+                content: `${prefix}Matched "${description}" → #${chosen.id} ${pickedStr(chosen)}\n(click/type/answer with this selector)\n\nAll candidates:\n${listOf(marks)}${densityWarn}`,
                 elements: [chosen.el],
-                render,
+                render: marksResult({ picked: `#${chosen.id} ${pickedStr(chosen)}`, pickedBy: "model" }),
             };
         },
     });

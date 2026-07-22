@@ -8,7 +8,7 @@ import { render } from "preact";
 import type { ComponentChildren } from "preact";
 import { useState, useEffect } from "preact/hooks";
 import { signal } from "@preact/signals";
-import type { MlDebugEvent, DebugSessionConfig, DebugAgentConfig, NeutralMessage, MlConfig, ApiFormat, Theme, LoadedModel, ExtendProfile, RenderDescriptor } from "../contract";
+import type { MlDebugEvent, DebugSessionConfig, DebugAgentConfig, NeutralMessage, MlConfig, ApiFormat, Theme, LoadedModel, ExtendProfile, RenderDescriptor, LocateSubstep } from "../contract";
 import { DEFAULT_CONFIG } from "../contract";
 import {
     FONT_KEY, WRAP_KEY, LINES_KEY,
@@ -408,6 +408,31 @@ function RenderTable({ columns, rows }: { columns: string[]; rows: (string | num
 // The `locate` debug view: model + mode header, then (grounding) the VLM prompt, the
 // square the model saw with its box, and the element-location pass; (marks) just the
 // badged shot. Picked element at the bottom.
+// One substep of a locate run: a vision sub-call (its own In-prompt / image / Out-reply,
+// with a raw⇄visualise image toggle) or a DOM snap (just a labelled image). The [N] badge
+// numbers it; hovering explains what kind of step it is.
+function LocateSubstepView({ s, n }: { s: LocateSubstep; n: number }) {
+    const [raw, setRaw] = useState(false);   // "visualise" (the human overlay) by default
+    const kind = s.prompt ? "a vision sub-call — its own prompt + reply, run standalone" : "a DOM hit-test — no model call";
+    return (
+        <div class="r-loc-sub">
+            {s.note ? <div class="r-loc-note">{s.note}</div> : null}
+            <div class="r-loc-subhead">
+                <span class="tt r-loc-numtt"><span class="r-loc-num">{n}</span><span class="tt-pop left" role="tooltip">Sub-step {n}: {kind}.</span></span> {s.label}
+            </div>
+            {s.prompt ? <details class="io r-loc-io"><summary class="io-label">In (prompt): <span class="io-preview">{inlineText(s.prompt)}</span></summary><div class="io-body"><Code text={s.prompt} lang="text" /></div></details> : null}
+            {s.image ? <div class="r-loc-stage">
+                <ClickableImg src={raw && s.rawImage ? s.rawImage : s.image} alt={s.label} />
+                {s.rawImage ? <div class="rr-toggle r-loc-viz">
+                    <button class={raw ? "" : "on"} onClick={() => setRaw(false)}>visualise</button>
+                    <button class={raw ? "on" : ""} onClick={() => setRaw(true)}>raw</button>
+                </div> : null}
+            </div> : null}
+            {s.output != null && s.output !== "" ? <details class="io r-loc-io"><summary class="io-label">Out: <span class="io-preview">{inlineText(s.output)}</span></summary><div class="io-body"><Code text={s.output} lang="text" /></div></details> : null}
+        </div>
+    );
+}
+
 function LocateRender({ d }: { d: Extract<RenderDescriptor, { type: "locate" }> }) {
     // Is this vision sub-call's model the SAME as the agent driver's? If so, flag that
     // it still ran standalone (its image + reply never entered the driver's context) —
@@ -419,37 +444,11 @@ function LocateRender({ d }: { d: Extract<RenderDescriptor, { type: "locate" }> 
         <div class="r-locate">
             <div class="r-loc-head">
                 {d.mode === "grounding" ? "Grounding" : d.mode === "grid" ? "Grid" : "Set-of-Marks"} · <b>{d.model}</b>
-                {sameAsDriver ? <span class="r-loc-delegated" title="This vision sub-call ran on its own — its image and reply were NOT added to the agent driver's conversation, even though it's the same model."> (standalone sub-call · not in the agent's context)</span> : null}
+                {sameAsDriver ? <span class="tt r-loc-delegated"> (standalone sub-call · not in the agent's context)<span class="tt-pop left" role="tooltip">This vision sub-call ran on its own — its image and reply were NOT added to the agent driver's conversation, even though it's the same model.</span></span> : null}
             </div>
-            {d.mode === "grounding" ? <>
-                {d.prompt ? <details class="r-loc-prompt"><summary>prompt to the model</summary><Code text={d.prompt} lang="text" /></details> : null}
-                {d.groundingImage ? <div class="r-loc-stage">
-                    <div class="r-loc-cap">Model output{d.gaveBox ? ` · box ${d.boxCoords}` : ""}</div>
-                    <ClickableImg src={d.groundingImage} alt="what the grounding model saw" />
-                    {!d.gaveBox ? <div class="r-loc-note">The model returned no box.</div> : null}
-                </div> : null}
-                {d.resultImage ? <div class="r-loc-stage">
-                    <div class="r-loc-cap">Element location{d.margin ? ` · +${d.margin}px search margin` : ""}</div>
-                    <ClickableImg src={d.resultImage} alt="candidate elements" />
-                </div> : null}
-            </> : d.mode === "grid" ? <>
-                {d.prompt ? <details class="r-loc-prompt"><summary>prompt to the model</summary><Code text={d.prompt} lang="text" /></details> : null}
-                {d.griddedImage ? <div class="r-loc-stage">
-                    <div class="r-loc-cap">1 · Cell pick{d.cols && d.rows ? ` · grid ${d.cols}×${d.rows}` : ""}{d.cells?.length ? ` · model chose cell${d.cells.length > 1 ? "s" : ""} ${d.cells.join(",")}` : " · no cell"}</div>
-                    <ClickableImg src={d.griddedImage} alt="the numbered grid the model saw" />
-                </div> : null}
-                {d.handoff ? <div class="r-loc-note">The cell held {d.handoff} elements, so they were re-badged and a <b>second</b> vision call picked one (Set-of-Marks).</div> : null}
-                {d.resultImage ? <div class="r-loc-stage">
-                    <div class="r-loc-cap">{d.handoff ? `2 · Set-of-Marks pick · model chose 1 of ${d.handoff} candidates` : "Element location · single element, snapped directly"}</div>
-                    <ClickableImg src={d.resultImage} alt="candidate elements" />
-                </div> : null}
-            </> : <>
-                {d.fallbackNote ? <div class="r-loc-note">Grounding {d.fallbackNote} — fell back to Set-of-Marks.</div> : null}
-                {d.fallbackImage ? <div class="r-loc-stage"><div class="r-loc-cap">Grounding attempt</div><ClickableImg src={d.fallbackImage} alt="grounding attempt" /></div> : null}
-                {d.resultImage ? <div class="r-loc-stage">{d.fallbackNote ? <div class="r-loc-cap">Set-of-Marks</div> : null}<ClickableImg src={d.resultImage} alt="Set-of-Marks" /></div> : null}
-            </>}
-            <div class="r-loc-picked" title={d.mode === "marks" ? "The vision model picked this badge number directly." : d.mode === "grid" && d.handoff ? "The model picked a grid cell, then a second Set-of-Marks call picked this badge among the cell's elements." : d.mode === "grid" ? "The model picked a grid cell; the DOM hit-test found a single element there." : "The grounding model gave coordinates; the DOM hit-test snapped them to this element."}>
-                {d.mode === "marks" || (d.mode === "grid" && d.handoff) ? "Model picked" : "Snapped to"}: {d.picked ? <code>{d.picked}</code> : <span class="dim">(none)</span>}
+            {d.substeps.map((s, i) => <LocateSubstepView key={i} s={s} n={i + 1} />)}
+            <div class="r-loc-picked">
+                <span class="tt">{d.pickedBy === "model" ? "Model picked" : "Snapped to"}<span class="tt-pop left" role="tooltip">{d.pickedBy === "model" ? "The model chose this by badge number (Set-of-Marks)." : d.pickedBy === "snap" ? "The model localized a region; the DOM hit-test chose this actual element." : "No element was selected."}</span></span>: {d.picked ? <code>{d.picked}</code> : <span class="dim">(none)</span>}
             </div>
         </div>
     );

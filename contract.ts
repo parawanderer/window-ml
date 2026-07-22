@@ -130,6 +130,19 @@ export interface ToolResult {
     render?: RenderDescriptor;
 }
 
+/** One stage of a `locate` run: a vision sub-call (grid cell-pick, Set-of-Marks pick,
+ *  grounding box) or a non-model DOM snap. A sub-call carries its `prompt` (In), the
+ *  model's raw `output` (Out), the exact `rawImage` sent, and a human `image` overlay
+ *  (the raw⇄visualise toggle). A DOM snap carries just `image` + `label` (no prompt). */
+export interface LocateSubstep {
+    label: string;        // header after the [N] badge, e.g. "Cell pick · grid 5×3 · model chose cell 12"
+    note?: string;        // grey-italic explanation shown ABOVE this substep (e.g. why a hand-off happened)
+    prompt?: string;      // In: the prompt sent to the model (collapsible)
+    output?: string;      // Out: the model's raw reply (collapsible)
+    image?: string;       // the visualise (human overlay) view — shown by default
+    rawImage?: string;    // the exact image sent to the model; its presence enables the raw⇄visualise toggle
+}
+
 /** A serializable description of how to render a tool step in the debug sidebar.
  *  Data, never code — it crosses the window bus and the sidebar owns the actual
  *  UI (safe: only known `type`s render; unknown/absent → the default In:/Out:
@@ -141,31 +154,16 @@ export type RenderDescriptor = (
     | { type: "table"; columns: string[]; rows: (string | number)[][] }
     | { type: "keyval"; pairs: [string, string][] }
     | { type: "elements"; items: { path: string; text?: string; index?: number }[] }
-    // `locate`'s per-mechanism debug view. grounding: the VLM prompt + the square the
-    // model saw with ITS box (or none), then the element-location pass (red candidate
-    // boxes + a yellow, possibly-expanded search area). marks: just the badged shot.
+    // `locate`'s debug view as an ordered list of SUBSTEPS — each is one vision
+    // sub-call (grid cell-pick, Set-of-Marks pick, grounding box) OR a non-model DOM
+    // snap. The sidebar renders each with an In(prompt)/image(raw⇄visualise)/Out block,
+    // mirroring the tool In/Out mechanics, so a multi-call locate (e.g. grid → hand-off)
+    // reads as its distinct stages. `picked`/`pickedBy` are the final result.
     | {
         type: "locate"; mode: "grounding" | "marks" | "grid"; model: string;
-        picked?: string;                 // the chosen element (role/name → selector), or none
-        resultImage?: string;            // element-location pass (red boxes [+ yellow area]); absent for a grounding no-box
-        prompt?: string;                 // grounding/grid: the full VLM prompt
-        groundingImage?: string;         // grounding: the square the model saw, with its box
-        gaveBox?: boolean;               // grounding: did the model return a box?
-        boxCoords?: string;              // grounding: the raw coords it gave, for display
-        margin?: number;                 // grounding: the search-area expansion applied
-        // grid: the numbered grid the model saw (selected cell(s) highlighted), which
-        // cell(s) it chose, the aspect-matched grid dimensions, and — when the picked
-        // cell held several elements — how many a SECOND (Set-of-Marks) sub-call chose
-        // among (absent when a single element was snapped directly).
-        griddedImage?: string;
-        cells?: number[];
-        cols?: number;
-        rows?: number;
-        handoff?: number;
-        // marks: when 'auto' tried grounding and it missed, why (+ what it saw), so the
-        // fallback still shows the grounding attempt instead of hiding it.
-        fallbackNote?: string;
-        fallbackImage?: string;
+        substeps: LocateSubstep[];
+        picked?: string;                    // the chosen element (role/name → selector), or none
+        pickedBy?: "model" | "snap";        // model → "Model picked" (a badge); snap → "Snapped to" (DOM hit-test)
       }
     // Which block the descriptor renders (default "out"). `exec` renders its "in"
     // (the JS); output-derived descriptors (image/elements) render "out".

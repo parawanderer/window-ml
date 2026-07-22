@@ -126,6 +126,15 @@ const OVERLAY_PALETTE: { hex: string; h: number }[] = [
     { hex: "#2979ff", h: 217 },   // blue
     { hex: "#c724ff", h: 285 },   // purple
 ];
+// The "chosen/selected" highlight (grid cell, picked badge). Green-first (reads as
+// success) but page-aware, so it doesn't clash with a green-themed page.
+const ACCENT_PALETTE: { hex: string; h: number }[] = [
+    { hex: "#22c55e", h: 142 },   // green (the default highlight)
+    { hex: "#00e5ff", h: 187 },   // cyan
+    { hex: "#ff10f0", h: 312 },   // magenta
+    { hex: "#ffd400", h: 51 },    // amber
+    { hex: "#4f7bff", h: 225 },   // blue
+];
 const hueDist = (a: number, b: number): number => { const d = Math.abs(a - b) % 360; return d > 180 ? 360 - d : d; };
 
 /**
@@ -146,10 +155,10 @@ export function colorWordHues(text: string): number[] {
  * bucket = summed saturation×value of the image's pixels at that hue), also hard-
  * avoiding any `avoidHues`. Returns a hex; defaults to red on a neutral/grey page.
  */
-export function pickOverlayHex(weights: number[], avoidHues: number[] = []): string {
+export function pickOverlayHex(weights: number[], avoidHues: number[] = [], palette = OVERLAY_PALETTE): string {
     const buckets = weights.length || 12, span = 360 / buckets;
-    let best = OVERLAY_PALETTE[0].hex, bestScore = Infinity;
-    for (const c of OVERLAY_PALETTE) {
+    let best = palette[0].hex, bestScore = Infinity;
+    for (const c of palette) {
         let clash = 0;
         for (let b = 0; b < buckets; b++) {
             const bucketHue = b * span + span / 2;
@@ -183,22 +192,27 @@ function sampleHues(ctx: CanvasRenderingContext2D, w: number, h: number): number
     return weights;
 }
 
-/** Pick a contrasting overlay colour for a data-URL image (loads it, samples, scores). */
-export function pickOverlayColor(dataUrl: string, avoidHues: number[] = []): Promise<string> {
+/** Pick a contrasting colour for a data-URL image (loads it, samples, scores) from
+ *  `palette` — the overlay palette by default, or the accent palette for a highlight. */
+export function pickOverlayColor(dataUrl: string, avoidHues: number[] = [], palette = OVERLAY_PALETTE): Promise<string> {
     return new Promise((resolve) => {
         const img = new Image();
         img.onload = () => {
             const cv = document.createElement("canvas");
             cv.width = img.naturalWidth; cv.height = img.naturalHeight;
             const ctx = cv.getContext("2d");
-            if (!ctx) return resolve(OVERLAY_PALETTE[0].hex);
+            if (!ctx) return resolve(palette[0].hex);
             ctx.drawImage(img, 0, 0);
-            resolve(pickOverlayHex(sampleHues(ctx, cv.width, cv.height), avoidHues));
+            resolve(pickOverlayHex(sampleHues(ctx, cv.width, cv.height), avoidHues, palette));
         };
-        img.onerror = () => resolve(OVERLAY_PALETTE[0].hex);
+        img.onerror = () => resolve(palette[0].hex);
         img.src = dataUrl;
     });
 }
+
+/** The page-aware "selected" highlight colour (green unless the page is green-heavy). */
+export const pickAccentColor = (dataUrl: string, avoidHues: number[] = []): Promise<string> =>
+    pickOverlayColor(dataUrl, avoidHues, ACCENT_PALETTE);
 
 /** One box drawn onto a screenshot: a colored outline + an optional tab holding a
  *  `badge` number or a `label` string above its top-left corner, OR `corners` — two

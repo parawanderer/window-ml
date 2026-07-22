@@ -563,14 +563,17 @@ test("agent tool steps render descriptors (image / elements / table)", async () 
     assert.equal(w.shadow.querySelectorAll(".r-table td").length, 4, "table cells rendered");
 });
 
-test("locate render: grounding mode shows model, prompt, both stage images, and the pick", async () => {
+// Helper: build a locate render descriptor from an array of substeps + the final pick.
+const locateRender = (mode, model, substeps, extra = {}) => ({ type: "locate", mode, model, substeps, ...extra });
+
+test("locate render: grounding is a box substep + a DOM-snap substep, with the pick", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("lgr", "find it"));
-    await w.dispatch(agentStep("lgr", 1, { tool: "locate", arguments: { description: "star" }, elements: 1, render: {
-        type: "locate", mode: "grounding", model: "qwen2.5vl:7b", prompt: "Locate \"star\" …",
-        groundingImage: "data:image/png;base64,GGG", gaveBox: true, boxCoords: "(250, 250) → (300, 300)", margin: 40,
-        resultImage: "data:image/png;base64,RRR", picked: "[button] \"Star\" → #bar > div:nth-of-type(1)",
-    } }));
+    await w.dispatch(agentStep("lgr", 1, { tool: "locate", arguments: { description: "star" }, elements: 1, render:
+        locateRender("grounding", "qwen2.5vl:7b", [
+            { label: "Grounding · box (250, 250) → (300, 300)", prompt: "Locate \"star\" …", output: "250,250,300,300", rawImage: "data:image/png;base64,GGGraw", image: "data:image/png;base64,GGG" },
+            { label: "DOM snap · +40px search margin", image: "data:image/png;base64,RRR" },
+        ], { picked: "[button] \"Star\" → #bar > div:nth-of-type(1)", pickedBy: "snap" }) }));
     await w.dispatch(agentResult("lgr", "done", 1));
     w.shadow.querySelector(".row").click();
     await w.tick();
@@ -579,38 +582,62 @@ test("locate render: grounding mode shows model, prompt, both stage images, and 
 
     const loc = w.shadow.querySelector(".r-locate");
     assert.match(loc.querySelector(".r-loc-head").textContent, /Grounding · qwen2.5vl:7b/);
-    assert.ok(loc.querySelector(".r-loc-prompt"), "prompt disclosure present");
+    assert.equal(loc.querySelectorAll(".r-loc-sub").length, 2, "two substeps");
+    assert.ok(loc.querySelector(".r-loc-io"), "In(prompt) disclosure present");
+    assert.match(loc.textContent, /box \(250, 250\) → \(300, 300\)/);      // box coords in substep 1's head
+    assert.match(loc.textContent, /\+40px search margin/);                  // margin in substep 2's head
+    assert.match(loc.textContent, /Out:.*250,250,300,300/);   // Out is a collapsible like In
+    // Default view is "visualise" → the overlay images.
     const imgs = [...loc.querySelectorAll(".r-loc-stage img")].map(i => i.getAttribute("src"));
-    assert.deepEqual(imgs, ["data:image/png;base64,GGG", "data:image/png;base64,RRR"], "grounding + result images");
-    assert.match(loc.textContent, /box \(250, 250\) → \(300, 300\)/);
-    assert.match(loc.textContent, /\+40px search margin/);
-    assert.match(loc.querySelector(".r-loc-picked").textContent, /Snapped to:.*Star.*nth-of-type\(1\)/);
+    assert.deepEqual(imgs, ["data:image/png;base64,GGG", "data:image/png;base64,RRR"]);
+    assert.match(loc.querySelector(".r-loc-picked").textContent, /Snapped to[\s\S]*Star[\s\S]*nth-of-type\(1\)/);
 });
 
-test("locate render: no-box grounding shows the note and no element-location image", async () => {
+test("locate render: the raw⇄visualise toggle swaps to the exact image sent to the model", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("lrv", "find it"));
+    await w.dispatch(agentStep("lrv", 1, { tool: "locate", arguments: { description: "x" }, elements: 1, render:
+        locateRender("marks", "gemma4:31b", [
+            { label: "Set-of-Marks · 3 candidates · model chose #2", prompt: "which badge…", output: "2", rawImage: "data:image/png;base64,SENT", image: "data:image/png;base64,OVERLAY" },
+        ], { picked: "#2 [button] → #b", pickedBy: "model" }) }));
+    await w.dispatch(agentResult("lrv", "done", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    for (const h of w.shadow.querySelectorAll(".astep.tool .astep-head")) h.click();
+    await w.tick();
+    const loc = w.shadow.querySelector(".r-locate");
+    assert.equal(loc.querySelector(".r-loc-stage img").getAttribute("src"), "data:image/png;base64,OVERLAY", "visualise by default");
+    const toggle = loc.querySelector(".r-loc-viz");
+    [...toggle.querySelectorAll("button")].find(b => b.textContent === "raw").click();
+    await w.tick();
+    assert.equal(w.shadow.querySelector(".r-locate .r-loc-stage img").getAttribute("src"), "data:image/png;base64,SENT", "raw = the image sent to the model");
+});
+
+test("locate render: no-box grounding is a single box substep (no snap)", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("lnb", "find it"));
-    await w.dispatch(agentStep("lnb", 1, { tool: "locate", arguments: { description: "ghost" }, render: {
-        type: "locate", mode: "grounding", model: "qwen2.5vl:3b", prompt: "Locate …",
-        groundingImage: "data:image/png;base64,PLAIN", gaveBox: false, boxCoords: "",
-    } }));
+    await w.dispatch(agentStep("lnb", 1, { tool: "locate", arguments: { description: "ghost" }, render:
+        locateRender("grounding", "qwen2.5vl:3b", [
+            { label: "Grounding · no box returned", prompt: "Locate …", output: "NONE", image: "data:image/png;base64,PLAIN" },
+        ]) }));
     await w.dispatch(agentResult("lnb", "not found", 1));
     w.shadow.querySelector(".row").click();
     await w.tick();
     for (const h of w.shadow.querySelectorAll(".astep.tool .astep-head")) h.click();
     await w.tick();
     const loc = w.shadow.querySelector(".r-locate");
-    assert.match(loc.querySelector(".r-loc-note").textContent, /returned no box/);
-    assert.equal(loc.querySelectorAll(".r-loc-stage img").length, 1, "only the grounding image, no element-location pass");
+    assert.equal(loc.querySelectorAll(".r-loc-sub").length, 1, "one substep, no snap");
+    assert.match(loc.querySelector(".r-loc-subhead").textContent, /no box returned/);
+    assert.match(loc.querySelector(".r-loc-picked").textContent, /Snapped to[\s\S]*\(none\)/);
 });
 
-test("locate render: marks mode shows the model up top and the pick at the bottom", async () => {
+test("locate render: marks is one Set-of-Marks substep with the pick", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("lmk", "find it"));
-    await w.dispatch(agentStep("lmk", 1, { tool: "locate", arguments: { description: "trash" }, elements: 1, render: {
-        type: "locate", mode: "marks", model: "gemma4:31b",
-        resultImage: "data:image/png;base64,MARKS", picked: "#2 [button] → #bar > div:nth-of-type(2)",
-    } }));
+    await w.dispatch(agentStep("lmk", 1, { tool: "locate", arguments: { description: "trash" }, elements: 1, render:
+        locateRender("marks", "gemma4:31b", [
+            { label: "Set-of-Marks · 4 candidates · model chose #2", prompt: "which badge…", output: "2", rawImage: "data:image/png;base64,RAW", image: "data:image/png;base64,MARKS" },
+        ], { picked: "#2 [button] → #bar > div:nth-of-type(2)", pickedBy: "model" }) }));
     await w.dispatch(agentResult("lmk", "done", 1));
     w.shadow.querySelector(".row").click();
     await w.tick();
@@ -619,17 +646,17 @@ test("locate render: marks mode shows the model up top and the pick at the botto
     const loc = w.shadow.querySelector(".r-locate");
     assert.match(loc.querySelector(".r-loc-head").textContent, /Set-of-Marks · gemma4:31b/);
     assert.equal(loc.querySelector(".r-loc-stage img").getAttribute("src"), "data:image/png;base64,MARKS");
-    assert.match(loc.querySelector(".r-loc-picked").textContent, /Model picked:.*nth-of-type\(2\)/);
+    assert.match(loc.querySelector(".r-loc-picked").textContent, /Model picked[\s\S]*nth-of-type\(2\)/);
 });
 
-test("locate render: auto-fallback surfaces the grounding attempt above the Set-of-Marks pass", async () => {
+test("locate render: auto-fallback shows the grounding attempt substep above the Set-of-Marks one", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("lfb", "find it"));
-    await w.dispatch(agentStep("lfb", 1, { tool: "locate", arguments: { description: "trash" }, elements: 1, render: {
-        type: "locate", mode: "marks", model: "gemma4:31b",
-        resultImage: "data:image/png;base64,MARKS", picked: "#2 [button] → #bar > div:nth-of-type(2)",
-        fallbackNote: "returned no box", fallbackImage: "data:image/png;base64,GROUND",
-    } }));
+    await w.dispatch(agentStep("lfb", 1, { tool: "locate", arguments: { description: "trash" }, elements: 1, render:
+        locateRender("marks", "gemma4:31b", [
+            { label: "Grounding · no box returned", prompt: "Locate…", output: "NONE", image: "data:image/png;base64,GROUND" },
+            { label: "Set-of-Marks · 5 candidates · model chose #2", note: "Grounding returned no box — fell back to Set-of-Marks.", prompt: "which badge…", output: "2", rawImage: "data:image/png;base64,RAW", image: "data:image/png;base64,MARKS" },
+        ], { picked: "#2 [button] → #bar > div:nth-of-type(2)", pickedBy: "model" }) }));
     await w.dispatch(agentResult("lfb", "done", 1));
     w.shadow.querySelector(".row").click();
     await w.tick();
@@ -641,16 +668,16 @@ test("locate render: auto-fallback surfaces the grounding attempt above the Set-
     assert.deepEqual(imgs, ["data:image/png;base64,GROUND", "data:image/png;base64,MARKS"], "grounding attempt first, then marks");
 });
 
-test("locate render: grid mode shows the aspect grid + selected cells, then the DOM snap", async () => {
+test("locate render: grid single-element — cell-pick substep + DOM snap, 'Snapped to'", async () => {
     const w = await loadSidebarWorld();
     // Driver model == the sub-call model → the "standalone sub-call" note should show.
-    await w.dispatch(agentStart("lgr", "find it", "gemma4:31b", 10));
-    await w.dispatch(agentStep("lgr", 1, { tool: "locate", arguments: { description: "star", strategy: "grid" }, elements: 1, render: {
-        type: "locate", mode: "grid", model: "gemma4:31b", cols: 4, rows: 4, cells: [2, 3],
-        griddedImage: "data:image/png;base64,GRID", resultImage: "data:image/png;base64,SNAP",
-        picked: "[button] → #bar > div:nth-of-type(3)", prompt: "This image is divided into a 4×4 …",
-    } }));
-    await w.dispatch(agentResult("lgr", "done", 1));
+    await w.dispatch(agentStart("lgs", "find it", "gemma4:31b", 10));
+    await w.dispatch(agentStep("lgs", 1, { tool: "locate", arguments: { description: "star", strategy: "grid" }, elements: 1, render:
+        locateRender("grid", "gemma4:31b", [
+            { label: "Cell pick · grid 4×4 · model chose cells 2,3", prompt: "This image is divided into a 4×4 …", output: "2,3", rawImage: "data:image/png;base64,GRIDraw", image: "data:image/png;base64,GRID" },
+            { label: "DOM snap · single element in the cell", image: "data:image/png;base64,SNAP" },
+        ], { picked: "[button] → #bar > div:nth-of-type(3)", pickedBy: "snap" }) }));
+    await w.dispatch(agentResult("lgs", "done", 1));
     w.shadow.querySelector(".row").click();
     await w.tick();
     for (const h of w.shadow.querySelectorAll(".astep.tool .astep-head")) h.click();
@@ -658,41 +685,38 @@ test("locate render: grid mode shows the aspect grid + selected cells, then the 
     const loc = w.shadow.querySelector(".r-locate");
     assert.match(loc.querySelector(".r-loc-head").textContent, /Grid · gemma4:31b/);
     assert.match(loc.querySelector(".r-loc-delegated").textContent, /standalone sub-call/);
-    const caps = [...loc.querySelectorAll(".r-loc-cap")].map(c => c.textContent).join(" ");
-    assert.match(caps, /grid 4×4 · model chose cells 2,3/);
+    assert.match([...loc.querySelectorAll(".r-loc-subhead")].map(c => c.textContent).join(" "), /grid 4×4 · model chose cells 2,3/);
     const imgs = [...loc.querySelectorAll(".r-loc-stage img")].map(i => i.getAttribute("src"));
     assert.deepEqual(imgs, ["data:image/png;base64,GRID", "data:image/png;base64,SNAP"], "grid image then the snap");
-    // Single element under the cell → snapped directly (no hand-off) → "Snapped to".
-    assert.match(loc.querySelector(".r-loc-picked").textContent, /Snapped to:.*nth-of-type\(3\)/);
+    assert.match(loc.querySelector(".r-loc-picked").textContent, /Snapped to[\s\S]*nth-of-type\(3\)/);
     assert.equal(loc.querySelector(".r-loc-note"), null, "no hand-off note when a single element");
 });
 
-test("locate render: grid with a SoM hand-off tells the two-stage story (cell → badge pick)", async () => {
+test("locate render: grid hand-off is two substeps (cell pick → Set-of-Marks pick), 'Model picked'", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("lgh", "find it", "gemma4:31b", 10));
-    await w.dispatch(agentStep("lgh", 1, { tool: "locate", arguments: { description: "star", strategy: "grid" }, elements: 1, render: {
-        type: "locate", mode: "grid", model: "gemma4:31b", cols: 5, rows: 3, cells: [11], handoff: 15,
-        griddedImage: "data:image/png;base64,GRID", resultImage: "data:image/png;base64,MARKS",
-        picked: "#12 [div] → #grid > div:nth-of-type(92)", prompt: "grid …",
-    } }));
+    await w.dispatch(agentStep("lgh", 1, { tool: "locate", arguments: { description: "star", strategy: "grid" }, elements: 1, render:
+        locateRender("grid", "gemma4:31b", [
+            { label: "Cell pick · grid 5×3 · model chose cell 11", prompt: "grid…", output: "11", rawImage: "data:image/png;base64,GRIDraw", image: "data:image/png;base64,GRID" },
+            { label: "Set-of-Marks · 15 candidates · model chose #12", note: "The cell held 15 elements, so they were re-badged and a second vision call picked one (Set-of-Marks).", prompt: "which badge…", output: "12", rawImage: "data:image/png;base64,RAW", image: "data:image/png;base64,MARKS" },
+        ], { picked: "#12 [div] → #grid > div:nth-of-type(92)", pickedBy: "model" }) }));
     await w.dispatch(agentResult("lgh", "done", 1));
     w.shadow.querySelector(".row").click();
     await w.tick();
     for (const h of w.shadow.querySelectorAll(".astep.tool .astep-head")) h.click();
     await w.tick();
     const loc = w.shadow.querySelector(".r-locate");
+    assert.equal(loc.querySelectorAll(".r-loc-sub").length, 2, "two substeps");
     assert.match(loc.querySelector(".r-loc-note").textContent, /held 15 elements.*second vision call picked one/i);
-    assert.match([...loc.querySelectorAll(".r-loc-cap")].map(c => c.textContent).join(" "), /Set-of-Marks pick · model chose 1 of 15/);
-    // The model actively picked a badge → "Model picked", not "Snapped to".
-    assert.match(loc.querySelector(".r-loc-picked").textContent, /Model picked:.*#12.*nth-of-type\(92\)/);
+    assert.match([...loc.querySelectorAll(".r-loc-subhead")].map(c => c.textContent).join(" "), /Set-of-Marks · 15 candidates · model chose #12/);
+    assert.match(loc.querySelector(".r-loc-picked").textContent, /Model picked[\s\S]*#12[\s\S]*nth-of-type\(92\)/);
 });
 
 test("locate render: no delegated note when the sub-call model differs from the driver", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("lgd", "find it", "qwen3:14b", 10));   // driver ≠ reader
-    await w.dispatch(agentStep("lgd", 1, { tool: "locate", arguments: { description: "star" }, elements: 1, render: {
-        type: "locate", mode: "marks", model: "gemma4:31b", resultImage: "data:image/png;base64,MARKS", picked: "#1 [button] → #b",
-    } }));
+    await w.dispatch(agentStep("lgd", 1, { tool: "locate", arguments: { description: "star" }, elements: 1, render:
+        locateRender("marks", "gemma4:31b", [{ label: "Set-of-Marks · 2 candidates", image: "data:image/png;base64,MARKS" }], { picked: "#1 [button] → #b", pickedBy: "model" }) }));
     await w.dispatch(agentResult("lgd", "done", 1));
     w.shadow.querySelector(".row").click();
     await w.tick();
@@ -873,16 +897,16 @@ test("export: a run with screenshots downloads a zip (run.md + png sidecars)", a
     assert.ok(latin1.includes(String.fromCharCode(0x89) + "PNG"), "the real PNG bytes are embedded");
 });
 
-test("export: a grounding locate step serialises the full debug view (both images + prompt/box/pick)", async () => {
+test("export: a grounding locate step serialises its substeps (box + DOM snap, prompt/out/pick)", async () => {
     const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
     const url = "data:image/png;base64," + PNG;
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("expl", "find the star", "gemma4:31b", 10));
-    await w.dispatch(agentStep("expl", 1, { tool: "locate", arguments: { description: "star" }, elements: 1, render: {
-        type: "locate", mode: "grounding", model: "qwen2.5vl:7b", prompt: "Locate \"star\" …",
-        groundingImage: url, gaveBox: true, boxCoords: "(28, 242) → (45, 264)", margin: 40,
-        resultImage: url, picked: "[button] \"Star\" → #bar > div:nth-of-type(1)",
-    } }));
+    await w.dispatch(agentStep("expl", 1, { tool: "locate", arguments: { description: "star" }, elements: 1, render:
+        locateRender("grounding", "qwen2.5vl:7b", [
+            { label: "Grounding · box (28, 242) → (45, 264)", prompt: "Locate \"star\" …", output: "28,242,45,264", rawImage: url + "#raw", image: url },
+            { label: "DOM snap · +40px search margin", image: url },
+        ], { picked: "[button] \"Star\" → #bar > div:nth-of-type(1)", pickedBy: "snap" }) }));
     await w.dispatch(agentResult("expl", "clicked star", 1));
     w.shadow.querySelector(".row").click();
     await w.tick();
@@ -890,59 +914,63 @@ test("export: a grounding locate step serialises the full debug view (both image
     const { name, blob } = await captureExport(w);
     assert.equal(name, "ml-agent-expl.zip");
     const latin1 = String.fromCharCode(...new Uint8Array(await blob.arrayBuffer()));
-    assert.ok(latin1.includes("images/step-1-model-output.png"), "grounding image sidecar");
-    assert.ok(latin1.includes("images/step-1-element-location.png"), "element-location image sidecar");
+    assert.ok(latin1.includes("images/step-1-sub1.png"), "substep 1 image sidecar");
+    assert.ok(latin1.includes("images/step-1-sub2.png"), "substep 2 image sidecar");
     assert.match(latin1, /Grounding.{1,4}qwen2\.5vl:7b/, "model + mode (· is multibyte in latin1)");
     assert.match(latin1, /box \(28, 242\)/, "box coords as a pair");
     assert.match(latin1, /\+40px search margin/, "margin");
+    assert.match(latin1, /Out:.*28,242,45,264/, "the raw model output");
     assert.match(latin1, /Snapped to:.*nth-of-type\(1\)/, "picked element (grounding → snapped)");
-    assert.match(latin1, /Prompt to the model/, "the VLM prompt is included");
+    assert.match(latin1, /In \(prompt\)/, "the VLM prompt is included");
 });
 
-test("export: an auto-fallback locate step serialises the grounding attempt + the marks pass", async () => {
+test("export: an auto-fallback locate step serialises the grounding-attempt substep + the marks one", async () => {
     const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
     const url = "data:image/png;base64," + PNG;
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("expf", "find the star", "gemma4:31b", 10));
-    await w.dispatch(agentStep("expf", 1, { tool: "locate", arguments: { description: "star" }, elements: 1, render: {
-        type: "locate", mode: "marks", model: "gemma4:31b",
-        resultImage: url, picked: "#2 [button] → #bar > div:nth-of-type(2)",
-        fallbackNote: "returned no box", fallbackImage: url,
-    } }));
+    await w.dispatch(agentStep("expf", 1, { tool: "locate", arguments: { description: "star" }, elements: 1, render:
+        locateRender("marks", "gemma4:31b", [
+            { label: "Grounding · no box returned", prompt: "Locate…", output: "NONE", image: url },
+            { label: "Set-of-Marks · 5 candidates · model chose #2", note: "Grounding returned no box — fell back to Set-of-Marks.", prompt: "which badge…", output: "2", rawImage: url + "#raw", image: url },
+        ], { picked: "#2 [button] → #bar > div:nth-of-type(2)", pickedBy: "model" }) }));
     await w.dispatch(agentResult("expf", "clicked star", 1));
     w.shadow.querySelector(".row").click();
     await w.tick();
 
     const { blob } = await captureExport(w);
     const latin1 = String.fromCharCode(...new Uint8Array(await blob.arrayBuffer()));
-    assert.ok(latin1.includes("images/step-1-grounding-attempt.png"), "grounding-attempt sidecar");
-    assert.ok(latin1.includes("images/step-1-element-location.png"), "the marks pass sidecar");
+    assert.ok(latin1.includes("images/step-1-sub1.png"), "grounding-attempt sidecar");
+    assert.ok(latin1.includes("images/step-1-sub2.png"), "the marks-pass sidecar");
     assert.match(latin1, /Grounding returned no box .{1,4} fell back to Set-of-Marks/, "the fallback note");
-    assert.match(latin1, /Model picked:.*nth-of-type\(2\)/, "marks pick");
+    assert.match(latin1, /Model picked[\s\S]*nth-of-type\(2\)/, "marks pick");
 });
 
-test("export: a grid locate step serialises the numbered grid + the DOM snap", async () => {
+test("export: a grid hand-off locate step serialises both substeps + the raw image sent", async () => {
     const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
     const url = "data:image/png;base64," + PNG;
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("expg", "find the star", "gemma4:31b", 10));
-    await w.dispatch(agentStep("expg", 1, { tool: "locate", arguments: { description: "star", strategy: "grid" }, elements: 1, render: {
-        type: "locate", mode: "grid", model: "gemma4:31b", cols: 4, rows: 4, cells: [2, 3], handoff: 6,
-        griddedImage: url, resultImage: url, picked: "#4 [button] → #bar > div:nth-of-type(3)", prompt: "This image is divided into a 4×4 …",
-    } }));
+    const raw = "data:image/png;base64,QUJDRA==";   // a DIFFERENT but valid data-URL (so the raw sidecar is written)
+    await w.dispatch(agentStep("expg", 1, { tool: "locate", arguments: { description: "star", strategy: "grid" }, elements: 1, render:
+        locateRender("grid", "gemma4:31b", [
+            { label: "Cell pick · grid 4×4 · model chose cells 2,3", prompt: "This image is divided into a 4×4 …", output: "2,3", rawImage: raw, image: url },
+            { label: "Set-of-Marks · 6 candidates · model chose #4", note: "The cell held 6 elements, so they were re-badged and a second vision call picked one (Set-of-Marks).", prompt: "which badge…", output: "4", rawImage: raw, image: url },
+        ], { picked: "#4 [button] → #bar > div:nth-of-type(3)", pickedBy: "model" }) }));
     await w.dispatch(agentResult("expg", "clicked star", 1));
     w.shadow.querySelector(".row").click();
     await w.tick();
 
     const { blob } = await captureExport(w);
     const latin1 = String.fromCharCode(...new Uint8Array(await blob.arrayBuffer()));
-    assert.ok(latin1.includes("images/step-1-grid.png"), "grid image sidecar");
-    assert.ok(latin1.includes("images/step-1-element-location.png"), "the SoM-pick sidecar");
+    assert.ok(latin1.includes("images/step-1-sub1.png"), "cell-pick image sidecar");
+    assert.ok(latin1.includes("images/step-1-sub2.png"), "SoM-pick image sidecar");
+    assert.ok(latin1.includes("images/step-1-sub1-raw.png"), "the raw image sent to the model (differs from overlay)");
     assert.match(latin1, /Grid.{1,4}gemma4:31b/, "mode + model");
     assert.match(latin1, /standalone sub-call/, "delegated note (same model as driver)");
     assert.match(latin1, /model chose cells 2,3/, "selected cells");
     assert.match(latin1, /held 6 elements.{1,40}second/i, "hand-off note");
-    assert.match(latin1, /Set-of-Marks pick \(1 of 6\)/, "SoM-pick caption");
+    assert.match(latin1, /Set-of-Marks.{1,4}6 candidates.{1,4}model chose #4/, "SoM-pick substep label (· is multibyte in latin1)");
     assert.match(latin1, /Model picked:.*nth-of-type\(3\)/, "the model picked the badge");
 });
 

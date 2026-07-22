@@ -183,13 +183,22 @@ details.io[open] > summary .io-preview { display: none; }
 .r-image-label { color: var(--fg-faint); font-size: 0.85em; margin-top: 2px; }
 /* locate debug view: model/mode header, per-stage captioned images, picked footer. */
 .r-locate { display: flex; flex-direction: column; gap: 9px; }
-.r-loc-head { color: var(--fg-dim); font-size: 0.9em; }
-.r-loc-delegated { color: var(--fg-faint); font-style: italic; }
-.r-loc-prompt > summary { color: var(--fg-dim); font-size: 0.85em; cursor: pointer; margin-bottom: 4px; }
-.r-loc-stage { display: flex; flex-direction: column; gap: 3px; }
-.r-loc-cap { color: var(--fg-faint); font-size: 0.8em; letter-spacing: .02em; text-transform: uppercase; }
+.r-loc-head { color: var(--fg-dim); font-size: 1.1em; margin-top: 1em; margin-bottom: 0.5em; }
+.r-loc-delegated { color: var(--fg-faint); font-style: italic; font-size: 0.75em; margin-left: 0.6em; }
+/* image first, then the raw⇄visualise toggle below it (right-aligned) — no awkward gap. */
+.r-loc-stage { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
 .r-loc-stage img { max-width: 100%; border-radius: 6px; border: 1px solid var(--border); display: block; }
-.r-loc-note { color: var(--err); font-size: 0.85em; }
+.r-loc-note { color: var(--fg-faint); font-style: italic; font-size: 0.85em; margin-bottom: 1em; }
+/* one locate substep: a numbered [N] head, a collapsible In-prompt, an image with a
+   raw⇄visualise toggle, and a raw Out line — mirroring the tool In/Out mechanics. */
+.r-loc-sub { display: flex; flex-direction: column; gap: 5px; }
+.r-loc-subhead { color: var(--fg-dim); font-size: 0.92em; font-weight: 700; letter-spacing: .04em;
+  text-transform: uppercase; }
+.r-loc-num { display: inline-grid; place-items: center; width: 1.5em; height: 1.5em; border-radius: 4px;
+  background: var(--panel-2); color: var(--fg); font-weight: 600; font-size: 0.85em; cursor: help; }
+.r-loc-io > summary { color: var(--fg-dim); }
+.r-loc-viz { align-self: flex-end; margin-bottom: 4px; }
+.r-loc-numtt { vertical-align: middle; }
 .r-loc-picked { color: var(--fg-dim); font-size: 0.9em; padding-top: 2px; border-top: 1px solid var(--border); }
 .r-loc-picked code { color: var(--fg); font-size: 0.95em; word-break: break-all; }
 .r-elements { display: flex; flex-direction: column; gap: 2px; }

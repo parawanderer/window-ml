@@ -192,12 +192,34 @@ five icons in one cell and snapped to the wrong one):
 - **Marks hand-off** — after unioning + the `collectInBox` sweep, a region with **one**
   candidate returns it directly; **several** → a **second vision sub-call** picks by badge
   (Set-of-Marks *within the selection*) rather than snapping to the first. `badgeMarks`/
-  `askMarks` are shared with mechanism #2. The render carries `handoff` (the candidate
-  count) so the sidebar/export show the two stages ("cell pick" → "Set-of-Marks pick, 1 of
-  N") and the footer reads **"Model picked"** (the reader chose a badge) not "Snapped to".
+  `askMarks` are shared with mechanism #2.
+
+**Density guard + verify.** Pure Set-of-Marks over a dense page is unreliable (badges
+overlap, the model misreads), and mechanism #2 only badges the first `SOM_BADGE_CAP` (40) of
+up to 150 scanned. So when `> SOM_DENSE` (30) candidates exist, the result appends a warning
+with the **true count**, the truncation, and a steer to strategy `grid` / a `selector` /
+`look`. The `locate` **description also tells the driver to always verify the returned
+selector with `look({ selector })` before acting** — a visual pick can be wrong, and it
+empirically does better when it confirms first. The highlight colour (grid cell / picked
+badge) is page-aware too (`pickAccentColor`, green-first) so it doesn't clash on a green
+page.
 - **Honest ambiguity** — an invalid selection, an empty region, or a marks hand-off that
   still can't decide returns the candidates + a steer (re-pick / raise `gridSize` / switch
   strategy), never a confident wrong pick.
+
+**Locate debug render = substeps.** Every locate render is `{ mode, model, substeps[],
+picked?, pickedBy? }` — `LocateSubstep[]` where each substep is either a **vision sub-call**
+(grid cell-pick, Set-of-Marks pick, grounding box: carries `prompt` (In), the model's raw
+`output` (Out), the exact `rawImage` sent + a human `image` overlay) or a **DOM snap** (just
+`label`+`image`, no model). The sidebar (`LocateSubstepView`) renders each with a numbered
+`[N]` head, a collapsible In(prompt), the image under a **raw⇄visualise** toggle (visualise
+= the overlay by default; raw = the exact bytes the model saw), and a raw Out line — so a
+multi-call locate (grid → hand-off; or an `auto` grounding miss → marks) reads as its
+distinct stages, each with an optional grey-italic `note`. `pickedBy` drives the footer:
+`"model"` → **"Model picked"** (chose a badge: marks / grid hand-off), `"snap"` →
+**"Snapped to"** (the model localized a region, the DOM hit-test chose the element:
+grounding, grid-single). The export mirrors it (each substep → a `step-N-subM.png` sidecar,
+plus a `-raw.png` when the sent image differs from the overlay).
 
 **Hierarchical refine**: the driver re-runs with the returned `cells` selection to zoom
 (that union becomes the next region, a fresh aspect-grid inside) — driver-decided but
