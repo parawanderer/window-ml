@@ -32,7 +32,23 @@ const TIP = {
     utilityForceCpu: "Run the utility model on CPU (num_gpu: 0) so it never competes with your main model for VRAM. Only used when a utility model is set.",
     autoTitles: "Let the utility model generate a short title for each debug session. Off = sessions just show the first prompt. Only runs when a utility model is set and the panel is open.",
     autoApproveReadonly: "Experimental. Run read-only exec surveys (querySelectorAll → filter → map, no mutation) without an approval prompt, via a mediated interpreter that can't reach window/fetch and never eval()s a string. Anything that mutates or isn't recognised still asks. Also lets these surveys run on Trusted-Types pages where eval is blocked.",
+    groundingEnabled: "Experimental. When on, ml.agent's `locate` tool asks a grounding VLM for bounding-box coordinates. This loads an extra model into VRAM — leave off if memory is tight. Off = locate still works via the Set-of-Marks screenshot tool, which needs no extra model.",
+    groundingModel: "A vision model that outputs coordinates (recommended qwen2.5vl:7b, or :3b for lower latency). Blank auto-detects a qwen2.5vl on your server. Real-world grounding accuracy is unproven.",
 };
+
+// First qwen2.5vl on the server (7b preferred, then 3b, then any qwen*vl) — offered
+// as the grounding-model field's placeholder to save typing. "" if none present.
+const detectGrounding = (list: string[]): string =>
+    list.find(m => m === "qwen2.5vl:7b") || list.find(m => m === "qwen2.5vl:3b") || list.find(m => /qwen.*vl/i.test(m)) || "";
+
+// The model a role actually resolves to. Grounding, when enabled with a blank
+// field, falls back to the auto-detected qwen — the same effective model ml.agent
+// will use — so the status row + Test both act on what actually runs.
+function roleModel(key: keyof MlConfig): string {
+    const raw = (config.value[key] as string).trim();
+    if (key === "groundingModel" && config.value.groundingEnabled && !raw) return detectGrounding(models.value);
+    return raw;
+}
 
 // Field label with an optional hover tooltip. Left-anchored (.left) so it opens
 // rightward into the panel — far-left labels would clip a centered pop.
@@ -42,12 +58,15 @@ const Lbl = ({ children, tip }: { children: string; tip?: string }) =>
         : <span>{children}</span>;
 
 // --- model liveness test (per model) ---
-type TestState = { status: "loading" | "ok" | "err"; error?: string };
+// `model` records which model this result is for, so a row auto-invalidates (shows
+// as not-tested) when you change the field; `at` timestamps it for the hover.
+type TestState = { status: "loading" | "ok" | "err"; error?: string; at?: number; model?: string; image?: string };
 const modelTests = signal<Record<string, TestState | undefined>>({});
 const MODEL_ROLES: { key: keyof MlConfig; label: string; vision?: boolean }[] = [
-    { key: "model", label: "Model" },
+    { key: "model", label: "Default" },
     { key: "ocrModel", label: "OCR", vision: true },   // must be vision-capable
     { key: "utilityModel", label: "Utility" },
+    { key: "groundingModel", label: "Grounding", vision: true },   // needs vision (grounding itself isn't cap-detectable)
 ];
 
 const setTest = (key: keyof MlConfig, state: TestState) => { modelTests.value = { ...modelTests.value, [key]: state }; };
@@ -67,59 +86,100 @@ function visionGate(name: string): Promise<string | null> {
     });
 }
 
-// A generated PNG with a known short code — for genuinely testing OCR (a text
-// ping would pass on ANY model without exercising vision). null if no canvas.
+// Real words, not letter-soup: a general-purpose VLM reads prose far better than
+// random glyphs (which it mis-reads, e.g. V→√), and accurate letter-soup OCR wants
+// a specialised model this extension isn't chasing. Common, clearly-spelled words.
+const OCR_WORDS = [
+    "bright", "frozen", "gentle", "silver", "hidden", "golden", "clever", "purple",
+    "quiet", "wander", "jumping", "running", "flowing", "gliding", "whisper", "thunder",
+    "crimson", "meadow", "harbor", "velvet", "morning", "coffee", "garden", "planet",
+];
+
+// A generated PNG of one known word — genuinely tests OCR (a text ping passes on
+// ANY model without exercising vision). null if no canvas (e.g. jsdom).
 function ocrTestImage(): { dataUrl: string; token: string } | null {
     try {
-        const alpha = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";   // no ambiguous 0/O/1/I/L
-        let token = "";
-        for (let i = 0; i < 4; i++) token += alpha[Math.floor(Math.random() * alpha.length)];
+        const word = OCR_WORDS[Math.floor(Math.random() * OCR_WORDS.length)];
         const cv = document.createElement("canvas");
-        cv.width = 240; cv.height = 96;
+        cv.width = 360; cv.height = 84;
         const ctx = cv.getContext("2d");
         if (!ctx) return null;
         ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
-        ctx.fillStyle = "#000"; ctx.font = "bold 60px monospace"; ctx.textBaseline = "middle";
-        ctx.fillText(token, 20, 50);
-        return { dataUrl: cv.toDataURL("image/png"), token };
+        ctx.fillStyle = "#111"; ctx.font = "bold 48px sans-serif"; ctx.textBaseline = "middle";
+        ctx.fillText(word, 20, 44);
+        return { dataUrl: cv.toDataURL("image/png"), token: word };
     } catch { return null; }
 }
 
-// Test one model via the background. Text models get a trivial ping; the OCR
-// model actually transcribes a generated image and we verify the code returns.
-function testOne(key: keyof MlConfig): void {
-    const name = (config.value[key] as string).trim();
-    if (!name) return;
-    setTest(key, { status: "loading" });
+// A white PNG with ONE red dot in a random quadrant — a mini VISUAL GROUNDING task:
+// can the model point at where something is? Returns the dot's quadrant (qx/qy ∈
+// {0,1}) to check against the model's normalized coordinates. null if no canvas.
+function groundingTestImage(): { dataUrl: string; qx: 0 | 1; qy: 0 | 1 } | null {
+    try {
+        const W = 400, H = 300;
+        const qx = (Math.random() < 0.5 ? 0 : 1) as 0 | 1;
+        const qy = (Math.random() < 0.5 ? 0 : 1) as 0 | 1;
+        const cx = qx ? W * 0.75 : W * 0.25, cy = qy ? H * 0.75 : H * 0.25;
+        const cv = document.createElement("canvas");
+        cv.width = W; cv.height = H;
+        const ctx = cv.getContext("2d");
+        if (!ctx) return null;
+        ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, W, H);
+        ctx.fillStyle = "#e11d48"; ctx.beginPath(); ctx.arc(cx, cy, 26, 0, Math.PI * 2); ctx.fill();
+        return { dataUrl: cv.toDataURL("image/png"), qx, qy };
+    } catch { return null; }
+}
 
-    // Vision-required roles (OCR, later grounding): first check the model actually
-    // reports vision — a clear "not a vision model" beats a confusing functional
-    // failure downstream. Unknown caps (cloud/non-Ollama) pass through to the test.
+// Test one model. Text models get a trivial ping; OCR transcribes a code image
+// (with the allowed alphabet in the prompt); grounding must point at a red dot
+// (normalized coords, quadrant-checked); the utility model runs through its own
+// extend:"utility" profile. Records the model + a timestamp so a row invalidates
+// on change and shows the outcome on hover.
+function testOne(key: keyof MlConfig): void {
+    const name = roleModel(key);
+    if (!name) return;
+    setTest(key, { status: "loading", model: name });
+    const done = (s: Omit<TestState, "model" | "at">) => setTest(key, { ...s, model: name, at: Date.now() });
+
+    // Vision-required roles (OCR, grounding): first check the model actually reports
+    // vision — a clear "not a vision model" beats a confusing functional failure
+    // downstream. Unknown caps (cloud/non-Ollama) pass through to the test.
     const role = MODEL_ROLES.find(r => r.key === key);
     const gate = role?.vision ? visionGate(name) : Promise.resolve(null);
     gate.then(capErr => {
-        if (capErr) return setTest(key, { status: "err", error: capErr });
+        if (capErr) return done({ status: "err", error: capErr });
 
-        // The utility model is tested through its own profile (extend:"utility") so
-        // the check exercises its real num_ctx + Force-CPU config, not just the name.
         const ping = { role: "user", content: "Reply with exactly: OK" };
         const img = key === "ocrModel" ? ocrTestImage() : null;
+        const gimg = key === "groundingModel" ? groundingTestImage() : null;
+        const shot = img?.dataUrl || gimg?.dataUrl;   // the test image, kept on the result so the row can show it
         const payload = img
-            ? { messages: [{ role: "user", content: "Transcribe the characters in this image. Output only the characters.", images: [img.dataUrl] }], model: name, ocr: true }
-            : key === "utilityModel"
-                ? { messages: [ping], extend: "utility" }
-                : { messages: [ping], model: name };
+            ? { messages: [{ role: "user", content: "Transcribe the single word shown in this image. Output ONLY that word — no punctuation or explanation.", images: [img.dataUrl] }], model: name, ocr: true }
+            : gimg
+                ? { messages: [{ role: "user", content: "This image is white with ONE red dot. Reply with ONLY the dot's centre as two integers `x,y` in NORMALISED 0-1000 coordinates (x: 0=left … 1000=right; y: 0=top … 1000=bottom). Example: 250,750", images: [gimg.dataUrl] }], model: name }
+                : key === "utilityModel"
+                    ? { messages: [ping], extend: "utility" }
+                    : { messages: [ping], model: name };
 
         chrome.runtime.sendMessage({ type: "FETCH_LLM", payload }, (resp: any) => {
             const err = chrome.runtime.lastError?.message || (resp && resp.error);
-            if (err) return setTest(key, { status: "err", error: String(err) });
+            if (err) return done({ status: "err", error: String(err), image: shot });
             if (img) {
-                const got = String(resp.data || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
-                return setTest(key, got.includes(img.token)
-                    ? { status: "ok" }
-                    : { status: "err", error: `read "${truncate(String(resp.data || ""), 40)}" — expected ${img.token}` });
+                const got = String(resp.data || "").toLowerCase().replace(/[^a-z]/g, "");
+                return done(got.includes(img.token)
+                    ? { status: "ok", image: shot }
+                    : { status: "err", error: `read "${truncate(String(resp.data || ""), 40)}" — expected "${img.token}"`, image: shot });
             }
-            setTest(key, { status: "ok" });
+            if (gimg) {
+                const m = String(resp.data || "").match(/(\d{1,4})\s*[,;xX× ]\s*(\d{1,4})/);
+                if (!m) return done({ status: "err", error: `no coordinates in reply: "${truncate(String(resp.data || ""), 40)}"`, image: shot });
+                const gx = +m[1], gy = +m[2];
+                const side = (q: 0 | 1, a: string, b: string) => q ? b : a;
+                return done((gx > 500 ? 1 : 0) === gimg.qx && (gy > 500 ? 1 : 0) === gimg.qy
+                    ? { status: "ok", image: shot }
+                    : { status: "err", error: `pointed to ${gx},${gy} — the dot was ${side(gimg.qy, "top", "bottom")}-${side(gimg.qx, "left", "right")}`, image: shot });
+            }
+            done({ status: "ok" });
         });
     });
 }
@@ -136,20 +196,42 @@ function ModelTests() {
     const t = modelTests.value;
     return (
         <div class="set-test">
-            <button class="test-btn" onClick={testModels}>Test models</button>
+            <div class="set-test-title">Model status</div>
+            <div class="test-grid">
+                {MODEL_ROLES.map(({ key, label }) => {
+                    const name = roleModel(key);
+                    const st = t[key];
+                    // A result only counts for the model it was run against — editing
+                    // the field invalidates it back to "not tested".
+                    const fresh = st && st.model === name;
+                    const state = !name ? "unset" : fresh ? st!.status : "idle";
+                    const title = !name ? "Not set"
+                        : !fresh ? "Not tested yet"
+                        : st!.status === "loading" ? "Testing…"
+                        : st!.status === "ok" ? `Passed${st!.at ? ` at ${new Date(st!.at).toLocaleTimeString()}` : ""}`
+                        : st!.error || "Failed";
+                    return (
+                        <div class="test-row" key={key} title={title}>
+                            <TestIcon state={state} />
+                            <span class="role">{label}</span>
+                            <span class="name">{name || "not set"}</span>
+                        </div>
+                    );
+                })}
+            </div>
             {MODEL_ROLES.map(({ key, label }) => {
-                const name = (config.value[key] as string).trim();
-                const state = !name ? "unset" : (t[key]?.status ?? "idle");
+                const st = t[key];
+                if (!(st && st.status === "err" && st.model === roleModel(key))) return null;
                 return (
-                    <div class="test-row" key={key}>
-                        <TestIcon state={state} />
-                        <span class="role">{label}</span>
-                        <span class="name">{name || "not set"}</span>
+                    <div class="test-err" key={key}>
+                        {st.image ? <img class="test-thumb zoomable" src={st.image} alt={`${label} test image`}
+                            title="Click to view full size — decide for yourself if it really failed"
+                            onClick={() => window.parent.postMessage({ __mlLightbox: st.image }, "*")} /> : null}
+                        <span><b>{label}:</b> {truncate(st.error!, 160)}</span>
                     </div>
                 );
             })}
-            {MODEL_ROLES.map(({ key }) => t[key]?.error
-                ? <div class="test-err" key={key}>{truncate(t[key]!.error!, 160)}</div> : null)}
+            <button class="test-btn" onClick={testModels}>Test models</button>
         </div>
     );
 }
@@ -220,7 +302,9 @@ export function Settings() {
                     <input {...text("model", { list: "ml-models", placeholder: "e.g. qwen3:14b" })} /></label>
                 <label class="set-field"><Lbl tip={TIP.ocrModel}>OCR model (optional)</Lbl>
                     <input {...text("ocrModel", { list: "ml-models", placeholder: "e.g. qwen2.5vl" })} /></label>
-                <div class="set-note">If you set a utility model, then you can use it by using the shorthand: <br/><code>ml.chat("...", &#123; extend: "utility" &#125;);</code>.</div>
+
+                <div class="set-group">Utility model</div>
+                <div class="set-note">A small, cheap model for side tasks. If set, use it via the shorthand: <code>ml.chat("...", &#123; extend: "utility" &#125;)</code>.</div>
                 <label class="set-field"><Lbl tip={TIP.utilityModel}>Utility model (optional)</Lbl>
                     <input {...text("utilityModel", { list: "ml-models", placeholder: "blank = use main model" })} /></label>
                 <label class="set-field"><Lbl tip={TIP.utilityNumCtx}>Utility model context size</Lbl>
@@ -236,6 +320,17 @@ export function Settings() {
                         onChange={(e: any) => setField("autoTitles", e.target.checked)} />
                     <Lbl tip={TIP.autoTitles}>Summarise chat titles with the utility model</Lbl>
                 </label>
+
+                <div class="set-group">Visual grounding (experimental)</div>
+                <div class="set-note">Optional coordinate model for the agent's <code>locate</code> tool. <b>Loads an extra model into VRAM</b> — leave off if memory is tight. Off = <code>locate</code> still works via the Set-of-Marks screenshot tool (no extra model). Recommended: <code>qwen2.5vl:7b</code> (or <code>:3b</code>); accuracy is unproven.</div>
+                <label class="set-check">
+                    <input type="checkbox" checked={c.groundingEnabled}
+                        onChange={(e: any) => setField("groundingEnabled", e.target.checked)} />
+                    <Lbl tip={TIP.groundingEnabled}>Enable visual grounding model</Lbl>
+                </label>
+                <label class="set-field"><Lbl tip={TIP.groundingModel}>Grounding model</Lbl>
+                    <input {...text("groundingModel", { list: "ml-models", disabled: !c.groundingEnabled,
+                        placeholder: detectGrounding(models.value) ? `${detectGrounding(models.value)} (auto-detected)` : "e.g. qwen2.5vl:7b — none detected" })} /></label>
                 <ModelTests />
             </> : null}
 

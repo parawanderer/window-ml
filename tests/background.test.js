@@ -355,6 +355,7 @@ test("GET_CONFIG returns the model/ocrModel/apiFormat and withholds the URL and 
     assert.deepEqual(res.data, {
         model: "qwen3:235b", ocrModel: "qwen2.5vl", apiFormat: "ollama",
         utilityModel: "", utilityNumCtx: 4096, utilityForceCpu: false, autoApproveReadonly: false,
+        groundingEnabled: false, groundingModel: "",
     });
     // The page must never see the server URL or API key (security invariant).
     assert.ok(!("chatUrl" in res.data) && !("apiKey" in res.data), Object.keys(res.data).join());

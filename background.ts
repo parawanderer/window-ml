@@ -641,6 +641,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 model: config.model, ocrModel: config.ocrModel, apiFormat: config.apiFormat,
                 utilityModel: config.utilityModel, utilityNumCtx: config.utilityNumCtx, utilityForceCpu: config.utilityForceCpu,
                 autoApproveReadonly: config.autoApproveReadonly,
+                groundingEnabled: config.groundingEnabled, groundingModel: config.groundingModel,
             } }))
             .catch(err => sendResponse({ error: err.message }));
         return true;

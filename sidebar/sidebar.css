@@ -94,16 +94,21 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .set-err { color: var(--err); font-size: 0.83em; }
 
 /* model liveness test */
-.set-test { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
-.test-btn { align-self: flex-start; background: var(--panel-2); color: var(--fg); border: none; border-radius: 5px; padding: 4px 10px; font-size: 0.92em; cursor: pointer; }
+/* Model-status card: a bordered panel so the role/status grid reads as one unit. */
+.set-test { display: flex; flex-direction: column; gap: 8px; margin-top: 10px;
+    border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; background: var(--panel); }
+.set-test-title { color: var(--fg-dim); font-size: 0.82em; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
+.test-btn { align-self: flex-end; background: var(--panel-2); color: var(--fg); border: none; border-radius: 5px; padding: 4px 12px; font-size: 0.92em; cursor: pointer; }
 .test-btn:hover { background: var(--panel-2-hover); }
-.test-row { display: flex; align-items: center; gap: 6px; font-size: 0.92em; }
-.test-row .role { color: var(--fg-dim); min-width: 48px; }
+.test-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 16px; }
+.test-row { display: flex; align-items: center; gap: 7px; font-size: 0.92em; min-width: 0; }
+.test-row .role { color: var(--fg-dim); min-width: 62px; flex: 0 0 auto; }
 .test-row .name { color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .test-ic { width: 14px; flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; }
 .test-ic.ok { color: var(--ok); } .test-ic.err { color: var(--err); font-weight: 700; }
 .test-ic.loading { color: var(--warn); } .test-ic.unset { color: var(--fg-faint); }
-.test-err { color: var(--err); font-size: 0.83em; margin-left: 20px; word-break: break-word; }
+.test-err { display: flex; align-items: center; gap: 8px; color: var(--err); font-size: 0.83em; word-break: break-word; }
+.test-thumb { height: 30px; max-width: 90px; border-radius: 3px; border: 1px solid var(--border); background: #fff; cursor: zoom-in; flex: 0 0 auto; }
 .set-check { display: flex; align-items: center; gap: 7px; margin: 2px; color: var(--fg); cursor: pointer; }
 .set-check.off { opacity: .5; }
 .set-check input { width: auto; }

@@ -155,12 +155,12 @@ test("settings view: loads config, populates the model datalist, gates + persist
 test("settings: Test models runs a per-model liveness check (set models pass, unset stays '—')", async () => {
     const w = await loadSidebarWorld({ sync: { model: "qwen3:14b", utilityModel: "gemma:2b" }, models: ["qwen3:14b"] });
     await openSettings(w, "Models");
-    assert.equal(w.shadow.querySelectorAll(".test-row").length, 3, "one row per model role");
+    assert.equal(w.shadow.querySelectorAll(".test-row").length, 4, "one row per model role");
 
     w.shadow.querySelector(".test-btn").click();
     await w.tick();
     assert.equal(w.shadow.querySelectorAll(".test-ic.ok").length, 2, "the two set models pass");
-    assert.equal(w.shadow.querySelectorAll(".test-ic.unset").length, 1, "the unset OCR model stays not-set");
+    assert.equal(w.shadow.querySelectorAll(".test-ic.unset").length, 2, "the unset OCR + grounding stay not-set");
 });
 
 test("settings: a failing model test shows the error", async () => {
@@ -169,7 +169,57 @@ test("settings: a failing model test shows the error", async () => {
     w.shadow.querySelector(".test-btn").click();
     await w.tick();
     assert.ok(w.shadow.querySelector(".test-ic.err"), "error icon shown");
-    assert.match(w.shadow.querySelector(".test-err").textContent, /model not found/);
+    // The error is prefixed with the role label so you can tell which model failed.
+    assert.match(w.shadow.querySelector(".test-err").textContent, /Default:.*model not found/);
+});
+
+test("settings: grounding checkbox + model field persist, and the field is gated on the checkbox", async () => {
+    const w = await loadSidebarWorld({ models: ["qwen2.5vl:7b"] });
+    await openSettings(w, "Models");
+    const field = () => w.shadow.querySelector('input[list="ml-models"][placeholder*="qwen2.5vl:7b"]');
+    // Placeholder auto-detects the qwen on the server; field disabled until enabled.
+    assert.ok(field(), "grounding field shows the auto-detected qwen as its placeholder");
+    assert.ok(field().disabled, "grounding model field disabled while grounding is off");
+
+    const check = [...w.shadow.querySelectorAll(".set-check")].find(l => /grounding model/i.test(l.textContent)).querySelector("input");
+    check.click();
+    await w.tick();
+    assert.equal(w.syncStore.groundingEnabled, true, "enable persisted");
+    assert.ok(!field().disabled, "field enabled once grounding is on");
+
+    field().value = "qwen2.5vl:3b";
+    field().dispatchEvent(new w.window.Event("change", { bubbles: true }));
+    await w.tick();
+    assert.equal(w.syncStore.groundingModel, "qwen2.5vl:3b", "grounding model persisted");
+});
+
+test("settings: grounding enabled + blank field tests the auto-detected model (not skipped)", async () => {
+    const w = await loadSidebarWorld({
+        sync: { groundingEnabled: true }, models: ["qwen2.5vl:7b"],
+        caps: () => ["completion", "vision"], fetchLlm: () => ({ data: "250,750" }),
+    });
+    await openSettings(w, "Models");
+    const gRow = () => [...w.shadow.querySelectorAll(".test-row")].find(r => /Grounding/.test(r.textContent));
+    assert.match(gRow().textContent, /qwen2.5vl:7b/, "status row shows the auto-detected effective model");
+    w.shadow.querySelector(".test-btn").click();
+    await w.tick(); await w.tick();
+    assert.ok(gRow().querySelector(".test-ic.ok"), "the auto-detected grounding model got tested, not left unset");
+});
+
+test("settings: editing a model invalidates its stale test result", async () => {
+    const w = await loadSidebarWorld({ sync: { model: "qwen3:14b" }, models: ["qwen3:14b", "llama3:8b"] });
+    await openSettings(w, "Models");
+    w.shadow.querySelector(".test-btn").click();
+    await w.tick(); await w.tick();
+    const defRow = () => [...w.shadow.querySelectorAll(".test-row")].find(r => /Default/.test(r.textContent));
+    assert.ok(defRow().querySelector(".test-ic.ok"), "default model passes after Test");
+
+    const field = w.shadow.querySelector('input[placeholder="e.g. qwen3:14b"]');
+    field.value = "llama3:8b";
+    field.dispatchEvent(new w.window.Event("input", { bubbles: true }));
+    await w.tick();
+    assert.ok(!defRow().querySelector(".test-ic.ok"), "editing the model clears the stale pass");
+    assert.match(defRow().textContent, /llama3:8b/, "row shows the new model");
 });
 
 test("settings: a vision-required role (OCR) fails RED when the model lacks vision capability", async () => {

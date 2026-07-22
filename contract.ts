@@ -26,6 +26,10 @@ export interface MlConfig {
     utilityForceCpu: boolean;   // run it on CPU (num_gpu: 0) so it can't evict the main model
     autoTitles: boolean;        // let the utility model summarise session titles in the debug sidebar
     autoApproveReadonly: boolean;   // experimental: auto-approve read-only exec surveys via the mediated interpreter
+    // Optional visual-grounding model for ml.agent's `locate` tool (coordinate
+    // output). OFF by default — enabling loads a 3rd model into VRAM, so it's opt-in.
+    groundingEnabled: boolean;
+    groundingModel: string;     // e.g. qwen2.5vl:7b; empty + enabled → auto-detect a qwen2.5vl on the server
 }
 
 /** Single source of truth for config defaults — imported by background.ts,
@@ -49,11 +53,13 @@ export const DEFAULT_CONFIG: MlConfig = {
     utilityForceCpu: false,
     autoTitles: true,
     autoApproveReadonly: false,
+    groundingEnabled: false,
+    groundingModel: "",
 };
 
 /** The non-secret subset GET_CONFIG exposes to the page (never the URL/key). */
 export type MlPublicConfig = Pick<MlConfig,
-    "model" | "ocrModel" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly">;
+    "model" | "ocrModel" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "groundingEnabled" | "groundingModel">;
 
 /* --------------------------- chat wire shapes -------------------------- */
 
