@@ -33,6 +33,23 @@ const canvasAt = (x: number, y: number): Element | null => {
     try { el = document.elementFromPoint(x, y); } catch { return null; }
     return el ? el.closest("canvas") : null;
 };
+/**
+ * If a pick box OVERLAPS a <canvas>, the canvas-hit point nearest the box centre. Samples
+ * a grid across the box (not just the centre) so a box/cell straddling page chrome and the
+ * canvas — e.g. a target near the canvas's top edge — still yields a clickable coordinate
+ * instead of a spurious "no element". Returns null when no sampled point hits a canvas.
+ */
+const canvasPointIn = (box: Box): { x: number; y: number } | null => {
+    const cx = (box.left + box.right) / 2, cy = (box.top + box.bottom) / 2;
+    const w = box.right - box.left, h = box.bottom - box.top;
+    const F = [0.15, 0.35, 0.5, 0.65, 0.85];
+    let best: { x: number; y: number; d: number } | null = null;
+    for (const gy of F) for (const gx of F) {
+        const x = box.left + gx * w, y = box.top + gy * h;
+        if (canvasAt(x, y)) { const d = Math.hypot(x - cx, y - cy); if (!best || d < best.d) best = { x, y, d }; }
+    }
+    return best ? { x: best.x, y: best.y } : null;
+};
 /** Synthesize a real click at a viewport coordinate (for canvas surfaces): the full
  *  pointer/mouse sequence at (x,y) on the topmost element there. */
 const clickAt = (x: number, y: number): Element | null => {
@@ -302,21 +319,23 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 const localBox = cellsBox(sel, cols, rows, { left: 0, top: 0, width: gRegion.width, height: gRegion.height });
                 const griddedImage = await annotate(gridded, [{ rect: rectOf(localBox), color: await pickAccentColor(gridded, avoidHues), label: cellNote }], dpr);
                 const cellStep: LocateSubstep = { label: cellLabel(`model chose ${cellNote}`), prompt: gprompt, output: ans, rawImage: gridded, image: griddedImage };
-                // Snap the unioned selection to the DOM.
+                // Snap the unioned selection to the DOM. A <canvas> is NOT a real target (no
+                // sub-node) — drop it (esp. under filter:"all", which returns the canvas itself)
+                // so a canvas cell falls to a coordinate point, never a SoM hand-off over pixels.
                 const cellBox = cellsBox(sel, cols, rows, gRegion);
-                const ccx = (cellBox.left + cellBox.right) / 2, ccy = (cellBox.top + cellBox.bottom) / 2;
-                // Canvas/WebGL cell → no DOM node. Return the cell CENTRE as an @pt point; the
-                // driver zooms (cells:[…]) to place it precisely, or uses grounding for an exact one.
-                if (canvasAt(ccx, ccy)) {
-                    const token = mintPoint(ccx, ccy);
-                    const ptImg = await annotate(shot, [{ rect: rectOf(cellBox), color: YELLOW, label: cellNote }, { rect: { left: ccx - 11, top: ccy - 11, width: 22, height: 22 }, color: RED, label: "point" }], dpr);
-                    return {
-                        content: `Grid ${cellNote}${scopeNote} is on a <canvas> — no DOM element, so this is a COORDINATE: ${token} at the cell centre (${Math.round(ccx)}, ${Math.round(ccy)}). Click it verbatim: click({ selector: "${token}" }). For a PRECISE point, first zoom so the target fills a cell: ${refineHint} (re-centres the point) — or use strategy 'grounding' for an exact point.`,
-                        render: gridResult([cellStep, { label: "Canvas point · cell centre", image: ptImg }], { picked: `${token} @ (${Math.round(ccx)}, ${Math.round(ccy)})`, pickedBy: "snap" }),
-                    };
-                }
-                const found = collectInBox(cellBox, filter, { max: 20 });
+                const found = collectInBox(cellBox, filter, { max: 20 }).filter(el => el.tagName !== "CANVAS");
                 if (!found.length) {
+                    // No real DOM element → a canvas coordinate (the canvas-hit nearest the cell
+                    // centre; robust to a cell straddling the chrome above the canvas), else empty.
+                    const cpt = canvasPointIn(cellBox);
+                    if (cpt) {
+                        const token = mintPoint(cpt.x, cpt.y);
+                        const ptImg = await annotate(shot, [{ rect: rectOf(cellBox), color: YELLOW, label: cellNote }, { rect: { left: cpt.x - 11, top: cpt.y - 11, width: 22, height: 22 }, color: RED, label: "point" }], dpr);
+                        return {
+                            content: `Grid ${cellNote}${scopeNote} is on a <canvas> — no DOM element, so this is a COORDINATE: ${token} at (${Math.round(cpt.x)}, ${Math.round(cpt.y)}). Click it verbatim: click({ selector: "${token}" }). For a PRECISE point, first zoom so the target fills a cell: ${refineHint} (re-centres the point) — or use strategy 'grounding' for an exact point.`,
+                            render: gridResult([cellStep, { label: "Canvas point · in the cell", image: ptImg }], { picked: `${token} @ (${Math.round(cpt.x)}, ${Math.round(cpt.y)})`, pickedBy: "snap" }),
+                        };
+                    }
                     const snapImg = await annotate(shot, [{ rect: rectOf(cellBox), color: YELLOW, label: cellNote }], dpr);
                     return { content: `Grid ${cellNote} for "${description}"${scopeNote} has no ${filter} element under it. Re-pick, raise gridSize, or switch strategy.`, render: gridResult([cellStep, { label: "DOM snap · no element under the cell", image: snapImg }]) };
                 }
@@ -395,16 +414,18 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                     if (box) {
                         const b: Box = margin > 0 ? { left: box.left - margin, top: box.top - margin, right: box.right + margin, bottom: box.bottom + margin } : box;
                         const cx = (b.left + b.right) / 2, cy = (b.top + b.bottom) / 2;
-                        // Canvas/WebGL surface → no DOM node to snap to. Return the box centre as
-                        // an @pt point token (grounding gives a PRECISE point — its whole strength).
-                        if (canvasAt(cx, cy)) {
+                        // Canvas/WebGL surface → no DOM node to snap to. Return a point token at
+                        // the canvas-hit nearest the box centre (robust to a box straddling the
+                        // page chrome above the canvas). Grounding gives a PRECISE box, its strength.
+                        const cpt = canvasPointIn(b);
+                        if (cpt) {
                             if (!shot) shot = await ml.screenshot(null, {});
-                            const token = mintPoint(cx, cy);
-                            const dot = { left: cx - 11, top: cy - 11, width: 22, height: 22 };
+                            const token = mintPoint(cpt.x, cpt.y);
+                            const dot = { left: cpt.x - 11, top: cpt.y - 11, width: 22, height: 22 };
                             const ptImg = await annotate(shot, [{ rect: rectOf(b), color: YELLOW, label: "grounded region" }, { rect: dot, color: RED, label: "click point" }], dpr);
                             return {
-                                content: `Grounded "${description}"${scopeNote} on a <canvas> — no DOM element, so this is a COORDINATE: ${token} at (${Math.round(cx)}, ${Math.round(cy)}). Click it verbatim: click({ selector: "${token}" }).`,
-                                render: groundResult([boxStep, { label: "Canvas point (no DOM element)", image: ptImg }], { picked: `${token} @ (${Math.round(cx)}, ${Math.round(cy)})`, pickedBy: "snap" }),
+                                content: `Grounded "${description}"${scopeNote} on a <canvas> — no DOM element, so this is a COORDINATE: ${token} at (${Math.round(cpt.x)}, ${Math.round(cpt.y)}). Click it verbatim: click({ selector: "${token}" }).`,
+                                render: groundResult([boxStep, { label: "Canvas point (no DOM element)", image: ptImg }], { picked: `${token} @ (${Math.round(cpt.x)}, ${Math.round(cpt.y)})`, pickedBy: "snap" }),
                             };
                         }
                         const primary = elementAtPoint(cx, cy, filter);
