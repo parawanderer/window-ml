@@ -81,9 +81,14 @@ function agentToMarkdown(s: Session, addImage: AddImage): string {
                 o.push(`**Model output**${r.gaveBox ? ` — box ${r.boxCoords}` : " — no box returned"}:`, "");
                 o.push(gref ? `![step ${st.step} model output](${gref})` : "_🖼️ (image unavailable)_", "");
             }
+            if (r.fallbackNote) {
+                o.push(`> _Grounding ${r.fallbackNote} — fell back to Set-of-Marks._`, "");
+                const fref = r.fallbackImage && addImage(r.fallbackImage, `step-${st.step}-grounding-attempt`);
+                if (fref) o.push(`**Grounding attempt:**`, "", `![step ${st.step} grounding attempt](${fref})`, "");
+            }
             const eref = r.resultImage && addImage(r.resultImage, `step-${st.step}-element-location`);
             if (eref) {
-                o.push(`**Element location**${r.margin ? ` — +${r.margin}px search margin` : ""}:`, "");
+                o.push(`**${r.mode === "marks" && r.fallbackNote ? "Set-of-Marks" : "Element location"}**${r.margin ? ` — +${r.margin}px search margin` : ""}:`, "");
                 o.push(`![step ${st.step} element location](${eref})`, "");
             }
             o.push(`**${r.mode === "grounding" ? "Snapped to" : "Model picked"}:** ${r.picked || "_(none)_"}`, "");

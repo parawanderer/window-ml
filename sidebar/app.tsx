@@ -423,7 +423,11 @@ function LocateRender({ d }: { d: Extract<RenderDescriptor, { type: "locate" }> 
                     <div class="r-loc-cap">Element location{d.margin ? ` · +${d.margin}px search margin` : ""}</div>
                     <ClickableImg src={d.resultImage} alt="candidate elements" />
                 </div> : null}
-            </> : (d.resultImage ? <div class="r-loc-stage"><ClickableImg src={d.resultImage} alt="Set-of-Marks" /></div> : null)}
+            </> : <>
+                {d.fallbackNote ? <div class="r-loc-note">Grounding {d.fallbackNote} — fell back to Set-of-Marks.</div> : null}
+                {d.fallbackImage ? <div class="r-loc-stage"><div class="r-loc-cap">Grounding attempt</div><ClickableImg src={d.fallbackImage} alt="grounding attempt" /></div> : null}
+                {d.resultImage ? <div class="r-loc-stage">{d.fallbackNote ? <div class="r-loc-cap">Set-of-Marks</div> : null}<ClickableImg src={d.resultImage} alt="Set-of-Marks" /></div> : null}
+            </>}
             <div class="r-loc-picked" title={d.mode === "grounding" ? "The grounding model gave coordinates; the DOM hit-test snapped them to this element." : "The vision model picked this badge number directly."}>
                 {d.mode === "grounding" ? "Snapped to" : "Model picked"}: {d.picked ? <code>{d.picked}</code> : <span class="dim">(none)</span>}
             </div>

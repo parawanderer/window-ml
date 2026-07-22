@@ -153,6 +153,10 @@ export type RenderDescriptor = (
         gaveBox?: boolean;               // grounding: did the model return a box?
         boxCoords?: string;              // grounding: the raw coords it gave, for display
         margin?: number;                 // grounding: the search-area expansion applied
+        // marks: when 'auto' tried grounding and it missed, why (+ what it saw), so the
+        // fallback still shows the grounding attempt instead of hiding it.
+        fallbackNote?: string;
+        fallbackImage?: string;
       }
     // Which block the descriptor renders (default "out"). `exec` renders its "in"
     // (the JS); output-derived descriptors (image/elements) render "out".

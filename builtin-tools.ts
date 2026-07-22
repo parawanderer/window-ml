@@ -97,7 +97,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             properties: {
                 description: { type: "string", description: "What to find, e.g. \"the star/favourite icon next to the chat title\"." },
                 filter: { type: "string", enum: ["clickables", "inputs", "images", "all"], description: "Which elements to consider (default 'clickables')." },
-                margin: { type: "integer", description: "Optional: grow the predicted region by this many pixels before matching. If a GROUNDING locate found nothing or the WRONG element (its box narrowly missed), call again with the SAME description and a margin like 40–120 — it reuses the cached prediction (no second vision call) and re-scans a wider area." },
+                margin: { type: "integer", description: "Optional: grow the predicted box by this many pixels before matching. Use it when GROUNDING returned a box but snapped to the WRONG element (the box narrowly missed) — call again with the SAME description and a margin like 40–120; it reuses the cached box (no second vision call) and re-scans a wider area. It does NOT help when grounding returned no box at all — then re-describe the element, scroll it into view, or use strategy 'marks'." },
                 strategy: { type: "string", enum: ["auto", "grounding", "marks"], description: "How to find it (default 'auto'). 'grounding' = a coordinate model points at it directly (needs a grounding model configured; fast, best for a described spot). 'marks' = numbered badges over every candidate and the model picks by number (robust; use when grounding missed or you want to choose among cluttered candidates). 'auto' tries grounding first, then falls back to marks." },
             },
             required: ["description"],
@@ -113,6 +113,11 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             if (strategy === "grounding" && !groundingModel) {
                 return "No grounding model is configured — use strategy 'marks' (or leave it 'auto').";
             }
+
+            // If 'auto' tries grounding and it misses, we still surface that attempt on
+            // the Set-of-Marks fallback (why it missed + what the model saw) instead of
+            // silently discarding it.
+            let fbNote: string | undefined, fbImage: string | undefined;
 
             // Mechanism #1 — grounding VLM: ask for a box, snap it to the DOM by
             // hit-testing. Sent as a 1000×1000 square so `coord/groundingRange` is a
@@ -164,22 +169,35 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                                 render: { ...base, resultImage, picked },
                             };
                         }
+                        // A box was returned but nothing interactive sits under it — here a
+                        // larger `margin` genuinely helps (it expands a real box).
                         if (strategy === "grounding") {
                             return { content: `Grounding located a region for "${description}" but no ${filter} element is under it. Retry with a larger \`margin\`, or use strategy 'marks'.`, render: { ...base, resultImage } };
                         }
-                    } else if (strategy === "grounding") {
-                        return { content: `The grounding model returned no box for "${description}" — it may not be visible. Scroll it into view, or use strategy 'marks'.`, render: { ...base } };
+                        fbNote = `found a region but no ${filter} element under it`; fbImage = resultImage;
+                    } else {
+                        // No box at all — a `margin` can't expand what doesn't exist, so say so
+                        // explicitly rather than let the model waste a step retrying with one.
+                        if (strategy === "grounding") {
+                            const m = margin ? " A `margin` can't help without a box — " : " ";
+                            return { content: `The grounding model returned no box for "${description}".${m}It may not be visible: scroll it into view, re-describe it, or use strategy 'marks'.`, render: { ...base } };
+                        }
+                        fbNote = "returned no box"; fbImage = groundingImage;
                     }
-                } else if (strategy === "grounding") {
-                    return `Grounding failed for "${description}" (the vision call errored). Try again, or use strategy 'marks'.`;
+                } else {
+                    if (strategy === "grounding") {
+                        return `Grounding failed for "${description}" (the vision call errored). Try again, or use strategy 'marks'.`;
+                    }
+                    fbNote = "the vision call errored";
                 }
-                // strategy 'auto' → fall through to Set-of-Marks.
+                // strategy 'auto' → fall through to Set-of-Marks (carrying fbNote/fbImage).
             }
 
             // Mechanism #2 — Set-of-Marks (default, and the 'auto' grounding fallback).
             const somReader = model || groundingModel;   // a grounding model can read badges too
             const cands = collectCandidates(filter);
-            if (!cands.length) return `No ${filter} candidates visible in the viewport. Scroll the target into view, widen the filter (try 'all'), then call again.`;
+            const gp = fbNote ? `(Grounding ${fbNote}.) ` : "";   // let the model know grounding was tried
+            if (!cands.length) return `${gp}No ${filter} candidates visible in the viewport. Scroll the target into view, widen the filter (try 'all'), then call again.`;
             const marks = buildMarks(cands);
             let badged: string;
             try {
@@ -192,12 +210,12 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             const answer = String(await ml.chat(somPrompt, { images: [badged], model: somReader, numCtx: VISION_NUM_CTX, maxTokens })).trim();
             const pick = (answer.match(/\d+/) || [])[0];
             const chosen = pick ? marks.find(m => m.id === Number(pick)) : undefined;
-            const render = { type: "locate" as const, mode: "marks" as const, model: String(somReader || "default"), resultImage: badged, picked: chosen ? `#${chosen.id} ${pickedStr(chosen)}` : undefined };
+            const render = { type: "locate" as const, mode: "marks" as const, model: String(somReader || "default"), resultImage: badged, picked: chosen ? `#${chosen.id} ${pickedStr(chosen)}` : undefined, fallbackNote: fbNote, fallbackImage: fbImage };
             if (!chosen) {
-                return { content: `No badge matched "${description}" (model replied "${truncate(answer, 40)}"). Candidates:\n${listOf(marks)}`, elements: cands.slice(0, 50), render };
+                return { content: `${gp}No badge matched "${description}" (model replied "${truncate(answer, 40)}"). Candidates:\n${listOf(marks)}`, elements: cands.slice(0, 50), render };
             }
             return {
-                content: `Matched "${description}" → #${chosen.id} ${pickedStr(chosen)}\n(click/type/answer with this selector)\n\nAll candidates:\n${listOf(marks)}`,
+                content: `${gp}Matched "${description}" → #${chosen.id} ${pickedStr(chosen)}\n(click/type/answer with this selector)\n\nAll candidates:\n${listOf(marks)}`,
                 elements: [chosen.el],
                 render,
             };

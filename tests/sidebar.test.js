@@ -622,6 +622,25 @@ test("locate render: marks mode shows the model up top and the pick at the botto
     assert.match(loc.querySelector(".r-loc-picked").textContent, /Model picked:.*nth-of-type\(2\)/);
 });
 
+test("locate render: auto-fallback surfaces the grounding attempt above the Set-of-Marks pass", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("lfb", "find it"));
+    await w.dispatch(agentStep("lfb", 1, { tool: "locate", arguments: { description: "trash" }, elements: 1, render: {
+        type: "locate", mode: "marks", model: "gemma4:31b",
+        resultImage: "data:image/png;base64,MARKS", picked: "#2 [button] → #bar > div:nth-of-type(2)",
+        fallbackNote: "returned no box", fallbackImage: "data:image/png;base64,GROUND",
+    } }));
+    await w.dispatch(agentResult("lfb", "done", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    for (const h of w.shadow.querySelectorAll(".astep.tool .astep-head")) h.click();
+    await w.tick();
+    const loc = w.shadow.querySelector(".r-locate");
+    assert.match(loc.querySelector(".r-loc-note").textContent, /Grounding returned no box.*fell back to Set-of-Marks/);
+    const imgs = [...loc.querySelectorAll(".r-loc-stage img")].map(i => i.getAttribute("src"));
+    assert.deepEqual(imgs, ["data:image/png;base64,GROUND", "data:image/png;base64,MARKS"], "grounding attempt first, then marks");
+});
+
 test("agent tool step: descriptor renders its target block; the other stays raw (per-block)", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("agt", "run js"));
