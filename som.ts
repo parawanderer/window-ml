@@ -9,6 +9,7 @@
 
 import { clickSelector } from "./dom";
 import { styleHidden, roleOf, accessibleName } from "./a11y";
+import { SB_ROOT } from "./ids";
 
 export type MarkFilter = "clickables" | "inputs" | "images" | "all";
 
@@ -75,6 +76,25 @@ export function representativeFor(hit: Element, filter: MarkFilter): Element | n
 }
 
 /**
+ * Run a DOM hit-test (`elementFromPoint`) with the debug sidebar overlay hidden, so it
+ * reaches page content UNDER the fixed, right-docked panel — matching the sidebar-hidden
+ * SCREENSHOT the vision model saw. Otherwise a target the model correctly points at (in
+ * the right strip) hit-tests to the panel and locate reports "no element". visibility:hidden
+ * is instant and flushed by the next elementFromPoint; a no-op when the sidebar is off.
+ */
+export function withHiddenSidebar<T>(fn: () => T): T {
+    // The panel + lightbox live INSIDE the shell's shadow root — unreachable via
+    // getElementById — so hide the light-DOM shadow HOST (#ml-sb-root); visibility
+    // inherits into the shadow subtree, exactly as the screenshot-hide does.
+    const host = (typeof document !== "undefined" && document.getElementById(SB_ROOT)) as HTMLElement | null;
+    if (!host) return fn();
+    const prev = host.style.visibility;
+    host.style.visibility = "hidden";
+    try { return fn(); }
+    finally { host.style.visibility = prev; }
+}
+
+/**
  * Hit-test sweep of the viewport: sample a grid of points, take the topmost
  * element at each (so occluded elements are excluded for free), reduce each to its
  * representative for `filter`, and collect the unique, visible, non-tiny ones.
@@ -84,6 +104,7 @@ export function representativeFor(hit: Element, filter: MarkFilter): Element | n
  * @returns {Element[]} Unique candidate elements, in reading order (top-left first).
  */
 export function collectCandidates(filter: MarkFilter, opts: { step?: number; max?: number } = {}): Element[] {
+  return withHiddenSidebar(() => {
     const step = opts.step ?? 24, max = opts.max ?? 40;
     const W = window.innerWidth, H = window.innerHeight;
     const seen = new Set<Element>();
@@ -103,6 +124,7 @@ export function collectCandidates(filter: MarkFilter, opts: { step?: number; max
         }
     }
     return out;
+  });
 }
 
 /** Turn candidate elements into numbered Marks (1-based), with role/name/selector. */
@@ -462,11 +484,14 @@ export function cellsBox(cells: number[], cols: number, rows: number, region: { 
     };
 }
 
-/** The representative interactive element painted at a viewport point (CSS px). */
+/** The representative interactive element painted at a viewport point (CSS px), with the
+ *  debug sidebar overlay ignored (so a point under the panel reaches page content). */
 export function elementAtPoint(x: number, y: number, filter: MarkFilter): Element | null {
-    let hit: Element | null;
-    try { hit = document.elementFromPoint(x, y); } catch { return null; }
-    return hit ? representativeFor(hit, filter) : null;
+    return withHiddenSidebar(() => {
+        let hit: Element | null;
+        try { hit = document.elementFromPoint(x, y); } catch { return null; }
+        return hit ? representativeFor(hit, filter) : null;
+    });
 }
 
 /**
@@ -475,6 +500,7 @@ export function elementAtPoint(x: number, y: number, filter: MarkFilter): Elemen
  * inside it. Same reduction/dedup as collectCandidates, clamped to the viewport.
  */
 export function collectInBox(box: Box, filter: MarkFilter, opts: { step?: number; max?: number } = {}): Element[] {
+  return withHiddenSidebar(() => {
     const step = opts.step ?? 18, max = opts.max ?? 20;
     const x0 = Math.max(0, box.left), x1 = Math.min(window.innerWidth, box.right);
     const y0 = Math.max(0, box.top), y1 = Math.min(window.innerHeight, box.bottom);
@@ -482,7 +508,9 @@ export function collectInBox(box: Box, filter: MarkFilter, opts: { step?: number
     const out: Element[] = [];
     for (let y = y0 + step / 2; y < y1; y += step) {
         for (let x = x0 + step / 2; x < x1; x += step) {
-            const el = elementAtPoint(x, y, filter);
+            let hit: Element | null;
+            try { hit = document.elementFromPoint(x, y); } catch { continue; }
+            const el = hit ? representativeFor(hit, filter) : null;
             if (!el || seen.has(el) || styleHidden(el)) continue;
             const r = el.getBoundingClientRect();
             if (r.width < 4 || r.height < 4) continue;
@@ -491,4 +519,5 @@ export function collectInBox(box: Box, filter: MarkFilter, opts: { step?: number
         }
     }
     return out;
+  });
 }

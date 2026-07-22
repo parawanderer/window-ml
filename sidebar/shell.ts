@@ -7,30 +7,32 @@
 // the page's `__mlDebug` stream (from injected.js, main world) into the iframe.
 // injected.js is unchanged: it still emits only after the `__mlSidebar:"ready"`
 // handshake, which the shell sends once the iframe app reports it's listening.
+import { SB_ROOT, SB_HOST, SB_TAB, SB_FRAME, SB_LIGHTBOX, SB_LIGHTBOX_X } from "../ids";
+
 const WIDTH_KEY = "ml_debug_width";
 const MIN_W = 280, TAB_W = 34, DEFAULT_W = 400;
 
 const SHELL_CSS = `
-#ml-sb-host { position: fixed; top: 0; right: 0; height: 100vh; display: flex;
+#${SB_HOST} { position: fixed; top: 0; right: 0; height: 100vh; display: flex;
   z-index: 2147483000; transform: translateX(calc(100% - ${TAB_W}px)); transition: transform .22s ease; }
-#ml-sb-host.open { transform: translateX(0); }
-#ml-sb-tab { width: ${TAB_W}px; flex: 0 0 ${TAB_W}px; cursor: pointer; border: none;
+#${SB_HOST}.open { transform: translateX(0); }
+#${SB_TAB} { width: ${TAB_W}px; flex: 0 0 ${TAB_W}px; cursor: pointer; border: none;
   background: #4f46e5; color: #fff; writing-mode: vertical-rl; text-orientation: mixed;
   letter-spacing: .08em; font: 600 12px system-ui, sans-serif; padding: 10px 0;
   border-radius: 6px 0 0 6px; align-self: center; height: 150px; box-shadow: -2px 0 8px rgba(0,0,0,.35); }
-#ml-sb-tab:hover { background: #6366f1; }
+#${SB_TAB}:hover { background: #6366f1; }
 #ml-sb-body { position: relative; flex: 1; min-width: 0; height: 100%; box-shadow: -4px 0 20px rgba(0,0,0,.4); }
 #ml-sb-resize { position: absolute; left: -3px; top: 0; width: 7px; height: 100%; cursor: ew-resize; z-index: 1; }
 #ml-sb-resize:hover, #ml-sb-resize.drag { background: #6366f1; opacity: .5; }
-#ml-sb-frame { display: block; width: 100%; height: 100%; border: 0; }
+#${SB_FRAME} { display: block; width: 100%; height: 100%; border: 0; }
 /* Full-window image lightbox (a sibling of the panel, so no transformed
    ancestor — position:fixed maps to the whole viewport). */
-#ml-lightbox { position: fixed; inset: 0; z-index: 2147483001; background: rgba(0,0,0,.82);
+#${SB_LIGHTBOX} { position: fixed; inset: 0; z-index: 2147483001; background: rgba(0,0,0,.82);
   display: flex; align-items: center; justify-content: center; padding: 28px; cursor: zoom-out; }
-#ml-lightbox img { max-width: 100%; max-height: 100%; border-radius: 6px; box-shadow: 0 10px 50px rgba(0,0,0,.6); cursor: default; }
-#ml-lightbox-x { position: fixed; top: 12px; right: 16px; width: 32px; height: 32px; border-radius: 7px;
+#${SB_LIGHTBOX} img { max-width: 100%; max-height: 100%; border-radius: 6px; box-shadow: 0 10px 50px rgba(0,0,0,.6); cursor: default; }
+#${SB_LIGHTBOX_X} { position: fixed; top: 12px; right: 16px; width: 32px; height: 32px; border-radius: 7px;
   border: 1px solid rgba(255,255,255,.35); background: rgba(0,0,0,.5); color: #fff; font: 16px system-ui; cursor: pointer; }
-#ml-lightbox-x:hover { background: rgba(0,0,0,.85); }
+#${SB_LIGHTBOX_X}:hover { background: rgba(0,0,0,.85); }
 `;
 
 let shellHost: HTMLElement | null = null;   // shadow host in the page's light DOM
@@ -50,13 +52,13 @@ function showLightbox(src: string): void {
     if (!shadowRoot) return;
     hideLightbox();
     lightbox = document.createElement("div");
-    lightbox.id = "ml-lightbox";
+    lightbox.id = SB_LIGHTBOX;
     lightbox.addEventListener("click", hideLightbox);   // backdrop click closes
     const img = document.createElement("img");
     img.src = src;
     img.addEventListener("click", (e) => e.stopPropagation());
     const x = document.createElement("button");
-    x.id = "ml-lightbox-x"; x.textContent = "✕"; x.title = "Close (Esc)";
+    x.id = SB_LIGHTBOX_X; x.textContent = "✕"; x.title = "Close (Esc)";
     x.addEventListener("click", hideLightbox);
     lightbox.append(x, img);
     shadowRoot.append(lightbox);
@@ -127,7 +129,7 @@ function mount(): void {
     // page rules that target the host element itself. Secrets still live in the
     // iframe (its own extension origin), not in this shell.
     shellHost = document.createElement("div");
-    shellHost.id = "ml-sb-root";
+    shellHost.id = SB_ROOT;
     shellHost.style.cssText = "all: initial;";
     const root = shellHost.attachShadow({ mode: "open" });
     shadowRoot = root;
@@ -137,10 +139,10 @@ function mount(): void {
     root.append(style);
 
     panel = document.createElement("div");
-    panel.id = "ml-sb-host";
+    panel.id = SB_HOST;
 
     const tab = document.createElement("button");
-    tab.id = "ml-sb-tab";
+    tab.id = SB_TAB;
     tab.title = "window.ml debug";
     tab.textContent = "ml · debug";
     tab.addEventListener("click", toggleOpen);
@@ -152,7 +154,7 @@ function mount(): void {
     resize.title = "Drag to resize";
     resize.addEventListener("pointerdown", startResize);
     frame = document.createElement("iframe");
-    frame.id = "ml-sb-frame";
+    frame.id = SB_FRAME;
     frame.allow = "clipboard-write";   // delegate the Clipboard API into the extension iframe
     frame.src = chrome.runtime.getURL("sidebar.html");
     body.append(resize, frame);

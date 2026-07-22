@@ -8,7 +8,7 @@ import type { MlApi, MlTool, LocateSubstep } from "./contract";
 import { DEFAULT_GROUNDING_RANGE } from "./contract";
 import { truncate, errText, elLine, queryAll, selectorError } from "./dom";
 import { settle, VISION_NUM_CTX, cropDataUrl, MIN_SHOT_PX, POINT_RE, mintPoint, resolvePoint } from "./util";
-import { collectCandidates, buildMarks, annotate, formatBox, letterboxToSquare, projectFromSquare, drawGrid, gridDims, validateCells, cellsBox, collectInBox, elementAtPoint, viewportBox, colorWordHues, pickOverlayColor, pickAccentColor, type MarkFilter, type Box, type Mark } from "./som";
+import { collectCandidates, buildMarks, annotate, formatBox, letterboxToSquare, projectFromSquare, drawGrid, gridDims, validateCells, cellsBox, collectInBox, elementAtPoint, viewportBox, colorWordHues, pickOverlayColor, pickAccentColor, withHiddenSidebar, type MarkFilter, type Box, type Mark } from "./som";
 
 // --- Coordinate targets (canvas / WebGL) -----------------------------------
 // A <canvas> has NO sub-node to snap to, so `locate` mints an OPAQUE `@pt:` token (see
@@ -26,7 +26,7 @@ const canvasAt = (x: number, y: number): Element | null => {
  * canvas — e.g. a target near the canvas's top edge — still yields a clickable coordinate
  * instead of a spurious "no element". Returns null when no sampled point hits a canvas.
  */
-const canvasPointIn = (box: Box): { x: number; y: number } | null => {
+const canvasPointIn = (box: Box): { x: number; y: number } | null => withHiddenSidebar(() => {
     const cx = (box.left + box.right) / 2, cy = (box.top + box.bottom) / 2;
     const w = box.right - box.left, h = box.bottom - box.top;
     const F = [0.15, 0.35, 0.5, 0.65, 0.85];
@@ -36,11 +36,12 @@ const canvasPointIn = (box: Box): { x: number; y: number } | null => {
         if (canvasAt(x, y)) { const d = Math.hypot(x - cx, y - cy); if (!best || d < best.d) best = { x, y, d }; }
     }
     return best ? { x: best.x, y: best.y } : null;
-};
+});
 /** Synthesize a real click at a viewport coordinate (for canvas surfaces): the full
  *  pointer/mouse sequence at (x,y) on the topmost element there. */
 const clickAt = (x: number, y: number): Element | null => {
-    const el = canvasAt(x, y) || (() => { try { return document.elementFromPoint(x, y); } catch { return null; } })();
+    // Ignore the debug sidebar overlay so a click under the panel reaches the canvas/page.
+    const el = withHiddenSidebar(() => canvasAt(x, y) || (() => { try { return document.elementFromPoint(x, y); } catch { return null; } })());
     if (!el) return null;
     const base: MouseEventInit = { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, view: window };
     const hasPointer = typeof PointerEvent === "function";

@@ -6,6 +6,7 @@
  */
 
 import type { FetchLlmPayload } from "./contract";
+import { SB_ROOT } from "./ids";
 
 /**
  * Ask the debug sidebar shell to hide its overlay for a screenshot (so it
@@ -16,7 +17,7 @@ import type { FetchLlmPayload } from "./contract";
  * @returns {Promise<void>} Resolves once the sidebar has painted its hidden state (or immediately if unmounted).
  */
 export const hideSidebarForShot = (): Promise<void> => new Promise(resolve => {
-    const mounted = typeof document.getElementById === "function" && document.getElementById("ml-sb-root");
+    const mounted = typeof document.getElementById === "function" && document.getElementById(SB_ROOT);
     if (!mounted) return resolve();   // sidebar off → nothing to hide, no wait
     let done = false;
     const finish = () => { if (done) return; done = true; window.removeEventListener("message", onAck); clearTimeout(timer); resolve(); };
