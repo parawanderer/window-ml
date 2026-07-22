@@ -71,11 +71,13 @@ function onWindowMessage(e: MessageEvent): void {
     // the hidden state has painted before the capture fires.
     if (d.__mlSidebarShot === "hide") {
         if (shellHost) shellHost.style.visibility = "hidden";
+        if (lightbox) lightbox.style.visibility = "hidden";   // full-viewport overlay — MUST hide too, else the shot is all backdrop
         requestAnimationFrame(() => requestAnimationFrame(() => window.postMessage({ __mlSidebarShot: "hidden" }, "*")));
         return;
     }
     if (d.__mlSidebarShot === "show") {
         if (shellHost) shellHost.style.visibility = "";
+        if (lightbox) lightbox.style.visibility = "";
         return;
     }
     // The iframe app asks to open an image full-window (ClickableImg).
