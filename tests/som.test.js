@@ -16,7 +16,22 @@ function world(html) {
     return dom.window.document;
 }
 const som = require("../dist/som.js");
-const { representativeFor, isClickish, buildMarks, viewportBox, formatBox, projectFromSquare } = som;
+const { representativeFor, isClickish, buildMarks, viewportBox, formatBox, projectFromSquare, gridCellBox } = som;
+
+test("gridCellBox maps a 1-based cell (row-major) to its viewport box, within a region", () => {
+    const full = { left: 0, top: 0, width: 1600, height: 900 };
+    // 4×4 over the full viewport: cell 1 is the top-left 400×225 tile.
+    assert.deepEqual(gridCellBox(1, 4, 4, full), { left: 0, top: 0, right: 400, bottom: 225 });
+    // cell 6 = row 1, col 1 (0-based) → offset by one tile on each axis.
+    assert.deepEqual(gridCellBox(6, 4, 4, full), { left: 400, top: 225, right: 800, bottom: 450 });
+    // cell 16 = the bottom-right tile.
+    assert.deepEqual(gridCellBox(16, 4, 4, full), { left: 1200, top: 675, right: 1600, bottom: 900 });
+    // Within a scoped/zoomed region the offset carries through.
+    const region = { left: 100, top: 200, width: 400, height: 400 };
+    assert.deepEqual(gridCellBox(1, 2, 2, region), { left: 100, top: 200, right: 300, bottom: 400 });
+    // Out-of-range cells clamp instead of producing a NaN box.
+    assert.deepEqual(gridCellBox(99, 2, 2, region), gridCellBox(4, 2, 2, region));
+});
 
 test("projectFromSquare inverts a letterbox: ONE scale (max side) on both axes, + region offset", () => {
     // Full viewport 1600×900, range 1000. Letterbox fits by the long side (1600), so

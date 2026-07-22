@@ -160,9 +160,9 @@ text-only driver can use it. The badged image rides `ToolResult.render` → side
 never history. Auto-wired into `ml.agent` alongside `look` whenever `_resolveVisionModel`
 resolves a reader (agent-model-if-vision → OCR model).
 
-**Two mechanisms, driver picks (`strategy`).** `locate({ strategy })` — `"marks"` (above),
-`"grounding"` (a coordinate VLM points at it), or `"auto"` (grounding-first, marks
-fallback). Grounding is **opt-in** config (`groundingEnabled`/`groundingModel`, off by
+**Three mechanisms, driver picks (`strategy`).** `locate({ strategy })` — `"marks"` (above),
+`"grounding"` (a coordinate VLM points at it), `"grid"` (below), or `"auto"`
+(grounding-first, marks fallback; `grid` is explicit-only, never in `auto`). Grounding is **opt-in** config (`groundingEnabled`/`groundingModel`, off by
 default — it loads a 3rd model into VRAM): the search region is **letterboxed** into a
 **1000×1000 square** (`letterboxToSquare` — aspect-preserving; a stretch mangles an
 arbitrary-shaped crop) so one configurable **`groundingRange`** (the coord divisor, default
@@ -179,6 +179,25 @@ with that explanation. An **`auto` grounding miss** isn't discarded: the marks f
 render carries `fallbackNote`/`fallbackImage` (why it missed + what the model saw), and the
 model-facing result gets a short "(Grounding …)" prefix.
 
+**Grid mechanism (`strategy:"grid"`).** `drawGrid` overlays an **N×N numbered grid**
+(default 4, `gridSize` 2–8) on the region and asks the reader *"which cell holds the
+target?"* — multiple-choice classification, so it needs **no coordinate training** (works
+with any vision model) and **can't hallucinate an (x,y)** (the marks argument, but over
+fixed cells rather than per-element badges — robust even where the sweep finds few
+candidates). Downstream is **identical to grounding**: the chosen cell is a box → the same
+`collectInBox` sweep snaps it to a DOM node → returns its `clickSelector`. `gridCellBox`
+(pure, tested) maps a 1-based cell (row-major) to a viewport Box and is its own inverse for
+**hierarchical refine** — the driver re-runs with the returned `cell` to zoom (that cell
+becomes the next region, a fresh grid drawn inside it), driver-decided but delegation-safe
+(the vision sub-call always picks; the driver only echoes a cell the tool *reported*, never
+authoring coordinates). Available whenever a vision **reader** resolves (`model ||
+groundingModel`), NOT gated on `groundingEnabled`. Grid reuses the `locate` render
+(`mode:"grid"`: the numbered grid the model saw with the picked cell highlighted +
+`griddedImage`/`cell`/`gridSize`, then the DOM-snap `resultImage`); it snaps to the DOM, so
+the footer reads **"Snapped to"** like grounding. This is slice 3's **DOM-first** half; the
+canvas/WebGL half (a cell over a bare `<canvas>` has no sub-node → an opaque coordinate
+currency + a coordinate-click primitive) is a deliberate follow-up.
+
 **Scope to a container (`selector`/`index`).** `locate({ selector, index })` crops the
 search to one element's region (a list row, a toolbar, a card) — far more reliable for a
 small target in a busy page. It scrolls the container into view first (like look/click),
@@ -192,9 +211,10 @@ Delegated vision sub-calls (OCR, grounding, delegated `look`) cap `num_ctx` at
 `VISION_NUM_CTX` (util.ts) so a vision model's huge default context doesn't pre-allocate tens
 of GB of KV cache and OOM modest cards — NOT the native look (that reuses the agent's own
 model). `som.ts` unit-tested standalone (`dist/som.js`, `tests/som.test.js`:
-`representativeFor` walk-up + `viewportBox`/`projectFromSquare` coord mapping;
+`representativeFor` walk-up + `viewportBox`/`projectFromSquare`/`gridCellBox` coord mapping;
 `elementFromPoint`/canvas are jsdom no-ops); scoping guards in `tests/agent.test.js`. Slices
-1–2 of `tmp/visual_element_selection_design.md`; grid mechanism is later.
+1–3 (DOM-first) of `tmp/visual_element_selection_design.md`; grid's canvas/coordinate half
+and slice 4 remain.
 
 **Agent runs in the debug sidebar.** `ml.agent` emits its own debug-event kinds
 (not `chat`): `agent` (run start: task + model), `agent-step` (one per step — a

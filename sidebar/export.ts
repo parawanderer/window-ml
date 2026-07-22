@@ -74,12 +74,17 @@ function agentToMarkdown(s: Session, addImage: AddImage): string {
         } else if (st.render && st.render.type === "locate") {
             // The full grounding/SoM debug view, mirroring the sidebar's locate render.
             const r = st.render;
-            o.push(`> _${r.mode === "grounding" ? "Grounding" : "Set-of-Marks"} · ${r.model}_`, "");
+            o.push(`> _${r.mode === "grounding" ? "Grounding" : r.mode === "grid" ? "Grid" : "Set-of-Marks"} · ${r.model}_`, "");
             if (r.mode === "grounding") {
                 if (r.prompt) o.push("<details><summary>Prompt to the model</summary>", "", fence(r.prompt), "", "</details>", "");
                 const gref = r.groundingImage && addImage(r.groundingImage, `step-${st.step}-model-output`);
                 o.push(`**Model output**${r.gaveBox ? ` — box ${r.boxCoords}` : " — no box returned"}:`, "");
                 o.push(gref ? `![step ${st.step} model output](${gref})` : "_🖼️ (image unavailable)_", "");
+            } else if (r.mode === "grid") {
+                if (r.prompt) o.push("<details><summary>Prompt to the model</summary>", "", fence(r.prompt), "", "</details>", "");
+                const gref = r.griddedImage && addImage(r.griddedImage, `step-${st.step}-grid`);
+                o.push(`**Grid**${r.gridSize ? ` ${r.gridSize}×${r.gridSize}` : ""}${r.cell ? ` — picked cell ${r.cell}` : " — no cell"}:`, "");
+                o.push(gref ? `![step ${st.step} grid](${gref})` : "_🖼️ (image unavailable)_", "");
             }
             if (r.fallbackNote) {
                 o.push(`> _Grounding ${r.fallbackNote} — fell back to Set-of-Marks._`, "");
@@ -91,7 +96,7 @@ function agentToMarkdown(s: Session, addImage: AddImage): string {
                 o.push(`**${r.mode === "marks" && r.fallbackNote ? "Set-of-Marks" : "Element location"}**${r.margin ? ` — +${r.margin}px search margin` : ""}:`, "");
                 o.push(`![step ${st.step} element location](${eref})`, "");
             }
-            o.push(`**${r.mode === "grounding" ? "Snapped to" : "Model picked"}:** ${r.picked || "_(none)_"}`, "");
+            o.push(`**${r.mode === "marks" ? "Model picked" : "Snapped to"}:** ${r.picked || "_(none)_"}`, "");
         }
         if (st.result != null && st.result !== "") o.push("**Out:**", "", fence(st.result), "");
         else if (st.elements != null) o.push(`**Out:** ${st.elements} element(s)`, "");

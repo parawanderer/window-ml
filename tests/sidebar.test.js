@@ -641,6 +641,28 @@ test("locate render: auto-fallback surfaces the grounding attempt above the Set-
     assert.deepEqual(imgs, ["data:image/png;base64,GROUND", "data:image/png;base64,MARKS"], "grounding attempt first, then marks");
 });
 
+test("locate render: grid mode shows the numbered grid + picked cell, then the DOM snap", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("lgr", "find it"));
+    await w.dispatch(agentStep("lgr", 1, { tool: "locate", arguments: { description: "star", strategy: "grid" }, elements: 1, render: {
+        type: "locate", mode: "grid", model: "gemma4:31b", gridSize: 4, cell: 6,
+        griddedImage: "data:image/png;base64,GRID", resultImage: "data:image/png;base64,SNAP",
+        picked: "[button] → #bar > div:nth-of-type(3)", prompt: "This image is divided into a 4×4 …",
+    } }));
+    await w.dispatch(agentResult("lgr", "done", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    for (const h of w.shadow.querySelectorAll(".astep.tool .astep-head")) h.click();
+    await w.tick();
+    const loc = w.shadow.querySelector(".r-locate");
+    assert.match(loc.querySelector(".r-loc-head").textContent, /Grid · gemma4:31b/);
+    assert.match([...loc.querySelectorAll(".r-loc-cap")].map(c => c.textContent).join(" "), /Grid 4×4 · picked cell 6/);
+    const imgs = [...loc.querySelectorAll(".r-loc-stage img")].map(i => i.getAttribute("src"));
+    assert.deepEqual(imgs, ["data:image/png;base64,GRID", "data:image/png;base64,SNAP"], "grid image then the snap");
+    // Grid snaps to the DOM (the model chose a cell, not the element) → "Snapped to".
+    assert.match(loc.querySelector(".r-loc-picked").textContent, /Snapped to:.*nth-of-type\(3\)/);
+});
+
 test("agent tool step: descriptor renders its target block; the other stays raw (per-block)", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("agt", "run js"));
@@ -859,6 +881,28 @@ test("export: an auto-fallback locate step serialises the grounding attempt + th
     assert.ok(latin1.includes("images/step-1-element-location.png"), "the marks pass sidecar");
     assert.match(latin1, /Grounding returned no box .{1,4} fell back to Set-of-Marks/, "the fallback note");
     assert.match(latin1, /Model picked:.*nth-of-type\(2\)/, "marks pick");
+});
+
+test("export: a grid locate step serialises the numbered grid + the DOM snap", async () => {
+    const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    const url = "data:image/png;base64," + PNG;
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("expg", "find the star", "gemma4:31b", 10));
+    await w.dispatch(agentStep("expg", 1, { tool: "locate", arguments: { description: "star", strategy: "grid" }, elements: 1, render: {
+        type: "locate", mode: "grid", model: "gemma4:31b", gridSize: 4, cell: 6,
+        griddedImage: url, resultImage: url, picked: "[button] → #bar > div:nth-of-type(3)", prompt: "This image is divided into a 4×4 …",
+    } }));
+    await w.dispatch(agentResult("expg", "clicked star", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+
+    const { blob } = await captureExport(w);
+    const latin1 = String.fromCharCode(...new Uint8Array(await blob.arrayBuffer()));
+    assert.ok(latin1.includes("images/step-1-grid.png"), "grid image sidecar");
+    assert.ok(latin1.includes("images/step-1-element-location.png"), "the DOM-snap sidecar");
+    assert.match(latin1, /Grid.{1,4}gemma4:31b/, "mode + model");
+    assert.match(latin1, /picked cell 6/, "picked cell");
+    assert.match(latin1, /Snapped to:.*nth-of-type\(3\)/, "grid snaps to the DOM");
 });
 
 test("export: a chat session downloads a markdown log (options, turns, reply)", async () => {

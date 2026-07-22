@@ -274,6 +274,55 @@ export function viewportBox(coords: number[], range: number, w: number, h: numbe
     };
 }
 
+/**
+ * Draw a `cols`×`rows` numbered grid over an image in memory — cells numbered 1..N
+ * left-to-right, top-to-bottom, a label in each cell's top-left. The grid mechanism
+ * asks a vision model "which cell holds <target>?", turning spatial grounding into a
+ * multiple-choice pick that needs no coordinate training and can't hallucinate an
+ * (x,y). `scale` sizes the lines/labels (dpr). Never touches the live page.
+ */
+export function drawGrid(dataUrl: string, cols: number, rows: number, scale: number): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+            const cv = document.createElement("canvas");
+            cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+            const ctx = cv.getContext("2d");
+            if (!ctx) return reject(new Error("no 2d canvas context for grid"));
+            ctx.drawImage(img, 0, 0);
+            const cw = cv.width / cols, ch = cv.height / rows;
+            const fs = Math.round(13 * scale), pad = Math.round(3 * scale);
+            ctx.strokeStyle = "#ff2d55"; ctx.lineWidth = Math.max(1, Math.round(1.5 * scale));
+            ctx.font = `bold ${fs}px sans-serif`; ctx.textBaseline = "top";
+            for (let c = 1; c < cols; c++) { ctx.beginPath(); ctx.moveTo(c * cw, 0); ctx.lineTo(c * cw, cv.height); ctx.stroke(); }
+            for (let r = 1; r < rows; r++) { ctx.beginPath(); ctx.moveTo(0, r * ch); ctx.lineTo(cv.width, r * ch); ctx.stroke(); }
+            for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+                const n = String(r * cols + c + 1);
+                const bw = Math.ceil(ctx.measureText(n).width) + pad * 2, bh = fs + pad * 2;
+                const x = c * cw + Math.round(2 * scale), y = r * ch + Math.round(2 * scale);
+                ctx.fillStyle = "rgba(255,45,85,0.85)"; ctx.fillRect(x, y, bw, bh);
+                ctx.fillStyle = "#fff"; ctx.fillText(n, x + pad, y + pad);
+            }
+            resolve(cv.toDataURL("image/png"));
+        };
+        img.onerror = () => reject(new Error("failed to load screenshot for grid"));
+        img.src = dataUrl;
+    });
+}
+
+/**
+ * The viewport Box of a 1-based grid cell (numbered left-to-right, top-to-bottom) in a
+ * `cols`×`rows` grid laid over `region`. Inverse of drawGrid's numbering — snaps the
+ * model's chosen cell to a DOM sweep, and lets a cell become the next region (zoom).
+ */
+export function gridCellBox(cell: number, cols: number, rows: number, region: { left: number; top: number; width: number; height: number }): Box {
+    const i = Math.max(1, Math.min(cols * rows, Math.round(cell))) - 1;
+    const col = i % cols, row = Math.floor(i / cols);
+    const cw = region.width / cols, ch = region.height / rows;
+    const left = region.left + col * cw, top = region.top + row * ch;
+    return { left, top, right: left + cw, bottom: top + ch };
+}
+
 /** The representative interactive element painted at a viewport point (CSS px). */
 export function elementAtPoint(x: number, y: number, filter: MarkFilter): Element | null {
     let hit: Element | null;

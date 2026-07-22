@@ -8,7 +8,7 @@ import type { MlApi, MlTool } from "./contract";
 import { DEFAULT_GROUNDING_RANGE } from "./contract";
 import { truncate, errText, elLine, queryAll, selectorError } from "./dom";
 import { settle, VISION_NUM_CTX, cropDataUrl, MIN_SHOT_PX } from "./util";
-import { collectCandidates, buildMarks, drawMarks, annotate, formatBox, letterboxToSquare, projectFromSquare, collectInBox, elementAtPoint, viewportBox, type MarkFilter, type Box } from "./som";
+import { collectCandidates, buildMarks, drawMarks, annotate, formatBox, letterboxToSquare, projectFromSquare, drawGrid, gridCellBox, collectInBox, elementAtPoint, viewportBox, type MarkFilter, type Box } from "./som";
 
 export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512 }: { model?: string | null; maxTokens?: number } = {}): MlTool => {
     return ml.defineTool({
@@ -98,16 +98,44 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
         parameters: {
             type: "object",
             properties: {
-                description: { type: "string", description: "What to find, e.g. \"the star/favourite icon next to the chat title\"." },
-                filter: { type: "string", enum: ["clickables", "inputs", "images", "all"], description: "Which elements to consider (default 'clickables')." },
-                selector: { type: "string", description: "Optional: a CSS selector for a CONTAINER to scope the search to (its region is cropped and searched alone). Use it to pin down a target inside one known area — a specific list row, a toolbar, a card. Scrolls the container into view first." },
-                index: { type: "integer", description: "Which match of `selector` to scope to (0-based); default 0." },
-                margin: { type: "integer", description: "Optional: grow the predicted box by this many pixels before matching. Use it when GROUNDING returned a box but snapped to the WRONG element (the box narrowly missed) — call again with the SAME description and a margin like 40–120; it reuses the cached box (no second vision call) and re-scans a wider area. It does NOT help when grounding returned no box at all — then re-describe the element, scroll it into view, or use strategy 'marks'." },
-                strategy: { type: "string", enum: ["auto", "grounding", "marks"], description: "How to find it (default 'auto'). 'grounding' = a coordinate model points at it directly (needs a grounding model configured; fast, best for a described spot). 'marks' = numbered badges over every candidate and the model picks by number (robust; use when grounding missed or you want to choose among cluttered candidates). 'auto' tries grounding first, then falls back to marks." },
+                description: {
+                    type: "string",
+                    description: "What to find, e.g. \"the star/favourite icon next to the chat title\"."
+                },
+                filter: {
+                    type: "string",
+                    enum: ["clickables", "inputs", "images", "all"],
+                    description: "Which elements to consider (default 'clickables')."
+                },
+                selector: {
+                    type: "string",
+                    description: "Optional: a CSS selector for a CONTAINER to scope the search to (its region is cropped and searched alone). Use it to pin down a target inside one known area — a specific list row, a toolbar, a card. Scrolls the container into view first."
+                },
+                index: {
+                    type: "integer",
+                    description: "Which match of `selector` to scope to (0-based); default 0."
+                },
+                margin: {
+                    type: "integer",
+                    description: "Optional: grow the predicted box by this many pixels before matching. Use it when GROUNDING returned a box but snapped to the WRONG element (the box narrowly missed) — call again with the SAME description and a margin like 40–120; it reuses the cached box and re-scans a wider area. It does NOT help when grounding returned no box at all — then re-describe the element, scroll it into view, or use strategy 'marks'."
+                },
+                strategy: {
+                    type: "string",
+                    enum: ["auto", "grounding", "marks", "grid"],
+                    description: "How to find it (default 'auto'). 'grounding' = a coordinate model points at it directly (needs a grounding model configured; fast, best for a described spot). 'marks' = numbered badges over every candidate and the model picks by number (robust; use when grounding missed or you want to choose among cluttered candidates). 'grid' = an N×N numbered grid is drawn and the model picks the CELL holding the target — no coordinate training needed, so it works with any vision model and stays robust on cluttered pages; zoom in by re-running with the returned `cell`, or raise `gridSize` for finer cells. 'auto' tries grounding first, then falls back to marks."
+                },
+                gridSize: {
+                    type: "integer",
+                    description: "For strategy 'grid': the grid is gridSize×gridSize (default 4, 2–8). Larger = finer cells."
+                },
+                cell: {
+                    type: "integer",
+                    description: "For strategy 'grid': zoom into a previously-returned cell number and draw a fresh grid inside it (hierarchical refine)."
+                },
             },
             required: ["description"],
         },
-        run: async ({ description, filter = "clickables", margin = 0, strategy = "auto", selector, index = 0 }: { description: string; filter?: MarkFilter; margin?: number; strategy?: "auto" | "grounding" | "marks"; selector?: string; index?: number }) => {
+        run: async ({ description, filter = "clickables", margin = 0, strategy = "auto", selector, index = 0, gridSize, cell }: { description: string; filter?: MarkFilter; margin?: number; strategy?: "auto" | "grounding" | "marks" | "grid"; selector?: string; index?: number; gridSize?: number; cell?: number }) => {
             if (!description) return "Provide a `description` of the element to find.";
             const dpr = window.devicePixelRatio || 1;
             const RED = "#ff2d55", YELLOW = "#eab308";
@@ -144,6 +172,52 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             }
             const regionBox: Box = { left: region.left, top: region.top, right: region.left + region.width, bottom: region.top + region.height };
             const scopeNote = scopeSel ? ` within "${scopeSel}"${index ? ` (#${index})` : ""}` : "";
+
+            // Mechanism #3 — grid: draw an N×N numbered grid, ask which CELL holds the
+            // target (multiple-choice → no coordinate hallucination), snap the cell to the
+            // DOM by the same sweep. `cell` zooms into a prior pick (hierarchical refine).
+            if (strategy === "grid") {
+                const reader = model || groundingModel;
+                if (!reader) return "No vision model is available to read the grid.";
+                const N = Math.max(2, Math.min(8, Math.round(gridSize || 4)));
+                const effRect = cell ? rectOf(gridCellBox(cell, N, N, region)) : region;
+                if (effRect.width < MIN_SHOT_PX || effRect.height < MIN_SHOT_PX) {
+                    return `Cell ${cell} is too small to subdivide further. Use the returned selectors, or switch strategy.`;
+                }
+                if (!shot) shot = await ml.screenshot(null, {});
+                let gridded: string;
+                try { gridded = await drawGrid(await cropDataUrl(shot, effRect, dpr), N, N, dpr); }
+                catch (e) { return `Error drawing the grid: ${errText(e)}`; }
+                const gprompt = `This image is divided into a ${N}×${N} numbered grid (cells 1–${N * N}, numbered left-to-right, top-to-bottom). ` +
+                    `Which single cell contains ${description}${scopeNote}${cell ? ` (zoomed into cell ${cell})` : ""}? Reply with ONLY the cell number, or "NONE".`;
+                const ans = String(await ml.chat(gprompt, { images: [gridded], model: reader, numCtx: VISION_NUM_CTX, maxTokens })).trim();
+                const pickN = (ans.match(/\d+/) || [])[0];
+                const picked = pickN ? Math.max(1, Math.min(N * N, Number(pickN))) : null;
+                const base = { type: "locate" as const, mode: "grid" as const, model: String(reader), prompt: gprompt, gridSize: N, cell: picked || undefined };
+                if (!picked) {
+                    return { content: `The model matched no grid cell for "${description}"${scopeNote} (replied "${truncate(ans, 40)}"). Re-run with a larger gridSize, refine the description, or switch strategy.`, render: { ...base, griddedImage: gridded } };
+                }
+                // Highlight the picked cell on the grid the model saw (crop-local coords).
+                const cellLocal = gridCellBox(picked, N, N, { left: 0, top: 0, width: effRect.width, height: effRect.height });
+                const griddedImage = await annotate(gridded, [{ rect: rectOf(cellLocal), color: "#22c55e", label: `cell ${picked}` }], dpr);
+                // Snap the chosen cell to the DOM — the same sweep grounding uses on its box.
+                const box = gridCellBox(picked, N, N, effRect);
+                const primary = elementAtPoint((box.left + box.right) / 2, (box.top + box.bottom) / 2, filter);
+                const nearby = collectInBox(box, filter);
+                const chosen = primary || nearby[0];
+                const ordered = chosen ? [chosen, ...nearby.filter(e => e !== chosen)].slice(0, 12) : nearby.slice(0, 12);
+                const marks = buildMarks(ordered);
+                const resultImage = await annotate(shot, [{ rect: rectOf(box), color: YELLOW, label: `cell ${picked}` }, ...marks.map(m => ({ rect: m.rect, color: RED, badge: m.id }))], dpr);
+                if (chosen) {
+                    const pk = pickedStr(marks[0]);
+                    return {
+                        content: `Grid picked cell ${picked}/${N * N}${scopeNote} → ${pk}\n(click/type/answer with this selector)\n\nTo narrow further, re-run with cell:${picked} (draws a fresh grid inside it). Other elements in that cell:\n${listOf(marks)}`,
+                        elements: ordered.slice(0, 50),
+                        render: { ...base, griddedImage, resultImage, picked: pk },
+                    };
+                }
+                return { content: `Grid cell ${picked} for "${description}"${scopeNote} has no ${filter} element under it. Zoom in with cell:${picked}, raise gridSize, or switch strategy.`, render: { ...base, griddedImage, resultImage } };
+            }
 
             // If 'auto' tries grounding and it misses, we still surface that attempt on
             // the Set-of-Marks fallback (why it missed + what the model saw) instead of

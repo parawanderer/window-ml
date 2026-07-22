@@ -411,7 +411,7 @@ function RenderTable({ columns, rows }: { columns: string[]; rows: (string | num
 function LocateRender({ d }: { d: Extract<RenderDescriptor, { type: "locate" }> }) {
     return (
         <div class="r-locate">
-            <div class="r-loc-head">{d.mode === "grounding" ? "Grounding" : "Set-of-Marks"} · <b>{d.model}</b></div>
+            <div class="r-loc-head">{d.mode === "grounding" ? "Grounding" : d.mode === "grid" ? "Grid" : "Set-of-Marks"} · <b>{d.model}</b></div>
             {d.mode === "grounding" ? <>
                 {d.prompt ? <details class="r-loc-prompt"><summary>prompt to the model</summary><Code text={d.prompt} lang="text" /></details> : null}
                 {d.groundingImage ? <div class="r-loc-stage">
@@ -423,13 +423,23 @@ function LocateRender({ d }: { d: Extract<RenderDescriptor, { type: "locate" }> 
                     <div class="r-loc-cap">Element location{d.margin ? ` · +${d.margin}px search margin` : ""}</div>
                     <ClickableImg src={d.resultImage} alt="candidate elements" />
                 </div> : null}
+            </> : d.mode === "grid" ? <>
+                {d.prompt ? <details class="r-loc-prompt"><summary>prompt to the model</summary><Code text={d.prompt} lang="text" /></details> : null}
+                {d.griddedImage ? <div class="r-loc-stage">
+                    <div class="r-loc-cap">Grid{d.gridSize ? ` ${d.gridSize}×${d.gridSize}` : ""}{d.cell ? ` · picked cell ${d.cell}` : " · no cell"}</div>
+                    <ClickableImg src={d.griddedImage} alt="the numbered grid the model saw" />
+                </div> : null}
+                {d.resultImage ? <div class="r-loc-stage">
+                    <div class="r-loc-cap">Element location</div>
+                    <ClickableImg src={d.resultImage} alt="candidate elements" />
+                </div> : null}
             </> : <>
                 {d.fallbackNote ? <div class="r-loc-note">Grounding {d.fallbackNote} — fell back to Set-of-Marks.</div> : null}
                 {d.fallbackImage ? <div class="r-loc-stage"><div class="r-loc-cap">Grounding attempt</div><ClickableImg src={d.fallbackImage} alt="grounding attempt" /></div> : null}
                 {d.resultImage ? <div class="r-loc-stage">{d.fallbackNote ? <div class="r-loc-cap">Set-of-Marks</div> : null}<ClickableImg src={d.resultImage} alt="Set-of-Marks" /></div> : null}
             </>}
-            <div class="r-loc-picked" title={d.mode === "grounding" ? "The grounding model gave coordinates; the DOM hit-test snapped them to this element." : "The vision model picked this badge number directly."}>
-                {d.mode === "grounding" ? "Snapped to" : "Model picked"}: {d.picked ? <code>{d.picked}</code> : <span class="dim">(none)</span>}
+            <div class="r-loc-picked" title={d.mode === "marks" ? "The vision model picked this badge number directly." : d.mode === "grid" ? "The model picked a grid cell; the DOM hit-test snapped to this element." : "The grounding model gave coordinates; the DOM hit-test snapped them to this element."}>
+                {d.mode === "marks" ? "Model picked" : "Snapped to"}: {d.picked ? <code>{d.picked}</code> : <span class="dim">(none)</span>}
             </div>
         </div>
     );

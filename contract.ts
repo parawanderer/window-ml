@@ -145,14 +145,19 @@ export type RenderDescriptor = (
     // model saw with ITS box (or none), then the element-location pass (red candidate
     // boxes + a yellow, possibly-expanded search area). marks: just the badged shot.
     | {
-        type: "locate"; mode: "grounding" | "marks"; model: string;
+        type: "locate"; mode: "grounding" | "marks" | "grid"; model: string;
         picked?: string;                 // the chosen element (role/name → selector), or none
         resultImage?: string;            // element-location pass (red boxes [+ yellow area]); absent for a grounding no-box
-        prompt?: string;                 // grounding: the full VLM prompt
+        prompt?: string;                 // grounding/grid: the full VLM prompt
         groundingImage?: string;         // grounding: the square the model saw, with its box
         gaveBox?: boolean;               // grounding: did the model return a box?
         boxCoords?: string;              // grounding: the raw coords it gave, for display
         margin?: number;                 // grounding: the search-area expansion applied
+        // grid: the numbered grid the model saw (picked cell highlighted), which cell it
+        // chose, and the grid resolution.
+        griddedImage?: string;
+        cell?: number;
+        gridSize?: number;
         // marks: when 'auto' tried grounding and it missed, why (+ what it saw), so the
         // fallback still shows the grounding attempt instead of hiding it.
         fallbackNote?: string;
