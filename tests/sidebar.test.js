@@ -568,7 +568,7 @@ test("locate render: grounding mode shows model, prompt, both stage images, and 
     await w.dispatch(agentStart("lgr", "find it"));
     await w.dispatch(agentStep("lgr", 1, { tool: "locate", arguments: { description: "star" }, elements: 1, render: {
         type: "locate", mode: "grounding", model: "qwen2.5vl:7b", prompt: "Locate \"star\" …",
-        groundingImage: "data:image/png;base64,GGG", gaveBox: true, boxCoords: "250,250,300,300", margin: 40,
+        groundingImage: "data:image/png;base64,GGG", gaveBox: true, boxCoords: "(250, 250) → (300, 300)", margin: 40,
         resultImage: "data:image/png;base64,RRR", picked: "[button] \"Star\" → #bar > div:nth-of-type(1)",
     } }));
     await w.dispatch(agentResult("lgr", "done", 1));
@@ -582,7 +582,7 @@ test("locate render: grounding mode shows model, prompt, both stage images, and 
     assert.ok(loc.querySelector(".r-loc-prompt"), "prompt disclosure present");
     const imgs = [...loc.querySelectorAll(".r-loc-stage img")].map(i => i.getAttribute("src"));
     assert.deepEqual(imgs, ["data:image/png;base64,GGG", "data:image/png;base64,RRR"], "grounding + result images");
-    assert.match(loc.textContent, /box 250,250,300,300/);
+    assert.match(loc.textContent, /box \(250, 250\) → \(300, 300\)/);
     assert.match(loc.textContent, /\+40px search margin/);
     assert.match(loc.querySelector(".r-loc-picked").textContent, /Star.*nth-of-type\(1\)/);
 });
@@ -801,7 +801,7 @@ test("export: a grounding locate step serialises the full debug view (both image
     await w.dispatch(agentStart("expl", "find the star", "gemma4:31b", 10));
     await w.dispatch(agentStep("expl", 1, { tool: "locate", arguments: { description: "star" }, elements: 1, render: {
         type: "locate", mode: "grounding", model: "qwen2.5vl:7b", prompt: "Locate \"star\" …",
-        groundingImage: url, gaveBox: true, boxCoords: "28, 242, 45, 264", margin: 40,
+        groundingImage: url, gaveBox: true, boxCoords: "(28, 242) → (45, 264)", margin: 40,
         resultImage: url, picked: "[button] \"Star\" → #bar > div:nth-of-type(1)",
     } }));
     await w.dispatch(agentResult("expl", "clicked star", 1));
@@ -814,7 +814,7 @@ test("export: a grounding locate step serialises the full debug view (both image
     assert.ok(latin1.includes("images/step-1-model-output.png"), "grounding image sidecar");
     assert.ok(latin1.includes("images/step-1-element-location.png"), "element-location image sidecar");
     assert.match(latin1, /Grounding.{1,4}qwen2\.5vl:7b/, "model + mode (· is multibyte in latin1)");
-    assert.match(latin1, /box 28, 242, 45, 264/, "box coords");
+    assert.match(latin1, /box \(28, 242\)/, "box coords as a pair");
     assert.match(latin1, /\+40px search margin/, "margin");
     assert.match(latin1, /Picked:.*nth-of-type\(1\)/, "picked element");
     assert.match(latin1, /Prompt to the model/, "the VLM prompt is included");

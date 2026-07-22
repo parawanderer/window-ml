@@ -114,13 +114,25 @@ export function buildMarks(candidates: Element[]): Mark[] {
 }
 
 /** One box drawn onto a screenshot: a colored outline + an optional tab holding a
- *  `badge` number or a `label` string above its top-left corner. `rect` is in source
- *  units (CSS px for a viewport shot; image px for the grounding square). */
+ *  `badge` number or a `label` string above its top-left corner, OR `corners` — two
+ *  labels at the top-left and bottom-right corners (for a grounding box shown as two
+ *  (x,y) pairs). `rect` is in source units (CSS px for a viewport shot; image px for
+ *  the grounding square). */
 export interface Annot {
     rect: { left: number; top: number; width: number; height: number };
     color: string;
     badge?: number;
     label?: string;
+    corners?: [string, string];   // [top-left, bottom-right] labels
+}
+
+/** Format grounding coords [x1,y1,x2,y2] as a readable box — a "(x1, y1) → (x2, y2)"
+ *  string for the UI text + the two per-corner labels for the overlay. Ints stay
+ *  ints; floats round to 1 decimal with a `.` (a range-1 model reads "0.3, 0.2"). */
+export function formatBox(nums: number[]): { text: string; corners: [string, string] } {
+    const f = (n: number) => Number.isInteger(n) ? String(n) : (Math.round(n * 10) / 10).toString();
+    const tl = `${f(nums[0])}, ${f(nums[1])}`, br = `${f(nums[2])}, ${f(nums[3])}`;
+    return { text: `(${tl}) → (${br})`, corners: [tl, br] };
 }
 
 /**
@@ -138,22 +150,30 @@ export function annotate(dataUrl: string, boxes: Annot[], scale: number): Promis
             if (!ctx) return reject(new Error("no 2d canvas context for annotate"));
             ctx.drawImage(img, 0, 0);
             const fs = Math.round(13 * scale);
+            const pad = Math.round(3 * scale);
+            const bh = fs + pad * 2;
             ctx.font = `bold ${fs}px sans-serif`;
             ctx.textBaseline = "top";
+            const tab = (text: string, color: string, cornerX: number, cornerY: number, place: "above" | "belowRight") => {
+                const bw = Math.ceil(ctx.measureText(text).width) + pad * 2;
+                let bx = place === "belowRight" ? cornerX - bw : cornerX;   // right-aligned to end at the corner
+                let by = place === "belowRight" ? cornerY : cornerY - bh;   // above the top edge / below the bottom
+                bx = Math.max(0, Math.min(bx, cv.width - bw));
+                by = Math.max(0, Math.min(by, cv.height - bh));
+                ctx.fillStyle = color; ctx.fillRect(bx, by, bw, bh);
+                ctx.fillStyle = "#fff"; ctx.fillText(text, bx + pad, by + pad);
+            };
             for (const b of boxes) {
                 const x = b.rect.left * scale, y = b.rect.top * scale;
                 const w = b.rect.width * scale, h = b.rect.height * scale;
                 ctx.strokeStyle = b.color; ctx.lineWidth = Math.max(1, Math.round(2 * scale));
                 ctx.strokeRect(x, y, w, h);
-                const text = b.badge != null ? String(b.badge) : b.label;
-                if (text) {
-                    const pad = Math.round(3 * scale);
-                    const bw = Math.ceil(ctx.measureText(text).width) + pad * 2;
-                    const bh = fs + pad * 2;
-                    const bx = Math.max(0, x);
-                    const by = Math.max(0, y - bh);   // tab above the box's top-left, clamped on-screen
-                    ctx.fillStyle = b.color; ctx.fillRect(bx, by, bw, bh);
-                    ctx.fillStyle = "#fff"; ctx.fillText(text, bx + pad, by + pad);
+                if (b.corners) {
+                    tab(b.corners[0], b.color, x, y, "above");            // top-left
+                    tab(b.corners[1], b.color, x + w, y + h, "belowRight"); // bottom-right
+                } else {
+                    const text = b.badge != null ? String(b.badge) : b.label;
+                    if (text) tab(text, b.color, x, y, "above");
                 }
             }
             resolve(cv.toDataURL("image/png"));

@@ -16,7 +16,15 @@ function world(html) {
     return dom.window.document;
 }
 const som = require("../dist/som.js");
-const { representativeFor, isClickish, buildMarks, viewportBox } = som;
+const { representativeFor, isClickish, buildMarks, viewportBox, formatBox } = som;
+
+test("formatBox renders a box as two (x,y) pairs — ints stay ints, floats round to 1dp", () => {
+    assert.deepEqual(formatBox([28, 242, 45, 264]),
+        { text: "(28, 242) → (45, 264)", corners: ["28, 242", "45, 264"] });
+    // a 0–1 (range 1) model: decimals kept, `.` separator, 1 decimal place.
+    assert.deepEqual(formatBox([0.3, 0.2, 0.5, 0.6]),
+        { text: "(0.3, 0.2) → (0.5, 0.6)", corners: ["0.3, 0.2", "0.5, 0.6"] });
+});
 
 test("viewportBox maps model coords (any range) to a viewport box, min/max-normalized", () => {
     // 0–1000 normalized on a 1600×900 viewport.

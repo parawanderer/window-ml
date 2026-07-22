@@ -8,7 +8,7 @@ import type { MlApi, MlTool } from "./contract";
 import { DEFAULT_GROUNDING_RANGE } from "./contract";
 import { truncate, errText, elLine, queryAll, selectorError } from "./dom";
 import { settle, VISION_NUM_CTX } from "./util";
-import { collectCandidates, buildMarks, drawMarks, annotate, resizeToSquare, collectInBox, elementAtPoint, viewportBox, type MarkFilter, type Box } from "./som";
+import { collectCandidates, buildMarks, drawMarks, annotate, formatBox, resizeToSquare, collectInBox, elementAtPoint, viewportBox, type MarkFilter, type Box } from "./som";
 
 export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512 }: { model?: string | null; maxTokens?: number } = {}): MlTool => {
     return ml.defineTool({
@@ -136,12 +136,13 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 if (cached) {
                     const { nums, square, prompt } = cached;
                     const R = groundingRange || DEFAULT_GROUNDING_RANGE;
-                    // Comma-SPACE separated, floats to 1 decimal with a `.` — so a
-                    // range-1 (0–1) model reads "0.3, 0.2, 0.5, 0.6", not "0,3,0,2,…".
-                    const coords = nums ? nums.map(n => Number.isInteger(n) ? String(n) : (Math.round(n * 10) / 10).toString()).join(", ") : "";
-                    // The square the model saw, annotated with ITS box (in square px).
-                    const groundingImage = nums
-                        ? await annotate(square, [{ rect: rectOf(viewportBox(nums, R, DEFAULT_GROUNDING_RANGE, DEFAULT_GROUNDING_RANGE)), color: RED, label: coords }], 1)
+                    // Two (x,y) pairs — "(x1, y1) → (x2, y2)" text + per-corner overlay labels.
+                    const fb = nums ? formatBox(nums) : null;
+                    const coords = fb ? fb.text : "";
+                    // The square the model saw, annotated with ITS box (in square px),
+                    // labelling the two corners with their coordinates.
+                    const groundingImage = nums && fb
+                        ? await annotate(square, [{ rect: rectOf(viewportBox(nums, R, DEFAULT_GROUNDING_RANGE, DEFAULT_GROUNDING_RANGE)), color: RED, corners: fb.corners }], 1)
                         : square;
                     const base = { type: "locate" as const, mode: "grounding" as const, model: groundingModel, prompt, groundingImage, gaveBox: !!nums, boxCoords: coords, margin: margin || undefined };
                     const box = nums ? viewportBox(nums, R, window.innerWidth, window.innerHeight) : null;
