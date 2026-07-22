@@ -29,7 +29,8 @@ import { detectGroundingModel, DEFAULT_GROUNDING_RANGE } from "./contract";
 import { evalReadonly } from "./readonly-exec";
 import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError } from "./dom";
 import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE } from "./prompts";
-import { pageContext, cropDataUrl, MIN_SHOT_PX } from "./util";
+import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint } from "./util";
+import { annotate, pickAccentColor } from "./som";
 import { suspiciousArgsWarning, suspiciousChars } from "./security";
 import { emitDebug, debugId, shortHash, sessionRegistry, enterAgentRun, exitAgentRun } from "./bus";
 import { makeDomTools } from "./tools";
@@ -710,6 +711,20 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool } from ".
                 finally { window.postMessage({ __mlSidebarShot: "show" }, "*"); }
             };
             if (target == null) return fullPage ? this._stitchFullPage(viewport) : viewport();
+
+            // An `@pt:` point token (a canvas coordinate from locate) → a cropped view around
+            // the point with a MARK on the exact click spot, so look() can VERIFY what a click
+            // will hit (a canvas has no DOM node to screenshot). Works for both look paths.
+            if (typeof target === "string" && POINT_RE.test(target.trim())) {
+                const pt = resolvePoint(target);
+                if (!pt) throw new Error(`Unknown point token "${target}" — re-run locate for a fresh one.`);
+                const dpr = window.devicePixelRatio || 1, R = 100;
+                const left = Math.max(0, pt.x - R), top = Math.max(0, pt.y - R);
+                const rect = { left, top, width: Math.min(window.innerWidth, pt.x + R) - left, height: Math.min(window.innerHeight, pt.y + R) - top };
+                const cropped = await cropDataUrl(await viewport(), rect, dpr);
+                const color = await pickAccentColor(cropped);   // contrast the marker with what's there
+                return annotate(cropped, [{ rect: { left: pt.x - left - 12, top: pt.y - top - 12, width: 24, height: 24 }, color, label: "click point" }], dpr);
+            }
 
             let el = target;
             if (typeof target === "string") {

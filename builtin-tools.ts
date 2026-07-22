@@ -7,26 +7,13 @@
 import type { MlApi, MlTool, LocateSubstep } from "./contract";
 import { DEFAULT_GROUNDING_RANGE } from "./contract";
 import { truncate, errText, elLine, queryAll, selectorError } from "./dom";
-import { settle, VISION_NUM_CTX, cropDataUrl, MIN_SHOT_PX } from "./util";
+import { settle, VISION_NUM_CTX, cropDataUrl, MIN_SHOT_PX, POINT_RE, mintPoint, resolvePoint } from "./util";
 import { collectCandidates, buildMarks, annotate, formatBox, letterboxToSquare, projectFromSquare, drawGrid, gridDims, validateCells, cellsBox, collectInBox, elementAtPoint, viewportBox, colorWordHues, pickOverlayColor, pickAccentColor, type MarkFilter, type Box, type Mark } from "./som";
 
 // --- Coordinate targets (canvas / WebGL) -----------------------------------
-// A <canvas> has NO sub-node to snap to, so `locate` mints an OPAQUE point token that
-// the `click` tool resolves — the driver copies the token verbatim, never authoring
-// coordinates (the whole point). The registry lives for the page's lifetime (tokens
-// are a few bytes; a run mints only a handful). Shared here because both tools are in
-// this module.
-const pointRegistry = new Map<string, { x: number; y: number }>();
-const POINT_RE = /^@pt:([0-9a-f]{1,12})$/;
-const mintPoint = (x: number, y: number): string => {
-    const id = Math.random().toString(16).slice(2, 10);
-    pointRegistry.set(id, { x: Math.round(x), y: Math.round(y) });
-    return `@pt:${id}`;
-};
-const resolvePoint = (token: string): { x: number; y: number } | null => {
-    const m = POINT_RE.exec((token || "").trim());
-    return m ? pointRegistry.get(m[1]) || null : null;
-};
+// A <canvas> has NO sub-node to snap to, so `locate` mints an OPAQUE `@pt:` token (see
+// util.ts) that `click` resolves and `look`/`screenshot` can crop+mark. These helpers add
+// the DOM-side detection + the synthetic click.
 /** The <canvas> at a viewport point, if the topmost element there is one (or inside one). */
 const canvasAt = (x: number, y: number): Element | null => {
     let el: Element | null = null;
@@ -79,11 +66,13 @@ export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512 }: { mo
             "image is DOWNSCALED, so use it for layout/orientation, not for reading small text. " +
             "To CLASSIFY items in a grid/list (which posts show a cat?), give the item selector " +
             "and iterate `index` (0,1,2,…) — one tight, high-res crop per item, decisive and " +
-            "bound to that exact element.",
+            "bound to that exact element. You can also pass an `@pt:…` point token from locate to " +
+            "VERIFY a canvas click target BEFORE clicking — it crops and marks the exact spot so " +
+            "you can confirm what you're about to hit.",
         parameters: {
             type: "object",
             properties: {
-                selector: { type: "string", description: "CSS selector of an element; omit to see the page." },
+                selector: { type: "string", description: "CSS selector of an element, or an `@pt:…` point token from locate; omit to see the page." },
                 question: { type: "string", description: "What to determine (optional)." },
                 scope: { type: "string", enum: ["viewport", "page"], description: "'viewport' (default), or 'page' to scroll+stitch the full page (only when no selector)." },
                 index: { type: "integer", description: "Which match of the selector to look at (0-based); iterate a grid with 0,1,2,…" }
@@ -91,18 +80,25 @@ export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512 }: { mo
         },
         run: async ({ selector, question, scope, index }: { selector?: string; question?: string; scope?: "viewport" | "page"; index?: number } = {}) => {
             const fullPage = scope === "page" && !selector;
+            // An @pt point token → screenshot returns a cropped, MARKED view of the click spot
+            // (canvas verification): tailor the prompt to "what's at the mark", not page text.
+            const isPoint = !!selector && POINT_RE.test(selector.trim());
             let shot;
             try { shot = await ml.screenshot(selector || null, { fullPage, index: index || 0 }); }
             catch (e) { return `Error: ${errText(e)}`; }
-            const subject = selector
-                ? `the element "${selector}"${index ? ` (match #${index})` : ""}`
+            const subject = isPoint ? `the point marked on the canvas (${selector})`
+                : selector ? `the element "${selector}"${index ? ` (match #${index})` : ""}`
                 : (fullPage ? "the whole page" : "the current page");
-            const base = question || `Describe ${subject} concisely — what is shown and what stands out.`;
+            const base = question || (isPoint
+                ? `A crosshair box marks exactly where a click would land. Describe what is AT the mark — its colour and shape — and whether it matches what I'm after, so I don't click the wrong thing.`
+                : `Describe ${subject} concisely — what is shown and what stands out.`);
             // A full-page stitch is downscaled — the vision model's patches get
             // too coarse to read small text, so frame it as layout/orientation
             // and DON'T ask for verbatim anchors (those are confidently wrong at
             // that zoom). Viewport/element shots are sharp enough to quote text.
-            const guidance = fullPage
+            const guidance = isPoint
+                ? ""   // a canvas point has no page text to quote
+                : fullPage
                 ? "\n\nThis is a DOWNSCALED full-page overview: report the overall layout and " +
                   "roughly where sections/items are. Do NOT try to read small text verbatim — " +
                   "say so if it's illegible, and use sampleText/findByText (or look at a specific " +
@@ -157,7 +153,11 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             properties: {
                 description: {
                     type: "string",
-                    description: "What to find, e.g. \"the star/favourite icon next to the chat title\"."
+                    description: "What to find, described by its APPEARANCE — colour, shape, icon, and any " +
+                        "visible text — NOT by a name, brand, or role the vision model can't see (it reads " +
+                        "pixels, not names). Good: \"a red heart icon\", \"a round blue button with a " +
+                        "magnifying glass\", \"the star/favourite icon next to the chat title\". Bad: \"Big Pete\", " +
+                        "\"the delete handler\", \"the submit button\" (say what it LOOKS like instead)."
                 },
                 filter: {
                     type: "string",

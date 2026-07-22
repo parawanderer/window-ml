@@ -80,3 +80,20 @@ export const cropDataUrl = (dataUrl: string, rect: { left: number; top: number; 
     img.onerror = () => reject(new Error("failed to load the captured screenshot"));
     img.src = dataUrl;
 });
+
+// --- Canvas coordinate targets: an OPAQUE `@pt:<hex>` token → a viewport {x,y} ------
+// A <canvas> has no sub-node to snap to, so `locate` mints a point token that `click`
+// resolves (and `screenshot`/`look` can crop+mark for verification). Shared here so
+// injected (screenshot) and builtin-tools (locate/click) use one registry. The token is
+// opaque — the model copies it verbatim, never authoring coordinates. Page-lifetime map.
+const pointRegistry = new Map<string, { x: number; y: number }>();
+export const POINT_RE = /^@pt:([0-9a-f]{1,12})$/;
+export const mintPoint = (x: number, y: number): string => {
+    const id = Math.random().toString(16).slice(2, 10);
+    pointRegistry.set(id, { x: Math.round(x), y: Math.round(y) });
+    return `@pt:${id}`;
+};
+export const resolvePoint = (token: string): { x: number; y: number } | null => {
+    const m = POINT_RE.exec((token || "").trim());
+    return m ? pointRegistry.get(m[1]) || null : null;
+};

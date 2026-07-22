@@ -255,7 +255,17 @@ gives a **precise** point (its box centre — its whole strength on a canvas); g
 and steers to those two. The **`click` tool decodes `@pt:`** → `clickAt(x,y)` synthesizes the
 full pointer/mouse sequence (`pointerdown`/`mousedown`/`pointerup`/`mouseup`/`click`) at that
 viewport coordinate — canvas games read `clientX-rect.left`, which the synthetic `clientX`
-satisfies. A stale/unknown token fails cleanly ("re-run locate"). Demo:
+satisfies. A stale/unknown token fails cleanly ("re-run locate"). The token registry +
+`mintPoint`/`resolvePoint` live in **util.ts** (shared) so `ml.screenshot` resolves it too:
+**`look({ selector: "@pt:…" })` verifies a canvas target** — `screenshot` returns a cropped
+view around the point with the exact click spot **marked** (a contrast-coloured box), so the
+driver can confirm what it's about to hit before clicking (the canvas analogue of
+`look({ selector })` on a DOM node; works for both the native and delegated look). Detection
+is robust to a pick **straddling page chrome above the canvas** (`canvasPointIn` samples the
+whole box, not just the centre) and a `<canvas>` is dropped from a grid cell's candidates so
+it never triggers a snap/hand-off — it becomes a coordinate. **Describe the target by
+APPEARANCE, not a name** (the `description` param says so): the vision model reads pixels, so
+"a red umbrella icon" works but "Morio"/"the delete handler" does not. Demo:
 `examples/find-waldo.html` — a whole-scene `<canvas>` (zero DOM children) where only
 vision + `@pt` click can win. Point decode is unit-tested (`tests/agent.test.js`); the
 dispatch is a browser op (jsdom `elementFromPoint` is a no-op).
