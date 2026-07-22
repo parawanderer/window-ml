@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Agent hell — a div-spam icon haystack for ml.locate (grid strategy)</title>
+<style>
+  body { font: 15px system-ui, sans-serif; margin: 32px; color: #111; }
+  h1 { font-size: 18px; margin-bottom: 6px; }
+  p { max-width: 74ch; color: #444; }
+  code { font: 12px ui-monospace, monospace; background: #f0f0f2; padding: 1px 5px; border-radius: 4px; }
+
+  /* A "table" built the WRONG way: a spam grid of BARE <div>s, each with a
+     synthetic click handler + pointer cursor and an unlabelled inline <svg> or
+     <img>. No <button>, role, tabindex, aria-label, id, text, or data-* that
+     reveals the target — every cell's markup is identical. Text/ARIA tools find
+     nothing; interactives lists 100 × "(no accessible name)". Only the rendered
+     SHAPE tells them apart → the model must SEE it (ml.locate, grid strategy). */
+  #grid {
+    display: grid; grid-template-columns: repeat(10, 1fr); gap: 6px;
+    margin: 22px 0; max-width: 720px;
+  }
+  .cell {
+    aspect-ratio: 1; display: grid; place-items: center;
+    border-radius: 8px; background: #f2f2f4; cursor: pointer; user-select: none;
+    transition: transform .08s ease, background .12s ease;
+  }
+  .cell:hover { background: #e6e6ea; transform: scale(1.08); }
+  .cell svg { width: 60%; height: 60%; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .cell img { width: 60%; height: 60%; }
+  .cell.wrong { animation: nope .3s; }
+  @keyframes nope { 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
+
+  #log { margin-top: 20px; font: 13px ui-monospace, monospace; color: #0a7; min-height: 1.4em; }
+  .hint { color: #888; font-size: 13px; }
+  .mini { font: 12px system-ui, sans-serif; padding: 4px 10px; border-radius: 6px;
+    border: 1px solid #ccc; background: #fafafa; color: #333; cursor: pointer; }
+  .mini:hover { background: #f0f0f0; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #1b1b1f; color: #eee; } p { color: #bbb; } code { background: #2a2a30; }
+    .cell { background: #2a2a30; } .cell:hover { background: #35353d; }
+    .mini { background: #2a2a30; border-color: #444; color: #ddd; } .mini:hover { background: #34343c; }
+  }
+
+  /* --- the silly "YOU ARE WIN !" screen (classic bootleg-game Engrish) --- */
+  #win { position: fixed; inset: 0; z-index: 9999; display: none; place-items: center; overflow: hidden;
+    background: repeating-linear-gradient(45deg, #4d001a, #4d001a 40px, #66002a 40px, #66002a 80px); }
+  #win.show { display: grid; }
+  #win .msg { text-align: center; animation: pop .5s cubic-bezier(.2,1.6,.4,1) both; }
+  #win h2 { margin: 0; letter-spacing: 3px; font: 900 clamp(44px, 13vw, 150px)/1 "Impact", system-ui, sans-serif;
+    color: #ffd400; text-shadow: 4px 4px 0 #d40000, 8px 8px 0 rgba(0,0,0,.45); animation: hue 3s linear infinite; }
+  #win p { color: #fff; font: 700 18px system-ui, sans-serif; margin: 18px 0 0; }
+  #win small { display: block; margin-top: 10px; color: #fce; font: 400 13px system-ui; }
+  .confetti { position: absolute; top: -24px; font-size: 26px; animation: fall linear infinite; }
+  @keyframes pop { from { transform: scale(0) rotate(-12deg); } }
+  @keyframes hue { to { filter: hue-rotate(360deg); } }
+  @keyframes fall { to { transform: translateY(110vh) rotate(720deg); } }
+</style>
+</head>
+<body>
+  <h1>Agent hell 🔥</h1>
+  <p>A <b>100-cell</b> grid of bare <code>&lt;div&gt;</code>s — each an unlabelled icon or image with
+     a synthetic click handler, <b>identical markup</b>, and no text/role/aria. <code>findByText</code>
+     finds nothing; <code>interactives</code> lists a hundred <em>"(no accessible name)"</em>. Only how
+     they <em>look</em> tells them apart, so the agent has to actually SEE the target:</p>
+  <p><code>ml.agent("click the target icon to win", { tools: [ml.clickTool()], hints: "Use locate({ strategy: 'grid' }) — the target is a bright RED umbrella. Re-run with the returned cells to zoom." })</code></p>
+
+  <div id="grid" aria-hidden="false"></div>
+
+  <div id="log">Nothing clicked yet.</div>
+  <p><button id="hintToggle" class="mini">Hide hint</button>
+     <span class="hint" style="margin-left:8px">— hide this before an agent run so it can't cheat.</span></p>
+  <p id="hint" class="hint">🎯 Target: the <b>bright red umbrella</b> ☂ — it appears <b>exactly once</b>, somewhere in the grid.
+     Click it (and nothing else) to win. Position is randomised every reload.</p>
+
+  <!-- Victory screen, hidden until the target is clicked. -->
+  <div id="win" title="click anywhere to play again">
+    <div class="msg">
+      <h2>YOU&nbsp;ARE&nbsp;WIN&nbsp;!</h2>
+      <p>You found the needle in the div-spam. Congratulation!</p>
+      <small>(click anywhere to scramble and play again)</small>
+    </div>
+  </div>
+
+<script>
+  // ---- the icon vocabulary: monochrome Feather-style paths (the DECOY noise) ----
+  // Stored as raw inner-SVG so every cell is structurally identical markup.
+  const SHAPES = {
+    star:     '<path d="M12 2l3 6.5 7 .9-5 4.8 1.2 7-6.4-3.4L5.6 21l1.2-7-5-4.8 7-.9z"/>',
+    heart:    '<path d="M12 21s-7-4.5-9.5-9A5 5 0 0 1 12 6a5 5 0 0 1 9.5 6c-2.5 4.5-9.5 9-9.5 9z"/>',
+    circle:   '<circle cx="12" cy="12" r="9"/>',
+    square:   '<rect x="4" y="4" width="16" height="16" rx="2"/>',
+    triangle: '<path d="M12 3l9 16H3z"/>',
+    bolt:     '<path d="M13 2L3 14h7l-1 8 10-12h-7z"/>',
+    trash:    '<path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13"/>',
+    download: '<path d="M12 3v12M7 11l5 4 5-4M4 20h16"/>',
+    bell:     '<path d="M18 8a6 6 0 1 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/>',
+    check:    '<path d="M20 6L9 17l-5-5"/>',
+    cross:    '<path d="M18 6L6 18M6 6l12 12"/>',
+    home:     '<path d="M3 12l9-9 9 9M5 10v10h14V10"/>',
+    plus:     '<path d="M12 5v14M5 12h14"/>',
+    moon:     '<path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/>',
+    cloud:    '<path d="M18 10a4 4 0 0 0-7.7-1.3A3.5 3.5 0 1 0 8 16h9a3.5 3.5 0 0 0 1-6.9z"/>',
+    flag:     '<path d="M5 21V4M5 4h11l-2 4 2 4H5"/>',
+    eye:      '<path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/>',
+    tag:      '<path d="M3 3h8l10 10-8 8L3 11V3z"/><circle cx="7" cy="7" r="1.5"/>',
+  };
+  const NAMES = Object.keys(SHAPES);
+  // Muted, desaturated strokes — the decoys must NOT pop, so the one bright cell does.
+  const MUTED = ['#8a8a92', '#7d8a99', '#8f8577', '#7f8f83', '#928089', '#84868f'];
+
+  // The TARGET: an umbrella, drawn ONCE, in loud red — a shape absent from the decoy
+  // pool so it's unambiguous once seen. (Rendered as an inline SVG like the rest, so
+  // no attribute/text betrays it — the pixels are the only tell.)
+  const UMBRELLA = '<path d="M12 2v2M3.5 11a8.5 8.5 0 0 1 17 0c-2-1.5-3.5-1.5-5.5 0-2-1.5-4-1.5-6 0-2-1.5-3.5-1.5-5.5 0zM12 11v7a2.5 2.5 0 0 0 5 0"/>';
+
+  const grid = document.getElementById('grid');
+  const log = document.getElementById('log');
+  const win = document.getElementById('win');
+  const COLS = 10, ROWS = 10, N = COLS * ROWS;   // 100 cells; the target lives among the noise
+  const rnd = (a) => a[Math.floor(Math.random() * a.length)];
+
+  // A cell is a bare <div> with a synthetic handler — never a <button>. `isTarget`
+  // is captured in the closure, NOT written to the DOM, so nothing distinguishes the
+  // target but its rendered shape (no id/class/data-* for exec to filter on).
+  function makeCell(isTarget) {
+    const d = document.createElement('div');
+    d.className = 'cell';
+    if (isTarget) {
+      d.innerHTML = `<svg viewBox="0 0 24 24" style="stroke:#ff2d2d">${UMBRELLA}</svg>`;
+    } else if (Math.random() < 0.14) {
+      // ~1 in 7 cells is an <img> (a data-URI SVG blob) instead of an inline icon —
+      // "images and icons", all equally unlabelled.
+      const c = rnd(MUTED), s = SHAPES[rnd(NAMES)];
+      const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='${c}' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'>${s}</svg>`;
+      d.innerHTML = `<img alt="" src="data:image/svg+xml,${encodeURIComponent(svg)}">`;
+    } else {
+      d.innerHTML = `<svg viewBox="0 0 24 24" style="stroke:${rnd(MUTED)}">${SHAPES[rnd(NAMES)]}</svg>`;
+    }
+    d.addEventListener('click', () => {
+      if (isTarget) return victory();
+      wrong++;
+      log.textContent = `❌ Nope — that's not the umbrella. (${wrong} wrong click${wrong === 1 ? '' : 's'})`;
+      d.classList.add('wrong');
+      setTimeout(() => d.classList.remove('wrong'), 300);
+    });
+    return d;
+  }
+
+  let wrong = 0;
+  function build() {
+    wrong = 0;
+    grid.innerHTML = '';
+    grid.style.gridTemplateColumns = `repeat(${COLS}, 1fr)`;
+    const targetAt = Math.floor(Math.random() * N);
+    for (let i = 0; i < N; i++) grid.appendChild(makeCell(i === targetAt));
+    log.textContent = 'Nothing clicked yet.';
+    // A tiny console breadcrumb for humans debugging the demo (NOT visible to a
+    // text/DOM scan of the page — it's console-only).
+    console.log(`[agent-hell] target umbrella is cell #${targetAt + 1} → #grid > div:nth-of-type(${targetAt + 1})`);
+  }
+
+  function victory() {
+    win.classList.add('show');
+    for (let i = 0; i < 60; i++) {
+      const c = document.createElement('div');
+      c.className = 'confetti';
+      c.textContent = rnd(['☂', '🎉', '⭐', '🔥', '🎯']);
+      c.style.left = Math.random() * 100 + 'vw';
+      c.style.animationDuration = (2 + Math.random() * 2.5) + 's';
+      c.style.animationDelay = (Math.random() * 1.5) + 's';
+      win.appendChild(c);
+    }
+  }
+  win.addEventListener('click', () => { win.classList.remove('show'); win.querySelectorAll('.confetti').forEach(c => c.remove()); build(); });
+
+  document.getElementById('hintToggle').addEventListener('click', (e) => {
+    const hint = document.getElementById('hint');
+    const showing = hint.style.display !== 'none';
+    hint.style.display = showing ? 'none' : '';
+    e.target.textContent = showing ? 'Show hint' : 'Hide hint';
+  });
+
+  build();
+</script>
+</body>
+</html>
