@@ -181,6 +181,16 @@ details.io[open] > summary .io-preview { display: none; }
 /* descriptor renderers */
 .r-image img { max-width: 100%; border-radius: 6px; border: 1px solid var(--border); display: block; }
 .r-image-label { color: var(--fg-faint); font-size: 0.85em; margin-top: 2px; }
+/* locate debug view: model/mode header, per-stage captioned images, picked footer. */
+.r-locate { display: flex; flex-direction: column; gap: 9px; }
+.r-loc-head { color: var(--fg-dim); font-size: 0.9em; }
+.r-loc-prompt > summary { color: var(--fg-dim); font-size: 0.85em; cursor: pointer; margin-bottom: 4px; }
+.r-loc-stage { display: flex; flex-direction: column; gap: 3px; }
+.r-loc-cap { color: var(--fg-faint); font-size: 0.8em; letter-spacing: .02em; text-transform: uppercase; }
+.r-loc-stage img { max-width: 100%; border-radius: 6px; border: 1px solid var(--border); display: block; }
+.r-loc-note { color: var(--err); font-size: 0.85em; }
+.r-loc-picked { color: var(--fg-dim); font-size: 0.9em; padding-top: 2px; border-top: 1px solid var(--border); }
+.r-loc-picked code { color: var(--fg); font-size: 0.95em; word-break: break-all; }
 .r-elements { display: flex; flex-direction: column; gap: 2px; }
 .r-el { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
 .r-el-idx { color: var(--fg-faint); font: 0.8em ui-monospace, SFMono-Regular, Menlo, monospace; flex: 0 0 auto; }

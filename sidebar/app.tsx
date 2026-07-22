@@ -405,6 +405,30 @@ function RenderTable({ columns, rows }: { columns: string[]; rows: (string | num
         </div>
     );
 }
+// The `locate` debug view: model + mode header, then (grounding) the VLM prompt, the
+// square the model saw with its box, and the element-location pass; (marks) just the
+// badged shot. Picked element at the bottom.
+function LocateRender({ d }: { d: Extract<RenderDescriptor, { type: "locate" }> }) {
+    return (
+        <div class="r-locate">
+            <div class="r-loc-head">{d.mode === "grounding" ? "Grounding" : "Set-of-Marks"} · <b>{d.model}</b></div>
+            {d.mode === "grounding" ? <>
+                {d.prompt ? <details class="r-loc-prompt"><summary>prompt to the model</summary><Code text={d.prompt} lang="text" /></details> : null}
+                {d.groundingImage ? <div class="r-loc-stage">
+                    <div class="r-loc-cap">Model output{d.gaveBox ? ` · box ${d.boxCoords}` : ""}</div>
+                    <ClickableImg src={d.groundingImage} alt="what the grounding model saw" />
+                    {!d.gaveBox ? <div class="r-loc-note">The model returned no box.</div> : null}
+                </div> : null}
+                {d.resultImage ? <div class="r-loc-stage">
+                    <div class="r-loc-cap">Element location{d.margin ? ` · +${d.margin}px search margin` : ""}</div>
+                    <ClickableImg src={d.resultImage} alt="candidate elements" />
+                </div> : null}
+            </> : (d.resultImage ? <div class="r-loc-stage"><ClickableImg src={d.resultImage} alt="Set-of-Marks" /></div> : null)}
+            <div class="r-loc-picked">Picked: {d.picked ? <code>{d.picked}</code> : <span class="dim">(none)</span>}</div>
+        </div>
+    );
+}
+
 function RenderPanel({ d }: { d: RenderDescriptor }) {
     switch (d.type) {
         case "image": return <div class="r-image"><ClickableImg src={d.src} alt={d.label || "image"} />{d.label ? <div class="r-image-label">{d.label}</div> : null}</div>;
@@ -412,6 +436,7 @@ function RenderPanel({ d }: { d: RenderDescriptor }) {
         case "table": return <RenderTable columns={d.columns} rows={d.rows} />;
         case "keyval": return <div class="r-keyval">{d.pairs.map(([k, v], i) => <div class="r-kv" key={i}><span class="r-k">{k}</span><span class="r-v">{v}</span></div>)}</div>;
         case "elements": return <RenderElements items={d.items} />;
+        case "locate": return <LocateRender d={d} />;
         default: return <Code text={pretty(d)} lang="json" />;   // unknown type → dump it
     }
 }

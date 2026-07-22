@@ -199,7 +199,7 @@ shown as a green/red **provenance badge** + a matching left-border outline on th
 step. That badge is the slot a future interactive-approval control resolves into.
 
 **Tool render descriptors.** A tool step can carry a `render`: a **serializable
-`RenderDescriptor`** (`image`/`code`/`table`/`keyval`/`elements`) — data, never
+`RenderDescriptor`** (`image`/`code`/`table`/`keyval`/`elements`/`locate`) — data, never
 code, since functions can't cross the window bus and page code must never run in
 the extension-origin iframe. `descriptorFor` resolves it in priority order: a
 `render` descriptor the tool's **`run()` returned directly** on its `ToolResult`

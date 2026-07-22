@@ -563,6 +563,65 @@ test("agent tool steps render descriptors (image / elements / table)", async () 
     assert.equal(w.shadow.querySelectorAll(".r-table td").length, 4, "table cells rendered");
 });
 
+test("locate render: grounding mode shows model, prompt, both stage images, and the pick", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("lgr", "find it"));
+    await w.dispatch(agentStep("lgr", 1, { tool: "locate", arguments: { description: "star" }, elements: 1, render: {
+        type: "locate", mode: "grounding", model: "qwen2.5vl:7b", prompt: "Locate \"star\" …",
+        groundingImage: "data:image/png;base64,GGG", gaveBox: true, boxCoords: "250,250,300,300", margin: 40,
+        resultImage: "data:image/png;base64,RRR", picked: "[button] \"Star\" → #bar > div:nth-of-type(1)",
+    } }));
+    await w.dispatch(agentResult("lgr", "done", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    for (const h of w.shadow.querySelectorAll(".astep.tool .astep-head")) h.click();
+    await w.tick();
+
+    const loc = w.shadow.querySelector(".r-locate");
+    assert.match(loc.querySelector(".r-loc-head").textContent, /Grounding · qwen2.5vl:7b/);
+    assert.ok(loc.querySelector(".r-loc-prompt"), "prompt disclosure present");
+    const imgs = [...loc.querySelectorAll(".r-loc-stage img")].map(i => i.getAttribute("src"));
+    assert.deepEqual(imgs, ["data:image/png;base64,GGG", "data:image/png;base64,RRR"], "grounding + result images");
+    assert.match(loc.textContent, /box 250,250,300,300/);
+    assert.match(loc.textContent, /\+40px search margin/);
+    assert.match(loc.querySelector(".r-loc-picked").textContent, /Star.*nth-of-type\(1\)/);
+});
+
+test("locate render: no-box grounding shows the note and no element-location image", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("lnb", "find it"));
+    await w.dispatch(agentStep("lnb", 1, { tool: "locate", arguments: { description: "ghost" }, render: {
+        type: "locate", mode: "grounding", model: "qwen2.5vl:3b", prompt: "Locate …",
+        groundingImage: "data:image/png;base64,PLAIN", gaveBox: false, boxCoords: "",
+    } }));
+    await w.dispatch(agentResult("lnb", "not found", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    for (const h of w.shadow.querySelectorAll(".astep.tool .astep-head")) h.click();
+    await w.tick();
+    const loc = w.shadow.querySelector(".r-locate");
+    assert.match(loc.querySelector(".r-loc-note").textContent, /returned no box/);
+    assert.equal(loc.querySelectorAll(".r-loc-stage img").length, 1, "only the grounding image, no element-location pass");
+});
+
+test("locate render: marks mode shows the model up top and the pick at the bottom", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("lmk", "find it"));
+    await w.dispatch(agentStep("lmk", 1, { tool: "locate", arguments: { description: "trash" }, elements: 1, render: {
+        type: "locate", mode: "marks", model: "gemma4:31b",
+        resultImage: "data:image/png;base64,MARKS", picked: "#2 [button] → #bar > div:nth-of-type(2)",
+    } }));
+    await w.dispatch(agentResult("lmk", "done", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    for (const h of w.shadow.querySelectorAll(".astep.tool .astep-head")) h.click();
+    await w.tick();
+    const loc = w.shadow.querySelector(".r-locate");
+    assert.match(loc.querySelector(".r-loc-head").textContent, /Set-of-Marks · gemma4:31b/);
+    assert.equal(loc.querySelector(".r-loc-stage img").getAttribute("src"), "data:image/png;base64,MARKS");
+    assert.match(loc.querySelector(".r-loc-picked").textContent, /nth-of-type\(2\)/);
+});
+
 test("agent tool step: descriptor renders its target block; the other stays raw (per-block)", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("agt", "run js"));

@@ -141,6 +141,19 @@ export type RenderDescriptor = (
     | { type: "table"; columns: string[]; rows: (string | number)[][] }
     | { type: "keyval"; pairs: [string, string][] }
     | { type: "elements"; items: { path: string; text?: string; index?: number }[] }
+    // `locate`'s per-mechanism debug view. grounding: the VLM prompt + the square the
+    // model saw with ITS box (or none), then the element-location pass (red candidate
+    // boxes + a yellow, possibly-expanded search area). marks: just the badged shot.
+    | {
+        type: "locate"; mode: "grounding" | "marks"; model: string;
+        picked?: string;                 // the chosen element (role/name → selector), or none
+        resultImage?: string;            // element-location pass (red boxes [+ yellow area]); absent for a grounding no-box
+        prompt?: string;                 // grounding: the full VLM prompt
+        groundingImage?: string;         // grounding: the square the model saw, with its box
+        gaveBox?: boolean;               // grounding: did the model return a box?
+        boxCoords?: string;              // grounding: the raw coords it gave, for display
+        margin?: number;                 // grounding: the search-area expansion applied
+      }
     // Which block the descriptor renders (default "out"). `exec` renders its "in"
     // (the JS); output-derived descriptors (image/elements) render "out".
 ) & { target?: "in" | "out" };

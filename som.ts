@@ -113,47 +113,59 @@ export function buildMarks(candidates: Element[]): Mark[] {
     }));
 }
 
+/** One box drawn onto a screenshot: a colored outline + an optional tab holding a
+ *  `badge` number or a `label` string above its top-left corner. `rect` is in source
+ *  units (CSS px for a viewport shot; image px for the grounding square). */
+export interface Annot {
+    rect: { left: number; top: number; width: number; height: number };
+    color: string;
+    badge?: number;
+    label?: string;
+}
+
 /**
- * Draw the numbered badges onto a viewport screenshot, in memory. Mirrors
- * cropDataUrl's dpr handling: the captured PNG is at devicePixelRatio while rects
- * are CSS px, so scale by `dpr`. Never touches the live page.
- *
- * @param {string} dataUrl The viewport PNG data URL.
- * @param {Mark[]} marks The marks to draw.
- * @param {number} dpr Device pixel ratio.
- * @returns {Promise<string>} The badged image as a PNG data URL.
+ * Draw boxes + labels onto an image in memory. `scale` maps source units to the
+ * image's pixels — dpr for a devicePixelRatio-captured viewport shot, 1 for the
+ * grounding square (already in its own px). Never touches the live page.
  */
-export function drawMarks(dataUrl: string, marks: Mark[], dpr: number): Promise<string> {
+export function annotate(dataUrl: string, boxes: Annot[], scale: number): Promise<string> {
     return new Promise((resolve, reject) => {
         const img = new Image();
         img.onload = () => {
             const cv = document.createElement("canvas");
             cv.width = img.naturalWidth; cv.height = img.naturalHeight;
             const ctx = cv.getContext("2d");
-            if (!ctx) return reject(new Error("no 2d canvas context for Set-of-Marks"));
+            if (!ctx) return reject(new Error("no 2d canvas context for annotate"));
             ctx.drawImage(img, 0, 0);
-            const fs = Math.round(13 * dpr);
+            const fs = Math.round(13 * scale);
             ctx.font = `bold ${fs}px sans-serif`;
             ctx.textBaseline = "top";
-            for (const m of marks) {
-                const x = m.rect.left * dpr, y = m.rect.top * dpr;
-                const w = m.rect.width * dpr, h = m.rect.height * dpr;
-                ctx.strokeStyle = "#ff2d55"; ctx.lineWidth = Math.max(1, Math.round(2 * dpr));
+            for (const b of boxes) {
+                const x = b.rect.left * scale, y = b.rect.top * scale;
+                const w = b.rect.width * scale, h = b.rect.height * scale;
+                ctx.strokeStyle = b.color; ctx.lineWidth = Math.max(1, Math.round(2 * scale));
                 ctx.strokeRect(x, y, w, h);
-                const label = String(m.id);
-                const pad = Math.round(3 * dpr);
-                const bw = Math.ceil(ctx.measureText(label).width) + pad * 2;
-                const bh = fs + pad * 2;
-                const bx = Math.max(0, x);
-                const by = Math.max(0, y - bh);   // badge above the box's top-left, clamped on-screen
-                ctx.fillStyle = "#ff2d55"; ctx.fillRect(bx, by, bw, bh);
-                ctx.fillStyle = "#fff"; ctx.fillText(label, bx + pad, by + pad);
+                const text = b.badge != null ? String(b.badge) : b.label;
+                if (text) {
+                    const pad = Math.round(3 * scale);
+                    const bw = Math.ceil(ctx.measureText(text).width) + pad * 2;
+                    const bh = fs + pad * 2;
+                    const bx = Math.max(0, x);
+                    const by = Math.max(0, y - bh);   // tab above the box's top-left, clamped on-screen
+                    ctx.fillStyle = b.color; ctx.fillRect(bx, by, bw, bh);
+                    ctx.fillStyle = "#fff"; ctx.fillText(text, bx + pad, by + pad);
+                }
             }
             resolve(cv.toDataURL("image/png"));
         };
-        img.onerror = () => reject(new Error("failed to load the screenshot for marking"));
+        img.onerror = () => reject(new Error("failed to load the screenshot for annotation"));
         img.src = dataUrl;
     });
+}
+
+/** The Set-of-Marks convenience: red numbered badges over each candidate. */
+export function drawMarks(dataUrl: string, marks: Mark[], dpr: number): Promise<string> {
+    return annotate(dataUrl, marks.map(m => ({ rect: m.rect, color: "#ff2d55", badge: m.id })), dpr);
 }
 
 // ---- Grounding-VLM mechanism (locate's optional path) ----

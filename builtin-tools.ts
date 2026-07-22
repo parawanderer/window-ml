@@ -8,7 +8,7 @@ import type { MlApi, MlTool } from "./contract";
 import { DEFAULT_GROUNDING_RANGE } from "./contract";
 import { truncate, errText, elLine, queryAll, selectorError } from "./dom";
 import { settle, VISION_NUM_CTX } from "./util";
-import { collectCandidates, buildMarks, drawMarks, resizeToSquare, collectInBox, elementAtPoint, viewportBox, type MarkFilter, type Box } from "./som";
+import { collectCandidates, buildMarks, drawMarks, annotate, resizeToSquare, collectInBox, elementAtPoint, viewportBox, type MarkFilter, type Box } from "./som";
 
 export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512 }: { model?: string | null; maxTokens?: number } = {}): MlTool => {
     return ml.defineTool({
@@ -76,10 +76,11 @@ export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512 }: { mo
 export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null, groundingRange = DEFAULT_GROUNDING_RANGE, maxTokens = 64 }: { model?: string | null; groundingModel?: string | null; groundingRange?: number; maxTokens?: number } = {}): MlTool => {
     const listOf = (marks: { id: number; role: string; name: string; selector: string }[]) =>
         marks.map(m => `#${m.id} [${m.role}] ${m.name ? `"${truncate(m.name, 50)}"` : "(no accessible name)"}  →  ${m.selector}`).join("\n");
-    // Per-run cache of the grounding box (undefined = not asked; null = model said
-    // none). The tool instance lives for one ml.agent run, so a `margin` retry reuses
-    // the cached prediction and re-runs only the cheap DOM sweep — no 2nd VLM call.
-    const boxCache = new Map<string, Box | null>();
+    // Per-run cache of the grounding call (undefined = not asked; null = it errored).
+    // The tool lives for one ml.agent run, so a `margin` retry reuses the cached
+    // coords + prompt/image and re-runs only the cheap DOM sweep — no 2nd VLM call.
+    type GroundCache = { nums: number[] | null; square: string; prompt: string };
+    const groundCache = new Map<string, GroundCache | null>();
     return ml.defineTool({
         name: "locate",
         capabilities: ["vision"],
@@ -104,6 +105,9 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
         run: async ({ description, filter = "clickables", margin = 0, strategy = "auto" }: { description: string; filter?: MarkFilter; margin?: number; strategy?: "auto" | "grounding" | "marks" }) => {
             if (!description) return "Provide a `description` of the element to find.";
             const dpr = window.devicePixelRatio || 1;
+            const RED = "#ff2d55", YELLOW = "#eab308";
+            const rectOf = (b: Box) => ({ left: b.left, top: b.top, width: b.right - b.left, height: b.bottom - b.top });
+            const pickedStr = (m: { role: string; name: string; selector: string }) => `[${m.role}]${m.name ? ` "${m.name}"` : ""} → ${m.selector}`;
             let shot: string | undefined;   // captured once, shared between mechanisms
 
             if (strategy === "grounding" && !groundingModel) {
@@ -115,8 +119,8 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             // per-axis fraction for ANY convention.
             if (groundingModel && strategy !== "marks") {
                 const key = `${filter}\x00${description}`;
-                let box = boxCache.get(key);   // reuse a prior prediction this run (for a margin retry)
-                if (box === undefined) {
+                let cached = groundCache.get(key);   // reuse this run's prediction (for a margin retry)
+                if (cached === undefined) {
                     try {
                         shot = await ml.screenshot(null, {});
                         const square = await resizeToSquare(shot, DEFAULT_GROUNDING_RANGE);
@@ -124,36 +128,47 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                             `x1,y1,x2,y2 — top-left then bottom-right corner, each from 0 to ${groundingRange} ` +
                             `(x: 0=left→${groundingRange}=right; y: 0=top→${groundingRange}=bottom). If it isn't visible, reply "NONE".`;
                         const ans = String(await ml.chat(gp, { images: [square], model: groundingModel, numCtx: VISION_NUM_CTX, maxTokens })).trim();
-                        const nums = (ans.match(/\d+(?:\.\d+)?/g) || []).map(Number);
-                        const computed: Box | null = nums.length >= 4 ? viewportBox(nums, groundingRange, window.innerWidth, window.innerHeight) : null;
-                        boxCache.set(key, computed);   // cache the definitive result (box or null); a transient throw is left uncached
-                        box = computed;
-                    } catch { box = null; }
+                        const parsed = (ans.match(/\d+(?:\.\d+)?/g) || []).map(Number);
+                        cached = { nums: parsed.length >= 4 ? parsed.slice(0, 4) : null, square, prompt: gp };
+                        groundCache.set(key, cached);
+                    } catch { cached = null; }   // transient failure → leave uncached, fall through
                 }
-                if (box) {
-                    const b: Box = margin > 0
-                        ? { left: box.left - margin, top: box.top - margin, right: box.right + margin, bottom: box.bottom + margin }
-                        : box;
-                    const primary = elementAtPoint((b.left + b.right) / 2, (b.top + b.bottom) / 2, filter);
-                    const nearby = collectInBox(b, filter);
-                    const chosen = primary || nearby[0];
-                    if (chosen) {
-                        const ordered = [chosen, ...nearby.filter(e => e !== chosen)].slice(0, 12);
+                if (cached) {
+                    const { nums, square, prompt } = cached;
+                    const R = groundingRange || DEFAULT_GROUNDING_RANGE;
+                    const coords = nums ? nums.join(",") : "";
+                    // The square the model saw, annotated with ITS box (in square px).
+                    const groundingImage = nums
+                        ? await annotate(square, [{ rect: rectOf(viewportBox(nums, R, DEFAULT_GROUNDING_RANGE, DEFAULT_GROUNDING_RANGE)), color: RED, label: coords }], 1)
+                        : square;
+                    const base = { type: "locate" as const, mode: "grounding" as const, model: groundingModel, prompt, groundingImage, gaveBox: !!nums, boxCoords: coords, margin: margin || undefined };
+                    const box = nums ? viewportBox(nums, R, window.innerWidth, window.innerHeight) : null;
+                    if (box) {
+                        const b: Box = margin > 0 ? { left: box.left - margin, top: box.top - margin, right: box.right + margin, bottom: box.bottom + margin } : box;
+                        const primary = elementAtPoint((b.left + b.right) / 2, (b.top + b.bottom) / 2, filter);
+                        const nearby = collectInBox(b, filter);
+                        const chosen = primary || nearby[0];
+                        const ordered = chosen ? [chosen, ...nearby.filter(e => e !== chosen)].slice(0, 12) : nearby.slice(0, 12);
                         const marks = buildMarks(ordered);
-                        if (!shot) shot = await ml.screenshot(null, {});   // cache-hit skipped the capture; need it for the render
-                        const badged = await drawMarks(shot, marks, dpr);
-                        return {
-                            content: `Grounded "${description}"${margin ? ` (margin ${margin}px)` : ""} → [${marks[0].role}]${marks[0].name ? ` "${marks[0].name}"` : ""}\n` +
-                                `selector: ${marks[0].selector}\n(click/type/answer with this selector)\n\nOther elements in that region:\n${listOf(marks)}`,
-                            elements: ordered.slice(0, 50),
-                            render: { type: "image" as const, src: badged, label: `grounded: "${truncate(description, 40)}"` },
-                        };
+                        if (!shot) shot = await ml.screenshot(null, {});   // a cache-hit skipped the capture
+                        // Element-location pass: the search area in YELLOW, candidates in RED.
+                        const resultImage = await annotate(shot, [{ rect: rectOf(b), color: YELLOW }, ...marks.map(m => ({ rect: m.rect, color: RED, badge: m.id }))], dpr);
+                        if (chosen) {
+                            const picked = pickedStr(marks[0]);
+                            return {
+                                content: `Grounded "${description}"${margin ? ` (margin ${margin}px)` : ""} → ${picked}\n(click/type/answer with this selector)\n\nOther elements in that region:\n${listOf(marks)}`,
+                                elements: ordered.slice(0, 50),
+                                render: { ...base, resultImage, picked },
+                            };
+                        }
+                        if (strategy === "grounding") {
+                            return { content: `Grounding located a region for "${description}" but no ${filter} element is under it. Retry with a larger \`margin\`, or use strategy 'marks'.`, render: { ...base, resultImage } };
+                        }
+                    } else if (strategy === "grounding") {
+                        return { content: `The grounding model returned no box for "${description}" — it may not be visible. Scroll it into view, or use strategy 'marks'.`, render: { ...base } };
                     }
-                }
-                // NONE / unparseable / nothing under the box.
-                if (strategy === "grounding") {
-                    return `Grounding didn't locate "${description}" (no box returned, or nothing interactive under it). ` +
-                        `Retry with a \`margin\` (e.g. 80), scroll it into view, or use strategy 'marks' to pick from labelled candidates.`;
+                } else if (strategy === "grounding") {
+                    return `Grounding failed for "${description}" (the vision call errored). Try again, or use strategy 'marks'.`;
                 }
                 // strategy 'auto' → fall through to Set-of-Marks.
             }
@@ -168,19 +183,18 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 if (!shot) shot = await ml.screenshot(null, {});   // viewport PNG (hides our sidebar)
                 badged = await drawMarks(shot, marks, dpr);
             } catch (e) { return `Error capturing/marking the screenshot: ${errText(e)}`; }
-            const prompt = `The screenshot has numbered red badges (#1–#${marks.length}) drawn over candidate ` +
+            const somPrompt = `The screenshot has numbered red badges (#1–#${marks.length}) drawn over candidate ` +
                 `elements. Which single badge number best matches this element: "${description}"? ` +
                 `Reply with ONLY the number, or "NONE" if none match.`;
-            const answer = String(await ml.chat(prompt, { images: [badged], model: somReader, numCtx: VISION_NUM_CTX, maxTokens })).trim();
+            const answer = String(await ml.chat(somPrompt, { images: [badged], model: somReader, numCtx: VISION_NUM_CTX, maxTokens })).trim();
             const pick = (answer.match(/\d+/) || [])[0];
             const chosen = pick ? marks.find(m => m.id === Number(pick)) : undefined;
-            const render = { type: "image" as const, src: badged, label: chosen ? `Set-of-Marks · #${chosen.id}` : "Set-of-Marks" };
+            const render = { type: "locate" as const, mode: "marks" as const, model: String(somReader || "default"), resultImage: badged, picked: chosen ? `#${chosen.id} ${pickedStr(chosen)}` : undefined };
             if (!chosen) {
                 return { content: `No badge matched "${description}" (model replied "${truncate(answer, 40)}"). Candidates:\n${listOf(marks)}`, elements: cands.slice(0, 50), render };
             }
             return {
-                content: `Matched "${description}" → #${chosen.id} [${chosen.role}]` +
-                    `${chosen.name ? ` "${chosen.name}"` : ""}\nselector: ${chosen.selector}\n(click/type/answer with this selector)\n\nAll candidates:\n${listOf(marks)}`,
+                content: `Matched "${description}" → #${chosen.id} ${pickedStr(chosen)}\n(click/type/answer with this selector)\n\nAll candidates:\n${listOf(marks)}`,
                 elements: [chosen.el],
                 render,
             };
