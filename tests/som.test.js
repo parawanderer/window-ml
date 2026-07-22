@@ -16,7 +16,21 @@ function world(html) {
     return dom.window.document;
 }
 const som = require("../dist/som.js");
-const { representativeFor, isClickish, buildMarks } = som;
+const { representativeFor, isClickish, buildMarks, viewportBox } = som;
+
+test("viewportBox maps model coords (any range) to a viewport box, min/max-normalized", () => {
+    // 0–1000 normalized on a 1600×900 viewport.
+    assert.deepEqual(viewportBox([250, 250, 750, 750], 1000, 1600, 900),
+        { left: 400, top: 225, right: 1200, bottom: 675 });
+    // 0–100 percent (Molmo).
+    assert.deepEqual(viewportBox([10, 20, 30, 40], 100, 1000, 500),
+        { left: 100, top: 100, right: 300, bottom: 200 });
+    // Corners given bottom-right-first still normalize to a valid box.
+    assert.deepEqual(viewportBox([750, 750, 250, 250], 1000, 1000, 1000),
+        { left: 250, top: 250, right: 750, bottom: 750 });
+    // range 0 falls back to 1000 (no divide-by-zero).
+    assert.equal(viewportBox([500, 0, 500, 0], 0, 1000, 1000).left, 500);
+});
 
 test("clickables: climbs from a raw hit to the nearest semantic-interactive ancestor", () => {
     const doc = world(`<button id="b"><span id="label"><svg id="icon"></svg></span></button>`);

@@ -155,3 +155,75 @@ export function drawMarks(dataUrl: string, marks: Mark[], dpr: number): Promise<
         img.src = dataUrl;
     });
 }
+
+// ---- Grounding-VLM mechanism (locate's optional path) ----
+
+export type Box = { left: number; top: number; right: number; bottom: number };
+
+/**
+ * Downscale a screenshot to a `size`×`size` square (stretch). Grounding needs
+ * position, not legibility — and a square lets ONE configurable divisor cover every
+ * coordinate convention: 0–1000 normalized, qwen2.5vl's absolute-pixels-of-the-sent
+ * image (which now == 0–size), 0–100 percent, 0–1024 tokens. Map per-axis by
+ * `coord/range`, independent of the viewport's aspect ratio.
+ */
+export function resizeToSquare(dataUrl: string, size = 1000): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+            const cv = document.createElement("canvas");
+            cv.width = size; cv.height = size;
+            const ctx = cv.getContext("2d");
+            if (!ctx) return reject(new Error("no 2d canvas context for grounding resize"));
+            ctx.drawImage(img, 0, 0, size, size);
+            resolve(cv.toDataURL("image/png"));
+        };
+        img.onerror = () => reject(new Error("failed to load screenshot for grounding"));
+        img.src = dataUrl;
+    });
+}
+
+/**
+ * Map a grounding model's [x1,y1,x2,y2] (each in 0..range) to a viewport box in CSS
+ * px. Per-axis `coord/range` fraction — the 1000×1000 square makes `range` cover
+ * every convention (see resizeToSquare). Corners are min/max-normalized.
+ */
+export function viewportBox(coords: number[], range: number, w: number, h: number): Box {
+    const R = range || 1000;
+    const [x1, y1, x2, y2] = coords;
+    return {
+        left: Math.min(x1, x2) / R * w, right: Math.max(x1, x2) / R * w,
+        top: Math.min(y1, y2) / R * h, bottom: Math.max(y1, y2) / R * h,
+    };
+}
+
+/** The representative interactive element painted at a viewport point (CSS px). */
+export function elementAtPoint(x: number, y: number, filter: MarkFilter): Element | null {
+    let hit: Element | null;
+    try { hit = document.elementFromPoint(x, y); } catch { return null; }
+    return hit ? representativeFor(hit, filter) : null;
+}
+
+/**
+ * Hit-test sweep restricted to a viewport box (CSS px) — the grounding box only
+ * needs to be directionally right; this snaps to the real interactive node(s)
+ * inside it. Same reduction/dedup as collectCandidates, clamped to the viewport.
+ */
+export function collectInBox(box: Box, filter: MarkFilter, opts: { step?: number; max?: number } = {}): Element[] {
+    const step = opts.step ?? 18, max = opts.max ?? 20;
+    const x0 = Math.max(0, box.left), x1 = Math.min(window.innerWidth, box.right);
+    const y0 = Math.max(0, box.top), y1 = Math.min(window.innerHeight, box.bottom);
+    const seen = new Set<Element>();
+    const out: Element[] = [];
+    for (let y = y0 + step / 2; y < y1; y += step) {
+        for (let x = x0 + step / 2; x < x1; x += step) {
+            const el = elementAtPoint(x, y, filter);
+            if (!el || seen.has(el) || styleHidden(el)) continue;
+            const r = el.getBoundingClientRect();
+            if (r.width < 4 || r.height < 4) continue;
+            seen.add(el); out.push(el);
+            if (out.length >= max) return out;
+        }
+    }
+    return out;
+}

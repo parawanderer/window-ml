@@ -44,6 +44,14 @@ export const settle = (ms: number): Promise<void> => new Promise(r => (typeof se
 // genuinely small-but-real targets (icons, badges) still pass.
 export const MIN_SHOT_PX = 4;
 
+// Context window (num_ctx) for DELEGATED one-off vision sub-calls — OCR, grounding,
+// and the delegated `look`. A single screenshot + a short reply needs only a few
+// thousand tokens, but a vision model's DEFAULT context is huge, and Ollama
+// pre-allocates KV cache to it (tens of GB), which OOMs modest cards. Capping it
+// here keeps those calls affordable for anybody. NOT applied to native look (that
+// reuses the agent's own model, which needs its full conversation context).
+export const VISION_NUM_CTX = 8192;
+
 /**
  * Crop a full-viewport PNG data URL down to an element's rect. Runs page-side
  * because a data: image doesn't taint the canvas (the cross-origin-taint gotcha

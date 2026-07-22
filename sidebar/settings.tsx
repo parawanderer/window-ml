@@ -5,7 +5,7 @@
 // signal updates on input for a responsive UI + the utility-field enable gating.
 import { signal } from "@preact/signals";
 import type { MlConfig, ApiFormat, Theme, LoadedModel } from "../contract";
-import { DEFAULT_CONFIG } from "../contract";
+import { DEFAULT_CONFIG, DEFAULT_GROUNDING_RANGE, detectGroundingModel } from "../contract";
 import {
     config, models, fontScale, codeWrap, codeLineNumbers,
     MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY,
@@ -34,19 +34,15 @@ const TIP = {
     autoApproveReadonly: "Experimental. Run read-only exec surveys (querySelectorAll → filter → map, no mutation) without an approval prompt, via a mediated interpreter that can't reach window/fetch and never eval()s a string. Anything that mutates or isn't recognised still asks. Also lets these surveys run on Trusted-Types pages where eval is blocked.",
     groundingEnabled: "Experimental. When on, ml.agent's `locate` tool asks a grounding VLM for bounding-box coordinates. This loads an extra model into VRAM — leave off if memory is tight. Off = locate still works via the Set-of-Marks screenshot tool, which needs no extra model.",
     groundingModel: "A vision model that outputs coordinates (recommended qwen2.5vl:7b, or :3b for lower latency). Blank auto-detects a qwen2.5vl on your server. Real-world grounding accuracy is unproven.",
+    groundingRange: "The coordinate scale the model outputs (the divisor for its x,y). The screenshot is sent as a square, so one number covers every convention: 1000 (0-1000 normalized OR qwen2.5vl absolute pixels), 100 (Molmo percent), 1024 (PaliGemma tokens), 1 (0.0-1.0 fractions). Leave at 1000 unless your model uses a different range.",
 };
 
-// First qwen2.5vl on the server (7b preferred, then 3b, then any qwen*vl) — offered
-// as the grounding-model field's placeholder to save typing. "" if none present.
-const detectGrounding = (list: string[]): string =>
-    list.find(m => m === "qwen2.5vl:7b") || list.find(m => m === "qwen2.5vl:3b") || list.find(m => /qwen.*vl/i.test(m)) || "";
-
 // The model a role actually resolves to. Grounding, when enabled with a blank
-// field, falls back to the auto-detected qwen — the same effective model ml.agent
-// will use — so the status row + Test both act on what actually runs.
+// field, falls back to the auto-detected qwen (detectGroundingModel, shared with
+// ml.agent) — the same effective model — so the status row + Test act on what runs.
 function roleModel(key: keyof MlConfig): string {
     const raw = (config.value[key] as string).trim();
-    if (key === "groundingModel" && config.value.groundingEnabled && !raw) return detectGrounding(models.value);
+    if (key === "groundingModel" && config.value.groundingEnabled && !raw) return detectGroundingModel(models.value);
     return raw;
 }
 
@@ -63,8 +59,8 @@ const Lbl = ({ children, tip }: { children: string; tip?: string }) =>
 type TestState = { status: "loading" | "ok" | "err"; error?: string; detail?: string; at?: number; model?: string; image?: string };
 const modelTests = signal<Record<string, TestState | undefined>>({});
 
-// Name the quadrant of a point in 0–1000 coordinate space (image y-down: 0=top).
-const areaName = (x: number, y: number) => `${y > 500 ? "bottom" : "top"}-${x > 500 ? "right" : "left"}`;
+// Name the quadrant of a point given as fractions [0,1] (image y-down: 0=top).
+const areaName = (fx: number, fy: number) => `${fy > 0.5 ? "bottom" : "top"}-${fx > 0.5 ? "right" : "left"}`;
 const MODEL_ROLES: { key: keyof MlConfig; label: string; vision?: boolean }[] = [
     { key: "model", label: "Default" },
     { key: "ocrModel", label: "OCR", vision: true },   // must be vision-capable
@@ -119,17 +115,18 @@ function ocrTestImage(): { dataUrl: string; token: string } | null {
 // centre coords (250/750) match the 0–1000 answer space whether the model returns
 // pixels (qwen2.5vl's native absolute output) or normalized values — sidestepping
 // the pixel-vs-normalized ambiguity. Returns the dot's centre (cx/cy) to grade.
-function groundingTestImage(): { dataUrl: string; cx: number; cy: number } | null {
+function groundingTestImage(): { dataUrl: string; fx: number; fy: number } | null {
     try {
-        const cx = Math.random() < 0.5 ? 250 : 750;
-        const cy = Math.random() < 0.5 ? 250 : 750;
+        const S = DEFAULT_GROUNDING_RANGE;   // the square size locate also sends at
+        const fx = Math.random() < 0.5 ? 0.25 : 0.75;
+        const fy = Math.random() < 0.5 ? 0.25 : 0.75;
         const cv = document.createElement("canvas");
-        cv.width = 1000; cv.height = 1000;
+        cv.width = S; cv.height = S;
         const ctx = cv.getContext("2d");
         if (!ctx) return null;
-        ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, 1000, 1000);
-        ctx.fillStyle = "#e11d48"; ctx.beginPath(); ctx.arc(cx, cy, 70, 0, Math.PI * 2); ctx.fill();
-        return { dataUrl: cv.toDataURL("image/png"), cx, cy };
+        ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, S, S);
+        ctx.fillStyle = "#e11d48"; ctx.beginPath(); ctx.arc(fx * S, fy * S, S * 0.07, 0, Math.PI * 2); ctx.fill();
+        return { dataUrl: cv.toDataURL("image/png"), fx, fy };
     } catch { return null; }
 }
 
@@ -165,11 +162,12 @@ function testOne(key: keyof MlConfig): void {
         const ping = { role: "user", content: "Reply with exactly: OK" };
         const img = key === "ocrModel" ? ocrTestImage() : null;
         const gimg = key === "groundingModel" ? groundingTestImage() : null;
+        const gRange = config.value.groundingRange || DEFAULT_GROUNDING_RANGE;
         const shot = img?.dataUrl || gimg?.dataUrl;   // the test image, kept on the result so the row can show it
         const payload = img
             ? { messages: [{ role: "user", content: "Transcribe the single word shown in this image. Output ONLY that word — no punctuation or explanation.", images: [img.dataUrl] }], model: name, ocr: true }
             : gimg
-                ? { messages: [{ role: "user", content: "The image is 1000×1000 pixels, white, with ONE red dot. Reply with ONLY the dot's centre coordinates as `x,y` — x from 0 (left edge) to 1000 (right edge), y from 0 (top edge) to 1000 (bottom edge). Example: 250,750", images: [gimg.dataUrl] }], model: name }
+                ? { messages: [{ role: "user", content: `This image is white with ONE red dot. Reply with ONLY the dot's centre coordinates as \`x,y\` — each from 0 to ${gRange} (x: 0=left→${gRange}=right; y: 0=top→${gRange}=bottom). Example: ${Math.round(gRange * 0.25)},${Math.round(gRange * 0.75)}`, images: [gimg.dataUrl] }], model: name }
                 : key === "utilityModel"
                     ? { messages: [ping], extend: "utility" }
                     : { messages: [ping], model: name };
@@ -184,14 +182,15 @@ function testOne(key: keyof MlConfig): void {
                     : { status: "err", error: `read "${truncate(String(resp.data || ""), 40)}" — expected "${img.token}"`, image: shot });
             }
             if (gimg) {
-                const dot = areaName(gimg.cx, gimg.cy);
-                const m = String(resp.data || "").match(/(\d{1,4})\s*[,;xX× ]\s*(\d{1,4})/);
+                const dot = areaName(gimg.fx, gimg.fy);
+                const dotCoord = `${Math.round(gimg.fx * gRange)},${Math.round(gimg.fy * gRange)}`;   // where the dot is, in the model's range
+                const m = String(resp.data || "").match(/(\d+(?:\.\d+)?)\s*[,;xX× ]\s*(\d+(?:\.\d+)?)/);
                 if (!m) return done({ status: "err", error: `no coordinates in reply: "${truncate(String(resp.data || ""), 40)}"`, image: shot });
-                const gx = +m[1], gy = +m[2];
-                const hit = (gx > 500 ? 1 : 0) === (gimg.cx > 500 ? 1 : 0) && (gy > 500 ? 1 : 0) === (gimg.cy > 500 ? 1 : 0);
+                const gx = +m[1], gy = +m[2], mfx = gx / gRange, mfy = gy / gRange;   // model fractions
+                const hit = (mfx > 0.5) === (gimg.fx > 0.5) && (mfy > 0.5) === (gimg.fy > 0.5);
                 return done(hit
-                    ? { status: "ok", detail: `dot was ${dot} (≈${gimg.cx},${gimg.cy}); model said ${gx},${gy}`, image: shot }
-                    : { status: "err", error: `model said ${gx},${gy} (${areaName(gx, gy)}) — dot was ${dot} (≈${gimg.cx},${gimg.cy})`, image: shot });
+                    ? { status: "ok", detail: `dot was ${dot} (≈${dotCoord}); model said ${gx},${gy}`, image: shot }
+                    : { status: "err", error: `model said ${gx},${gy} (${areaName(mfx, mfy)}) — dot was ${dot} (≈${dotCoord})`, image: shot });
             }
             done({ status: "ok" });
         });
@@ -354,7 +353,10 @@ export function Settings() {
                 </label>
                 <label class="set-field"><Lbl tip={TIP.groundingModel}>Grounding model</Lbl>
                     <input {...text("groundingModel", { list: "ml-models", disabled: !c.groundingEnabled,
-                        placeholder: detectGrounding(models.value) ? `${detectGrounding(models.value)} (auto-detected)` : "e.g. qwen2.5vl:7b — none detected" })} /></label>
+                        placeholder: detectGroundingModel(models.value) ? `${detectGroundingModel(models.value)} (auto-detected)` : "e.g. qwen2.5vl:7b — none detected" })} /></label>
+                <label class="set-field"><Lbl tip={TIP.groundingRange}>Coordinate range</Lbl>
+                    <input type="number" min="1" step="1" value={c.groundingRange} disabled={!c.groundingEnabled}
+                        onChange={(e: any) => setField("groundingRange", parseInt(e.target.value, 10) || DEFAULT_GROUNDING_RANGE)} /></label>
                 <ModelTests />
             </> : null}
 

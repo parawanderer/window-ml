@@ -158,10 +158,24 @@ sees the badged image and returns a number; only the chosen element's `clickSele
 (stateless currency for click/type/answer) re-enters the driver's thread, so a
 text-only driver can use it. The badged image rides `ToolResult.render` → sidebar only,
 never history. Auto-wired into `ml.agent` alongside `look` whenever `_resolveVisionModel`
-resolves a reader (agent-model-if-vision → OCR model). `som.ts` is unit-tested standalone
-(`dist/som.js`, `tests/som.test.js`) for the walk-up core (`elementFromPoint` is a jsdom
-no-op). Slice 1 of `tmp/visual_element_selection_design.md`; grid + grounding-VLM
-mechanisms are later slices.
+resolves a reader (agent-model-if-vision → OCR model).
+
+**Two mechanisms, driver picks (`strategy`).** `locate({ strategy })` — `"marks"` (above),
+`"grounding"` (a coordinate VLM points at it), or `"auto"` (grounding-first, marks
+fallback). Grounding is **opt-in** config (`groundingEnabled`/`groundingModel`, off by
+default — it loads a 3rd model into VRAM): the screenshot is sent as a **1000×1000
+square** so one configurable **`groundingRange`** (the coord divisor, default 1000)
+covers every convention at once — 0–1000 normalized, qwen2.5vl's absolute-pixels-of-the
+-sent-image (now == 0–1000), 100 (Molmo %), 1024 (PaliGemma), 1 (0–1 floats). The box is
+snapped to the DOM by the same `elementFromPoint` sweep (`collectInBox`), so the model
+only has to be directionally right. `margin` grows the box on a retry, reusing a
+**per-run box cache** (the VLM call is the cost; re-sweeping is free). Delegated vision
+sub-calls (OCR, grounding, delegated `look`) cap `num_ctx` at `VISION_NUM_CTX` (util.ts)
+so a vision model's huge default context doesn't pre-allocate tens of GB of KV cache and
+OOM modest cards — NOT the native look (that reuses the agent's own model). `som.ts`
+unit-tested standalone (`dist/som.js`, `tests/som.test.js`: `representativeFor` walk-up +
+`viewportBox` coord mapping; `elementFromPoint`/canvas are jsdom no-ops). Slices 1–2 of
+`tmp/visual_element_selection_design.md`; grid mechanism is later.
 
 **Agent runs in the debug sidebar.** `ml.agent` emits its own debug-event kinds
 (not `chat`): `agent` (run start: task + model), `agent-step` (one per step — a

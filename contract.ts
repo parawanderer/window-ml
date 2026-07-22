@@ -30,7 +30,18 @@ export interface MlConfig {
     // output). OFF by default — enabling loads a 3rd model into VRAM, so it's opt-in.
     groundingEnabled: boolean;
     groundingModel: string;     // e.g. qwen2.5vl:7b; empty + enabled → auto-detect a qwen2.5vl on the server
+    // Coordinate range the grounding model outputs (the divisor for its x,y). The
+    // screenshot is sent as a 1000×1000 square, so this one number covers every
+    // convention: 1000 (0–1000 normalized, or qwen2.5vl absolute-pixels-of-the-sent
+    // image), 100 (Molmo percent), 1024 (PaliGemma/Florence tokens).
+    groundingRange: number;
 }
+
+/** Default grounding coordinate range / the square size the screenshot is sent at.
+ *  One value: the image is sent at this many px, so a PIXEL model (qwen2.5vl) outputs
+ *  0–this — the same space a 0–1000-NORMALIZED model uses. Override the config range
+ *  only for a different convention (100 = percent, 1024 = tokens). */
+export const DEFAULT_GROUNDING_RANGE = 1000;
 
 /** Single source of truth for config defaults — imported by background.ts,
  *  popup.ts, and the sidebar app so the three can't drift.
@@ -55,11 +66,18 @@ export const DEFAULT_CONFIG: MlConfig = {
     autoApproveReadonly: false,
     groundingEnabled: false,
     groundingModel: "",
+    groundingRange: DEFAULT_GROUNDING_RANGE,
 };
+
+/** First qwen2.5vl on a server model list (7b → 3b → any qwen*vl) — the grounding
+ *  model auto-detect used when the field is blank. "" if none present. Pure; shared
+ *  by the settings UI and ml.agent so they resolve the same effective model. */
+export const detectGroundingModel = (models: string[]): string =>
+    models.find(m => m === "qwen2.5vl:7b") || models.find(m => m === "qwen2.5vl:3b") || models.find(m => /qwen.*vl/i.test(m)) || "";
 
 /** The non-secret subset GET_CONFIG exposes to the page (never the URL/key). */
 export type MlPublicConfig = Pick<MlConfig,
-    "model" | "ocrModel" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "groundingEnabled" | "groundingModel">;
+    "model" | "ocrModel" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "groundingEnabled" | "groundingModel" | "groundingRange">;
 
 /* --------------------------- chat wire shapes -------------------------- */
 
@@ -427,8 +445,9 @@ export interface MlApi {
 
     /** Built-in vision tool factory (OCR/screenshot look). */
     lookTool(opts?: { model?: string | null; maxTokens?: number }): MlTool;
-    /** Built-in delegated Set-of-Marks locator factory (find an element by describing it). */
-    locateTool(opts?: { model?: string | null; maxTokens?: number }): MlTool;
+    /** Built-in delegated visual locator (find an element by describing it): grounding
+     *  VLM when configured, else Set-of-Marks; both snap to the DOM by hit-testing. */
+    locateTool(opts?: { model?: string | null; groundingModel?: string | null; groundingRange?: number; maxTokens?: number }): MlTool;
     /** Built-in click tool factory. */
     clickTool(): MlTool;
     /** Built-in type tool factory. */

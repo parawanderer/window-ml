@@ -25,6 +25,7 @@ import type {
     LoadedModel,
     MlHistory
 } from "./contract";
+import { detectGroundingModel, DEFAULT_GROUNDING_RANGE } from "./contract";
 import { evalReadonly } from "./readonly-exec";
 import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError } from "./dom";
 import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE } from "./prompts";
@@ -400,7 +401,17 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool } from ".
                     } else {
                         toolset.push(this.lookTool({ model: visionModel }));
                     }
-                    toolset.push(this.locateTool({ model: visionModel }));
+                    // Grounding (opt-in): the effective model is the explicit field, or
+                    // the auto-detected qwen when it's blank; plus its coordinate range.
+                    let groundingModel: string | null = null, groundingRange = DEFAULT_GROUNDING_RANGE;
+                    try {
+                        const cfg = await this.config();
+                        if (cfg.groundingEnabled) {
+                            groundingRange = cfg.groundingRange || DEFAULT_GROUNDING_RANGE;
+                            groundingModel = cfg.groundingModel.trim() || detectGroundingModel(await this.models()) || null;
+                        }
+                    } catch { /* config/models unavailable → Set-of-Marks only */ }
+                    toolset.push(this.locateTool({ model: visionModel, groundingModel, groundingRange }));
                 }
             }
             const byName = Object.fromEntries(toolset.map(t => [t.name, t]));
@@ -815,7 +826,7 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool } from ".
          * @param {number} [opts.maxTokens=64] Cap on the sub-call (it returns a number).
          * @returns {MlTool} A tool with `name: "locate"` and `capabilities: ["vision"]`.
          */
-        locateTool: function(opts: { model?: string | null; maxTokens?: number } = {}): MlTool {
+        locateTool: function(opts: { model?: string | null; groundingModel?: string | null; groundingRange?: number; maxTokens?: number } = {}): MlTool {
             return buildLocateTool(this, opts);
         },
         /**
