@@ -167,7 +167,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 },
                 selector: {
                     type: "string",
-                    description: "Optional: CSS selector of a PARENT CONTAINER element (e.g. '.modal', 'tr:nth-child(2)') to restrict visual scanning to that box. Its region is cropped and searched alone. Do NOT pass the target element's selector here — this is only for the outer box."
+                    description: "Optional: CSS selector of a PARENT CONTAINER element (e.g. '.modal', 'tr:nth-child(2)') to restrict visual scanning to that box. Its region is cropped and searched alone. Do NOT pass the target element's selector here — this is only for the outer box. FOR ANYTHING ON A <canvas>/WebGL surface, FIRST find the canvas's selector (interactives/describeElement, or just 'canvas' / its id) and pass it here — the search then covers only the canvas, giving tighter cells and exact coordinates."
                 },
                 index: {
                     type: "integer",
