@@ -8,7 +8,7 @@ import type { MlApi, MlTool } from "./contract";
 import { DEFAULT_GROUNDING_RANGE } from "./contract";
 import { truncate, errText, elLine, queryAll, selectorError } from "./dom";
 import { settle, VISION_NUM_CTX, cropDataUrl, MIN_SHOT_PX } from "./util";
-import { collectCandidates, buildMarks, drawMarks, annotate, formatBox, letterboxToSquare, projectFromSquare, drawGrid, gridDims, validateCells, cellsBox, collectInBox, elementAtPoint, viewportBox, type MarkFilter, type Box, type Mark } from "./som";
+import { collectCandidates, buildMarks, annotate, formatBox, letterboxToSquare, projectFromSquare, drawGrid, gridDims, validateCells, cellsBox, collectInBox, elementAtPoint, viewportBox, colorWordHues, pickOverlayColor, type MarkFilter, type Box, type Mark } from "./som";
 
 export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512 }: { model?: string | null; maxTokens?: number } = {}): MlTool => {
     return ml.defineTool({
@@ -143,14 +143,18 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             const rectOf = (b: Box) => ({ left: b.left, top: b.top, width: b.right - b.left, height: b.bottom - b.top });
             const pickedStr = (m: { role: string; name: string; selector: string }) => `[${m.role}]${m.name ? ` "${m.name}"` : ""} → ${m.selector}`;
             let shot: string | undefined;   // captured once, shared between mechanisms
+            const avoidHues = colorWordHues(description);   // don't overlay the target's own colour
 
             // Draw numbered badges over `marks` — full-frame, or translated onto a crop of
-            // `crop` (a scoped/grid-cell view, for a tighter, more legible image). Shared by
+            // `crop` (a scoped/grid-cell view, for a tighter, more legible image). The badge
+            // colour contrasts with the page (and avoids the target's colour). Shared by
             // strategy 'marks' and grid's in-cell disambiguation.
             const badgeMarks = async (marks: Mark[], crop?: { left: number; top: number; width: number; height: number }): Promise<string> => {
                 if (!shot) shot = await ml.screenshot(null, {});
-                if (!crop) return drawMarks(shot, marks, dpr);
-                return annotate(await cropDataUrl(shot, crop, dpr), marks.map(m => ({ rect: { left: m.rect.left - crop.left, top: m.rect.top - crop.top, width: m.rect.width, height: m.rect.height }, color: RED, badge: m.id })), dpr);
+                const src = crop ? await cropDataUrl(shot, crop, dpr) : shot;
+                const color = await pickOverlayColor(src, avoidHues);
+                const box = (m: Mark) => crop ? { left: m.rect.left - crop.left, top: m.rect.top - crop.top, width: m.rect.width, height: m.rect.height } : m.rect;
+                return annotate(src, marks.map(m => ({ rect: box(m), color, badge: m.id })), dpr);
             };
             // Ask the vision reader which badge matches the description; returns the chosen
             // mark (or none) + the raw answer.
@@ -217,7 +221,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 const { cols, rows } = gridDims(gRegion, base);   // aspect-matched — no wasted rows
                 if (!shot) shot = await ml.screenshot(null, {});
                 let gridded: string;
-                try { gridded = await drawGrid(await cropDataUrl(shot, gRegion, dpr), cols, rows, dpr); }
+                try { gridded = await drawGrid(await cropDataUrl(shot, gRegion, dpr), cols, rows, dpr, avoidHues); }
                 catch (e) { return `Error drawing the grid: ${errText(e)}`; }
                 const gprompt = `This image is divided into a ${cols}×${rows} numbered grid (cells 1–${cols * rows}, numbered left-to-right, top-to-bottom). ` +
                     `Which cell contains ${description}${scopeNote}? If the target sits ON a grid line or spans more than one cell, reply with the 2 adjacent cells (or a 2×2 block of 4) that cover it; otherwise the single cell. ` +
@@ -243,25 +247,28 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                     return { content: `Grid ${cellNote} for "${description}"${scopeNote} has no ${filter} element under it. Re-pick, raise gridSize, or switch strategy.`, render: { ...desc, griddedImage, resultImage: await annotate(shot, [{ rect: rectOf(cellBox), color: YELLOW, label: cellNote }], dpr) } };
                 }
                 const marks = buildMarks(found);
-                let picked: Mark, resultImage: string;
+                let picked: Mark, resultImage: string, pk: string, handoff: number | undefined;
                 if (found.length === 1) {
+                    // Exactly one element under the cell → snap to it directly (no 2nd call).
                     picked = marks[0];
+                    pk = pickedStr(picked);
                     resultImage = await annotate(shot, [{ rect: rectOf(cellBox), color: YELLOW, label: cellNote }, { rect: picked.rect, color: RED, badge: 1 }], dpr);
                 } else {
-                    // Several candidates in the region → let the reader pick by badge (SoM on
-                    // just the selected cells), instead of snapping to the first.
+                    // Several candidates in the region → a SECOND vision sub-call picks by badge
+                    // (Set-of-Marks on just the selected cells), instead of snapping to the first.
                     resultImage = await badgeMarks(marks, rectOf(cellBox));
                     const { chosen, answer } = await askMarks(marks, resultImage, reader, scopeNote);
                     if (!chosen) {
-                        return { content: `Grid narrowed "${description}"${scopeNote} to ${cellNote} (${found.length} candidates) but couldn't pick one (replied "${truncate(answer, 40)}"). Candidates:\n${listOf(marks)}`, elements: found.slice(0, 50), render: { ...desc, griddedImage, resultImage } };
+                        return { content: `Grid narrowed "${description}"${scopeNote} to ${cellNote} (${found.length} candidates) but couldn't pick one (replied "${truncate(answer, 40)}"). Candidates:\n${listOf(marks)}`, elements: found.slice(0, 50), render: { ...desc, griddedImage, resultImage, handoff: found.length } };
                     }
                     picked = chosen;
+                    pk = `#${picked.id} ${pickedStr(picked)}`;   // the badge the model chose
+                    handoff = found.length;
                 }
-                const pk = pickedStr(picked);
                 return {
-                    content: `Grid ${cellNote}${scopeNote} → ${pk}\n(click/type/answer with this selector)\n\nTo narrow further, re-run with cells:[${sel.join(",")}] (fresh grid inside). Candidates in that region:\n${listOf(marks)}`,
+                    content: `Grid ${cellNote}${scopeNote}${handoff ? ` → badged ${handoff} candidates → model picked ${pk}` : ` → ${pk}`}\n(click/type/answer with this selector)\n\nTo narrow further, re-run with cells:[${sel.join(",")}] (fresh grid inside). Candidates in that region:\n${listOf(marks)}`,
                     elements: [picked.el, ...found.filter(e => e !== picked.el)].slice(0, 50),
-                    render: { ...desc, griddedImage, resultImage, picked: pk },
+                    render: { ...desc, griddedImage, resultImage, picked: pk, handoff },
                 };
             }
 
@@ -358,11 +365,9 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             const marks = buildMarks(cands);
             let badged: string;
             try {
-                if (!shot) shot = await ml.screenshot(null, {});   // viewport PNG (hides our sidebar)
-                badged = scopeSel
-                    // Badge on the cropped region — translate each mark into crop-local coords.
-                    ? await annotate(await cropDataUrl(shot, region, dpr), marks.map(m => ({ rect: { left: m.rect.left - region.left, top: m.rect.top - region.top, width: m.rect.width, height: m.rect.height }, color: RED, badge: m.id })), dpr)
-                    : await drawMarks(shot, marks, dpr);
+                // Badge full-frame, or on a crop of the scoped region (badgeMarks picks a
+                // page-contrasting colour that avoids the target's own colour).
+                badged = await badgeMarks(marks, scopeSel ? region : undefined);
             } catch (e) { return `Error capturing/marking the screenshot: ${errText(e)}`; }
             const somPrompt = `The screenshot has numbered red badges (#1–#${marks.length}) drawn over candidate ` +
                 `elements. Which single badge number best matches this element: "${description}"${scopeNote}? ` +

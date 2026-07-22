@@ -435,11 +435,12 @@ function LocateRender({ d }: { d: Extract<RenderDescriptor, { type: "locate" }> 
             </> : d.mode === "grid" ? <>
                 {d.prompt ? <details class="r-loc-prompt"><summary>prompt to the model</summary><Code text={d.prompt} lang="text" /></details> : null}
                 {d.griddedImage ? <div class="r-loc-stage">
-                    <div class="r-loc-cap">Grid{d.cols && d.rows ? ` ${d.cols}×${d.rows}` : ""}{d.cells?.length ? ` · cell${d.cells.length > 1 ? "s" : ""} ${d.cells.join(",")}` : " · no cell"}</div>
+                    <div class="r-loc-cap">1 · Cell pick{d.cols && d.rows ? ` · grid ${d.cols}×${d.rows}` : ""}{d.cells?.length ? ` · model chose cell${d.cells.length > 1 ? "s" : ""} ${d.cells.join(",")}` : " · no cell"}</div>
                     <ClickableImg src={d.griddedImage} alt="the numbered grid the model saw" />
                 </div> : null}
+                {d.handoff ? <div class="r-loc-note">The cell held {d.handoff} elements, so they were re-badged and a <b>second</b> vision call picked one (Set-of-Marks).</div> : null}
                 {d.resultImage ? <div class="r-loc-stage">
-                    <div class="r-loc-cap">Element location</div>
+                    <div class="r-loc-cap">{d.handoff ? `2 · Set-of-Marks pick · model chose 1 of ${d.handoff} candidates` : "Element location · single element, snapped directly"}</div>
                     <ClickableImg src={d.resultImage} alt="candidate elements" />
                 </div> : null}
             </> : <>
@@ -447,8 +448,8 @@ function LocateRender({ d }: { d: Extract<RenderDescriptor, { type: "locate" }> 
                 {d.fallbackImage ? <div class="r-loc-stage"><div class="r-loc-cap">Grounding attempt</div><ClickableImg src={d.fallbackImage} alt="grounding attempt" /></div> : null}
                 {d.resultImage ? <div class="r-loc-stage">{d.fallbackNote ? <div class="r-loc-cap">Set-of-Marks</div> : null}<ClickableImg src={d.resultImage} alt="Set-of-Marks" /></div> : null}
             </>}
-            <div class="r-loc-picked" title={d.mode === "marks" ? "The vision model picked this badge number directly." : d.mode === "grid" ? "The model picked a grid cell; the DOM hit-test snapped to this element." : "The grounding model gave coordinates; the DOM hit-test snapped them to this element."}>
-                {d.mode === "marks" ? "Model picked" : "Snapped to"}: {d.picked ? <code>{d.picked}</code> : <span class="dim">(none)</span>}
+            <div class="r-loc-picked" title={d.mode === "marks" ? "The vision model picked this badge number directly." : d.mode === "grid" && d.handoff ? "The model picked a grid cell, then a second Set-of-Marks call picked this badge among the cell's elements." : d.mode === "grid" ? "The model picked a grid cell; the DOM hit-test found a single element there." : "The grounding model gave coordinates; the DOM hit-test snapped them to this element."}>
+                {d.mode === "marks" || (d.mode === "grid" && d.handoff) ? "Model picked" : "Snapped to"}: {d.picked ? <code>{d.picked}</code> : <span class="dim">(none)</span>}
             </div>
         </div>
     );

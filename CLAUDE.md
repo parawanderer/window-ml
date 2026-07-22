@@ -190,9 +190,11 @@ five icons in one cell and snapped to the wrong one):
   cells so a target *straddling* a grid line is fully covered; `validateCells` rejects
   non-adjacent / L-shape / 3-cell picks, `cellsBox` unions the selection into one Box.
 - **Marks hand-off** — after unioning + the `collectInBox` sweep, a region with **one**
-  candidate returns it; **several** → it hands off to Set-of-Marks *within the selection*
-  (badge + pick) rather than snapping to the first. `badgeMarks`/`askMarks` are shared with
-  mechanism #2.
+  candidate returns it directly; **several** → a **second vision sub-call** picks by badge
+  (Set-of-Marks *within the selection*) rather than snapping to the first. `badgeMarks`/
+  `askMarks` are shared with mechanism #2. The render carries `handoff` (the candidate
+  count) so the sidebar/export show the two stages ("cell pick" → "Set-of-Marks pick, 1 of
+  N") and the footer reads **"Model picked"** (the reader chose a badge) not "Snapped to".
 - **Honest ambiguity** — an invalid selection, an empty region, or a marks hand-off that
   still can't decide returns the candidates + a steer (re-pick / raise `gridSize` / switch
   strategy), never a confident wrong pick.
@@ -205,6 +207,16 @@ delegation-safe (the vision sub-call always picks; the driver only echoes cells 
 render (`mode:"grid"`: the grid the model saw with the selected cells highlighted +
 `griddedImage`/`cells`/`cols`/`rows`, then the DOM-snap `resultImage`); it snaps to the DOM,
 so the footer reads **"Snapped to"** like grounding.
+
+**Overlay colour heuristic.** The grid lines and the SoM badges are **model-facing** (the
+grounding image sent to the model is the plain letterbox; the element-location/box images are
+human-only), so a fixed red vanishes on a red-themed page. `pickOverlayHex` samples the
+image into a 12-bucket hue histogram and picks the palette colour that clashes least, also
+hard-avoiding any colour **named in the description** (`colorWordHues` — so "the red
+umbrella" is never overlaid in red, which the histogram alone won't repel for a tiny
+target). Grid lines also get a dark casing so they survive a busy multi-colour page.
+`pickOverlayHex`/`colorWordHues` are pure + unit-tested; the sampling/draw is a canvas op
+(jsdom no-op).
 
 **Delegated-model note.** Every vision sub-call (grid/marks/grounding) runs *standalone* —
 its image + reply never enter the driver's context. When the sub-call's model **equals the

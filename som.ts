@@ -113,6 +113,93 @@ export function buildMarks(candidates: Element[]): Mark[] {
     }));
 }
 
+// ---- Overlay colour heuristic (grid lines + SoM badges are model-facing, so a fixed
+// red vanishes on a red-themed page) ----
+
+// Vivid overlay colours that all read with WHITE text (mid-luminance, saturated),
+// spread around the wheel so one is always far from a page's dominant hue.
+const OVERLAY_PALETTE: { hex: string; h: number }[] = [
+    { hex: "#ff2d55", h: 344 },   // red (the default, kept for a neutral page)
+    { hex: "#ff8f00", h: 34 },    // amber
+    { hex: "#12b34a", h: 142 },   // green
+    { hex: "#00b8d4", h: 189 },   // cyan
+    { hex: "#2979ff", h: 217 },   // blue
+    { hex: "#c724ff", h: 285 },   // purple
+];
+const hueDist = (a: number, b: number): number => { const d = Math.abs(a - b) % 360; return d > 180 ? 360 - d : d; };
+
+/**
+ * Colour words in a description → representative hues, so an overlay avoids the
+ * TARGET's own colour ("the red umbrella") — which a page histogram alone won't repel
+ * when the target is a tiny fraction of the pixels.
+ */
+export function colorWordHues(text: string): number[] {
+    const MAP: Record<string, number> = { red: 0, orange: 30, amber: 40, gold: 45, yellow: 55, lime: 90, green: 140, teal: 175, cyan: 190, blue: 220, indigo: 250, purple: 280, violet: 280, magenta: 320, pink: 340, crimson: 348, scarlet: 5 };
+    const t = (text || "").toLowerCase();
+    const hues: number[] = [];
+    for (const [w, h] of Object.entries(MAP)) if (new RegExp(`\\b${w}\\b`).test(t)) hues.push(h);
+    return hues;
+}
+
+/**
+ * Pick the palette colour that clashes LEAST with a 12-bucket hue histogram (each
+ * bucket = summed saturation×value of the image's pixels at that hue), also hard-
+ * avoiding any `avoidHues`. Returns a hex; defaults to red on a neutral/grey page.
+ */
+export function pickOverlayHex(weights: number[], avoidHues: number[] = []): string {
+    const buckets = weights.length || 12, span = 360 / buckets;
+    let best = OVERLAY_PALETTE[0].hex, bestScore = Infinity;
+    for (const c of OVERLAY_PALETTE) {
+        let clash = 0;
+        for (let b = 0; b < buckets; b++) {
+            const bucketHue = b * span + span / 2;
+            clash += weights[b] * Math.max(0, 1 - hueDist(bucketHue, c.h) / 60);
+        }
+        for (const a of avoidHues) if (hueDist(a, c.h) < 45) clash += 1e6;   // never overlay the target's colour
+        if (clash < bestScore) { bestScore = clash; best = c.hex; }
+    }
+    return best;
+}
+
+/** Sample an already-drawn canvas into a 12-bucket hue histogram (grey/near-black/
+ *  near-white pixels excluded — they don't clash with any hue). */
+function sampleHues(ctx: CanvasRenderingContext2D, w: number, h: number): number[] {
+    const weights = new Array(12).fill(0);
+    let data: Uint8ClampedArray;
+    try { data = ctx.getImageData(0, 0, w, h).data; } catch { return weights; }
+    const step = Math.max(1, Math.round(Math.sqrt((w * h) / 4000)));   // ~4k samples, dpr-independent
+    for (let y = 0; y < h; y += step) for (let x = 0; x < w; x += step) {
+        const i = (y * w + x) * 4;
+        const r = data[i] / 255, g = data[i + 1] / 255, bl = data[i + 2] / 255;
+        const max = Math.max(r, g, bl), min = Math.min(r, g, bl), d = max - min;
+        if (d < 0.12 || max < 0.12 || max > 0.97) continue;   // grey / near-black / near-white → no hue claim
+        let hue: number;
+        if (max === r) hue = ((g - bl) / d + 6) % 6;
+        else if (max === g) hue = (bl - r) / d + 2;
+        else hue = (r - g) / d + 4;
+        hue = hue * 60;
+        weights[Math.min(11, Math.floor(hue / 30))] += d * max;
+    }
+    return weights;
+}
+
+/** Pick a contrasting overlay colour for a data-URL image (loads it, samples, scores). */
+export function pickOverlayColor(dataUrl: string, avoidHues: number[] = []): Promise<string> {
+    return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+            const cv = document.createElement("canvas");
+            cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+            const ctx = cv.getContext("2d");
+            if (!ctx) return resolve(OVERLAY_PALETTE[0].hex);
+            ctx.drawImage(img, 0, 0);
+            resolve(pickOverlayHex(sampleHues(ctx, cv.width, cv.height), avoidHues));
+        };
+        img.onerror = () => resolve(OVERLAY_PALETTE[0].hex);
+        img.src = dataUrl;
+    });
+}
+
 /** One box drawn onto a screenshot: a colored outline + an optional tab holding a
  *  `badge` number or a `label` string above its top-left corner, OR `corners` — two
  *  labels at the top-left and bottom-right corners (for a grounding box shown as two
@@ -181,11 +268,6 @@ export function annotate(dataUrl: string, boxes: Annot[], scale: number): Promis
         img.onerror = () => reject(new Error("failed to load the screenshot for annotation"));
         img.src = dataUrl;
     });
-}
-
-/** The Set-of-Marks convenience: red numbered badges over each candidate. */
-export function drawMarks(dataUrl: string, marks: Mark[], dpr: number): Promise<string> {
-    return annotate(dataUrl, marks.map(m => ({ rect: m.rect, color: "#ff2d55", badge: m.id })), dpr);
 }
 
 // ---- Grounding-VLM mechanism (locate's optional path) ----
@@ -279,9 +361,12 @@ export function viewportBox(coords: number[], range: number, w: number, h: numbe
  * left-to-right, top-to-bottom, a label in each cell's top-left. The grid mechanism
  * asks a vision model "which cell holds <target>?", turning spatial grounding into a
  * multiple-choice pick that needs no coordinate training and can't hallucinate an
- * (x,y). `scale` sizes the lines/labels (dpr). Never touches the live page.
+ * (x,y). `scale` sizes the lines/labels (dpr); the line/badge colour is chosen to
+ * contrast with the page (avoiding `avoidHues`, e.g. the target's own colour), and each
+ * line gets a dark casing so it survives even a busy multi-colour page. Never touches
+ * the live page.
  */
-export function drawGrid(dataUrl: string, cols: number, rows: number, scale: number): Promise<string> {
+export function drawGrid(dataUrl: string, cols: number, rows: number, scale: number, avoidHues: number[] = []): Promise<string> {
     return new Promise((resolve, reject) => {
         const img = new Image();
         img.onload = () => {
@@ -290,17 +375,22 @@ export function drawGrid(dataUrl: string, cols: number, rows: number, scale: num
             const ctx = cv.getContext("2d");
             if (!ctx) return reject(new Error("no 2d canvas context for grid"));
             ctx.drawImage(img, 0, 0);
+            const color = pickOverlayHex(sampleHues(ctx, cv.width, cv.height), avoidHues);
             const cw = cv.width / cols, ch = cv.height / rows;
             const fs = Math.round(13 * scale), pad = Math.round(3 * scale);
-            ctx.strokeStyle = "#ff2d55"; ctx.lineWidth = Math.max(1, Math.round(1.5 * scale));
+            const lw = Math.max(1, Math.round(1.5 * scale));
+            const lines = () => {
+                for (let c = 1; c < cols; c++) { ctx.beginPath(); ctx.moveTo(c * cw, 0); ctx.lineTo(c * cw, cv.height); ctx.stroke(); }
+                for (let r = 1; r < rows; r++) { ctx.beginPath(); ctx.moveTo(0, r * ch); ctx.lineTo(cv.width, r * ch); ctx.stroke(); }
+            };
+            ctx.strokeStyle = "rgba(0,0,0,0.55)"; ctx.lineWidth = lw + Math.max(2, Math.round(2 * scale)); lines();   // dark casing
+            ctx.strokeStyle = color; ctx.lineWidth = lw; lines();                                                     // bright core
             ctx.font = `bold ${fs}px sans-serif`; ctx.textBaseline = "top";
-            for (let c = 1; c < cols; c++) { ctx.beginPath(); ctx.moveTo(c * cw, 0); ctx.lineTo(c * cw, cv.height); ctx.stroke(); }
-            for (let r = 1; r < rows; r++) { ctx.beginPath(); ctx.moveTo(0, r * ch); ctx.lineTo(cv.width, r * ch); ctx.stroke(); }
             for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
                 const n = String(r * cols + c + 1);
                 const bw = Math.ceil(ctx.measureText(n).width) + pad * 2, bh = fs + pad * 2;
                 const x = c * cw + Math.round(2 * scale), y = r * ch + Math.round(2 * scale);
-                ctx.fillStyle = "rgba(255,45,85,0.85)"; ctx.fillRect(x, y, bw, bh);
+                ctx.fillStyle = color; ctx.fillRect(x, y, bw, bh);
                 ctx.fillStyle = "#fff"; ctx.fillText(n, x + pad, y + pad);
             }
             resolve(cv.toDataURL("image/png"));

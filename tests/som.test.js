@@ -1,6 +1,6 @@
 "use strict";
 // The Set-of-Marks hit-test engine (som.ts, built to dist/som.js). elementFromPoint
-// is a jsdom no-op, so collectCandidates/drawMarks (which need real layout + canvas)
+// is a jsdom no-op, so collectCandidates/drawGrid (which need real layout + canvas)
 // can't run here — but representativeFor is the accessibility-agnostic CORE (climb a
 // raw hit to the meaningful element) and IS testable against a real DOM.
 const { test } = require("node:test");
@@ -16,7 +16,26 @@ function world(html) {
     return dom.window.document;
 }
 const som = require("../dist/som.js");
-const { representativeFor, isClickish, buildMarks, viewportBox, formatBox, projectFromSquare, gridDims, validateCells, cellsBox } = som;
+const { representativeFor, isClickish, buildMarks, viewportBox, formatBox, projectFromSquare, gridDims, validateCells, cellsBox, colorWordHues, pickOverlayHex } = som;
+
+test("colorWordHues extracts hues from colour words in a description (for overlay avoidance)", () => {
+    assert.deepEqual(colorWordHues("the bright RED umbrella"), [0]);
+    assert.deepEqual(colorWordHues("a green download button").sort((a, b) => a - b), [140]);
+    assert.deepEqual(colorWordHues("no colour here mentioned"), []);
+    // Word-boundaried: "regenerate" must not match "red".
+    assert.deepEqual(colorWordHues("the regenerate icon"), []);
+});
+
+test("pickOverlayHex chooses a palette colour that clashes least with the page hues", () => {
+    const empty = new Array(12).fill(0);
+    // A neutral/grey page → the default red.
+    assert.equal(pickOverlayHex(empty), "#ff2d55");
+    // A red-heavy page (weight in the 0° bucket) → red is avoided, a far hue chosen.
+    const redPage = empty.slice(); redPage[0] = 100;
+    assert.notEqual(pickOverlayHex(redPage), "#ff2d55");
+    // avoidHues hard-blocks the target's colour even on a neutral page.
+    assert.notEqual(pickOverlayHex(empty, [0]), "#ff2d55", "red target → don't overlay in red");
+});
 
 test("gridDims matches the grid to the region aspect (a wide strip gets more cols than rows)", () => {
     assert.deepEqual(gridDims({ width: 1000, height: 1000 }, 4), { cols: 4, rows: 4 });   // square → N×N

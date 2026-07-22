@@ -86,8 +86,9 @@ function agentToMarkdown(s: Session, addImage: AddImage): string {
             } else if (r.mode === "grid") {
                 if (r.prompt) o.push("<details><summary>Prompt to the model</summary>", "", fence(r.prompt), "", "</details>", "");
                 const gref = r.griddedImage && addImage(r.griddedImage, `step-${st.step}-grid`);
-                o.push(`**Grid**${r.cols && r.rows ? ` ${r.cols}×${r.rows}` : ""}${r.cells?.length ? ` — cell${r.cells.length > 1 ? "s" : ""} ${r.cells.join(",")}` : " — no cell"}:`, "");
+                o.push(`**1 · Cell pick**${r.cols && r.rows ? ` — grid ${r.cols}×${r.rows}` : ""}${r.cells?.length ? ` — model chose cell${r.cells.length > 1 ? "s" : ""} ${r.cells.join(",")}` : " — no cell"}:`, "");
                 o.push(gref ? `![step ${st.step} grid](${gref})` : "_🖼️ (image unavailable)_", "");
+                if (r.handoff) o.push(`> _The cell held ${r.handoff} elements → re-badged → a **second** vision call picked one (Set-of-Marks)._`, "");
             }
             if (r.fallbackNote) {
                 o.push(`> _Grounding ${r.fallbackNote} — fell back to Set-of-Marks._`, "");
@@ -96,10 +97,13 @@ function agentToMarkdown(s: Session, addImage: AddImage): string {
             }
             const eref = r.resultImage && addImage(r.resultImage, `step-${st.step}-element-location`);
             if (eref) {
-                o.push(`**${r.mode === "marks" && r.fallbackNote ? "Set-of-Marks" : "Element location"}**${r.margin ? ` — +${r.margin}px search margin` : ""}:`, "");
+                const cap = r.mode === "grid" && r.handoff ? `2 · Set-of-Marks pick (1 of ${r.handoff})`
+                    : r.mode === "marks" && r.fallbackNote ? "Set-of-Marks"
+                    : "Element location";
+                o.push(`**${cap}**${r.margin ? ` — +${r.margin}px search margin` : ""}:`, "");
                 o.push(`![step ${st.step} element location](${eref})`, "");
             }
-            o.push(`**${r.mode === "marks" ? "Model picked" : "Snapped to"}:** ${r.picked || "_(none)_"}`, "");
+            o.push(`**${r.mode === "marks" || (r.mode === "grid" && r.handoff) ? "Model picked" : "Snapped to"}:** ${r.picked || "_(none)_"}`, "");
         }
         if (st.result != null && st.result !== "") o.push("**Out:**", "", fence(st.result), "");
         else if (st.elements != null) o.push(`**Out:** ${st.elements} element(s)`, "");

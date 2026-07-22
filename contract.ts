@@ -154,11 +154,14 @@ export type RenderDescriptor = (
         boxCoords?: string;              // grounding: the raw coords it gave, for display
         margin?: number;                 // grounding: the search-area expansion applied
         // grid: the numbered grid the model saw (selected cell(s) highlighted), which
-        // cell(s) it chose, and the aspect-matched grid dimensions.
+        // cell(s) it chose, the aspect-matched grid dimensions, and — when the picked
+        // cell held several elements — how many a SECOND (Set-of-Marks) sub-call chose
+        // among (absent when a single element was snapped directly).
         griddedImage?: string;
         cells?: number[];
         cols?: number;
         rows?: number;
+        handoff?: number;
         // marks: when 'auto' tried grounding and it missed, why (+ what it saw), so the
         // fallback still shows the grounding attempt instead of hiding it.
         fallbackNote?: string;

@@ -658,11 +658,33 @@ test("locate render: grid mode shows the aspect grid + selected cells, then the 
     const loc = w.shadow.querySelector(".r-locate");
     assert.match(loc.querySelector(".r-loc-head").textContent, /Grid · gemma4:31b/);
     assert.match(loc.querySelector(".r-loc-delegated").textContent, /standalone sub-call/);
-    assert.match([...loc.querySelectorAll(".r-loc-cap")].map(c => c.textContent).join(" "), /Grid 4×4 · cells 2,3/);
+    const caps = [...loc.querySelectorAll(".r-loc-cap")].map(c => c.textContent).join(" ");
+    assert.match(caps, /grid 4×4 · model chose cells 2,3/);
     const imgs = [...loc.querySelectorAll(".r-loc-stage img")].map(i => i.getAttribute("src"));
     assert.deepEqual(imgs, ["data:image/png;base64,GRID", "data:image/png;base64,SNAP"], "grid image then the snap");
-    // Grid snaps to the DOM (the model chose cells, not the element) → "Snapped to".
+    // Single element under the cell → snapped directly (no hand-off) → "Snapped to".
     assert.match(loc.querySelector(".r-loc-picked").textContent, /Snapped to:.*nth-of-type\(3\)/);
+    assert.equal(loc.querySelector(".r-loc-note"), null, "no hand-off note when a single element");
+});
+
+test("locate render: grid with a SoM hand-off tells the two-stage story (cell → badge pick)", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("lgh", "find it", "gemma4:31b", 10));
+    await w.dispatch(agentStep("lgh", 1, { tool: "locate", arguments: { description: "star", strategy: "grid" }, elements: 1, render: {
+        type: "locate", mode: "grid", model: "gemma4:31b", cols: 5, rows: 3, cells: [11], handoff: 15,
+        griddedImage: "data:image/png;base64,GRID", resultImage: "data:image/png;base64,MARKS",
+        picked: "#12 [div] → #grid > div:nth-of-type(92)", prompt: "grid …",
+    } }));
+    await w.dispatch(agentResult("lgh", "done", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    for (const h of w.shadow.querySelectorAll(".astep.tool .astep-head")) h.click();
+    await w.tick();
+    const loc = w.shadow.querySelector(".r-locate");
+    assert.match(loc.querySelector(".r-loc-note").textContent, /held 15 elements.*second vision call picked one/i);
+    assert.match([...loc.querySelectorAll(".r-loc-cap")].map(c => c.textContent).join(" "), /Set-of-Marks pick · model chose 1 of 15/);
+    // The model actively picked a badge → "Model picked", not "Snapped to".
+    assert.match(loc.querySelector(".r-loc-picked").textContent, /Model picked:.*#12.*nth-of-type\(92\)/);
 });
 
 test("locate render: no delegated note when the sub-call model differs from the driver", async () => {
@@ -905,8 +927,8 @@ test("export: a grid locate step serialises the numbered grid + the DOM snap", a
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("expg", "find the star", "gemma4:31b", 10));
     await w.dispatch(agentStep("expg", 1, { tool: "locate", arguments: { description: "star", strategy: "grid" }, elements: 1, render: {
-        type: "locate", mode: "grid", model: "gemma4:31b", cols: 4, rows: 4, cells: [2, 3],
-        griddedImage: url, resultImage: url, picked: "[button] → #bar > div:nth-of-type(3)", prompt: "This image is divided into a 4×4 …",
+        type: "locate", mode: "grid", model: "gemma4:31b", cols: 4, rows: 4, cells: [2, 3], handoff: 6,
+        griddedImage: url, resultImage: url, picked: "#4 [button] → #bar > div:nth-of-type(3)", prompt: "This image is divided into a 4×4 …",
     } }));
     await w.dispatch(agentResult("expg", "clicked star", 1));
     w.shadow.querySelector(".row").click();
@@ -915,11 +937,13 @@ test("export: a grid locate step serialises the numbered grid + the DOM snap", a
     const { blob } = await captureExport(w);
     const latin1 = String.fromCharCode(...new Uint8Array(await blob.arrayBuffer()));
     assert.ok(latin1.includes("images/step-1-grid.png"), "grid image sidecar");
-    assert.ok(latin1.includes("images/step-1-element-location.png"), "the DOM-snap sidecar");
+    assert.ok(latin1.includes("images/step-1-element-location.png"), "the SoM-pick sidecar");
     assert.match(latin1, /Grid.{1,4}gemma4:31b/, "mode + model");
     assert.match(latin1, /standalone sub-call/, "delegated note (same model as driver)");
-    assert.match(latin1, /cells 2,3/, "selected cells");
-    assert.match(latin1, /Snapped to:.*nth-of-type\(3\)/, "grid snaps to the DOM");
+    assert.match(latin1, /model chose cells 2,3/, "selected cells");
+    assert.match(latin1, /held 6 elements.{1,40}second/i, "hand-off note");
+    assert.match(latin1, /Set-of-Marks pick \(1 of 6\)/, "SoM-pick caption");
+    assert.match(latin1, /Model picked:.*nth-of-type\(3\)/, "the model picked the badge");
 });
 
 test("export: a chat session downloads a markdown log (options, turns, reply)", async () => {
