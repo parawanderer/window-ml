@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Find Morio — a Where's-Waldo canvas torture game for ml.locate</title>
+<style>
+  body { font: 15px system-ui, sans-serif; margin: 24px 30px; color: #111; }
+  h1 { font-size: 18px; margin-bottom: 6px; }
+  p { max-width: 80ch; color: #444; }
+  code { font: 12px ui-monospace, monospace; background: #f0f0f2; padding: 1px 5px; border-radius: 4px; }
+  .bar { display: flex; align-items: center; gap: 8px; margin: 10px 0; flex-wrap: wrap; }
+  .diff { display: inline-flex; border: 1px solid #ccc; border-radius: 6px; overflow: hidden; }
+  .diff button { border: none; background: #fafafa; color: #333; padding: 5px 12px; font: 12px system-ui; cursor: pointer; }
+  .diff button.on { background: #e23b3b; color: #fff; font-weight: 600; }
+  #stage { display: block; width: 100%; height: 72vh; border-radius: 10px; cursor: crosshair;
+    background: #1a1c22; border: 1px solid #2a2a30; image-rendering: pixelated; }
+  #log { margin-top: 12px; font: 13px ui-monospace, monospace; color: #0a7; min-height: 1.4em; }
+  .hint { color: #888; font-size: 13px; }
+  .mini { font: 12px system-ui; padding: 4px 10px; border-radius: 6px; border: 1px solid #ccc; background: #fafafa; color: #333; cursor: pointer; }
+  .mini:hover { background: #f0f0f0; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #1b1b1f; color: #eee; } p { color: #bbb; } code { background: #2a2a30; }
+    .diff, .mini { border-color: #444; } .diff button, .mini { background: #2a2a30; color: #ddd; }
+    .mini:hover { background: #34343c; }
+  }
+  #win { position: fixed; inset: 0; z-index: 9999; display: none; place-items: center; overflow: hidden;
+    background: repeating-linear-gradient(45deg, #5a1500, #5a1500 40px, #7a1d00 40px, #7a1d00 80px); }
+  #win.show { display: grid; }
+  #win .msg { text-align: center; animation: pop .5s cubic-bezier(.2,1.6,.4,1) both; }
+  #win h2 { margin: 0; letter-spacing: 3px; font: 900 clamp(40px,12vw,140px)/1 "Impact", system-ui, sans-serif;
+    color: #ffd400; text-shadow: 4px 4px 0 #d40000, 8px 8px 0 rgba(0,0,0,.45); animation: hue 3s linear infinite; }
+  #win p { color: #fff; font: 700 18px system-ui; margin: 18px 0 0; }
+  #win small { display: block; margin-top: 10px; color: #fed; font: 400 13px system-ui; }
+  .confetti { position: absolute; top: -24px; font-size: 26px; animation: fall linear infinite; }
+  @keyframes pop { from { transform: scale(0) rotate(-12deg); } }
+  @keyframes hue { to { filter: hue-rotate(360deg); } }
+  @keyframes fall { to { transform: translateY(110vh) rotate(720deg); } }
+</style>
+</head>
+<body>
+  <h1>Find Morio 🍄 <span style="color:#e23b3b">(knockoff)</span></h1>
+  <p>A crowd of <b>legally-distinct plumber sprites</b> in random colours, painted on <b>one
+     <code>&lt;canvas&gt;</code></b> — a real Where's-Waldo: no colour "pop" cheat, identical silhouettes,
+     and no DOM to search. Find the <b>one red Morio</b> (classic red cap + blue overalls) and click him.
+     Only vision + a coordinate click can do it:</p>
+  <p><code>ml.agent("find the red Morio and click him", { tools: [ml.clickTool()], hints: "It's a canvas — use locate({ strategy: 'grounding' }) (or grid, zooming in), then click the @pt:… token. If unsure, look() at the point first." })</code></p>
+
+  <div class="bar">
+    <span class="hint">Difficulty (sprite count):</span>
+    <span class="diff" id="diff">
+      <button data-n="40">Easy · 40</button>
+      <button data-n="120" class="on">Medium · 120</button>
+      <button data-n="260">Hard · 260</button>
+      <button data-n="500">Insane · 500</button>
+    </span>
+  </div>
+
+  <canvas id="stage"></canvas>
+
+  <div id="log">Nothing clicked yet.</div>
+  <p><button id="hintToggle" class="mini">Hide hint</button>
+     <span class="hint" style="margin-left:8px">— the true Waldo case: camouflaged target, many similar distractors.</span></p>
+  <p id="hint" class="hint">🎯 Target: the <b>red Morio</b> — red cap &amp; shirt, blue overalls (the "real" one). All the
+     others are the same little guy in a random colour. Click him to win. New scramble each reload / difficulty change.</p>
+
+  <div id="win" title="click anywhere to play again">
+    <div class="msg">
+      <h2>MORIO&nbsp;GET&nbsp;!</h2>
+      <p>You found the red one in a sea of knockoffs. Wahoo (legally distinct).</p>
+      <small>(click anywhere to scramble and play again)</small>
+    </div>
+  </div>
+
+<script>
+  const canvas = document.getElementById('stage');
+  const ctx = canvas.getContext('2d');
+  const log = document.getElementById('log');
+  const win = document.getElementById('win');
+  const pick = (a) => a[Math.floor(Math.random() * a.length)];
+
+  // ---- colour helpers ----
+  function hsl(h, s, l) {
+    s /= 100; l /= 100;
+    const k = (n) => (n + h / 30) % 12, a = s * Math.min(l, 1 - l);
+    const f = (n) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+    const to = (v) => Math.round(v * 255).toString(16).padStart(2, '0');
+    return '#' + to(f(0)) + to(f(8)) + to(f(4));
+  }
+  function shade(hex, amt) {   // amt<0 darkens
+    const n = parseInt(hex.slice(1), 16);
+    const c = (sh) => Math.max(0, Math.min(255, ((n >> sh) & 255) + Math.round(amt * 255)));
+    return '#' + [c(16), c(8), c(0)].map(v => v.toString(16).padStart(2, '0')).join('');
+  }
+
+  const SKIN = '#f3c8a0', DARK = '#2a1c10', OVR = '#2f56c9', BTN = '#ffce33', GLV = '#ffffff';
+
+  // A blocky ~10×13-"pixel" plumber; `primary` colours the cap + shirt + arms (the tell).
+  function drawMorio(cx, cy, u, primary) {
+    const x = cx - 5 * u, y = cy - 6.5 * u;
+    const R = (a, b, w, h, col) => { ctx.fillStyle = col; ctx.fillRect(x + a * u, y + b * u, Math.ceil(w * u), Math.ceil(h * u)); };
+    const brim = shade(primary, -0.28);
+    R(3, 0, 4, 2, primary); R(2, 1, 6, 1, primary); R(1, 2, 8, 1, brim);   // cap + brim
+    R(2, 3, 6, 4, SKIN); R(1, 4, 1, 3, DARK); R(8, 4, 1, 2, SKIN);         // face + hair
+    R(3, 4, 1, 1, DARK); R(6, 4, 1, 1, DARK);                              // eyes
+    R(2, 6, 6, 1, DARK);                                                   // mustache
+    R(2, 7, 6, 2, primary); R(1, 7, 1, 2, primary); R(8, 7, 1, 2, primary);// shirt + arms
+    R(0, 8, 1, 1, GLV); R(9, 8, 1, 1, GLV);                                // hands
+    R(3, 8, 4, 4, OVR); R(3, 7, 1, 1, OVR); R(6, 7, 1, 1, OVR);            // overalls + straps
+    R(4, 9, 1, 1, BTN); R(5, 9, 1, 1, BTN);                                // buttons
+    R(2, 12, 2, 1, DARK); R(6, 12, 2, 1, DARK);                            // shoes
+  }
+
+  let target = { cx: 0, cy: 0, hw: 0, hh: 0 };
+  let count = 120, wrong = 0;
+
+  function build() {
+    wrong = 0;
+    const dpr = window.devicePixelRatio || 1;
+    const W = canvas.clientWidth, H = canvas.clientHeight;
+    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    ctx.fillStyle = '#1a1c22'; ctx.fillRect(0, 0, W, H);
+
+    // Lay a grid sized to fit ~count sprites, then use a random subset of the slots.
+    const cell = Math.max(16, Math.sqrt((W * H) / (count * 1.35)));
+    const cols = Math.max(1, Math.floor(W / cell)), rows = Math.max(1, Math.floor(H / cell));
+    const slots = [];
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) slots.push({ c, r });
+    // shuffle
+    for (let i = slots.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [slots[i], slots[j]] = [slots[j], slots[i]]; }
+    const n = Math.min(count, slots.length);
+    const u = (cell / 13) * 0.82;                          // "pixel" size so a sprite fits a cell
+    const ti = Math.floor(Math.random() * n);             // which drawn sprite is Morio
+
+    for (let i = 0; i < n; i++) {
+      const s = slots[i];
+      const cx = (s.c + 0.5) * cell + (Math.random() - 0.5) * cell * 0.3;
+      const cy = (s.r + 0.5) * cell + (Math.random() - 0.5) * cell * 0.3;
+      if (i === ti) {
+        drawMorio(cx, cy, u, '#e23b3b');                  // THE red Morio
+        target = { cx, cy, hw: 5.2 * u, hh: 6.8 * u };
+      } else {
+        drawMorio(cx, cy, u, hsl(30 + Math.random() * 300, 62, 56));   // random hue, skips red band
+      }
+    }
+    log.textContent = `Nothing clicked yet. (${n} sprites)`;
+    console.log(`[find-morio] red Morio at (${Math.round(target.cx)}, ${Math.round(target.cy)}) among ${n}.`);
+  }
+
+  canvas.addEventListener('click', (e) => {
+    const b = canvas.getBoundingClientRect();
+    const x = e.clientX - b.left, y = e.clientY - b.top;
+    if (Math.abs(x - target.cx) <= target.hw && Math.abs(y - target.cy) <= target.hh) return victory();
+    wrong++;
+    log.textContent = `❌ (${Math.round(x)}, ${Math.round(y)}) isn't Morio. (${wrong} wrong click${wrong === 1 ? '' : 's'})`;
+  });
+
+  function victory() {
+    win.classList.add('show');
+    for (let i = 0; i < 60; i++) {
+      const c = document.createElement('div');
+      c.className = 'confetti'; c.textContent = pick(['🍄', '⭐', '🎉', '🪙', '🔴']);
+      c.style.left = Math.random() * 100 + 'vw';
+      c.style.animationDuration = (2 + Math.random() * 2.5) + 's';
+      c.style.animationDelay = (Math.random() * 1.5) + 's';
+      win.appendChild(c);
+    }
+  }
+  win.addEventListener('click', () => { win.classList.remove('show'); win.querySelectorAll('.confetti').forEach(c => c.remove()); build(); });
+
+  document.getElementById('diff').addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-n]'); if (!btn) return;
+    count = +btn.dataset.n;
+    [...e.currentTarget.querySelectorAll('button')].forEach(b => b.classList.toggle('on', b === btn));
+    build();
+  });
+  document.getElementById('hintToggle').addEventListener('click', (e) => {
+    const hint = document.getElementById('hint');
+    const showing = hint.style.display !== 'none';
+    hint.style.display = showing ? 'none' : '';
+    e.target.textContent = showing ? 'Show hint' : 'Hide hint';
+  });
+
+  window.addEventListener('resize', build);
+  build();
+</script>
+</body>
+</html>
