@@ -584,7 +584,7 @@ test("locate render: grounding mode shows model, prompt, both stage images, and 
     assert.deepEqual(imgs, ["data:image/png;base64,GGG", "data:image/png;base64,RRR"], "grounding + result images");
     assert.match(loc.textContent, /box \(250, 250\) → \(300, 300\)/);
     assert.match(loc.textContent, /\+40px search margin/);
-    assert.match(loc.querySelector(".r-loc-picked").textContent, /Star.*nth-of-type\(1\)/);
+    assert.match(loc.querySelector(".r-loc-picked").textContent, /Snapped to:.*Star.*nth-of-type\(1\)/);
 });
 
 test("locate render: no-box grounding shows the note and no element-location image", async () => {
@@ -619,7 +619,7 @@ test("locate render: marks mode shows the model up top and the pick at the botto
     const loc = w.shadow.querySelector(".r-locate");
     assert.match(loc.querySelector(".r-loc-head").textContent, /Set-of-Marks · gemma4:31b/);
     assert.equal(loc.querySelector(".r-loc-stage img").getAttribute("src"), "data:image/png;base64,MARKS");
-    assert.match(loc.querySelector(".r-loc-picked").textContent, /nth-of-type\(2\)/);
+    assert.match(loc.querySelector(".r-loc-picked").textContent, /Model picked:.*nth-of-type\(2\)/);
 });
 
 test("agent tool step: descriptor renders its target block; the other stays raw (per-block)", async () => {
@@ -816,7 +816,7 @@ test("export: a grounding locate step serialises the full debug view (both image
     assert.match(latin1, /Grounding.{1,4}qwen2\.5vl:7b/, "model + mode (· is multibyte in latin1)");
     assert.match(latin1, /box \(28, 242\)/, "box coords as a pair");
     assert.match(latin1, /\+40px search margin/, "margin");
-    assert.match(latin1, /Picked:.*nth-of-type\(1\)/, "picked element");
+    assert.match(latin1, /Snapped to:.*nth-of-type\(1\)/, "picked element (grounding → snapped)");
     assert.match(latin1, /Prompt to the model/, "the VLM prompt is included");
 });
 

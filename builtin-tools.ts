@@ -155,7 +155,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                         const marks = buildMarks(ordered);
                         if (!shot) shot = await ml.screenshot(null, {});   // a cache-hit skipped the capture
                         // Element-location pass: the search area in YELLOW, candidates in RED.
-                        const resultImage = await annotate(shot, [{ rect: rectOf(b), color: YELLOW }, ...marks.map(m => ({ rect: m.rect, color: RED, badge: m.id }))], dpr);
+                        const resultImage = await annotate(shot, [{ rect: rectOf(b), color: YELLOW, label: margin ? `search +${margin}px` : "search area" }, ...marks.map(m => ({ rect: m.rect, color: RED, badge: m.id }))], dpr);
                         if (chosen) {
                             const picked = pickedStr(marks[0]);
                             return {

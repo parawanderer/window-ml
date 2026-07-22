@@ -86,7 +86,7 @@ function agentToMarkdown(s: Session, addImage: AddImage): string {
                 o.push(`**Element location**${r.margin ? ` — +${r.margin}px search margin` : ""}:`, "");
                 o.push(`![step ${st.step} element location](${eref})`, "");
             }
-            o.push(`**Picked:** ${r.picked || "_(none)_"}`, "");
+            o.push(`**${r.mode === "grounding" ? "Snapped to" : "Model picked"}:** ${r.picked || "_(none)_"}`, "");
         }
         if (st.result != null && st.result !== "") o.push("**Out:**", "", fence(st.result), "");
         else if (st.elements != null) o.push(`**Out:** ${st.elements} element(s)`, "");

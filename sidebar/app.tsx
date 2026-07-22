@@ -424,7 +424,9 @@ function LocateRender({ d }: { d: Extract<RenderDescriptor, { type: "locate" }> 
                     <ClickableImg src={d.resultImage} alt="candidate elements" />
                 </div> : null}
             </> : (d.resultImage ? <div class="r-loc-stage"><ClickableImg src={d.resultImage} alt="Set-of-Marks" /></div> : null)}
-            <div class="r-loc-picked">Picked: {d.picked ? <code>{d.picked}</code> : <span class="dim">(none)</span>}</div>
+            <div class="r-loc-picked" title={d.mode === "grounding" ? "The grounding model gave coordinates; the DOM hit-test snapped them to this element." : "The vision model picked this badge number directly."}>
+                {d.mode === "grounding" ? "Snapped to" : "Model picked"}: {d.picked ? <code>{d.picked}</code> : <span class="dim">(none)</span>}
+            </div>
         </div>
     );
 }
