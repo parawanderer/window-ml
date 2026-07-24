@@ -25,7 +25,8 @@ const chatStart = (hash, turn, user, opts = {}) => ({
 const chatResult = (hash, turn, content, opts = {}) => ({
     kind: "chat-result", id: `${hash}-${turn}`, ts: Date.now() + turn, save: !!opts.save,
     session: { hash, turn }, content, sources: opts.sources || null, structured: !!opts.structured,
-    model: opts.model ?? null, extend: opts.extend ?? null, reasoning: opts.reasoning ?? null
+    model: opts.model ?? null, extend: opts.extend ?? null, reasoning: opts.reasoning ?? null,
+    usage: opts.usage ?? null
 });
 // ml.agent run events (see contract.ts DebugAgent*).
 const agentStart = (hash, task, model = "m", maxSteps = 10, config = null) => ({ kind: "agent", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, task, model, maxSteps, config });
@@ -36,7 +37,7 @@ const agentResult = (hash, summary, steps, hitCap = false) => ({ kind: "agent-re
 // Models / Appearance / Advanced). Controls are grouped under tabs, so a test that
 // touches e.g. the model fields must select the "Models" tab first.
 const openSettings = async (w, tab) => {
-    w.shadow.querySelector('[title="Settings"]').click();
+    w.shadow.querySelector('[aria-label="Settings"]').click();
     await w.tick();
     if (tab) {
         [...w.shadow.querySelectorAll(".set-tab")].find(b => b.textContent.trim() === tab).click();
@@ -87,6 +88,114 @@ test("detail shows the options-first-message and renders assistant markdown with
     w.shadow.querySelector(".msg.asst .raw-btn").click();  // toggle → raw
     await w.tick();
     assert.match(w.shadow.querySelector(".msg.asst .code").textContent, /\*\*bold\*\*/);
+});
+
+test("composer usage gauge: fills against the loaded model's context window (occupancy = latest turn, not a sum)", async () => {
+    const w = await loadSidebarWorld({
+        vram: [{ model: "gemma4:31b", vramGB: 21, contextLength: 1000, expiresAt: null }],
+    });
+    // Two turns on the same resident model. Each turn's promptTokens already includes
+    // the prior turn (the whole history is re-sent), so occupancy is the LAST turn's
+    // prompt+completion (250+50=300 → 30% of 1000), NOT 100+250 summed.
+    await w.dispatch(chatStart("uuu", 0, "hi", { model: "gemma4:31b" }));
+    await w.dispatch(chatResult("uuu", 0, "a", { model: "gemma4:31b", usage: { promptTokens: 80, completionTokens: 20, totalTokens: 100 } }));
+    await w.dispatch(chatStart("uuu", 1, "more", { model: "gemma4:31b" }));
+    await w.dispatch(chatResult("uuu", 1, "b", { model: "gemma4:31b", usage: { promptTokens: 250, completionTokens: 50, totalTokens: 300 } }));
+    await w.raw({ __mlSidebarOpen: true });   // shell open → pollPs allowed to fetch the ps set (denominator)
+    w.shadow.querySelector(".row").click();   // open the session (a detail view triggers a poll)
+    await w.tick(); await w.flush();          // let the ps poll populate loadedModels
+
+    const gauge = w.shadow.querySelector(".usage-gauge");
+    assert.ok(gauge, "gauge renders in the composer");
+    assert.match(w.shadow.querySelector(".usage-pct").textContent, /30%/, "occupancy is the latest turn (300/1000), not the sum");
+    assert.ok(w.shadow.querySelector(".usage-fill"), "has a fill bar");
+});
+
+test("composer usage gauge: a DEFAULT session (no requested model) uses the RESOLVED model's window", async () => {
+    // Regression: a plain ml.chat() has request.model === null (s.model null), but the
+    // reply resolved to a resident model. The gauge must look up the RESOLVED model
+    // (like the header), not s.model — else it wrongly falls back to cumulative spend.
+    const w = await loadSidebarWorld({
+        vram: [{ model: "gemma4:31b", vramGB: 21, contextLength: 1000, expiresAt: null }],
+    });
+    await w.dispatch(chatStart("dfl", 0, "hi", { model: null }));                       // caller named no model
+    await w.dispatch(chatResult("dfl", 0, "a", { model: "gemma4:31b", usage: { promptTokens: 250, completionTokens: 50, totalTokens: 300 } }));  // resolved server-side
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector(".row").click();
+    await w.tick(); await w.flush();
+
+    assert.ok(w.shadow.querySelector(".usage-pct"), "a % gauge (not the cumulative fallback)");
+    assert.match(w.shadow.querySelector(".usage-pct").textContent, /30%/, "measured against the resolved model's 1000-token window");
+});
+
+test("composer usage gauge: a utility-profile session measures against the UTILITY model's (small) window", async () => {
+    // extend:"utility" also sends request.model === null, but resolves server-side to
+    // the utility model — often loaded with a small utilityNumCtx. The gauge must use
+    // that resolved model's window (here 4096), same shownModel path as the header.
+    const w = await loadSidebarWorld({
+        sync: { model: "gemma4:31b", utilityModel: "gemma4:e2b" },
+        vram: [
+            { model: "gemma4:31b", vramGB: 21, contextLength: 262144, expiresAt: null },
+            { model: "gemma4:e2b", vramGB: 0, sizeGB: 6.8, contextLength: 4096, expiresAt: null },   // utility, small ctx, on CPU
+        ],
+    });
+    await w.dispatch(chatStart("utl", 0, "summarise", { model: null, extend: "utility" }));
+    await w.dispatch(chatResult("utl", 0, "sum", { model: "gemma4:e2b", extend: "utility", usage: { promptTokens: 1948, completionTokens: 100, totalTokens: 2048 } }));
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector(".row").click();
+    await w.tick(); await w.flush();
+
+    // 2048 / 4096 = 50% — measured against the UTILITY window, NOT the 262K main model.
+    assert.ok(w.shadow.querySelector(".usage-pct"), "a % gauge against the utility window");
+    assert.match(w.shadow.querySelector(".usage-pct").textContent, /50%/, "utility model's 4096 window, not the main model's 262K");
+});
+
+test("composer usage gauge: an unknown-window model shows RAW OCCUPANCY (last turn), not a cumulative sum", async () => {
+    const w = await loadSidebarWorld({ vram: [] });   // never resident → no contextLength denominator, ever
+    await w.dispatch(chatStart("ccl", 0, "hi", { model: "gpt-cloud" }));
+    await w.dispatch(chatResult("ccl", 0, "a", { model: "gpt-cloud", usage: { promptTokens: 80, completionTokens: 20, totalTokens: 100 } }));
+    await w.dispatch(chatStart("ccl", 1, "more", { model: "gpt-cloud" }));
+    await w.dispatch(chatResult("ccl", 1, "b", { model: "gpt-cloud", usage: { promptTokens: 250, completionTokens: 50, totalTokens: 300 } }));
+    w.shadow.querySelector(".row").click();
+    await w.tick(); await w.flush();
+
+    assert.ok(!w.shadow.querySelector(".usage-pct"), "no percentage without a known window");
+    // Occupancy = the LAST turn's prompt+completion = 250+50 = 300 — NOT the 400 sum
+    // (summing double-counts the re-sent history). Same numerator as the % branch.
+    const total = w.shadow.querySelector(".usage-total").textContent;
+    assert.match(total, /300/, "raw occupancy = latest turn");
+    assert.ok(!/400/.test(total), "not the cumulative sum");
+});
+
+test("composer usage gauge: an EVICTED model keeps its % (remembers the window it was seen at)", async () => {
+    // First poll sees gemma4:31b resident at 262144; a later poll finds it gone. The
+    // gauge must keep showing occupancy% against the remembered window, not flip to a
+    // raw count — a model's window is a property of the model, not of residency.
+    const w = await loadSidebarWorld({ vram: [{ model: "gemma4:31b", vramGB: 21, contextLength: 262144, expiresAt: null }] });
+    await w.dispatch(chatStart("evi", 0, "hi", { model: "gemma4:31b" }));
+    await w.dispatch(chatResult("evi", 0, "a", { model: "gemma4:31b", usage: { promptTokens: 5000, completionTokens: 240, totalTokens: 5240 } }));
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector(".row").click();
+    await w.tick(); await w.flush();
+    assert.ok(w.shadow.querySelector(".usage-pct"), "shows a % while resident");
+
+    // Model evicted → ps now empty. Re-poll and re-render.
+    w.setVram([]);
+    await w.flush(); await w.tick();
+    assert.ok(w.shadow.querySelector(".usage-pct"), "STILL a % after eviction (window remembered)");
+    assert.ok(!w.shadow.querySelector(".usage-total"), "did not flip to a raw-count fallback");
+});
+
+test("composer usage gauge: absent until the server reports token counts", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(chatStart("non", 0, "hi"));
+    await w.dispatch(chatResult("non", 0, "a"));   // no usage on the result
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    assert.ok(w.shadow.querySelector(".composer"), "the composer placeholder still renders");
+    assert.ok(!w.shadow.querySelector(".usage-gauge"), "but no gauge without any usage data");
+    assert.ok(w.shadow.querySelector(".cinput").disabled, "the input is a disabled placeholder");
+    assert.ok(w.shadow.querySelector(".csend").disabled, "the send button is disabled");
 });
 
 test("a result arriving while the detail view is OPEN re-renders it live (no stale …thinking)", async () => {
@@ -278,7 +387,7 @@ test("VRAM monitor lists loaded models with a total, and evicts one + all", asyn
         { model: "glm-ocr", vramGB: 2.1, expiresAt: null },
     ] });
     await w.raw({ __mlSidebarOpen: true });                     // shell reports slid-open → polling allowed
-    w.shadow.querySelector('[title="VRAM monitor"]').click();
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
     await w.flush();                                            // let the poll effect run
 
     assert.equal(w.shadow.querySelectorAll(".vram-row").length, 2, "one row per loaded model");
@@ -295,13 +404,32 @@ test("VRAM monitor lists loaded models with a total, and evicts one + all", asyn
     assert.deepEqual(w.unloadCalls.at(-1), {});
 });
 
+test("VRAM monitor shows the context a model was LOADED with (Ollama preallocates the KV cache)", async () => {
+    const w = await loadSidebarWorld({ vram: [
+        { model: "gemma4:31b", vramGB: 21.4, contextLength: 262144, expiresAt: null },
+        { model: "glm-ocr", vramGB: 2.1, contextLength: 8192, expiresAt: null },
+        { model: "old-server", vramGB: 1.0, contextLength: null, expiresAt: null },   // pre-0.11 Ollama: not reported
+    ] });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+
+    // Rows sort by name: gemma4:31b, glm-ocr, old-server. A missing context renders
+    // NOTHING (rather than a misleading "0" / "?"), so only two chips exist.
+    const chips = [...w.shadow.querySelectorAll(".vram-ctx")].map(n => n.textContent.trim().split("Loaded")[0]);
+    assert.deepEqual(chips, ["256K", "8K"], "compact context chip per reporting model, none for the old server");
+    assert.equal(w.shadow.querySelectorAll(".vram-row").length, 3, "the non-reporting model still gets a row");
+    // The tooltip explains WHY it matters (preallocation), not just what it is.
+    assert.match(w.shadow.querySelector(".vram-ctx .tt-pop").textContent, /preallocates/i);
+});
+
 test("VRAM monitor: clicking a colour dot hides that model from the total", async () => {
     const w = await loadSidebarWorld({ vram: [
         { model: "qwen3:14b", vramGB: 8.2, expiresAt: null },
         { model: "glm-ocr", vramGB: 2.1, expiresAt: null },
     ] });
     await w.raw({ __mlSidebarOpen: true });
-    w.shadow.querySelector('[title="VRAM monitor"]').click();
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
     await w.flush();
     assert.match(w.shadow.querySelector(".vram-total").textContent, /10\.3 GB/);
 
@@ -320,7 +448,7 @@ test("VRAM monitor: clicking a colour dot hides that model from the total", asyn
 test("VRAM monitor pauses polling while the sidebar is slid closed", async () => {
     const w = await loadSidebarWorld({ vram: [{ model: "x", vramGB: 1, expiresAt: null }] });
     // sidebarOpen defaults false (no __mlSidebarOpen received) → poll is skipped
-    w.shadow.querySelector('[title="VRAM monitor"]').click();
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
     await w.tick();
     assert.equal(w.shadow.querySelectorAll(".vram-row").length, 0, "no poll while closed");
 });
@@ -328,7 +456,7 @@ test("VRAM monitor pauses polling while the sidebar is slid closed", async () =>
 test("VRAM monitor shows unavailable with no Ollama backend", async () => {
     const w = await loadSidebarWorld({ psError: "no ollama" });
     await w.raw({ __mlSidebarOpen: true });
-    w.shadow.querySelector('[title="VRAM monitor"]').click();
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
     await w.flush();
     assert.match(w.shadow.querySelector(".vram-empty").textContent, /unavailable/);
 });
@@ -351,8 +479,8 @@ test("provenance: a utility-profile call shows the resolved model in the row, he
     await w.dispatch(chatResult("prov", 0, "a title", { model: "qwen3:0.5b", extend: "utility" }));
 
     const row = w.shadow.querySelector(".row");
-    assert.equal(row.querySelector(".model").textContent, "qwen3:0.5b", "row shows the resolved model, not 'default'");
     assert.ok(row.querySelector(".profile"), "row shows the utility badge");
+    assert.equal(row.querySelector(".model"), null, "the model name is not shown in the list row");
 
     row.click();
     await w.tick();
@@ -370,17 +498,24 @@ test("provenance: a pending turn resolves its model from the config (not 'defaul
     await w.dispatch(chatStart("pend", 0, "hi", { model: null }));                    // default profile
     await w.dispatch(chatStart("pendu", 0, "hi", { model: null, extend: "utility" })); // utility profile
 
-    // The list rows already resolve the pending model from config (not "default").
+    // Rows are newest-first: pendu (utility) then pend (default). The header resolves
+    // a still-pending turn's model from config (not "default") — the list row no
+    // longer shows a model at all.
     const rows = [...w.shadow.querySelectorAll(".row")];
-    const models = rows.map(r => r.querySelector(".model").textContent);
-    assert.ok(models.includes("gemma4:31b"), "pending default row shows the configured default model");
-    assert.ok(models.includes("qwen3:0.5b"), "pending utility row shows the utility model");
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0].querySelector(".model"), null, "no model in the row");
 
-    // Header resolves it too. Open the default one (find by its resolved model).
-    rows.find(r => r.querySelector(".model").textContent === "gemma4:31b").click();
+    rows[1].click();   // pend (default), older → second
     await w.tick();
-    assert.match(w.shadow.querySelector(".head-model").textContent, /gemma4:31b/);
+    assert.match(w.shadow.querySelector(".head-model").textContent, /gemma4:31b/, "pending default resolves to the configured model");
     assert.match(w.shadow.querySelector(".head .profile").textContent, /default/);
+
+    w.shadow.querySelector('[aria-label="Back to sessions"]').click();
+    await w.tick();
+    [...w.shadow.querySelectorAll(".row")][0].click();   // pendu (utility), newest → first
+    await w.tick();
+    assert.match(w.shadow.querySelector(".head-model").textContent, /qwen3:0\.5b/, "pending utility resolves to the utility model");
+    assert.match(w.shadow.querySelector(".head .profile").textContent, /utility/);
 });
 
 test("provenance: an explicitly-requested model gets no (default)/(utility) tag", async () => {
@@ -479,7 +614,7 @@ test("status dot: no cloud guess when provenance is unknown (ollamaModels null)"
 test("VRAM panel shows a CPU-resident model's RAM size, not '?'", async () => {
     const w = await loadSidebarWorld({ vram: [{ model: "util:2b", vramGB: null, sizeGB: 7.7, expiresAt: null }] });
     await w.raw({ __mlSidebarOpen: true });
-    w.shadow.querySelector('[title="VRAM monitor"]').click();
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
     await w.flush();
     assert.match(w.shadow.querySelector(".vram-gb").textContent, /7\.7 GB \(CPU\)/);
 });
@@ -540,7 +675,23 @@ test("agent runs render as their own session with steps + a final answer", async
     await w.tick();
     assert.match(toolStep.textContent, /selector/, "In: shows the args");
     assert.match(toolStep.textContent, /top navigation/, "Out: shows the result");
-    assert.match(w.shadow.querySelector(".agent-summary").textContent, /login button is top-right/);
+    assert.match(w.shadow.querySelector(".msg.asst").textContent, /login button is top-right/);
+    // The merged reply bubble: a model chip + a raw⇄nice toggle, like a chat reply.
+    assert.ok(w.shadow.querySelector(".msg.asst .model-name"), "answer shows the model chip");
+    assert.ok(w.shadow.querySelector(".msg.asst .raw-btn"), "answer has a raw toggle");
+});
+
+test("agent view: a usage-only step (no thought/tool) does not render an empty step box", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("aus", "answer directly"));
+    // The model answers on step 1 with no tools — the loop emits a usage-only step
+    // (for the gauge). It must NOT render as a bare "STEP 1/10" box.
+    await w.dispatch(agentStep("aus", 1, { usage: { promptTokens: 40, completionTokens: 10, totalTokens: 50 } }));
+    await w.dispatch(agentResult("aus", "done, no tools needed.", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    assert.equal(w.shadow.querySelectorAll(".aturn").length, 0, "no empty step group rendered");
+    assert.match(w.shadow.querySelector(".msg.asst").textContent, /no tools needed/, "the answer still renders");
 });
 
 test("agent tool steps render descriptors (image / elements / table)", async () => {
@@ -852,7 +1003,7 @@ async function captureExport(w) {
     w.window.URL.createObjectURL = (b) => { blob = b; return "blob:mock"; };
     w.window.URL.revokeObjectURL = () => {};
     w.window.HTMLAnchorElement.prototype.click = function () { name = this.download; };
-    w.shadow.querySelector('[title="Export log"]').click();
+    w.shadow.querySelector('[aria-label="Export log"]').click();
     await w.tick();
     return { name, blob };
 }
@@ -873,6 +1024,22 @@ test("export: an image-free agent run downloads a plain markdown log", async () 
     assert.match(text, /items\.forEach\(i => i\.remove\(\)\)/, "exec JS is beautified in the log");
     assert.match(text, /Hidden 38 items\./, "tool result captured");
     assert.match(text, /## Answer\n\nI hid all slow items\./);
+});
+
+test("export: skips a usage-only step (no bare 'Step N · ?' header)", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("expu", "answer directly", "gemma4:31b"));
+    // A thinking-model step: reasoning went to the thinking channel, so the emit
+    // carries only a token sample (no thought/tool). It must not serialise a header.
+    await w.dispatch(agentStep("expu", 1, { usage: { promptTokens: 40, completionTokens: 10, totalTokens: 50 } }));
+    await w.dispatch(agentResult("expu", "Done.", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+
+    const { blob } = await captureExport(w);
+    const text = await blob.text();
+    assert.ok(!/Step 1 · \?/.test(text), "no phantom empty-step header");
+    assert.match(text, /## Answer\n\nDone\./);
 });
 
 test("export: a run with screenshots downloads a zip (run.md + png sidecars)", async () => {
@@ -1114,7 +1281,7 @@ test("a running agent shows …running, then the answer arrives live", async () 
 
     await w.dispatch(agentResult("ag2", "all done", 1));   // lands while detail is open
     assert.ok(!w.shadow.querySelector(".pending-note"), "…running cleared live");
-    assert.match(w.shadow.querySelector(".agent-summary").textContent, /all done/);
+    assert.match(w.shadow.querySelector(".msg.asst").textContent, /all done/);
 });
 
 test("an agent that hits the step cap is flagged as stopped/error", async () => {
@@ -1124,7 +1291,7 @@ test("an agent that hits the step cap is flagged as stopped/error", async () => 
     assert.ok(w.shadow.querySelector(".row .dot.err"), "capped run marked error");
     w.shadow.querySelector(".row").click();
     await w.tick();
-    assert.match(w.shadow.querySelector(".agent-summary.capped").textContent, /step cap/);
+    assert.match(w.shadow.querySelector(".msg.asst.capped").textContent, /step cap/);
 });
 
 test("detail: an assistant reply collapses to its first line and expands again", async () => {

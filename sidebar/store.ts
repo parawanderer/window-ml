@@ -3,7 +3,7 @@
 // view module imports from here — extracted from app.tsx so the components can
 // live in their own files while still reading one source of truth.
 import { signal } from "@preact/signals";
-import type { DebugSessionConfig, DebugAgentConfig, MlConfig, LoadedModel, ExtendProfile, RenderDescriptor } from "../contract";
+import type { DebugSessionConfig, DebugAgentConfig, MlConfig, LoadedModel, ExtendProfile, RenderDescriptor, TokenUsage } from "../contract";
 import { DEFAULT_CONFIG } from "../contract";
 
 export const FONT_KEY = "ml_debug_fontscale";
@@ -21,8 +21,9 @@ export interface Turn {
     model?: string | null;      // the model that actually produced this reply (resolved server-side)
     extend?: ExtendProfile | null;  // which profile resolved it — marks (default) vs (utility)
     reasoning?: string | null;  // separate thinking/reasoning text, if the model produced any
+    usage?: TokenUsage | null;  // token counts for this turn, when the server reports them
 }
-export interface AgentStep { step: number; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: number; render?: RenderDescriptor; argIssues?: string[]; approval?: "readonly" | "user" | "denied"; }
+export interface AgentStep { step: number; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: number; render?: RenderDescriptor; argIssues?: string[]; approval?: "readonly" | "user" | "denied"; usage?: TokenUsage | null; }
 export interface Session {
     hash: string; model: string | null; tag: "session" | "saved";
     createdTs: number; lastTs: number; status: Status;

@@ -311,6 +311,7 @@ function closeSidebarWorlds() {
 // in jsdom window.parent === window, so dispatch posts with source: win.
 async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaModels = null, fetchLlm = () => ({ data: "OK" }), vram = [], psError = null, caps = null } = {}) {
     const unloadCalls = [];
+    let psVram = vram;   // mutable so a test can change the resident set mid-run (setVram)
     const dom = new JSDOM(`<!doctype html><html><body><div id="root"></div></body></html>`, { runScripts: "outside-only", pretendToBeVisual: true });
     const win = dom.window;
     _sidebarWins.push(win);   // closed in an after() hook — the VRAM panel's setInterval keeps the event loop alive otherwise
@@ -335,7 +336,7 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaMode
                 if (type === "LIST_MODELS") cb({ data: models, ollamaModels });
                 else if (type === "FETCH_LLM") cb(fetchLlm(msg.payload));
                 else if (type === "MODEL_CAPS") cb({ data: typeof caps === "function" ? caps(msg.payload && msg.payload.model) : caps });
-                else if (type === "OLLAMA_PS") cb(psError ? { error: psError } : { data: vram });
+                else if (type === "OLLAMA_PS") cb(psError ? { error: psError } : { data: psVram });
                 else if (type === "OLLAMA_UNLOAD") { unloadCalls.push(msg.payload); cb({ data: [] }); }
                 else cb({ data: null });
             },
@@ -365,7 +366,8 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaMode
     // Wait past a requestAnimationFrame so Preact useEffect (e.g. VRAM polling)
     // has run, then flush the resulting async state update + re-render.
     const flush = async () => { await new Promise((r) => win.setTimeout(r, 30)); await tick(); };
-    return { window: win, shadow: win.document, dispatch, raw, tick, flush, changeListeners, syncStore, localStore, unloadCalls };
+    const setVram = (v) => { psVram = v; };   // change the resident set a later poll will see
+    return { window: win, shadow: win.document, dispatch, raw, tick, flush, changeListeners, syncStore, localStore, unloadCalls, setVram };
 }
 
 module.exports = { jsonResponse, htmlResponse, streamResponse, loadBackground, loadPageWorld, loadDomWorld, loadSidebarWorld, closeSidebarWorlds, loadDotEnv };

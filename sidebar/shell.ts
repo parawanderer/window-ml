@@ -33,6 +33,25 @@ const SHELL_CSS = `
 #${SB_LIGHTBOX_X} { position: fixed; top: 12px; right: 16px; width: 32px; height: 32px; border-radius: 7px;
   border: 1px solid rgba(255,255,255,.35); background: rgba(0,0,0,.5); color: #fff; font: 16px system-ui; cursor: pointer; }
 #${SB_LIGHTBOX_X}:hover { background: rgba(0,0,0,.85); }
+/* Tooltip primitive — a copy of the app's (sidebar.css), because this shell lives in
+   its own shadow root in the PAGE and shares no stylesheet with the iframe. Same rule
+   applies: size and typography are pinned absolutely, never inherited — the tab is
+   writing-mode: vertical-rl, which would otherwise render its tooltip sideways. */
+.ml-tt { position: relative; }
+.ml-tt-pop {
+    position: absolute; z-index: 1; background: #1f2937; color: #f3f4f6;
+    border: 1px solid rgba(255,255,255,.16); border-radius: 5px; padding: 4px 7px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.45); opacity: 0; pointer-events: none;
+    transition: opacity .12s; white-space: nowrap;
+    font: 400 11px/1.35 system-ui, -apple-system, sans-serif;
+    writing-mode: horizontal-tb; text-orientation: mixed; letter-spacing: normal;
+    text-transform: none; font-style: normal;
+}
+.ml-tt:hover .ml-tt-pop { opacity: 1; }
+/* The tab sits at the panel's left edge, vertically centred — put its pop to the left. */
+#${SB_TAB} .ml-tt-pop { right: calc(100% + 8px); top: 50%; transform: translateY(-50%); }
+#ml-sb-resize .ml-tt-pop { right: calc(100% + 8px); top: 50%; transform: translateY(-50%); }
+#${SB_LIGHTBOX_X} .ml-tt-pop { top: calc(100% + 6px); right: 0; }
 `;
 
 let shellHost: HTMLElement | null = null;   // shadow host in the page's light DOM
@@ -40,6 +59,15 @@ let shadowRoot: ShadowRoot | null = null;
 let panel: HTMLElement | null = null;       // the sliding container, inside the shadow root
 let frame: HTMLIFrameElement | null = null;
 let lightbox: HTMLElement | null = null;
+
+/** A hover tooltip bubble for the shell's own chrome (see .ml-tt in SHELL_CSS). */
+function tip(text: string): HTMLElement {
+    const t = document.createElement("span");
+    t.className = "ml-tt-pop";
+    t.setAttribute("role", "tooltip");
+    t.textContent = text;
+    return t;
+}
 
 function hideLightbox(): void {
     lightbox?.remove(); lightbox = null;
@@ -58,7 +86,10 @@ function showLightbox(src: string): void {
     img.src = src;
     img.addEventListener("click", (e) => e.stopPropagation());
     const x = document.createElement("button");
-    x.id = SB_LIGHTBOX_X; x.textContent = "✕"; x.title = "Close (Esc)";
+    x.id = SB_LIGHTBOX_X; x.textContent = "✕";
+    x.setAttribute("aria-label", "Close (Esc)");   // icon-only: keep the accessible name
+    x.classList.add("ml-tt");
+    x.append(tip("Close (Esc)"));
     x.addEventListener("click", hideLightbox);
     lightbox.append(x, img);
     shadowRoot.append(lightbox);
@@ -143,15 +174,17 @@ function mount(): void {
 
     const tab = document.createElement("button");
     tab.id = SB_TAB;
-    tab.title = "window.ml debug";
     tab.textContent = "ml · debug";
+    tab.classList.add("ml-tt");
+    tab.append(tip("window.ml debug"));
     tab.addEventListener("click", toggleOpen);
 
     const body = document.createElement("div");
     body.id = "ml-sb-body";
     const resize = document.createElement("div");
     resize.id = "ml-sb-resize";
-    resize.title = "Drag to resize";
+    resize.classList.add("ml-tt");
+    resize.append(tip("Drag to resize"));
     resize.addEventListener("pointerdown", startResize);
     frame = document.createElement("iframe");
     frame.id = SB_FRAME;
@@ -177,6 +210,11 @@ function unmount(): void {
     window.removeEventListener("message", onWindowMessage);
     shellHost.remove();
     shellHost = panel = frame = shadowRoot = null;
+    // Tell injected.js (main world) the sidebar is gone so it stops emitting AND
+    // drops its buffered events — switching the sidebar off must stop all tracking,
+    // not just hide the UI. Posted last, after the listener is detached, so we don't
+    // handle our own message.
+    window.postMessage({ __mlSidebar: "gone" }, "*");
 }
 
 chrome.storage.sync.get({ sidebar: false }, (cfg) => { if (cfg.sidebar) mount(); });

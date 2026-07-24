@@ -5,7 +5,7 @@
 // signal updates on input for a responsive UI + the utility-field enable gating.
 import { signal } from "@preact/signals";
 import type { MlConfig, ApiFormat, Theme, LoadedModel } from "../contract";
-import { DEFAULT_CONFIG, DEFAULT_GROUNDING_RANGE, detectGroundingModel } from "../contract";
+import { DEFAULT_CONFIG, DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX, detectGroundingModel } from "../contract";
 import {
     config, models, fontScale, codeWrap, codeLineNumbers,
     MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY,
@@ -164,10 +164,13 @@ function testOne(key: keyof MlConfig): void {
         const gimg = key === "groundingModel" ? groundingTestImage() : null;
         const gRange = config.value.groundingRange || DEFAULT_GROUNDING_RANGE;
         const shot = img?.dataUrl || gimg?.dataUrl;   // the test image, kept on the result so the row can show it
+        // Cap the vision probes' num_ctx (like the real delegated sub-calls): a one-word
+        // liveness check shouldn't fresh-load a vision model at its auto-sized default
+        // window (128K on a big-VRAM box) and balloon KV cache. Text pings stay uncapped.
         const payload = img
-            ? { messages: [{ role: "user", content: "Transcribe the single word shown in this image. Output ONLY that word — no punctuation or explanation.", images: [img.dataUrl] }], model: name, ocr: true }
+            ? { messages: [{ role: "user", content: "Transcribe the single word shown in this image. Output ONLY that word — no punctuation or explanation.", images: [img.dataUrl] }], model: name, ocr: true, numCtx: VISION_NUM_CTX }
             : gimg
-                ? { messages: [{ role: "user", content: `This image is white with ONE red dot. Reply with ONLY the dot's centre coordinates as \`x,y\` — each from 0 to ${gRange} (x: 0=left→${gRange}=right; y: 0=top→${gRange}=bottom). Example: ${Math.round(gRange * 0.25)},${Math.round(gRange * 0.75)}`, images: [gimg.dataUrl] }], model: name }
+                ? { messages: [{ role: "user", content: `This image is white with ONE red dot. Reply with ONLY the dot's centre coordinates as \`x,y\` — each from 0 to ${gRange} (x: 0=left→${gRange}=right; y: 0=top→${gRange}=bottom). Example: ${Math.round(gRange * 0.25)},${Math.round(gRange * 0.75)}`, images: [gimg.dataUrl] }], model: name, numCtx: VISION_NUM_CTX }
                 : key === "utilityModel"
                     ? { messages: [ping], extend: "utility" }
                     : { messages: [ping], model: name };

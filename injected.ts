@@ -23,13 +23,14 @@ import type {
     ToolRenderInput,
     StoredSession,
     LoadedModel,
+    TokenUsage,
     MlHistory
 } from "./contract";
 import { detectGroundingModel, DEFAULT_GROUNDING_RANGE } from "./contract";
 import { evalReadonly } from "./readonly-exec";
 import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError } from "./dom";
 import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE } from "./prompts";
-import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint } from "./util";
+import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, PT_LOOK_RADIUS } from "./util";
 import { annotate, pickAccentColor } from "./som";
 import { suspiciousArgsWarning, suspiciousChars } from "./security";
 import { emitDebug, debugId, shortHash, sessionRegistry, enterAgentRun, exitAgentRun } from "./bus";
@@ -171,9 +172,9 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool } from ".
                         think: (think === true || think === false) ? think : null,
                         maxTokens: maxTokens ?? null
                     } });
-                    let content, sources, resolvedModel, reasoning;
+                    let content, sources, resolvedModel, reasoning, usage;
                     try {
-                        ({ content, sources, model: resolvedModel, reasoning } = (typeof onToken === "function" && !schema)
+                        ({ content, sources, model: resolvedModel, reasoning, usage } = (typeof onToken === "function" && !schema)
                             ? await makeStreamingTaskPromise(requestPayload, onToken)
                             : await makeChatRequest(requestPayload));
                     } catch (err) {
@@ -194,7 +195,7 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool } from ".
                             toolIds: this.toolIds, maxTokens: this.maxTokens, save: true,
                         },
                     }).catch(() => { /* storage full / unavailable — resume just won't have this turn */ });
-                    emitDebug({ kind: "chat-result", id: debug, ts: Date.now(), save, session, content: reply, sources: (sources && sources.length) ? sources : null, structured: !!schema, model: resolvedModel || model || null, extend: extend || null, reasoning: reasoning || null });
+                    emitDebug({ kind: "chat-result", id: debug, ts: Date.now(), save, session, content: reply, sources: (sources && sources.length) ? sources : null, structured: !!schema, model: resolvedModel || model || null, extend: extend || null, reasoning: reasoning || null, usage: usage || null });
                     return (schema ? ml._parseJSON(reply) : reply) as string | Record<string, unknown>;
                 },
                 /**
@@ -269,7 +270,7 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool } from ".
             tools?: unknown[];
             model?: string | null;
             think?: boolean | null;
-        } = {}): Promise<{ content: string; tool_calls: ToolCall[] }> {
+        } = {}): Promise<{ content: string; tool_calls: ToolCall[]; usage?: TokenUsage | null }> {
             return makeBackgroundTaskPromise(
                 "LLM_REQUEST",
                 "LLM_RESPONSE",
@@ -452,14 +453,14 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool } from ".
                 tools: toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval, vision: !!(t.capabilities && t.capabilities.includes("vision")) })),
                 maxSteps, think: (think === true || think === false) ? think : null, env, vision: vision ?? null, hints: hints || null,
             } });
-            const emit = (event: { step: number; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: Node[]; render?: RenderDescriptor; argIssues?: string[]; approval?: "readonly" | "user" | "denied" }) => {
+            const emit = (event: { step: number; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: Node[]; render?: RenderDescriptor; argIssues?: string[]; approval?: "readonly" | "user" | "denied"; usage?: TokenUsage | null }) => {
                 if (logDebug) logStep(event);
                 emitDebug({
                     kind: "agent-step", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: event.step },
                     step: event.step, thought: event.thought, tool: event.tool, arguments: event.arguments,
                     result: event.result, elements: event.elements ? event.elements.length : undefined, render: event.render,
                     argIssues: event.argIssues && event.argIssues.length ? event.argIssues : undefined,
-                    approval: event.approval,
+                    approval: event.approval, usage: event.usage || undefined,
                 });
                 if (!onStep) return;
                 try { onStep(event); } catch (e) { console.error("ml.agent onStep threw:", e); }
@@ -492,14 +493,17 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool } from ".
             for (let step = 1; step <= maxSteps; step++) {
                 const msg = await this.step(messages, { tools: toolDefs, model, think });
                 if (!msg.tool_calls || !msg.tool_calls.length) {
+                    // Final answer step: emit its usage (the run's peak context) with no tool.
+                    if (msg.usage) emit({ step, usage: msg.usage });
                     return finish({ summary: (msg.content || "").trim(), steps: step - 1, transcript, elements: answered });
                 }
                 // Surface the model's reasoning (its prose before the tool calls)
-                // so callers can watch it think, not just navigate.
+                // so callers can watch it think, not just navigate. The step's token
+                // usage rides this emit (or a usage-only emit when there's no prose).
                 const thought = (msg.content || "").trim();
-                if (thought) {
-                    transcript.push({ thought });
-                    emit({ step, thought });
+                if (thought || msg.usage) {
+                    if (thought) transcript.push({ thought });
+                    emit({ step, thought: thought || undefined, usage: msg.usage });
                 }
                 messages.push({ role: "assistant" as const, content: msg.content || "", tool_calls: msg.tool_calls });
 
@@ -718,7 +722,7 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool } from ".
             if (typeof target === "string" && POINT_RE.test(target.trim())) {
                 const pt = resolvePoint(target);
                 if (!pt) throw new Error(`Unknown point token "${target}" — re-run locate for a fresh one.`);
-                const dpr = window.devicePixelRatio || 1, R = 100;
+                const dpr = window.devicePixelRatio || 1, R = PT_LOOK_RADIUS;
                 const left = Math.max(0, pt.x - R), top = Math.max(0, pt.y - R);
                 const rect = { left, top, width: Math.min(window.innerWidth, pt.x + R) - left, height: Math.min(window.innerHeight, pt.y + R) - top };
                 const cropped = await cropDataUrl(await viewport(), rect, dpr);
@@ -950,13 +954,19 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool } from ".
                     const label = selector
                         ? `element "${selector}"${index ? ` #${index}` : ""}`
                         : (fullPage ? "full page" : "viewport");
+                    // @pt verify shot → disclose the snap-around-point recovery, @pt-only: the
+                    // driver can see here whether the mark grazes a target it can otherwise see.
+                    const isPoint = !!selector && POINT_RE.test((selector as string).trim());
+                    const pointTip = isPoint
+                        ? `\n\n(Verify before clicking. If the target IS visible in this crop but the mark isn't on it, re-locate just this area to snap onto it: locate({ selector: "${selector}", strategy: "grounding", description: "…" }) — searches only this box (add margin: 40–120 if the target is partly cut off at the edge). If the target ISN'T in this crop at all, it's the wrong spot: change region/description, don't re-verify here.)`
+                        : "";
                     // Hand the screenshotted element back on the elements side-channel
                     // so it's hoverable in `logDebug`/`onStep` (never sent to the model).
                     // Guarded: a bad/stub-DOM selector just yields no node.
                     let elements;
                     if (selector) { try { const el = queryAll(selector)[index || 0]; if (el) elements = [el]; } catch {} }
                     return {
-                        content: `Screenshot of the ${label} captured — shown to you in the next message. Describe it, then continue.`,
+                        content: `Screenshot of the ${label} captured — shown to you in the next message.${pointTip}`,
                         image: shot,
                         imageLabel: label,
                         elements

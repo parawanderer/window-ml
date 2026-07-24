@@ -447,6 +447,39 @@ export function gridDims(region: { width: number; height: number }, base = 4): {
     return { cols: clamp(base * Math.sqrt(aspect)), rows: clamp(base / Math.sqrt(aspect)) };
 }
 
+/** The nine coarse directional regions a model can name from its spatial "vibe"
+ *  (it can say "he's on the left" long before it can pick 1-of-60 grid cells). */
+export type RegionName = "left" | "right" | "top" | "bottom" | "center"
+    | "top-left" | "top-right" | "bottom-left" | "bottom-right";
+export const REGION_NAMES: RegionName[] = ["left", "right", "top", "bottom", "center", "top-left", "top-right", "bottom-left", "bottom-right"];
+
+/** Crop `region` to a named directional area — the level-0 coarse split BEFORE the
+ *  grid. Bands run the full length (`left` = left portion × full height; `top` = top
+ *  portion × full width); corners are quadrants; `center` is the middle box. Halves
+ *  OVERLAP by `REGION_OVERLAP` on the split axis so a target near the midline lands in
+ *  BOTH sides — "guess a side, try the other" then always succeeds. Fractions, so it's
+ *  resolution-independent; the caller maps back to viewport pixels.
+ *  `cx`/`cy` are the horizontal/vertical span each name selects. */
+export const REGION_OVERLAP = 0.05;
+export function regionBox(name: RegionName, region: { left: number; top: number; width: number; height: number }): Box {
+    const o = REGION_OVERLAP;
+    const L: [number, number] = [0, 0.5 + o], R: [number, number] = [0.5 - o, 1], FULL: [number, number] = [0, 1];
+    const T = L, B = R;   // vertical halves mirror the horizontal ones
+    const CTR: [number, number] = [0.25, 0.75];
+    const map: Record<RegionName, { cx: [number, number]; cy: [number, number] }> = {
+        "left": { cx: L, cy: FULL }, "right": { cx: R, cy: FULL },
+        "top": { cx: FULL, cy: T }, "bottom": { cx: FULL, cy: B },
+        "center": { cx: CTR, cy: CTR },
+        "top-left": { cx: L, cy: T }, "top-right": { cx: R, cy: T },
+        "bottom-left": { cx: L, cy: B }, "bottom-right": { cx: R, cy: B },
+    };
+    const { cx, cy } = map[name];
+    return {
+        left: region.left + cx[0] * region.width, right: region.left + cx[1] * region.width,
+        top: region.top + cy[0] * region.height, bottom: region.top + cy[1] * region.height,
+    };
+}
+
 /**
  * A grid-cell SELECTION the model may return: 1 cell, 2 edge-adjacent cells (a target
  * straddling a boundary), or 4 cells forming a 2×2 block. Rejects anything else
@@ -482,6 +515,28 @@ export function cellsBox(cells: number[], cols: number, rows: number, region: { 
         left: region.left + minC * cw, right: region.left + (maxC + 1) * cw,
         top: region.top + minR * ch, bottom: region.top + (maxR + 1) * ch,
     };
+}
+
+/** The in-bounds 4-neighbours of a cell selection, keyed by direction — for a "the
+ *  target's in the next cell over" hint. The driver never sees the grid (it's a
+ *  standalone sub-call), so it can't infer neighbour numbers itself; locate names them.
+ *  Steps one cell out from the selection's bounding box at its mid row/col; omits any
+ *  that fall off the grid or are already in the selection. Cells are 1-based, L→R T→B. */
+export function adjacentCells(cells: number[], cols: number, rows: number): { left?: number; right?: number; top?: number; bottom?: number } {
+    const inSel = new Set(cells);
+    const rc = cells.map(c => ({ r: Math.floor((c - 1) / cols), c: (c - 1) % cols }));
+    const minR = Math.min(...rc.map(p => p.r)), maxR = Math.max(...rc.map(p => p.r));
+    const minC = Math.min(...rc.map(p => p.c)), maxC = Math.max(...rc.map(p => p.c));
+    const midR = Math.floor((minR + maxR) / 2), midC = Math.floor((minC + maxC) / 2);
+    const at = (r: number, c: number): number | undefined =>
+        (r >= 0 && r < rows && c >= 0 && c < cols) ? r * cols + c + 1 : undefined;
+    const out: { left?: number; right?: number; top?: number; bottom?: number } = {};
+    const l = at(midR, minC - 1), r = at(midR, maxC + 1), t = at(minR - 1, midC), b = at(maxR + 1, midC);
+    if (l && !inSel.has(l)) out.left = l;
+    if (r && !inSel.has(r)) out.right = r;
+    if (t && !inSel.has(t)) out.top = t;
+    if (b && !inSel.has(b)) out.bottom = b;
+    return out;
 }
 
 /** The representative interactive element painted at a viewport point (CSS px), with the

@@ -7,8 +7,8 @@
 import type { MlApi, MlTool, LocateSubstep } from "./contract";
 import { DEFAULT_GROUNDING_RANGE } from "./contract";
 import { truncate, errText, elLine, queryAll, selectorError } from "./dom";
-import { settle, VISION_NUM_CTX, cropDataUrl, MIN_SHOT_PX, POINT_RE, mintPoint, resolvePoint } from "./util";
-import { collectCandidates, buildMarks, annotate, formatBox, letterboxToSquare, projectFromSquare, drawGrid, gridDims, validateCells, cellsBox, collectInBox, elementAtPoint, viewportBox, colorWordHues, pickOverlayColor, pickAccentColor, withHiddenSidebar, type MarkFilter, type Box, type Mark } from "./som";
+import { settle, VISION_NUM_CTX, cropDataUrl, MIN_SHOT_PX, POINT_RE, PT_LOOK_RADIUS, mintPoint, resolvePoint, nearbyPoint } from "./util";
+import { collectCandidates, buildMarks, annotate, formatBox, letterboxToSquare, projectFromSquare, drawGrid, gridDims, validateCells, cellsBox, collectInBox, elementAtPoint, viewportBox, colorWordHues, pickOverlayColor, pickAccentColor, withHiddenSidebar, regionBox, REGION_NAMES, adjacentCells, type RegionName, type MarkFilter, type Box, type Mark } from "./som";
 
 // --- Coordinate targets (canvas / WebGL) -----------------------------------
 // A <canvas> has NO sub-node to snap to, so `locate` mints an OPAQUE `@pt:` token (see
@@ -100,12 +100,18 @@ export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512 }: { mo
                   "badges, prices, delivery text) I could search for with findByText to locate " +
                   "the key items.";
             const description = await ml.chat(base + guidance, { images: [shot], model, maxTokens, numCtx: VISION_NUM_CTX }) as string;
+            // Progressive-disclosure tip, @pt targets ONLY (irrelevant for a DOM look):
+            // the verify step is exactly where the model can see the point grazing the
+            // target — steer it to snap with grid-grounding rather than click a near-miss.
+            const pointTip = isPoint
+                ? `\n\n(Verify before clicking. If the target IS visible in this preview but the mark isn't on it, re-locate just this area to snap onto it: locate({ description: "…", selector: "${selector}", strategy: "grounding" }) — searches only this box (add margin: 40–120 if the target is partly cut off at the edge). If the target ISN'T in this preview at all, it's the wrong spot: change \`region\`/description, don't re-verify here.)`
+                : "";
             // Attach the inspected element on the side-channel (debug-only,
             // never to the model). Guarded so a stub-DOM/bad selector no-ops
             // and the return stays a plain string for viewport/no-selector.
             let elements;
             if (selector) { try { const el = queryAll(selector)[index || 0]; if (el) elements = [el]; } catch {} }
-            return elements ? { content: description, elements } : description;
+            return elements ? { content: description + pointTip, elements } : description + pointTip;
         }
     });
 };
@@ -150,7 +156,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 },
                 selector: {
                     type: "string",
-                    description: "Optional CONTAINER selector to crop scanning to (a modal, a list row) — better for a small target in a busy area. For a target on a <canvas>, pass the canvas's selector here. NOT the target's own selector."
+                    description: "Optional CONTAINER selector to crop scanning to (a modal, a list row) — better for a small target in a busy area. For a target on a <canvas>, pass the canvas's selector here. NOT the target's own selector. An `@pt:…` token also works: re-searches the box around that point with ANY strategy (e.g. grid inside a point)."
                 },
                 index: {
                     type: "integer",
@@ -162,22 +168,27 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 },
                 strategy: {
                     type: "string",
-                    enum: ["auto", "grounding", "marks", "grid"],
-                    description: "Default 'auto'. 'grounding' = a coordinate model points at it (needs one configured; best for a clear spot). 'marks' = numbered badges, model picks by number (robust when cluttered). 'grid' = a numbered grid, model picks the CELL (any vision model; zoom with `cells` or raise `gridSize`). 'auto' = grounding then marks."
+                    enum: ["auto", "grounding", "marks", "grid", "grid-grounding"],
+                    description: "Default 'auto'. 'grounding' = a coordinate model points at it (needs one configured; best for a clear spot). 'marks' = numbered badges, model picks by number (robust when cluttered). 'grid' = a numbered grid, model picks the CELL (any vision model; zoom with `cells` or raise `gridSize`). 'grid-grounding' = grid narrows to a cell, THEN grounding points precisely inside it (needs a grounding model; best for a small target on a busy page or canvas, where a plain grid centre only grazes). 'auto' = grounding then marks."
+                },
+                region: {
+                    type: "string",
+                    enum: ["left", "right", "top", "bottom", "center", "top-left", "top-right", "bottom-left", "bottom-right"],
+                    description: "Coarse pre-crop by rough position BEFORE the grid — for a dense scene where the grid has too many near-identical cells to pick from (you can vaguely tell 'left'/'bottom' even when you can't read a cell number). Bands are full-length ('left' = left side, full height); corners are quadrants. Halves overlap, so if unsure which side, guess one and try the opposite on a miss. Composes with any strategy."
                 },
                 gridSize: {
                     type: "integer",
-                    description: "For 'grid': base cell count (default 4, 2–8); larger = finer cells."
+                    description: "For 'grid': base cell count (default 4, 2–8; the grid maxes out ~60 cells). To go FINER, don't raise this — zoom with `cells` (a fresh grid inside a cell) or pre-crop with `region`."
                 },
                 cells: {
                     type: "array",
                     items: { type: "integer" },
-                    description: "For strategy 'grid': zoom into a previously-returned cell selection (1, 2 adjacent, or a 2×2 block of 4) and draw a fresh grid inside it (hierarchical refine)."
+                    description: "A previously-returned cell selection (1, 2 adjacent, or a 2×2 block of 4). 'grid' draws a fresh grid inside it (recursive zoom); 'grid-grounding' grounds directly inside it (reuses the pick — no re-roll)."
                 },
             },
             required: ["description"],
         },
-        run: async ({ description, filter = "clickables", margin = 0, strategy = "auto", selector, index = 0, gridSize, cells }: { description: string; filter?: MarkFilter; margin?: number; strategy?: "auto" | "grounding" | "marks" | "grid"; selector?: string; index?: number; gridSize?: number; cells?: number[] }) => {
+        run: async ({ description, filter = "clickables", margin = 0, strategy = "auto", selector, index = 0, gridSize, cells, region: regionName }: { description: string; filter?: MarkFilter; margin?: number; strategy?: "auto" | "grounding" | "marks" | "grid" | "grid-grounding"; selector?: string; index?: number; gridSize?: number; cells?: number[]; region?: RegionName }) => {
             if (!description) return "Provide a `description` of the element to find.";
             const dpr = window.devicePixelRatio || 1;
             const RED = "#ff2d55", YELLOW = "#eab308";
@@ -221,6 +232,14 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             // Substeps accumulated by an EARLIER mechanism (an 'auto' grounding attempt that
             // missed) so the Set-of-Marks fallback still shows what grounding saw.
             const priorSubsteps: LocateSubstep[] = [];
+            // Set when a plain `strategy:"grid"` cell landed on a canvas and a grounding model
+            // is available — we auto-upgrade to grid-grounding (grounding pinpoints inside the
+            // cell) instead of returning the imprecise cell centre. Noted in the result.
+            let autoUpgraded = false;
+            // The cell-CENTRE @pt to fall back to if the auto-upgraded grounding whiffs (no box
+            // / error): the upgrade must never be WORSE than the plain-grid cell centre it
+            // replaced. Stashed in the grid block (holds its cell-scoped advice strings).
+            let autoUpFallback: { x: number; y: number; cellBox: Box; cellNote: string; offAdvice: string } | null = null;
 
             if (strategy === "grounding" && !groundingModel) {
                 return "No grounding model is configured — use strategy 'marks' (or leave it 'auto').";
@@ -231,7 +250,25 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             // cropped pixels and the coordinate projection stay in lockstep.
             let region = { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
             let scopeSel = "";
-            if (selector) {
+            // True once the search region is narrowed (a `selector` container, or a
+            // grid-grounding cell) — so the marks fallback scans that region, not the viewport.
+            let scoped = false;
+            if (selector && POINT_RE.test(selector.trim())) {
+                // `@pt:` scope ("snap around point") — search the SAME neighborhood box
+                // that look() showed around a canvas point. The model re-locates an area it
+                // just VISUALLY CONFIRMED holds the target, so grounding inside that ~200px
+                // box snaps precisely — the finest zoom tier, seeded by a verified view. No
+                // DOM node / scroll; just crop around the coordinate (clipped to viewport).
+                const pt = resolvePoint(selector);
+                if (!pt) return `Unknown point token "${selector}" — re-run locate for a fresh one.`;
+                // `margin` grows the crop so a target cut off at the box edge comes into frame.
+                const R = PT_LOOK_RADIUS + (margin > 0 ? margin : 0);
+                const left = Math.max(0, pt.x - R), top = Math.max(0, pt.y - R);
+                region = { left, top, width: Math.min(window.innerWidth, pt.x + R) - left, height: Math.min(window.innerHeight, pt.y + R) - top };
+                if (region.width < MIN_SHOT_PX || region.height < MIN_SHOT_PX) return `The area around ${selector} is too small to search (the point is at the viewport edge). Scroll it toward centre, or locate on the canvas selector instead.`;
+                scopeSel = selector;
+                scoped = true;
+            } else if (selector) {
                 let matches: Element[];
                 try { matches = queryAll(selector); } catch (e) { return selectorError(selector, e as Error); }
                 const el = matches[index];
@@ -248,13 +285,71 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 const left = Math.max(0, r.left), top = Math.max(0, r.top);
                 region = { left, top, width: Math.min(window.innerWidth, r.right) - left, height: Math.min(window.innerHeight, r.bottom) - top };
                 scopeSel = selector;
+                scoped = true;
             }
-            const regionBox: Box = { left: region.left, top: region.top, right: region.left + region.width, bottom: region.top + region.height };
-            const scopeNote = scopeSel ? ` within "${scopeSel}"${index ? ` (#${index})` : ""}` : "";
+            // Optional `region` pre-crop: the level-0 coarse split. Narrows the search
+            // to a named directional area (of the container, or the viewport) BEFORE any
+            // mechanism runs — so every strategy inherits it, like `selector` does. The
+            // model names it from rough position ("left") when a dense grid has too many
+            // near-identical cells to pick a number from.
+            let regionCrop = "";
+            if (regionName) {
+                // Tolerate natural/British variants; reject anything else with the valid
+                // list (else regionBox would destructure undefined and throw cryptically —
+                // and the model does guess plausible-but-unlisted names like "center-left").
+                const REGION_ALIASES: Record<string, RegionName> = { centre: "center", middle: "center", mid: "center" };
+                const rn = (REGION_ALIASES[String(regionName).toLowerCase()] || regionName) as RegionName;
+                if (!REGION_NAMES.includes(rn)) {
+                    return `Invalid region "${regionName}". Use exactly one of: ${REGION_NAMES.join(", ")}. Bands are full-length ("left" = the whole left side); for a finer area, pick the nearest of these and then zoom with grid \`cells\`.`;
+                }
+                const rb = regionBox(rn, region);
+                region = { left: rb.left, top: rb.top, width: rb.right - rb.left, height: rb.bottom - rb.top };
+                if (region.width < MIN_SHOT_PX || region.height < MIN_SHOT_PX) {
+                    return `The "${regionName}" region${scopeSel ? ` of "${scopeSel}"` : ""} is only ${Math.round(region.width)}×${Math.round(region.height)}px — too small to search. Drop \`region\`, or scope to a larger container first.`;
+                }
+                scoped = true;
+                regionCrop = ` (${rn})`;
+            }
+            let regionAsBox: Box = { left: region.left, top: region.top, right: region.left + region.width, bottom: region.top + region.height };
+            const scopeNote = (scopeSel ? ` within "${scopeSel}"${index ? ` (#${index})` : ""}` : "") + regionCrop;
             // Tips disclosed IN the results (kept out of the tool description, which the model
             // half-reads) so each fires exactly when it applies.
             const actHint = "(verify it with look() first, then click/type/answer with this selector)";
             const canvasScopeTip = scopeSel ? "" : " For tighter coordinates, first scope to the canvas by passing its selector to locate.";
+            // Mint an @pt AND detect a re-locate loop: if this spot ~matches one already
+            // located this run, warn (each mint is a fresh token, so the model otherwise
+            // can't tell it keeps landing on the same wrong coordinate — a real failure
+            // mode on a hard canvas). Check before minting so it can't match itself.
+            const mintPointWarned = (x: number, y: number): { token: string; dupWarn: string } => {
+                const dup = nearbyPoint(x, y);
+                const token = mintPoint(x, y);
+                const dupWarn = dup ? ` ⚠ This is essentially the SAME spot as ${dup.token} (${dup.x}, ${dup.y}) you already located and it didn't work — do NOT re-verify it. Change approach: a different \`region\`, a re-worded description, or another strategy.` : "";
+                return { token, dupWarn };
+            };
+
+            // grid-grounding needs a grounding model on BOTH its paths (fresh pick and the
+            // cells-reuse shortcut below) — check once here so the reuse path can't silently
+            // fall through to marks when no grounder is configured.
+            if (strategy === "grid-grounding" && !groundingModel) return "strategy 'grid-grounding' needs a grounding model configured — use 'grid' instead, or configure one in the popup.";
+
+            // grid-grounding + `cells` → REUSE a prior grid pick. Skip the (nondeterministic)
+            // grid vision re-pick entirely: narrow the region to the given cell(s) here and
+            // let the grounding mechanism pinpoint inside it. This makes "reuse cell 15"
+            // deterministic — re-rolling the pick could return NONE on the same target.
+            let ggReuse = false;
+            if (strategy === "grid-grounding" && cells && cells.length) {
+                const base = Math.max(2, Math.min(8, Math.round(gridSize || 4)));
+                const prev = gridDims(region, base);
+                const v = validateCells(cells, prev.cols, prev.rows);
+                if (!v.ok) return `Invalid \`cells\` ${JSON.stringify(cells)} — ${v.reason}. (Cells map to the grid at gridSize ${base}; pass the same gridSize the pick used.)`;
+                const cb = cellsBox(cells, prev.cols, prev.rows, region);
+                const w = cb.right - cb.left, h = cb.bottom - cb.top;
+                if (w < MIN_SHOT_PX || h < MIN_SHOT_PX) return `Cell ${cells.join(",")} is too small to ground within. Drop \`cells\`, or re-pick a coarser one.`;
+                region = { left: cb.left, top: cb.top, width: w, height: h };
+                regionAsBox = cb;
+                scoped = true;
+                ggReuse = true;
+            }
 
             // Mechanism #3 — grid: draw an aspect-matched numbered grid, ask which CELL(S)
             // hold the target (multiple-choice → no coordinate hallucination). The model may
@@ -262,9 +357,15 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             // line is fully covered; we union them, sweep the DOM, and — when the region
             // still holds several candidates — hand off to marks WITHIN it rather than
             // guessing the first. `cells` zooms into a prior selection (hierarchical refine).
-            if (strategy === "grid") {
+            //
+            // 'grid-grounding' shares this cell-pick, then narrows `region` to the chosen
+            // cell and falls through to the grounding mechanism below — the grid coarsely
+            // localizes, then grounding places a PRECISE point inside the small cell (where
+            // a plain grid's cell centre only grazes an off-centre target, esp. on canvas).
+            // (Skipped when ggReuse already narrowed to a caller-supplied cell.)
+            if (!ggReuse && (strategy === "grid" || strategy === "grid-grounding")) {
                 const reader = model || groundingModel;
-                if (!reader) return "No vision model is available to read the grid.";
+                if (!reader) return "No vision model is available to read the grid.";   // grid-grounding's grounding-model guard already fired above
                 const base = Math.max(2, Math.min(8, Math.round(gridSize || 4)));
                 // A driver zoom: narrow to a previously-returned, validated cell selection.
                 let gRegion = region;
@@ -292,16 +393,36 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 const gridResult = (substeps: LocateSubstep[], extra: { picked?: string; pickedBy?: "model" | "snap" } = {}) =>
                     ({ type: "locate" as const, mode: "grid" as const, model: gmodel, substeps, ...extra });
                 if (!sel.length) {
-                    return { content: `The model matched no grid cell for "${description}"${scopeNote} (replied "${truncate(ans, 40)}"). Raise gridSize, refine the description, or switch strategy.`, render: gridResult([{ label: cellLabel("no cell matched"), prompt: gprompt, output: ans, image: gridded }]) };
+                    // Dense scene → a 60-cell grid of near-identical items is impossible to
+                    // pick from. Steer to the level-0 coarse split (`region`) first; only offer
+                    // "raise gridSize" while it's still below the ~60-cell cap.
+                    const steer = regionName
+                        ? ` You already cropped to "${regionName}" — the target may be elsewhere; try the opposite side or another region.`
+                        : ` If the scene is too dense to pick one cell, narrow by rough position FIRST: region: "left"/"right"/"top"/"bottom"/a corner/"center" (unsure? guess a side, try the opposite on a miss) — the grid then runs inside just that area.`;
+                    const alt = `${groundingModel ? " Or strategy 'grid-grounding'." : ""}${base < 8 ? " Or raise gridSize for finer cells." : ""}`;
+                    return { content: `The model matched no grid cell for "${description}"${scopeNote} (replied "${truncate(ans, 40)}").${steer} Or refine the description / switch to 'marks'.${alt}`, render: gridResult([{ label: cellLabel("no cell matched"), prompt: gprompt, output: ans, image: gridded }]) };
                 }
                 const valid = validateCells(sel, cols, rows);
                 if (!valid.ok) {
                     return { content: `The model selected cells ${JSON.stringify(sel)}, not a valid pick (${valid.reason}). Ask it again, or switch strategy.`, render: gridResult([{ label: cellLabel(`chose cells ${sel.join(",")} (invalid)`), prompt: gprompt, output: ans, image: gridded }]) };
                 }
                 const cellNote = `cell${sel.length > 1 ? "s" : ""} ${sel.join(",")}`;
-                // A concrete call so the model knows `cells` is a locate arg (reuse the same
-                // description + strategy), not a bare fragment.
-                const refineHint = `To zoom in, call locate again with those cells: locate({ description: "${truncate(description, 50)}", strategy: "grid", cells: [${sel.join(",")}] }) — it draws a fresh grid inside them.`;
+                // Concrete reuse calls (so the model knows `cells` is a locate arg, not a bare
+                // fragment). `cells` only map back under the SAME gridSize, so carry it whenever
+                // it's non-default — the compact form of that caveat.
+                const dsc = truncate(description, 50);
+                const cellsArg = sel.join(",");
+                const gsArg = base !== 4 ? `, gridSize: ${base}` : "";
+                const gridZoomCall = `locate({ description: "${dsc}", strategy: "grid", cells: [${cellsArg}]${gsArg} })`;
+                // Name the real neighbour cells by direction (+ an example) — the driver never
+                // sees the grid, so "try an adjacent cell" is a dangling reference otherwise.
+                const adj = adjacentCells(sel, cols, rows);
+                const adjEntries = Object.entries(adj) as [string, number][];
+                const neighbourHint = adjEntries.length
+                    ? ` If it's actually in a neighbouring cell, try — ${adjEntries.map(([d, n]) => `${d} ${n}`).join(", ")} — e.g. locate({ description: "${dsc}", strategy: "grid", cells: [${adjEntries[0][1]}]${gsArg} }).`
+                    : "";
+                // The "zoom in" line for DOM results (a fresh grid recurses inside the cell).
+                const refineHint = `zoom in — ${gridZoomCall} draws a fresh grid inside that cell.${neighbourHint}`;
                 // Highlight the selection on the grid the model saw (crop-local coords) — the
                 // human "visualise" view; the model saw the plain `gridded` (rawImage).
                 const localBox = cellsBox(sel, cols, rows, { left: 0, top: 0, width: gRegion.width, height: gRegion.height });
@@ -311,16 +432,38 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 // sub-node) — drop it (esp. under filter:"all", which returns the canvas itself)
                 // so a canvas cell falls to a coordinate point, never a SoM hand-off over pixels.
                 const cellBox = cellsBox(sel, cols, rows, gRegion);
+                // Snap the unioned selection to the DOM. A <canvas> is NOT a real target (no
+                // sub-node) — drop it so a canvas cell falls to a coordinate, never a SoM pick.
                 const found = collectInBox(cellBox, filter, { max: 20 }).filter(el => el.tagName !== "CANVAS");
+                const cpt = found.length ? null : canvasPointIn(cellBox);
+                // AUTO-UPGRADE: a plain-grid canvas cell with a grounder available → treat it
+                // like grid-grounding (grounding pinpoints inside the cell) rather than returning
+                // the imprecise cell centre. On a canvas the snap can't hurt (no element to
+                // mis-snap), so it's a free precision win.
+                autoUpgraded = strategy === "grid" && !!cpt && !!groundingModel;
+                if (strategy === "grid-grounding" || autoUpgraded) {
+                    // Narrow the region to the chosen cell and fall through to the grounding
+                    // mechanism (it handles the DOM snap / canvas @pt / marks fallback). `cellStep`
+                    // rides along as the first debug substep.
+                    region = rectOf(cellBox);
+                    regionAsBox = cellBox;
+                    scoped = true;
+                    priorSubsteps.push(cellStep);
+                    // If the cell is on a canvas (`cpt` set), stash the cell centre so a
+                    // grounding whiff returns THAT, not the marks-on-canvas dead end ("no
+                    // clickables in the cell"). Applies to BOTH the auto-upgrade and an
+                    // EXPLICIT grid-grounding — marks can never work inside a canvas cell.
+                    if (cpt) autoUpFallback = { x: cpt.x, y: cpt.y, cellBox, cellNote, offAdvice: ` If it lands OFF the target, ${refineHint}` };
+                } else {
                 if (!found.length) {
-                    // No real DOM element → a canvas coordinate (the canvas-hit nearest the cell
-                    // centre; robust to a cell straddling the chrome above the canvas), else empty.
-                    const cpt = canvasPointIn(cellBox);
+                    // No real DOM element → a canvas coordinate at the cell CENTRE (no grounder
+                    // here, else we'd have auto-upgraded above), else empty. The centre can graze
+                    // an off-centre target, so steer off-target to zoom + the real neighbour cells.
                     if (cpt) {
-                        const token = mintPoint(cpt.x, cpt.y);
+                        const { token, dupWarn } = mintPointWarned(cpt.x, cpt.y);
                         const ptImg = await annotate(shot, [{ rect: rectOf(cellBox), color: YELLOW, label: cellNote }, { rect: { left: cpt.x - 11, top: cpt.y - 11, width: 22, height: 22 }, color: RED, label: "point" }], dpr);
                         return {
-                            content: `Grid ${cellNote}${scopeNote} is on a <canvas> — no DOM element, so this is a COORDINATE: ${token} at (${Math.round(cpt.x)}, ${Math.round(cpt.y)}). First verify, then click: look({ selector: "${token}" }) → click({ selector: "${token}" }). If it lands slightly OFF the target: retry with a LARGER gridSize (finer cells → the centre lands closer), or zoom in — ${refineHint} — or use strategy 'grounding' for an exact point.${canvasScopeTip}`,
+                            content: `Grid ${cellNote}${scopeNote} is on a <canvas> — no DOM element, so this is a COORDINATE: ${token} at (${Math.round(cpt.x)}, ${Math.round(cpt.y)}). First verify, then click: look({ selector: "${token}" }) → click({ selector: "${token}" }).${dupWarn} If it lands OFF the target, ${refineHint}${canvasScopeTip}`,
                             render: gridResult([cellStep, { label: "Canvas point · in the cell", image: ptImg }], { picked: `${token} @ (${Math.round(cpt.x)}, ${Math.round(cpt.y)})`, pickedBy: "snap" }),
                         };
                     }
@@ -355,6 +498,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                     elements: [chosen.el, ...found.filter(e => e !== chosen.el)].slice(0, 50),
                     render: gridResult([cellStep, { label: somLabel(found.length, chosen), note: handoffNote, prompt: somPrompt, output: answer, rawImage: raw, image: viz }], { picked: pk, pickedBy: "model" }),
                 };
+                }
             }
 
             // A note carried onto the Set-of-Marks substep when 'auto' tried grounding and
@@ -365,7 +509,11 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             // hit-testing. Sent as a 1000×1000 square so `coord/groundingRange` is a
             // per-axis fraction for ANY convention.
             if (groundingModel && strategy !== "marks") {
-                const key = `${filter}\x00${scopeSel}\x00${index}\x00${description}`;
+                // Key the cache on the region too, so a grid-grounding pass (region = a picked
+                // cell) doesn't collide with the full-viewport prediction — while a `margin`
+                // retry (same region) still hits.
+                const rk = `${Math.round(region.left)},${Math.round(region.top)},${Math.round(region.width)},${Math.round(region.height)}`;
+                const key = `${filter}\x00${scopeSel}\x00${index}\x00${rk}\x00${description}`;
                 let cached = groundCache.get(key);   // reuse this run's prediction (for a margin retry)
                 if (cached === undefined) {
                     try {
@@ -384,8 +532,25 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                         groundCache.set(key, cached);
                     } catch { cached = null; }   // transient failure → leave uncached, fall through
                 }
+                // 'grid-grounding' entered here via the grid cell-pick — label the render so
+                // the sidebar shows it as the two-stage mechanism, and prepend the grid's
+                // cellStep (carried in priorSubsteps) as the first substep. For plain grounding
+                // priorSubsteps is empty, so this is a no-op there.
+                const groundMode = (strategy === "grid-grounding" || autoUpgraded) ? "grid-grounding" as const : "grounding" as const;
                 const groundResult = (substeps: LocateSubstep[], extra: { picked?: string; pickedBy?: "model" | "snap" } = {}) =>
-                    ({ type: "locate" as const, mode: "grounding" as const, model: String(groundingModel), substeps, ...extra });
+                    ({ type: "locate" as const, mode: groundMode, model: String(groundingModel), substeps: [...priorSubsteps, ...substeps], ...extra });
+                // When an AUTO-UPGRADED grounding whiffs, don't degrade to marks-on-canvas —
+                // return the plain-grid cell CENTRE we stashed (the upgrade must never regress).
+                const returnAutoUpFallback = async (extra: LocateSubstep[] = []) => {
+                    const f = autoUpFallback!;
+                    if (!shot) shot = await ml.screenshot(null, {});
+                    const { token, dupWarn } = mintPointWarned(f.x, f.y);
+                    const ptImg = await annotate(shot, [{ rect: rectOf(f.cellBox), color: YELLOW, label: f.cellNote }, { rect: { left: f.x - 11, top: f.y - 11, width: 22, height: 22 }, color: RED, label: "point" }], dpr);
+                    return {
+                        content: `Grid ${f.cellNote}${scopeNote}: grounding couldn't refine inside the cell, so this is the cell-CENTRE COORDINATE (may graze an off-centre target): ${token} at (${Math.round(f.x)}, ${Math.round(f.y)}). First verify, then click: look({ selector: "${token}" }) → click({ selector: "${token}" }).${dupWarn}${f.offAdvice}${canvasScopeTip}`,
+                        render: groundResult([...extra, { label: "Canvas point · cell centre (grounding fallback)", image: ptImg }], { picked: `${token} @ (${Math.round(f.x)}, ${Math.round(f.y)})`, pickedBy: "snap" }),
+                    };
+                };
                 if (cached) {
                     const { nums, square, prompt, answer } = cached;
                     const R = groundingRange || DEFAULT_GROUNDING_RANGE;
@@ -408,11 +573,15 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                         const cpt = canvasPointIn(b);
                         if (cpt) {
                             if (!shot) shot = await ml.screenshot(null, {});
-                            const token = mintPoint(cpt.x, cpt.y);
+                            const { token, dupWarn } = mintPointWarned(cpt.x, cpt.y);
                             const dot = { left: cpt.x - 11, top: cpt.y - 11, width: 22, height: 22 };
                             const ptImg = await annotate(shot, [{ rect: rectOf(b), color: YELLOW, label: "grounded region" }, { rect: dot, color: RED, label: "click point" }], dpr);
+                            const upNote = autoUpgraded ? ` (on a <canvas>, so 'grid' was auto-upgraded to 'grid-grounding' in this call — grounding pinpointed inside the cell)` : "";
+                            // Off-target: snap around THIS point (re-ground its neighborhood); a
+                            // `margin` grows that search box if the target is cut off at its edge.
+                            const snapHint = ` If it lands OFF the target but you can see it nearby, snap onto it: locate({ selector: "${token}", strategy: "grounding", description: "${truncate(description, 50)}" }) — re-searches just around this point (add margin: 40–120 if it's partly cut off at the edge).`;
                             return {
-                                content: `Grounded "${description}"${scopeNote} on a <canvas> — no DOM element, so this is a COORDINATE: ${token} at (${Math.round(cpt.x)}, ${Math.round(cpt.y)}). First verify, then click: look({ selector: "${token}" }) → click({ selector: "${token}" }).${canvasScopeTip}`,
+                                content: `Grounded "${description}"${scopeNote} on a <canvas> — no DOM element, so this is a COORDINATE: ${token} at (${Math.round(cpt.x)}, ${Math.round(cpt.y)}).${upNote} First verify, then click: look({ selector: "${token}" }) → click({ selector: "${token}" }).${dupWarn}${snapHint}${canvasScopeTip}`,
                                 render: groundResult([boxStep, { label: "Canvas point (no DOM element)", image: ptImg }], { picked: `${token} @ (${Math.round(cpt.x)}, ${Math.round(cpt.y)})`, pickedBy: "snap" }),
                             };
                         }
@@ -435,6 +604,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                         }
                         // A box was returned but nothing interactive sits under it — here a
                         // larger `margin` genuinely helps (it expands a real box).
+                        if (autoUpFallback) return returnAutoUpFallback([boxStep, { ...snapStep, label: "DOM snap · no element in the box" }]);
                         if (strategy === "grounding") {
                             return { content: `Grounding located a region for "${description}" but no ${filter} element is under it. Retry with a larger \`margin\` (e.g. 40–120) — cheap, it reuses this box with no 2nd vision call — or use strategy 'marks'.`, render: groundResult([boxStep, { ...snapStep, label: "DOM snap · no element in the box" }]) };
                         }
@@ -443,6 +613,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                     } else {
                         // No box at all — a `margin` can't expand what doesn't exist, so say so
                         // explicitly rather than let the model waste a step retrying with one.
+                        if (autoUpFallback) return returnAutoUpFallback([boxStep]);
                         if (strategy === "grounding") {
                             const m = margin ? " A `margin` can't help without a box — " : " ";
                             return { content: `The grounding model returned no box for "${description}".${m}It may not be visible: scroll it into view, re-describe it, or use strategy 'marks'.`, render: groundResult([boxStep]) };
@@ -451,6 +622,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                         fallbackNote = "Grounding returned no box — fell back to Set-of-Marks.";
                     }
                 } else {
+                    if (autoUpFallback) return returnAutoUpFallback();
                     if (strategy === "grounding") {
                         return `Grounding failed for "${description}" (the vision call errored). Try again, or use strategy 'marks'.`;
                     }
@@ -464,13 +636,18 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             // Scan wider than we'll badge, so we can report the TRUE candidate count and cap
             // the badges at a legible number (badging 100 elements overlaps into mush).
             const SOM_BADGE_CAP = 40, SOM_DENSE = 30;
-            const allCands = scopeSel ? collectInBox(regionBox, filter, { max: 150 }) : collectCandidates(filter, { max: 150 });
+            const allCands = scoped ? collectInBox(regionAsBox, filter, { max: 150 }) : collectCandidates(filter, { max: 150 });
             const cands = allCands.slice(0, SOM_BADGE_CAP);
             const prefix = fallbackNote ? "(Grounding missed — used Set-of-Marks.) " : "";
             if (!cands.length) return `${prefix}No ${filter} candidates visible${scopeNote || " in the viewport"}. Scroll the target into view, widen the filter (try 'all'), then call again.`;
             // A <canvas>/WebGL surface has no sub-elements to badge — Set-of-Marks can't pick
             // inside it. Steer to the coordinate mechanisms instead of a useless single badge.
-            if (cands.every(c => c.tagName === "CANVAS")) return `${prefix}"${description}" is on a <canvas> — Set-of-Marks can't pick inside it (it has no sub-elements). Use strategy 'grounding' for an exact point, or 'grid' and zoom in — either returns an @pt coordinate token to click.`;
+            if (cands.every(c => c.tagName === "CANVAS")) {
+                const canvasAlts = groundingModel
+                    ? "Use strategy 'grid-grounding' (grid narrows the region, then a grounding model pinpoints an exact spot inside it — best for a small target), or 'grounding', or 'grid' and zoom in"
+                    : "Use strategy 'grid' and zoom in";
+                return `${prefix}"${description}" is on a <canvas> — Set-of-Marks can't pick inside it (it has no sub-elements). ${canvasAlts} — it returns an @pt coordinate token to click.`;
+            }
             // Dense pages break Set-of-Marks (badges overlap, the model misreads) AND we
             // only badge the first SOM_BADGE_CAP — say both, and steer to a better tool.
             const densityWarn = allCands.length > SOM_DENSE

@@ -14,7 +14,7 @@
 // Anything outside the dialect throws `NotInDialect`; any blocked access throws
 // `Denied`. Callers treat BOTH as "fall back to the normal approval + eval path"
 // — safe because the interpreter is side-effect-free, so a failed attempt does
-// nothing observable. See tmp/READONLY_EXEC_SPEC.md.
+// nothing observable. See docs/spec/READONLY_EXEC_SPEC.md.
 
 export class NotInDialect extends Error {}
 export class Denied extends Error {}

@@ -77,6 +77,79 @@ test("FETCH_LLM omits the reasoning key when the model produced none", async () 
     assert.ok(!("reasoning" in res), "no reasoning key on a plain reply");
 });
 
+test("FETCH_LLM surfaces token usage — OpenWebUI `usage` block and Ollama-native root counts", async () => {
+    // OpenWebUI nests a usage block (OpenAI naming).
+    const bgO = loadBackground({
+        config: baseConfig(),
+        onFetch: () => jsonResponse({ choices: [{ message: { content: "42" } }], usage: { prompt_tokens: 18, completion_tokens: 70, total_tokens: 88 } })
+    });
+    const rO = await bgO.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "q" }] } });
+    assert.deepEqual(rO.usage, { promptTokens: 18, completionTokens: 70, totalTokens: 88 });
+
+    // Ollama-native puts prompt_eval_count/eval_count at the response root (no total).
+    const bgL = loadBackground({
+        config: baseConfig({ apiFormat: "ollama", chatUrl: "http://host/ollama/api/chat" }),
+        onFetch: () => jsonResponse({ message: { content: "42" }, prompt_eval_count: 20, eval_count: 5 })
+    });
+    const rL = await bgL.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "q" }] } });
+    assert.deepEqual(rL.usage, { promptTokens: 20, completionTokens: 5, totalTokens: 25 }, "total derived when absent");
+});
+
+test("FETCH_LLM usage is null when the server reports no counts (never a fake 0)", async () => {
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => jsonResponse({ choices: [{ message: { content: "hi" } }] })
+    });
+    const res = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "q" }] } });
+    assert.equal(res.usage, null);
+});
+
+test("num_ctx: a smaller cap becomes the RESIDENT value when the model is already loaded bigger (no reload, no balloon)", async () => {
+    let chatBody = null;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            // /api/ps says gemma4:31b is loaded with a 262144 window.
+            if (call.url.includes("/api/ps")) return jsonResponse({ models: [{ model: "gemma4:31b", context_length: 262144, size_vram: 1 }] });
+            chatBody = call.body;
+            return jsonResponse({ choices: [{ message: { content: "ok" } }] });
+        },
+    });
+    // A delegated vision call caps num_ctx at 8192 — but the resident 262144 fits, so we
+    // send the RESIDENT value (matches the running instance → no reload). NOT omitted:
+    // an omitted num_ctx would make a stale-residency reload auto-size to the default.
+    await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }], model: "gemma4:31b", numCtx: 8192 } });
+    assert.equal(chatBody.params.num_ctx, 262144, "sends the resident window, so it matches the running model (no reload) yet still bounds a mistaken fresh load");
+});
+
+test("num_ctx: the cap IS applied when the model is not resident (a fresh load stays bounded)", async () => {
+    let chatBody = null;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            if (call.url.includes("/api/ps")) return jsonResponse({ models: [] });   // nothing loaded
+            chatBody = call.body;
+            return jsonResponse({ choices: [{ message: { content: "ok" } }] });
+        },
+    });
+    await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }], model: "qwen2.5vl:7b", numCtx: 8192 } });
+    assert.equal(chatBody.params.num_ctx, 8192, "cap applied — a fresh load must stay bounded");
+});
+
+test("num_ctx: the cap is kept when the resident window is SMALLER than requested (needs the space)", async () => {
+    let chatBody = null;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            if (call.url.includes("/api/ps")) return jsonResponse({ models: [{ model: "m", context_length: 2048, size_vram: 1 }] });
+            chatBody = call.body;
+            return jsonResponse({ choices: [{ message: { content: "ok" } }] });
+        },
+    });
+    await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }], model: "m", numCtx: 8192 } });
+    assert.equal(chatBody.params.num_ctx, 8192, "resident 2048 < 8192 → keep the override");
+});
+
 test("FETCH_LLM omits think unless it is a boolean", async () => {
     const bg = loadBackground({
         config: baseConfig(),
@@ -435,7 +508,8 @@ test("FETCH_LLM raw mode returns normalized tool_calls (openai, string args)", a
     });
     assert.deepEqual(res.data, {
         content: null,
-        tool_calls: [{ id: "call_abc", name: "readDom", arguments: { selector: ".menu" } }]
+        tool_calls: [{ id: "call_abc", name: "readDom", arguments: { selector: ".menu" } }],
+        usage: null,   // this mock reports no counts
     });
 });
 
@@ -746,12 +820,19 @@ test("OLLAMA_PS reports loaded models with VRAM usage", async () => {
     const bg = loadBackground({
         config: baseConfig(),
         onFetch: () => jsonResponse({
-            models: [{ model: "a", size_vram: 21_400_000_000, size: 30_000_000_000, expires_at: "soon" }]
+            models: [
+                { model: "a", size_vram: 21_400_000_000, size: 30_000_000_000, expires_at: "soon", context_length: 262_144 },
+                // An older Ollama omits context_length entirely → null, never a bogus 0.
+                { model: "b", size_vram: 2_100_000_000, size: 2_100_000_000, expires_at: "later" },
+            ]
         })
     });
 
     const res = await bg.send({ type: "OLLAMA_PS", payload: {} });
-    assert.deepEqual(res, { data: [{ model: "a", vramGB: 21.4, sizeGB: 30, expiresAt: "soon" }] });
+    assert.deepEqual(res, { data: [
+        { model: "a", vramGB: 21.4, sizeGB: 30, contextLength: 262_144, expiresAt: "soon" },
+        { model: "b", vramGB: 2.1, sizeGB: 2.1, contextLength: null, expiresAt: "later" },
+    ] });
 });
 
 // A tiny helper: drains microtasks/macrotasks so port messages settle.

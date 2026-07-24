@@ -27,7 +27,7 @@ const HANDLE_MAP: Partial<Record<PageRequestType, RelayEntry>> = {
     GET_SESSION_REQUEST: { type: "GET_SESSION", responseType: "GET_SESSION_RESPONSE" },
 };
 
-interface BgResponse { data?: unknown; sources?: unknown; model?: unknown; reasoning?: unknown; error?: string; }
+interface BgResponse { data?: unknown; sources?: unknown; model?: unknown; reasoning?: unknown; usage?: unknown; error?: string; }
 
 const sendRuntimeMessage = (type: BackgroundMessageType, requestId: string, payload: unknown, responseType: string): void => {
     chrome.runtime.sendMessage({ type, payload }, (response: BgResponse | undefined) => {
@@ -39,12 +39,13 @@ const sendRuntimeMessage = (type: BackgroundMessageType, requestId: string, payl
             sources: response && response.sources,
             model: response && response.model,   // resolved model, for the debug sidebar's provenance
             reasoning: response && response.reasoning,   // separate thinking text, for the sidebar
+            usage: response && response.usage,   // token counts, for the sidebar's context gauge
             error: response && response.error,
         }, "*");
     });
 };
 
-interface StreamMsg { type: "chunk" | "done" | "error"; delta?: string; content?: string; sources?: unknown; model?: string; reasoning?: string; error?: string; }
+interface StreamMsg { type: "chunk" | "done" | "error"; delta?: string; content?: string; sources?: unknown; model?: string; reasoning?: string; usage?: unknown; error?: string; }
 
 // Streaming can't use the one-shot sendMessage (it answers once), so it rides a
 // long-lived Port: forward the payload, relay each { chunk | done | error } back.
@@ -54,7 +55,7 @@ const startStream = (requestId: string, payload: unknown): void => {
         if (msg.type === "chunk") {
             window.postMessage({ type: "LLM_STREAM_CHUNK", requestId, delta: msg.delta }, "*");
         } else if (msg.type === "done") {
-            window.postMessage({ type: "LLM_STREAM_DONE", requestId, content: msg.content, sources: msg.sources, model: msg.model, reasoning: msg.reasoning }, "*");
+            window.postMessage({ type: "LLM_STREAM_DONE", requestId, content: msg.content, sources: msg.sources, model: msg.model, reasoning: msg.reasoning, usage: msg.usage }, "*");
             port.disconnect();
         } else if (msg.type === "error") {
             window.postMessage({ type: "LLM_STREAM_ERROR", requestId, error: msg.error }, "*");

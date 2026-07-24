@@ -165,6 +165,33 @@ test("with no sidebar present, nothing is buffered (disabled = zero cost)", asyn
     assert.equal(events.length, 0, "events before a sidebar existed are never retained");
 });
 
+test("switching the sidebar OFF stops emission and drops the buffered events", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: () => ({ data: "hi" }) });
+    const win = world.context.window;
+    const events = [];
+    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+
+    win.postMessage({ __mlSidebar: "present" });
+    win.postMessage({ __mlSidebar: "ready" });
+    await new Promise(r => setTimeout(r, 0));
+    await world.ml.chat("while on");
+    assert.ok(events.length > 0, "emitting while the sidebar is on");
+
+    // The user unchecks the sidebar → the shell unmounts and reports "gone".
+    win.postMessage({ __mlSidebar: "gone" });
+    await new Promise(r => setTimeout(r, 0));
+    const after = events.length;
+    await world.ml.chat("while off");
+    assert.equal(events.length, after, "no events emitted once the sidebar is off");
+
+    // The ring was dropped too: re-enabling replays NOTHING from the off period
+    // (otherwise disabling would silently keep retaining prompts/replies).
+    win.postMessage({ __mlSidebar: "ready" });
+    await new Promise(r => setTimeout(r, 0));
+    const texts = JSON.stringify(events);
+    assert.ok(!texts.includes("while off"), "nothing captured while off is retained or replayed");
+});
+
 test("ml.chat forwards toolIds for server-side tools", async () => {
     const world = loadPageWorld({
         onRuntimeMessage: (msg) => {

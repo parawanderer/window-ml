@@ -2,7 +2,7 @@
 // model picker, Save & Test, VRAM readout, and the theme. Talks to background.ts
 // via chrome.runtime for privileged work.
 import type { MlConfig, Theme, LoadedModel } from "./contract";
-import { DEFAULT_CONFIG } from "./contract";   // single source of truth (see contract.ts)
+import { DEFAULT_CONFIG, fmtCtx } from "./contract";   // single source of truth (see contract.ts)
 
 // Text/select inputs, read via .value. Numbers (NUMBERS) and booleans
 // (CHECKBOXES) are handled separately.
@@ -164,7 +164,9 @@ function renderVram(models: LoadedModel[]) {
         return;
     }
     const usedGB = models.reduce((sum, m) => sum + (m.vramGB || 0), 0);
-    const list = models.map(m => `• ${m.model} — ${m.vramGB ?? "?"} GB`).join("\n");
+    // Show the loaded context too — Ollama preallocates KV cache for the whole window,
+    // so it's a big part of why a model costs what it costs.
+    const list = models.map(m => `• ${m.model}${m.contextLength ? ` (${fmtCtx(m.contextLength)} ctx)` : ""} — ${m.vramGB ?? "?"} GB`).join("\n");
     $("vram").textContent = `${usedGB.toFixed(1)} GB in use\n${list}`;
 }
 

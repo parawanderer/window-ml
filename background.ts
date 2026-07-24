@@ -2,7 +2,7 @@
 // extracts replies, and makes the privileged (host-permissioned) fetches. All
 // server JSON is genuinely opaque, so it's typed `any`; our own data uses the
 // shared contract types.
-import type { MlConfig, ApiFormat, NeutralMessage, ToolCall, FetchLlmPayload, LlmResult, LoadedModel, JsonSchema } from "./contract";
+import type { MlConfig, ApiFormat, NeutralMessage, ToolCall, FetchLlmPayload, LlmResult, LoadedModel, JsonSchema, TokenUsage } from "./contract";
 import { DEFAULT_CONFIG } from "./contract";   // single source of truth (see contract.ts)
 
 // The wire body we assemble for a chat request (grows per format/options).
@@ -37,8 +37,23 @@ interface ApiFormatHandler {
     // OpenAI route reads it from `params` (same channel as num_ctx) — a top-level
     // `think` there is dropped, so `think:false` silently fails to disable it.
     applyThink(body: ChatBody, think: boolean): void;
-    streamChunk(line: string): { delta: string; reasoning?: string; toolCall: boolean; sources?: unknown[] | null } | null;
+    streamChunk(line: string): { delta: string; reasoning?: string; toolCall: boolean; sources?: unknown[] | null; usage?: TokenUsage | null } | null;
 }
+
+/** Normalize a server's token counts into TokenUsage, or null when absent.
+ *  Handles every spelling we see from one place: OpenAI (`prompt_tokens`), the
+ *  newer OpenAI naming (`input_tokens`), and Ollama-native (`prompt_eval_count`).
+ *  OpenWebUI's `usage` block carries all three, and Ollama puts its counts at the
+ *  response root — so callers pass `data.usage || data` and this sorts it out. */
+export const normalizeUsage = (u: any): TokenUsage | null => {
+    if (!u || typeof u !== "object") return null;
+    const n = (v: any) => (typeof v === "number" && isFinite(v) ? v : null);
+    const p = n(u.prompt_tokens) ?? n(u.input_tokens) ?? n(u.prompt_eval_count);
+    const c = n(u.completion_tokens) ?? n(u.output_tokens) ?? n(u.eval_count);
+    if (p == null && c == null) return null;   // no counts at all → report nothing, never a fake 0
+    const promptTokens = p ?? 0, completionTokens = c ?? 0;
+    return { promptTokens, completionTokens, totalTokens: n(u.total_tokens) ?? promptTokens + completionTokens };
+};
 
 // OpenAI serves tool-call arguments as a JSON string; Ollama as an object.
 // Normalize to a parsed object, falling back to the raw value on bad JSON.
@@ -142,6 +157,8 @@ const API_FORMATS: Record<ApiFormat, ApiFormatHandler> = {
                 toolCall: choice.finish_reason === "tool_calls" || !!choice.delta?.tool_calls,
                 // OpenWebUI emits tool/RAG provenance on its own line: { sources: [...] }.
                 sources: Array.isArray(obj.sources) ? obj.sources : null,
+                // Usage rides the final SSE chunk (stream_options.include_usage / OpenWebUI).
+                usage: normalizeUsage(obj.usage),
             };
         },
     },
@@ -189,7 +206,8 @@ const API_FORMATS: Record<ApiFormat, ApiFormatHandler> = {
         streamChunk(line) {
             let obj: any;
             try { obj = JSON.parse(line); } catch { return null; }
-            return { delta: obj.message?.content || "", reasoning: obj.message?.thinking || "", toolCall: !!obj.message?.tool_calls };
+            // Ollama puts prompt_eval_count/eval_count on the FINAL object (done:true).
+            return { delta: obj.message?.content || "", reasoning: obj.message?.thinking || "", toolCall: !!obj.message?.tool_calls, usage: obj.done ? normalizeUsage(obj) : null };
         },
     },
 };
@@ -200,6 +218,33 @@ function getConfig(): Promise<MlConfig> {
 
 // model -> capabilities array | null, per service-worker lifetime
 const capabilitiesCache = new Map<string, string[] | null>();
+
+// Short-lived cache of Ollama's resident set (/api/ps). It changes as models load
+// and unload, so a few seconds keeps the num_ctx-reuse check cheap across a run's
+// burst of vision sub-calls without going stale. Short by design: a stale "resident"
+// would wrongly skip the cap on a fresh load (risking a huge-context OOM), so we
+// bound the risk window rather than trust it for long.
+let psCache: { ts: number; models: any[] } | null = null;
+const PS_CACHE_MS = 2500;
+
+async function residentModels(config: MlConfig): Promise<any[]> {
+    if (psCache && Date.now() - psCache.ts < PS_CACHE_MS) return psCache.models;
+    let models: any[] = [];
+    try { models = (await findOllamaBase(config)).loaded; } catch { /* no Ollama → treat as nothing resident */ }
+    psCache = { ts: Date.now(), models };
+    return models;
+}
+
+// The context window a model is currently LOADED with (Ollama /api/ps
+// `context_length`), or null when it isn't resident or the server is too old to
+// report it. Used to skip a num_ctx override that would needlessly reload an
+// already-loaded model. Matches on the full tagged name (only normalising :latest).
+async function residentContextLength(config: MlConfig, model: string): Promise<number | null> {
+    const norm = (m: string) => m.replace(/:latest$/, "");
+    const hit = (await residentModels(config)).find(
+        (x: any) => x.model === model || x.name === model || norm(x.model || x.name || "") === norm(model));
+    return hit && typeof hit.context_length === "number" ? hit.context_length : null;
+}
 
 // Asks Ollama's /api/show (directly or via the OpenWebUI passthrough) for a
 // model's capability list, e.g. ["completion", "tools", "vision", "thinking"].
@@ -323,8 +368,26 @@ async function prepareRequest(payload: FetchLlmPayload) {
     // format handler puts them where each backend reads them (Ollama `options` vs
     // OpenAI-compat top-level) — OpenWebUI's OpenAI route ignores an options
     // object, so mis-placing them silently dropped Force-CPU / context.
-    const numCtx = payload.numCtx ?? (useUtility ? config.utilityNumCtx : undefined);
+    let numCtx = payload.numCtx ?? (useUtility ? config.utilityNumCtx : undefined);
     const numGpu = payload.numGpu ?? (useUtility && config.utilityForceCpu ? 0 : undefined);
+    // Reuse an already-loaded model instead of reloading it at a smaller context.
+    // A num_ctx override that's SMALLER than what the model is currently resident
+    // with forces Ollama to unload + reload — the churn behind the latency and the
+    // flapping usage bar when delegated vision sub-calls (capped at VISION_NUM_CTX)
+    // hit the agent's own driver model. The cap only exists to bound a FRESH load;
+    // if the model already fits the request, send the RESIDENT value (not undefined).
+    //
+    // Why not drop it to undefined: `undefined` = "no num_ctx", and if our residency
+    // belief is stale (the ~short ps cache raced an eviction / keep-alive expiry), a
+    // request with NO num_ctx makes Ollama FRESH-load the model at its default — which
+    // on a big-VRAM box auto-sizes to the model's full window (e.g. qwen2.5vl → 128K),
+    // ballooning KV cache for a task that needs ~1.4K tokens. Sending the believed value
+    // instead: a genuinely-resident model matches → no reload; a mistaken/fresh load
+    // still stays bounded at that value, never the auto-sized default.
+    if (typeof numCtx === "number") {
+        const resident = await residentContextLength(config, model);
+        if (resident !== null && resident >= numCtx) numCtx = resident;
+    }
     format.applyRuntimeOptions(body, {
         numCtx: typeof numCtx === "number" ? numCtx : undefined,
         numGpu: typeof numGpu === "number" ? numGpu : undefined,
@@ -367,7 +430,7 @@ const HANDBACK_ERROR =
     'Function Calling to the server-side loop ("Legacy" on OpenWebUI v0.10.0+, ' +
     '"Default" on older builds), or check that the tool id is correct.';
 
-async function fetchLLM(payload: FetchLlmPayload): Promise<LlmResult | { content: string | null; tool_calls: ToolCall[] }> {
+async function fetchLLM(payload: FetchLlmPayload): Promise<LlmResult | { content: string | null; tool_calls: ToolCall[]; usage: TokenUsage | null }> {
     const { config, format, body, send, model } = await prepareRequest(payload);
 
     let data: any;
@@ -388,10 +451,12 @@ async function fetchLLM(payload: FetchLlmPayload): Promise<LlmResult | { content
 
     // Raw mode (ml.step): hand back content + normalized tool_calls so the
     // caller drives the loop. content may be null when the model chose a tool.
+    // Usage rides along so the agent loop can track its context occupancy per step.
     if (payload.raw) {
         return {
             content: format.extractContent(data) ?? null,
             tool_calls: format.extractToolCalls(data),
+            usage: normalizeUsage(data.usage || data),
         };
     }
 
@@ -408,7 +473,8 @@ async function fetchLLM(payload: FetchLlmPayload): Promise<LlmResult | { content
 
     // sources: server-side tool / RAG provenance (OpenWebUI attaches it top-level
     // when a tool runs). Absent on plain chats and the Ollama-native format.
-    return { content, sources: Array.isArray(data.sources) ? data.sources : [], model, reasoning: format.extractReasoning(data) || null };
+    // usage: OpenWebUI nests it under `usage`; Ollama-native puts counts at the root.
+    return { content, sources: Array.isArray(data.sources) ? data.sources : [], model, reasoning: format.extractReasoning(data) || null, usage: normalizeUsage(data.usage || data) };
 }
 
 // Streaming variant of fetchLLM: reads the SSE/NDJSON response and calls
@@ -416,7 +482,7 @@ async function fetchLLM(payload: FetchLlmPayload): Promise<LlmResult | { content
 // Text-only — no schema/raw/tools; toolIds is supported (streams each
 // server-side mode; a handed-back attempt streams no content, so nothing is
 // emitted to the caller before we retry the next mode).
-async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: string) => void): Promise<{ content: string; sources: unknown[]; model: string; reasoning: string | null }> {
+async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: string) => void): Promise<{ content: string; sources: unknown[]; model: string; reasoning: string | null; usage: TokenUsage | null }> {
     const { format, body, send, model } = await prepareRequest(payload);
 
     const consume = async (res: Response) => {
@@ -424,6 +490,7 @@ async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: string) => v
         const decoder = new TextDecoder();
         let buffer = "", content = "", reasoning = "", sawToolCall = false;
         let sources: unknown[] = [];
+        let usage: TokenUsage | null = null;
         const handleLine = (line: string) => {
             const chunk = format.streamChunk(line);
             if (!chunk) return;
@@ -432,6 +499,7 @@ async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: string) => v
             if (chunk.toolCall) sawToolCall = true;
             // sources arrive on their own SSE line (no choices) — capture them.
             if (Array.isArray(chunk.sources)) sources = chunk.sources;
+            if (chunk.usage) usage = chunk.usage;   // rides the final chunk
         };
         for (;;) {
             const { done, value } = await reader.read();
@@ -445,20 +513,20 @@ async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: string) => v
             }
         }
         if (buffer.trim()) handleLine(buffer.trim());
-        return { content, sawToolCall, sources, reasoning: reasoning || null };
+        return { content, sawToolCall, sources, reasoning: reasoning || null, usage };
     };
 
     if (payload.toolIds?.length) {
         for (const mode of SERVER_TOOL_MODES) {
             body.params = { ...body.params, function_calling: mode };
-            const { content, sawToolCall, sources, reasoning } = await consume(await send(body, true));
-            if (content.trim() || !sawToolCall) return { content, sources, model, reasoning };   // real answer, or a plain empty completion
+            const { content, sawToolCall, sources, reasoning, usage } = await consume(await send(body, true));
+            if (content.trim() || !sawToolCall) return { content, sources, model, reasoning, usage };   // real answer, or a plain empty completion
         }
         throw new Error(HANDBACK_ERROR);
     }
 
-    const { content, sources, reasoning } = await consume(await send(body, true));
-    return { content, sources, model, reasoning };
+    const { content, sources, reasoning, usage } = await consume(await send(body, true));
+    return { content, sources, model, reasoning, usage };
 }
 
 function authHeaders(config: MlConfig): Record<string, string> {
@@ -568,6 +636,10 @@ async function listLoadedModels(): Promise<LoadedModel[]> {
         model: m.model || m.name,
         vramGB: m.size_vram ? +(m.size_vram / 1e9).toFixed(1) : null,
         sizeGB: m.size ? +(m.size / 1e9).toFixed(1) : null,
+        // The context window it was loaded with. Ollama preallocates KV cache for the
+        // FULL window, so this explains a big share of size_vram (a 256K-ctx load is
+        // mostly cache). Older servers don't report it → null, and the UI hides it.
+        contextLength: typeof m.context_length === "number" ? m.context_length : null,
         expiresAt: m.expires_at || null,
     }));
 }
@@ -607,6 +679,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 const resp: any = { data: result.content, model: result.model ?? null };
                 if (result.sources && result.sources.length) resp.sources = result.sources;
                 if (result.reasoning) resp.reasoning = result.reasoning;
+                if (result.usage) resp.usage = result.usage;
                 sendResponse(resp);
             })
             .catch(err => sendResponse({ error: err.message }));
@@ -725,7 +798,7 @@ chrome.runtime.onConnect.addListener((port) => {
     if (port.name !== "LLM_STREAM") return;
     port.onMessage.addListener((message: any) => {
         streamLLM(message.payload, (delta) => port.postMessage({ type: "chunk", delta }))
-            .then(({ content, sources, model, reasoning }) => port.postMessage({ type: "done", content, sources, model, reasoning }))
+            .then(({ content, sources, model, reasoning, usage }) => port.postMessage({ type: "done", content, sources, model, reasoning, usage }))
             .catch((err) => port.postMessage({ type: "error", error: err.message }));
     });
 });

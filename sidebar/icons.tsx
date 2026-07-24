@@ -43,3 +43,16 @@ export const IconVram = () => (
         <path d="M3 12h4l2 5 4-13 3 8h5" />
     </svg>
 );
+// Send — Heroicons "paper-airplane" (MIT). For the composer's submit button.
+export const IconSend = () => (
+    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6 12 3.27 4.36a.6.6 0 0 1 .82-.74l16.2 7.83a.6.6 0 0 1 0 1.08l-16.2 7.83a.6.6 0 0 1-.82-.74L6 12Zm0 0h6" />
+    </svg>
+);
+// Usage gauge — a half-dial with a needle. Marks the context-usage bar.
+export const IconUsage = () => (
+    <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M2.5 12a5.5 5.5 0 1 1 11 0" />
+        <path d="M8 12 11 7" />
+    </svg>
+);

@@ -145,7 +145,8 @@ attempts in `tests/readonly-exec.test.js`.
 **Visual element location (`locate` / Set-of-Marks).** For controls text/ARIA can't
 reach — unlabelled icon buttons, or pages built with no accessibility markup at all
 (a bare `<div>` with a synthetic click handler) — `ml.locateTool` finds an element by
-**describing** it. Engine (`som.ts`): the accessibility-agnostic primitive is
+**describing** it. (Illustrated end-to-end, DOM + canvas, with mermaid diagrams in
+`docs/LOCATE-VISION.md`.) Engine (`som.ts`): the accessibility-agnostic primitive is
 `document.elementFromPoint` (hit-testing), NOT selector matching — `collectCandidates`
 sweeps the viewport on a grid, takes the topmost element at each point (so occluded
 ones are excluded for free), and climbs each to its representative (`representativeFor`:
@@ -161,8 +162,23 @@ never history. Auto-wired into `ml.agent` alongside `look` whenever `_resolveVis
 resolves a reader (agent-model-if-vision → OCR model).
 
 **Three mechanisms, driver picks (`strategy`).** `locate({ strategy })` — `"marks"` (above),
-`"grounding"` (a coordinate VLM points at it), `"grid"` (below), or `"auto"`
-(grounding-first, marks fallback; `grid` is explicit-only, never in `auto`). Grounding is **opt-in** config (`groundingEnabled`/`groundingModel`, off by
+`"grounding"` (a coordinate VLM points at it), `"grid"` (below), `"grid-grounding"`
+(grid narrows to a cell, then grounding pinpoints INSIDE it — the two-model combo for a
+small target on a busy page/canvas where grid's cell-centre `@pt` only grazes; the grid
+cell-pick just narrows `region` and **falls through into the grounding mechanism**, reusing
+its whole snap/`@pt`/fallback pipeline, and renders as "Grid → Grounding" with the cell-pick
+as substep 1; needs a grounding model — **or `grid-grounding({ cells })` skips the pick and
+grounds straight inside the reused cell**), or `"auto"`
+(grounding-first, marks fallback; `grid`/`grid-grounding` are explicit-only, never in `auto`).
+**Canvas auto-upgrade:** a plain `strategy:"grid"` cell that lands on a `<canvas>` with a
+grounder configured **auto-upgrades to grid-grounding** (grounding pinpoints inside the cell) —
+on a canvas the snap can't mis-snap (no element), so it's a free precision win; the result
+notes it, and a grounding whiff **falls back to the stashed cell centre** so the upgrade is
+never worse than plain grid. Without a grounder, grid returns the cell centre and steers the
+off-target case to zoom + the real neighbour cells (`adjacentCells`, named by direction, since
+the driver never sees the grid). `@pt:…` is a **universal scope** (`selector`), not just a
+grounding input: any strategy re-searches the point's box (grid-inside-a-point, etc.), `margin`
+grows that box for a cut-off target. Grounding is **opt-in** config (`groundingEnabled`/`groundingModel`, off by
 default — it loads a 3rd model into VRAM): the search region is **letterboxed** into a
 **1000×1000 square** (`letterboxToSquare` — aspect-preserving; a stretch mangles an
 arbitrary-shaped crop) so one configurable **`groundingRange`** (the coord divisor, default
@@ -255,12 +271,23 @@ gives a **precise** point (its box centre — its whole strength on a canvas); g
 and steers to those two. The **`click` tool decodes `@pt:`** → `clickAt(x,y)` synthesizes the
 full pointer/mouse sequence (`pointerdown`/`mousedown`/`pointerup`/`mouseup`/`click`) at that
 viewport coordinate — canvas games read `clientX-rect.left`, which the synthetic `clientX`
-satisfies. A stale/unknown token fails cleanly ("re-run locate"). The token registry +
-`mintPoint`/`resolvePoint` live in **util.ts** (shared) so `ml.screenshot` resolves it too:
+satisfies. A stale/unknown token fails cleanly ("re-run locate"). **Re-locate-loop guard:**
+each mint is a fresh token even for the same coordinate, so a model that keeps re-locating a
+hard target can circle back to the same wrong spot without noticing (observed: qwen2.5vl
+grounding fixated on one point across 7 reworded descriptions). `nearbyPoint(x,y)` checks the
+registry on mint; if the new point ~matches (≤12px) one already located this run, `locate`
+appends a warning naming the prior token so the driver breaks the loop (change region /
+description / strategy) instead of re-verifying it. The token registry +
+`mintPoint`/`resolvePoint`/`nearbyPoint` live in **util.ts** (shared) so `ml.screenshot` resolves it too:
 **`look({ selector: "@pt:…" })` verifies a canvas target** — `screenshot` returns a cropped
-view around the point with the exact click spot **marked** (a contrast-coloured box), so the
-driver can confirm what it's about to hit before clicking (the canvas analogue of
-`look({ selector })` on a DOM node; works for both the native and delegated look). Detection
+view around the point (radius `PT_LOOK_RADIUS`) with the exact click spot **marked** (a
+contrast-coloured box), so the driver can confirm what it's about to hit before clicking (the
+canvas analogue of `look({ selector })` on a DOM node; works for both the native and delegated
+look). **"Snap around point" (`locate({ selector: "@pt:…" })`)** closes the loop: it scopes the
+search to that *same* `PT_LOOK_RADIUS` box — the neighborhood the model just VISUALLY CONFIRMED
+holds the target in its verify shot — and re-grounds inside it. The finest zoom tier, and the
+only one seeded by a verified view rather than a guess: when the mark grazes a target that's
+plainly in-frame, re-locating the box snaps precisely. The look(`@pt`) result discloses it. Detection
 is robust to a pick **straddling page chrome above the canvas** (`canvasPointIn` samples the
 whole box, not just the centre) and a `<canvas>` is dropped from a grid cell's candidates so
 it never triggers a snap/hand-off — it becomes a coordinate. **Describe the target by
@@ -279,15 +306,46 @@ and rejects a not-found selector / a sub-`MIN_SHOT_PX` sliver with an actionable
 marks runs `collectInBox(region)` and badges a **crop** of just that region (marks
 translated to crop-local coords).
 
+**Coarse pre-crop (`region`) — the level-0 split.** For a dense scene where a ~60-cell grid
+is too many near-identical cells to pick a number from, `locate({ region })` crops the search
+to a **named directional area** the model can produce from rough spatial "vibe" ("he's on the
+left") long before it can read a cell number. `regionBox` (som.ts, pure/unit-tested) maps the
+9 names — bands full-length (`left` = left side × full height), corners = quadrants, `center`
+= middle box — with **halves overlapping by `REGION_OVERLAP`** so a midline target lands in
+BOTH sides ("guess a side, try the opposite on a miss" always succeeds). It's just another
+crop, applied right after `selector` scoping, so **every** strategy inherits it — the same
+`region`/`scoped` narrowing selector uses. Three tiers now: **region (directional, lvl 0) →
+grid (numeric cells, lvl 1) → `cells` recursion (lvl 2+)**, each using the model's strength at
+that zoom. Dense-NONE and the too-many-cells advice steer to it first.
+
+**grid-grounding `cells` reuse.** `grid-grounding` normally does its own grid cell-pick, but
+`grid-grounding({ cells })` **skips the (nondeterministic) re-pick** and grounds directly
+inside `cellsBox(cells)` — deterministic reuse of a prior grid result (re-rolling the pick can
+return NONE on the same target). Handled by an early `ggReuse` branch that narrows `region` to
+the cell and falls through to the grounding mechanism; the grounding-model guard fires for it
+too. `cells` only map back under the **same `gridSize`**, so every emitted `cells:[…]` snippet
+carries `gridSize: N` when non-default (the compact caveat). The look(`@pt`) verify result adds
+a tip (`@pt`-only) steering a near-miss to `grid-grounding` + `cells`.
+
 Delegated vision sub-calls (OCR, grounding, delegated `look`) cap `num_ctx` at
 `VISION_NUM_CTX` (util.ts) so a vision model's huge default context doesn't pre-allocate tens
 of GB of KV cache and OOM modest cards — NOT the native look (that reuses the agent's own
-model). `som.ts` unit-tested standalone (`dist/som.js`, `tests/som.test.js`:
+model). **But when the model is already resident with a ≥ window, the cap is replaced by the
+RESIDENT value** (`residentContextLength` reads `/api/ps`, short-cached): a smaller num_ctx than
+the loaded instance forces Ollama to reload, and for grid/marks the reader IS the agent's own
+driver model — so the cap was thrashing the driver (reload down → reload up every sub-call),
+adding latency and flapping the usage-bar denominator. Sending the resident value matches the
+running instance (no reload) — **but NOT `undefined`**: an omitted num_ctx makes a mistaken
+fresh load (stale ps cache raced an eviction) auto-size to the model's full window on a big-VRAM
+box (qwen2.5vl → 128K, tens of GB of KV cache), so we send the believed value to keep even a
+wrong load bounded. The liveness probes (sidebar Test-models grounding/OCR) cap the same way;
+`VISION_NUM_CTX` lives in `contract.ts`. The cap only exists to bound a *fresh* load. `som.ts` unit-tested standalone (`dist/som.js`, `tests/som.test.js`:
 `representativeFor` walk-up + `viewportBox`/`projectFromSquare` coord mapping +
 `gridDims`/`validateCells`/`cellsBox`; `elementFromPoint`/canvas are jsdom no-ops); scoping
-guards in `tests/agent.test.js`. Slices
-1–3 (DOM-first) of `tmp/visual_element_selection_design.md`; grid's canvas/coordinate half
-and slice 4 remain.
+guards in `tests/agent.test.js`. The original design's slices 1–4 all shipped (incl. the
+canvas/coordinate half — grid, grid-grounding, `@pt`; and slice 4's settings capability-RED,
+`visionGate` in `sidebar/settings.tsx`), plus later additions (region tiers, snap-around-point,
+canvas auto-upgrade, `@pt` dedup). Illustrated end-to-end in `docs/LOCATE-VISION.md`.
 
 **Agent runs in the debug sidebar.** `ml.agent` emits its own debug-event kinds
 (not `chat`): `agent` (run start: task + model), `agent-step` (one per step — a

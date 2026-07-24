@@ -8,8 +8,8 @@ import { render } from "preact";
 import type { ComponentChildren } from "preact";
 import { useState, useEffect } from "preact/hooks";
 import { signal } from "@preact/signals";
-import type { MlDebugEvent, DebugSessionConfig, DebugAgentConfig, NeutralMessage, MlConfig, ApiFormat, Theme, LoadedModel, ExtendProfile, RenderDescriptor, LocateSubstep } from "../contract";
-import { DEFAULT_CONFIG } from "../contract";
+import type { MlDebugEvent, DebugSessionConfig, DebugAgentConfig, NeutralMessage, MlConfig, ApiFormat, Theme, LoadedModel, ExtendProfile, RenderDescriptor, LocateSubstep, TokenUsage } from "../contract";
+import { DEFAULT_CONFIG, fmtCtx } from "../contract";
 import {
     FONT_KEY, WRAP_KEY, LINES_KEY,
     sessionMap, rev, view, fontScale, codeWrap, codeLineNumbers, config, models,
@@ -20,7 +20,7 @@ import { pretty, shortStamp, fullStamp, truncate, collapsedPreview, highlight, b
 import { annotatedConfig, turnProfile, shownModel, sessionProfile } from "./model";
 import { exportSession } from "./export";
 import { applyTheme, applyFont, applyCodePrefs, initThemeStyle } from "./prefs";
-import { IconCopy, IconCheck, IconWarn, IconChevron, IconGear, IconExport, IconVram } from "./icons";
+import { IconCopy, IconCheck, IconWarn, IconChevron, IconGear, IconExport, IconVram, IconSend, IconUsage } from "./icons";
 import { Settings } from "./settings";
 
 function onDebug(ev: MlDebugEvent): void {
@@ -36,7 +36,7 @@ function onDebug(ev: MlDebugEvent): void {
     if (ev.kind === "agent-step") {
         const s = sessionMap.get(ev.session.hash);
         if (!s) return;
-        s.steps = [...(s.steps || []), { step: ev.step, thought: ev.thought, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: ev.elements, render: ev.render, argIssues: ev.argIssues, approval: ev.approval }];
+        s.steps = [...(s.steps || []), { step: ev.step, thought: ev.thought, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: ev.elements, render: ev.render, argIssues: ev.argIssues, approval: ev.approval, usage: ev.usage }];
         s.lastTs = ev.ts; rev.value++; return;
     }
     if (ev.kind === "agent-result") {
@@ -70,7 +70,7 @@ function onDebug(ev: MlDebugEvent): void {
         // Replace the turn with a NEW object (see note above) so the open detail
         // view re-renders it live instead of only after a re-navigation/reload.
         const updated: Turn = ev.kind === "chat-result"
-            ? { ...prev, assistant: ev.content, sources: ev.sources, structured: ev.structured, status: "ok", ts: ev.ts, model: ev.model, extend: ev.extend, reasoning: ev.reasoning }
+            ? { ...prev, assistant: ev.content, sources: ev.sources, structured: ev.structured, status: "ok", ts: ev.ts, model: ev.model, extend: ev.extend, reasoning: ev.reasoning, usage: ev.usage }
             : { ...prev, error: ev.error, status: "err", ts: ev.ts };
         s.turns = s.turns.map((x, idx) => idx === i ? updated : x);
         s.lastTs = ev.ts; s.status = rollupStatus(s);
@@ -191,8 +191,11 @@ function useCopy(): { copied: boolean; copy: (text: string) => void } {
 // (parent), not this iframe, so it fills the whole browser rather than the
 // ~sidebar-width frame — post the src up and the shell renders the overlay.
 const openLightbox = (src: string) => window.parent.postMessage({ __mlLightbox: src }, "*");
+// No tooltip here on purpose: `cursor: zoom-in` is the standard affordance for
+// "click to enlarge", and a pop anchored under a full-width screenshot (locate
+// renders stack several) would land far from the pointer and just add noise.
 const ClickableImg = ({ src, alt }: { src: string; alt?: string }) =>
-    <img class="zoomable" src={src} alt={alt} title="Click to view full size" onClick={() => openLightbox(src)} />;
+    <img class="zoomable" src={src} alt={alt} onClick={() => openLightbox(src)} />;
 
 // A short hash rendered as click-to-copy, with a tooltip. `stop` swallows the
 // click so copying a hash inside a session row doesn't also open the session.
@@ -290,53 +293,65 @@ function CopyModel({ model }: { model: string }) {
     );
 }
 
-// Assistant reply: no visible box around the text (#5). The markdown⇄raw toggle
-// and a copy button (copies raw markdown, #6) sit on the right of the header row.
-function AssistantBody({ t }: { t: Turn }) {
-    const [showRaw, setShowRaw] = useState(!!t.structured);
+// A reply bubble — shared by a chat turn's assistant reply and an agent run's
+// final answer, so the two render identically: no boxed background (#5), a header
+// (status dot · collapse chevron · model chip · (profile) · copy · raw ⇄ nice ·
+// timestamp) over the body (markdown ⇄ raw, collapsible), with optional thinking
+// and sources. No "assistant"/"answer" word — the header controls carry the
+// meaning; `label` appears only for an exceptional state (e.g. an agent step-cap).
+function ReplyBubble({ content, status, model, profile, ts, reasoning = null, sources = null, error, label, capped, initialRaw }: {
+    content: string; status: Status; model: string | null; profile: "utility" | "default" | null; ts: number;
+    reasoning?: string | null; sources?: unknown[] | null; error?: string; label?: string; capped?: boolean; initialRaw?: boolean;
+}) {
+    const [showRaw, setShowRaw] = useState(!!initialRaw);
     const [collapsed, setCollapsed] = useState(false);
-    const done = t.status === "ok";
-    const preview = done ? collapsedPreview(t.assistant || "") : null;
+    // "There's a reply to show" — true for an OK turn AND a step-capped agent answer
+    // (status "err" but it still produced a summary). A real error has `error` set.
+    const hasReply = status !== "pending" && !error;
+    const preview = hasReply ? collapsedPreview(content) : null;
     return (
-        <>
+        <div class={`msg asst ${status}${capped ? " capped" : ""}`}>
             <div class="mrow">
-                <Dot status={t.status} />
-                {/* The chevron + label toggle collapse (only when there's a reply). */}
-                {done
+                {/* Chevron (collapse affordance) · status dot · an optional label for
+                    an exceptional state (e.g. an agent step-cap stop). */}
+                {hasReply
                     ? <button class="who-toggle" title={collapsed ? "expand" : "collapse"} onClick={() => setCollapsed(v => !v)}>
                         <span class={`tri${collapsed ? "" : " open"}`} aria-hidden="true"><IconChevron /></span>
-                        <span class="who">assistant</span>
                     </button>
-                    : <span class="who">assistant</span>}
+                    : null}
+                <Dot status={status} />
+                {label ? <span class="who">{label}</span> : null}
                 {/* The model that produced this reply + its (default)/(utility) profile. */}
-                {done && t.model ? <CopyModel model={t.model} /> : null}
-                {done && t.model && turnProfile(t) ? <span class="profile-inline">({turnProfile(t)})</span> : null}
+                {hasReply && model ? <CopyModel model={model} /> : null}
+                {hasReply && model && profile ? <span class="profile-inline">({profile})</span> : null}
                 <span class="sp" />
-                {done
+                {/* Copy + raw⇄nice are for a real reply. A terminal notice (a step-cap
+                    stop) is a short line — collapsible is enough; copy/raw are noise. */}
+                {hasReply && !capped
                     ? <>
-                        <CopyBtn text={t.assistant || ""} tip="copy markdown" />
+                        <CopyBtn text={content} tip="copy markdown" />
                         {collapsed ? null : <button class="raw-btn" onClick={() => setShowRaw(v => !v)}>{showRaw ? "nice" : "raw"}</button>}
                     </>
                     : null}
-                <Stamp ts={t.ts} />
+                <Stamp ts={ts} />
             </div>
             {/* Reasoning/thinking text (separate from the reply), collapsed by default. */}
-            {done && !collapsed && t.reasoning
-                ? <details class="thinking"><summary>thinking</summary><div class="md" dangerouslySetInnerHTML={{ __html: markdown(t.reasoning) }} /></details>
+            {hasReply && !collapsed && reasoning
+                ? <details class="thinking"><summary>thinking</summary><div class="md" dangerouslySetInnerHTML={{ __html: markdown(reasoning) }} /></details>
                 : null}
-            {t.status === "pending"
+            {status === "pending"
                 ? <div class="pending-note">…thinking</div>
-                : t.status === "err"
-                    ? <div class="errtext">{t.error || "(error)"}</div>
+                : error
+                    ? <div class="errtext">{error}</div>
                     : collapsed
                         ? <div class="asst-collapsed" onClick={() => setCollapsed(false)}>{preview!.text}{preview!.more ? <span class="more"> …</span> : null}</div>
                         : showRaw
-                            ? <Code text={t.assistant || ""} lang="markdown" />
-                            : <div class="md" dangerouslySetInnerHTML={{ __html: markdown(t.assistant || "") }} />}
-            {t.sources?.length
-                ? <details class="sources"><summary>{`sources (${t.sources.length})`}</summary><Code text={pretty(t.sources)} lang="json" /></details>
+                            ? <Code text={content} lang="markdown" />
+                            : <div class="md" dangerouslySetInnerHTML={{ __html: markdown(content) }} />}
+            {sources?.length
+                ? <details class="sources"><summary>{`sources (${sources.length})`}</summary><Code text={pretty(sources)} lang="json" /></details>
                 : null}
-        </>
+        </div>
     );
 }
 
@@ -348,7 +363,9 @@ function MessageTurn({ t }: { t: Turn }) {
                 <div class="utext">{t.user}</div>
                 {t.images?.length ? <div class="thumbs">{t.images.map((src, i) => <ClickableImg key={i} src={src} />)}</div> : null}
             </div>
-            <div class={`msg asst ${t.status}`}><AssistantBody t={t} /></div>
+            <ReplyBubble content={t.assistant || ""} status={t.status} model={t.model ?? null}
+                profile={turnProfile(t)} ts={t.ts} reasoning={t.reasoning} sources={t.sources}
+                error={t.status === "err" ? (t.error || "(error)") : undefined} initialRaw={!!t.structured} />
         </>
     );
 }
@@ -362,7 +379,9 @@ const ProfileBadge = ({ profile }: { profile?: ExtendProfile | null }) =>
 // `s` reference) would make it skip the parent re-render and freeze on pending.
 const AgentBadge = () => <span class="agent-badge">agent</span>;
 
-function SessionRow({ s, model, profile }: { s: Session; model: string; profile: "utility" | "default" | null }) {
+// The model name is intentionally NOT shown here — the list gets busy with tags,
+// and the resolved model is one tap away in the detail header.
+function SessionRow({ s, profile }: { s: Session; profile: "utility" | "default" | null }) {
     const title = s.title || s.task || s.turns[0]?.user || "(no prompt)";
     return (
         <button class="row" onClick={() => (view.value = { name: "detail", hash: s.hash })}>
@@ -372,7 +391,6 @@ function SessionRow({ s, model, profile }: { s: Session; model: string; profile:
             <div class="row-meta">
                 {s.kind === "agent" ? <AgentBadge /> : <TagBadge tag={s.tag} />}
                 <ProfileBadge profile={profile} />
-                <span class="model">{model}</span>
                 <Hash hash={s.hash} stop />
             </div>
         </button>
@@ -443,7 +461,7 @@ function LocateRender({ d }: { d: Extract<RenderDescriptor, { type: "locate" }> 
     return (
         <div class="r-locate">
             <div class="r-loc-head">
-                {d.mode === "grounding" ? "Grounding" : d.mode === "grid" ? "Grid" : "Set-of-Marks"} · <b>{d.model}</b>
+                {d.mode === "grounding" ? "Grounding" : d.mode === "grid-grounding" ? "Grid → Grounding" : d.mode === "grid" ? "Grid" : "Set-of-Marks"} · <b>{d.model}</b>
                 {sameAsDriver ? <span class="tt r-loc-delegated"> (standalone sub-call · not in the agent's context)<span class="tt-pop left" role="tooltip">This vision sub-call ran on its own — its image and reply were NOT added to the agent driver's conversation, even though it's the same model.</span></span> : null}
             </div>
             {d.substeps.map((s, i) => <LocateSubstepView key={i} s={s} n={i + 1} />)}
@@ -561,13 +579,13 @@ function ToolStep({ st }: { st: AgentStep }) {
                 <Dot status={toolFailed(st.result) ? "err" : "ok"} />
                 <span class="tool-name">{st.tool}</span>
                 {st.approval ? <ApprovalBadge approval={st.approval} /> : null}
-                {st.elements ? <span class="el-count" title="DOM nodes returned (reach them in the console via onStep)">{st.elements} el</span> : null}
+                {st.elements ? <span class="tt el-count">{st.elements} el<span class="tt-pop wrap" role="tooltip">DOM nodes returned (reach them in the console via onStep).</span></span> : null}
                 {issues ? <span class="arg-warn" title={issues.join("; ")}><IconWarn />{issues.length}</span> : null}
                 {!open ? <span class="astep-preview">{collapsedPreview(st.result || "").text}</span> : null}
             </button>
             {open
                 ? <div class="astep-body">
-                    {issues ? <div class="arg-issues" title="The args don't match this tool's parameter schema."><IconWarn /><span>arg schema: {issues.join("; ")}</span></div> : null}
+                    {issues ? <div class="tt tt-row arg-issues"><IconWarn /><span>arg schema: {issues.join("; ")}</span><span class="tt-pop wrap left" role="tooltip">The args don't match this tool's parameter schema.</span></div> : null}
                     {args
                         ? <IoBlock label="In" tip="The arguments the model passed to this tool call."
                             preview={inlineJson(args)} render={inRender} raw={<Code text={pretty(args)} lang="json" />} />
@@ -614,11 +632,11 @@ function AgentOptionsBlock({ s }: { s: Session }) {
             <div class="block-head" role="button" onClick={() => setOpen(v => !v)}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
                 <span class="block-label">agent options</span>
-                {noVision ? <span class="arg-warn" title="No vision-capable model resolved (agent model → OCR model). The look and locate tools aren't available this run; set an OCR/vision model in Settings → Models."><IconWarn />no vision</span> : null}
+                {noVision ? <span class="tt arg-warn"><IconWarn />no vision<span class="tt-pop wrap left" role="tooltip">No vision-capable model resolved (agent model → OCR model). The look and locate tools aren't available this run; set an OCR/vision model in Settings → Models.</span></span> : null}
             </div>
             {open
                 ? <div class="tbody">
-                    {noVision ? <div class="arg-issues" title="ml.agent couldn't resolve a vision reader, so look/locate weren't wired."><IconWarn /><span>visual tools unavailable — no vision model (set an OCR/vision model in Settings → Models)</span></div> : null}
+                    {noVision ? <div class="tt tt-row arg-issues"><IconWarn /><span>visual tools unavailable — no vision model (set an OCR/vision model in Settings → Models)</span><span class="tt-pop wrap left" role="tooltip">ml.agent couldn't resolve a vision reader, so look/locate weren't wired.</span></div> : null}
                     <pre class="opts">{lines.join("\n")}</pre>
                     <div class="sys-block">
                         <button class="raw-btn" onClick={() => setShowSys(v => !v)}>{showSys ? "hide" : "show"} system prompt{c.customSystem ? " (custom)" : ""}</button>
@@ -639,12 +657,13 @@ function AgentRunView({ s }: { s: Session }) {
                 <div class="mrow"><span class="who">task</span><span class="sp" /><Stamp ts={s.createdTs} /></div>
                 <div class="utext">{s.task}</div>
             </div>
-            {turns.map(t => <AgentTurn key={t.step} turn={t} max={s.maxSteps} />)}
+            {/* Skip an empty step group — one carrying only a usage sample (the final
+                answer's token counts), no thought or tool, would render a bare pill. */}
+            {turns.filter(t => t.thought || t.tools.length).map(t => <AgentTurn key={t.step} turn={t} max={s.maxSteps} />)}
             {s.summary != null
-                ? <div class={`agent-summary${s.hitCap ? " capped" : ""}`}>
-                    <div class="mrow"><Dot status={s.status} /><span class="who">{s.hitCap ? "stopped (step cap)" : "answer"}</span><span class="sp" /><Stamp ts={s.lastTs} /></div>
-                    <div class="md" dangerouslySetInnerHTML={{ __html: markdown(s.summary) }} />
-                </div>
+                ? <ReplyBubble content={s.summary} status={s.status} model={s.model}
+                    profile={sessionProfile(s)} ts={s.lastTs}
+                    label={s.hitCap ? "stopped (step cap)" : undefined} capped={s.hitCap} />
                 : <div class="pending-note">…running ({(s.steps || []).length} steps)</div>}
         </>
     );
@@ -657,7 +676,7 @@ function ListView() {
     const r = rev.value;
     const list = [...sessionMap.values()].sort((a, b) => b.lastTs - a.lastTs);
     if (!list.length) return <div class="empty" data-rev={r}>No ml calls yet. Run one in the console.</div>;
-    return <div class="list" data-rev={r}>{list.map(s => <SessionRow key={s.hash} s={s} model={shownModel(s)} profile={sessionProfile(s)} />)}</div>;
+    return <div class="list" data-rev={r}>{list.map(s => <SessionRow key={s.hash} s={s} profile={sessionProfile(s)} />)}</div>;
 }
 
 function DetailView({ hash }: { hash: string }) {
@@ -684,6 +703,14 @@ function fetchModels(): void {
 const VRAM_COLORS = ["#6366f1", "#22c55e", "#f59e0b", "#ec4899", "#06b6d4", "#a855f7", "#ef4444", "#84cc16"];
 const colorFor = (name: string) => VRAM_COLORS[[...name].reduce((a, c) => a + c.charCodeAt(0), 0) % VRAM_COLORS.length];
 const VRAM_HISTORY = 45, VRAM_POLL_MS = 2000;
+const normModel = (m: string) => m.replace(/:latest$/, "");
+// The context window we last OBSERVED each model loaded with (from /api/ps). A
+// model's window is a property of the model, not of whether it's resident right now
+// — so the usage gauge keeps measuring occupancy after the model is evicted from
+// VRAM instead of flipping to a different metric. Overwritten every poll, so a
+// mid-run reload at a new num_ctx is picked up; live-resident always wins, this is
+// only the fallback while evicted (last-observed — can be stale, which is fine).
+const seenContext = new Map<string, number>();
 // Models the user has hidden from the totals/graph (session-only; a signal so it
 // survives VramPanel remounts). Immutable Set updates so the signal notifies.
 const hiddenModels = signal<Set<string>>(new Set());
@@ -706,7 +733,10 @@ function pollPs(): void {
             loadedModels.value = []; return;
         }
         psError.value = null;
-        loadedModels.value = resp.data || [];
+        const loaded = resp.data || [];
+        // Remember each resident model's window (overwrite → tracks a mid-run reload).
+        for (const m of loaded) if (typeof m.contextLength === "number") seenContext.set(normModel(m.model), m.contextLength);
+        loadedModels.value = loaded;
     });
 }
 
@@ -751,6 +781,98 @@ function modelLoadState(model: string, inFlight: boolean): { state: LoadState; t
     if (listed) return { state: "cold", tip: "Idle — installed but not resident; loads on next use." };
     if (models.value.length) return { state: "unavailable", tip: "Unavailable — the server doesn't list this model (not installed?)." };
     return { state: "unknown", tip: "Load state unknown." };
+}
+
+// --- Context-usage gauge (composer footer) ---
+// Current context OCCUPANCY for a session = the LATEST turn's / step's usage
+// (prompt + completion), NOT a sum: every call re-sends the whole history, so the
+// last call's prompt already contains all prior turns. Summing would double-count
+// that shared prefix N times over. Returns null when no counts were reported.
+function sessionOccupancy(s: Session): number | null {
+    const usages: TokenUsage[] = s.kind === "agent"
+        ? (s.steps || []).map(st => st.usage).filter((u): u is TokenUsage => !!u)
+        : s.turns.map(t => t.usage).filter((u): u is TokenUsage => !!u);
+    if (!usages.length) return null;
+    const last = usages[usages.length - 1];
+    return last.promptTokens + last.completionTokens;
+}
+
+// The context window the session's model was LOADED with, matched by full tagged
+// name: the LIVE resident window (/api/ps) if it's loaded now, else the last window
+// we observed it at (seenContext) — a model's window is a property of the model, so
+// an evicted-but-previously-seen model keeps its denominator. null only when we've
+// genuinely never seen it (a true cloud model) → the gauge shows a raw token count.
+function sessionContextLimit(model: string | null): number | null {
+    if (!model) return null;
+    const ps = psError.value ? null : loadedModels.value;
+    const resident = ps?.find(m => m.model === model || normModel(m.model) === normModel(model));
+    return resident?.contextLength ?? seenContext.get(normModel(model)) ?? null;
+}
+
+// Green → amber → red as the window fills. Interpolated in hue so it eases rather
+// than jumping at thresholds (a full context = truncation, the thing to warn about).
+function usageHue(frac: number): string {
+    const f = Math.max(0, Math.min(1, frac));
+    const hue = 130 - 130 * f;   // 130 (green) → 0 (red), amber ~65 in the middle
+    return `hsl(${Math.round(hue)}, 72%, 45%)`;
+}
+
+function UsageBar({ s }: { s: Session }) {
+    const occupancy = sessionOccupancy(s);
+    if (occupancy == null) return null;   // nothing to show until the server reports counts
+    // Use the RESOLVED model (what the header shows), not s.model — a "default"
+    // session has s.model === null (the caller named no model), but the reply
+    // resolved to a real, often-resident model whose window we CAN measure against.
+    const model = shownModel(s);
+    const limit = sessionContextLimit(model);
+    // The NUMERATOR is the same either way (occupancy) — only the denominator/% comes
+    // and goes with whether we know the window, so the number never jumps.
+    if (limit) {
+        const frac = occupancy / limit;
+        const pct = Math.round(frac * 100);
+        return (
+            <span class="tt usage-gauge">
+                <span class="usage-ic" aria-hidden="true"><IconUsage /></span>
+                <span class="usage-track"><span class="usage-fill" style={{ width: `${Math.min(100, frac * 100).toFixed(1)}%`, background: usageHue(frac) }} /></span>
+                <span class="usage-pct">{pct}%</span>
+                <span class="tt-pop wrap above" role="tooltip">
+                    Context: {occupancy.toLocaleString()} / {limit.toLocaleString()} tokens ({pct}%).
+                    This is the live window occupancy — every turn re-sends the whole history. Near 100% the model starts truncating.
+                </span>
+            </span>
+        );
+    }
+    // Window unknown (a model we've never seen resident — a true cloud model): show the
+    // raw occupancy, no %/bar. Same number as above, just no denominator to divide by.
+    return (
+        <span class="tt usage-gauge">
+            <span class="usage-ic" aria-hidden="true"><IconUsage /></span>
+            <span class="usage-total">{fmtCtx(occupancy)} tok</span>
+            <span class="tt-pop wrap above" role="tooltip">
+                {occupancy.toLocaleString()} tokens in context (latest turn). No context limit is known for this model{model ? ` ("${model}")` : ""} — it's never been resident in Ollama (a cloud model?), so there's no window size to show a % against.
+            </span>
+        </span>
+    );
+}
+
+// A placeholder chat composer at the bottom of a session. Not wired up yet — the
+// long-term plan is to append user messages to a live session from here — so the
+// input and both buttons are disabled. It exists now to host the usage gauge and
+// stake out the layout (upload + · input · send · gauge).
+function Composer({ s }: { s: Session }) {
+    return (
+        <div class="composer">
+            <div class="composer-row">
+                <button class="tt cbtn" disabled aria-label="Upload an image">＋<span class="tt-pop left above" role="tooltip">Attach an image — coming soon (you'll be able to paste screenshots here)</span></button>
+                <input class="cinput" type="text" disabled placeholder="Send a message to this session… (coming soon)" />
+                <button class="tt cbtn csend" disabled aria-label="Send"><IconSend /><span class="tt-pop above" role="tooltip">Send — coming soon</span></button>
+            </div>
+            <div class="composer-foot">
+                <span class="sp" />
+                <UsageBar s={s} />
+            </div>
+        </div>
+    );
 }
 
 function ModelStatusDot({ model, inFlight }: { model: string; inFlight: boolean }) {
@@ -820,9 +942,14 @@ function VramPanel() {
                             <button class="vram-dot" style={{ background: off ? "var(--fg-faint)" : colorFor(m.model) }}
                                 title={off ? "Show in totals" : "Hide from totals"} onClick={() => toggleHidden(m.model)} />
                             <span class="vram-name">{m.model}</span>
+                            {m.contextLength ? (
+                                <span class="tt vram-ctx">{fmtCtx(m.contextLength)}
+                                    <span class="tt-pop left" role="tooltip">Loaded with a {m.contextLength.toLocaleString()}-token context window. Ollama preallocates the KV cache for the FULL window, even when your prompts are short. Load with a smaller <code>num_ctx</code> to reclaim it.</span>
+                                </span>
+                            ) : null}
                             <span class="sp" />
                             <span class="vram-gb">{m.vramGB != null ? `${m.vramGB} GB` : m.sizeGB != null ? `${m.sizeGB} GB (CPU)` : "?"}</span>
-                            <button class="vram-x" title="Evict from VRAM" onClick={() => evict(m.model)}>✕</button>
+                            <button class="tt vram-x" aria-label="Evict from VRAM" onClick={() => evict(m.model)}>✕<span class="tt-pop" role="tooltip">Evict from VRAM</span></button>
                         </div>
                     );
                 })
@@ -862,7 +989,7 @@ function App() {
     return (
         <div class="app">
             <div class="head">
-                {v.name !== "list" ? <button class="nav" title="Back to sessions" onClick={() => (view.value = { name: "list" })}>‹</button> : null}
+                {v.name !== "list" ? <button class="tt nav" aria-label="Back to sessions" onClick={() => (view.value = { name: "list" })}>‹<span class="tt-pop left" role="tooltip">Back to sessions</span></button> : null}
                 {detailSession
                     ? <>
                         <ModelStatusDot model={shownModel(detailSession)} inFlight={detailSession.status === "pending"} />
@@ -873,9 +1000,9 @@ function App() {
                     : <b>{inSettings ? "Settings" : `Sessions (${sessionMap.size})`}</b>}
                 <span class="sp" />
                 {v.name === "detail" ? <Hash hash={v.hash} /> : null}
-                {v.name === "detail" ? <button class="hbtn" title="Export log" onClick={() => exportSession(v.hash)}><IconExport /></button> : null}
-                {!inSettings ? <button class={`hbtn${vramOpen.value ? " on" : ""}`} title="VRAM monitor" onClick={() => (vramOpen.value = !vramOpen.value)}><IconVram /></button> : null}
-                {!inSettings ? <button class="hbtn" title="Settings" onClick={() => { fetchModels(); view.value = { name: "settings" }; }}><IconGear /></button> : null}
+                {v.name === "detail" ? <button class="tt hbtn" aria-label="Export log" onClick={() => exportSession(v.hash)}><IconExport /><span class="tt-pop" role="tooltip">Export log</span></button> : null}
+                {!inSettings ? <button class={`tt hbtn${vramOpen.value ? " on" : ""}`} aria-label="VRAM monitor" onClick={() => (vramOpen.value = !vramOpen.value)}><IconVram /><span class="tt-pop" role="tooltip">VRAM monitor</span></button> : null}
+                {!inSettings ? <button class="tt hbtn" aria-label="Settings" onClick={() => { fetchModels(); view.value = { name: "settings" }; }}><IconGear /><span class="tt-pop" role="tooltip">Settings</span></button> : null}
             </div>
             {vramOpen.value && !inSettings ? <VramPanel /> : null}
             <div class="view" data-rev={r}>
@@ -883,6 +1010,7 @@ function App() {
                     : v.name === "list" ? <ListView />
                         : <DetailView hash={v.hash} />}
             </div>
+            {detailSession ? <Composer s={detailSession} /> : null}
         </div>
     );
 }

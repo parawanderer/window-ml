@@ -24,6 +24,14 @@ window.addEventListener("message", (event) => {
     else if (d === "ready") {
         sidebarPresent = debugEnabled = true;
         for (const ev of debugRing) { try { window.postMessage({ __mlDebug: ev }, "*"); } catch { /* non-cloneable — ignore */ } }
+    } else if (d === "gone") {
+        // The sidebar was switched OFF (shell unmounted). Stop emitting AND drop the
+        // ring — otherwise we'd keep building events and retaining up to 200 prompts
+        // and replies in memory for a UI that no longer exists, until a page reload.
+        // Turning the sidebar off must return us to the same zero-cost state as
+        // never having turned it on.
+        sidebarPresent = debugEnabled = false;
+        debugRing.length = 0;
     }
 });
 

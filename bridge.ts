@@ -5,7 +5,7 @@
  * Extracted from injected.ts — these close over only window/document globals.
  */
 
-import type { FetchLlmPayload } from "./contract";
+import type { FetchLlmPayload, TokenUsage } from "./contract";
 import { SB_ROOT } from "./ids";
 
 /**
@@ -76,7 +76,7 @@ export const makeBackgroundTaskPromise = <T = unknown>(
  * @param {FetchLlmPayload} payload The chat request payload.
  * @returns {Promise<{content: string, sources: Array}>} The chat response.
  */
-export const makeChatRequest = (payload: FetchLlmPayload): Promise<{ content: string; sources: unknown[]; model: string | null; reasoning: string | null }> => {
+export const makeChatRequest = (payload: FetchLlmPayload): Promise<{ content: string; sources: unknown[]; model: string | null; reasoning: string | null; usage: TokenUsage | null }> => {
     return new Promise((resolve, reject) => {
         const requestId = Math.random().toString(36).substring(7);
         function handle(event: MessageEvent) {
@@ -84,7 +84,7 @@ export const makeChatRequest = (payload: FetchLlmPayload): Promise<{ content: st
             if (!d || d.type !== "LLM_RESPONSE" || d.requestId !== requestId) return;
             window.removeEventListener("message", handle);
             if (d.error) reject(d.error);
-            else resolve({ content: d.result, sources: d.sources || [], model: d.model ?? null, reasoning: d.reasoning ?? null });
+            else resolve({ content: d.result, sources: d.sources || [], model: d.model ?? null, reasoning: d.reasoning ?? null, usage: d.usage ?? null });
         }
         window.addEventListener("message", handle);
         window.postMessage({ type: "LLM_REQUEST", requestId, payload }, "*");
@@ -103,7 +103,7 @@ export const makeChatRequest = (payload: FetchLlmPayload): Promise<{ content: st
 export const makeStreamingTaskPromise = (
     payload: FetchLlmPayload,
     onToken: (delta: string, full: string) => void
-): Promise<{ content: string; sources: unknown[]; model: string | null; reasoning: string | null }> => {
+): Promise<{ content: string; sources: unknown[]; model: string | null; reasoning: string | null; usage: TokenUsage | null }> => {
     return new Promise((resolve, reject) => {
         const requestId = Math.random().toString(36).substring(7);
         let full = "";
@@ -118,7 +118,7 @@ export const makeStreamingTaskPromise = (
                 try { onToken(delta, full); } catch (e) { console.error("ml onToken threw:", e); }
             } else if (d.type === "LLM_STREAM_DONE") {
                 window.removeEventListener("message", handle);
-                resolve({ content: d.content != null ? d.content : full, sources: d.sources || [], model: d.model ?? null, reasoning: d.reasoning ?? null });
+                resolve({ content: d.content != null ? d.content : full, sources: d.sources || [], model: d.model ?? null, reasoning: d.reasoning ?? null, usage: d.usage ?? null });
             } else if (d.type === "LLM_STREAM_ERROR") {
                 window.removeEventListener("message", handle);
                 reject(d.error);

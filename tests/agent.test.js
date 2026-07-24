@@ -828,6 +828,56 @@ test("locate scoping: a zero/sliver-size container is rejected with an actionabl
     assert.match(String(out), /too small to search within/);
 });
 
+test("locate strategy 'grid-grounding' needs a grounding model — short-circuits without one", async () => {
+    const { ml } = loadDomWorld('<div id="box">hi</div>');
+    // No groundingModel configured → the two-stage strategy can't run; it says so
+    // (rather than silently degrading) before any capture.
+    const out = await ml.locateTool({ model: "vlm" }).run({ description: "a red icon", strategy: "grid-grounding" });
+    assert.match(String(out), /grid-grounding' needs a grounding model/);
+});
+
+test("locate grid-grounding + cells needs a grounding model too (reuse path can't fall through to marks)", async () => {
+    const { ml } = loadDomWorld('<div id="box">hi</div>');
+    // The cells-reuse shortcut runs before the grid block, so the grounding-model
+    // guard must fire for it as well — not silently degrade to Set-of-Marks.
+    const out = await ml.locateTool({ model: "vlm" }).run({ description: "x", strategy: "grid-grounding", cells: [1] });
+    assert.match(String(out), /grid-grounding' needs a grounding model/);
+});
+
+test("locate grid-grounding + invalid cells is rejected with the gridSize caveat", async () => {
+    const { ml } = loadDomWorld('<div id="box">hi</div>');
+    // With a grounder configured, the reuse path validates `cells` against the grid.
+    // A wild out-of-range cell is refused, and the message names the gridSize mapping.
+    const out = await ml.locateTool({ model: "vlm", groundingModel: "qwen2.5vl" }).run({ description: "x", strategy: "grid-grounding", cells: [9999] });
+    assert.match(String(out), /Invalid `cells`/);
+    assert.match(String(out), /gridSize/, "explains cells map to a specific gridSize");
+});
+
+test("locate region on a sliver container is rejected before any capture", async () => {
+    const { ml } = loadDomWorld('<div id="box">hi</div>');
+    // jsdom reports 0×0 rects, so scoping to #box then cropping to a region is a
+    // non-starter — it's caught with an actionable message, not a broken capture.
+    const out = await ml.locateTool({ model: "vlm" }).run({ description: "x", selector: "#box", region: "left" });
+    assert.match(String(out), /too small to search/);
+});
+
+test("locate rejects an invalid region name (e.g. the model's guessed 'center-left') with the valid list", async () => {
+    const { ml } = loadDomWorld('<div id="box">hi</div>');
+    // regionBox would throw on an unlisted name; the guard returns an actionable message.
+    const out = await ml.locateTool({ model: "vlm" }).run({ description: "x", region: "center-left" });
+    assert.match(String(out), /Invalid region "center-left"/);
+    assert.match(String(out), /left, right, top, bottom, center/, "lists the valid names");
+});
+
+test("locate selector '@pt:…' ('snap around point') rejects an unknown token, not as a CSS selector", async () => {
+    const { ml } = loadDomWorld('<div id="box">hi</div>');
+    // An @pt selector scopes to the point's neighborhood — a stale/unknown token is
+    // caught cleanly (told to re-run locate), never fed to queryAll as a CSS selector.
+    const out = await ml.locateTool({ model: "vlm" }).run({ description: "x", selector: "@pt:deadbeef" });
+    assert.match(String(out), /Unknown point token/);
+    assert.ok(!/No element matches/.test(String(out)), "not mistaken for a CSS selector");
+});
+
 // Capture the __mlDebug events emitted by an agent run over one tool.
 async function agentDebugEvents(tool) {
     const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall(tool.name, {}, "c1"), reply("done")]) });

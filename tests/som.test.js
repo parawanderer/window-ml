@@ -16,7 +16,7 @@ function world(html) {
     return dom.window.document;
 }
 const som = require("../dist/som.js");
-const { representativeFor, isClickish, buildMarks, viewportBox, formatBox, projectFromSquare, gridDims, validateCells, cellsBox, colorWordHues, pickOverlayHex } = som;
+const { representativeFor, isClickish, buildMarks, viewportBox, formatBox, projectFromSquare, gridDims, validateCells, cellsBox, adjacentCells, colorWordHues, pickOverlayHex, regionBox, REGION_OVERLAP } = som;
 
 test("colorWordHues extracts hues from colour words in a description (for overlay avoidance)", () => {
     assert.deepEqual(colorWordHues("the bright RED umbrella"), [0]);
@@ -44,6 +44,48 @@ test("gridDims matches the grid to the region aspect (a wide strip gets more col
     assert.ok(wide.rows >= 2, "rows clamped to a floor of 2");
     const tall = gridDims({ width: 150, height: 1200 }, 4);
     assert.ok(tall.rows > tall.cols, "tall region → more rows than columns");
+});
+
+test("regionBox crops to a named directional area — bands full-length, corners quadrants, halves overlap", () => {
+    const region = { left: 0, top: 0, width: 1000, height: 1000 };
+    const o = REGION_OVERLAP * 1000;   // the overlap in px on this region
+
+    // Bands run the FULL cross-axis length.
+    assert.deepEqual(regionBox("left", region), { left: 0, top: 0, right: 500 + o, bottom: 1000 }, "left = left half (overlapping), full height");
+    assert.deepEqual(regionBox("right", region), { left: 500 - o, top: 0, right: 1000, bottom: 1000 }, "right = right half, full height");
+    assert.deepEqual(regionBox("top", region), { left: 0, top: 0, right: 1000, bottom: 500 + o }, "top = full width, top half");
+    assert.deepEqual(regionBox("bottom", region), { left: 0, top: 500 - o, right: 1000, bottom: 1000 });
+
+    // Corners are quadrants (both axes halved).
+    assert.deepEqual(regionBox("top-left", region), { left: 0, top: 0, right: 500 + o, bottom: 500 + o });
+    assert.deepEqual(regionBox("bottom-right", region), { left: 500 - o, top: 500 - o, right: 1000, bottom: 1000 });
+
+    // Center is the middle box.
+    assert.deepEqual(regionBox("center", region), { left: 250, top: 250, right: 750, bottom: 750 });
+
+    // The overlap means a point exactly on the midline is inside BOTH halves.
+    const mid = 500;
+    const left = regionBox("left", region), right = regionBox("right", region);
+    assert.ok(mid < left.right && mid > right.left, "the midline is covered by both left and right (no boundary gap)");
+
+    // Honours the region's own offset (a scoped container, not the viewport).
+    const off = regionBox("left", { left: 200, top: 100, width: 400, height: 400 });
+    assert.equal(off.left, 200, "left edge = the container's left, not 0");
+    assert.equal(off.top, 100);
+});
+
+test("adjacentCells names the in-bounds 4-neighbours by direction (the run from the screenshots)", () => {
+    // 12×5 grid, cell 38 → row 3, col 1 (0-based). left=37, right=39, top=26, bottom=50.
+    assert.deepEqual(adjacentCells([38], 12, 5), { left: 37, right: 39, top: 26, bottom: 50 });
+    // A corner cell (1) has no left/top — only the in-bounds neighbours are returned.
+    assert.deepEqual(adjacentCells([1], 12, 5), { right: 2, bottom: 13 });
+    // Bottom-right corner (60) → only left/top.
+    assert.deepEqual(adjacentCells([60], 12, 5), { left: 59, top: 48 });
+    // A 2-cell selection: neighbours step out from the bounding box, none inside the pick.
+    const adj = adjacentCells([1, 2], 12, 5);   // spans cols 0–1, row 0
+    assert.equal(adj.left, undefined, "no left — cell 1 is on the edge");
+    assert.equal(adj.right, 3, "right of the 2-cell span");
+    assert.equal(adj.top, undefined, "no top — row 0");
 });
 
 test("validateCells accepts 1 / 2-adjacent / 2×2, rejects non-adjacent, L-shapes, and 3-cell picks", () => {

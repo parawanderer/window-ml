@@ -44,13 +44,10 @@ export const settle = (ms: number): Promise<void> => new Promise(r => (typeof se
 // genuinely small-but-real targets (icons, badges) still pass.
 export const MIN_SHOT_PX = 4;
 
-// Context window (num_ctx) for DELEGATED one-off vision sub-calls — OCR, grounding,
-// and the delegated `look`. A single screenshot + a short reply needs only a few
-// thousand tokens, but a vision model's DEFAULT context is huge, and Ollama
-// pre-allocates KV cache to it (tens of GB), which OOMs modest cards. Capping it
-// here keeps those calls affordable for anybody. NOT applied to native look (that
-// reuses the agent's own model, which needs its full conversation context).
-export const VISION_NUM_CTX = 8192;
+// Context window cap for delegated vision sub-calls — the single source of truth
+// lives in contract.ts (shared with the sidebar's model-test); re-exported here so
+// page-world consumers (builtin-tools) keep importing it from util.
+export { VISION_NUM_CTX } from "./contract";
 
 /**
  * Crop a full-viewport PNG data URL down to an element's rect. Runs page-side
@@ -88,6 +85,10 @@ export const cropDataUrl = (dataUrl: string, rect: { left: number; top: number; 
 // opaque — the model copies it verbatim, never authoring coordinates. Page-lifetime map.
 const pointRegistry = new Map<string, { x: number; y: number }>();
 export const POINT_RE = /^@pt:([0-9a-f]{1,12})$/;
+// Half-size of the square `look({ @pt })` crops around a point (→ a 2·R box). Shared
+// so `locate({ selector: "@pt:…" })` searches the EXACT box look showed — the model
+// re-locates the neighborhood it just visually confirmed holds the target.
+export const PT_LOOK_RADIUS = 100;
 export const mintPoint = (x: number, y: number): string => {
     const id = Math.random().toString(16).slice(2, 10);
     pointRegistry.set(id, { x: Math.round(x), y: Math.round(y) });
@@ -96,4 +97,18 @@ export const mintPoint = (x: number, y: number): string => {
 export const resolvePoint = (token: string): { x: number; y: number } | null => {
     const m = POINT_RE.exec((token || "").trim());
     return m ? pointRegistry.get(m[1]) || null : null;
+};
+// The most-recently-minted point within `within` px of (x,y), if any. Each mint is a
+// FRESH token even for the same coordinate, so a re-locate loop that keeps landing on
+// the same wrong spot can't otherwise tell it's going in circles — `locate` uses this
+// to warn "you already tried here". Call BEFORE minting the new point (so it can't match
+// itself). Returns the prior token + coords, or null.
+export const nearbyPoint = (x: number, y: number, within = 12): { token: string; x: number; y: number } | null => {
+    let best: { token: string; x: number; y: number } | null = null;
+    let bestD = within * within;
+    for (const [id, p] of pointRegistry) {
+        const dx = p.x - x, dy = p.y - y, d = dx * dx + dy * dy;
+        if (d <= bestD) { bestD = d; best = { token: `@pt:${id}`, x: p.x, y: p.y }; }
+    }
+    return best;
 };

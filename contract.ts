@@ -43,6 +43,15 @@ export interface MlConfig {
  *  only for a different convention (100 = percent, 1024 = tokens). */
 export const DEFAULT_GROUNDING_RANGE = 1000;
 
+/** Context window (num_ctx) for DELEGATED one-off vision sub-calls — OCR, grounding,
+ *  the delegated `look`, and their liveness probes. A screenshot + a short reply needs
+ *  only a few thousand tokens, but a vision model's DEFAULT context auto-sizes to its
+ *  full window on a big-VRAM box (qwen2.5vl → 128K), pre-allocating tens of GB of KV
+ *  cache. Capping it bounds a FRESH load. NOT applied to the native look (that reuses
+ *  the agent's own model, which needs its full conversation context). Shared so the
+ *  page (util/builtin-tools) and the sidebar's model-test both cap identically. */
+export const VISION_NUM_CTX = 8192;
+
 /** Single source of truth for config defaults — imported by background.ts,
  *  popup.ts, and the sidebar app so the three can't drift.
  *  - chatUrl: OpenWebUI's OpenAI-compatible endpoint. No root /v1 alias (tested
@@ -72,6 +81,15 @@ export const DEFAULT_CONFIG: MlConfig = {
 /** First qwen2.5vl on a server model list (7b → 3b → any qwen*vl) — the grounding
  *  model auto-detect used when the field is blank. "" if none present. Pure; shared
  *  by the settings UI and ml.agent so they resolve the same effective model. */
+/** A loaded context window as a compact label: 262144 → "256K", 8192 → "8K", 900 → "900".
+ *  Powers of two land exact; anything else keeps one decimal (49152 → "48K", 40000 → "39.1K").
+ *  Shared by the sidebar VRAM rows and the popup readout so both read the same. Pure. */
+export const fmtCtx = (n: number): string => {
+    if (n >= 1024 * 1024) return `${+(n / (1024 * 1024)).toFixed(1)}M`;
+    if (n >= 1024) return `${+(n / 1024).toFixed(1)}K`;
+    return String(n);
+};
+
 export const detectGroundingModel = (models: string[]): string =>
     models.find(m => m === "qwen2.5vl:7b") || models.find(m => m === "qwen2.5vl:3b") || models.find(m => /qwen.*vl/i.test(m)) || "";
 
@@ -100,11 +118,25 @@ export interface ToolCall {
     arguments: Record<string, unknown> | string;
 }
 
+/** Token accounting for ONE request, when the server reports it (OpenWebUI returns a
+ *  `usage` block; Ollama-native returns prompt_eval_count/eval_count).
+ *
+ *  IMPORTANT: `promptTokens` already covers the WHOLE conversation — every turn
+ *  re-sends the full history — so live context occupancy is
+ *  `promptTokens + completionTokens` of the LATEST call, never a sum across turns
+ *  (summing would overcount quadratically). Only cumulative SPEND is a sum. */
+export interface TokenUsage {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+}
+
 export interface LlmResult {
     content: string;
     sources?: unknown[] | null;
     model?: string | null;   // the model actually used, after server-side resolution (extend/ocr/default)
     reasoning?: string | null;   // separate reasoning/thinking text (reasoning_content / message.thinking)
+    usage?: TokenUsage | null;   // token counts, when the server reports them
 }
 
 /* ----------------------------- tools / agent --------------------------- */
@@ -160,7 +192,7 @@ export type RenderDescriptor = (
     // mirroring the tool In/Out mechanics, so a multi-call locate (e.g. grid → hand-off)
     // reads as its distinct stages. `picked`/`pickedBy` are the final result.
     | {
-        type: "locate"; mode: "grounding" | "marks" | "grid"; model: string;
+        type: "locate"; mode: "grounding" | "marks" | "grid" | "grid-grounding"; model: string;
         substeps: LocateSubstep[];
         picked?: string;                    // the chosen element (role/name → selector), or none
         pickedBy?: "model" | "snap";        // model → "Model picked" (a badge); snap → "Snapped to" (DOM hit-test)
@@ -344,11 +376,15 @@ export interface FetchLlmPayload {
 
 /** A model resident in Ollama, from OLLAMA_PS. `vramGB` is the portion in VRAM
  *  (null when fully on CPU); `sizeGB` is the total footprint — together they
- *  reveal CPU-only (vram 0) vs partial offload (0 < vram < size) vs full GPU. */
+ *  reveal CPU-only (vram 0) vs partial offload (0 < vram < size) vs full GPU.
+ *  `contextLength` is the num_ctx it was LOADED with — Ollama preallocates the
+ *  KV cache for the whole window, so it's a big share of `vramGB` (null when the
+ *  server is too old to report it). */
 export interface LoadedModel {
     model: string;
     vramGB: number | null;
     sizeGB: number | null;
+    contextLength: number | null;
     expiresAt: string | null;
 }
 
@@ -392,7 +428,7 @@ interface DebugBase {
     session: SessionRef;
 }
 export interface DebugChatStart extends DebugBase { kind: "chat"; streaming: boolean; request: DebugChatRequest; config: DebugSessionConfig; }
-export interface DebugChatResult extends DebugBase { kind: "chat-result"; content: string; sources: unknown[] | null; structured: boolean; model: string | null; extend: ExtendProfile | null; reasoning: string | null; }
+export interface DebugChatResult extends DebugBase { kind: "chat-result"; content: string; sources: unknown[] | null; structured: boolean; model: string | null; extend: ExtendProfile | null; reasoning: string | null; usage: TokenUsage | null; }
 export interface DebugChatError extends DebugBase { kind: "chat-error"; error: string; }
 
 /** ml.agent runs: a run-start, one event per step (a thought OR a tool call +
@@ -419,6 +455,10 @@ export interface DebugAgentStep extends DebugBase {
     // require approval). The sidebar renders it as a green/red provenance badge —
     // and it's the slot a future interactive-approval control resolves into.
     approval?: "readonly" | "user" | "denied";
+    // Token counts for this step's driver call, when the server reports them. Each
+    // step re-sends the full growing history, so the LATEST step's usage is the run's
+    // current context occupancy (not a sum across steps — see TokenUsage).
+    usage?: TokenUsage | null;
 }
 export interface DebugAgentResult extends DebugBase { kind: "agent-result"; summary: string; steps: number; hitCap: boolean; }
 
@@ -457,7 +497,7 @@ export interface MlApi {
 
     /* ---- tools / agent ---- */
     /** Low-level single model turn WITH client-side tools; you own the loop. */
-    step(messages: NeutralMessage[], opts?: StepOptions): Promise<{ content: string; tool_calls: ToolCall[] }>;
+    step(messages: NeutralMessage[], opts?: StepOptions): Promise<{ content: string; tool_calls: ToolCall[]; usage?: TokenUsage | null }>;
     /** Build one agent tool (JSON-schema signature + page-side run). */
     defineTool(tool?: Partial<MlTool>): MlTool;
     /** Run a full agent loop over a tool registry until it stops or hits maxSteps. */

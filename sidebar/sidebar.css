@@ -17,6 +17,9 @@
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
+/* Hard backstop: the sidebar page itself can never scroll horizontally, whatever
+   a tool result throws at it (a wide child scrolls inside its own box instead). */
+html, body { overflow-x: hidden; }
 html { background: var(--bg); }   /* opaque canvas so the host page never shows through */
 #root { height: 100%; }
 /* Themed scrollbars for the scrolling view (native default ignores the panel theme). */
@@ -56,8 +59,12 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .vram-row { display: flex; align-items: center; gap: 6px; font-size: 0.83em; }
 /* Colour indicator doubles as a hide/show toggle (greys out when hidden). */
 .vram-dot { width: 0.7em; height: 0.7em; border-radius: 50%; flex: 0 0 auto; padding: 0; border: none; cursor: pointer; }
-.vram-row.off .vram-name, .vram-row.off .vram-gb { opacity: 0.45; text-decoration: line-through; }
+.vram-row.off .vram-name, .vram-row.off .vram-gb, .vram-row.off .vram-ctx { opacity: 0.45; text-decoration: line-through; }
 .vram-name { color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Context the model was LOADED with — Ollama preallocates KV cache for the whole
+   window, so it explains much of the GB on the right. Sits by the name, dimmed. */
+.vram-ctx { flex: 0 0 auto; color: var(--fg-faint); font-size: 0.9em; font-variant-numeric: tabular-nums;
+  border: 1px solid var(--border); border-radius: 3px; padding: 0 3px; line-height: 1.35; cursor: help; }
 .vram-gb { color: var(--fg-dim); font-variant-numeric: tabular-nums; }
 .vram-x { background: transparent; border: none; color: var(--fg-faint); cursor: pointer; padding: 0 4px; font-size: 0.92em; border-radius: 3px; line-height: 1; }
 .vram-x:hover { background: var(--panel-2); color: var(--err); }
@@ -122,8 +129,36 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .stepper .reset { font-size: 0.83em; color: var(--fg-dim); }
 .set-val { color: var(--fg); font-size: 0.92em; min-width: 34px; text-align: center; font-variant-numeric: tabular-nums; }
 
+/* ----------------------------- composer --------------------------------- */
+/* A pinned footer below the scrolling .view (a placeholder — not wired up yet;
+   hosts the context-usage gauge and stakes out the chat-input layout). */
+/* Outlined, low-tone-variation aesthetic to match the cards/controls elsewhere:
+   transparent-on-bg fields with 1px borders, no filled panels or accent blocks. */
+.composer { flex: 0 0 auto; border-top: 1px solid var(--border); background: var(--bg); padding: 7px 8px; display: flex; flex-direction: column; gap: 5px; }
+.composer-row { display: flex; align-items: center; gap: 6px; }
+.cinput { flex: 1; min-width: 0; background: var(--panel); color: var(--fg); border: 1px solid var(--border);
+  border-radius: 6px; padding: 6px 9px; font: inherit; font-size: 0.9em; }
+.cinput::placeholder { color: var(--fg-faint); }
+.cinput:disabled { cursor: not-allowed; }
+/* Both composer buttons (attach + send) are the same outlined icon button. */
+.cbtn { flex: 0 0 auto; width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; color: var(--fg-dim); border: 1px solid var(--border); border-radius: 6px; font-size: 1.05em; line-height: 0; }
+.cbtn:hover:not(:disabled) { background: var(--panel); color: var(--fg); }
+.cbtn:disabled { cursor: not-allowed; opacity: 0.55; }
+.composer-foot { display: flex; align-items: center; min-height: 14px; }
+/* Context-usage gauge (bottom-right of the composer): a small dial icon + a thin
+   bar + the figure — outlined track, colour only in the fill. */
+.usage-gauge { gap: 5px; }
+.usage-ic { display: inline-flex; color: var(--fg-faint); }
+.usage-track { width: 80px; height: 6px; border-radius: 999px; background: transparent; border: 1px solid var(--border); overflow: hidden; flex: 0 0 auto; }
+.usage-fill { display: block; height: 100%; border-radius: 999px; transition: width .3s ease, background .3s ease; }
+.usage-pct, .usage-total { color: var(--fg-dim); font-size: 0.8em; font-variant-numeric: tabular-nums; }
+
 /* --------------------------- shared bits -------------------------------- */
-.view { flex: 1; overflow-y: auto; padding: 8px; }
+/* The scroll area scrolls VERTICALLY only. A long unbreakable token (e.g. a huge
+   generated selector in a tool result) must never widen the panel — wide content
+   wraps, or scrolls inside its own box (code blocks, tables), never the page. */
+.view { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 8px; min-width: 0; }
 .empty { color: var(--fg-faint); padding: 16px 8px; text-align: center; }
 .sp { flex: 1; }
 .tag { font-size: 0.75em; font-weight: 700; letter-spacing: .04em; padding: 1px 5px; border-radius: 999px; text-transform: uppercase; }
@@ -148,6 +183,9 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .astep .tool-name { font-weight: 700; color: var(--accent); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; flex: 0 0 auto; }
 .astep .el-count { color: var(--fg-faint); font-size: 0.8em; border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; flex: 0 0 auto; }
 .astep-preview { color: var(--fg-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+/* Brighten the collapsed preview on hover — same affordance as a collapsed
+   assistant reply (.asst-collapsed:hover). */
+.astep-head:hover .astep-preview { color: var(--fg); }
 .astep-body { padding: 2px 0 4px 4px; }
 /* approval provenance — reuse the step's left border as a green/red outline + a pill. */
 .astep.tool.appr-yes { border-left-color: var(--ok); }
@@ -215,9 +253,11 @@ details.io[open] > summary .io-preview { display: none; }
 .r-v { color: var(--fg); word-break: break-word; }
 .dim { color: var(--fg-faint); font-style: italic; }
 
-.agent-summary { border: 1px solid var(--border); border-radius: 7px; margin-top: 8px; padding: 10px 12px 12px; }
-.agent-summary .mrow { margin-bottom: 6px; }
-.agent-summary.capped .who { color: var(--warn); }
+/* The agent's final answer reuses the chat reply bubble (.msg.asst). A step-cap
+   stop is a warning, not a hard error — colour its label, and separate it a touch
+   from the steps above. */
+.msg.asst.capped { margin-top: 6px; }
+.msg.asst.capped .who { color: var(--warn); }
 /* Per-reply model chip: outlined, click-to-copy (see CopyModel). */
 .model-name { background: transparent; border: 1px solid var(--border); color: var(--fg-dim); border-radius: 4px; padding: 0 6px; font: 0.85em ui-monospace, SFMono-Regular, Menlo, monospace; cursor: pointer; }
 .model-name:hover { color: var(--fg); border-color: var(--fg-dim); }
@@ -226,7 +266,6 @@ details.io[open] > summary .io-preview { display: none; }
    (not <b>) so the `.head b { overflow:hidden }` ellipsis rule can't clip the
    tooltip pop; matches the title's weight/size manually. */
 .head-model { cursor: help; font-weight: 700; font-size: 1.08em; }
-.model { color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 120px; }
 .time { color: var(--fg-faint); font-size: 0.83em; }
 .hash {
     color: var(--fg-dim); font: 0.83em ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -240,12 +279,27 @@ details.io[open] > summary .io-preview { display: none; }
    nowrap (for elements near the panel's right edge, e.g. hashes/copy icons).
    .wide = centered + wrapping (for mid-row elements like the type badge). */
 .tt { position: relative; display: inline-flex; align-items: center; }
+/* Block-level trigger (a full-width row like .arg-issues) — keep the element's own
+   flex layout, take only the positioning context. */
+.tt.tt-row { display: flex; }
+/* Long text: wrap instead of one very wide nowrap strip. Combines with any anchor. */
+.tt-pop.wrap { white-space: normal; width: max-content; max-width: 190px; }
 .tt-pop {
     position: absolute; top: calc(100% + 6px); right: 0; z-index: 10;
     background: var(--panel-2); color: var(--fg); border: 1px solid var(--border);
-    border-radius: 5px; padding: 4px 7px; font-size: 0.83em; line-height: 1.35;
+    border-radius: 5px; padding: 4px 7px; line-height: 1.35;
     white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity .12s;
     box-shadow: 0 2px 8px rgba(0,0,0,.35);
+    /* Size off the ROOT content size (--fs, which the font-scale setting drives),
+       NOT the parent's em: triggers sit inside already-shrunken rows (.vram-row and
+       .el-count are .8–.83em), and an em here compounds to an unreadable pop.
+       Reset the inheritable text properties too — a bold/uppercase/italic/spaced
+       trigger (.arg-warn, badges, the grey-italic notes) must not restyle its own
+       tooltip. Tooltips are chrome: they should look identical everywhere. */
+    font-size: calc(var(--fs) * 0.83);
+    font-weight: 400; font-style: normal; font-variant: normal;
+    text-transform: none; letter-spacing: normal; text-align: left; text-indent: 0;
+    writing-mode: horizontal-tb;
 }
 .tt-pop::after {
     content: ""; position: absolute; bottom: 100%; right: 10px;
@@ -263,6 +317,11 @@ details.io[open] > summary .io-preview { display: none; }
     white-space: normal; width: max-content; max-width: 190px;
 }
 .tt-pop.left::after { right: auto; left: 10px; transform: none; }
+/* Open ABOVE the trigger (for a trigger near the panel's bottom edge, e.g. the
+   composer's usage gauge, where a below-pop would fall off-screen). The arrow
+   flips to the tooltip's bottom, pointing down at the trigger. */
+.tt-pop.above { top: auto; bottom: calc(100% + 6px); }
+.tt-pop.above::after { top: 100%; bottom: auto; border-bottom-color: transparent; border-top-color: var(--panel-2); }
 .tt:hover .tt-pop { opacity: 1; }
 
 .icon-btn {
@@ -313,6 +372,9 @@ details.io[open] > summary .io-preview { display: none; }
 /* Assistant reply reads as flowing text, not a boxed bubble (#5). */
 .msg.asst { background: transparent; border: none; padding: 4px 8px 8px; }
 .msg.asst.err { border-left: 2px solid var(--err); border-radius: 0; padding-left: 8px; }
+/* A step-capped agent answer is a warning, not a hard error — same left-rail
+   treatment but in warn, and its label warn-coloured (see .capped above). */
+.msg.asst.capped { border-left: 2px solid var(--warn); border-radius: 0; padding-left: 8px; }
 .mrow { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
 .who { font-weight: 600; color: var(--kind); font-size: 0.92em; }
 .utext { white-space: pre-wrap; word-break: break-word; color: var(--fg); }
@@ -328,6 +390,10 @@ details.io[open] > summary .io-preview { display: none; }
 
 /* rendered markdown */
 .md { color: var(--fg); word-break: break-word; }
+/* The reply's own markdown body gets breathing room (the header sits tight to the
+   edge; the prose shouldn't). Scoped to the direct child so thinking / agent-thought
+   / tool-output markdown elsewhere is unaffected. */
+.msg.asst > .md { padding: 3px 4px 2px; }
 .md p { margin: 0 0 6px; }
 .md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { margin: 8px 0 4px; line-height: 1.25; }
 /* em (relative to --fs) so content scales with the font-size setting */
@@ -342,6 +408,9 @@ details.io[open] > summary .io-preview { display: none; }
     margin: 0; white-space: pre-wrap; word-break: break-word;
     background: var(--bg); border: 1px solid var(--border); border-radius: 5px;
     color: var(--fg); font: 0.92em/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+    /* A wide line (e.g. a giant one-line selector in scroll mode) scrolls inside
+       its own box — never widening the panel. */
+    max-width: 100%; overflow-x: auto;
 }
 .md pre.code code { background: none; padding: 0; }
 /* Assistant-reply code blocks get breathing room; the bare `.code` exec

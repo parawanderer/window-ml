@@ -58,6 +58,11 @@ function agentToMarkdown(s: Session, addImage: AddImage): string {
         o.push(`<details><summary>System prompt${c.customSystem ? " (custom)" : ""}</summary>`, "", fence(c.system), "", "</details>", "");
     }
     for (const st of s.steps || []) {
+        // Skip an empty step — a thinking-model's usage-only emit (no thought/tool,
+        // just a token sample). Matches the sidebar's filter; otherwise it serialises
+        // a bare "Step N · ?" header. (A `think:true` step puts its reasoning in the
+        // separate thinking channel, so its content-thought is empty.)
+        if (st.tool == null && !st.thought) continue;
         if (st.tool == null && st.thought != null) { o.push(`## Step ${st.step} · thought`, "", st.thought, ""); continue; }
         o.push(`## Step ${st.step} · ${st.tool || "?"}`, "");
         if (st.approval) o.push(`> _${st.approval === "readonly" ? "auto-approved (read-only)" : st.approval === "user" ? "approved by user" : "denied by user"}_`, "");
@@ -77,7 +82,7 @@ function agentToMarkdown(s: Session, addImage: AddImage): string {
             // Flag a sub-call that ran on the SAME model as the driver — it was still
             // standalone (image + reply not in the driver's context).
             const delegated = r.model && r.model === s.model ? " · standalone sub-call (not in the agent's context)" : "";
-            o.push(`> _${r.mode === "grounding" ? "Grounding" : r.mode === "grid" ? "Grid" : "Set-of-Marks"} · ${r.model}${delegated}_`, "");
+            o.push(`> _${r.mode === "grounding" ? "Grounding" : r.mode === "grid-grounding" ? "Grid → Grounding" : r.mode === "grid" ? "Grid" : "Set-of-Marks"} · ${r.model}${delegated}_`, "");
             r.substeps.forEach((sub, i) => {
                 if (sub.note) o.push(`> _${sub.note}_`, "");
                 o.push(`**${i + 1} · ${sub.label}**`, "");
