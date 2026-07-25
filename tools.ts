@@ -289,7 +289,18 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
                 const logged = logs.length ? `console:\n${clip(logs.join("\n"), 500)}` : "";
                 const withLogs = (value: string) => logged ? `${logged}\n\nvalue: ${value}` : value;
 
-                if (failed) return withLogs(`Error: ${(failed as Error).message}`);
+                if (failed) {
+                    const msg = (failed as Error).message;
+                    // The #1 exec mistake: querySelectorAll / .children / getElementsBy* return a
+                    // NodeList/HTMLCollection (array-LIKE, no .map/.filter). Steer the retry
+                    // instead of leaving the model to flail on "map is not a function".
+                    const arrayish = /\.(map|filter|forEach|reduce|some|every|find|flatMap|sort|slice) is not a function/.test(msg)
+                        && /querySelectorAll|getElementsBy|\.children\b|\.childNodes\b|classList/.test(js);
+                    const hint = arrayish
+                        ? " — querySelectorAll / .children / getElementsBy* return a NodeList/HTMLCollection, not an Array. Wrap it first: [...document.querySelectorAll('…')].map(…) or Array.from(…)."
+                        : "";
+                    return withLogs(`Error: ${msg}${hint}`);
+                }
 
                 // DOM node results come back hoverable (see the loop's envelope).
                 if (typeof Element !== "undefined" && result instanceof Element) {

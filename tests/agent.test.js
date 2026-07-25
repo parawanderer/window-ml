@@ -412,6 +412,12 @@ test("exec evaluates expressions, serializes objects, and catches errors", async
     // exec used dom.ts `truncate`, whose \s+→" " flattened every line into spaces).
     const multi = await run(ml, "exec", { js: "for (let i = 1; i <= 3; i++) console.log('line ' + i);" });
     assert.match(multi, /^console:\nline 1\nline 2\nline 3\n\nvalue: /);
+    // The #1 exec mistake: .map on a raw NodeList → steer to Array.from/spread.
+    const nodelist = await run(ml, "exec", { js: "document.querySelectorAll('li').map(x => x.tagName)" });
+    assert.match(nodelist, /is not a function/);
+    assert.match(nodelist, /NodeList\/HTMLCollection, not an Array/);
+    // A non-DOM "not a function" must NOT get the NodeList hint (false-positive guard).
+    assert.doesNotMatch(await run(ml, "exec", { js: "(42).map(x => x)" }), /NodeList/);
 });
 
 test("selector tools accept end-position :contains/:has-text and explain mid-selector", () => {

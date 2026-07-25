@@ -321,8 +321,14 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool } from ".
          *
          * @param {string} task Natural-language task for the agent.
          * @param {Object} [opts]
-         * @param {MlTool[]} [opts.tools] Tool registry (default {@link module:ml.domTools}).
-         * @param {MlTool[]} [opts.extraTools=[]] Extra tools appended to `tools`.
+         * @param {MlTool[]} [opts.tools] Tool registry. ⚠ REPLACES the default
+         *   `domTools` ({@link module:ml.domTools}) — passing e.g. `[clickTool()]`
+         *   leaves the agent with ONLY that (plus auto-wired look/locate), stripping
+         *   `exec`/DOM inspection, scroll, type, etc. To ADD a tool to the full default
+         *   kit (the usual intent), use `extraTools`, not `tools`.
+         * @param {MlTool[]} [opts.extraTools=[]] Extra tools APPENDED to the toolset
+         *   (the default `domTools`, or `tools` if you overrode it). Use this to hand the
+         *   agent an extra capability without losing the built-ins.
          * @param {string} [opts.system] System prompt (default the generic strategy preamble).
          * @param {string} [opts.hints] Task-specific notes APPENDED to the system prompt
          *   (keeps the built-in workflow + tool clauses — unlike `system`, which
