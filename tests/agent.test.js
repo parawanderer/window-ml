@@ -820,6 +820,26 @@ test("click: an @pt point token is decoded (not treated as a CSS selector), unkn
     assert.ok(!/No element matches/.test(String(out)), "not mistaken for a CSS selector");
 });
 
+test("click: an @box container token is refused (a region isn't clickable) and steers inside it", async () => {
+    const { ml } = loadDomWorld('<button>x</button>');
+    const out = await ml.clickTool().run({ selector: "@box:deadbeef" });
+    assert.match(String(out), /container region, not a clickable point/);
+    assert.match(String(out), /locate\(\{ selector: "@box:deadbeef"/);   // steers to locate INSIDE it
+    assert.ok(!/No element matches/.test(String(out)), "not mistaken for a CSS selector");
+});
+
+test("locate: @box scope with an unknown token → clear 'container' error (not a CSS selector)", async () => {
+    const { ml } = loadDomWorld('<div>hi</div>');
+    const out = await ml.locateTool({ model: "vlm" }).run({ description: "the toggle", selector: "@box:deadbeef" });
+    assert.match(String(out), /Unknown container token/);
+});
+
+test("locate: container:true without a grounding model is refused with guidance", async () => {
+    const { ml } = loadDomWorld('<div>hi</div>');
+    const out = await ml.locateTool({ model: "vlm" }).run({ description: "the settings panel", container: true });
+    assert.match(String(out), /container mode.*needs a grounding model/);
+});
+
 test("locate scoping: a missing container selector short-circuits (no screenshot attempt)", async () => {
     const { ml } = loadDomWorld('<div id="box">hi</div>');
     const out = await ml.locateTool({ model: "vlm" }).run({ description: "the star", selector: "#nope" });

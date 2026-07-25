@@ -112,3 +112,23 @@ export const nearbyPoint = (x: number, y: number, within = 12): { token: string;
     }
     return best;
 };
+
+// --- Canvas coordinate CONTAINERS: an opaque `@box:<hex>` token → a viewport box ------
+// The REGION analogue of @pt. `locate({ container: true })` has the grounding model
+// outline a sub-area of a canvas (a panel/card/toolbar) and mints this; then
+// `locate({ selector: "@box:…" })` scopes the search INTO it, and `look({ selector:
+// "@box:…" })` crops to it. Same opaque contract — the model copies the token verbatim,
+// never authoring coordinates — so a text-only driver can recurse box → sub-box → @pt on
+// a pure-canvas UI. Page-lifetime map, shared by injected (look) + builtin-tools (locate).
+export type PtBox = { left: number; top: number; right: number; bottom: number };
+const boxRegistry = new Map<string, PtBox>();
+export const BOX_RE = /^@box:([0-9a-f]{1,12})$/;
+export const mintBox = (b: PtBox): string => {
+    const id = Math.random().toString(16).slice(2, 10);
+    boxRegistry.set(id, { left: Math.round(b.left), top: Math.round(b.top), right: Math.round(b.right), bottom: Math.round(b.bottom) });
+    return `@box:${id}`;
+};
+export const resolveBox = (token: string): PtBox | null => {
+    const m = BOX_RE.exec((token || "").trim());
+    return m ? boxRegistry.get(m[1]) || null : null;
+};

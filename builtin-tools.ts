@@ -7,7 +7,7 @@
 import type { MlApi, MlTool, LocateSubstep } from "./contract";
 import { DEFAULT_GROUNDING_RANGE } from "./contract";
 import { truncate, errText, elLine, queryAll, selectorError } from "./dom";
-import { settle, VISION_NUM_CTX, cropDataUrl, MIN_SHOT_PX, POINT_RE, PT_LOOK_RADIUS, mintPoint, resolvePoint, nearbyPoint } from "./util";
+import { settle, VISION_NUM_CTX, cropDataUrl, MIN_SHOT_PX, POINT_RE, PT_LOOK_RADIUS, mintPoint, resolvePoint, nearbyPoint, BOX_RE, mintBox, resolveBox } from "./util";
 import { collectCandidates, buildMarks, annotate, formatBox, letterboxToSquare, projectFromSquare, drawGrid, gridDims, validateCells, cellsBox, collectInBox, elementAtPoint, viewportBox, colorWordHues, pickOverlayColor, pickAccentColor, withHiddenSidebar, regionBox, REGION_NAMES, adjacentCells, type RegionName, type MarkFilter, type Box, type Mark } from "./som";
 
 // --- Coordinate targets (canvas / WebGL) -----------------------------------
@@ -141,7 +141,9 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             "If the target sits on a <canvas> (a game/drawing surface — no DOM nodes inside it), FIRST " +
             "identify the canvas and pass ITS selector as `selector` so the search is cropped to it; the " +
             "result is an `@pt:…` coordinate token (there's no element to select), which you verify with " +
-            "look({ selector: \"@pt:…\" }) and then click.",
+            "look({ selector: \"@pt:…\" }) and then click. On a busy canvas UI, zoom in with `container: " +
+            "true` — the grounding model outlines a panel/card/toolbar and returns an `@box:…` region " +
+            "token; scope back into it (selector: \"@box:…\") to find a control, recursing box→sub-box→@pt.",
         parameters: {
             type: "object",
             properties: {
@@ -189,10 +191,14 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                     items: { type: "integer" },
                     description: "A previously-returned cell selection (1, 2 adjacent, or a 2×2 block of 4). 'grid' draws a fresh grid inside it (recursive zoom); 'grid-grounding' grounds directly inside it (reuses the pick — no re-roll)."
                 },
+                container: {
+                    type: "boolean",
+                    description: "Set true to OUTLINE a sub-area rather than pick a control — the grounding model boxes a container (a panel, card, toolbar, dialog) and returns an `@box:…` region token instead of a click point. Use it on a busy <canvas> UI to zoom in: get the container box, then locate({ selector: \"@box:…\", description: \"…\" }) to find a control INSIDE it (recurse as needed), and click the final `@pt:…`. Needs a grounding model."
+                },
             },
             required: ["description"],
         },
-        run: async ({ description, filter = "clickables", margin = 0, strategy = "auto", selector, index = 0, gridSize, cells, region: regionName }: { description: string; filter?: MarkFilter; margin?: number; strategy?: "auto" | "grounding" | "marks" | "grid" | "grid-grounding"; selector?: string; index?: number; gridSize?: number; cells?: number[]; region?: RegionName }) => {
+        run: async ({ description, filter = "clickables", margin = 0, strategy = "auto", selector, index = 0, gridSize, cells, region: regionName, container = false }: { description: string; filter?: MarkFilter; margin?: number; strategy?: "auto" | "grounding" | "marks" | "grid" | "grid-grounding"; selector?: string; index?: number; gridSize?: number; cells?: number[]; region?: RegionName; container?: boolean }) => {
             if (!description) return "Provide a `description` of the element to find.";
             const dpr = window.devicePixelRatio || 1;
             const RED = "#ff2d55", YELLOW = "#eab308";
@@ -257,7 +263,18 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             // True once the search region is narrowed (a `selector` container, or a
             // grid-grounding cell) — so the marks fallback scans that region, not the viewport.
             let scoped = false;
-            if (selector && POINT_RE.test(selector.trim())) {
+            if (selector && BOX_RE.test(selector.trim())) {
+                // `@box:` scope — search INSIDE a previously-outlined canvas container
+                // (from locate({ container: true })). Just a coordinate crop; no DOM node.
+                const bx = resolveBox(selector);
+                if (!bx) return `Unknown container token "${selector}" — re-run locate({ container: true }) for a fresh one.`;
+                const m = margin > 0 ? margin : 0;   // grow the box on a margin retry (cut-off target)
+                const left = Math.max(0, bx.left - m), top = Math.max(0, bx.top - m);
+                region = { left, top, width: Math.min(window.innerWidth, bx.right + m) - left, height: Math.min(window.innerHeight, bx.bottom + m) - top };
+                if (region.width < MIN_SHOT_PX || region.height < MIN_SHOT_PX) return `The container ${selector} is too small or off-screen to search within. Re-locate it, or drop the scope.`;
+                scopeSel = selector;
+                scoped = true;
+            } else if (selector && POINT_RE.test(selector.trim())) {
                 // `@pt:` scope ("snap around point") — search the SAME neighborhood box
                 // that look() showed around a canvas point. The model re-locates an area it
                 // just VISUALLY CONFIRMED holds the target, so grounding inside that ~200px
@@ -335,6 +352,12 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             // cells-reuse shortcut below) — check once here so the reuse path can't silently
             // fall through to marks when no grounder is configured.
             if (strategy === "grid-grounding" && !groundingModel) return "strategy 'grid-grounding' needs a grounding model configured — use 'grid' instead, or configure one in the popup.";
+            // Container mode outlines a region via grounding, so it needs a grounder and
+            // must run the grounding mechanism (route a 'marks'/'grid' strategy through it).
+            if (container) {
+                if (!groundingModel) return "container mode (outlining an @box region) needs a grounding model — configure one in the popup, or narrow with `region` / grid `cells` instead.";
+                if (strategy === "marks" || strategy === "grid") strategy = "grounding";
+            }
 
             // grid-grounding + `cells` → REUSE a prior grid pick. Skip the (nondeterministic)
             // grid vision re-pick entirely: narrow the region to the given cell(s) here and
@@ -570,6 +593,18 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                     const box = nums ? projectFromSquare(nums, R, region) : null;
                     if (box) {
                         const b: Box = margin > 0 ? { left: box.left - margin, top: box.top - margin, right: box.right + margin, bottom: box.bottom + margin } : box;
+                        // Container mode: return the grounded region as a scopable @box token
+                        // (a coordinate CONTAINER to operate within), not a click point. The
+                        // driver copies the token and recurses INTO it — box → sub-box → @pt.
+                        if (container) {
+                            if (!shot) shot = await ml.screenshot(null, {});
+                            const token = mintBox(b);
+                            const boxImg = await annotate(shot, [{ rect: rectOf(b), color: YELLOW, label: "container" }], dpr);
+                            return {
+                                content: `Outlined a container for "${description}"${scopeNote}: ${token} — a ${Math.round(b.right - b.left)}×${Math.round(b.bottom - b.top)}px region. Operate WITHIN it: verify with look({ selector: "${token}" }), then locate({ selector: "${token}", description: "…" }) to find a control inside (or container:true again to narrow further), then click the final @pt. Copy the token verbatim — it's a coordinate region, not a selector.`,
+                                render: groundResult([boxStep, { label: "Container region (@box)", image: boxImg }], { picked: token, pickedBy: "snap" }),
+                            };
+                        }
                         const cx = (b.left + b.right) / 2, cy = (b.top + b.bottom) / 2;
                         // Canvas/WebGL surface → no DOM node to snap to. Return a point token at
                         // the canvas-hit nearest the box centre (robust to a box straddling the
@@ -714,6 +749,10 @@ export const buildClickTool = (ml: MlApi): MlTool => {
             required: ["selector"]
         },
         run: async ({ selector, index = 0 }: { selector: string; index?: number }): Promise<string> => {
+            // A container token is a REGION, not a click target — steer to a point inside it.
+            if (BOX_RE.test((selector || "").trim())) {
+                return `"${selector}" is an @box container region, not a clickable point. Locate a control INSIDE it first: locate({ selector: "${selector}", description: "…" }) → click the @pt it returns.`;
+            }
             // A canvas point token from locate → synthesize a click at that coordinate.
             if (POINT_RE.test((selector || "").trim())) {
                 const pt = resolvePoint(selector);

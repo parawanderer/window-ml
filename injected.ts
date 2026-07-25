@@ -30,7 +30,7 @@ import { detectGroundingModel, DEFAULT_GROUNDING_RANGE } from "./contract";
 import { evalReadonly } from "./readonly-exec";
 import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError } from "./dom";
 import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE } from "./prompts";
-import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, PT_LOOK_RADIUS } from "./util";
+import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, PT_LOOK_RADIUS, BOX_RE, resolveBox } from "./util";
 import { annotate, pickAccentColorForTarget } from "./som";
 import { suspiciousArgsWarning, suspiciousChars } from "./security";
 import { emitDebug, debugId, shortHash, sessionRegistry, enterAgentRun, exitAgentRun } from "./bus";
@@ -736,6 +736,21 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool } from ".
                 // Contrast the marker with the background AND the target under it (in image px).
                 const color = await pickAccentColorForTarget(cropped, { left: marker.left * dpr, top: marker.top * dpr, width: marker.width * dpr, height: marker.height * dpr });
                 return annotate(cropped, [{ rect: marker, color, label: "click point", float: true }], dpr);
+            }
+
+            // An `@box:` container token (a canvas region from locate({ container: true })) →
+            // a padded crop with the region OUTLINED, so look() can VERIFY what you scoped to
+            // before operating inside it. The canvas analogue of screenshotting a container.
+            if (typeof target === "string" && BOX_RE.test(target.trim())) {
+                const bx = resolveBox(target);
+                if (!bx) throw new Error(`Unknown container token "${target}" — re-run locate({ container: true }) for a fresh one.`);
+                const dpr = window.devicePixelRatio || 1, pad = 16;
+                const left = Math.max(0, bx.left - pad), top = Math.max(0, bx.top - pad);
+                const rect = { left, top, width: Math.min(window.innerWidth, bx.right + pad) - left, height: Math.min(window.innerHeight, bx.bottom + pad) - top };
+                const cropped = await cropDataUrl(await viewport(), rect, dpr);
+                const outline = { left: bx.left - left, top: bx.top - top, width: bx.right - bx.left, height: bx.bottom - bx.top };
+                const color = await pickAccentColorForTarget(cropped, { left: outline.left * dpr, top: outline.top * dpr, width: outline.width * dpr, height: outline.height * dpr });
+                return annotate(cropped, [{ rect: outline, color, label: "container" }], dpr);
             }
 
             let el = target;
