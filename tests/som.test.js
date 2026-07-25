@@ -200,3 +200,77 @@ test("buildMarks numbers candidates 1-based and carries role/name/selector", () 
     assert.match(marks[0].selector, /#one|button/); // clickSelector anchors on the id
     assert.equal(marks[1].name, "Open");            // accessible name from text
 });
+
+// ---- Variance-aware label placement (the @pt verify "click point" fix) ----
+// pickLabelSpot slides a floating label to the least-busy of a fixed candidate set so
+// it never covers the icon it marks. Geometry is pure (a variance oracle is injected);
+// the real getImageData variance is a canvas op (jsdom no-op).
+const { labelCandidates, pickLabelSpot, rectsOverlap } = som;
+
+test("labelCandidates: 12 spots, all clamped fully inside the image", () => {
+    const box = { left: 90, top: 90, width: 24, height: 24 };
+    const cands = labelCandidates(box, { left: 0, top: 0, width: 60, height: 18 }, { left: 0, top: 0, width: 200, height: 200 });
+    assert.equal(cands.length, 12);
+    for (const c of cands) {
+        assert.ok(c.left >= 0 && c.top >= 0, "no negative origin");
+        assert.ok(c.left + c.width <= 200 && c.top + c.height <= 200, "stays in image");
+    }
+});
+
+test("pickLabelSpot: chooses the flattest (lowest-variance) candidate", () => {
+    const box = { left: 90, top: 90, width: 24, height: 24 };
+    const label = { left: 0, top: 0, width: 60, height: 18 };
+    const img = { left: 0, top: 0, width: 200, height: 200 };
+    // Everything busy except the bottom-right image corner → label goes there.
+    const flat = labelCandidates(box, label, img)[11];   // bottom-right corner
+    const score = (r) => (r.left === flat.left && r.top === flat.top ? 1 : 999);
+    const spot = pickLabelSpot(box, label, img, score);
+    assert.deepEqual({ left: spot.left, top: spot.top }, { left: flat.left, top: flat.top });
+});
+
+test("pickLabelSpot: never places the label overlapping the target box, even if that spot is flat", () => {
+    const box = { left: 90, top: 90, width: 24, height: 24 };
+    const label = { left: 0, top: 0, width: 60, height: 18 };
+    const img = { left: 0, top: 0, width: 200, height: 200 };
+    // Pretend the whole image is uniformly flat (score 0 everywhere): the overlap
+    // penalty must still keep the label off the box.
+    const spot = pickLabelSpot(box, label, img, () => 0);
+    assert.ok(!rectsOverlap(spot, box), "chosen label spot must not cover the marker box");
+});
+
+test("rectsOverlap: adjacency does not count as overlap", () => {
+    assert.ok(rectsOverlap({ left: 0, top: 0, width: 10, height: 10 }, { left: 5, top: 5, width: 10, height: 10 }));
+    assert.ok(!rectsOverlap({ left: 0, top: 0, width: 10, height: 10 }, { left: 10, top: 0, width: 10, height: 10 }));
+});
+
+test("pickLabelSpot: prefers a flat HUG spot over an equally-flat far corner (stays near)", () => {
+    const box = { left: 138, top: 116, width: 24, height: 24 };
+    const label = { left: 0, top: 0, width: 60, height: 18 };
+    const img = { left: 0, top: 0, width: 300, height: 260 };
+    // Uniformly flat everywhere → must pick a hugging spot (near the box), not a corner.
+    const spot = pickLabelSpot(box, label, img, () => 0);
+    assert.equal(spot.hug, true, "a flat hug spot should win over a flat corner");
+});
+
+test("pickLabelSpot: escapes to the flat corner only when every hug spot is busy", () => {
+    const box = { left: 138, top: 116, width: 24, height: 24 };
+    const label = { left: 0, top: 0, width: 60, height: 18 };
+    const img = { left: 0, top: 0, width: 300, height: 260 };
+    const bottomRight = labelCandidates(box, label, img)[11];   // hug:false corner
+    // All hug spots busy (>> HUG_FLAT_ENOUGH); one corner flat → tier 2 takes the corner.
+    const score = (r) => (r.left === bottomRight.left && r.top === bottomRight.top ? 0 : 5000);
+    const spot = pickLabelSpot(box, label, img, score);
+    assert.equal(spot.hug, false, "boxed in → escape to a corner");
+    assert.deepEqual({ left: spot.left, top: spot.top }, { left: bottomRight.left, top: bottomRight.top });
+});
+
+test("pickLabelSpot hugOnly: never escapes to a corner, even when every hug spot is busy", () => {
+    const box = { left: 138, top: 116, width: 24, height: 24 };
+    const label = { left: 0, top: 0, width: 60, height: 18 };
+    const img = { left: 0, top: 0, width: 300, height: 260 };
+    const bottomRight = labelCandidates(box, label, img)[11];
+    // Corner is flattest, but hugOnly forbids leaving the box → stays a hug spot.
+    const score = (r) => (r.left === bottomRight.left && r.top === bottomRight.top ? 0 : 5000);
+    const spot = pickLabelSpot(box, label, img, score, 4, /* hugOnly */ true);
+    assert.equal(spot.hug, true, "hug-only stays beside the box (no corner + leader)");
+});

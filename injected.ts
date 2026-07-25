@@ -31,7 +31,7 @@ import { evalReadonly } from "./readonly-exec";
 import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError } from "./dom";
 import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, PT_LOOK_RADIUS } from "./util";
-import { annotate, pickAccentColor } from "./som";
+import { annotate, pickAccentColorForTarget } from "./som";
 import { suspiciousArgsWarning, suspiciousChars } from "./security";
 import { emitDebug, debugId, shortHash, sessionRegistry, enterAgentRun, exitAgentRun } from "./bus";
 import { makeDomTools } from "./tools";
@@ -726,8 +726,10 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool } from ".
                 const left = Math.max(0, pt.x - R), top = Math.max(0, pt.y - R);
                 const rect = { left, top, width: Math.min(window.innerWidth, pt.x + R) - left, height: Math.min(window.innerHeight, pt.y + R) - top };
                 const cropped = await cropDataUrl(await viewport(), rect, dpr);
-                const color = await pickAccentColor(cropped);   // contrast the marker with what's there
-                return annotate(cropped, [{ rect: { left: pt.x - left - 12, top: pt.y - top - 12, width: 24, height: 24 }, color, label: "click point" }], dpr);
+                const marker = { left: pt.x - left - 12, top: pt.y - top - 12, width: 24, height: 24 };
+                // Contrast the marker with the background AND the target under it (in image px).
+                const color = await pickAccentColorForTarget(cropped, { left: marker.left * dpr, top: marker.top * dpr, width: marker.width * dpr, height: marker.height * dpr });
+                return annotate(cropped, [{ rect: marker, color, label: "click point", float: true }], dpr);
             }
 
             let el = target;

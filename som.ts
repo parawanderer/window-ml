@@ -193,14 +193,22 @@ export function pickOverlayHex(weights: number[], avoidHues: number[] = [], pale
 }
 
 /** Sample an already-drawn canvas into a 12-bucket hue histogram (grey/near-black/
- *  near-white pixels excluded — they don't clash with any hue). */
-function sampleHues(ctx: CanvasRenderingContext2D, w: number, h: number): number[] {
+ *  near-white pixels excluded — they don't claim a hue). Pass `region` (image px) to
+ *  restrict sampling to a sub-rect, e.g. the target box, so its own colour is measured
+ *  even when it's a tiny fraction of the full image. */
+function sampleHues(ctx: CanvasRenderingContext2D, w: number, h: number, region?: Rect): number[] {
     const weights = new Array(12).fill(0);
+    const x0 = region ? Math.max(0, Math.floor(region.left)) : 0;
+    const y0 = region ? Math.max(0, Math.floor(region.top)) : 0;
+    const x1 = region ? Math.min(w, Math.ceil(region.left + region.width)) : w;
+    const y1 = region ? Math.min(h, Math.ceil(region.top + region.height)) : h;
+    const rw = x1 - x0, rh = y1 - y0;
+    if (rw <= 0 || rh <= 0) return weights;
     let data: Uint8ClampedArray;
-    try { data = ctx.getImageData(0, 0, w, h).data; } catch { return weights; }
-    const step = Math.max(1, Math.round(Math.sqrt((w * h) / 4000)));   // ~4k samples, dpr-independent
-    for (let y = 0; y < h; y += step) for (let x = 0; x < w; x += step) {
-        const i = (y * w + x) * 4;
+    try { data = ctx.getImageData(x0, y0, rw, rh).data; } catch { return weights; }
+    const step = Math.max(1, Math.round(Math.sqrt((rw * rh) / 4000)));   // ~4k samples, dpr-independent
+    for (let y = 0; y < rh; y += step) for (let x = 0; x < rw; x += step) {
+        const i = (y * rw + x) * 4;
         const r = data[i] / 255, g = data[i + 1] / 255, bl = data[i + 2] / 255;
         const max = Math.max(r, g, bl), min = Math.min(r, g, bl), d = max - min;
         if (d < 0.12 || max < 0.12 || max > 0.97) continue;   // grey / near-black / near-white → no hue claim
@@ -212,6 +220,21 @@ function sampleHues(ctx: CanvasRenderingContext2D, w: number, h: number): number
         weights[Math.min(11, Math.floor(hue / 30))] += d * max;
     }
     return weights;
+}
+
+/**
+ * The hue-bucket centres that carry real weight in a histogram (≥ `frac` of the peak
+ * bucket) — a region's characteristic colour(s). Used to hard-avoid the TARGET's own
+ * hue when picking a marker colour, so the outline clashes with neither the background
+ * (the histogram) NOR the thing it rings (these). Pure; unit-tested.
+ */
+export function dominantHues(weights: number[], frac = 0.5): number[] {
+    const buckets = weights.length, span = 360 / buckets;
+    const peak = Math.max(0, ...weights);
+    if (peak <= 0) return [];
+    const out: number[] = [];
+    for (let b = 0; b < buckets; b++) if (weights[b] >= peak * frac) out.push(b * span + span / 2);
+    return out;
 }
 
 /** Pick a contrasting colour for a data-URL image (loads it, samples, scores) from
@@ -236,17 +259,48 @@ export function pickOverlayColor(dataUrl: string, avoidHues: number[] = [], pale
 export const pickAccentColor = (dataUrl: string, avoidHues: number[] = []): Promise<string> =>
     pickOverlayColor(dataUrl, avoidHues, ACCENT_PALETTE);
 
+/**
+ * Page-aware accent that also dodges the TARGET's own colour: picks against the whole
+ * image's hue histogram (background) while hard-avoiding the dominant hue(s) inside
+ * `box` (image px) — so the marker outline clashes with neither the background nor the
+ * element it rings. `box` is the marker rect in the image's own pixels (source × scale).
+ */
+export function pickAccentColorForTarget(dataUrl: string, box: Rect, avoidHues: number[] = []): Promise<string> {
+    return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+            const cv = document.createElement("canvas");
+            cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+            const ctx = cv.getContext("2d");
+            if (!ctx) return resolve(ACCENT_PALETTE[0].hex);
+            ctx.drawImage(img, 0, 0);
+            const background = sampleHues(ctx, cv.width, cv.height);
+            const target = dominantHues(sampleHues(ctx, cv.width, cv.height, box));
+            resolve(pickOverlayHex(background, [...avoidHues, ...target], ACCENT_PALETTE));
+        };
+        img.onerror = () => resolve(ACCENT_PALETTE[0].hex);
+        img.src = dataUrl;
+    });
+}
+
 /** One box drawn onto a screenshot: a colored outline + an optional tab holding a
  *  `badge` number or a `label` string above its top-left corner, OR `corners` — two
  *  labels at the top-left and bottom-right corners (for a grounding box shown as two
  *  (x,y) pairs). `rect` is in source units (CSS px for a viewport shot; image px for
- *  the grounding square). */
+ *  the grounding square).
+ *
+ *  `float` opts a single `label` into variance-aware placement (slide to the least-busy
+ *  spot BESIDE the box) — worth it on a small zoomed crop like the @pt verify where a
+ *  fixed label would swamp the target. Hug-only: it never flies to a corner (a detached
+ *  label + leader misleads the VLM reading the crop). OFF by default; big debug overlays
+ *  keep the simple fixed tab. */
 export interface Annot {
     rect: { left: number; top: number; width: number; height: number };
     color: string;
     badge?: number;
     label?: string;
     corners?: [string, string];   // [top-left, bottom-right] labels
+    float?: boolean;
 }
 
 /** Format grounding coords [x1,y1,x2,y2] as a readable box — a "(x1, y1) → (x2, y2)"
@@ -258,10 +312,112 @@ export function formatBox(nums: number[]): { text: string; corners: [string, str
     return { text: `(${tl}) → (${br})`, corners: [tl, br] };
 }
 
+export type Rect = { left: number; top: number; width: number; height: number };
+export type LabelSpot = Rect & { hug: boolean };
+
+const LABEL_OVERLAP_PENALTY = 1e6;
+// A hugging spot this flat is "clearly on background" — take it and stay near the box
+// rather than chasing a marginally-flatter far corner. Luminance variance units (≈ σ²);
+// ~120 is σ≈11, below the texture of any real icon/glyph but above sensor/AA noise.
+const HUG_FLAT_ENOUGH = 120;
+
+export function rectsOverlap(a: Rect, b: Rect): boolean {
+    return a.left < b.left + b.width && a.left + a.width > b.left &&
+        a.top < b.top + b.height && a.top + a.height > b.top;
+}
+
+/**
+ * Candidate positions for a floating LABEL of size `label` around a target `box`, within
+ * image `img`. Two tiers: eight `hug` spots a `gap` off the box's edges (near what they
+ * name — the gap keeps them off the marker so they don't graze the very icon underneath),
+ * then four image-corner escapes (`hug:false`) for when the box is boxed in on every side.
+ * All clamped fully inside the image. Deterministic (no random sampling) so the render is
+ * reproducible; the `hug` flag lets the caller draw a leader only for a real escape.
+ */
+export function labelCandidates(box: Rect, label: Rect, img: Rect, gap = 4): LabelSpot[] {
+    const lw = label.width, lh = label.height;
+    const cx = box.left + box.width / 2, cy = box.top + box.height / 2;
+    const aboveY = box.top - gap - lh, belowY = box.top + box.height + gap;
+    const leftX = box.left - gap - lw, rightX = box.left + box.width + gap;
+    const hug: [number, number][] = [
+        [box.left, aboveY], [box.left + box.width - lw, aboveY], [cx - lw / 2, aboveY],
+        [box.left, belowY], [box.left + box.width - lw, belowY], [cx - lw / 2, belowY],
+        [leftX, cy - lh / 2], [rightX, cy - lh / 2],
+    ];
+    const corner: [number, number][] = [
+        [0, 0], [img.width - lw, 0], [0, img.height - lh], [img.width - lw, img.height - lh],
+    ];
+    const clamp = (v: number, max: number) => Math.max(0, Math.min(v, Math.max(0, max)));
+    const mk = (xy: [number, number], isHug: boolean): LabelSpot =>
+        ({ left: clamp(xy[0], img.width - lw), top: clamp(xy[1], img.height - lh), width: lw, height: lh, hug: isHug });
+    return [...hug.map(p => mk(p, true)), ...corner.map(p => mk(p, false))];
+}
+
+/**
+ * Pick the least-busy label spot. `score` returns a variance-like "busy-ness" for a rect
+ * (high = icon/text/edge, low = flat background — where we want the label); injected so
+ * the geometry is unit-testable without a canvas. Two-tier, matching the intent "try the
+ * spots around the box; escape only if they're all busy":
+ *   1. Best HUG spot (overlap with the box penalised hard — a label must never hide its
+ *      own marker). If it's flat enough (≤ HUG_FLAT_ENOUGH), take it — stay near.
+ *   2. Otherwise every side is occupied → take the global least-busy spot, corners
+ *      included. Ties resolve to the earliest candidate, so a label never drifts needlessly.
+ * `hugOnly` forbids tier 2 (never leave the box for a corner) — for a small verify crop
+ * where a corner label + its leader line misleads a VLM into a spurious "click here" cue.
+ */
+export function pickLabelSpot(box: Rect, label: Rect, img: Rect, score: (r: Rect) => number, gap = 4, hugOnly = false): LabelSpot {
+    const cands = labelCandidates(box, label, img, gap);
+    const scored = cands.map(c => ({ c, s: score(c) + (rectsOverlap(c, box) ? LABEL_OVERLAP_PENALTY : 0) }));
+    const argmin = (xs: { c: LabelSpot; s: number }[]) =>
+        xs.reduce((best, x) => (x.s < best.s ? x : best), xs[0]);
+    const hugBest = argmin(scored.filter(x => x.c.hug));
+    if (hugOnly) return (hugBest || argmin(scored)).c;              // stay beside the box, never a corner
+    if (hugBest && hugBest.s <= HUG_FLAT_ENOUGH) return hugBest.c;   // near + clearly on background
+    return argmin(scored).c;                                        // boxed in → flattest anywhere
+}
+
+/**
+ * Luminance variance over a rect of the canvas — the "busy-ness" score for label
+ * placement. High variance = an icon/glyph/text/edge (intentional, high-contrast
+ * content the label must not cover); low = a flat panel/background (safe). Samples
+ * every 4th pixel for speed. Returns 0 on a tainted canvas or where getImageData is a
+ * jsdom no-op, so placement then just falls back to the first candidate.
+ */
+function regionBusyness(ctx: CanvasRenderingContext2D, r: Rect): number {
+    try {
+        const w = Math.max(1, Math.round(r.width)), h = Math.max(1, Math.round(r.height));
+        const data = ctx.getImageData(Math.max(0, Math.round(r.left)), Math.max(0, Math.round(r.top)), w, h).data;
+        let n = 0, sum = 0, sumsq = 0;
+        for (let i = 0; i + 2 < data.length; i += 16) {   // step 4 px (16 bytes/px×4)
+            const lum = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+            sum += lum; sumsq += lum * lum; n++;
+        }
+        if (n === 0) return 0;
+        const mean = sum / n;
+        return sumsq / n - mean * mean;
+    } catch {
+        return 0;
+    }
+}
+
+/** The overlay's "cased stroke": a dark halo drawn first, then the bright colour on top,
+ *  so a thin line/outline survives even a busy multi-colour background. One legibility
+ *  trick shared by the grid lines and the box outlines — `path` strokes the shape (it may
+ *  itself call ctx.stroke()/strokeRect, run twice with the two styles). */
+function strokeCased(ctx: CanvasRenderingContext2D, path: () => void, coreWidth: number, color: string, scale: number) {
+    ctx.strokeStyle = "rgba(0,0,0,0.55)"; ctx.lineWidth = coreWidth + Math.max(2, Math.round(2 * scale)); path();
+    ctx.strokeStyle = color; ctx.lineWidth = coreWidth; path();
+}
+
 /**
  * Draw boxes + labels onto an image in memory. `scale` maps source units to the
  * image's pixels — dpr for a devicePixelRatio-captured viewport shot, 1 for the
  * grounding square (already in its own px). Never touches the live page.
+ *
+ * A `float` label (not a positional badge/corner) is placed by variance-probing: it
+ * slides to the least-busy hug spot BESIDE the box so it doesn't occlude the icon it
+ * marks (acute on a zoomed-in @pt verify shot) — hug-only, never a corner/leader. Badges
+ * stay pinned — the number↔box correspondence is Set-of-Marks' whole point.
  */
 export function annotate(dataUrl: string, boxes: Annot[], scale: number): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -289,14 +445,39 @@ export function annotate(dataUrl: string, boxes: Annot[], scale: number): Promis
             for (const b of boxes) {
                 const x = b.rect.left * scale, y = b.rect.top * scale;
                 const w = b.rect.width * scale, h = b.rect.height * scale;
-                ctx.strokeStyle = b.color; ctx.lineWidth = Math.max(1, Math.round(2 * scale));
-                ctx.strokeRect(x, y, w, h);
+                const boxRect: Rect = { left: x, top: y, width: w, height: h };
+
+                // A `float` label picks its spot from the pixels BEFORE this box's stroke
+                // lands, so the stroke doesn't bias the variance around the box edge. Only
+                // when opted in (small crops) — a big render keeps the simple fixed tab so
+                // an escape-leader can't span the whole image.
+                let placed: { spot: LabelSpot; bw: number; text: string } | null = null;
+                if (b.float && !b.corners && b.badge == null && b.label) {
+                    const bw = Math.ceil(ctx.measureText(b.label).width) + pad * 2;
+                    const spot = pickLabelSpot(
+                        boxRect,
+                        { left: 0, top: 0, width: bw, height: bh },
+                        { left: 0, top: 0, width: cv.width, height: cv.height },
+                        r => regionBusyness(ctx, r),
+                        Math.max(3, Math.round(4 * scale)),
+                        true,   // hug-only: never a corner + leader (misleads the VLM verify)
+                    );
+                    placed = { spot, bw, text: b.label };
+                }
+
+                strokeCased(ctx, () => ctx.strokeRect(x, y, w, h), Math.max(1, Math.round(2 * scale)), b.color, scale);
+
                 if (b.corners) {
                     tab(b.corners[0], b.color, x, y, "above");            // top-left
                     tab(b.corners[1], b.color, x + w, y + h, "belowRight"); // bottom-right
-                } else {
-                    const text = b.badge != null ? String(b.badge) : b.label;
-                    if (text) tab(text, b.color, x, y, "above");
+                } else if (b.badge != null) {
+                    tab(String(b.badge), b.color, x, y, "above");         // pinned to its box
+                } else if (placed) {
+                    // hug-only: the label sits beside the box, never a corner + leader.
+                    ctx.fillStyle = b.color; ctx.fillRect(placed.spot.left, placed.spot.top, placed.bw, bh);
+                    ctx.fillStyle = "#fff"; ctx.fillText(placed.text, placed.spot.left + pad, placed.spot.top + pad);
+                } else if (b.label) {
+                    tab(b.label, b.color, x, y, "above");                 // fixed tab (default)
                 }
             }
             resolve(cv.toDataURL("image/png"));
@@ -419,8 +600,7 @@ export function drawGrid(dataUrl: string, cols: number, rows: number, scale: num
                 for (let c = 1; c < cols; c++) { ctx.beginPath(); ctx.moveTo(c * cw, 0); ctx.lineTo(c * cw, cv.height); ctx.stroke(); }
                 for (let r = 1; r < rows; r++) { ctx.beginPath(); ctx.moveTo(0, r * ch); ctx.lineTo(cv.width, r * ch); ctx.stroke(); }
             };
-            ctx.strokeStyle = "rgba(0,0,0,0.55)"; ctx.lineWidth = lw + Math.max(2, Math.round(2 * scale)); lines();   // dark casing
-            ctx.strokeStyle = color; ctx.lineWidth = lw; lines();                                                     // bright core
+            strokeCased(ctx, lines, lw, color, scale);
             ctx.font = `bold ${fs}px sans-serif`; ctx.textBaseline = "top";
             for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
                 const n = String(r * cols + c + 1);
