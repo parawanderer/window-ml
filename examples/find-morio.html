@@ -43,7 +43,7 @@
      <code>&lt;canvas&gt;</code></b> — a real Where's-Waldo: no colour "pop" cheat, identical silhouettes,
      and no DOM to search. Find the <b>one red Morio</b> (classic red cap + blue overalls) and click him.
      Only vision + a coordinate click can do it:</p>
-  <p><code>ml.agent("find the red Morio and click him", { tools: [ml.clickTool()], hints: "It's a canvas — use locate({ strategy: 'grounding' }) (or grid, zooming in), then click the @pt:… token. If unsure, look() at the point first." })</code></p>
+  <p><code>ml.agent("find the red Morio and click him", { extraTools: [ml.clickTool()], hints: "It's a canvas — use locate({ strategy: 'grounding' }) (or grid, zooming in), then click the @pt:… token. If unsure, look() at the point first." })</code></p>
 
   <div class="bar">
     <span class="hint">Difficulty (sprite count):</span>
@@ -212,7 +212,7 @@
     if (!ml || !ml.agent) throw new Error('window.ml is not ready — load the extension and reload the page.');
     const task = opts.task ?? 'find the red Morio and click him';
     const hints = opts.hints ?? "It's a canvas — use locate({ strategy: 'grounding' }) (or grid-grounding / grid, zooming in), then click the @pt:… token. If unsure, look() at the point first.";
-    const agentOpts = { tools: [ml.clickTool()], hints, maxSteps: opts.maxSteps ?? 12, ...(opts.agent || {}) };
+    const agentOpts = { extraTools: [ml.clickTool()], hints, maxSteps: opts.maxSteps ?? 12, ...(opts.agent || {}) };
     const results = [];
     for (let i = 0; i < n; i++) {
       morio.reset();
