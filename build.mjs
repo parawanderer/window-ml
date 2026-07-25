@@ -7,6 +7,7 @@
 // to plain JS; the sidebar/ entry may pull in bundled deps (e.g. a highlighter).
 import * as esbuild from "esbuild";
 import { cpSync, rmSync, mkdirSync } from "node:fs";
+import { generatePreview } from "./tools/preview-annotate.mjs";
 
 // output name (dist/<name>.js)  ->  source entry
 const ENTRIES = {
@@ -69,5 +70,8 @@ if (watch) {
     await esbuild.build({ entryPoints: { "readonly-exec": "readonly-exec.ts" }, outdir: "dist", bundle: true, format: "cjs", platform: "node", logLevel: "info" });
     await esbuild.build({ entryPoints: { "som": "som.ts" }, outdir: "dist", bundle: true, format: "cjs", platform: "node", logLevel: "info" });
     copyAssets();
-    console.log("built dist/");
+    // Regenerate the standalone visual preview of som's canvas annotate() (gitignored —
+    // it's a build artifact). Open tools/annotate-preview.html to eyeball label placement.
+    await generatePreview();
+    console.log("built dist/ (+ tools/annotate-preview.html)");
 }

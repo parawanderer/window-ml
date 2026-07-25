@@ -5,3 +5,4 @@ __pycache__
 *.log
 dist/
 tmp/
+tools/annotate-preview.html
