@@ -6,7 +6,7 @@
 // — the core primitive stays dependency-free.
 import { render } from "preact";
 import type { ComponentChildren } from "preact";
-import { useState, useEffect } from "preact/hooks";
+import { useState, useEffect, useRef } from "preact/hooks";
 import { signal } from "@preact/signals";
 import type { MlDebugEvent, DebugSessionConfig, DebugAgentConfig, NeutralMessage, MlConfig, ApiFormat, Theme, LoadedModel, ExtendProfile, RenderDescriptor, LocateSubstep, TokenUsage } from "../contract";
 import { DEFAULT_CONFIG, fmtCtx } from "../contract";
@@ -18,7 +18,7 @@ import {
 import type { Status, Turn, AgentStep, Session } from "./store";
 import { pretty, shortStamp, fullStamp, truncate, collapsedPreview, highlight, beautifyJs, htmlLines, markdown, lastUser, rollupStatus } from "./format";
 import { annotatedConfig, turnProfile, shownModel, sessionProfile } from "./model";
-import { exportSession } from "./export";
+import { exportSession, printSession } from "./export";
 import { applyTheme, applyFont, applyCodePrefs, initThemeStyle } from "./prefs";
 import { IconCopy, IconCheck, IconWarn, IconChevron, IconGear, IconExport, IconVram, IconSend, IconUsage } from "./icons";
 import { Settings } from "./settings";
@@ -958,6 +958,45 @@ function VramPanel() {
     );
 }
 
+// Export button + its format menu. Two shapes of the same log: a markdown bundle
+// (for a coding assistant — screenshots as real .png sidecars) or a PDF via the
+// print dialog (for a human). Dismissed by a pointerdown outside, or Escape.
+function ExportMenu({ hash }: { hash: string }) {
+    const [open, setOpen] = useState(false);
+    const wrap = useRef<HTMLSpanElement>(null);
+    useEffect(() => {
+        if (!open) return;
+        // A pointerdown inside the wrapper is the trigger's own (its onClick
+        // toggles) or an item's (its onClick closes) — closing here too would
+        // fight them, so ignore anything within.
+        const onDown = (e: Event) => { if (!wrap.current?.contains(e.target as Node)) setOpen(false); };
+        const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+        document.addEventListener("pointerdown", onDown);
+        document.addEventListener("keydown", onKey);
+        return () => { document.removeEventListener("pointerdown", onDown); document.removeEventListener("keydown", onKey); };
+    }, [open]);
+    const pick = (fn: (h: string) => void) => { setOpen(false); fn(hash); };
+    return (
+        <span class="menuwrap" ref={wrap}>
+            <button class={`tt hbtn${open ? " on" : ""}`} aria-label="Export log" aria-haspopup="menu" aria-expanded={open}
+                onClick={() => setOpen(o => !o)}>
+                <IconExport />
+                {open ? null : <span class="tt-pop" role="tooltip">Export log</span>}
+            </button>
+            {open ? (
+                <div class="menu" role="menu">
+                    <button class="menu-item" role="menuitem" onClick={() => pick(exportSession)}>
+                        Markdown<span class="menu-hint">.zip with screenshots</span>
+                    </button>
+                    <button class="menu-item" role="menuitem" onClick={() => pick(printSession)}>
+                        PDF<span class="menu-hint">opens the print dialog</span>
+                    </button>
+                </div>
+            ) : null}
+        </span>
+    );
+}
+
 function App() {
     const v = view.value;
     // Subscribe to session-data changes. This read MUST land in always-rendered
@@ -1000,7 +1039,7 @@ function App() {
                     : <b>{inSettings ? "Settings" : `Sessions (${sessionMap.size})`}</b>}
                 <span class="sp" />
                 {v.name === "detail" ? <Hash hash={v.hash} /> : null}
-                {v.name === "detail" ? <button class="tt hbtn" aria-label="Export log" onClick={() => exportSession(v.hash)}><IconExport /><span class="tt-pop" role="tooltip">Export log</span></button> : null}
+                {v.name === "detail" ? <ExportMenu hash={v.hash} /> : null}
                 {!inSettings ? <button class={`tt hbtn${vramOpen.value ? " on" : ""}`} aria-label="VRAM monitor" onClick={() => (vramOpen.value = !vramOpen.value)}><IconVram /><span class="tt-pop" role="tooltip">VRAM monitor</span></button> : null}
                 {!inSettings ? <button class="tt hbtn" aria-label="Settings" onClick={() => { fetchModels(); view.value = { name: "settings" }; }}><IconGear /><span class="tt-pop" role="tooltip">Settings</span></button> : null}
             </div>

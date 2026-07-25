@@ -391,19 +391,39 @@ reopens spans that straddle a newline — matching `<` first, so a text run like
 ` searchResults` isn't misread as a `<span>`), and numbers stay aligned even when
 a line wraps because each source line is its own flex row.
 
-**Export log.** The detail-view header has an "Export log" button →
-`serializeSession(session)` → `{ md, images }`, downloaded (chat and agent both).
-It serialises the in-memory session (options, turns/steps, exec JS beautified,
-results, model provenance, timestamps) — no new plumbing, it's all already in the
-`Session` object. **Screenshots ship as real PNG sidecars**, because base64 in a
-text file is unreadable to a coding assistant but a `.png` can be opened: an
-`addImage` callback decodes each data-URL, and the markdown references
-`images/step-N.png`. A run with images downloads a **`.zip`** (`run.md` +
-`images/*.png`); a text-only run downloads a bare **`.md`**. The zip is written by
-a tiny dependency-free **store-method** `zipStore` (PNGs are already deflated, so
-no compression — local headers + central directory + a hand-rolled `crc32`). The
-iframe can't touch the filesystem, so it downloads via a `Blob` + `<a download>`
-click.
+**Export log.** The detail-view header has an "Export log" button opening a small
+menu with two formats (chat and agent both). It serialises the in-memory session
+(options, turns/steps, exec JS beautified, results, model provenance, timestamps)
+— no new plumbing, it's all already in the `Session` object.
+
+*One walk, two sinks.* `writeAgent`/`writeChat` walk the `Session` and emit through
+a **`Sink`** — a deliberately small *semantic* vocabulary (`note`/`block`/`prose`/
+`image`/`details`/…, never "bold this"), so each format renders those meanings its
+own way. A third format = a third sink, not a third walker.
+
+- **Markdown** (`mdSink` → `serializeSession` → `{ md, images }`). **Screenshots
+  ship as real PNG sidecars**, because base64 in a text file is unreadable to a
+  coding assistant but a `.png` can be opened: the sink decodes each data-URL and
+  the markdown references `images/step-N.png`. A run with images downloads a
+  **`.zip`** (`run.md` + `images/*.png`); a text-only run downloads a bare
+  **`.md`**. The zip is written by a tiny dependency-free **store-method**
+  `zipStore` (PNGs are already deflated, so no compression — local headers +
+  central directory + a hand-rolled `crc32`). The iframe can't touch the
+  filesystem, so it downloads via a `Blob` + `<a download>` click.
+- **PDF** (`htmlSink` → `sessionToHtml` → `printSession`). A self-contained
+  light-themed HTML doc (inline `PRINT_CSS` + the bundled Atom One *light* hljs
+  theme, images inlined — a print doc has nowhere to put sidecars), loaded into an
+  **offscreen iframe** (`.printframe`, off-page rather than `display:none`, which
+  wouldn't lay out) from a Blob URL, then `contentWindow.print()` → the user picks
+  "Save as PDF". Chrome seeds that **filename from the doc's `<title>`**, so it's
+  set to the same `ml-agent-<hash>` base as the `.md` (a blank title falls back to
+  the `blob:` URL). `@page` margins + `break-inside: avoid` on images/code/notes
+  are the reason this isn't just the sidebar's stylesheet. The doc renders at the
+  **extension's origin**, so the HTML sink pushes every dynamic string through
+  `escapeHtml`/`markdown()`/`highlight()` (all three escape) — a hostile tool
+  result or model reply can never inject markup. Disclosures are `<details open>`:
+  a collapsed one prints as just its summary. Cleanup rides `afterprint` plus a
+  long fallback timer, so a dismissed dialog can't leak the frame.
 
 **Sources.** When a tool/RAG runs, OpenWebUI attaches provenance — top-level
 `data.sources` (non-stream) or its own SSE line `{ sources: [...] }` (stream,

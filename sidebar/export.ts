@@ -1,20 +1,40 @@
-// Export a session as a shareable bundle: run.md + real PNG sidecars, zipped.
-// A coding assistant can open a .png but can't "see" a base64 blob, so screenshots
-// ship as files (images/*.png) and a text-only run downloads a bare .md. Includes a
-// tiny dependency-free store-method ZIP writer (PNGs are already deflated). Extracted
-// from app.tsx.
+// Export a session in two shapes, from ONE traversal:
+//   • Markdown  — run.md + real PNG sidecars, zipped (a coding assistant can open
+//     a .png but can't "see" a base64 blob, so screenshots ship as files).
+//   • PDF       — a self-contained printable HTML document rendered into a hidden
+//     iframe, then window.print() → the user picks "Save as PDF". Images are
+//     inlined (a print doc has nowhere to put sidecars).
+// The two differ only in how each piece of the log is written down, so the walk
+// over the Session lives in writeAgent/writeChat and emits through a `Sink`
+// (markdown ⇄ HTML). Adding a third format means adding a sink, not a walker.
+// Includes a tiny dependency-free store-method ZIP writer (PNGs are already
+// deflated). Extracted from app.tsx.
+import atomOneLight from "highlight.js/styles/atom-one-light.css";
 import { sessionMap } from "./store";
 import type { Session } from "./store";
-import { pretty, fullStamp, beautifyJs } from "./format";
+import { pretty, fullStamp, beautifyJs, escapeHtml, highlight, markdown } from "./format";
 import { annotatedConfig, resolveModel, shownModel } from "./model";
 
-// --- Export a session as a bundle: run.md + image sidecars -----------------
-// A run's screenshots must ship as real PNG files, not base64 in the markdown —
-// a coding assistant can open a .png but can't "see" a base64 blob. So an export
-// with any images downloads a .zip (run.md + images/*.png); a text-only run
-// downloads a bare .md. `addImage` collects sidecars and returns the ref path.
 type Sidecar = { name: string; bytes: Uint8Array };
-type AddImage = (dataUrl: string, base: string) => string | null;
+
+// --- the sink: the vocabulary the log is written in ------------------------
+// Deliberately small and *semantic* (a note, a labelled block, a bit of prose) —
+// never "bold this". Each sink then renders those meanings the way its medium
+// wants: markdown emits `> _…_`, HTML emits `<p class="note">`.
+interface Sink {
+    title(text: string): void;                       // the document's one h1
+    meta(pairs: [string, string][]): void;           // the header key/value list
+    head(text: string): void;                        // section (step / turn / options)
+    sub(text: string): void;                         // sub-heading (a locate substep)
+    prose(text: string, muted?: boolean): void;      // free text — model/user markdown
+    note(text: string, plain?: boolean): void;       // an aside (italic unless `plain`)
+    code(text: string, lang?: string): void;         // a code block
+    block(label: string, text: string, lang?: string): void;   // "In:" + a code block
+    speech(who: string, paren: string | null, text: string, muted?: boolean): void;
+    inline(label: string, value: string, opts?: { code?: boolean; muted?: boolean }): void;
+    image(src: string, base: string, alt: string): void;       // `base` names the sidecar
+    details(summary: string, body: () => void): void;          // collapsed disclosure
+}
 
 // A fenced block whose fence is longer than any backtick run inside it.
 function fence(text: string, lang = ""): string {
@@ -38,14 +58,77 @@ function dataUrlToBytes(url: string): { bytes: Uint8Array; ext: string } | null 
     } catch { return null; }
 }
 
-function agentToMarkdown(s: Session, addImage: AddImage): string {
+// --- markdown sink ---------------------------------------------------------
+// Screenshots become `images/…` sidecars; a data-URL that won't decode degrades
+// to an italic placeholder, so a broken image never breaks the export.
+function mdSink() {
     const o: string[] = [];
-    o.push(`# Agent run · ${s.model || "default"} · ${s.hash}`, "");
-    o.push(`- **Task:** ${s.task || ""}`);
-    o.push(`- **Started:** ${fullStamp(s.createdTs)}`);
-    o.push(`- **Finished:** ${fullStamp(s.lastTs)}`);
-    o.push(`- **Steps:** ${(s.steps || []).length}${s.maxSteps ? ` / ${s.maxSteps}` : ""}`);
-    o.push(`- **Outcome:** ${s.hitCap ? "stopped (step cap)" : s.status === "err" ? "error" : s.summary != null ? "answered" : "running"}`, "");
+    const images: Sidecar[] = [];
+    const em = (t: string, on?: boolean) => (on ? `_${t}_` : t);
+    const sink: Sink = {
+        title: (t) => o.push(`# ${t}`, ""),
+        meta: (pairs) => { for (const [k, v] of pairs) o.push(`- **${k}:** ${v}`); o.push(""); },
+        head: (t) => o.push(`## ${t}`, ""),
+        sub: (t) => o.push(`**${t}**`, ""),
+        prose: (t, muted) => o.push(em(t, muted), ""),
+        note: (t, plain) => o.push(`> ${em(t, !plain)}`, ""),
+        code: (t, lang) => o.push(fence(t, lang), ""),
+        block: (label, t, lang) => o.push(`**${label}:**`, "", fence(t, lang), ""),
+        // `**User:**` (colon inside the bold) vs `**Assistant** (model):` — the
+        // model attribution isn't part of the speaker's name.
+        speech: (who, paren, t, muted) => o.push(paren ? `**${who}** (${paren}):` : `**${who}:**`, "", em(t, muted), ""),
+        inline: (label, v, opts) => o.push(`**${label}:** ${opts?.code ? `\`${v}\`` : em(v, opts?.muted)}`, ""),
+        image: (src, base, alt) => {
+            const dec = dataUrlToBytes(src);
+            if (!dec) { o.push(`_🖼️ ${alt} (image unavailable)_`, ""); return; }
+            const name = `images/${base}.${dec.ext}`;
+            images.push({ name, bytes: dec.bytes });
+            o.push(`![${alt}](${name})`, "");
+        },
+        details: (summary, body) => { o.push(`<details><summary>${summary}</summary>`, ""); body(); o.push("</details>", ""); },
+    };
+    return { sink, done: () => ({ md: o.join("\n"), images }) };
+}
+
+// --- HTML sink -------------------------------------------------------------
+// Every dynamic string goes through escapeHtml / markdown() / highlight() — all
+// three escape — so a hostile thought or tool result can't inject markup into a
+// document that renders at the extension's origin. Disclosures are `open`, since
+// a collapsed <details> prints as just its summary.
+function htmlSink() {
+    const o: string[] = [];
+    const em = (t: string, on?: boolean) => (on ? `<em class="muted">${escapeHtml(t)}</em>` : escapeHtml(t));
+    const pre = (t: string, lang?: string) => `<pre class="code"><code class="hljs">${highlight(t, lang)}</code></pre>`;
+    const sink: Sink = {
+        title: (t) => o.push(`<h1>${escapeHtml(t)}</h1>`),
+        meta: (pairs) => o.push(`<dl class="meta">${pairs.map(([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v)}</dd>`).join("")}</dl>`),
+        head: (t) => o.push(`<h2>${escapeHtml(t)}</h2>`),
+        sub: (t) => o.push(`<h3>${escapeHtml(t)}</h3>`),
+        prose: (t, muted) => o.push(muted ? `<p>${em(t, true)}</p>` : `<div class="md">${markdown(t)}</div>`),
+        note: (t, plain) => o.push(`<p class="note">${plain ? escapeHtml(t) : `<em>${escapeHtml(t)}</em>`}</p>`),
+        code: (t, lang) => o.push(pre(t, lang)),
+        block: (label, t, lang) => o.push(`<p class="lbl">${escapeHtml(label)}:</p>`, pre(t, lang)),
+        speech: (who, paren, t, muted) => {
+            o.push(`<p class="lbl">${escapeHtml(who)}${paren ? ` <span class="dim">(${escapeHtml(paren)})</span>` : ""}:</p>`);
+            sink.prose(t, muted);
+        },
+        inline: (label, v, opts) => o.push(`<p class="lbl">${escapeHtml(label)}: ${opts?.code ? `<code>${escapeHtml(v)}</code>` : `<span class="val">${em(v, opts?.muted)}</span>`}</p>`),
+        image: (src, _base, alt) => o.push(`<img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}">`),
+        details: (summary, body) => { o.push(`<details open><summary>${escapeHtml(summary)}</summary>`); body(); o.push("</details>"); },
+    };
+    return { sink, done: () => o.join("\n") };
+}
+
+// --- the walk (one per session kind), written through a Sink ---------------
+function writeAgent(s: Session, d: Sink): void {
+    d.title(`Agent run · ${s.model || "default"} · ${s.hash}`);
+    d.meta([
+        ["Task", s.task || ""],
+        ["Started", fullStamp(s.createdTs)],
+        ["Finished", fullStamp(s.lastTs)],
+        ["Steps", `${(s.steps || []).length}${s.maxSteps ? ` / ${s.maxSteps}` : ""}`],
+        ["Outcome", s.hitCap ? "stopped (step cap)" : s.status === "err" ? "error" : s.summary != null ? "answered" : "running"],
+    ]);
     const c = s.agentConfig;
     if (c) {
         const lines = [`model: ${s.model || "default"}`, `maxSteps: ${c.maxSteps}`];
@@ -54,8 +137,9 @@ function agentToMarkdown(s: Session, addImage: AddImage): string {
         if (c.vision != null && c.vision !== true) lines.push(`vision: ${JSON.stringify(c.vision)}`);
         if (c.hints) lines.push(`hints: ${c.hints}`);
         lines.push(`tools (${c.tools.length}): ${c.tools.map(t => t.name + (t.requiresApproval ? " ⚠" : "")).join(", ")}`);
-        o.push("## Agent options", "", fence(lines.join("\n")), "");
-        o.push(`<details><summary>System prompt${c.customSystem ? " (custom)" : ""}</summary>`, "", fence(c.system), "", "</details>", "");
+        d.head("Agent options");
+        d.code(lines.join("\n"));
+        d.details(`System prompt${c.customSystem ? " (custom)" : ""}`, () => d.code(c.system));
     }
     for (const st of s.steps || []) {
         // Skip an empty step — a thinking-model's usage-only emit (no thought/tool,
@@ -63,90 +147,136 @@ function agentToMarkdown(s: Session, addImage: AddImage): string {
         // a bare "Step N · ?" header. (A `think:true` step puts its reasoning in the
         // separate thinking channel, so its content-thought is empty.)
         if (st.tool == null && !st.thought) continue;
-        if (st.tool == null && st.thought != null) { o.push(`## Step ${st.step} · thought`, "", st.thought, ""); continue; }
-        o.push(`## Step ${st.step} · ${st.tool || "?"}`, "");
-        if (st.approval) o.push(`> _${st.approval === "readonly" ? "auto-approved (read-only)" : st.approval === "user" ? "approved by user" : "denied by user"}_`, "");
-        if (st.thought) o.push(st.thought, "");
+        if (st.tool == null && st.thought != null) { d.head(`Step ${st.step} · thought`); d.prose(st.thought); continue; }
+        d.head(`Step ${st.step} · ${st.tool || "?"}`);
+        if (st.approval) d.note(st.approval === "readonly" ? "auto-approved (read-only)" : st.approval === "user" ? "approved by user" : "denied by user");
+        if (st.thought) d.prose(st.thought);
         if (st.arguments && Object.keys(st.arguments).length) {
             const js = st.tool === "exec" && typeof st.arguments.js === "string" ? st.arguments.js : null;
-            o.push("**In:**", "", js ? fence(beautifyJs(js), "javascript") : fence(pretty(st.arguments), "json"), "");
+            if (js) d.block("In", beautifyJs(js), "javascript");
+            else d.block("In", pretty(st.arguments), "json");
         }
-        if (st.argIssues && st.argIssues.length) o.push(`> ⚠ arg issues: ${st.argIssues.join("; ")}`, "");
+        if (st.argIssues && st.argIssues.length) d.note(`⚠ arg issues: ${st.argIssues.join("; ")}`, true);
         if (st.render && st.render.type === "image") {
             const label = st.render.label ? ` — ${st.render.label}` : "";
-            const ref = addImage(st.render.src, `step-${st.step}`);
-            o.push(ref ? `![step ${st.step}${label}](${ref})` : `_🖼️ screenshot${label} (image unavailable)_`, "");
+            d.image(st.render.src, `step-${st.step}`, `step ${st.step}${label}`);
         } else if (st.render && st.render.type === "locate") {
             // The full locate debug view as substeps, mirroring the sidebar's render.
             const r = st.render;
             // Flag a sub-call that ran on the SAME model as the driver — it was still
             // standalone (image + reply not in the driver's context).
             const delegated = r.model && r.model === s.model ? " · standalone sub-call (not in the agent's context)" : "";
-            o.push(`> _${r.mode === "grounding" ? "Grounding" : r.mode === "grid-grounding" ? "Grid → Grounding" : r.mode === "grid" ? "Grid" : "Set-of-Marks"} · ${r.model}${delegated}_`, "");
+            d.note(`${r.mode === "grounding" ? "Grounding" : r.mode === "grid-grounding" ? "Grid → Grounding" : r.mode === "grid" ? "Grid" : "Set-of-Marks"} · ${r.model}${delegated}`);
             r.substeps.forEach((sub, i) => {
-                if (sub.note) o.push(`> _${sub.note}_`, "");
-                o.push(`**${i + 1} · ${sub.label}**`, "");
-                if (sub.prompt) o.push("<details><summary>In (prompt)</summary>", "", fence(sub.prompt), "", "</details>", "");
-                const iref = sub.image && addImage(sub.image, `step-${st.step}-sub${i + 1}`);
-                if (iref) o.push(`![step ${st.step} sub-step ${i + 1}](${iref})`, "");
+                if (sub.note) d.note(sub.note);
+                d.sub(`${i + 1} · ${sub.label}`);
+                if (sub.prompt) d.details("In (prompt)", () => d.code(sub.prompt!));
+                if (sub.image) d.image(sub.image, `step-${st.step}-sub${i + 1}`, `step ${st.step} sub-step ${i + 1}`);
                 // The exact image sent to the model (raw), when it differs from the overlay.
-                const rref = sub.rawImage && sub.rawImage !== sub.image && addImage(sub.rawImage, `step-${st.step}-sub${i + 1}-raw`);
-                if (rref) o.push(`<details><summary>raw (image sent to the model)</summary>`, "", `![step ${st.step} sub-step ${i + 1} raw](${rref})`, "", "</details>", "");
-                // Out: inline for a short, backtick-free one-liner; otherwise a fenced block
-                // (multi-line / long / contains backticks). `fence` sizes its fence longer than
-                // any backtick run inside, so raw model output is preserved verbatim — never
-                // stripped — which is the whole point of showing Out in a debug view.
+                if (sub.rawImage && sub.rawImage !== sub.image)
+                    d.details("raw (image sent to the model)", () => d.image(sub.rawImage!, `step-${st.step}-sub${i + 1}-raw`, `step ${st.step} sub-step ${i + 1} raw`));
+                // Out: inline for a short, backtick-free one-liner; otherwise a block
+                // (multi-line / long / contains backticks). The markdown sink sizes its
+                // fence longer than any backtick run inside, so raw model output is
+                // preserved verbatim — never stripped — which is the whole point of
+                // showing Out in a debug view.
                 if (sub.output != null && sub.output !== "") {
-                    if (/[\n`]/.test(sub.output) || sub.output.length > 80) o.push("**Out:**", "", fence(sub.output), "");
-                    else o.push(`**Out:** \`${sub.output}\``, "");
+                    if (/[\n`]/.test(sub.output) || sub.output.length > 80) d.block("Out", sub.output);
+                    else d.inline("Out", sub.output, { code: true });
                 }
             });
-            o.push(`**${r.pickedBy === "model" ? "Model picked" : "Snapped to"}:** ${r.picked || "_(none)_"}`, "");
+            d.inline(r.pickedBy === "model" ? "Model picked" : "Snapped to", r.picked || "(none)", { muted: !r.picked });
         }
-        if (st.result != null && st.result !== "") o.push("**Out:**", "", fence(st.result), "");
-        else if (st.elements != null) o.push(`**Out:** ${st.elements} element(s)`, "");
+        if (st.result != null && st.result !== "") d.block("Out", st.result);
+        else if (st.elements != null) d.inline("Out", `${st.elements} element(s)`);
     }
-    o.push(`## ${s.hitCap ? "Stopped (step cap)" : "Answer"}`, "", s.summary || "_(no answer — run did not complete)_", "");
-    return o.join("\n");
+    d.head(s.hitCap ? "Stopped (step cap)" : "Answer");
+    d.prose(s.summary || "(no answer — run did not complete)", !s.summary);
 }
 
-function chatToMarkdown(s: Session, addImage: AddImage): string {
-    const o: string[] = [];
-    o.push(`# Chat · ${shownModel(s)} · ${s.hash}`, "");
-    if (s.title) o.push(`- **Title:** ${s.title}`);
-    o.push(`- **Started:** ${fullStamp(s.createdTs)}`);
-    o.push(`- **Last activity:** ${fullStamp(s.lastTs)}`);
-    o.push(`- **Type:** ${s.tag}`, "");
-    o.push("## Options", "", fence(annotatedConfig(s.config), "javascript"), "");
+function writeChat(s: Session, d: Sink): void {
+    d.title(`Chat · ${shownModel(s)} · ${s.hash}`);
+    const meta: [string, string][] = [];
+    if (s.title) meta.push(["Title", s.title]);
+    meta.push(["Started", fullStamp(s.createdTs)], ["Last activity", fullStamp(s.lastTs)], ["Type", s.tag]);
+    d.meta(meta);
+    d.head("Options");
+    d.code(annotatedConfig(s.config), "javascript");
     s.turns.forEach((t, i) => {
-        o.push(`## Turn ${i + 1} · ${fullStamp(t.ts)}`, "");
-        o.push("**User:**", "", t.user || "", "");
-        (t.images || []).forEach((img, j) => {
-            const ref = addImage(img, `turn-${i + 1}-img-${j + 1}`);
-            if (ref) o.push(`![turn ${i + 1} image ${j + 1}](${ref})`, "");
-        });
-        if (t.reasoning) o.push("<details><summary>Thinking</summary>", "", t.reasoning, "", "</details>", "");
-        if (t.status === "err") o.push(`**Error:** ${t.error || "(unknown)"}`, "");
-        else o.push(`**Assistant** (${t.model || resolveModel(t.reqModel, t.extend)}):`, "", t.assistant || "_(no reply)_", "");
-        if (t.sources && t.sources.length) o.push(`**Sources (${t.sources.length}):**`, "", fence(pretty(t.sources), "json"), "");
+        d.head(`Turn ${i + 1} · ${fullStamp(t.ts)}`);
+        d.speech("User", null, t.user || "");
+        (t.images || []).forEach((img, j) => d.image(img, `turn-${i + 1}-img-${j + 1}`, `turn ${i + 1} image ${j + 1}`));
+        if (t.reasoning) d.details("Thinking", () => d.prose(t.reasoning!));
+        if (t.status === "err") d.inline("Error", t.error || "(unknown)");
+        else d.speech("Assistant", t.model || resolveModel(t.reqModel, t.extend), t.assistant || "(no reply)", !t.assistant);
+        if (t.sources && t.sources.length) d.block(`Sources (${t.sources.length})`, pretty(t.sources), "json");
     });
-    return o.join("\n");
 }
 
-// Serialise a session to `{ md, images }`. addImage decodes each data-URL into a
-// sidecar and returns its `images/…` ref (or null → the markdown notes it as
-// unavailable, so a decode failure never breaks the export).
+const writeSession = (s: Session, d: Sink): void => (s.kind === "agent" ? writeAgent(s, d) : writeChat(s, d));
+
+// Serialise a session to `{ md, images }` — the markdown references each image as
+// `images/…`, and the bytes ride alongside as sidecars for the zip.
 function serializeSession(s: Session): { md: string; images: Sidecar[] } {
-    const images: Sidecar[] = [];
-    const addImage: AddImage = (dataUrl, base) => {
-        const dec = dataUrlToBytes(dataUrl);
-        if (!dec) return null;
-        const name = `images/${base}.${dec.ext}`;
-        images.push({ name, bytes: dec.bytes });
-        return name;
-    };
-    const md = (s.kind === "agent" ? agentToMarkdown(s, addImage) : chatToMarkdown(s, addImage)) + "\n";
-    return { md, images };
+    const { sink, done } = mdSink();
+    writeSession(s, sink);
+    const { md, images } = done();
+    return { md: md + "\n", images };
+}
+
+// --- printable document ----------------------------------------------------
+// Standalone, self-contained (inline CSS, inline images) and light-themed — it's
+// headed for paper/PDF, not the sidebar's dark panel. `@page` + the break rules
+// are the whole reason this isn't just the sidebar's stylesheet: a screenshot or
+// a code block split across a page boundary is unreadable.
+const PRINT_CSS = `
+@page { margin: 14mm; }
+* { box-sizing: border-box; }
+body { margin: 0; color: #18181b; background: #fff;
+  font: 11pt/1.55 system-ui, -apple-system, "Segoe UI", sans-serif; }
+.doc { max-width: 190mm; margin: 0 auto; padding: 8mm 0; }
+h1 { font-size: 1.5em; margin: 0 0 .5em; }
+h2 { font-size: 1.15em; margin: 1.5em 0 .4em; padding-top: .35em; border-top: 1px solid #d4d4d8; }
+h3 { font-size: 1em; margin: 1.1em 0 .3em; color: #3f3f46; }
+h1, h2, h3, .lbl, summary { break-after: avoid; }
+p { margin: 0 0 .5em; }
+dl.meta { margin: 0 0 1em; display: grid; grid-template-columns: max-content 1fr; gap: 2px 10px; }
+dl.meta dt { color: #52525b; font-weight: 600; }
+dl.meta dd { margin: 0; }
+.lbl { margin: .8em 0 .25em; font-weight: 600; color: #3f3f46; }
+.lbl .dim { font-weight: 400; color: #71717a; }
+.note { margin: .4em 0; padding: .3em .6em; border-left: 3px solid #a1a1aa;
+  background: #f4f4f5; color: #3f3f46; break-inside: avoid; }
+.muted { color: #71717a; }
+img { max-width: 100%; height: auto; margin: .4em 0; border: 1px solid #d4d4d8;
+  border-radius: 3px; break-inside: avoid; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+pre.code { margin: .3em 0 .7em; padding: .6em .7em; background: #f4f4f5; border: 1px solid #e4e4e7;
+  border-radius: 4px; font-size: .85em; line-height: 1.45;
+  white-space: pre-wrap; word-break: break-word; break-inside: avoid; }
+:not(pre) > code { background: #f4f4f5; border-radius: 3px; padding: 0 3px; font-size: .9em; }
+details { margin: .3em 0 .6em; }
+summary { color: #52525b; cursor: default; }
+.md > :first-child { margin-top: 0; }
+.md ul { margin: .3em 0; padding-left: 1.2em; }
+.md a { color: #4338ca; }
+table { border-collapse: collapse; }
+/* Long unbroken tokens (selectors, data URLs) must wrap, not overflow the page. */
+.doc { overflow-wrap: break-word; }
+`;
+
+// A full standalone HTML document for the session. The <title> matters: Chrome
+// seeds the "Save as PDF" filename from it.
+function sessionToHtml(s: Session, docTitle: string): string {
+    const { sink, done } = htmlSink();
+    writeSession(s, sink);
+    return `<!doctype html>
+<html><head><meta charset="utf-8"><title>${escapeHtml(docTitle)}</title>
+<style>${atomOneLight}</style>
+<style>${PRINT_CSS}</style>
+</head><body><div class="doc">
+${done()}
+</div></body></html>`;
 }
 
 // --- minimal ZIP writer (store / no compression — PNGs are already deflated,
@@ -203,11 +333,48 @@ function downloadBlob(name: string, blob: Blob): void {
     document.body.append(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 0);
 }
+
+const baseName = (s: Session): string => `ml-${s.kind === "agent" ? "agent" : "chat"}-${s.hash}`;
+
 export function exportSession(hash: string): void {
     const s = sessionMap.get(hash);
     if (!s) return;
-    const base = `ml-${s.kind === "agent" ? "agent" : "chat"}-${hash}`;
+    const base = baseName(s);
     const { md, images } = serializeSession(s);
     if (!images.length) { downloadBlob(`${base}.md`, new Blob([md], { type: "text/markdown" })); return; }
     downloadBlob(`${base}.zip`, zipStore([{ name: "run.md", bytes: new TextEncoder().encode(md) }, ...images]));
+}
+
+// Print the session → the user chooses "Save as PDF" (or a real printer). We
+// render into an offscreen iframe rather than printing the sidebar itself: the
+// panel is a narrow dark scroll-box with collapsed disclosures, none of which
+// belongs on paper. The doc is loaded from a Blob URL (a multi-megabyte srcdoc
+// attribute of inlined screenshots is wasteful) — same-origin, so we can reach
+// contentWindow.print(). Chrome's print() blocks until the dialog closes, but we
+// clean up on `afterprint` (plus a long fallback) so a dismissed dialog can't
+// leak the frame either way.
+const PRINT_CLEANUP_MS = 120_000;
+export function printSession(hash: string): void {
+    const s = sessionMap.get(hash);
+    if (!s) return;
+    const url = URL.createObjectURL(new Blob([sessionToHtml(s, baseName(s))], { type: "text/html" }));
+    const frame = document.createElement("iframe");
+    frame.className = "printframe";
+    frame.setAttribute("aria-hidden", "true");
+    let cleaned = false;
+    const cleanup = () => {
+        if (cleaned) return;
+        cleaned = true;
+        frame.remove();
+        URL.revokeObjectURL(url);
+    };
+    frame.onload = () => {
+        const w = frame.contentWindow;
+        if (!w) { cleanup(); return; }
+        setTimeout(cleanup, PRINT_CLEANUP_MS);
+        w.addEventListener("afterprint", cleanup);
+        try { w.focus(); w.print(); } catch { cleanup(); }
+    };
+    frame.src = url;
+    document.body.append(frame);
 }

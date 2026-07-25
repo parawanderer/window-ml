@@ -1025,17 +1025,44 @@ test("code display prefs: wrap⇄scroll + line-number toggles flip root attrs an
     assert.equal(w.localStore.ml_debug_codelines, true, "line numbers persisted");
 });
 
-// Capture what the "Export log" button downloads: stub the object-URL + anchor
-// click (jsdom has neither URL.createObjectURL nor real navigation) and read back
-// the Blob it built. Returns { name, blob }.
+// Open the export menu and click one of its format items ("Markdown" / "PDF").
+async function openExportMenu(w, label) {
+    w.shadow.querySelector('[aria-label="Export log"]').click();
+    await w.tick();
+    const item = [...w.shadow.querySelectorAll(".menu-item")].find(b => b.textContent.startsWith(label));
+    assert.ok(item, `export menu offers "${label}"`);
+    return item;
+}
+
+// Capture what the export menu's "Markdown" item downloads: stub the object-URL +
+// anchor click (jsdom has neither URL.createObjectURL nor real navigation) and
+// read back the Blob it built. Returns { name, blob }.
 async function captureExport(w) {
     let blob = null, name = null;
     w.window.URL.createObjectURL = (b) => { blob = b; return "blob:mock"; };
     w.window.URL.revokeObjectURL = () => {};
     w.window.HTMLAnchorElement.prototype.click = function () { name = this.download; };
-    w.shadow.querySelector('[aria-label="Export log"]').click();
+    (await openExportMenu(w, "Markdown")).click();
     await w.tick();
     return { name, blob };
+}
+
+// The text a browser would show for some markup: drop the tags (hljs wraps every
+// token in a span), then undo the entity escaping. Lets a test assert on the
+// source that reaches the page without hard-coding the highlighter's output.
+const plainText = (html) => html.replace(/<[^>]*>/g, "")
+    .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
+
+// Capture the printable document the "PDF" item builds: it loads an offscreen
+// iframe from a Blob URL, so stub createObjectURL and read the HTML back.
+async function capturePrint(w) {
+    let blob = null;
+    w.window.URL.createObjectURL = (b) => { blob = b; return "blob:mock-print"; };
+    w.window.URL.revokeObjectURL = () => {};
+    (await openExportMenu(w, "PDF")).click();
+    await w.tick();
+    const frame = w.window.document.querySelector("iframe.printframe");
+    return { frame, html: blob ? await blob.text() : null };
 }
 
 test("export: an image-free agent run downloads a plain markdown log", async () => {
@@ -1186,6 +1213,89 @@ test("export: a chat session downloads a markdown log (options, turns, reply)", 
     assert.match(text, /## Turn 1 ·/);
     assert.match(text, /\*\*User:\*\*\n\nwhat is 2\+2/);
     assert.match(text, /\*\*Assistant\*\* \(qwen3:14b\):\n\nIt is \*\*4\*\*\./);
+});
+
+test("export menu: offers both formats, and closes once one is picked", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("expm", "look around", "gemma4:31b"));
+    await w.dispatch(agentResult("expm", "done", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+
+    const trigger = w.shadow.querySelector('[aria-label="Export log"]');
+    assert.ok(!w.shadow.querySelector(".menu"), "menu is closed until asked for");
+    trigger.click();
+    await w.tick();
+    assert.deepEqual([...w.shadow.querySelectorAll(".menu-item")].map(b => b.firstChild.textContent),
+        ["Markdown", "PDF"], "both export formats offered");
+    assert.equal(trigger.getAttribute("aria-expanded"), "true");
+
+    w.window.URL.createObjectURL = () => "blob:mock";
+    w.window.URL.revokeObjectURL = () => {};
+    w.window.HTMLAnchorElement.prototype.click = function () {};
+    w.shadow.querySelector(".menu-item").click();
+    await w.tick();
+    assert.ok(!w.shadow.querySelector(".menu"), "picking a format closes the menu");
+});
+
+test("export menu: Escape closes it without exporting", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("expe", "look around", "gemma4:31b"));
+    await w.dispatch(agentResult("expe", "done", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    w.shadow.querySelector('[aria-label="Export log"]').click();
+    await w.flush();   // the key listener is registered in an effect (post-rAF)
+    assert.ok(w.shadow.querySelector(".menu"));
+    w.window.document.dispatchEvent(new w.window.KeyboardEvent("keydown", { key: "Escape" }));
+    await w.tick();
+    assert.ok(!w.shadow.querySelector(".menu"), "Escape dismisses the menu");
+});
+
+test("export → PDF: builds a self-contained printable document in an offscreen frame", async () => {
+    const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    const src = "data:image/png;base64," + PNG;
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("expp", "hide slow items", "gemma4:31b", 60));
+    await w.dispatch(agentStep("expp", 1, { tool: "look", render: { type: "image", src, label: "viewport" }, result: "a page" }));
+    await w.dispatch(agentStep("expp", 2, { tool: "exec", arguments: { js: "items.forEach(i=>i.remove())" }, result: "Hidden 38 items." }));
+    await w.dispatch(agentResult("expp", "I hid all **slow** items.", 2));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+
+    const { frame, html } = await capturePrint(w);
+    assert.ok(frame, "an offscreen print frame is appended");
+    assert.equal(frame.getAttribute("src"), "blob:mock-print", "loaded from the document blob");
+    assert.match(html, /^<!doctype html>/);
+    // Chrome seeds the "Save as PDF" filename from the title.
+    assert.match(html, /<title>ml-agent-expp<\/title>/, "titled like the .md export, for the PDF filename");
+    assert.match(html, /@page\s*\{[^}]*margin/, "print margins");
+    assert.match(html, /white-space: pre-wrap/, "code wraps instead of clipping off the page");
+    assert.match(html, /<h1>Agent run · gemma4:31b · expp<\/h1>/);
+    assert.match(html, /<h2>Step 1 · look<\/h2>/);
+    assert.ok(html.includes(`<img src="${src}"`), "screenshots are inlined (a print doc has no sidecars)");
+    // Code is syntax-highlighted, so read the source back through the tokens.
+    assert.match(plainText(html), /items\.forEach\(i => i\.remove\(\)\)/, "exec JS is beautified");
+    assert.ok(!/i=>i\.remove/.test(html), "the cramped original was reflowed");
+    assert.match(html, /Hidden 38 items\./);
+    assert.match(html, /<strong>slow<\/strong>/, "the answer's markdown is rendered, not shown raw");
+});
+
+test("export → PDF: a chat run renders turns, and hostile content can't inject markup", async () => {
+    const w = await loadSidebarWorld();
+    // The printable doc renders at the extension's origin, so every dynamic string
+    // (a model reply here) must be escaped, never passed through as markup.
+    await w.dispatch(chatStart("expx", 0, "hi", { model: "qwen3:14b" }));
+    await w.dispatch(chatResult("expx", 0, "<script>alert(1)</script><img src=x onerror=alert(2)>", { model: "qwen3:14b" }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+
+    const { html } = await capturePrint(w);
+    assert.match(html, /<h1>Chat · qwen3:14b · expx<\/h1>/);
+    assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/, "script tag escaped");
+    assert.ok(!/<script/.test(html), "no live script element");
+    assert.ok(!/<img[^>]*onerror/.test(html), "no injected event handler — only the escaped text");
+    assert.match(plainText(html), /<img src=x onerror=alert\(2\)>/, "…and the reply still reads verbatim");
 });
 
 test("clicking a debug image opens the full-window lightbox (posts src to the shell)", async () => {

@@ -274,6 +274,29 @@ details.io[open] > summary .io-preview { display: none; }
 .hash.copyable { cursor: pointer; }
 .hash.copyable:hover { color: var(--fg); border-color: var(--fg-dim); }
 
+/* ----------------------------- dropdown menu ---------------------------- */
+/* A header button + a small menu under it (the export-format picker). Anchored
+   right so it can't spill past the panel's edge on a narrow sidebar. */
+.menuwrap { position: relative; display: inline-flex; align-items: center; }
+.menu {
+    position: absolute; top: calc(100% + 5px); right: 0; z-index: 20;
+    display: flex; flex-direction: column; min-width: 160px; padding: 4px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+    box-shadow: 0 4px 14px rgba(0,0,0,.4);
+}
+.menu-item {
+    display: flex; flex-direction: column; gap: 1px; text-align: left;
+    background: none; border: none; border-radius: 4px; padding: 5px 8px;
+    color: var(--fg); font: inherit; cursor: pointer;
+}
+.menu-item:hover { background: var(--panel-2); }
+.menu-hint { color: var(--fg-faint); font-size: 0.83em; }
+
+/* Offscreen (but rendered — display:none would never lay out) document we print
+   from. It's a separate document with its own print stylesheet, so nothing about
+   the panel's dark, narrow, scrolling layout reaches the page. */
+.printframe { position: fixed; left: -10000px; top: 0; width: 210mm; height: 297mm; border: 0; }
+
 /* --------------------------- tooltip primitive -------------------------- */
 /* Wrap a trigger + a .tt-pop; the pop shows on hover. Default = right-anchored
    nowrap (for elements near the panel's right edge, e.g. hashes/copy icons).
