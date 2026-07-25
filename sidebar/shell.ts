@@ -96,6 +96,12 @@ function showLightbox(src: string): void {
     window.addEventListener("keydown", onLightboxKey);
 }
 
+// While the overlay is hidden for a shot it stops being a hit-test target, so a wheel
+// gesture you were mid-scroll on falls through to the page and moves it — corrupting the
+// very shot we're taking (and leaving the page scrolled). Pin the page scroll for the
+// hide→show window: snapshot the position and snap back on any scroll until we restore.
+let scrollPin: { x: number; y: number; onScroll: () => void } | null = null;
+
 function onWindowMessage(e: MessageEvent): void {
     const d = e.data;
     if (!d) return;
@@ -103,6 +109,12 @@ function onWindowMessage(e: MessageEvent): void {
     // isn't captured into the agent's `look`). Hide, then ack after two frames so
     // the hidden state has painted before the capture fires.
     if (d.__mlSidebarShot === "hide") {
+        if (!scrollPin) {
+            const x = window.scrollX, y = window.scrollY;
+            const onScroll = () => window.scrollTo(x, y);
+            window.addEventListener("scroll", onScroll, { passive: true });
+            scrollPin = { x, y, onScroll };
+        }
         if (shellHost) shellHost.style.visibility = "hidden";
         if (lightbox) lightbox.style.visibility = "hidden";   // full-viewport overlay — MUST hide too, else the shot is all backdrop
         requestAnimationFrame(() => requestAnimationFrame(() => window.postMessage({ __mlSidebarShot: "hidden" }, "*")));
@@ -111,6 +123,11 @@ function onWindowMessage(e: MessageEvent): void {
     if (d.__mlSidebarShot === "show") {
         if (shellHost) shellHost.style.visibility = "";
         if (lightbox) lightbox.style.visibility = "";
+        if (scrollPin) {
+            window.removeEventListener("scroll", scrollPin.onScroll);
+            window.scrollTo(scrollPin.x, scrollPin.y);   // final restore in case one slipped through
+            scrollPin = null;
+        }
         return;
     }
     // The iframe app asks to open an image full-window (ClickableImg).
