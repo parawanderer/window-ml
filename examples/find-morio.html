@@ -63,6 +63,13 @@
   <p id="hint" class="hint">🎯 Target: the <b>red Morio</b> — red cap &amp; shirt, blue overalls (the "real" one). All the
      others are the same little guy in a random colour. Click him to win. New scramble each reload / difficulty change.</p>
 
+  <div class="bar" style="margin-top:10px">
+    <button id="benchRun" class="mini">▶ Run accuracy benchmark</button>
+    <input id="benchN" type="number" min="1" value="10" style="width:56px" title="trials">
+    <span class="hint" style="margin-left:6px">runs <code>ml.agent</code> N times at the current difficulty, tallies wins — needs the extension + Ollama up. (Or <code>await benchMorio(20)</code> in the console.)</span>
+  </div>
+  <pre id="benchOut" style="display:none; white-space:pre-wrap; background:#12131a; border:1px solid #2a2c36; border-radius:8px; padding:12px; margin-top:8px; font:12px/1.5 ui-monospace,Menlo,monospace; color:#cdd"></pre>
+
   <div id="win" title="click anywhere to play again">
     <div class="msg">
       <h2>MORIO&nbsp;GET&nbsp;!</h2>
@@ -148,10 +155,23 @@
     console.log(`[find-morio] red Morio at (${Math.round(target.cx)}, ${Math.round(target.cy)}) among ${n}.`);
   }
 
+  // Benchmark hook: expose just enough for an automated accuracy loop (below).
+  const morio = {
+    build,                                 // rescramble: new target + layout
+    target: () => ({ ...target }),         // the red Morio's box (CSS px)
+    spriteCount: () => count,
+    won: () => win.classList.contains('show'),
+    lastClick: null,                       // set by the click handler, for distance-to-target
+    reset() { win.classList.remove('show'); win.querySelectorAll('.confetti').forEach(c => c.remove()); build(); },
+  };
+  window.__morio = morio;
+
   canvas.addEventListener('click', (e) => {
     const b = canvas.getBoundingClientRect();
     const x = e.clientX - b.left, y = e.clientY - b.top;
-    if (Math.abs(x - target.cx) <= target.hw && Math.abs(y - target.cy) <= target.hh) return victory();
+    const hit = Math.abs(x - target.cx) <= target.hw && Math.abs(y - target.cy) <= target.hh;
+    morio.lastClick = { x, y, hit };
+    if (hit) return victory();
     wrong++;
     log.textContent = `❌ (${Math.round(x)}, ${Math.round(y)}) isn't Morio. (${wrong} wrong click${wrong === 1 ? '' : 's'})`;
   });
@@ -183,6 +203,63 @@
   });
 
   window.addEventListener('resize', build);
+
+  // --- Automated accuracy benchmark -------------------------------------
+  // Runs ml.agent N times against fresh scrambles and tallies wins — the quick
+  // way to see whether a locate tweak helped or regressed. Console: benchMorio(20).
+  window.benchMorio = async function (n = 10, opts = {}) {
+    const ml = window.ml;
+    if (!ml || !ml.agent) throw new Error('window.ml is not ready — load the extension and reload the page.');
+    const task = opts.task ?? 'find the red Morio and click him';
+    const hints = opts.hints ?? "It's a canvas — use locate({ strategy: 'grounding' }) (or grid-grounding / grid, zooming in), then click the @pt:… token. If unsure, look() at the point first.";
+    const agentOpts = { tools: [ml.clickTool()], hints, maxSteps: opts.maxSteps ?? 12, ...(opts.agent || {}) };
+    const results = [];
+    for (let i = 0; i < n; i++) {
+      morio.reset();
+      morio.lastClick = null;
+      const tgt = morio.target();
+      const t0 = performance.now();
+      let steps = 0, hitCap = false, err = null;
+      try { const r = await ml.agent(task, agentOpts); steps = r.steps; hitCap = !!r.hitCap; }
+      catch (e) { err = (e && e.message) || String(e); }
+      const ms = Math.round(performance.now() - t0);
+      const won = morio.won();
+      const lc = morio.lastClick;
+      const dist = lc ? Math.round(Math.hypot(lc.x - tgt.cx, lc.y - tgt.cy)) : null;
+      const row = { trial: i + 1, won, steps, hitCap, ms, dist, err };
+      results.push(row);
+      (opts.onTrial || (() => {}))(row, results);
+      console.log(`[bench] ${i + 1}/${n}: ${won ? 'WIN ✓' : 'loss ✗'} · ${steps} steps · ${ms}ms${dist != null ? ` · ${dist}px off` : ''}${err ? ` · ERR ${err}` : ''}`);
+    }
+    const wins = results.filter(r => r.won).length;
+    const mean = k => results.length ? +(results.reduce((s, r) => s + (r[k] || 0), 0) / results.length).toFixed(1) : 0;
+    const summary = { n, wins, accuracy: +(100 * wins / n).toFixed(1), spriteCount: morio.spriteCount(), meanSteps: mean('steps'), meanMs: mean('ms'), results };
+    console.log(`[bench] === ${wins}/${n} = ${summary.accuracy}% · ${summary.spriteCount} sprites · mean ${summary.meanSteps} steps / ${summary.meanMs}ms ===`);
+    return summary;
+  };
+
+  const benchOut = document.getElementById('benchOut');
+  document.getElementById('benchRun').addEventListener('click', async (e) => {
+    const btn = e.currentTarget, label = btn.textContent;
+    const n = Math.max(1, +document.getElementById('benchN').value || 10);
+    btn.disabled = true; btn.textContent = 'Running…';
+    benchOut.style.display = 'block'; benchOut.textContent = `Running ${n} trials at ${morio.spriteCount()} sprites…`;
+    const fmt = all => {
+      const wins = all.filter(r => r.won).length;
+      return `${wins}/${all.length} wins so far…\n\n` + all.map(r =>
+        `${String(r.trial).padStart(2)}. ${r.won ? '✓' : '✗'}  ${String(r.steps).padStart(2)} steps  ${String(r.ms).padStart(6)}ms` +
+        `${r.dist != null ? `  ${String(r.dist).padStart(4)}px off` : ''}${r.hitCap ? '  (hit cap)' : ''}${r.err ? `  ⚠ ${r.err}` : ''}`).join('\n');
+    };
+    try {
+      const s = await window.benchMorio(n, { onTrial: (_row, all) => { benchOut.textContent = fmt(all); } });
+      benchOut.textContent += `\n\n════════════════\n${s.wins}/${s.n} = ${s.accuracy}% accuracy · ${s.spriteCount} sprites · mean ${s.meanSteps} steps, ${s.meanMs}ms`;
+    } catch (err) {
+      benchOut.textContent = 'Benchmark error: ' + ((err && err.message) || err);
+    } finally {
+      btn.disabled = false; btn.textContent = label;
+    }
+  });
+
   build();
 </script>
 </body>
