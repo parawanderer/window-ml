@@ -245,7 +245,7 @@ export function pickOverlayColor(dataUrl: string, avoidHues: number[] = [], pale
         img.onload = () => {
             const cv = document.createElement("canvas");
             cv.width = img.naturalWidth; cv.height = img.naturalHeight;
-            const ctx = cv.getContext("2d");
+            const ctx = cv.getContext("2d", { willReadFrequently: true });   // we sample pixels back (sampleHues)
             if (!ctx) return resolve(palette[0].hex);
             ctx.drawImage(img, 0, 0);
             resolve(pickOverlayHex(sampleHues(ctx, cv.width, cv.height), avoidHues, palette));
@@ -271,7 +271,7 @@ export function pickAccentColorForTarget(dataUrl: string, box: Rect, avoidHues: 
         img.onload = () => {
             const cv = document.createElement("canvas");
             cv.width = img.naturalWidth; cv.height = img.naturalHeight;
-            const ctx = cv.getContext("2d");
+            const ctx = cv.getContext("2d", { willReadFrequently: true });   // samples background + target hues
             if (!ctx) return resolve(ACCENT_PALETTE[0].hex);
             ctx.drawImage(img, 0, 0);
             const background = sampleHues(ctx, cv.width, cv.height);
@@ -425,7 +425,7 @@ export function annotate(dataUrl: string, boxes: Annot[], scale: number): Promis
         img.onload = () => {
             const cv = document.createElement("canvas");
             cv.width = img.naturalWidth; cv.height = img.naturalHeight;
-            const ctx = cv.getContext("2d");
+            const ctx = cv.getContext("2d", { willReadFrequently: true });   // regionBusyness reads back for float labels
             if (!ctx) return reject(new Error("no 2d canvas context for annotate"));
             ctx.drawImage(img, 0, 0);
             const fs = Math.round(13 * scale);
@@ -589,7 +589,7 @@ export function drawGrid(dataUrl: string, cols: number, rows: number, scale: num
         img.onload = () => {
             const cv = document.createElement("canvas");
             cv.width = img.naturalWidth; cv.height = img.naturalHeight;
-            const ctx = cv.getContext("2d");
+            const ctx = cv.getContext("2d", { willReadFrequently: true });   // sampleHues reads back to pick the line colour
             if (!ctx) return reject(new Error("no 2d canvas context for grid"));
             ctx.drawImage(img, 0, 0);
             const color = pickOverlayHex(sampleHues(ctx, cv.width, cv.height), avoidHues);
