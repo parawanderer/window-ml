@@ -217,7 +217,7 @@ details.io[open] > summary .io-preview { display: none; }
 .io-body { padding-left: 10px; }
 
 /* descriptor renderers */
-.r-image img { max-width: 100%; border-radius: 6px; border: 1px solid var(--border); display: block; }
+.r-image img { max-width: 100%; max-height: 320px; border-radius: 6px; border: 1px solid var(--border); display: block; }
 .r-image-label { color: var(--fg-faint); font-size: 0.85em; margin-top: 2px; }
 /* locate debug view: model/mode header, per-stage captioned images, picked footer. */
 .r-locate { display: flex; flex-direction: column; gap: 9px; }
@@ -225,7 +225,7 @@ details.io[open] > summary .io-preview { display: none; }
 .r-loc-delegated { color: var(--fg-faint); font-style: italic; font-size: 0.75em; margin-left: 0.6em; }
 /* image first, then the raw⇄visualise toggle below it (right-aligned) — no awkward gap. */
 .r-loc-stage { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
-.r-loc-stage img { max-width: 100%; border-radius: 6px; border: 1px solid var(--border); display: block; }
+.r-loc-stage img { max-width: 100%; max-height: 320px; border-radius: 6px; border: 1px solid var(--border); display: block; }
 .r-loc-note { color: var(--fg-faint); font-style: italic; font-size: 0.85em; margin-bottom: 1em; }
 /* one locate substep: a numbered [N] head, a collapsible In-prompt, an image with a
    raw⇄visualise toggle, and a raw Out line — mirroring the tool In/Out mechanics. */

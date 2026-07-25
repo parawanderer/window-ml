@@ -36,17 +36,26 @@ window.addEventListener("message", (e: MessageEvent) => {
 });
 
 // The app posts __mlLightbox on an image click; the overlay's shell shows it full-window.
-// The panel is its own page, so it needs its own minimal viewer.
+// The panel is its own page, so it needs its own viewer — with Escape + backdrop close,
+// and it grabs focus so Escape lands HERE even though the click came from the app iframe
+// (keyboard events don't cross the iframe boundary).
+let lightboxKey: ((e: KeyboardEvent) => void) | null = null;
+function hideLightbox(): void {
+    document.getElementById("ml-lightbox")?.remove();
+    if (lightboxKey) { window.removeEventListener("keydown", lightboxKey); lightboxKey = null; }
+}
 function showLightbox(src: string): void {
-    let box = document.getElementById("ml-lightbox");
-    if (!box) {
-        box = document.createElement("div");
-        box.id = "ml-lightbox";
-        box.addEventListener("click", () => box!.remove());
-        document.body.append(box);
-    }
-    box.innerHTML = "";
+    hideLightbox();
+    const box = document.createElement("div");
+    box.id = "ml-lightbox";
+    box.tabIndex = -1;
+    box.addEventListener("click", hideLightbox);              // backdrop click closes
     const img = document.createElement("img");
     img.src = src;
+    img.addEventListener("click", e => e.stopPropagation());  // clicking the image itself doesn't
     box.append(img);
+    document.body.append(box);
+    box.focus();                                              // pull focus out of the iframe → Escape reaches us
+    lightboxKey = e => { if (e.key === "Escape") hideLightbox(); };
+    window.addEventListener("keydown", lightboxKey);
 }
