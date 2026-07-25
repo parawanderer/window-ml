@@ -137,7 +137,11 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
         description: "Find an on-screen control by DESCRIBING how it looks — for unlabelled icons, " +
             "custom widgets, canvas, or any UI you can't reach by text or a guessed selector. Returns a " +
             "CSS selector (or an `@pt:…` coordinate, for canvas) to pass to click/type/answer. Sees only " +
-            "the current viewport (scroll the target into view first).",
+            "the current viewport (scroll the target into view first). " +
+            "If the target sits on a <canvas> (a game/drawing surface — no DOM nodes inside it), FIRST " +
+            "identify the canvas and pass ITS selector as `selector` so the search is cropped to it; the " +
+            "result is an `@pt:…` coordinate token (there's no element to select), which you verify with " +
+            "look({ selector: \"@pt:…\" }) and then click.",
         parameters: {
             type: "object",
             properties: {
@@ -643,16 +647,21 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             // sub-elements to badge — Set-of-Marks can't pick inside it. Steer to the
             // coordinate mechanisms. Shared by the no-candidates path (a canvas yields
             // ZERO clickables, so it hits `!cands.length` first) and the all-canvas path.
+            // On a canvas SoM never ran (there was nothing to badge), so DON'T use the
+            // "used Set-of-Marks" prefix here — it reads as nonsense on a canvas ("why is
+            // it using SoM on the canvas"). Say plainly that grounding missed and SoM
+            // doesn't apply.
+            const canvasLead = fallbackNote ? "Grounding missed, and Set-of-Marks doesn't apply here: " : "";
             const canvasAlts = groundingModel
                 ? "Use strategy 'grid-grounding' (grid narrows the region, then a grounding model pinpoints an exact spot inside it — best for a small target), or 'grounding', or 'grid' and zoom in"
                 : "Use strategy 'grid' and zoom in";
             const onCanvas = canvasPointIn(regionAsBox);   // is the search area itself a canvas?
             if (!cands.length) {
-                if (onCanvas) return `${prefix}${scopeSel ? `"${scopeSel}"` : "That area"} is a <canvas> — Set-of-Marks can't pick inside it (no sub-elements to badge). ${canvasAlts} — each returns an @pt coordinate token to click.`;
+                if (onCanvas) return `${canvasLead}${scopeSel ? `"${scopeSel}"` : "that area"} is a <canvas> — nothing to badge (no sub-elements). ${canvasAlts} — each returns an @pt coordinate token to click.`;
                 return `${prefix}No ${filter} candidates visible${scopeNote || " in the viewport"}. Scroll the target into view, widen the filter (try 'all'), then call again.`;
             }
             if (cands.every(c => c.tagName === "CANVAS")) {
-                return `${prefix}"${description}" is on a <canvas> — Set-of-Marks can't pick inside it (it has no sub-elements). ${canvasAlts} — it returns an @pt coordinate token to click.`;
+                return `${canvasLead}"${description}" is on a <canvas> — nothing to badge (it has no sub-elements). ${canvasAlts} — it returns an @pt coordinate token to click.`;
             }
             // Dense pages break Set-of-Marks (badges overlap, the model misreads) AND we
             // only badge the first SOM_BADGE_CAP — say both, and steer to a better tool.
