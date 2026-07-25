@@ -425,6 +425,32 @@ own way. A third format = a third sink, not a third walker.
   a collapsed one prints as just its summary. Cleanup rides `afterprint` plus a
   long fallback timer, so a dismissed dialog can't leak the frame.
 
+**Two surfaces (in-page overlay + DevTools panel).** The same `sidebar-app` bundle runs
+in two places: the in-page **overlay** (a content-script shadow-root shell, `shell.ts`,
+hosting `sidebar.html` in an iframe) and an optional **DevTools panel** (`devtools.ts`
+registers a "window.ml" panel; `panel.html`/`panel.ts` host the *same* `sidebar.html`
+iframe and play the same parent-relay role the shell does). `sidebar/app.tsx` is
+untouched between them — the panel is byte-for-byte the overlay's app. Debug events reach
+the panel by an **event-agnostic ONE-WAY stream**: `injected.js` → shell (forwards
+`ML_DEBUG_EVENT`) → `background.ts` keeps a per-tab ring buffer (`DEBUG_BUFFER_CAP`) + fans
+out to any connected `ml-devtools` port → `panel.ts` relays into the iframe (queuing until
+the app handshakes `ready`). The buffer **replays on connect** (a panel opened mid-run
+catches up); a fresh shell mount sends `ML_DEBUG_RESET` so stale events don't replay after
+navigation. Spec + the deferred "panel-only" mode (suppress the overlay, needs
+`injected.js` emit-gating changes): `docs/spec/DEVTOOLS_PANEL_PLAN.md`.
+
+**Extending the sidebar — will it work in both surfaces?** *View/read features come free:*
+a new debug **event kind** (the transport forwards any `__mlDebug` payload), a new
+`RenderPanel` descriptor, session UI, export, or anything using `chrome.runtime`/
+`chrome.storage` renders identically in both — it's the same app. *Two things don't:*
+(1) a **new message the app posts to its parent** (the app→parent protocol is just
+`__mlSidebarApp:"ready"` + `__mlLightbox`, both mirrored in `panel.ts`) must be handled in
+`panel.ts` too; (2) anything that **acts back on the page** (DOM-node highlight) or **sends
+input into the agent** (the session composer) needs a **reverse channel** that doesn't
+exist yet — the transport is one-way (page→panel). The overlay can reach the page (its
+parent is a content script); the panel would need `panel → port → background → content
+script → injected.js`, keyed by the inspected `tabId`.
+
 **Sources.** When a tool/RAG runs, OpenWebUI attaches provenance — top-level
 `data.sources` (non-stream) or its own SSE line `{ sources: [...] }` (stream,
 captured in `streamChunk`/`consume`). `fetchLLM`/`streamLLM` return
