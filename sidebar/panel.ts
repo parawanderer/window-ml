@@ -49,10 +49,9 @@ function showLightbox(src: string): void {
     const box = document.createElement("div");
     box.id = "ml-lightbox";
     box.tabIndex = -1;
-    box.addEventListener("click", hideLightbox);              // backdrop click closes
+    box.addEventListener("click", hideLightbox);              // click anywhere (incl. the image) closes
     const img = document.createElement("img");
     img.src = src;
-    img.addEventListener("click", e => e.stopPropagation());  // clicking the image itself doesn't
     box.append(img);
     document.body.append(box);
     box.focus();                                              // pull focus out of the iframe → Escape reaches us

@@ -81,10 +81,9 @@ function showLightbox(src: string): void {
     hideLightbox();
     lightbox = document.createElement("div");
     lightbox.id = SB_LIGHTBOX;
-    lightbox.addEventListener("click", hideLightbox);   // backdrop click closes
+    lightbox.addEventListener("click", hideLightbox);   // click anywhere (incl. the image) closes
     const img = document.createElement("img");
     img.src = src;
-    img.addEventListener("click", (e) => e.stopPropagation());
     const x = document.createElement("button");
     x.id = SB_LIGHTBOX_X; x.textContent = "✕";
     x.setAttribute("aria-label", "Close (Esc)");   // icon-only: keep the accessible name
