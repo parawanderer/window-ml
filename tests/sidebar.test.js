@@ -362,6 +362,7 @@ test("settings: a vision-required role (OCR) fails RED when the model lacks visi
 test("settings: a configured model the model-filter excludes is flagged RED up front (no test needed)", async () => {
     const w = await loadSidebarWorld({
         sync: { model: "qwen3:14b", ocrModel: "gpt-4o-cloud", modelFilter: "^qwen" },
+        models: ["qwen3:14b", "gpt-4o-cloud"],
     });
     await openSettings(w, "Models");
     await w.tick();
@@ -373,6 +374,19 @@ test("settings: a configured model the model-filter excludes is flagged RED up f
     assert.match(ocrRow.querySelector(".tt-pop").textContent, /Excluded by the model access filter/);
     // qwen3:14b matches → not flagged.
     assert.ok(!defRow.querySelector(".test-ic.err"), "a matching model is not flagged");
+    // The input FIELD holding the excluded model is red-bordered where you're looking,
+    // not only the status row far below.
+    const ocrInput = [...w.shadow.querySelectorAll(".set-field")]
+        .find(f => /OCR model/.test(f.querySelector(".lbl, label, .set-lbl")?.textContent || f.textContent))
+        ?.querySelector("input");
+    assert.ok(ocrInput && ocrInput.classList.contains("err"), "excluded OCR input red-bordered");
+    const defInput = [...w.shadow.querySelectorAll(".set-field")]
+        .find(f => /Default model/.test(f.textContent))?.querySelector("input");
+    assert.ok(defInput && !defInput.classList.contains("err"), "matching Default input not flagged");
+    // The model-picker datalist hides the excluded ids so the dropdown matches ml.models().
+    const opts = [...w.shadow.querySelectorAll("#ml-models option")].map(o => o.value);
+    assert.ok(opts.includes("qwen3:14b"), "datalist keeps a matching model");
+    assert.ok(!opts.includes("gpt-4o-cloud"), "datalist hides an excluded model");
 });
 
 test("settings: unknown caps (cloud/non-Ollama) do NOT red a vision role — fall through to the functional test", async () => {

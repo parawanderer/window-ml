@@ -286,6 +286,10 @@ export function Settings() {
     const tab = settingsTab.value;
     const utilOn = !!c.utilityModel.trim();
     const filterValid = (() => { if (!c.modelFilter.trim()) return true; try { new RegExp(c.modelFilter); return true; } catch { return false; } })();
+    // A configured model id the current filter excludes (non-empty + no match) → flag it.
+    const excl = (v: string) => !!v.trim() && !modelFilterAllows(v, c.modelFilter);
+    const modelInput = (key: keyof MlConfig, extra: Record<string, unknown>) =>
+        text(key, { ...extra, class: excl(c[key] as string) ? "err" : "" });
     const pct = Math.round(fontScale.value * 100);
     const setScale = (s: number) => {
         fontScale.value = Math.min(MAX_FS, Math.max(MIN_FS, Math.round(s * 20) / 20));
@@ -307,7 +311,7 @@ export function Settings() {
                         onClick={() => { settingsTab.value = t.id; }}>{t.label}</button>
                 ))}
             </div>
-            <datalist id="ml-models">{models.value.map(m => <option key={m} value={m} />)}</datalist>
+            <datalist id="ml-models">{models.value.filter(m => modelFilterAllows(m, c.modelFilter)).map(m => <option key={m} value={m} />)}</datalist>
 
             <div class="set-body">
             {tab === "connection" ? <>
@@ -339,14 +343,14 @@ export function Settings() {
                 </label>
 
                 <label class="set-field"><Lbl tip={TIP.model}>Default model</Lbl>
-                    <input {...text("model", { list: "ml-models", placeholder: "e.g. qwen3:14b" })} /></label>
+                    <input {...modelInput("model", { list: "ml-models", placeholder: "e.g. qwen3:14b" })} /></label>
                 <label class="set-field"><Lbl tip={TIP.ocrModel}>OCR model (optional)</Lbl>
-                    <input {...text("ocrModel", { list: "ml-models", placeholder: "e.g. qwen2.5vl" })} /></label>
+                    <input {...modelInput("ocrModel", { list: "ml-models", placeholder: "e.g. qwen2.5vl" })} /></label>
 
                 <div class="set-group">Utility model</div>
                 <div class="set-note">A small, cheap model for side tasks. If set, use it via the shorthand: <code>ml.chat("...", &#123; extend: "utility" &#125;)</code>.</div>
                 <label class="set-field"><Lbl tip={TIP.utilityModel}>Utility model (optional)</Lbl>
-                    <input {...text("utilityModel", { list: "ml-models", placeholder: "blank = use main model" })} /></label>
+                    <input {...modelInput("utilityModel", { list: "ml-models", placeholder: "blank = use main model" })} /></label>
                 <label class="set-field"><Lbl tip={TIP.utilityNumCtx}>Utility model context size</Lbl>
                     <input type="number" min="512" step="512" value={c.utilityNumCtx} disabled={!utilOn}
                         onChange={(e: any) => setField("utilityNumCtx", parseInt(e.target.value, 10) || DEFAULT_CONFIG.utilityNumCtx)} /></label>
@@ -369,7 +373,7 @@ export function Settings() {
                     <Lbl tip={TIP.groundingEnabled}>Enable visual grounding model</Lbl>
                 </label>
                 <label class="set-field"><Lbl tip={TIP.groundingModel}>Grounding model</Lbl>
-                    <input {...text("groundingModel", { list: "ml-models", disabled: !c.groundingEnabled,
+                    <input {...modelInput("groundingModel", { list: "ml-models", disabled: !c.groundingEnabled,
                         placeholder: detectGroundingModel(models.value) ? `${detectGroundingModel(models.value)} (auto-detected)` : "e.g. qwen2.5vl:7b — none detected" })} /></label>
                 <label class="set-field"><Lbl tip={TIP.groundingRange}>Coordinate range</Lbl>
                     <input type="number" min="1" step="1" value={c.groundingRange} disabled={!c.groundingEnabled}
