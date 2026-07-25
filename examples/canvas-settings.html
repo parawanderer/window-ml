@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Canvas Settings — an @box container demo for ml.locate</title>
+<style>
+  body { font: 15px system-ui, sans-serif; margin: 24px 30px; color: #111; }
+  h1 { font-size: 18px; margin-bottom: 6px; }
+  p { max-width: 84ch; color: #444; }
+  code { font: 12px ui-monospace, monospace; background: #f0f0f2; padding: 1px 5px; border-radius: 4px; }
+  .bar { display: flex; align-items: center; gap: 8px; margin: 10px 0; flex-wrap: wrap; }
+  #app { display: block; width: 100%; height: 66vh; border-radius: 10px; cursor: default;
+    background: #d7dbe2; border: 1px solid #c2c7d0; }
+  #log { margin-top: 12px; font: 13px ui-monospace, monospace; color: #0a7; min-height: 1.4em; }
+  .hint { color: #888; font-size: 13px; }
+  .mini { font: 12px system-ui; padding: 4px 10px; border-radius: 6px; border: 1px solid #ccc; background: #fafafa; color: #333; cursor: pointer; }
+  .mini:hover { background: #f0f0f0; }
+  button:disabled { opacity: .5; cursor: default; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #1b1b1f; color: #eee; } p { color: #bbb; } code { background: #2a2a30; }
+    .mini { border-color: #444; background: #2a2a30; color: #ddd; } .mini:hover { background: #34343c; }
+    #app { background: #2a2d34; border-color: #3a3d47; }
+  }
+  #win { position: fixed; inset: 0; z-index: 9999; display: none; place-items: center;
+    background: rgba(10,14,20,.72); }
+  #win.show { display: grid; }
+  #win .card { background: #fff; color: #111; border-radius: 16px; padding: 34px 46px; text-align: center;
+    box-shadow: 0 24px 80px rgba(0,0,0,.5); animation: pop .45s cubic-bezier(.2,1.6,.4,1) both; }
+  #win h2 { margin: 0 0 6px; font-size: 30px; } #win p { color: #444; margin: 0; }
+  #win small { display: block; margin-top: 12px; color: #888; }
+  @keyframes pop { from { transform: scale(.6); opacity: 0; } }
+  pre#benchOut { display:none; white-space:pre-wrap; background:#12131a; border:1px solid #2a2c36;
+    border-radius:8px; padding:12px; margin-top:8px; font:12px/1.5 ui-monospace,Menlo,monospace; color:#cdd; }
+</style>
+</head>
+<body>
+  <h1>Canvas Settings 🎛 <span style="color:#3b82f6">(all pixels, no DOM)</span></h1>
+  <p>A whole app UI — window, a left <b>nav</b>, a <b>content panel</b> of toggles — painted on <b>one
+     <code>&lt;canvas&gt;</code></b>. There are no DOM nodes to walk: every control is drawn pixels.
+     This is the case <code>@box</code> containers are for — the model outlines a panel, scopes INTO it,
+     and finds a control there, instead of grounding across the whole busy window.</p>
+  <p><b>Task:</b> turn <b>ON</b> the “Do&nbsp;Not&nbsp;Track” switch — it lives under <b>Privacy</b>
+     (so you must open that section first).</p>
+  <p><code>ml.agent("Open Privacy and turn on Do Not Track", { extraTools: [ml.clickTool()], hints: "It's all one &lt;canvas&gt; — scope to it, then locate({ container: true }) to outline the nav or the content panel, locate a control inside (selector: '@box:…'), and click the @pt. Verify with look() first." })</code></p>
+
+  <canvas id="app"></canvas>
+  <div id="log">Nothing done yet.</div>
+
+  <div class="bar" style="margin-top:10px">
+    <button id="benchRun" class="mini">▶ Run accuracy benchmark</button>
+    <input id="benchN" type="number" min="1" value="10" style="width:56px" title="trials">
+    <span class="hint" style="margin-left:6px">runs <code>ml.agent</code> N times, tallies wins — needs the extension + a grounding model. (Or <code>await benchSettings(20)</code>.)</span>
+  </div>
+  <pre id="benchOut"></pre>
+
+  <div id="win" title="click to reset">
+    <div class="card">
+      <h2>✅ Do Not Track is ON</h2>
+      <p>You navigated to Privacy and flipped the right switch among the lookalikes.</p>
+      <small>(click anywhere to reset)</small>
+    </div>
+  </div>
+
+<script>
+  const canvas = document.getElementById('app');
+  const ctx = canvas.getContext('2d');
+  const log = document.getElementById('log');
+  const winEl = document.getElementById('win');
+
+  // ---- app state: sections of controls, drawn on demand -------------------
+  const T = (label, on) => ({ type: 'toggle', label, on: !!on });
+  const B = (label) => ({ type: 'button', label });
+  const S = (label, val) => ({ type: 'slider', label, val });
+  const D = (label, val) => ({ type: 'select', label, val });
+  const NAV = ['General', 'Appearance', 'Privacy', 'Notifications', 'Advanced'];
+  let sections, active, won;
+
+  function reset() {
+    sections = {
+      General:       [T('Auto-save documents', true), T('Check for updates', true), D('Language', 'English'), B('Reset to defaults')],
+      Appearance:    [T('Dark mode', false), S('Text size', 0.5), T('Show sidebar', true), D('Accent colour', 'Blue')],
+      Privacy:       [T('Do Not Track', false), T('Share usage telemetry', true), T('Save browsing history', true), T('Allow cookies', true), B('Clear browsing data')],
+      Notifications: [T('Enable notifications', true), T('Play sounds', false), T('Badge app icon', true)],
+      Advanced:      [T('Developer mode', false), T('Hardware acceleration', true), B('Export logs')],
+    };
+    active = 'General';
+    const deep = decodeURIComponent((location.hash || '').slice(1));   // #Privacy etc. → open a section directly (demo/testing)
+    if (NAV.includes(deep)) active = deep;
+    won = false;
+    winEl.classList.remove('show');
+    render();
+    log.textContent = 'Nothing done yet.';
+  }
+
+  // ---- geometry (rebuilt each render) → hit regions in CSS px --------------
+  let hits = [];   // { x, y, w, h, act }
+  const push = (x, y, w, h, act) => hits.push({ x, y, w, h, act });
+  const rr = (x, y, w, h, r) => { ctx.beginPath(); ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r); ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath(); };
+
+  function drawToggle(x, y, on) {                 // pill switch, right-anchored at (x=right edge)
+    const w = 46, h = 26, left = x - w;
+    ctx.fillStyle = on ? '#22c55e' : '#c3c8d0'; rr(left, y, w, h, h/2); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(left + (on ? w - h/2 : h/2), y + h/2, h/2 - 3, 0, 7); ctx.fill();
+    return { x: left, y, w, h };
+  }
+  function drawButton(x, y, label) {              // right-anchored pill button
+    ctx.font = '600 14px system-ui'; const w = Math.ceil(ctx.measureText(label).width) + 28, h = 30, left = x - w;
+    ctx.fillStyle = '#eef1f6'; rr(left, y, w, h, 8); ctx.fill(); ctx.strokeStyle = '#cdd3dd'; ctx.lineWidth = 1; ctx.stroke();
+    ctx.fillStyle = '#2b3a55'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(label, left + w/2, y + h/2 + 1);
+    ctx.textAlign = 'left';
+    return { x: left, y, w, h };
+  }
+  function drawSelect(x, y, val) {                // right-anchored value + chevron
+    ctx.font = '14px system-ui'; const txt = val + '  ⌄', w = Math.ceil(ctx.measureText(txt).width) + 24, h = 30, left = x - w;
+    ctx.fillStyle = '#fff'; rr(left, y, w, h, 8); ctx.fill(); ctx.strokeStyle = '#cdd3dd'; ctx.stroke();
+    ctx.fillStyle = '#333'; ctx.textBaseline = 'middle'; ctx.fillText(txt, left + 12, y + h/2 + 1);
+    return { x: left, y, w, h };
+  }
+  function drawSlider(x, y, val) {                // right-anchored track + thumb
+    const w = 120, h = 6, left = x - w, cy = y + 15;
+    ctx.fillStyle = '#d3d8e0'; rr(left, cy - h/2, w, h, h/2); ctx.fill();
+    ctx.fillStyle = '#3b82f6'; rr(left, cy - h/2, w*val, h, h/2); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.strokeStyle = '#9aa4b4'; ctx.beginPath(); ctx.arc(left + w*val, cy, 9, 0, 7); ctx.fill(); ctx.stroke();
+    return { x: left, y, w, h: 30 };
+  }
+
+  function render() {
+    hits = [];
+    const dpr = window.devicePixelRatio || 1;
+    const CW = canvas.clientWidth, CH = canvas.clientHeight;
+    canvas.width = Math.round(CW * dpr); canvas.height = Math.round(CH * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, CW, CH);
+    ctx.textBaseline = 'alphabetic';
+
+    // window card
+    const winW = Math.min(940, CW - 40), winH = Math.min(540, CH - 40);
+    const wx = Math.round((CW - winW) / 2), wy = Math.round((CH - winH) / 2);
+    ctx.fillStyle = '#ffffff'; rr(wx, wy, winW, winH, 14); ctx.fill();
+    ctx.strokeStyle = '#c8cdd7'; ctx.lineWidth = 1; ctx.stroke();
+
+    // title bar + traffic lights (decoys)
+    const titleH = 42;
+    ctx.fillStyle = '#f4f6fa'; rr(wx, wy, winW, titleH, 14); ctx.fill();
+    ctx.fillStyle = '#f4f6fa'; ctx.fillRect(wx, wy + titleH - 14, winW, 14);
+    ['#ff5f57', '#febc2e', '#28c840'].forEach((c, i) => { ctx.fillStyle = c; ctx.beginPath(); ctx.arc(wx + 20 + i*18, wy + titleH/2, 6, 0, 7); ctx.fill(); });
+    ctx.fillStyle = '#3a4254'; ctx.font = '600 14px system-ui'; ctx.textAlign = 'center'; ctx.fillText('Settings', wx + winW/2, wy + titleH/2 + 5); ctx.textAlign = 'left';
+
+    // left nav (a container)
+    const navW = 194, navX = wx, navY = wy + titleH, navH = winH - titleH;
+    ctx.fillStyle = '#eef1f6'; ctx.fillRect(navX, navY, navW, navH);
+    ctx.strokeStyle = '#dde1e9'; ctx.beginPath(); ctx.moveTo(navX + navW, navY); ctx.lineTo(navX + navW, navY + navH); ctx.stroke();
+    NAV.forEach((name, i) => {
+      const iy = navY + 12 + i * 46, ih = 40, ix = navX + 10, iw = navW - 20;
+      if (name === active) { ctx.fillStyle = '#3b82f6'; rr(ix, iy, iw, ih, 8); ctx.fill(); }
+      ctx.fillStyle = name === active ? '#fff' : '#39404e'; ctx.font = (name === active ? '600 ' : '') + '15px system-ui';
+      ctx.textBaseline = 'middle'; ctx.fillText(name, ix + 16, iy + ih/2 + 1); ctx.textBaseline = 'alphabetic';
+      push(ix, iy, iw, ih, () => { if (active !== name) { active = name; render(); log.textContent = 'Opened “' + name + '”.'; } });
+    });
+
+    // content panel (a container) — the active section's rows
+    const cx = navX + navW + 28, cy0 = navY + 26, cw = winW - navW - 56;
+    ctx.fillStyle = '#1f2633'; ctx.font = '700 20px system-ui'; ctx.fillText(active, cx, cy0);
+    const rows = sections[active];
+    let ry = cy0 + 26;
+    rows.forEach(row => {
+      const rh = 52, rightX = cx + cw;
+      ctx.fillStyle = '#333b49'; ctx.font = '15px system-ui'; ctx.textBaseline = 'middle';
+      ctx.fillText(row.label, cx, ry + rh/2);
+      ctx.textBaseline = 'alphabetic';
+      ctx.strokeStyle = '#eef0f4'; ctx.beginPath(); ctx.moveTo(cx, ry + rh); ctx.lineTo(rightX, ry + rh); ctx.stroke();
+      let box;
+      if (row.type === 'toggle') { box = drawToggle(rightX, ry + (rh-26)/2, row.on); box.act = () => flipToggle(row); }
+      else if (row.type === 'button') { box = drawButton(rightX, ry + (rh-30)/2, row.label); box.act = () => { log.textContent = 'Clicked “' + row.label + '”.'; }; }
+      else if (row.type === 'select') { box = drawSelect(rightX, ry + (rh-30)/2, row.val); box.act = () => { log.textContent = 'Opened “' + row.label + '” menu.'; }; }
+      else if (row.type === 'slider') { box = drawSlider(rightX, ry + (rh-30)/2, row.val); box.act = null; }
+      if (box) push(box.x, box.y, box.w, box.h, box.act || (() => {}), row);
+      ry += rh;
+    });
+  }
+
+  function flipToggle(row) {
+    row.on = !row.on;
+    log.textContent = '“' + row.label + '” → ' + (row.on ? 'ON' : 'off') + '.';
+    render();
+    if (active === 'Privacy' && row.label === 'Do Not Track' && row.on) victory();
+  }
+
+  function victory() { won = true; winEl.classList.add('show'); }
+
+  canvas.addEventListener('click', (e) => {
+    const b = canvas.getBoundingClientRect();
+    const x = e.clientX - b.left, y = e.clientY - b.top;
+    // topmost hit wins (regions don't overlap here, but be safe)
+    for (let i = hits.length - 1; i >= 0; i--) {
+      const h = hits[i];
+      if (x >= h.x && x <= h.x + h.w && y >= h.y && y <= h.y + h.h) { h.act(); return; }
+    }
+    log.textContent = '❌ (' + Math.round(x) + ', ' + Math.round(y) + ') hit nothing.';
+  });
+  winEl.addEventListener('click', reset);
+  window.addEventListener('resize', render);
+
+  // ---- benchmark hook + runner (mirrors find-morio) ------------------------
+  window.__settings = {
+    reset,
+    active: () => active,
+    won: () => won,
+    state: () => JSON.parse(JSON.stringify(sections)),
+  };
+
+  window.benchSettings = async function (n = 10, opts = {}) {
+    const ml = window.ml;
+    if (!ml || !ml.agent) throw new Error('window.ml is not ready — load the extension and reload.');
+    const task = opts.task ?? 'Open the Privacy section and turn on “Do Not Track”.';
+    const hints = opts.hints ?? "The whole app is one <canvas>. Scope to it, then locate({ container: true }) to outline the left nav or the content panel, locate a control inside it (selector: '@box:…'), and click the @pt. Verify with look() first. Do Not Track is under Privacy, so open that first.";
+    const agentOpts = { extraTools: [ml.clickTool()], hints, maxSteps: opts.maxSteps ?? 16, ...(opts.agent || {}) };
+    const results = [];
+    for (let i = 0; i < n; i++) {
+      window.__settings.reset();
+      const t0 = performance.now();
+      let steps = 0, hitCap = false, err = null;
+      try { const r = await ml.agent(task, agentOpts); steps = r.steps; hitCap = !!r.hitCap; }
+      catch (e) { err = (e && e.message) || String(e); }
+      const ms = Math.round(performance.now() - t0);
+      const w = window.__settings.won();
+      const row = { trial: i + 1, won: w, steps, hitCap, ms, err };
+      results.push(row);
+      (opts.onTrial || (() => {}))(row, results);
+      console.log(`[bench] ${i + 1}/${n}: ${w ? 'WIN ✓' : 'loss ✗'} · ${steps} steps · ${ms}ms${err ? ` · ERR ${err}` : ''}`);
+    }
+    const wins = results.filter(r => r.won).length;
+    const mean = k => results.length ? +(results.reduce((s, r) => s + (r[k] || 0), 0) / results.length).toFixed(1) : 0;
+    const summary = { n, wins, accuracy: +(100 * wins / n).toFixed(1), meanSteps: mean('steps'), meanMs: mean('ms'), results };
+    console.log(`[bench] === ${wins}/${n} = ${summary.accuracy}% · mean ${summary.meanSteps} steps / ${summary.meanMs}ms ===`);
+    return summary;
+  };
+
+  const benchOut = document.getElementById('benchOut');
+  document.getElementById('benchRun').addEventListener('click', async (e) => {
+    const btn = e.currentTarget, label = btn.textContent;
+    const n = Math.max(1, +document.getElementById('benchN').value || 10);
+    btn.disabled = true; btn.textContent = 'Running…';
+    benchOut.style.display = 'block'; benchOut.textContent = `Running ${n} trials…`;
+    const fmt = all => {
+      const wins = all.filter(r => r.won).length;
+      return `${wins}/${all.length} wins so far…\n\n` + all.map(r =>
+        `${String(r.trial).padStart(2)}. ${r.won ? '✓' : '✗'}  ${String(r.steps).padStart(2)} steps  ${String(r.ms).padStart(6)}ms` +
+        `${r.hitCap ? '  (hit cap)' : ''}${r.err ? `  ⚠ ${r.err}` : ''}`).join('\n');
+    };
+    try {
+      const s = await window.benchSettings(n, { onTrial: (_r, all) => { benchOut.textContent = fmt(all); } });
+      benchOut.textContent += `\n\n════════════════\n${s.wins}/${s.n} = ${s.accuracy}% accuracy · mean ${s.meanSteps} steps, ${s.meanMs}ms`;
+    } catch (err) { benchOut.textContent = 'Benchmark error: ' + ((err && err.message) || err); }
+    finally { btn.disabled = false; btn.textContent = label; }
+  });
+
+  reset();
+</script>
+</body>
+</html>
