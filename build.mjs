@@ -19,6 +19,11 @@ const ENTRIES = {
     // the sidebar.html iframe.
     "sidebar-shell": "sidebar/shell.ts",
     "sidebar-app": "sidebar/app.tsx",
+    // Optional DevTools panel: a second surface for the same app. `devtools` registers
+    // the panel; `panel` hosts the app iframe and relays the debug stream from the
+    // background (see sidebar/panel.ts).
+    "devtools": "sidebar/devtools.ts",
+    "panel": "sidebar/panel.ts",
 };
 
 // [source, dist-relative dest] — copied verbatim next to the bundles.
@@ -27,6 +32,8 @@ const ASSETS = [
     ["popup.html", "popup.html"],
     ["sidebar/sidebar.html", "sidebar.html"],
     ["sidebar/sidebar.css", "sidebar.css"],
+    ["sidebar/devtools.html", "devtools.html"],
+    ["sidebar/panel.html", "panel.html"],
 ];
 
 const watch = process.argv.includes("--watch");

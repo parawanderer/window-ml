@@ -1,6 +1,17 @@
 # DevTools panel for the debug sidebar — plan
 
-Status: **planned, not built.** Greenlit design; captured here so it survives.
+Status: **v1 built.** The panel mirrors the in-page overlay's stream: enable the sidebar,
+open DevTools → the "ml" panel streams the same sessions/renders, with a per-tab replay
+buffer so a panel opened mid-run catches up. Transport = `injected.js` → shell →
+`ML_DEBUG_EVENT` → background (ring buffer + fan-out) → `ml-devtools` port → `panel.html`
+(hosts `sidebar.html` unchanged). Needs a manual load-and-look to confirm the live render.
+
+**Remaining (the "panel-only" mode):** a toggle that *suppresses* the in-page overlay
+while keeping events flowing — the version that actually removes the hide-for-shot dance.
+It needs `injected.js` to emit when *debug is enabled* rather than when *the overlay is
+mounted* (today the overlay's presence gates emission), plus splitting the shell's
+`mount()` into "start plumbing" vs "create UI". Deferred; the committed scroll-pin already
+fixed the overlay's scroll bug, so this is a nicety, not urgent.
 
 ## Why
 

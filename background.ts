@@ -680,6 +680,11 @@ async function unloadModels(modelName?: string): Promise<string[]> {
 }
 
 chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
+    // The content-script shell forwards each __mlDebug event here so a DevTools panel
+    // (which can't see page window-messages) can mirror the overlay's stream. Fire-and-
+    // forget — no response. RESET clears a tab's buffer on navigation (fresh page).
+    if (message.type === "ML_DEBUG_EVENT") { if (sender.tab?.id != null) relayDebugEvent(sender.tab.id, message.event); return; }
+    if (message.type === "ML_DEBUG_RESET") { if (sender.tab?.id != null) debugBuffer.delete(sender.tab.id); return; }
     if (message.type === "FETCH_LLM") {
         fetchLLM(message.payload)
             // raw (ml.step) returns { content, tool_calls } as data; normal chat
@@ -817,5 +822,44 @@ chrome.runtime.onConnect.addListener((port) => {
         streamLLM(message.payload, (delta) => port.postMessage({ type: "chunk", delta }))
             .then(({ content, sources, model, reasoning, usage }) => port.postMessage({ type: "done", content, sources, model, reasoning, usage }))
             .catch((err) => port.postMessage({ type: "error", error: err.message }));
+    });
+});
+
+// ---- DevTools panel debug stream (opt-in second surface for the sidebar) ----
+// The in-page overlay receives __mlDebug via window-messages; a DevTools panel can't, so
+// the content-script shell also forwards each event here (ML_DEBUG_EVENT). We buffer per
+// inspected tab — a panel opened mid-run replays what it missed (the overlay never needs
+// this, it's always mounted) — and fan out to any connected panel for that tab.
+const devtoolsPorts = new Map<number, Set<chrome.runtime.Port>>();
+const debugBuffer = new Map<number, unknown[]>();
+const DEBUG_BUFFER_CAP = 500;   // drop-oldest ring; screenshots are big, so keep it modest
+
+function relayDebugEvent(tabId: number, event: unknown): void {
+    let buf = debugBuffer.get(tabId);
+    if (!buf) { buf = []; debugBuffer.set(tabId, buf); }
+    buf.push(event);
+    if (buf.length > DEBUG_BUFFER_CAP) buf.splice(0, buf.length - DEBUG_BUFFER_CAP);
+    const ports = devtoolsPorts.get(tabId);
+    if (ports) for (const p of ports) { try { p.postMessage({ __mlDebug: event }); } catch { /* port closing */ } }
+}
+
+chrome.runtime.onConnect.addListener((port) => {
+    if (port.name !== "ml-devtools") return;
+    let tabId: number | null = null;
+    port.onMessage.addListener((msg: any) => {
+        if (msg?.type === "ml-devtools-init" && typeof msg.tabId === "number") {
+            const tid: number = msg.tabId;   // const local: TS narrows it (a captured `let` wouldn't)
+            tabId = tid;
+            let set = devtoolsPorts.get(tid);
+            if (!set) { set = new Set(); devtoolsPorts.set(tid, set); }
+            set.add(port);
+            port.postMessage({ replay: debugBuffer.get(tid) || [] });   // catch a late-opened panel up
+        }
+    });
+    port.onDisconnect.addListener(() => {
+        const tid = tabId;
+        if (tid == null) return;
+        const set = devtoolsPorts.get(tid);
+        if (set) { set.delete(port); if (!set.size) devtoolsPorts.delete(tid); }
     });
 });

@@ -1026,3 +1026,32 @@ test("SAVE_SESSION persists a session that GET_SESSION reads back", async () => 
     const missing = await bg.send({ type: "GET_SESSION", payload: { hash: "nope" } });
     assert.equal(missing.data, null);
 });
+
+test("devtools panel: buffers debug events per tab, replays on connect, relays live, resets", () => {
+    const bg = loadBackground({ config: baseConfig() });
+    // Fire-and-forget: the ML_DEBUG_* handlers don't sendResponse, so we don't await —
+    // they run synchronously inside the send() executor.
+    const dbg = (n, id) => bg.send({ type: "ML_DEBUG_EVENT", event: { kind: "chat", n } }, { tab: { id } });
+
+    // Events arrive for tab 7 BEFORE any panel is open → buffered. Tab 8 must not leak in.
+    dbg(1, 7); dbg(2, 7); dbg(99, 8);
+
+    // A panel opens for tab 7 → gets a replay burst of exactly tab 7's events, in order.
+    const panel = bg.connect("ml-devtools");
+    panel.send({ type: "ml-devtools-init", tabId: 7 });
+    const replay = panel.messages.find(m => Array.isArray(m.replay));
+    assert.ok(replay, "panel received a replay burst on connect");
+    assert.deepEqual(replay.replay.map(e => e.n), [1, 2], "replay is tab 7's events, no tab-8 leak");
+
+    // A live event now fans out to the connected panel.
+    dbg(3, 7);
+    const live = panel.messages.filter(m => m.__mlDebug);
+    assert.equal(live.length, 1, "one live relay");
+    assert.equal(live[0].__mlDebug.n, 3);
+
+    // RESET clears the tab's buffer (fresh page) → a panel opened after replays nothing.
+    bg.send({ type: "ML_DEBUG_RESET" }, { tab: { id: 7 } });
+    const panel2 = bg.connect("ml-devtools");
+    panel2.send({ type: "ml-devtools-init", tabId: 7 });
+    assert.deepEqual(panel2.messages.find(m => Array.isArray(m.replay)).replay, [], "reset → nothing to replay");
+});

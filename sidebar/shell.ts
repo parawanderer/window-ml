@@ -132,8 +132,14 @@ function onWindowMessage(e: MessageEvent): void {
     }
     // The iframe app asks to open an image full-window (ClickableImg).
     if (typeof d.__mlLightbox === "string" && frame && e.source === frame.contentWindow) { showLightbox(d.__mlLightbox); return; }
-    // injected.js (page main world) → relay into the iframe app.
-    if (d.__mlDebug && e.source === window) { frame?.contentWindow?.postMessage(d, "*"); return; }
+    // injected.js (page main world) → relay into the iframe app AND forward to the
+    // background so an optional DevTools panel can mirror the same stream (a panel can't
+    // receive these window-messages). Fire-and-forget; harmless when no panel is open.
+    if (d.__mlDebug && e.source === window) {
+        frame?.contentWindow?.postMessage(d, "*");
+        try { void chrome.runtime.sendMessage({ type: "ML_DEBUG_EVENT", event: d.__mlDebug }).catch(() => {}); } catch { /* context gone */ }
+        return;
+    }
     // The iframe app is listening → handshake injected.js so it starts emitting,
     // and tell the app the current open state (so it can pause polling when hidden).
     if (d.__mlSidebarApp === "ready" && frame && e.source === frame.contentWindow) {
@@ -215,6 +221,9 @@ function mount(): void {
 
     chrome.storage.local.get({ [WIDTH_KEY]: DEFAULT_W }, (d: any) => setWidth(d[WIDTH_KEY] || DEFAULT_W));
     window.addEventListener("message", onWindowMessage);
+    // Clear any DevTools-panel buffer for this tab — a fresh mount means a fresh page
+    // (or a re-enable), so stale events from a prior load shouldn't replay into a panel.
+    try { void chrome.runtime.sendMessage({ type: "ML_DEBUG_RESET" }).catch(() => {}); } catch { /* context gone */ }
     // Tell injected.js a sidebar now exists so it starts BUFFERING debug events
     // immediately — before the iframe app finishes loading and handshakes `ready`.
     // Events emitted in that load window get replayed on ready instead of dropped.
