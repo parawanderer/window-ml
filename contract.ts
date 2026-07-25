@@ -17,6 +17,9 @@ export interface MlConfig {
     model: string;
     apiFormat: ApiFormat;
     ocrModel: string;
+    // Optional regex WHITELIST: when set, the wrapper only calls models whose id
+    // matches it (every resolved model — main/ocr/grounding/utility). Empty = no filter.
+    modelFilter: string;
     sidebar: boolean;
     theme: Theme;
     // Small "utility" model for cheap side tasks (e.g. session-title summaries).
@@ -52,6 +55,17 @@ export const DEFAULT_GROUNDING_RANGE = 1000;
  *  page (util/builtin-tools) and the sidebar's model-test both cap identically. */
 export const VISION_NUM_CTX = 8192;
 
+/** Whether a model id passes the optional `modelFilter` regex whitelist. Empty /
+ *  whitespace filter → everything allowed. An INVALID regex → everything allowed
+ *  (fail-OPEN: a typo shouldn't silently brick every call; the settings UI flags an
+ *  invalid regex separately so the user knows the guard is inactive). Otherwise
+ *  `regex.test(model)`. Pure; shared by the background enforcement, the LIST_MODELS
+ *  filter, and the settings row/datalist indicators so they all agree. */
+export function modelFilterAllows(model: string, filter: string): boolean {
+    if (!filter || !filter.trim()) return true;
+    try { return new RegExp(filter).test(model); } catch { return true; }
+}
+
 /** Single source of truth for config defaults — imported by background.ts,
  *  popup.ts, and the sidebar app so the three can't drift.
  *  - chatUrl: OpenWebUI's OpenAI-compatible endpoint. No root /v1 alias (tested
@@ -66,6 +80,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     model: "",
     apiFormat: "openai",
     ocrModel: "",
+    modelFilter: "",
     sidebar: false,
     theme: "auto",
     utilityModel: "",

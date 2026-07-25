@@ -5,7 +5,7 @@
 // signal updates on input for a responsive UI + the utility-field enable gating.
 import { signal } from "@preact/signals";
 import type { MlConfig, ApiFormat, Theme, LoadedModel } from "../contract";
-import { DEFAULT_CONFIG, DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX, detectGroundingModel } from "../contract";
+import { DEFAULT_CONFIG, DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX, detectGroundingModel, modelFilterAllows } from "../contract";
 import {
     config, models, fontScale, codeWrap, codeLineNumbers,
     MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY,
@@ -26,6 +26,7 @@ function setField(key: keyof MlConfig, value: string | number | boolean, persist
 const TIP = {
     apiFormat: "Request and response shape — match it to the URL above.",
     model: "The model list loads automatically — start typing to pick one.",
+    modelFilter: "Optional regex WHITELIST. When set, only models whose id matches are callable via window.ml, and pages (ml.models()) never even see the others — a guard against a page invoking, e.g., an expensive cloud model. Applies to every resolved model (main/OCR/grounding/utility). Blank = no restriction. Example: ^(qwen|gemma) to allow only local families.",
     ocrModel: "Vision model ml.read() uses for OCR — kept separate from the chat model.",
     utilityModel: "A small, cheap model for side tasks like session-title summaries. Leave blank to reuse the main model. Suggestions: qwen3.5:0.8b for an average machine, a gemma4:e2b-class model for a beefier one.",
     utilityNumCtx: "Context window (num_ctx) for the utility model. Summarising needs little context — keep it small on modest hardware; larger just uses more KV-cache memory. Only used when a utility model is set.",
@@ -229,8 +230,12 @@ function ModelTests() {
                     // A result only counts for the model it was run against — editing
                     // the field invalidates it back to "not tested".
                     const fresh = st && st.model === name;
-                    const state = !name ? "unset" : fresh ? st!.status : "idle";
+                    // A configured model the whitelist excludes is un-callable — flag it RED
+                    // up front (no test needed), like the vision-capability check does.
+                    const excluded = !!name && !modelFilterAllows(name, config.value.modelFilter);
+                    const state = !name ? "unset" : excluded ? "err" : fresh ? st!.status : "idle";
                     const title = !name ? "Not set"
+                        : excluded ? "Excluded by the model access filter — this model can't be called."
                         : !fresh ? "Not tested yet"
                         : st!.status === "loading" ? "Testing…"
                         : st!.status === "ok" ? `Passed${st!.at ? ` at ${new Date(st!.at).toLocaleTimeString()}` : ""}${st!.detail ? ` · ${st!.detail}` : ""}`
@@ -280,6 +285,7 @@ export function Settings() {
     const c = config.value;
     const tab = settingsTab.value;
     const utilOn = !!c.utilityModel.trim();
+    const filterValid = (() => { if (!c.modelFilter.trim()) return true; try { new RegExp(c.modelFilter); return true; } catch { return false; } })();
     const pct = Math.round(fontScale.value * 100);
     const setScale = (s: number) => {
         fontScale.value = Math.min(MAX_FS, Math.max(MIN_FS, Math.round(s * 20) / 20));
@@ -324,6 +330,14 @@ export function Settings() {
 
             {tab === "models" ? <>
                 <div class="set-note">These are the defaults <code>ml.chat</code> / <code>ml.createChat</code> use when you don't pass a <code>model</code>. With no default <b>Model</b> set, you must specify one on every call.</div>
+
+                <div class="set-group">Model access filter</div>
+                <label class="set-field"><Lbl tip={TIP.modelFilter}>Allowed models (regex whitelist)</Lbl>
+                    <input {...text("modelFilter", { placeholder: "blank = all models · e.g. ^(qwen|gemma)" })} class={filterValid ? "" : "err"} />
+                    <div class="set-hint">Only matching model ids are callable via <code>window.ml</code> and shown to pages. Blank = no restriction. The rows below flag any configured model this excludes.</div>
+                    {filterValid ? null : <div class="set-err">Invalid regex — the filter is inactive (all models allowed).</div>}
+                </label>
+
                 <label class="set-field"><Lbl tip={TIP.model}>Default model</Lbl>
                     <input {...text("model", { list: "ml-models", placeholder: "e.g. qwen3:14b" })} /></label>
                 <label class="set-field"><Lbl tip={TIP.ocrModel}>OCR model (optional)</Lbl>

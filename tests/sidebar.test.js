@@ -359,6 +359,22 @@ test("settings: a vision-required role (OCR) fails RED when the model lacks visi
     assert.match(w.shadow.querySelector(".test-err").textContent, /doesn't report vision capability/);
 });
 
+test("settings: a configured model the model-filter excludes is flagged RED up front (no test needed)", async () => {
+    const w = await loadSidebarWorld({
+        sync: { model: "qwen3:14b", ocrModel: "gpt-4o-cloud", modelFilter: "^qwen" },
+    });
+    await openSettings(w, "Models");
+    await w.tick();
+    const rows = [...w.shadow.querySelectorAll(".test-row")];
+    const ocrRow = rows.find(r => r.querySelector(".role").textContent === "OCR");
+    const defRow = rows.find(r => r.querySelector(".role").textContent === "Default");
+    // gpt-4o-cloud fails /^qwen/ → RED with the filter reason, statically (no Test click).
+    assert.ok(ocrRow.querySelector(".test-ic.err"), "excluded OCR model flagged RED");
+    assert.match(ocrRow.querySelector(".tt-pop").textContent, /Excluded by the model access filter/);
+    // qwen3:14b matches → not flagged.
+    assert.ok(!defRow.querySelector(".test-ic.err"), "a matching model is not flagged");
+});
+
 test("settings: unknown caps (cloud/non-Ollama) do NOT red a vision role — fall through to the functional test", async () => {
     const w = await loadSidebarWorld({
         sync: { ocrModel: "cloud-vlm" },

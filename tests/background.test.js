@@ -701,6 +701,51 @@ test("SET_MODEL validates against the server list and persists", async () => {
     assert.equal(bg.stored.model, "b"); // unchanged
 });
 
+test("model filter: FETCH_LLM blocks a model outside the whitelist, allows a matching one", async () => {
+    const bg = loadBackground({
+        config: baseConfig({ modelFilter: "^qwen" }),
+        onFetch: () => jsonResponse({ choices: [{ message: { content: "ok" } }] }),
+    });
+    const blocked = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }], model: "gpt-4o" } });
+    assert.match(blocked.error, /blocked by the model filter/);
+    const ok = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }], model: "qwen3:14b" } });
+    assert.equal(ok.data, "ok");
+});
+
+test("model filter: an invalid regex fails OPEN (a typo doesn't brick every call)", async () => {
+    const bg = loadBackground({
+        config: baseConfig({ modelFilter: "([" }),   // not a valid regex
+        onFetch: () => jsonResponse({ choices: [{ message: { content: "ok" } }] }),
+    });
+    const res = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }], model: "gpt-4o" } });
+    assert.equal(res.data, "ok", "invalid filter → no restriction, not a hard block");
+});
+
+test("model filter: LIST_MODELS hides non-matching models from callers", async () => {
+    const bg = loadBackground({
+        config: baseConfig({ modelFilter: "^qwen" }),
+        onFetch: (call) => call.url === "http://host/api/models"
+            ? jsonResponse({ data: [{ id: "qwen3:14b" }, { id: "gpt-4o" }, { id: "qwen2.5vl:7b" }] })
+            : jsonResponse({ choices: [{ message: { content: "ok" } }] }),
+    });
+    const res = await bg.send({ type: "LIST_MODELS" });
+    assert.deepEqual(res.data, ["qwen3:14b", "qwen2.5vl:7b"], "cloud model never surfaces to the caller");
+});
+
+test("model filter: SET_MODEL rejects an in-server model the whitelist excludes (with a clear reason)", async () => {
+    const bg = loadBackground({
+        config: baseConfig({ modelFilter: "^qwen" }),
+        onFetch: (call) => call.url === "http://host/api/models"
+            ? jsonResponse({ data: [{ id: "qwen3:14b" }, { id: "gpt-4o" }] })
+            : jsonResponse({}),
+    });
+    // gpt-4o IS on the server, so it's not "unknown" — it's blocked by the filter, and
+    // the error says so (the list stays unfiltered for validation to give this message).
+    const res = await bg.send({ type: "SET_MODEL", payload: { model: "gpt-4o" } });
+    assert.match(res.error, /blocked by the model filter/);
+    assert.equal(bg.stored.model, baseConfig().model, "not persisted");
+});
+
 test("LIST_MODELS explains an empty server instead of route-hopping", async () => {
     const bg = loadBackground({
         config: baseConfig(),

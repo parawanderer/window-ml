@@ -639,13 +639,19 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             const allCands = scoped ? collectInBox(regionAsBox, filter, { max: 150 }) : collectCandidates(filter, { max: 150 });
             const cands = allCands.slice(0, SOM_BADGE_CAP);
             const prefix = fallbackNote ? "(Grounding missed — used Set-of-Marks.) " : "";
-            if (!cands.length) return `${prefix}No ${filter} candidates visible${scopeNote || " in the viewport"}. Scroll the target into view, widen the filter (try 'all'), then call again.`;
-            // A <canvas>/WebGL surface has no sub-elements to badge — Set-of-Marks can't pick
-            // inside it. Steer to the coordinate mechanisms instead of a useless single badge.
+            // A <canvas>/WebGL surface (WebGL is just a <canvas> to the DOM) has no
+            // sub-elements to badge — Set-of-Marks can't pick inside it. Steer to the
+            // coordinate mechanisms. Shared by the no-candidates path (a canvas yields
+            // ZERO clickables, so it hits `!cands.length` first) and the all-canvas path.
+            const canvasAlts = groundingModel
+                ? "Use strategy 'grid-grounding' (grid narrows the region, then a grounding model pinpoints an exact spot inside it — best for a small target), or 'grounding', or 'grid' and zoom in"
+                : "Use strategy 'grid' and zoom in";
+            const onCanvas = canvasPointIn(regionAsBox);   // is the search area itself a canvas?
+            if (!cands.length) {
+                if (onCanvas) return `${prefix}${scopeSel ? `"${scopeSel}"` : "That area"} is a <canvas> — Set-of-Marks can't pick inside it (no sub-elements to badge). ${canvasAlts} — each returns an @pt coordinate token to click.`;
+                return `${prefix}No ${filter} candidates visible${scopeNote || " in the viewport"}. Scroll the target into view, widen the filter (try 'all'), then call again.`;
+            }
             if (cands.every(c => c.tagName === "CANVAS")) {
-                const canvasAlts = groundingModel
-                    ? "Use strategy 'grid-grounding' (grid narrows the region, then a grounding model pinpoints an exact spot inside it — best for a small target), or 'grounding', or 'grid' and zoom in"
-                    : "Use strategy 'grid' and zoom in";
                 return `${prefix}"${description}" is on a <canvas> — Set-of-Marks can't pick inside it (it has no sub-elements). ${canvasAlts} — it returns an @pt coordinate token to click.`;
             }
             // Dense pages break Set-of-Marks (badges overlap, the model misreads) AND we

@@ -459,6 +459,14 @@ it per format: `params.think` (openai) vs a top-level `think` (ollama native).
   so a hostile page can't repoint the saved API key at another host.
 - Pages can change only the **model**, and `setModel` validates it against the
   server list.
+- **Model-access filter (`modelFilter`, a regex whitelist, default empty).** When set,
+  the wrapper only calls models whose id matches — enforced on the RESOLVED model in
+  `prepareRequest` (main/ocr/grounding/utility all pass through) and in `setModel`, and
+  `LIST_MODELS` filters its response so a page's `ml.models()` never even sees an excluded
+  (e.g. cloud) model. Invalid regex fails **open** (a typo can't brick every call; settings
+  flags it). `modelFilterAllows` (contract.ts, pure) is the single source shared by the
+  background enforcement and the settings row/datalist markers. `modelFilter` is NOT in the
+  `GET_CONFIG` public subset — the page can't read the filter.
 - The background's cross-origin fetches rely on `<all_urls>` host permission,
   which "On click" site access withholds for third-party hosts (e.g. image
   CDNs) — a known limitation, not a bug.

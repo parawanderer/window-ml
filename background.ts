@@ -3,7 +3,7 @@
 // server JSON is genuinely opaque, so it's typed `any`; our own data uses the
 // shared contract types.
 import type { MlConfig, ApiFormat, NeutralMessage, ToolCall, FetchLlmPayload, LlmResult, LoadedModel, JsonSchema, TokenUsage } from "./contract";
-import { DEFAULT_CONFIG } from "./contract";   // single source of truth (see contract.ts)
+import { DEFAULT_CONFIG, modelFilterAllows } from "./contract";   // single source of truth (see contract.ts)
 
 // The wire body we assemble for a chat request (grows per format/options).
 interface ChatBody {
@@ -313,6 +313,12 @@ async function prepareRequest(payload: FetchLlmPayload) {
                 : "No model configured. Set a Model in the popup or the sidebar settings."
         );
     }
+    // Model-filter whitelist: the wrapper only calls models matching the configured
+    // regex (a guard against a page invoking, e.g., an expensive cloud model). Applies
+    // to the RESOLVED model — main/ocr/grounding/utility all pass through here.
+    if (!modelFilterAllows(model, config.modelFilter)) {
+        throw new Error(`Model "${model}" is blocked by the model filter (/${config.modelFilter}/). Only matching models are callable — change or clear the filter in the extension settings.`);
+    }
 
     const messages = payload.messages || [];
     const hasImages = messages.some(m => m.images && m.images.length);
@@ -606,6 +612,10 @@ async function setModel(model: unknown): Promise<string> {
     if (!ids.includes(model)) {
         throw new Error(`Unknown model "${model}". Available: ${ids.join(", ")}`);
     }
+    const config = await getConfig();
+    if (!modelFilterAllows(model, config.modelFilter)) {
+        throw new Error(`Model "${model}" is blocked by the model filter (/${config.modelFilter}/). Pick a matching model, or change the filter in the extension settings.`);
+    }
     await chrome.storage.sync.set({ model });
     return model;
 }
@@ -689,8 +699,15 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // Config overrides are only honored from the extension's own pages
         // (popup); pages relaying through the content script (sender.tab set)
         // must not be able to point the saved API key at another host.
-        listAvailableModels(sender.tab ? {} : (message.payload || {}))
-            .then(({ ids, ollamaModels }) => sendResponse({ data: ids, ollamaModels }))
+        // Filter the returned list by the model-filter whitelist too, so a page's
+        // ml.models() never even SEES an excluded (e.g. cloud) model, and the settings
+        // datalists only offer allowed ones. Enforcement still lives in prepareRequest;
+        // this is the "don't surface it" half.
+        Promise.all([listAvailableModels(sender.tab ? {} : (message.payload || {})), getConfig()])
+            .then(([{ ids, ollamaModels }, cfg]) => {
+                const keep = (m: string) => modelFilterAllows(m, cfg.modelFilter);
+                sendResponse({ data: ids.filter(keep), ollamaModels: ollamaModels ? ollamaModels.filter(keep) : null });
+            })
             .catch(err => sendResponse({ error: err.message }));
         return true;
 
