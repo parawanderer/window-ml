@@ -1158,6 +1158,25 @@ test("export: Steps counts TURNS, not events (a turn emits a thought + one event
     assert.match(text, /\*\*Steps:\*\* 1 \/ 10/, "Steps = distinct turns (1), not the 3 emitted events");
 });
 
+test("export: keeps the raw args alongside a rendered In (both, since there's no toggle)", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("pyx", "compute", "gemma4:31b", 10));
+    await w.dispatch(agentStep("pyx", 1, {
+        tool: "python_exec", arguments: { code: "return 6 * 7", cast: "pt", mode: "readonly" },
+        result: "→ @pt:dead", renderIn: { type: "python-in", mode: "pt", code: "return 6 * 7" },
+        renderOut: { type: "python-out", value: "[42]" },
+    }));
+    await w.dispatch(agentResult("pyx", "done", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+
+    const { blob } = await captureExport(w);
+    const text = await blob.text();
+    assert.match(text, /return 6 \* 7/, "the rendered python source is shown");
+    assert.match(text, /In · raw args/, "and the raw args disclosure is present");
+    assert.match(text, /"cast": "pt"/, "the raw args carry the full tool call the model emitted (not just the code)");
+});
+
 test("export: skips a usage-only step (no bare 'Step N · ?' header)", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("expu", "answer directly", "gemma4:31b"));

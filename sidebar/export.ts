@@ -151,15 +151,26 @@ function writeAgent(s: Session, d: Sink): void {
         d.head(`Step ${st.step} · ${st.tool || "?"}`);
         if (st.approval) d.note(st.approval === "readonly" ? "auto-approved (read-only)" : st.approval === "sandbox" ? "auto-approved (sandboxed python)" : st.approval === "user" ? "approved by user" : "denied by user");
         if (st.thought) d.prose(st.thought);
+        // In: a rendered view (when the tool supplies one) AND — always — the RAW args
+        // the model emitted. The sidebar has a rendered⇄raw toggle; a static export can't
+        // toggle, so it keeps both (the raw args are the ground truth the LLM produced).
+        let renderedIn = false;
         if (st.renderIn && st.renderIn.type === "python-in") {
             // python_exec's notebook-cell In: mode + the input screenshot + the source.
             const pin = st.renderIn;
             d.note(`Mode: ${pin.mode}`);
             if (pin.image) d.image(pin.image, `step-${st.step}-in`, `step ${st.step} — input image`);
             d.block("In", pin.code, "python");
-        } else if (st.arguments && Object.keys(st.arguments).length) {
-            const js = st.tool === "exec" && typeof st.arguments.js === "string" ? st.arguments.js : null;
-            if (js) d.block("In", beautifyJs(js), "javascript");
+            renderedIn = true;
+        } else if (st.renderIn && st.renderIn.type === "code") {
+            d.block("In", st.renderIn.format ? beautifyJs(st.renderIn.text) : st.renderIn.text, st.renderIn.lang || "javascript");
+            renderedIn = true;
+        } else if (!st.renderIn && st.tool === "exec" && typeof st.arguments?.js === "string") {
+            d.block("In", beautifyJs(st.arguments.js), "javascript");
+            renderedIn = true;
+        }
+        if (st.arguments && Object.keys(st.arguments).length) {
+            if (renderedIn) d.details("In · raw args (as sent by the model)", () => d.code(pretty(st.arguments), "json"));
             else d.block("In", pretty(st.arguments), "json");
         }
         if (st.argIssues && st.argIssues.length) d.note(`⚠ arg issues: ${st.argIssues.join("; ")}`, true);
