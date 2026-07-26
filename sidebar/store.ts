@@ -23,7 +23,7 @@ export interface Turn {
     reasoning?: string | null;  // separate thinking/reasoning text, if the model produced any
     usage?: TokenUsage | null;  // token counts for this turn, when the server reports them
 }
-export interface AgentStep { step: number; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: number; render?: RenderDescriptor; argIssues?: string[]; approval?: "readonly" | "user" | "denied"; usage?: TokenUsage | null; }
+export interface AgentStep { step: number; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: number; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; argIssues?: string[]; approval?: "readonly" | "user" | "denied"; usage?: TokenUsage | null; }
 export interface Session {
     hash: string; model: string | null; tag: "session" | "saved";
     createdTs: number; lastTs: number; status: Status;

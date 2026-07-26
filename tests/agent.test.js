@@ -922,18 +922,21 @@ test("a custom tool's render() emits a serializable descriptor on its step", asy
         name: "stats", run: () => "3 items",
         render: () => ({ type: "table", columns: ["k", "v"], rows: [["a", 1]] })
     });
-    assert.deepEqual(step.render, { type: "table", columns: ["k", "v"], rows: [["a", 1]] });
+    // A tool's render() METHOD fills the In slot (a visualization of the call).
+    assert.deepEqual(step.renderIn, { type: "table", columns: ["k", "v"], rows: [["a", 1]] });
+    assert.ok(!step.renderOut, "the method feeds In, not Out");
 });
 
 test("a throwing/absent render() falls back to the default (never breaks the run)", async () => {
     const { res, step } = await agentDebugEvents({ name: "boom", run: () => "ok", render: () => { throw new Error("nope"); } });
     assert.equal(res.summary, "done", "run completed despite the throwing render");
-    assert.ok(!step.render, "no descriptor → sidebar uses the default In:/Out:");
+    assert.ok(!step.renderIn && !step.renderOut, "no descriptor → sidebar uses the default In:/Out:");
 });
 
 test("agent auto-derives an image descriptor from a tool that returns a screenshot", async () => {
     const { step } = await agentDebugEvents({ name: "shoot", run: () => ({ content: "shot", image: "data:image/png;base64,AAA", imageLabel: "viewport" }) });
-    assert.deepEqual(step.render, { type: "image", src: "data:image/png;base64,AAA", label: "viewport" });
+    // An auto-derived image describes the RESULT → the Out slot.
+    assert.deepEqual(step.renderOut, { type: "image", src: "data:image/png;base64,AAA", label: "viewport" });
 });
 
 test("agent-start carries the resolved config (system prompt, tools, maxSteps)", async () => {
@@ -981,7 +984,7 @@ test("built-in exec renders the run JS as a javascript code descriptor", async (
     const exec = world.ml.domTools.find(t => t.name === "exec");
     await world.ml.agent("x", { tools: [exec], vision: false, approve: () => true });
     const step = events.find(e => e.kind === "agent-step" && e.tool === "exec");
-    assert.deepEqual(step.render, { type: "code", text: "1 + 1", lang: "javascript", target: "in", format: true });
+    assert.deepEqual(step.renderIn, { type: "code", text: "1 + 1", lang: "javascript", format: true });
 });
 
 test("autoApproveReadonly: a read-only exec survey runs with NO approval prompt", async () => {

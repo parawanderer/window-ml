@@ -368,18 +368,25 @@ the read-only interpreter · `"user"` = you approved · `"denied"` = you rejecte
 shown as a green/red **provenance badge** + a matching left-border outline on the
 step. That badge is the slot a future interactive-approval control resolves into.
 
-**Tool render descriptors.** A tool step can carry a `render`: a **serializable
-`RenderDescriptor`** (`image`/`code`/`table`/`keyval`/`elements`/`locate`) — data, never
-code, since functions can't cross the window bus and page code must never run in
-the extension-origin iframe. `descriptorFor` resolves it in priority order: a
-`render` descriptor the tool's **`run()` returned directly** on its `ToolResult`
-(for a visualization computed at run-time, e.g. `locate`'s badged image — shown in
-the sidebar but, unlike `image`, NOT injected into the model's history) → the tool's
-optional **`render(input, args)`** method (runs page-side, e.g. `exec`) → auto-derive
-`image`/`elements` from the envelope → `undefined` (the default In:/Out: view). The sidebar (`RenderPanel`) is
-a registry keyed by `type` + the default fallback — it owns all UI, so an unknown
-type just dumps as JSON. Custom-tool render is defensive (throw → fallback, never
-breaks the run). A `code` descriptor may set `format: true` (the `exec` tool does)
+**Tool render descriptors (two slots).** A tool step carries **two** independent
+**serializable `RenderDescriptor`s** (`image`/`code`/`table`/`keyval`/`elements`/`locate`/
+`python-in`/`python-out`) — data, never code, since functions can't cross the window bus and
+page code must never run in the extension-origin iframe. `descriptorFor` fills each slot from
+its **own hook** (no `target` field — the slot IS the hook):
+- **In** (a visualization of the *call*) = the `ToolResult.renderIn` a `run()` returned
+  (e.g. `python`'s notebook-cell header), else the tool's **`render(input, args)`** method
+  (page-side, e.g. `exec`'s pretty JS). The sidebar renders the In block whenever there are
+  args *or* a `renderIn`.
+- **Out** (a visualization of the *result*) = the `ToolResult.render` a `run()` returned
+  (e.g. `locate`'s badged image / `python`'s output — shown in the sidebar but, unlike
+  `image`, NOT injected into the model's history), else an auto-derived `image`/`elements`
+  from the envelope.
+Either slot may be `undefined` → that block falls back to its raw view (args / result). The
+sidebar (`RenderPanel`) is a registry keyed by `type` + a default fallback — it owns all UI,
+so an unknown type just dumps as JSON. Custom-tool render is defensive (throw → fallback,
+never breaks the run). The `agent-step` debug event carries `renderIn`/`renderOut`; the
+export mirrors both (`python-in` → mode + input-image sidecar + source; `python-out` → an
+image sidecar). A `code` descriptor may set `format: true` (the `exec` tool does)
 → the sidebar beautifies the JS with **js-beautify** before highlighting (bundled
 into `sidebar-app` only, from the standalone `js-beautify/js/lib/beautify.js` —
 the npm deps are CLI-only). Two sidebar-only code-block display prefs live in
@@ -390,6 +397,22 @@ block reacts at once; the gutter re-splits highlighted HTML per line (`htmlLines
 reopens spans that straddle a newline — matching `<` first, so a text run like
 ` searchResults` isn't misread as a `<span>`), and numbers stay aligned even when
 a line wraps because each source line is its own flex row.
+
+**`python_exec` — sandboxed Python (offscreen Pyodide).** An opt-in, `requiresApproval`
+tool (`buildPythonTool`, like `clickTool`) for pixel/array/spatial work better done in Python
+than JS. The service worker can't run WASM and the page main-world CSP blocks it, so CPython
+runs in an **offscreen document** (`offscreen.ts`, extension-origin, its CSP allows
+`'wasm-unsafe-eval'`): `background.js` `ensureOffscreen()` → `PY_RUN` message → Pyodide
+(numpy/Pillow, bundled offline in `dist/pyodide/`, lazy-loaded). The relay is the usual
+contract — `PYTHON_EXEC_REQUEST` (page) → `PYTHON_EXEC` (bg). `ml.pythonExec(code, { image })`
+screenshots `image` (a selector or `@pt`/`@box`) into the sandbox as `img` (PIL) + `img_np`
+(numpy); the code runs in a **sandboxed namespace** (no network/fs/DOM) under
+`contextlib.redirect_stdout` (byte-exact stdout, newlines intact) with its own try/except
+(traceback captured, partial stdout preserved). Returns come back as **text by default**;
+`cast:"pt"`/`"box"` validate the return and mint a clickable `@pt`/`@box` (mismatch → an
+honest error, never a guess), and a `to_base64(...)` image return is always shown. The debug
+render is the two-slot `python-in`/`python-out` (above). *(Planned: bundle pandas + a
+table-selector `df` input mode — `docs/spec/PYTHON_EXEC_RENDERER.md`.)*
 
 **Export log.** The detail-view header has an "Export log" button opening a small
 menu with two formats (chat and agent both). It serialises the in-memory session

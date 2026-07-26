@@ -36,7 +36,7 @@ function onDebug(ev: MlDebugEvent): void {
     if (ev.kind === "agent-step") {
         const s = sessionMap.get(ev.session.hash);
         if (!s) return;
-        s.steps = [...(s.steps || []), { step: ev.step, thought: ev.thought, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: ev.elements, render: ev.render, argIssues: ev.argIssues, approval: ev.approval, usage: ev.usage }];
+        s.steps = [...(s.steps || []), { step: ev.step, thought: ev.thought, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: ev.elements, renderIn: ev.renderIn, renderOut: ev.renderOut, argIssues: ev.argIssues, approval: ev.approval, usage: ev.usage }];
         s.lastTs = ev.ts; rev.value++; return;
     }
     if (ev.kind === "agent-result") {
@@ -472,6 +472,36 @@ function LocateRender({ d }: { d: Extract<RenderDescriptor, { type: "locate" }> 
     );
 }
 
+// `python_exec`'s In slot: a notebook-cell header — the run mode (hover explains what
+// `script`/`cast:pt`/`cast:box` mean), the input screenshot the script saw, and the source.
+const PY_MODE = {
+    script: { label: "script", tip: "General scripting — the return comes back as text." },
+    pt: { label: "cast: pt", tip: "The return is validated as a point ([x,y]/{x,y}) and minted as a clickable @pt." },
+    box: { label: "cast: box", tip: "The return is validated as a box and minted as an @box region." },
+} as const;
+function PythonInRender({ d }: { d: Extract<RenderDescriptor, { type: "python-in" }> }) {
+    return (
+        <div class="r-python r-py-in">
+            <div class="r-py-mode">Mode: <span class="tt"><span class="r-py-modeval">{PY_MODE[d.mode].label}</span><span class="tt-pop left" role="tooltip">{PY_MODE[d.mode].tip}</span></span></div>
+            {d.image ? <div class="r-image r-py-img"><ClickableImg src={d.image} alt="input image" /><div class="r-image-label">input image (img / img_np)</div></div> : null}
+            <Code text={d.code} lang="python" />
+        </div>
+    );
+}
+// `python_exec`'s Out slot: captured stdout, then one of a returned image / a minted
+// @pt·@box token / the raw value / a Python traceback.
+function PythonOutRender({ d }: { d: Extract<RenderDescriptor, { type: "python-out" }> }) {
+    return (
+        <div class="r-python r-py-out">
+            {d.stdout ? <div class="r-py-stdout"><div class="r-py-lbl">stdout</div><Code text={d.stdout} lang="text" /></div> : null}
+            {d.image ? <div class="r-image"><ClickableImg src={d.image} alt="output image" /><div class="r-image-label">returned image</div></div> : null}
+            {d.token ? <div class="r-py-token"><div class="r-py-lbl">token</div><code>{d.token}</code></div> : null}
+            {d.error ? <div class="r-py-err"><div class="r-py-lbl">error</div><Code text={d.error} lang="text" /></div> : null}
+            {d.value != null && !d.image && !d.token && !d.error ? <div class="r-py-val"><div class="r-py-lbl">value</div><Code text={d.value} lang="json" /></div> : null}
+        </div>
+    );
+}
+
 function RenderPanel({ d }: { d: RenderDescriptor }) {
     switch (d.type) {
         case "image": return <div class="r-image"><ClickableImg src={d.src} alt={d.label || "image"} />{d.label ? <div class="r-image-label">{d.label}</div> : null}</div>;
@@ -480,6 +510,8 @@ function RenderPanel({ d }: { d: RenderDescriptor }) {
         case "keyval": return <div class="r-keyval">{d.pairs.map(([k, v], i) => <div class="r-kv" key={i}><span class="r-k">{k}</span><span class="r-v">{v}</span></div>)}</div>;
         case "elements": return <RenderElements items={d.items} />;
         case "locate": return <LocateRender d={d} />;
+        case "python-in": return <PythonInRender d={d} />;
+        case "python-out": return <PythonOutRender d={d} />;
         default: return <Code text={pretty(d)} lang="json" />;   // unknown type → dump it
     }
 }
@@ -497,8 +529,8 @@ function IoBlock({ label, tip, preview, render, raw }: { label: string; tip?: st
                 {render
                     ? <>
                         <div class="rr-toggle">
-                            <button class={showRaw ? "" : "on"} onClick={() => setShowRaw(false)}>rendered</button>
-                            <button class={showRaw ? "on" : ""} onClick={() => setShowRaw(true)}>raw</button>
+                            <span class="tt"><button class={showRaw ? "" : "on"} onClick={() => setShowRaw(false)}>rendered</button><span class="tt-pop left" role="tooltip">A debug visualisation for you — not shown to the model.</span></span>
+                            <span class="tt"><button class={showRaw ? "on" : ""} onClick={() => setShowRaw(true)}>raw</button><span class="tt-pop left" role="tooltip">Exactly what the model sent/received. All it knows.</span></span>
                         </div>
                         {showRaw ? raw : <RenderPanel d={render} />}
                     </>
@@ -568,9 +600,9 @@ const ApprovalBadge = ({ approval }: { approval: "readonly" | "user" | "denied" 
 function ToolStep({ st }: { st: AgentStep }) {
     const [open, setOpen] = useState(false);
     const args = st.arguments && Object.keys(st.arguments).length ? st.arguments : null;
-    // A descriptor renders the block it targets (default "out"); the other stays raw.
-    const inRender = st.render?.target === "in" ? st.render : undefined;
-    const outRender = st.render && st.render.target !== "in" ? st.render : undefined;
+    // Each slot renders from its own descriptor; the block falls back to raw when absent.
+    const inRender = st.renderIn;
+    const outRender = st.renderOut;
     const issues = st.argIssues?.length ? st.argIssues : null;
     return (
         <div class={`astep tool${st.approval ? (st.approval === "denied" ? " appr-no" : " appr-yes") : ""}`}>
@@ -586,9 +618,9 @@ function ToolStep({ st }: { st: AgentStep }) {
             {open
                 ? <div class="astep-body">
                     {issues ? <div class="tt tt-row arg-issues"><IconWarn /><span>arg schema: {issues.join("; ")}</span><span class="tt-pop wrap left" role="tooltip">The args don't match this tool's parameter schema.</span></div> : null}
-                    {args
+                    {args || inRender
                         ? <IoBlock label="In" tip="The arguments the model passed to this tool call."
-                            preview={inlineJson(args)} render={inRender} raw={<Code text={pretty(args)} lang="json" />} />
+                            preview={inlineJson(args || {})} render={inRender} raw={<Code text={pretty(args || {})} lang="json" />} />
                         : null}
                     <IoBlock label="Out" tip="What the tool returned to the model."
                         preview={inlineText(st.result || "")} render={outRender}
@@ -1062,10 +1094,21 @@ function App() {
  */
 // Debug events are relayed in from the shell (the parent window); a bare page
 // can't reach this iframe's message bus across the extension-origin boundary.
+// Drop all session state. The DevTools panel reuses one long-lived app across page
+// reloads (the overlay gets a fresh iframe each load), so it must be told to clear —
+// on a page navigation (ML_DEBUG_RESET) and before a reconnect's authoritative replay.
+function resetSessions(): void {
+    sessionMap.clear();
+    titleTried.clear();
+    if (view.value.name === "detail") view.value = { name: "list" };
+    rev.value++;
+}
+
 function onMessage(e: MessageEvent): void {
     const d = e.data as any;
     if (e.source !== window.parent || !d) return;
     if (d.__mlDebug) onDebug(d.__mlDebug as MlDebugEvent);
+    else if (d.__mlDebugReset) resetSessions();
     else if (typeof d.__mlSidebarOpen === "boolean") {
         const wasOpen = sidebarOpen.value;
         sidebarOpen.value = d.__mlSidebarOpen;

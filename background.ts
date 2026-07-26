@@ -684,7 +684,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     // (which can't see page window-messages) can mirror the overlay's stream. Fire-and-
     // forget — no response. RESET clears a tab's buffer on navigation (fresh page).
     if (message.type === "ML_DEBUG_EVENT") { if (sender.tab?.id != null) relayDebugEvent(sender.tab.id, message.event); return; }
-    if (message.type === "ML_DEBUG_RESET") { if (sender.tab?.id != null) debugBuffer.delete(sender.tab.id); return; }
+    if (message.type === "ML_DEBUG_RESET") { if (sender.tab?.id != null) resetDebug(sender.tab.id); return; }
     if (message.type === "PYTHON_EXEC") {
         // Route the sandboxed-Python run to the offscreen Pyodide host (the service worker
         // can't run WASM). Spin the offscreen doc up on first use, then relay PY_RUN to it.
@@ -850,6 +850,15 @@ function relayDebugEvent(tabId: number, event: unknown): void {
     if (buf.length > DEBUG_BUFFER_CAP) buf.splice(0, buf.length - DEBUG_BUFFER_CAP);
     const ports = devtoolsPorts.get(tabId);
     if (ports) for (const p of ports) { try { p.postMessage({ __mlDebug: event }); } catch { /* port closing */ } }
+}
+
+// A fresh page mount (shell remount → ML_DEBUG_RESET) clears the buffer AND tells any
+// connected panel to drop its stale sessions — the panel's app outlives a page reload, so
+// without this it keeps the prior load's data while new events pile on under it.
+function resetDebug(tabId: number): void {
+    debugBuffer.delete(tabId);
+    const ports = devtoolsPorts.get(tabId);
+    if (ports) for (const p of ports) { try { p.postMessage({ reset: true }); } catch { /* port closing */ } }
 }
 
 chrome.runtime.onConnect.addListener((port) => {

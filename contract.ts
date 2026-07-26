@@ -174,7 +174,8 @@ export interface ToolResult {
     elements?: Node[];
     image?: string;
     imageLabel?: string;
-    render?: RenderDescriptor;
+    render?: RenderDescriptor;     // the Out slot: a visualization of the result (e.g. locate's marks)
+    renderIn?: RenderDescriptor;   // the In slot: a visualization of the CALL (e.g. python's notebook-cell header)
 }
 
 /** One stage of a `locate` run: a vision sub-call (grid cell-pick, Set-of-Marks pick,
@@ -212,9 +213,16 @@ export type RenderDescriptor = (
         picked?: string;                    // the chosen element (role/name → selector), or none
         pickedBy?: "model" | "snap";        // model → "Model picked" (a badge); snap → "Snapped to" (DOM hit-test)
       }
-    // Which block the descriptor renders (default "out"). `exec` renders its "in"
-    // (the JS); output-derived descriptors (image/elements) render "out".
-) & { target?: "in" | "out" };
+    // `python_exec`'s In slot: a notebook-cell header — the run mode (from `cast`), the
+    // input screenshot the script saw, and the Python source (highlighted, NOT beautified).
+    | { type: "python-in"; mode: "script" | "pt" | "box"; code: string; image?: string }
+    // `python_exec`'s Out slot: captured stdout, a returned image, a minted @pt/@box token,
+    // the raw/JSON value, or a Python traceback.
+    | { type: "python-out"; stdout?: string; image?: string; token?: string; value?: string; error?: string }
+);
+// The slot a descriptor fills is decided by which hook produced it (a tool's `render()`
+// method / run()-returned `renderIn` → the In slot; a run()-returned `render` / an
+// auto-derived image/elements → the Out slot) — not by a field on the descriptor.
 
 /** Input to a tool's `render`: the run's stringified result + the raw envelope
  *  extras (live nodes/image), plus the call args. Runs page-side. */
@@ -223,7 +231,8 @@ export interface ToolRenderInput {
     elements?: Node[];
     image?: string;
     imageLabel?: string;
-    render?: RenderDescriptor;   // a render the tool's run() precomputed (wins over auto-derive)
+    render?: RenderDescriptor;     // an Out render the tool's run() precomputed (wins over auto-derive)
+    renderIn?: RenderDescriptor;   // an In render the tool's run() precomputed (wins over the render() method)
 }
 
 export interface MlTool {
@@ -236,8 +245,10 @@ export interface MlTool {
     run: (args: any) => string | ToolResult | Promise<string | ToolResult>;
     requiresApproval: boolean;
     capabilities: ("vision"|"answer")[];         // e.g. "vision" | "answer"
-    // Optional page-side formatter → a serializable RenderDescriptor for the
-    // debug sidebar (null/throw → the default renderer). Never receives/returns code.
+    // Optional page-side formatter → a serializable RenderDescriptor for the debug
+    // sidebar's IN slot (a visualization of the call; null/throw → the raw args). This
+    // is the method form of `ToolResult.renderIn`; `exec` uses it to show pretty JS.
+    // Never receives/returns code.
     render?: (input: ToolRenderInput, args: Record<string, unknown>) => RenderDescriptor | null | undefined;
 }
 
@@ -464,7 +475,8 @@ export interface DebugAgentStart extends DebugBase { kind: "agent"; task: string
 export interface DebugAgentStep extends DebugBase {
     kind: "agent-step"; step: number;
     thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: number;
-    render?: RenderDescriptor;   // tool-supplied or auto-derived rich render (else the default In:/Out:)
+    renderIn?: RenderDescriptor;    // rich render for the In slot (the call) — else the raw args
+    renderOut?: RenderDescriptor;   // rich render for the Out slot (the result) — else the raw result
     argIssues?: string[];        // JSON-Schema mismatches between the args and the tool's parameters
     // How an approval-gated tool call was decided (undefined for tools that don't
     // require approval). The sidebar renders it as a green/red provenance badge —
@@ -533,7 +545,7 @@ export interface MlApi {
     typeTool(): MlTool;
     /** Run a sandboxed Python snippet (Pyodide/WASM, numpy + Pillow) with an optional
      *  screenshot injected as `img`/`img_np`. No network/filesystem/DOM. */
-    pythonExec(code: string, opts?: { image?: string | Element | null }): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string }>;
+    pythonExec(code: string, opts?: { image?: string | Element | null }): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string }>;
     /** Built-in sandboxed-Python tool factory (numpy/Pillow pixel/array work). */
     pythonTool(): MlTool;
 

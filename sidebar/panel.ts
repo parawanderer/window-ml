@@ -16,12 +16,31 @@ function toApp(evt: unknown): void {
 }
 
 const tabId = chrome.devtools.inspectedWindow.tabId;
-const port = chrome.runtime.connect({ name: "ml-devtools" });
-port.postMessage({ type: "ml-devtools-init", tabId });
-port.onMessage.addListener((msg: any) => {
-    if (msg?.__mlDebug) toApp(msg.__mlDebug);
-    else if (Array.isArray(msg?.replay)) for (const e of msg.replay) toApp(e);   // catch-up burst
-});
+
+// Tell the app to drop its sessions. Its iframe outlives inspected-page reloads (the
+// overlay's doesn't), so it must be cleared explicitly — on a page navigation (`reset`)
+// and before a reconnect's authoritative replay, so re-applying the buffer can't dupe.
+function resetApp(): void {
+    if (ready) frame.contentWindow?.postMessage({ __mlDebugReset: true }, "*");
+    else queue.length = 0;   // nothing shown yet → just drop any pending burst
+}
+
+// The MV3 background service worker is recycled aggressively; when it (or the port) drops,
+// the panel would silently stop receiving events (it connected once). Reconnect so new
+// calls keep flowing, and treat each (re)connect's `replay` as the source of truth.
+function connect(): void {
+    let port: chrome.runtime.Port;
+    try { port = chrome.runtime.connect({ name: "ml-devtools" }); }
+    catch { return; }   // extension context gone (e.g. reloaded) → this panel is stale
+    port.postMessage({ type: "ml-devtools-init", tabId });
+    port.onMessage.addListener((msg: any) => {
+        if (msg?.__mlDebug) toApp(msg.__mlDebug);
+        else if (msg?.reset) resetApp();
+        else if (Array.isArray(msg?.replay)) { resetApp(); for (const e of msg.replay) toApp(e); }   // authoritative catch-up
+    });
+    port.onDisconnect.addListener(() => { setTimeout(connect, 500); });   // SW cycled → re-establish
+}
+connect();
 
 window.addEventListener("message", (e: MessageEvent) => {
     const d: any = e.data;

@@ -194,8 +194,12 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .appr.yes { color: var(--ok); border-color: var(--ok); }
 .appr.no { color: var(--err); border-color: var(--err); }
 /* rendered ⇄ raw toggle for a descriptor step */
-.rr-toggle { display: inline-flex; gap: 0; margin-bottom: 4px; border: 1px solid var(--border); border-radius: 5px; overflow: hidden; }
+/* No `overflow: hidden` here — it would clip the buttons' hover tooltip (which hangs
+   below the toggle). The rounded ends come from the first/last button instead. */
+.rr-toggle { display: inline-flex; gap: 0; margin-bottom: 4px; border: 1px solid var(--border); border-radius: 5px; }
 .rr-toggle button { background: var(--panel); color: var(--fg-dim); border: none; padding: 1px 8px; font-size: 0.82em; cursor: pointer; }
+.rr-toggle .tt:first-child button { border-radius: 4px 0 0 4px; }
+.rr-toggle .tt:last-child button { border-radius: 0 4px 4px 0; }
 .rr-toggle button.on { background: var(--panel-2); color: var(--fg); }
 /* arg schema-check warnings */
 .arg-warn { display: inline-flex; align-items: center; gap: 3px; color: var(--err); font-size: 0.8em; font-weight: 700; flex: 0 0 auto; }
@@ -239,6 +243,15 @@ details.io[open] > summary .io-preview { display: none; }
 .r-loc-numtt { vertical-align: middle; }
 .r-loc-picked { color: var(--fg-dim); font-size: 0.9em; padding-top: 2px; border-top: 1px solid var(--border); }
 .r-loc-picked code { color: var(--fg); font-size: 0.95em; word-break: break-all; }
+/* python_exec notebook-cell render: In (mode + input image + source), Out (stdout +
+   one of image/token/value/error). Each labelled sub-block gets a small caption. */
+.r-python { display: flex; flex-direction: column; gap: 8px; }
+.r-py-mode { color: var(--fg-dim); font-size: 0.9em; }
+.r-py-modeval { color: var(--fg); font-weight: 600; cursor: help; border-bottom: 1px dotted var(--fg-faint); }
+.r-py-img img, .r-py-out .r-image img { max-height: 240px; }
+.r-py-lbl { color: var(--fg-faint); font-size: 0.8em; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 2px; }
+.r-py-token code { color: var(--fg); font-size: 0.95em; word-break: break-all; }
+.r-py-err code, .r-py-err .hljs { color: var(--err); }
 .r-elements { display: flex; flex-direction: column; gap: 2px; }
 .r-el { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
 .r-el-idx { color: var(--fg-faint); font: 0.8em ui-monospace, SFMono-Regular, Menlo, monospace; flex: 0 0 auto; }

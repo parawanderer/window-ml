@@ -727,9 +727,9 @@ test("agent view: a usage-only step (no thought/tool) does not render an empty s
 test("agent tool steps render descriptors (image / elements / table)", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("agr", "look at stuff"));
-    await w.dispatch(agentStep("agr", 1, { tool: "look", arguments: {}, render: { type: "image", src: "data:image/png;base64,AAA", label: "viewport" } }));
-    await w.dispatch(agentStep("agr", 2, { tool: "findByText", arguments: { text: "cat" }, elements: 2, render: { type: "elements", items: [{ path: "div.card", text: "Black cat", index: 0 }, { path: "div.card", text: "White cat", index: 1 }] } }));
-    await w.dispatch(agentStep("agr", 3, { tool: "stats", arguments: {}, render: { type: "table", columns: ["k", "v"], rows: [["a", 1], ["b", 2]] } }));
+    await w.dispatch(agentStep("agr", 1, { tool: "look", arguments: {}, renderOut: { type: "image", src: "data:image/png;base64,AAA", label: "viewport" } }));
+    await w.dispatch(agentStep("agr", 2, { tool: "findByText", arguments: { text: "cat" }, elements: 2, renderOut: { type: "elements", items: [{ path: "div.card", text: "Black cat", index: 0 }, { path: "div.card", text: "White cat", index: 1 }] } }));
+    await w.dispatch(agentStep("agr", 3, { tool: "stats", arguments: {}, renderIn: { type: "table", columns: ["k", "v"], rows: [["a", 1], ["b", 2]] } }));
     await w.dispatch(agentResult("agr", "done", 3));
 
     w.shadow.querySelector(".row").click();
@@ -750,7 +750,7 @@ const locateRender = (mode, model, substeps, extra = {}) => ({ type: "locate", m
 test("locate render: grounding is a box substep + a DOM-snap substep, with the pick", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("lgr", "find it"));
-    await w.dispatch(agentStep("lgr", 1, { tool: "locate", arguments: { description: "star" }, elements: 1, render:
+    await w.dispatch(agentStep("lgr", 1, { tool: "locate", arguments: { description: "star" }, elements: 1, renderOut:
         locateRender("grounding", "qwen2.5vl:7b", [
             { label: "Grounding · box (250, 250) → (300, 300)", prompt: "Locate \"star\" …", output: "250,250,300,300", rawImage: "data:image/png;base64,GGGraw", image: "data:image/png;base64,GGG" },
             { label: "DOM snap · +40px search margin", image: "data:image/png;base64,RRR" },
@@ -777,7 +777,7 @@ test("locate render: grounding is a box substep + a DOM-snap substep, with the p
 test("locate render: the raw⇄visualise toggle swaps to the exact image sent to the model", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("lrv", "find it"));
-    await w.dispatch(agentStep("lrv", 1, { tool: "locate", arguments: { description: "x" }, elements: 1, render:
+    await w.dispatch(agentStep("lrv", 1, { tool: "locate", arguments: { description: "x" }, elements: 1, renderOut:
         locateRender("marks", "gemma4:31b", [
             { label: "Set-of-Marks · 3 candidates · model chose #2", prompt: "which badge…", output: "2", rawImage: "data:image/png;base64,SENT", image: "data:image/png;base64,OVERLAY" },
         ], { picked: "#2 [button] → #b", pickedBy: "model" }) }));
@@ -797,7 +797,7 @@ test("locate render: the raw⇄visualise toggle swaps to the exact image sent to
 test("locate render: no-box grounding is a single box substep (no snap)", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("lnb", "find it"));
-    await w.dispatch(agentStep("lnb", 1, { tool: "locate", arguments: { description: "ghost" }, render:
+    await w.dispatch(agentStep("lnb", 1, { tool: "locate", arguments: { description: "ghost" }, renderOut:
         locateRender("grounding", "qwen2.5vl:3b", [
             { label: "Grounding · no box returned", prompt: "Locate …", output: "NONE", image: "data:image/png;base64,PLAIN" },
         ]) }));
@@ -815,7 +815,7 @@ test("locate render: no-box grounding is a single box substep (no snap)", async 
 test("locate render: marks is one Set-of-Marks substep with the pick", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("lmk", "find it"));
-    await w.dispatch(agentStep("lmk", 1, { tool: "locate", arguments: { description: "trash" }, elements: 1, render:
+    await w.dispatch(agentStep("lmk", 1, { tool: "locate", arguments: { description: "trash" }, elements: 1, renderOut:
         locateRender("marks", "gemma4:31b", [
             { label: "Set-of-Marks · 4 candidates · model chose #2", prompt: "which badge…", output: "2", rawImage: "data:image/png;base64,RAW", image: "data:image/png;base64,MARKS" },
         ], { picked: "#2 [button] → #bar > div:nth-of-type(2)", pickedBy: "model" }) }));
@@ -833,7 +833,7 @@ test("locate render: marks is one Set-of-Marks substep with the pick", async () 
 test("locate render: auto-fallback shows the grounding attempt substep above the Set-of-Marks one", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("lfb", "find it"));
-    await w.dispatch(agentStep("lfb", 1, { tool: "locate", arguments: { description: "trash" }, elements: 1, render:
+    await w.dispatch(agentStep("lfb", 1, { tool: "locate", arguments: { description: "trash" }, elements: 1, renderOut:
         locateRender("marks", "gemma4:31b", [
             { label: "Grounding · no box returned", prompt: "Locate…", output: "NONE", image: "data:image/png;base64,GROUND" },
             { label: "Set-of-Marks · 5 candidates · model chose #2", note: "Grounding returned no box — fell back to Set-of-Marks.", prompt: "which badge…", output: "2", rawImage: "data:image/png;base64,RAW", image: "data:image/png;base64,MARKS" },
@@ -853,7 +853,7 @@ test("locate render: grid single-element — cell-pick substep + DOM snap, 'Snap
     const w = await loadSidebarWorld();
     // Driver model == the sub-call model → the "standalone sub-call" note should show.
     await w.dispatch(agentStart("lgs", "find it", "gemma4:31b", 10));
-    await w.dispatch(agentStep("lgs", 1, { tool: "locate", arguments: { description: "star", strategy: "grid" }, elements: 1, render:
+    await w.dispatch(agentStep("lgs", 1, { tool: "locate", arguments: { description: "star", strategy: "grid" }, elements: 1, renderOut:
         locateRender("grid", "gemma4:31b", [
             { label: "Cell pick · grid 4×4 · model chose cells 2,3", prompt: "This image is divided into a 4×4 …", output: "2,3", rawImage: "data:image/png;base64,GRIDraw", image: "data:image/png;base64,GRID" },
             { label: "DOM snap · single element in the cell", image: "data:image/png;base64,SNAP" },
@@ -876,7 +876,7 @@ test("locate render: grid single-element — cell-pick substep + DOM snap, 'Snap
 test("locate render: grid hand-off is two substeps (cell pick → Set-of-Marks pick), 'Model picked'", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("lgh", "find it", "gemma4:31b", 10));
-    await w.dispatch(agentStep("lgh", 1, { tool: "locate", arguments: { description: "star", strategy: "grid" }, elements: 1, render:
+    await w.dispatch(agentStep("lgh", 1, { tool: "locate", arguments: { description: "star", strategy: "grid" }, elements: 1, renderOut:
         locateRender("grid", "gemma4:31b", [
             { label: "Cell pick · grid 5×3 · model chose cell 11", prompt: "grid…", output: "11", rawImage: "data:image/png;base64,GRIDraw", image: "data:image/png;base64,GRID" },
             { label: "Set-of-Marks · 15 candidates · model chose #12", note: "The cell held 15 elements, so they were re-badged and a second vision call picked one (Set-of-Marks).", prompt: "which badge…", output: "12", rawImage: "data:image/png;base64,RAW", image: "data:image/png;base64,MARKS" },
@@ -896,7 +896,7 @@ test("locate render: grid hand-off is two substeps (cell pick → Set-of-Marks p
 test("locate render: no delegated note when the sub-call model differs from the driver", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("lgd", "find it", "qwen3:14b", 10));   // driver ≠ reader
-    await w.dispatch(agentStep("lgd", 1, { tool: "locate", arguments: { description: "star" }, elements: 1, render:
+    await w.dispatch(agentStep("lgd", 1, { tool: "locate", arguments: { description: "star" }, elements: 1, renderOut:
         locateRender("marks", "gemma4:31b", [{ label: "Set-of-Marks · 2 candidates", image: "data:image/png;base64,MARKS" }], { picked: "#1 [button] → #b", pickedBy: "model" }) }));
     await w.dispatch(agentResult("lgd", "done", 1));
     w.shadow.querySelector(".row").click();
@@ -910,7 +910,7 @@ test("agent tool step: descriptor renders its target block; the other stays raw 
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("agt", "run js"));
     // exec-style: the descriptor targets "in" (pretty JS); Out stays raw (the error/result).
-    await w.dispatch(agentStep("agt", 1, { tool: "exec", arguments: { js: "1 + 1" }, result: "2", render: { type: "code", text: "1 + 1", lang: "javascript", target: "in" } }));
+    await w.dispatch(agentStep("agt", 1, { tool: "exec", arguments: { js: "1 + 1" }, result: "2", renderIn: { type: "code", text: "1 + 1", lang: "javascript" } }));
     await w.dispatch(agentResult("agt", "done", 1));
 
     w.shadow.querySelector(".row").click();
@@ -933,10 +933,69 @@ test("agent tool step: descriptor renders its target block; the other stays raw 
     assert.match(inB.textContent, /"js"/, "In raw shows the JSON args");
 });
 
+test("python_exec render: In is a notebook cell (mode + input image + source); Out is stdout + token", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("pyc", "click the star"));
+    await w.dispatch(agentStep("pyc", 1, {
+        tool: "python_exec", arguments: { code: "return [10, 20]", cast: "pt" },
+        result: "stdout:\nfound\n\n→ @pt:abcd1234 at (10, 20).",
+        renderIn: { type: "python-in", mode: "pt", code: "return [10, 20]", image: "data:image/png;base64,INIMG" },
+        renderOut: { type: "python-out", stdout: "found\n", token: "@pt:abcd1234" },
+    }));
+    await w.dispatch(agentResult("pyc", "done", 1));
+
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const toolStep = w.shadow.querySelector(".astep.tool");
+    toolStep.querySelector(".astep-head").click();
+    await w.tick();
+
+    // In slot = the python-in cell header.
+    const inCell = toolStep.querySelector(".r-py-in");
+    assert.ok(inCell, "In renders the python-in cell");
+    assert.match(inCell.querySelector(".r-py-mode").textContent, /cast: pt/, "mode line reflects the cast");
+    assert.equal(inCell.querySelector(".r-py-img img").getAttribute("src"), "data:image/png;base64,INIMG", "input image shown");
+    assert.match(inCell.querySelector(".code").textContent, /return \[10, 20\]/, "source highlighted");
+
+    // Out slot = the python-out block: stdout + the minted token.
+    const outCell = toolStep.querySelector(".r-py-out");
+    assert.ok(outCell, "Out renders the python-out block");
+    assert.match(outCell.querySelector(".r-py-stdout").textContent, /found/, "stdout shown byte-exact");
+    assert.match(outCell.querySelector(".r-py-token").textContent, /@pt:abcd1234/, "minted token shown");
+
+    // The Out raw toggle falls back to the exact result string the model received.
+    const outBlock = [...toolStep.querySelectorAll("details.io")].find(b => b.querySelector(".r-py-out"));
+    [...outBlock.querySelectorAll(".rr-toggle button")].find(b => b.textContent === "raw").click();
+    await w.tick();
+    assert.match(outBlock.textContent, /→ @pt:abcd1234 at \(10, 20\)/, "Out raw = the model-facing result");
+});
+
+test("python_exec render: a Python error surfaces the traceback in the Out block", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("pye", "compute"));
+    await w.dispatch(agentStep("pye", 1, {
+        tool: "python_exec", arguments: { code: "return 1/0" },
+        result: "Python error: ZeroDivisionError: division by zero",
+        renderIn: { type: "python-in", mode: "script", code: "return 1/0" },
+        renderOut: { type: "python-out", error: "Traceback (most recent call last):\nZeroDivisionError: division by zero" },
+    }));
+    await w.dispatch(agentResult("pye", "done", 1));
+
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const toolStep = w.shadow.querySelector(".astep.tool");
+    toolStep.querySelector(".astep-head").click();
+    await w.tick();
+
+    assert.match(toolStep.querySelector(".r-py-mode").textContent, /script/, "no cast → script mode");
+    assert.equal(toolStep.querySelector(".r-py-in .r-py-img"), null, "no input image row for an image-less run");
+    assert.match(toolStep.querySelector(".r-py-err").textContent, /ZeroDivisionError/, "traceback shown");
+});
+
 test("agent tool steps carry an approval provenance badge (auto/user green, denied red)", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("apv", "run"));
-    await w.dispatch(agentStep("apv", 1, { tool: "exec", arguments: { js: "1" }, result: "1", approval: "readonly", render: { type: "code", text: "1", lang: "javascript", target: "in" } }));
+    await w.dispatch(agentStep("apv", 1, { tool: "exec", arguments: { js: "1" }, result: "1", approval: "readonly", renderIn: { type: "code", text: "1", lang: "javascript" } }));
     await w.dispatch(agentStep("apv", 2, { tool: "click", arguments: { selector: "b" }, result: "clicked", approval: "user" }));
     await w.dispatch(agentStep("apv", 3, { tool: "exec", arguments: { js: "2" }, result: "Denied by the user.", approval: "denied" }));
     await w.dispatch(agentResult("apv", "done", 3));
@@ -956,7 +1015,7 @@ test("exec code is beautified for display when the descriptor sets format", asyn
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("bty", "run js"));
     const ugly = "[...document.querySelectorAll('a')].map(x=>{const y=x.href;return {y}})";
-    await w.dispatch(agentStep("bty", 1, { tool: "exec", arguments: { js: ugly }, result: "ok", render: { type: "code", text: ugly, lang: "javascript", target: "in", format: true } }));
+    await w.dispatch(agentStep("bty", 1, { tool: "exec", arguments: { js: ugly }, result: "ok", renderIn: { type: "code", text: ugly, lang: "javascript", format: true } }));
     await w.dispatch(agentResult("bty", "done", 1));
     w.shadow.querySelector(".row").click();
     await w.tick();
@@ -974,7 +1033,7 @@ test("code line-number gutter: off by default, toggled on via settings, applied 
     const html = w.window.document.documentElement;
     assert.equal(html.getAttribute("data-codelines"), "on", "gutter attr set from storage.local");
     await w.dispatch(agentStart("ln", "x"));
-    await w.dispatch(agentStep("ln", 1, { tool: "exec", arguments: { js: "a;\nb;\nc;" }, result: "ok", render: { type: "code", text: "a;\nb;\nc;", lang: "javascript", target: "in" } }));
+    await w.dispatch(agentStep("ln", 1, { tool: "exec", arguments: { js: "a;\nb;\nc;" }, result: "ok", renderIn: { type: "code", text: "a;\nb;\nc;", lang: "javascript" } }));
     await w.dispatch(agentResult("ln", "done", 1));
     w.shadow.querySelector(".row").click();
     await w.tick();
@@ -991,7 +1050,7 @@ test("numbered gutter preserves line content — no spurious span-reopen prefix"
     const w = await loadSidebarWorld({ local: { ml_debug_codelines: true } });
     const js = "const searchResults = 1;\nconsole.log('n:', searchResults);\nreturn searchResults;";
     await w.dispatch(agentStart("lnp", "x"));
-    await w.dispatch(agentStep("lnp", 1, { tool: "exec", arguments: { js }, result: "1", render: { type: "code", text: js, lang: "javascript", target: "in" } }));
+    await w.dispatch(agentStep("lnp", 1, { tool: "exec", arguments: { js }, result: "1", renderIn: { type: "code", text: js, lang: "javascript" } }));
     await w.dispatch(agentResult("lnp", "done", 1));
     w.shadow.querySelector(".row").click();
     await w.tick();
@@ -1068,7 +1127,7 @@ async function capturePrint(w) {
 test("export: an image-free agent run downloads a plain markdown log", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("expa", "hide slow items", "gemma4:31b", 60));
-    await w.dispatch(agentStep("expa", 2, { tool: "exec", arguments: { js: "items.forEach(i=>i.remove())" }, result: "Hidden 38 items.", render: { type: "code", text: "items.forEach(i=>i.remove())", lang: "javascript", target: "in", format: true } }));
+    await w.dispatch(agentStep("expa", 2, { tool: "exec", arguments: { js: "items.forEach(i=>i.remove())" }, result: "Hidden 38 items.", renderIn: { type: "code", text: "items.forEach(i=>i.remove())", lang: "javascript", format: true } }));
     await w.dispatch(agentResult("expa", "I hid all slow items.", 2));
     w.shadow.querySelector(".row").click();
     await w.tick();
@@ -1104,7 +1163,7 @@ test("export: a run with screenshots downloads a zip (run.md + png sidecars)", a
     const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("expz", "look around", "gemma4:31b", 60));
-    await w.dispatch(agentStep("expz", 1, { tool: "look", render: { type: "image", src: "data:image/png;base64," + PNG, label: "viewport" }, result: "a page" }));
+    await w.dispatch(agentStep("expz", 1, { tool: "look", renderOut: { type: "image", src: "data:image/png;base64," + PNG, label: "viewport" }, result: "a page" }));
     await w.dispatch(agentResult("expz", "done", 1));
     w.shadow.querySelector(".row").click();
     await w.tick();
@@ -1126,7 +1185,7 @@ test("export: a grounding locate step serialises its substeps (box + DOM snap, p
     const url = "data:image/png;base64," + PNG;
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("expl", "find the star", "gemma4:31b", 10));
-    await w.dispatch(agentStep("expl", 1, { tool: "locate", arguments: { description: "star" }, elements: 1, render:
+    await w.dispatch(agentStep("expl", 1, { tool: "locate", arguments: { description: "star" }, elements: 1, renderOut:
         locateRender("grounding", "qwen2.5vl:7b", [
             { label: "Grounding · box (28, 242) → (45, 264)", prompt: "Locate \"star\" …", output: "28,242,45,264", rawImage: url + "#raw", image: url },
             { label: "DOM snap · +40px search margin", image: url },
@@ -1153,7 +1212,7 @@ test("export: an auto-fallback locate step serialises the grounding-attempt subs
     const url = "data:image/png;base64," + PNG;
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("expf", "find the star", "gemma4:31b", 10));
-    await w.dispatch(agentStep("expf", 1, { tool: "locate", arguments: { description: "star" }, elements: 1, render:
+    await w.dispatch(agentStep("expf", 1, { tool: "locate", arguments: { description: "star" }, elements: 1, renderOut:
         locateRender("marks", "gemma4:31b", [
             { label: "Grounding · no box returned", prompt: "Locate…", output: "NONE", image: url },
             { label: "Set-of-Marks · 5 candidates · model chose #2", note: "Grounding returned no box — fell back to Set-of-Marks.", prompt: "which badge…", output: "2", rawImage: url + "#raw", image: url },
@@ -1176,7 +1235,7 @@ test("export: a grid hand-off locate step serialises both substeps + the raw ima
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("expg", "find the star", "gemma4:31b", 10));
     const raw = "data:image/png;base64,QUJDRA==";   // a DIFFERENT but valid data-URL (so the raw sidecar is written)
-    await w.dispatch(agentStep("expg", 1, { tool: "locate", arguments: { description: "star", strategy: "grid" }, elements: 1, render:
+    await w.dispatch(agentStep("expg", 1, { tool: "locate", arguments: { description: "star", strategy: "grid" }, elements: 1, renderOut:
         locateRender("grid", "gemma4:31b", [
             { label: "Cell pick · grid 4×4 · model chose cells 2,3", prompt: "This image is divided into a 4×4 …", output: "2,3", rawImage: raw, image: url },
             { label: "Set-of-Marks · 6 candidates · model chose #4", note: "The cell held 6 elements, so they were re-badged and a second vision call picked one (Set-of-Marks).", prompt: "which badge…", output: "4", rawImage: raw, image: url },
@@ -1257,7 +1316,7 @@ test("export → PDF: builds a self-contained printable document in an offscreen
     const src = "data:image/png;base64," + PNG;
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("expp", "hide slow items", "gemma4:31b", 60));
-    await w.dispatch(agentStep("expp", 1, { tool: "look", render: { type: "image", src, label: "viewport" }, result: "a page" }));
+    await w.dispatch(agentStep("expp", 1, { tool: "look", renderOut: { type: "image", src, label: "viewport" }, result: "a page" }));
     await w.dispatch(agentStep("expp", 2, { tool: "exec", arguments: { js: "items.forEach(i=>i.remove())" }, result: "Hidden 38 items." }));
     await w.dispatch(agentResult("expp", "I hid all **slow** items.", 2));
     w.shadow.querySelector(".row").click();
@@ -1303,7 +1362,7 @@ test("clicking a debug image opens the full-window lightbox (posts src to the sh
     let posted = null;
     w.window.addEventListener("message", (e) => { if (e.data && e.data.__mlLightbox) posted = e.data.__mlLightbox; });
     await w.dispatch(agentStart("img", "x"));
-    await w.dispatch(agentStep("img", 1, { tool: "look", render: { type: "image", src: "data:image/png;base64,ZZZ", label: "shot" } }));
+    await w.dispatch(agentStep("img", 1, { tool: "look", renderOut: { type: "image", src: "data:image/png;base64,ZZZ", label: "shot" } }));
     await w.dispatch(agentResult("img", "done", 1));
     w.shadow.querySelector(".row").click();
     await w.tick();

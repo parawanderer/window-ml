@@ -151,18 +151,24 @@ function writeAgent(s: Session, d: Sink): void {
         d.head(`Step ${st.step} · ${st.tool || "?"}`);
         if (st.approval) d.note(st.approval === "readonly" ? "auto-approved (read-only)" : st.approval === "user" ? "approved by user" : "denied by user");
         if (st.thought) d.prose(st.thought);
-        if (st.arguments && Object.keys(st.arguments).length) {
+        if (st.renderIn && st.renderIn.type === "python-in") {
+            // python_exec's notebook-cell In: mode + the input screenshot + the source.
+            const pin = st.renderIn;
+            d.note(`Mode: ${pin.mode}`);
+            if (pin.image) d.image(pin.image, `step-${st.step}-in`, `step ${st.step} — input image`);
+            d.block("In", pin.code, "python");
+        } else if (st.arguments && Object.keys(st.arguments).length) {
             const js = st.tool === "exec" && typeof st.arguments.js === "string" ? st.arguments.js : null;
             if (js) d.block("In", beautifyJs(js), "javascript");
             else d.block("In", pretty(st.arguments), "json");
         }
         if (st.argIssues && st.argIssues.length) d.note(`⚠ arg issues: ${st.argIssues.join("; ")}`, true);
-        if (st.render && st.render.type === "image") {
-            const label = st.render.label ? ` — ${st.render.label}` : "";
-            d.image(st.render.src, `step-${st.step}`, `step ${st.step}${label}`);
-        } else if (st.render && st.render.type === "locate") {
+        if (st.renderOut && st.renderOut.type === "image") {
+            const label = st.renderOut.label ? ` — ${st.renderOut.label}` : "";
+            d.image(st.renderOut.src, `step-${st.step}`, `step ${st.step}${label}`);
+        } else if (st.renderOut && st.renderOut.type === "locate") {
             // The full locate debug view as substeps, mirroring the sidebar's render.
-            const r = st.render;
+            const r = st.renderOut;
             // Flag a sub-call that ran on the SAME model as the driver — it was still
             // standalone (image + reply not in the driver's context).
             const delegated = r.model && r.model === s.model ? " · standalone sub-call (not in the agent's context)" : "";
@@ -186,6 +192,9 @@ function writeAgent(s: Session, d: Sink): void {
                 }
             });
             d.inline(r.pickedBy === "model" ? "Model picked" : "Snapped to", r.picked || "(none)", { muted: !r.picked });
+        } else if (st.renderOut && st.renderOut.type === "python-out" && st.renderOut.image) {
+            // A to_base64 image return — the stdout/value live in the result block below.
+            d.image(st.renderOut.image, `step-${st.step}`, `step ${st.step} — returned image`);
         }
         if (st.result != null && st.result !== "") d.block("Out", st.result);
         else if (st.elements != null) d.inline("Out", `${st.elements} element(s)`);

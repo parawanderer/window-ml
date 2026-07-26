@@ -459,36 +459,43 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
                 tools: toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval, vision: !!(t.capabilities && t.capabilities.includes("vision")) })),
                 maxSteps, think: (think === true || think === false) ? think : null, env, vision: vision ?? null, hints: hints || null,
             } });
-            const emit = (event: { step: number; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: Node[]; render?: RenderDescriptor; argIssues?: string[]; approval?: "readonly" | "user" | "denied"; usage?: TokenUsage | null }) => {
+            const emit = (event: { step: number; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: Node[]; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; argIssues?: string[]; approval?: "readonly" | "user" | "denied"; usage?: TokenUsage | null }) => {
                 if (logDebug) logStep(event);
                 emitDebug({
                     kind: "agent-step", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: event.step },
                     step: event.step, thought: event.thought, tool: event.tool, arguments: event.arguments,
-                    result: event.result, elements: event.elements ? event.elements.length : undefined, render: event.render,
+                    result: event.result, elements: event.elements ? event.elements.length : undefined,
+                    renderIn: event.renderIn, renderOut: event.renderOut,
                     argIssues: event.argIssues && event.argIssues.length ? event.argIssues : undefined,
                     approval: event.approval, usage: event.usage || undefined,
                 });
                 if (!onStep) return;
                 try { onStep(event); } catch (e) { console.error("ml.agent onStep threw:", e); }
             };
-            // A serializable render descriptor for a tool step: the tool's own
-            // `render` (page-side, defensive) wins; else auto-derive image/elements
-            // from the envelope; else undefined → the sidebar's default In:/Out:.
-            const descriptorFor = (tool: MlTool | undefined, input: ToolRenderInput, args: Record<string, unknown>): RenderDescriptor | undefined => {
-                if (input.render && input.render.type) return input.render;   // run() precomputed one (e.g. locate's marks)
-                if (tool?.render) {
-                    try { const d = tool.render(input, args); if (d && d.type) return d; }
+            // Two independent render slots for a tool step, each from its own hook:
+            //  · IN  = a visualization of the CALL — run()-returned `renderIn` wins, else
+            //          the tool's `render(input, args)` method (page-side, defensive).
+            //  · OUT = a visualization of the RESULT — run()-returned `render` wins, else
+            //          an auto-derived image/elements from the envelope.
+            // Either may be undefined → the sidebar falls back to that block's raw view.
+            const descriptorFor = (tool: MlTool | undefined, input: ToolRenderInput, args: Record<string, unknown>): { in?: RenderDescriptor; out?: RenderDescriptor } => {
+                let inD: RenderDescriptor | undefined;
+                if (input.renderIn && input.renderIn.type) inD = input.renderIn;   // run() precomputed the In (e.g. python's cell header)
+                else if (tool?.render) {
+                    try { const d = tool.render(input, args); if (d && d.type) inD = d; }   // the render() method (e.g. exec's pretty JS)
                     catch (e) { console.error(`ml tool "${tool.name}" render threw:`, e); }
                 }
-                if (input.image) return { type: "image", src: input.image, label: input.imageLabel };
-                if (input.elements?.length) return {
+                let outD: RenderDescriptor | undefined;
+                if (input.render && input.render.type) outD = input.render;   // run() precomputed the Out (e.g. locate's marks)
+                else if (input.image) outD = { type: "image", src: input.image, label: input.imageLabel };
+                else if (input.elements?.length) outD = {
                     type: "elements",
                     items: input.elements.slice(0, 50).map((el: Node, i: number) => ({
                         path: (typeof Element !== "undefined" && el instanceof Element) ? elPath(el) : String(el.nodeName || "node"),
                         text: truncate((el as Element).textContent || "", 60), index: i,
                     })),
                 };
-                return undefined;
+                return { in: inD, out: outD };
             };
             const finish = (r: AgentResult): AgentResult => {
                 emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: r.steps }, summary: r.summary, steps: r.steps, hitCap: !!r.hitCap });
@@ -541,7 +548,7 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
                         // A tool may also hand back { image, imageLabel } — a screenshot
                         // for #3 inline vision, injected into the model's own history.
                         if (raw && typeof raw === "object" && typeof raw.content === "string") {
-                            return { result: raw.content + note, elements: raw.elements, image: raw.image, imageLabel: raw.imageLabel, render: raw.render };
+                            return { result: raw.content + note, elements: raw.elements, image: raw.image, imageLabel: raw.imageLabel, render: raw.render, renderIn: raw.renderIn };
                         }
                         return { result: String(raw) + note };
                     } catch (e) { return { result: `Error: ${errText(e)}` + note }; }
@@ -551,7 +558,7 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
                 for (const call of msg.tool_calls) {
                     const tool = byName[call.name];
                     let args = (call.arguments || {}) as Record<string, unknown>;
-                    let result, elements, image, imageLabel, toolRender;
+                    let result, elements, image, imageLabel, toolRender, toolRenderIn;
                     let approval: "readonly" | "user" | "denied" | undefined;
                     if (!tool) {
                         result = `Error: no tool named "${call.name}".`;
@@ -583,7 +590,7 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
                             } else {
                                 approval = "user";
                                 args = decision.arguments;   // possibly caller-edited before running
-                                ({ result, elements, image, imageLabel, render: toolRender } = await runTool(tool, args));
+                                ({ result, elements, image, imageLabel, render: toolRender, renderIn: toolRenderIn } = await runTool(tool, args));
                             }
                         }
                     } else {
@@ -593,9 +600,9 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
                     const entry: AgentTranscriptEntry = { tool: call.name, arguments: args, result };
                     if (elements && elements.length) entry.elements = elements;
                     transcript.push(entry);
-                    const render = descriptorFor(tool, { result, elements, image, imageLabel, render: toolRender }, args);
+                    const { in: renderIn, out: renderOut } = descriptorFor(tool, { result, elements, image, imageLabel, render: toolRender, renderIn: toolRenderIn }, args);
                     const argIssues = tool ? validateArgs(tool.parameters, args) : undefined;
-                    emit({ step, ...entry, render, argIssues, approval });
+                    emit({ step, ...entry, renderIn, renderOut, argIssues, approval });
                     // An answer-capable tool designates the caller-facing result node(s).
                     if (tool && tool.capabilities && tool.capabilities.includes("answer") && elements && elements.length) {
                         answered.push(...elements);
@@ -913,11 +920,13 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
          *   image via `to_base64(...)`. `print()` output is captured as `stdout`.
          * @param {Object} [opts]
          * @param {string|Element} [opts.image] What to screenshot into the sandbox (omit for none).
-         * @returns {Promise<{ ok: boolean, value?: any, stdout: string, error?: string }>}
+         * @returns {Promise<{ ok: boolean, value?: any, stdout: string, error?: string, inputImage?: string }>}
+         *   `inputImage` is the resolved screenshot data-URL the sandbox saw (for the debug render).
          */
-        pythonExec: async function(code: string, { image = null }: { image?: string | Element | null } = {}): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string }> {
+        pythonExec: async function(code: string, { image = null }: { image?: string | Element | null } = {}): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string }> {
             const img = image != null ? await this.screenshot(image as string | Element) : null;
-            return makeBackgroundTaskPromise("PYTHON_EXEC_REQUEST", "PYTHON_EXEC_RESPONSE", { code, image: img });
+            const r = await makeBackgroundTaskPromise("PYTHON_EXEC_REQUEST", "PYTHON_EXEC_RESPONSE", { code, image: img }) as { ok: boolean; value?: unknown; stdout: string; error?: string };
+            return img ? { ...r, inputImage: img } : r;
         },
         /**
          * Agent tool wrapping {@link module:ml.pythonExec} — sandboxed Python (numpy/Pillow)

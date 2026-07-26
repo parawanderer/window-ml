@@ -9,7 +9,7 @@
 // `img` (PIL.Image) + `img_np` (H×W×3 uint8) decoded from the injected screenshot, and a
 // `to_base64()` helper so a script can return a processed image back to the caller.
 const PRELUDE = `
-import io, base64, sys
+import io, base64, sys, contextlib
 import numpy as np
 from PIL import Image
 
@@ -52,20 +52,28 @@ function sanitize(v: unknown): unknown {
 
 async function run(code: string, image: string | null): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string }> {
     const py = await getPyodide();
-    const out: string[] = [];
-    py.setStdout({ batched: (s: string) => out.push(s) });
-    py.setStderr({ batched: (s: string) => out.push(s) });
     py.globals.set("INJECTED_IMAGE_B64", image);
-    // The model's code becomes the body of `_user()`; its return value is `result`.
-    const wrapped = `${PRELUDE}\ndef _user():\n${indent(code)}\nresult = _user()\n`;
+    // The model's code becomes the body of `_user()`. Capture stdout/stderr IN Python
+    // (byte-exact, newlines intact) and catch the user's runtime errors there too, so a
+    // traceback AND any partial stdout both survive. `result`/`_stdout`/`_err` come back
+    // as globals. (A syntax error in the code fails the wrapper compile → the JS catch.)
+    const wrapped = `${PRELUDE}\ndef _user():\n${indent(code)}\n` +
+        `_out = io.StringIO()\n_err = None\n` +
+        `with contextlib.redirect_stdout(_out), contextlib.redirect_stderr(_out):\n` +
+        `    try:\n        result = _user()\n` +
+        `    except BaseException:\n        import traceback\n        _err = traceback.format_exc()\n        result = None\n` +
+        `_stdout = _out.getvalue()\n`;
     try {
         await py.runPythonAsync(wrapped);
+        const stdout = String(py.globals.get("_stdout") ?? "");
+        const err = py.globals.get("_err");
+        if (err) return { ok: false, stdout, error: String(err) };
         const r = py.globals.get("result");
         const value = r && r.toJs ? r.toJs({ dict_converter: Object.fromEntries }) : r;
         if (r && r.destroy) r.destroy();
-        return { ok: true, value: sanitize(value), stdout: out.join("") };
+        return { ok: true, value: sanitize(value), stdout };
     } catch (e: any) {
-        return { ok: false, stdout: out.join(""), error: String((e && e.message) || e) };
+        return { ok: false, stdout: "", error: String((e && e.message) || e) };   // wrapper didn't run (syntax error)
     } finally {
         py.globals.set("INJECTED_IMAGE_B64", null);
     }
