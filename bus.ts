@@ -16,6 +16,7 @@ import type { MlDebugEvent, MlHistory } from "./contract";
 // buffer from "present" and REPLAY on "ready" (each event lands exactly once).
 let debugEnabled = false;    // live emission (after the iframe app handshakes)
 let sidebarPresent = false;  // a sidebar shell exists at all
+let replayed = false;        // the ring was replayed this present-session (guards a double handshake)
 const DEBUG_RING_MAX = 200;
 const debugRing: MlDebugEvent[] = [];
 window.addEventListener("message", (event) => {
@@ -23,8 +24,11 @@ window.addEventListener("message", (event) => {
     if (d === "present") { sidebarPresent = true; }
     else if (d === "ready") {
         sidebarPresent = debugEnabled = true;
-        for (const ev of debugRing) { try { window.postMessage({ __mlDebug: ev }, "*"); } catch { /* non-cloneable — ignore */ } }
+        // Replay the buffered ring ONCE per session — a re-handshake (below) must not re-emit
+        // events that already went out (the sidebar/panel append, they don't dedup).
+        if (!replayed) { replayed = true; for (const ev of debugRing) { try { window.postMessage({ __mlDebug: ev }, "*"); } catch { /* non-cloneable — ignore */ } } }
     } else if (d === "gone") {
+        replayed = false;
         // The sidebar was switched OFF (shell unmounted). Stop emitting AND drop the
         // ring — otherwise we'd keep building events and retaining up to 200 prompts
         // and replies in memory for a UI that no longer exists, until a page reload.
@@ -34,6 +38,14 @@ window.addEventListener("message", (event) => {
         debugRing.length = 0;
     }
 });
+
+// Announce that injected.js is loaded and listening. A page-load RACE otherwise loses the
+// handshake: the shell reads config and posts `present`/`ready` — and in devtools mode it
+// posts `ready` immediately (no iframe app to wait for) — but injected.js is added as an
+// async <script>, so if the shell got there first its handshake landed before this listener
+// existed and we'd never go live (until a settings toggle re-posted it). The shell re-sends
+// the handshake on `hello`, so it no longer matters who loaded first.
+try { window.postMessage({ __mlSidebar: "hello" }, "*"); } catch { /* pre-DOM / cross-origin — ignore */ }
 
 // >0 while inside an ml.agent run, so chat calls the agent makes internally (e.g.
 // the auto-wired `look` vision tool) don't spawn their own orphan sessions — their

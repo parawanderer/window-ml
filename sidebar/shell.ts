@@ -8,8 +8,10 @@
 // (for the DevTools panel). Config `debugMode` picks the surface: `overlay` mounts this
 // shell; `devtools` attaches the forwarder only (no overlay drawn) and — since there's no
 // iframe app to hand back the `__mlSidebar:"ready"` handshake — posts `ready` itself so
-// injected.js goes live; `off` attaches nothing. injected.js is unchanged: it emits after
-// `ready` regardless of who sent it.
+// injected.js goes live; `off` attaches nothing. injected.js announces `hello` when it loads
+// and we re-send the handshake on it, so a page-load race (our handshake landing before
+// injected's async <script> is listening — which stranded the devtools panel on Ctrl+R)
+// can't leave it un-live.
 import { SB_ROOT, SB_HOST, SB_TAB, SB_FRAME, SB_LIGHTBOX, SB_LIGHTBOX_X } from "../ids";
 import type { DebugMode } from "../contract";
 
@@ -108,6 +110,10 @@ let scrollPin: { x: number; y: number; onScroll: () => void } | null = null;
 function onWindowMessage(e: MessageEvent): void {
     const d = e.data;
     if (!d) return;
+    // injected.js just loaded and is listening (a page-load race: it may have missed the
+    // handshake we posted before its <script> ran). Re-send it. `mode` is never "off" while
+    // this listener is attached; guard anyway.
+    if (d.__mlSidebar === "hello" && e.source === window) { if (mode !== "off") handshake(); return; }
     // injected.js asks us to hide the overlay for a screenshot (so the sidebar
     // isn't captured into the agent's `look`). Hide, then ack after two frames so
     // the hidden state has painted before the capture fires.
@@ -181,14 +187,21 @@ function startResize(e: PointerEvent): void {
     window.addEventListener("pointerup", onUp);
 }
 
+// Tell injected.js debug is on: `present` (start buffering), plus — in devtools mode, which
+// has no iframe app to hand back `ready` — `ready` right away so it goes live. Re-sent on
+// injected's `hello` too, so a page-load race (injected's async <script> not yet listening
+// when we first post) can't strand it un-live. Idempotent (bus guards a double replay).
+function handshake(): void {
+    window.postMessage({ __mlSidebar: "present" }, "*");
+    if (mode === "devtools") window.postMessage({ __mlSidebar: "ready" }, "*");
+}
+
 // Start relaying the debug stream WITHOUT drawing the overlay: add the window listener,
-// clear any stale DevTools-panel buffer for this tab, and tell injected.js debug is on so
-// it starts buffering. Shared by both surfaces — the overlay's iframe app posts `ready`
-// when it loads; devtools mode has no app, so applyMode posts `ready` itself.
+// clear any stale DevTools-panel buffer for this tab, and hand injected.js the handshake.
 function attach(): void {
     window.addEventListener("message", onWindowMessage);
     try { void chrome.runtime.sendMessage({ type: "ML_DEBUG_RESET" }).catch(() => {}); } catch { /* context gone */ }
-    window.postMessage({ __mlSidebar: "present" }, "*");
+    handshake();
 }
 
 function mountOverlay(): void {
@@ -250,9 +263,9 @@ function teardown(): void {
 }
 
 // The single entry point for the three debug surfaces. `off` draws nothing and forwards
-// nothing (zero cost). `overlay` mounts the in-page shell. `devtools` forwards the stream
-// to the background (for the DevTools panel) but draws NO overlay — so it must post `ready`
-// itself (there's no iframe app to hand back the handshake).
+// nothing (zero cost). `overlay` mounts the in-page shell (whose iframe app hands back the
+// `ready`). `devtools` forwards the stream to the background (for the DevTools panel) but
+// draws NO overlay — attach()/handshake() posts `ready` itself (no iframe app to wait for).
 let mode: DebugMode = "off";
 function applyMode(next: DebugMode): void {
     if (next === mode) return;
@@ -261,7 +274,6 @@ function applyMode(next: DebugMode): void {
     if (mode === "off") return;
     attach();
     if (mode === "overlay") mountOverlay();
-    else window.postMessage({ __mlSidebar: "ready" }, "*");   // devtools: no app → go live now
 }
 
 chrome.storage.sync.get({ debugMode: "off" }, (cfg) => applyMode(cfg.debugMode as DebugMode));

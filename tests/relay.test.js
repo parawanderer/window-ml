@@ -153,6 +153,36 @@ test("debug events emitted between sidebar 'present' and 'ready' are buffered th
     assert.ok(events.find(e => e.kind === "chat-result"), "its result replayed too");
 });
 
+test("injected announces 'hello' on load (so a shell that mounted first can re-handshake)", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: () => ({ data: "hi" }) });
+    const win = world.context.window;
+    const signals = [];
+    win.addEventListener("message", (e) => { if (e.data && e.data.__mlSidebar) signals.push(e.data.__mlSidebar); });
+    await new Promise(r => setTimeout(r, 0));   // let the queued announce deliver
+    assert.ok(signals.includes("hello"), "posts a hello so a page-load-race handshake isn't lost");
+});
+
+test("a second 'ready' does NOT re-replay the ring (idempotent re-handshake on hello)", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: () => ({ data: "hi" }) });
+    const win = world.context.window;
+    const events = [];
+    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+
+    win.postMessage({ __mlSidebar: "present" });
+    await new Promise(r => setTimeout(r, 0));
+    await world.ml.chat("early", { save: true });
+    win.postMessage({ __mlSidebar: "ready" });
+    await new Promise(r => setTimeout(r, 0));
+    const afterFirst = events.length;
+    assert.ok(afterFirst >= 2, "buffered turn replayed on the first ready");
+
+    // The shell re-sends the handshake when injected posts `hello` (page-load race guard);
+    // a second `ready` must not re-emit events that already went out.
+    win.postMessage({ __mlSidebar: "ready" });
+    await new Promise(r => setTimeout(r, 0));
+    assert.equal(events.length, afterFirst, "second ready is a no-op — no duplicate events");
+});
+
 test("with no sidebar present, nothing is buffered (disabled = zero cost)", async () => {
     const world = loadPageWorld({ onRuntimeMessage: () => ({ data: "hi" }) });
     const win = world.context.window;

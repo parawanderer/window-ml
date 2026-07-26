@@ -503,7 +503,12 @@ devtools mode so `look` screenshots work with no overlay to hide. The surfaces a
 **exclusive** — the shell forwards to the background ONLY in `devtools` mode (overlay events
 stay on the page). A DevTools panel can't be un-registered, so it's always a tab; `panel.ts`
 reads `debugMode` and, when it isn't the active surface (`off`/`overlay`), swaps the app for a
-self-explaining note instead of a misleading empty log.
+self-explaining note instead of a misleading empty log. **Handshake race:** injected.js
+announces `__mlSidebar:"hello"` when it loads and the shell re-sends `present`/`ready` on it —
+without this, the shell's immediate `ready` (devtools mode has no iframe app to wait for) could
+land before injected's async `<script>` was listening, stranding the panel un-live on Ctrl+R
+until a settings toggle. `bus.ts` replays its ring only ONCE per session so the re-handshake
+can't double-emit.
 
 **Extending the sidebar — will it work in both surfaces?** *View/read features come free:*
 a new debug **event kind** (the transport forwards any `__mlDebug` payload), a new
