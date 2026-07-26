@@ -1589,7 +1589,7 @@ test("lookTool scope:'page' stitches and frames it as a downscaled overview", as
     world.ml.screenshot = async (t, o) => { seen.push([t, o]); return "data:image/png;base64,VIEW"; };
 
     await world.ml.lookTool().run({ scope: "page" });
-    assert.deepEqual(seen[0], [null, { fullPage: true, index: 0 }]); // whole page, stitched
+    assert.deepEqual(seen[0], [null, { fullPage: true, index: 0, margin: 0 }]); // whole page, stitched
     assert.match(prompts[0], /downscaled|overview/i);          // framed as orientation
     assert.doesNotMatch(prompts[0], /list a few EXACT/i);      // does NOT ask to extract anchors
 
@@ -1599,7 +1599,7 @@ test("lookTool scope:'page' stitches and frames it as a downscaled overview", as
 
     // classifying a grid: look at the Nth match (index passed through to screenshot)
     await world.ml.lookTool().run({ selector: ".post", index: 2 });
-    assert.deepEqual(seen[2], [".post", { fullPage: false, index: 2 }]);
+    assert.deepEqual(seen[2], [".post", { fullPage: false, index: 2, margin: 0 }]);
     assert.match(prompts[2], /match #2/);
 });
 

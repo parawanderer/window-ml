@@ -69,16 +69,17 @@ export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512 }: { mo
                 selector: { type: "string", description: "CSS selector of an element, or an `@pt:…` point token from locate; omit to see the page." },
                 question: { type: "string", description: "What to determine (optional)." },
                 scope: { type: "string", enum: ["viewport", "page"], description: "'viewport' (default), or 'page' to scroll+stitch the full page (only when no selector)." },
-                index: { type: "integer", description: "Which match of the selector to look at (0-based); iterate a grid with 0,1,2,…" }
+                index: { type: "integer", description: "Which match of the selector to look at (0-based); iterate a grid with 0,1,2,…" },
+                margin: { type: "number", description: "For an @pt: token only — the crop RADIUS in px around the point (bigger = more context). Ignored for CSS selectors." }
             }
         },
-        run: async ({ selector, question, scope, index }: { selector?: string; question?: string; scope?: "viewport" | "page"; index?: number } = {}) => {
+        run: async ({ selector, question, scope, index, margin }: { selector?: string; question?: string; scope?: "viewport" | "page"; index?: number; margin?: number } = {}) => {
             const fullPage = scope === "page" && !selector;
             // An @pt point token → screenshot returns a cropped, MARKED view of the click spot
             // (canvas verification): tailor the prompt to "what's at the mark", not page text.
             const isPoint = !!selector && POINT_RE.test(selector.trim());
             let shot;
-            try { shot = await ml.screenshot(selector || null, { fullPage, index: index || 0 }); }
+            try { shot = await ml.screenshot(selector || null, { fullPage, index: index || 0, margin: typeof margin === "number" ? margin : 0 }); }
             catch (e) { return `Error: ${errText(e)}`; }
             const subject = isPoint ? `the point marked on the canvas (${selector})`
                 : selector ? `the element "${selector}"${index ? ` (match #${index})` : ""}`

@@ -1065,13 +1065,14 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
                     properties: {
                         selector: { type: "string", description: "CSS selector of an element; omit to see the page." },
                         scope: { type: "string", enum: ["viewport", "page"], description: "'viewport' (default), or 'page' to scroll+stitch the full page (only when no selector)." },
-                        index: { type: "integer", description: "Which match of the selector to look at (0-based); iterate a grid with 0,1,2,…" }
+                        index: { type: "integer", description: "Which match of the selector to look at (0-based); iterate a grid with 0,1,2,…" },
+                        margin: { type: "number", description: "For an @pt: token only — the crop RADIUS in px around the point (bigger = more context). Ignored for CSS selectors." }
                     }
                 },
-                run: async ({ selector, scope, index }: { selector?: string; scope?: "viewport" | "page"; index?: number } = {}): Promise<string | ToolResult> => {
+                run: async ({ selector, scope, index, margin }: { selector?: string; scope?: "viewport" | "page"; index?: number; margin?: number } = {}): Promise<string | ToolResult> => {
                     const fullPage = scope === "page" && !selector;
                     let shot;
-                    try { shot = await ml.screenshot(selector || null, { fullPage, index: index || 0 }); }
+                    try { shot = await ml.screenshot(selector || null, { fullPage, index: index || 0, margin: typeof margin === "number" ? margin : 0 }); }
                     catch (e) { return `Error: ${errText(e)}`; }
                     const label = selector
                         ? `element "${selector}"${index ? ` #${index}` : ""}`
