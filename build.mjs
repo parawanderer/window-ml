@@ -6,7 +6,7 @@
 // The core (injected/content/background/popup) has no runtime deps and compiles
 // to plain JS; the sidebar/ entry may pull in bundled deps (e.g. a highlighter).
 import * as esbuild from "esbuild";
-import { cpSync, rmSync, mkdirSync } from "node:fs";
+import { cpSync, rmSync, mkdirSync, existsSync, readdirSync } from "node:fs";
 import { generatePreview } from "./tools/preview-annotate.mjs";
 
 // output name (dist/<name>.js)  ->  source entry
@@ -58,6 +58,22 @@ function copyAssets() {
     for (const [src, dst] of ASSETS) cpSync(src, `dist/${dst}`);
 }
 
+// Offline python_exec runtime → dist/pyodide/: the Pyodide CORE (from the `pyodide` npm
+// devDep) + the numpy/Pillow wheels (from `npm run fetch-pyodide`, which the npm package
+// doesn't ship). All optional — a missing piece just means the python_exec tool won't
+// load; nothing else breaks. Copied once (not per watch-rebuild — it's ~17 MB static).
+const PYODIDE_CORE = ["pyodide.mjs", "pyodide.asm.mjs", "pyodide.asm.wasm", "python_stdlib.zip", "pyodide-lock.json"];
+function copyPyodide() {
+    if (!existsSync("node_modules/pyodide")) { console.warn("⚠ pyodide not installed — python_exec disabled (npm i)."); return; }
+    mkdirSync("dist/pyodide", { recursive: true });
+    for (const f of PYODIDE_CORE) cpSync(`node_modules/pyodide/${f}`, `dist/pyodide/${f}`);
+    if (existsSync("pyodide-wheels")) {
+        for (const w of readdirSync("pyodide-wheels")) cpSync(`pyodide-wheels/${w}`, `dist/pyodide/${w}`);
+    } else {
+        console.warn("⚠ pyodide-wheels/ missing — run `npm run fetch-pyodide` to enable python_exec (numpy/Pillow).");
+    }
+}
+
 rmSync("dist", { recursive: true, force: true });
 mkdirSync("dist", { recursive: true });
 
@@ -67,6 +83,7 @@ if (watch) {
     const sidebarCtx = await esbuild.context({ ...base, entryPoints: { "sidebar-app": sidebarApp }, minify: true, plugins: [copyPlugin] });
     await coreCtx.watch();
     await sidebarCtx.watch();
+    copyPyodide();   // once — static, not worth recopying on every rebuild
     console.log("watching… (dist/)");
 } else {
     await esbuild.build({ ...base, entryPoints: coreEntries });
@@ -77,6 +94,7 @@ if (watch) {
     await esbuild.build({ entryPoints: { "readonly-exec": "readonly-exec.ts" }, outdir: "dist", bundle: true, format: "cjs", platform: "node", logLevel: "info" });
     await esbuild.build({ entryPoints: { "som": "som.ts" }, outdir: "dist", bundle: true, format: "cjs", platform: "node", logLevel: "info" });
     copyAssets();
+    copyPyodide();
     // Regenerate the standalone visual preview of som's canvas annotate() (gitignored —
     // it's a build artifact). Open tools/annotate-preview.html to eyeball label placement.
     await generatePreview();
