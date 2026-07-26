@@ -22,6 +22,11 @@ interface ChatBody {
 interface ApiFormatHandler {
     buildMessage(m: NeutralMessage): any;
     extractContent(data: any): string | null | undefined;
+    // Does the response have this format's message CONTAINER (openai: `choices`;
+    // ollama: `message`)? Distinguishes an empty/filtered reply (container present,
+    // content null — a valid-but-empty response) from a genuine format/endpoint
+    // mismatch (no container at all — e.g. the SPA HTML from a wrong route).
+    hasContainer(data: any): boolean;
     // The model's separate reasoning/thinking text (OpenAI reasoning_content /
     // Ollama message.thinking), when present — kept out of `content`.
     extractReasoning(data: any): string | null | undefined;
@@ -113,6 +118,7 @@ const API_FORMATS: Record<ApiFormat, ApiFormatHandler> = {
             };
         },
         extractContent: (data: any) => data.choices?.[0]?.message?.content,
+        hasContainer: (data: any) => Array.isArray(data?.choices),
         extractReasoning: (data: any) => data.choices?.[0]?.message?.reasoning_content,
         extractToolCalls: (data: any): ToolCall[] => (data.choices?.[0]?.message?.tool_calls || []).map((tc: any) => ({
             id: tc.id,
@@ -181,6 +187,7 @@ const API_FORMATS: Record<ApiFormat, ApiFormatHandler> = {
             return message;
         },
         extractContent: (data: any) => data.message?.content,
+        hasContainer: (data: any) => data?.message != null,
         extractReasoning: (data: any) => data.message?.thinking,
         extractToolCalls: (data: any): ToolCall[] => (data.message?.tool_calls || []).map((tc: any, i: number) => ({
             id: `call_${i}`,
@@ -469,6 +476,14 @@ async function fetchLLM(payload: FetchLlmPayload): Promise<LlmResult | { content
     const content = format.extractContent(data);
 
     if (content == null) {
+        // The message CONTAINER is there but content is null → a valid-but-EMPTY reply
+        // (the model said nothing, refused, or a provider content-filtered it — e.g.
+        // MiniMax's `output_sensitive`). Return "" so a vision sub-call degrades to a
+        // no-match and a chat gets an empty string, rather than crashing the run. Only a
+        // MISSING container is a real format/endpoint mismatch (e.g. a wrong route's SPA HTML).
+        if (format.hasContainer(data)) {
+            return { content: "", sources: [], model, reasoning: format.extractReasoning(data) || null, usage: normalizeUsage(data.usage || data) };
+        }
         throw new Error(
             `Response did not match the "${config.apiFormat}" format ` +
             `(expected ${format.expectedShape}). ` +

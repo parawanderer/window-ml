@@ -68,6 +68,28 @@ test("FETCH_LLM surfaces reasoning — reasoning_content (openai) and message.th
     assert.equal(rL.reasoning, "6 times 7");
 });
 
+test("FETCH_LLM: choices present but null content → an empty reply, NOT a format error", async () => {
+    // A MiniMax content-filtered reply: valid openai `choices`, but the message content
+    // was blanked (output_sensitive). Must degrade to "" so a vision sub-call reads NONE
+    // and the run continues — not crash with a misleading "check the API format" error.
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => jsonResponse({ id: "x", object: "chat.completion", choices: [{ message: { role: "assistant", content: null } }], output_sensitive: true, base_resp: { status_code: 0 } })
+    });
+    const res = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }] } });
+    assert.equal(res.data, "", "empty/filtered message → empty reply");
+    assert.ok(!res.error, "not surfaced as an error");
+});
+
+test("FETCH_LLM: a response with NO choices container IS a clear format-mismatch error", async () => {
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => jsonResponse({ detail: "not found", nonsense: true })   // no `choices` → genuine mismatch
+    });
+    const res = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }] } });
+    assert.match(res.error, /did not match the "openai" format/);
+});
+
 test("FETCH_LLM omits the reasoning key when the model produced none", async () => {
     const bg = loadBackground({
         config: baseConfig(),
