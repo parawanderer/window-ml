@@ -61,6 +61,13 @@ export const WAIT_CLAUSE =
     "`wait` tool BEFORE you look/read again, and use it GENEROUSLY: prefer `wait({ selector })` " +
     "to wait until a specific element appears (the page has settled), or `wait({ ms })` for a " +
     "fixed pause. Reading a mid-update page gives stale results and wastes steps — waiting is cheap.";
+export const EXEC_COMPUTE_CLAUSE =
+    "\n\nYou are a language model: you predict tokens, you do NOT calculate. So NEVER work out " +
+    "multi-step arithmetic, list/table totals, counts, averages, or data transformations in your " +
+    "head — you'll guess a plausible-looking wrong number. Instead compute them DETERMINISTICALLY " +
+    "with the `exec` tool (JavaScript): gather the values and run `Array`/`.map`/`.filter`/" +
+    "`.reduce`/`Math.*` to get the EXACT result before you answer. It's clunkier than a dedicated " +
+    "calculator, but infinitely better than guessing — the final number must come from code, not your head.";
 export const PYTHON_CLAUSE =
     "\n\nYou have `python_exec` — a REAL sandboxed Python (numpy/Pillow). You are a language " +
     "model: you predict tokens, you do NOT calculate. So NEVER work out multi-step arithmetic, " +

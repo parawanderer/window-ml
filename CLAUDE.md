@@ -434,7 +434,9 @@ exist"). The sandbox's third-party packages are a **single source of truth** in
 tool description's "in scope" list all derive from it, so adding a package (e.g. pandas) is
 one edit. When `python_exec` is in an `ml.agent` toolset, `PYTHON_CLAUSE` is appended to the
 system prompt telling the model to **delegate** arithmetic/matrix/probability/precise
-computation to it (it predicts tokens, it doesn't calculate) instead of guessing. The
+computation to it (it predicts tokens, it doesn't calculate) instead of guessing; when
+`python_exec` is absent but `exec` is present, `EXEC_COMPUTE_CLAUSE` is the fallback
+(compute deterministically in read-only JS — `Array`/`Math`/`.reduce`). Mutually exclusive. The
 markdown/PDF export keeps the **raw tool-call args alongside** any rendered In (the sidebar
 has a rendered⇄raw toggle; a static export can't, so it shows both). *(Planned: a
 table-selector `df` input mode — `docs/spec/PYTHON_EXEC_RENDERER.md`.)*

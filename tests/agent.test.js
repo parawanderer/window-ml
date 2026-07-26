@@ -961,6 +961,21 @@ test("python_exec in the toolset adds the computation-delegation clause to the s
     const sys = events.find(e => e.kind === "agent").config.system;
     assert.match(sys, /python_exec/, "the clause names the tool");
     assert.match(sys, /do NOT calculate|NEVER|deterministic/i, "and tells the model to delegate computation");
+    assert.ok(!/tool \(JavaScript\)/.test(sys), "python takes precedence — not doubled with the JS-compute clause");
+});
+
+test("exec without python_exec adds the JS-compute fallback clause", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("done")]) });
+    const win = world.context.window;
+    const events = [];
+    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    win.postMessage({ __mlSidebar: "ready" });
+    await new Promise(r => setTimeout(r, 0));
+    const exec = world.ml.domTools.find(t => t.name === "exec");
+    await world.ml.agent("x", { tools: [exec], vision: false });
+    const sys = events.find(e => e.kind === "agent").config.system;
+    assert.match(sys, /tool \(JavaScript\)/, "falls back to exec/JS as the deterministic calculator");
+    assert.ok(!/python_exec/.test(sys), "no python clause when the tool isn't present");
 });
 
 test("agent flags a tool call whose args don't match its parameter schema", async () => {
