@@ -1142,6 +1142,22 @@ test("export: an image-free agent run downloads a plain markdown log", async () 
     assert.match(text, /## Answer\n\nI hid all slow items\./);
 });
 
+test("export: Steps counts TURNS, not events (a turn emits a thought + one event per tool)", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("stp", "do stuff", "m", 10));
+    // ONE turn (step 1): a thought + two tool calls → 3 events but 1 turn.
+    await w.dispatch(agentStep("stp", 1, { thought: "planning" }));
+    await w.dispatch(agentStep("stp", 1, { tool: "exec", arguments: { js: "1" }, result: "1", renderIn: { type: "code", text: "1", lang: "javascript" } }));
+    await w.dispatch(agentStep("stp", 1, { tool: "pageInfo", arguments: {}, result: "a page" }));
+    await w.dispatch(agentResult("stp", "done", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+
+    const { blob } = await captureExport(w);
+    const text = await blob.text();
+    assert.match(text, /\*\*Steps:\*\* 1 \/ 10/, "Steps = distinct turns (1), not the 3 emitted events");
+});
+
 test("export: skips a usage-only step (no bare 'Step N · ?' header)", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("expu", "answer directly", "gemma4:31b"));

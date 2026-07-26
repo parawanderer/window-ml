@@ -10,7 +10,7 @@
 // Includes a tiny dependency-free store-method ZIP writer (PNGs are already
 // deflated). Extracted from app.tsx.
 import atomOneLight from "highlight.js/styles/atom-one-light.css";
-import { sessionMap } from "./store";
+import { sessionMap, turnsRun } from "./store";
 import type { Session } from "./store";
 import { pretty, fullStamp, beautifyJs, escapeHtml, highlight, markdown } from "./format";
 import { annotatedConfig, resolveModel, shownModel } from "./model";
@@ -126,7 +126,7 @@ function writeAgent(s: Session, d: Sink): void {
         ["Task", s.task || ""],
         ["Started", fullStamp(s.createdTs)],
         ["Finished", fullStamp(s.lastTs)],
-        ["Steps", `${(s.steps || []).length}${s.maxSteps ? ` / ${s.maxSteps}` : ""}`],
+        ["Steps", `${turnsRun(s.steps)}${s.maxSteps ? ` / ${s.maxSteps}` : ""}`],
         ["Outcome", s.hitCap ? "stopped (step cap)" : s.status === "err" ? "error" : s.summary != null ? "answered" : "running"],
     ]);
     const c = s.agentConfig;

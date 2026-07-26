@@ -24,6 +24,12 @@ export interface Turn {
     usage?: TokenUsage | null;  // token counts for this turn, when the server reports them
 }
 export interface AgentStep { step: number; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: number; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; argIssues?: string[]; approval?: "readonly" | "sandbox" | "user" | "denied"; usage?: TokenUsage | null; }
+
+// The agent's TURN count — the number of distinct `.step` values, NOT `steps.length`.
+// One turn (one LLM call) emits several `AgentStep` events (its thought + one per tool
+// call, all sharing the same `.step`), so `.length` over-counts and can exceed maxSteps.
+// The loop caps `step` at maxSteps, so this is always ≤ maxSteps.
+export const turnsRun = (steps?: AgentStep[]): number => new Set((steps || []).map(s => s.step)).size;
 export interface Session {
     hash: string; model: string | null; tag: "session" | "saved";
     createdTs: number; lastTs: number; status: Status;

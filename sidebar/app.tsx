@@ -13,7 +13,7 @@ import { DEFAULT_CONFIG, fmtCtx } from "../contract";
 import {
     FONT_KEY, WRAP_KEY, LINES_KEY,
     sessionMap, rev, view, fontScale, codeWrap, codeLineNumbers, config, models,
-    ollamaIds, vramOpen, sidebarOpen, loadedModels, psError,
+    ollamaIds, vramOpen, sidebarOpen, loadedModels, psError, turnsRun,
 } from "./store";
 import type { Status, Turn, AgentStep, Session } from "./store";
 import { pretty, shortStamp, fullStamp, truncate, collapsedPreview, highlight, beautifyJs, htmlLines, markdown, lastUser, rollupStatus } from "./format";
@@ -697,7 +697,7 @@ function AgentRunView({ s }: { s: Session }) {
                 ? <ReplyBubble content={s.summary} status={s.status} model={s.model}
                     profile={sessionProfile(s)} ts={s.lastTs}
                     label={s.hitCap ? "stopped (step cap)" : undefined} capped={s.hitCap} />
-                : <div class="pending-note">…running ({(s.steps || []).length} steps)</div>}
+                : <div class="pending-note">…running ({turnsRun(s.steps)} steps)</div>}
         </>
     );
 }
