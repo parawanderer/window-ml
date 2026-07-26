@@ -351,9 +351,11 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
          *   tool so the agent can see with no wiring. Default (`null`) probes the
          *   agent's model — and falls back to the configured OCR model — and adds
          *   `look` only when one is vision-capable (a positive Ollama capability;
-         *   unknown/cloud models never qualify). Pass `false` to disable, or a model
-         *   id to force `look` onto that specific vision model. Skipped when the
-         *   toolset already contains a vision-capable tool.
+         *   unknown/cloud models never qualify). Pass **`true` to FORCE NATIVE vision** on
+         *   the agent's own model (bypass the probe — for a cloud/non-Ollama model you know
+         *   sees, e.g. minimax/gpt-4o, so it gets the real pixels, not a text summary).
+         *   Pass `false` to disable, or a model id to force a DELEGATED `look` onto that
+         *   specific vision model. Skipped when the toolset already has a vision-capable tool.
          * @param {(ev: {step: number, thought?: string, tool?: string, arguments?: Object, result?: string, elements?: Node[]}) => void} [opts.onStep]
          *   Live tracer: fires `{ step, thought }` with the model's reasoning
          *   (its prose before the calls) and `{ step, tool, arguments, result,
@@ -404,8 +406,11 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
                 // reader — added alongside look whenever one exists.
                 const visionModel = await this._resolveVisionModel(model, vision);
                 if (visionModel) {
-                    const forced = typeof vision === "string" && !!vision;
-                    if (!forced && await this._modelSees(agentModel)) {
+                    const forcedDelegate = typeof vision === "string" && !!vision;
+                    // Native (agent sees the pixels) when the caller FORCES it (`vision:true`,
+                    // bypassing the probe for a cloud model it knows sees) OR an auto-probe
+                    // confirms the agent's own model is vision-capable; else delegated.
+                    if (vision === true || (!forcedDelegate && await this._modelSees(agentModel))) {
                         toolset.push(this._nativeLookTool());
                     } else {
                         toolset.push(this.lookTool({ model: visionModel }));
@@ -991,10 +996,11 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
          * @returns {Promise<string|null>} A vision-capable model id, or null.
          */
         _resolveVisionModel: async function(agentModel: string | null, vision: boolean | string | null): Promise<string | null> {
-            if (typeof vision === "string" && vision) return vision;   // forced
+            if (typeof vision === "string" && vision) return vision;   // forced delegated model
             let cfg: MlPublicConfig | null;
             try { cfg = await this.config(); } catch (e) { cfg = null; }
             const primary = agentModel || (cfg && cfg.model);
+            if (vision === true) return primary || null;   // forced NATIVE → the agent's own model (no probe)
             if (await this._modelSees(primary)) return primary;
             const ocr = cfg && cfg.ocrModel;
             if (ocr && ocr !== primary && await this._modelSees(ocr)) return ocr;

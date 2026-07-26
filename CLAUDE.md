@@ -55,7 +55,12 @@ which holds no credentials.
 `GET_CONFIG` (`ml.config()`) returns the **non-secret** config subset
 `{ model, ocrModel, apiFormat, utilityModel, utilityNumCtx, utilityForceCpu }` —
 the URL and API key are never exposed to the page. `ml.agent` uses it to
-auto-wire a vision (`look`) tool from the OCR model.
+auto-wire a vision (`look`) tool. The `vision` option: `null` (default) **probes** the
+agent's model then the OCR model, adding `look` only on a positive Ollama capability (native
+if the agent's own model sees, else delegated to the reader) — unknown/cloud never qualifies;
+**`true` FORCES NATIVE** on the agent's own model (bypasses the probe — for a cloud/non-Ollama
+model you know sees, e.g. minimax/gpt-4o); a model-id string forces a **delegated** `look` on
+that model; `false` disables it.
 
 `MODEL_CAPS` (`ml.capabilities(model)`) reads Ollama `/api/show` capabilities
 (`["completion","tools","vision","thinking"]`); `modelSupportsVision` is derived

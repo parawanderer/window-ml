@@ -1391,6 +1391,30 @@ test("inline vision (#3): a vision-capable agent model gets the screenshot in it
     assert.equal(res.summary, "I can see a search box at the top.");
 });
 
+test("vision:true forces NATIVE look on the agent's own model, bypassing the caps probe", async () => {
+    const steps = [];
+    const world = loadPageWorld({
+        onRuntimeMessage: (m) => {
+            if (m.type === "GET_CONFIG") return { data: { model: "minimax-m3", ocrModel: "" } };
+            if (m.type === "MODEL_CAPS") return { data: null };   // unknown → auto-probe would REFUSE native
+            steps.push(m.payload.messages);
+            return { data: steps.length === 1
+                ? { content: "", tool_calls: [{ id: "c1", name: "look", arguments: {} }] }
+                : { content: "It's a settings page.", tool_calls: [] } };
+        }
+    });
+    world.ml.screenshot = async () => "data:image/png;base64,SHOT";
+
+    const res = await world.ml.agent("what's here?", { vision: true });
+
+    // Native despite the probe returning unknown — the image is injected into the agent's
+    // OWN history (a delegated look would instead call a second model to describe it).
+    const injected = steps.some(msgs => msgs.some(m =>
+        m.role === "user" && Array.isArray(m.images) && m.images.includes("data:image/png;base64,SHOT")));
+    assert.ok(injected, "vision:true → native look injects the screenshot (probe bypassed)");
+    assert.equal(res.summary, "It's a settings page.");
+});
+
 test("approveOnce dedups by (tool, args): identical repeats free, new scripts re-ask", () => {
     const { ml, window } = loadDomWorld();
     let asked = 0;
