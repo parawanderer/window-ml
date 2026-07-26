@@ -418,6 +418,10 @@ test("exec evaluates expressions, serializes objects, and catches errors", async
     assert.match(nodelist, /NodeList\/HTMLCollection, not an Array/);
     // A non-DOM "not a function" must NOT get the NodeList hint (false-positive guard).
     assert.doesNotMatch(await run(ml, "exec", { js: "(42).map(x => x)" }), /NodeList/);
+    // A runaway result is capped so it can't flood context — with a "[+N chars truncated]"
+    // count (the model knows it's a prefix). 600 'x' → 500 kept + 100 dropped.
+    const big = await run(ml, "exec", { js: "'x'.repeat(600)" });
+    assert.match(big, /^x{500}… \[\+100 chars truncated\]$/);
 });
 
 test("selector tools accept end-position :contains/:has-text and explain mid-selector", () => {
@@ -1417,17 +1421,44 @@ test("vision:true forces NATIVE look on the agent's own model, bypassing the cap
 
 // ---- python_exec `table` → df extraction (_resolveTable over a real DOM) ----
 
-test("_resolveTable: a clean <table> with thead → structured rows (case-preserving)", () => {
+test("_resolveTable: numeric columns are auto-cast to numbers (strings would string-concat)", () => {
     const { ml } = loadDomWorld(`<table id="t">
         <thead><tr><th>Item</th><th>Qty</th><th>Price</th></tr></thead>
         <tbody>
           <tr><td>Apple</td><td>3</td><td>1.50</td></tr>
           <tr><td>Pear</td><td>2</td><td>2.00</td></tr>
         </tbody></table>`);
+    // JSON round-trip brings the sandbox arrays into this realm AND preserves number-vs-
+    // string types (deepStrictEqual can't compare across VM realms; deepEqual is too loose).
+    const realm = (x) => JSON.parse(JSON.stringify(x));
     const t = ml._resolveTable("#t");
     assert.equal(t.kind, "rows");
     assert.deepEqual(t.columns, ["Item", "Qty", "Price"]);
-    assert.deepEqual(t.rows, [["Apple", "3", "1.50"], ["Pear", "2", "2.00"]]);
+    assert.deepStrictEqual(realm(t.rows), [["Apple", 3, 1.5], ["Pear", 2, 2]]);
+});
+
+const realmRows = (t) => JSON.parse(JSON.stringify(t.rows));
+
+test("_resolveTable raw:true keeps every cell a string (no auto-cast)", () => {
+    const { ml } = loadDomWorld(`<table id="t"><thead><tr><th>Zip</th></tr></thead><tbody><tr><td>01234</td></tr><tr><td>00500</td></tr></tbody></table>`);
+    // Default would cast → drop the leading zeros (01234 → 1234). raw preserves them.
+    assert.deepStrictEqual(realmRows(ml._resolveTable("#t")), [[1234], [500]]);
+    assert.deepStrictEqual(realmRows(ml._resolveTable("#t", true)), [["01234"], ["00500"]]);
+});
+
+test("_resolveTable: strips corporate formatting + coerces the sub-10% outlier to null", () => {
+    const cells = ["$1,250.50", "(150)", "15%", "100", "200", "300", "400", "500", "600", "N/A"];
+    const { ml } = loadDomWorld(`<table id="t"><thead><tr><th>Amount</th></tr></thead><tbody>${cells.map(c => `<tr><td>${c}</td></tr>`).join("")}</tbody></table>`);
+    // currency+commas → 1250.5; accounting parens → -150; percent → 15. 9/10 numeric ≥ 90% →
+    // cast; the lone non-numeric "N/A" (< 10%) → null (pandas NaN).
+    assert.deepStrictEqual(realmRows(ml._resolveTable("#t")), [[1250.5], [-150], [15], [100], [200], [300], [400], [500], [600], [null]]);
+});
+
+test("_resolveTable: a mostly-text column stays strings (below the 90% numeric threshold)", () => {
+    const { ml } = loadDomWorld(`<table id="t"><thead><tr><th>Code</th></tr></thead><tbody>
+        <tr><td>A1</td></tr><tr><td>B2</td></tr><tr><td>C3</td></tr><tr><td>4</td></tr>
+      </tbody></table>`);
+    assert.deepStrictEqual(realmRows(ml._resolveTable("#t")), [["A1"], ["B2"], ["C3"], ["4"]]);
 });
 
 test("_resolveTable: a first-row <th> (no thead) becomes the header", () => {

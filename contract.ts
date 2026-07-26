@@ -221,7 +221,7 @@ export type RenderDescriptor = (
       }
     // `python_exec`'s In slot: a notebook-cell header — the run mode (from `cast`), the
     // input screenshot the script saw, and the Python source (highlighted, NOT beautified).
-    | { type: "python-in"; mode: "script" | "pt" | "box"; code: string; image?: string; table?: { columns: string[]; rows: string[][] } }
+    | { type: "python-in"; mode: "script" | "pt" | "box"; code: string; image?: string; table?: { columns: string[]; rows: (string | number | null)[][] } }
     // `python_exec`'s Out slot: captured stdout, a returned image, a minted @pt/@box token,
     // the raw/JSON value, or a Python traceback.
     | { type: "python-out"; stdout?: string; image?: string; token?: string; value?: string; error?: string }
@@ -551,7 +551,7 @@ export interface MlApi {
     typeTool(): MlTool;
     /** Run a sandboxed Python snippet (Pyodide/WASM, numpy + Pillow) with an optional
      *  screenshot injected as `img`/`img_np`. No network/filesystem/DOM. */
-    pythonExec(code: string, opts?: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; table?: string | Element | null }): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string; inputTable?: { columns: string[]; rows: string[][] } }>;
+    pythonExec(code: string, opts?: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; table?: string | Element | null; tableRaw?: boolean }): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string; inputTable?: { columns: string[]; rows: (string | number | null)[][] } }>;
     /** Built-in sandboxed-Python tool factory (numpy/Pillow pixel/array work). */
     pythonTool(): MlTool;
 
@@ -586,7 +586,7 @@ export interface MlApi {
     _imageToDataUrl(image: string | HTMLImageElement): Promise<string>;
     _fetchImageBase64(url: string): Promise<string>;
     _stitchFullPage(capture: () => Promise<string>): Promise<string>;
-    _resolveTable(target: string | Element): { kind: "rows"; columns: string[]; rows: string[][] } | { kind: "html"; html: string };
+    _resolveTable(target: string | Element, raw?: boolean): { kind: "rows"; columns: string[]; rows: (string | number | null)[][] } | { kind: "html"; html: string };
     _resolveVisionModel(agentModel: string | null, vision: boolean | string | null): Promise<string | null>;
     _modelSees(model: string | null): Promise<boolean>;
     _nativeLookTool(): MlTool;

@@ -7,7 +7,11 @@
 import type { MlApi, MlTool, LocateSubstep, ToolResult, RenderDescriptor } from "./contract";
 import { DEFAULT_GROUNDING_RANGE } from "./contract";
 import { PY_PACKAGE_LABELS } from "./python-env";
-import { truncate, errText, elLine, queryAll, selectorError } from "./dom";
+import { truncate, clipOut, errText, elLine, queryAll, selectorError } from "./dom";
+
+// Cap on python_exec output (stdout / value / error) fed back to the model — bigger than
+// exec's 500 (data output legitimately runs longer) but still bounds a runaway result.
+const PY_OUT_MAX = 2000;
 import { settle, VISION_NUM_CTX, cropDataUrl, MIN_SHOT_PX, POINT_RE, PT_LOOK_RADIUS, mintPoint, resolvePoint, nearbyPoint, BOX_RE, mintBox, resolveBox } from "./util";
 import { collectCandidates, buildMarks, annotate, formatBox, letterboxToSquare, projectFromSquare, drawGrid, gridDims, validateCells, cellsBox, collectInBox, elementAtPoint, viewportBox, colorWordHues, pickOverlayColor, pickAccentColor, withHiddenSidebar, regionBox, REGION_NAMES, adjacentCells, type RegionName, type MarkFilter, type Box, type Mark } from "./som";
 
@@ -855,10 +859,13 @@ export const buildPythonTool = (ml: MlApi): MlTool =>
         requiresApproval: true,
         description: "Run a SANDBOXED Python snippet (numpy + Pillow + pandas, WASM) for array/pixel/spatial/table " +
             "work you do better in Python than JS: pixel-mask a target and take its centroid, count regions, " +
-            "template-match, BFS a maze, sub-pixel math, or SUM/AVG/GROUP a table. Pass `image` (a CSS selector or " +
-            "an @pt:/@box: token) to load that screenshot as `img` (PIL.Image) + `img_np` (H×W×3 uint8), or `table` " +
-            "(a selector for a <table>/ARIA grid) to load it as `df` (pandas.DataFrame) — never eyeball spreadsheet " +
-            "math, compute it on `df`. `return` a value — it comes back as TEXT by " +
+            "template-match, BFS a maze, sub-pixel math, or SUM/AVG/GROUP a table. Think of it as appending ONE " +
+            "cell to a live Jupyter notebook: whatever you pass is ALREADY loaded as a variable — reference it " +
+            "directly, do NOT re-open/re-parse it. Pass `image` (a CSS selector or an @pt:/@box: token) → it's " +
+            "loaded as `img` (PIL.Image) + `img_np` (H×W×3 uint8); pass `table` (a selector for a <table>/ARIA " +
+            "grid) → loaded as `df` (pandas.DataFrame, numeric columns already typed) — never eyeball spreadsheet " +
+            "math, compute it on `df`. E.g. table → `return df.groupby('Region')['Q1'].sum().to_dict()`; image → " +
+            "`return int((img_np[:, :, 0] > 200).sum())`. `return` a value — it comes back as TEXT by " +
             "default (general scripting). To get a CLICKABLE coordinate, set `cast:'pt'` (the return must be [x,y] " +
             "or {x,y} → minted as an @pt) or `cast:'box'` ([x1,y1,x2,y2] or {left,top,right,bottom} → @box); a " +
             "mismatched return errors. A base64 image (via to_base64(...)) is always shown. Each call is " +
@@ -878,22 +885,27 @@ export const buildPythonTool = (ml: MlApi): MlTool =>
                 mode: { type: "string", enum: ["readonly", "full"], description: "'readonly' (default) = isolated sandbox, no network/JS scope (auto-approvable). 'full' = network enabled; ALWAYS asks for approval. Use 'readonly' for pure compute over the inputs." },
                 margin: { type: "number", description: "For an @pt image only: the crop RADIUS in px around the point (a bigger margin = more context). Omit for the default. Ignored for @box / CSS selectors." },
                 table: { type: "string", description: "Optional CSS selector for a page table (<table> or ARIA grid) → loaded as `df` (pandas.DataFrame). Use for spreadsheet/table math instead of eyeballing cells." },
+                tableRaw: { type: "boolean", description: "Load `table` cells as raw STRINGS (skip the default numeric/currency auto-cast). Use only for ZIP/SKU/leading-zero IDs that casting would corrupt." },
             },
             required: ["code"],
         },
-        run: async ({ code, image, cast, mode, margin, table }: { code: string; image?: string; cast?: "pt" | "box"; mode?: "readonly" | "full"; margin?: number; table?: string }): Promise<string | ToolResult> => {
-            const r = await ml.pythonExec(code, { image: image || null, mode: mode === "full" ? "full" : "readonly", margin: typeof margin === "number" ? margin : 0, table: table || null });
-            const pre = r.stdout ? `stdout:\n${r.stdout}\n\n` : "";
+        run: async ({ code, image, cast, mode, margin, table, tableRaw }: { code: string; image?: string; cast?: "pt" | "box"; mode?: "readonly" | "full"; margin?: number; table?: string; tableRaw?: boolean }): Promise<string | ToolResult> => {
+            const r = await ml.pythonExec(code, { image: image || null, mode: mode === "full" ? "full" : "readonly", margin: typeof margin === "number" ? margin : 0, table: table || null, tableRaw: !!tableRaw });
+            // Cap stdout/value/error fed back to the model so a runaway result (e.g. a
+            // string-concat blowup) can't flood the context — with a "[+N truncated]" note.
+            const stdoutClipped = clipOut(r.stdout || "", PY_OUT_MAX);
+            const pre = stdoutClipped ? `stdout:\n${stdoutClipped}\n\n` : "";
+            const stringify = (x: unknown) => clipOut(typeof x === "string" ? x : JSON.stringify(x), PY_OUT_MAX);
             // The In slot: a notebook-cell header (cell mode + input image/table + source). Shared
             // by every return path. The Out slot varies (stdout + one of image/token/value/error).
             const cellMode = cast === "pt" ? "pt" as const : cast === "box" ? "box" as const : "script" as const;
             const renderIn: RenderDescriptor = { type: "python-in", mode: cellMode, code,
                 ...(r.inputImage ? { image: r.inputImage } : {}), ...(r.inputTable ? { table: r.inputTable } : {}) };
-            const stdout = r.stdout || undefined;
+            const stdout = stdoutClipped || undefined;
             const done = (content: string, out: Omit<Extract<RenderDescriptor, { type: "python-out" }>, "type" | "stdout">): ToolResult =>
                 ({ content, renderIn, render: { type: "python-out", stdout, ...out } });
 
-            if (!r.ok) return done(`Python error: ${r.error}${r.stdout ? `\n\nstdout:\n${r.stdout}` : ""}`, { error: r.error });
+            if (!r.ok) { const err = clipOut(r.error || "", PY_OUT_MAX); return done(`Python error: ${err}${stdoutClipped ? `\n\nstdout:\n${stdoutClipped}` : ""}`, { error: err }); }
             const v = r.value;
             // An image return is unambiguous → always shown (no cast needed).
             if (typeof v === "string" && /^data:image\//.test(v)) {
@@ -903,17 +915,17 @@ export const buildPythonTool = (ml: MlApi): MlTool =>
             // script that returns two numbers). A mismatch is an honest error, not a guess.
             if (cast === "pt") {
                 const pt = asPoint(v);
-                if (!pt) return done(`${pre}cast:'pt' but the return isn't a point ([x,y] or {x,y}): ${JSON.stringify(v)}`, { value: JSON.stringify(v) });
+                if (!pt) return done(`${pre}cast:'pt' but the return isn't a point ([x,y] or {x,y}): ${stringify(v)}`, { value: stringify(v) });
                 const t = mintPoint(pt.x, pt.y);
                 return done(`${pre}→ ${t} at (${Math.round(pt.x)}, ${Math.round(pt.y)}). Verify then click: look({ selector: "${t}" }) → click({ selector: "${t}" }).`, { token: t });
             }
             if (cast === "box") {
                 const bx = asBoxVal(v);
-                if (!bx) return done(`${pre}cast:'box' but the return isn't a box ([x1,y1,x2,y2] or {left,top,right,bottom}): ${JSON.stringify(v)}`, { value: JSON.stringify(v) });
+                if (!bx) return done(`${pre}cast:'box' but the return isn't a box ([x1,y1,x2,y2] or {left,top,right,bottom}): ${stringify(v)}`, { value: stringify(v) });
                 const t = mintBox(bx);
                 return done(`${pre}→ ${t} (a ${Math.round(bx.right - bx.left)}×${Math.round(bx.bottom - bx.top)}px region). Scope into it: locate({ selector: "${t}", description: "…" }).`, { token: t });
             }
-            const text = typeof v === "string" ? v : JSON.stringify(v);
+            const text = stringify(v);
             return done(`${pre}${text}`, { value: text });
         },
     });

@@ -413,12 +413,12 @@ function RenderElements({ items }: { items: { path: string; text?: string; index
         </div>
     );
 }
-function RenderTable({ columns, rows }: { columns: string[]; rows: (string | number)[][] }) {
+function RenderTable({ columns, rows }: { columns: string[]; rows: (string | number | null)[][] }) {
     return (
         <div class="r-table-wrap">
             <table class="r-table">
                 <thead><tr>{columns.map((c, i) => <th key={i}>{c}</th>)}</tr></thead>
-                <tbody>{rows.map((row, i) => <tr key={i}>{row.map((c, j) => <td key={j}>{String(c)}</td>)}</tr>)}</tbody>
+                <tbody>{rows.map((row, i) => <tr key={i}>{row.map((c, j) => <td key={j} class={typeof c === "number" ? "r-td-num" : undefined}>{c == null ? "" : String(c)}</td>)}</tr>)}</tbody>
             </table>
         </div>
     );

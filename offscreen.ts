@@ -30,9 +30,11 @@ if _b64:
     img_np = np.array(img)
     H, W = img_np.shape[:2]
 
-# Optional page table → a pandas DataFrame 'df'. "rows" = a clean table walked in the page
-# (pad/truncate ragged rows to the header width so DataFrame() can't choke); "html" = the
-# read_html fallback (bs4 parser) for spans/nested/malformed markup.
+# Optional page table → a pandas DataFrame 'df'. "rows" = a clean table walked in the page —
+# cells are already type-cast page-side (numeric columns arrive as JS numbers, so pandas
+# infers int64/float64 and .sum() adds instead of string-CONCATENATING); pad/truncate ragged
+# rows to the header width so DataFrame() can't choke. "html" = the read_html fallback (bs4
+# parser, which type-infers itself) for spans/nested/malformed markup.
 df = None
 _tj = globals().get("INJECTED_TABLE_JSON")
 if _tj:

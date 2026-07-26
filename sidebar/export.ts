@@ -37,9 +37,9 @@ interface Sink {
 }
 
 // A GitHub-flavoured markdown table (capped) for the python_exec `df` input preview.
-function mdTable(columns: string[], rows: string[][], max = 20): string {
+function mdTable(columns: string[], rows: (string | number | null)[][], max = 20): string {
     const cols = columns.length ? columns : (rows[0] || []).map((_, i) => String(i));
-    const esc = (s: unknown) => String(s).replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+    const esc = (s: unknown) => (s == null ? "" : String(s)).replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
     const line = (cells: unknown[]) => `| ${cells.map(esc).join(" | ")} |`;
     const body = rows.slice(0, max).map(line).join("\n");
     const more = rows.length > max ? `\n\n_… ${rows.length - max} more rows_` : "";

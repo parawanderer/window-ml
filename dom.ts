@@ -29,6 +29,14 @@ export const clip = (str: string, n: number): string => {
     return str.length > n ? str.slice(0, n) + "…" : str;
 };
 
+/** Like {@link clip}, but for TOOL OUTPUT fed back to the model: it reports HOW MANY chars
+ *  were dropped, so the model knows it's seeing a prefix (and a runaway result — e.g. a
+ *  string-concat blowup — can't silently flood the context). */
+export const clipOut = (str: string, n: number): string => {
+    str = String(str == null ? "" : str);
+    return str.length > n ? `${str.slice(0, n)}… [+${str.length - n} chars truncated]` : str;
+};
+
 /**
  * Extract error text from a caught throw. Background tasks reject with a plain
  * STRING (not an Error), so `e.message` would be undefined — fall back to String.
@@ -336,5 +344,44 @@ export function extractTable(el: Element): { columns: string[]; rows: string[][]
     const out = cap(bodyEls.map(r => { const c = cells(r); return (c.length ? c : [...r.children]).map(cellText); }));
     if (!out) return null;
     if (hdr) out.columns = heads(hdr).map(cellText).slice(0, MAX_TABLE_COLS);
+    return out;
+}
+
+/** Parse a table cell as a number, tolerating corporate formatting — thousands commas,
+ *  currency ($€£¥), a trailing %, whitespace, and accounting parens ((150) → -150). Returns
+ *  null when it isn't a clean int/decimal (names, alphanumeric IDs, blanks). Pure. */
+export function parseNumericCell(v: string): number | null {
+    let s = String(v == null ? "" : v).trim();
+    if (!s) return null;
+    const paren = /^\((.*)\)$/.exec(s);
+    if (paren) s = "-" + paren[1];
+    s = s.replace(/[,$€£¥%\s]/g, "");
+    if (!/^[-+]?(\d+\.?\d*|\.\d+)$/.test(s)) return null;   // int/decimal only — no "1e3"/"421A"/leading-word
+    const n = Number(s);
+    return Number.isFinite(n) ? n : null;
+}
+
+/** Auto-cast the NUMERIC columns of an extracted table so pandas infers int64/float64 (else
+ *  every cell is a string and df.sum() string-CONCATENATES). Per column: if ≥90% of non-empty
+ *  cells parse as numbers, coerce the whole column to number|null (blank/stray → null, pandas
+ *  NaN); otherwise leave it as strings (names, and IDs/ZIPs where a leading zero would drop —
+ *  pass tableRaw to skip casting for those). Returns a NEW rows array. Pure. */
+export function castTableColumns(columns: string[], rows: string[][]): (string | number | null)[][] {
+    const width = Math.max(columns.length, ...rows.map(r => r.length), 0);
+    const out: (string | number | null)[][] = rows.map(r => r.slice());
+    for (let c = 0; c < width; c++) {
+        let nonEmpty = 0, numeric = 0;
+        for (const r of rows) {
+            const s = r[c] == null ? "" : String(r[c]).trim();
+            if (!s) continue;
+            nonEmpty++;
+            if (parseNumericCell(s) != null) numeric++;
+        }
+        if (nonEmpty === 0 || numeric / nonEmpty < 0.9) continue;   // not a numeric column
+        for (const r of out) {
+            const s = r[c] == null ? "" : String(r[c]).trim();
+            r[c] = s ? parseNumericCell(s) : null;   // non-numeric outlier → null (pandas NaN)
+        }
+    }
     return out;
 }

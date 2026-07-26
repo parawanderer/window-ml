@@ -417,8 +417,14 @@ contract — `PYTHON_EXEC_REQUEST` (page) → `PYTHON_EXEC` (bg). `ml.pythonExec
 screenshots `image` (a selector or `@pt`/`@box`) into the sandbox as `img` (PIL) + `img_np`
 (numpy); **`{ table }`** (a `<table>`/ARIA-grid selector) loads it as `df` (pandas) — a clean
 table is walked page-side (`extractTable`, case-preserving; col/rowspans or a non-table fall
-back to `pd.read_html(outerHTML)` with the bs4 parser). The code runs in a **sandboxed
-namespace** (no DOM/fs) under
+back to `pd.read_html(outerHTML)` with the bs4 parser). Numeric columns are **auto-cast
+page-side** (`dom.ts` `castTableColumns`, pure/tested: a column ≥90%-numeric after stripping
+currency/commas/%/accounting-parens → `number|null`, else strings) so `df.sum()` adds instead
+of string-CONCATENATING — `{ tableRaw }` skips it for ZIP/SKU/leading-zero IDs. The tool
+description frames the sandbox as "appending a cell to a live Jupyter notebook" (img/img_np/df
+are pre-loaded) with a df/img snippet. Output (stdout/value/error) is capped by `clipOut`
+(dom.ts, shared with `exec`) with a `[+N chars truncated]` count so a runaway result can't
+flood context. The code runs in a **sandboxed namespace** (no DOM/fs) under
 `contextlib.redirect_stdout` (byte-exact stdout, newlines intact) with its own try/except
 (traceback captured, partial stdout preserved). A per-run namespace reset wipes non-`_`
 globals so one run can't leak state into the next; the result is serialized via Python
