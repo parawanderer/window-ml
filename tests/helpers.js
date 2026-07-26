@@ -315,7 +315,7 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaMode
     const dom = new JSDOM(`<!doctype html><html><body><div id="root"></div></body></html>`, { runScripts: "outside-only", pretendToBeVisual: true });
     const win = dom.window;
     _sidebarWins.push(win);   // closed in an after() hook — the VRAM panel's setInterval keeps the event loop alive otherwise
-    const syncStore = { sidebar: true, theme: "auto", ...sync };
+    const syncStore = { debugMode: "overlay", theme: "auto", ...sync };
     const localStore = { ml_debug_fontscale: 1, ...local };
     const changeListeners = [];
     // Fire storage.onChanged like Chrome does, so cross-context (popup↔sidebar)

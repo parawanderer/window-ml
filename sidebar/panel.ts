@@ -6,6 +6,30 @@
 // @types/chrome global — a local `declare` would poison the type across the project.)
 const frame = document.getElementById("app") as HTMLIFrameElement;
 
+// This panel only streams when it's the ACTIVE debug surface (debugMode === "devtools").
+// The DevTools tab can't be un-registered, so when debug is off or rendering in the in-page
+// sidebar we swap the app for a note explaining how to point the stream here — never a
+// misleading empty log. Reads chrome.storage.sync (a DevTools page has chrome APIs).
+const offnote = document.getElementById("ml-offnote")!;
+function reflectMode(mode: string): void {
+    const active = mode === "devtools";
+    frame.style.display = active ? "block" : "none";
+    offnote.style.display = active ? "none" : "block";
+    if (active) return;
+    const h = document.getElementById("ml-offnote-h")!, b = document.getElementById("ml-offnote-b")!;
+    if (mode === "overlay") {
+        h.textContent = "Debug is showing in the in-page sidebar";
+        b.innerHTML = "window.ml is logging to the slide-out panel on the page. To stream it <b>here</b> instead, set <b>Debug panel → DevTools panel</b> in the toolbar popup or Settings → Appearance.";
+    } else {
+        h.textContent = "window.ml debug is off";
+        b.innerHTML = "Turn it on with <b>Debug panel → DevTools panel</b> in the toolbar popup or Settings → Appearance to stream ml calls here.";
+    }
+}
+chrome.storage.sync.get({ debugMode: "off" }, (c: any) => reflectMode(c.debugMode || "off"));
+chrome.storage.onChanged.addListener((ch: any, area: string) => {
+    if (area === "sync" && ch.debugMode) reflectMode(ch.debugMode.newValue || "off");
+});
+
 // Queue events until the app reports it's listening (its load races the port's replay
 // burst), then flush and go live — mirrors the shell's present→ready→replay handshake.
 let ready = false;

@@ -4,11 +4,11 @@
 import type { MlConfig, Theme, LoadedModel } from "./contract";
 import { DEFAULT_CONFIG, fmtCtx } from "./contract";   // single source of truth (see contract.ts)
 
-// Text/select inputs, read via .value. Numbers (NUMBERS) and booleans
-// (CHECKBOXES) are handled separately.
-const FIELDS: (keyof MlConfig)[] = ["chatUrl", "apiKey", "model", "apiFormat", "ocrModel", "theme", "utilityModel"];
-const NUMBERS: (keyof MlConfig)[] = ["utilityNumCtx"];
-const CHECKBOXES: (keyof MlConfig)[] = ["sidebar", "utilityForceCpu"];
+// The popup is a QUICK LAUNCHER: connection (the bare minimum to work) + the two
+// always-handy toggles (theme, debug panel). Everything else — OCR/utility/grounding/
+// model-filter/auto-approve — lives in the workbench Settings. All fields here are
+// text/select inputs read via .value; there are no number/checkbox fields anymore.
+const FIELDS: (keyof MlConfig)[] = ["chatUrl", "apiKey", "model", "apiFormat", "theme", "debugMode"];
 
 // Every referenced element is an <input>/<select> (or close enough for the props
 // we touch: value/checked/textContent/className/style/replaceChildren).
@@ -30,28 +30,34 @@ function setStatus(text: string, kind?: string) {
     statusEl().className = kind || "";
 }
 
-function readForm(): Record<string, string | number | boolean> {
-    const config: Record<string, string | number | boolean> = {};
+function readForm(): Record<string, string> {
+    const config: Record<string, string> = {};
     for (const field of FIELDS) config[field] = $(field).value.trim();
-    for (const num of NUMBERS) config[num] = parseInt($(num).value, 10) || (DEFAULT_CONFIG[num] as number);
-    for (const box of CHECKBOXES) config[box] = $(box).checked;
     return config;
 }
 
 async function loadForm() {
     const config = await chrome.storage.sync.get(DEFAULT_CONFIG) as MlConfig;
     for (const field of FIELDS) $(field).value = config[field] as string;
-    for (const num of NUMBERS) $(num).value = String(config[num]);
-    for (const box of CHECKBOXES) $(box).checked = !!config[box];
     applyTheme(config.theme);
-    syncUtilityEnabled();
+    // Connection block: expanded (and flagged) when unconfigured — it's the first thing
+    // to do; collapsed once a URL is set.
+    (document.getElementById("conn") as HTMLDetailsElement).open = !config.chatUrl.trim();
+    updateConnSummary();
 }
 
-// num_ctx / force-CPU only apply when a utility model is set — disable them otherwise.
-function syncUtilityEnabled() {
-    const on = !!$("utilityModel").value.trim();
-    $("utilityNumCtx").disabled = !on;
-    $("utilityForceCpu").disabled = !on;
+// The <summary> of the connection block reflects its state: a call-to-action when unset,
+// a green host readout once configured (so a glance tells you it's wired up).
+function updateConnSummary() {
+    const url = $("chatUrl").value.trim();
+    const el = document.getElementById("connStatus")!;
+    if (!url) { el.innerHTML = `<span class="todo">① Set up your connection</span>`; return; }
+    let host = url;
+    try { host = new URL(url).host || url; } catch { /* keep the raw string */ }
+    el.textContent = "Connection ";
+    const ok = document.createElement("span");
+    ok.className = "ok"; ok.textContent = `✓ ${host}`;
+    el.append(ok);
 }
 
 async function save() {
@@ -99,18 +105,8 @@ chrome.storage.onChanged.addListener((changes, area) => {
             $(field).value = changes[field].newValue as string;
         }
     }
-    for (const num of NUMBERS) {
-        if (changes[num] && changes[num].newValue !== undefined) {
-            $(num).value = String(changes[num].newValue);
-        }
-    }
-    for (const box of CHECKBOXES) {
-        if (changes[box] && changes[box].newValue !== undefined) {
-            $(box).checked = !!changes[box].newValue;
-        }
-    }
     if (changes.theme && changes.theme.newValue !== undefined) applyTheme(changes.theme.newValue as Theme);
-    if (changes.utilityModel && changes.utilityModel.newValue !== undefined) syncUtilityEnabled();
+    if (changes.chatUrl && changes.chatUrl.newValue !== undefined) updateConnSummary();
 });
 
 async function saveAndTest() {
@@ -190,12 +186,15 @@ function refreshVram(): Promise<LoadedModel[] | null> {
     });
 }
 
-$("theme").addEventListener("change", () => applyTheme($("theme").value as Theme));   // live preview
+// Theme + debug panel are one-glance toggles → persist immediately on change (no Save
+// needed). The connection fields still gather under Save / Save & Test.
+$("theme").addEventListener("change", () => { applyTheme($("theme").value as Theme); chrome.storage.sync.set({ theme: $("theme").value }); });
+$("debugMode").addEventListener("change", () => chrome.storage.sync.set({ debugMode: $("debugMode").value }));
+$("chatUrl").addEventListener("input", updateConnSummary);
 $("save").addEventListener("click", save);
 $("unload").addEventListener("click", freeVram);
 $("test").addEventListener("click", saveAndTest);
 $("refreshVram").addEventListener("click", refreshVram);
-$("utilityModel").addEventListener("input", syncUtilityEnabled);
 
 // Populate the form, then auto-fetch the model list (no Load button — the
 // datalist just fills in). refreshVram in parallel.

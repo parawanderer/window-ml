@@ -6,12 +6,13 @@ buffer so a panel opened mid-run catches up. Transport = `injected.js` → shell
 `ML_DEBUG_EVENT` → background (ring buffer + fan-out) → `ml-devtools` port → `panel.html`
 (hosts `sidebar.html` unchanged). Needs a manual load-and-look to confirm the live render.
 
-**Remaining (the "panel-only" mode):** a toggle that *suppresses* the in-page overlay
-while keeping events flowing — the version that actually removes the hide-for-shot dance.
-It needs `injected.js` to emit when *debug is enabled* rather than when *the overlay is
-mounted* (today the overlay's presence gates emission), plus splitting the shell's
-`mount()` into "start plumbing" vs "create UI". Deferred; the committed scroll-pin already
-fixed the overlay's scroll bug, so this is a nicety, not urgent.
+**Panel-only mode — SHIPPED.** The `debugMode` config (`"off"`/`"overlay"`/`"devtools"`,
+replacing the old `sidebar` boolean; set in the popup or Settings → Appearance) drives
+`shell.ts` `applyMode`: it split `mount()` into `attach()` ("start plumbing" — forwarder +
+`present`) vs `mountOverlay()` ("create UI"). In `devtools` mode the shell attaches the
+forwarder and posts `__mlSidebar:"ready"` itself (no iframe app), so injected.js goes live
+and streams to the background/panel with NO in-page overlay. The shell still acks
+`__mlSidebarShot` (a no-op hide) so `look` screenshots work.
 
 ## Why
 

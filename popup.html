@@ -55,50 +55,56 @@
         margin: 14px 0 2px; color: var(--fg); cursor: pointer;
     }
     .check input { width: auto; margin: 0; }
+    /* Collapsible connection block: expanded when unconfigured (the first thing to do),
+       collapsed once a URL is set (you rarely need it again). */
+    details.conn { border: 1px solid var(--border); border-radius: 6px; padding: 0 10px; margin-bottom: 6px; }
+    details.conn > summary {
+        list-style: none; cursor: pointer; padding: 9px 0; color: var(--fg);
+        display: flex; align-items: center; gap: 6px; font-weight: 600;
+    }
+    details.conn > summary::-webkit-details-marker { display: none; }
+    details.conn > summary::before { content: "▸"; color: var(--fg-faint); font-weight: 400; }
+    details.conn[open] > summary::before { content: "▾"; }
+    details.conn > summary .todo { color: var(--accent); }
+    details.conn > summary .ok { color: var(--ok); font-weight: 400; font-size: 12px; }
+    details.conn[open] { padding-bottom: 10px; }
+    .free-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+    .free-row .hint { margin: 0; flex: 1; }
 </style>
 </head>
 <body>
     <h1>window.ml</h1>
 
-    <label for="chatUrl">Chat completions URL</label>
-    <input id="chatUrl" type="text" placeholder="http://localhost:3000/api/chat/completions">
-    <div class="hint">OpenWebUI: /api/chat/completions &middot; Ollama passthrough: /ollama/api/chat</div>
+    <!-- Connection: the bare minimum to make the extension work. Collapsed once a URL is
+         set; everything else (OCR/utility/grounding/filters) lives in the workbench Settings. -->
+    <details class="conn" id="conn">
+        <summary><span id="connStatus"></span></summary>
 
-    <label for="apiKey">API key</label>
-    <input id="apiKey" type="password" placeholder="sk-...">
-    <div class="hint">OpenWebUI &rarr; Settings &rarr; Account &rarr; API keys</div>
+        <label for="chatUrl">Chat completions URL</label>
+        <input id="chatUrl" type="text" placeholder="http://localhost:3000/api/chat/completions">
+        <div class="hint">OpenWebUI: /api/chat/completions &middot; Ollama passthrough: /ollama/api/chat</div>
 
-    <label for="model">Default Model</label>
-    <input id="model" type="text" list="modelList" placeholder="e.g. qwen3:14b">
-    <datalist id="modelList"></datalist>
-    <div class="hint">The model list loads automatically — start typing to pick one.</div>
+        <label for="apiKey">API key</label>
+        <input id="apiKey" type="password" placeholder="sk-...">
+        <div class="hint">OpenWebUI &rarr; Settings &rarr; Account &rarr; API keys (skip for a keyless local server)</div>
 
-    <label for="apiFormat">API format</label>
-    <select id="apiFormat">
-        <option value="openai">OpenAI (…/chat/completions)</option>
-        <option value="ollama">Ollama native (…/api/chat)</option>
-    </select>
-    <div class="hint">Request and response shape — match it to the URL above</div>
+        <label for="apiFormat">API format</label>
+        <select id="apiFormat">
+            <option value="openai">OpenAI (…/chat/completions)</option>
+            <option value="ollama">Ollama native (…/api/chat)</option>
+        </select>
+        <div class="hint">Request and response shape — match it to the URL above</div>
 
-    <label for="ocrModel">OCR model (optional)</label>
-    <input id="ocrModel" type="text" list="modelList" placeholder="e.g. qwen2.5vl">
-    <div class="hint">Vision model ml.read() uses for OCR — kept separate from the chat model</div>
+        <label for="model">Default model</label>
+        <input id="model" type="text" list="modelList" placeholder="e.g. qwen3:14b">
+        <datalist id="modelList"></datalist>
+        <div class="hint">Optional but recommended — the list loads automatically; start typing to pick one.</div>
 
-    <label for="utilityModel">Utility model (optional)</label>
-    <input id="utilityModel" type="text" list="modelList" placeholder="e.g. qwen3.5:0.8b (small) — blank = use the main model">
-    <div class="hint">A small, cheap model for side tasks like session-title summaries. Leave blank to reuse the main model. Suggestions: <code>qwen3.5:0.8b</code> for an average machine, a <code>gemma3:e2b</code>-class model for a beefier one.</div>
-
-    <label for="utilityNumCtx">Utility context size</label>
-    <input id="utilityNumCtx" type="number" min="512" step="512" placeholder="4096"
-        title="Context window (num_ctx) for the utility model. Summarising needs little context — keep this small on modest hardware; larger just uses more KV-cache memory.">
-    <div class="hint">Summarising needs little context — 4096 is plenty. Only used when a utility model is set.</div>
-
-    <label class="check" for="utilityForceCpu"
-        title="Run the utility model on CPU (num_gpu: 0) so it never competes with your main model for VRAM. Recommended when both run on one GPU.">
-        <input id="utilityForceCpu" type="checkbox">
-        Force utility model onto CPU
-    </label>
-    <div class="hint">Keeps the utility model off the GPU so it can't evict your main model. Only used when a utility model is set.</div>
+        <div class="actions">
+            <button id="test" class="primary" title="Saves, then sends a test prompt">Save &amp; Test</button>
+            <button id="save" title="Save without testing">Save</button>
+        </div>
+    </details>
 
     <label for="theme">Theme</label>
     <select id="theme">
@@ -107,22 +113,21 @@
         <option value="light">Light</option>
     </select>
 
-    <label class="check" for="sidebar">
-        <input id="sidebar" type="checkbox">
-        Enable debug sidebar
-    </label>
-    <div class="hint">A slide-out panel that logs your ml calls on each page (for debugging).</div>
+    <label for="debugMode">Debug panel</label>
+    <select id="debugMode">
+        <option value="off">Off</option>
+        <option value="overlay">In-page sidebar</option>
+        <option value="devtools">DevTools panel</option>
+    </select>
+    <div class="hint">Where the ml-call debug log renders. <b>In-page</b> = a slide-out on every page. <b>DevTools</b> = the “window.ml” tab in DevTools, no on-page overlay.</div>
 
     <div id="vramSection" style="display:none">
-        <label>VRAM usage</label>
-        <div id="vram" class="hint">—</div>
-        <button id="refreshVram" title="Refresh VRAM usage" style="margin-top:6px">Refresh</button>
-    </div>
-
-    <div class="actions">
-        <button id="save" class="primary">Save</button>
-        <button id="test" title="Saves, then sends a test prompt">Save &amp; Test</button>
-        <button id="unload" title="Evict all loaded models from VRAM">Free VRAM</button>
+        <label>VRAM</label>
+        <div class="free-row">
+            <div id="vram" class="hint">—</div>
+            <button id="unload" title="Evict all loaded models from VRAM">Free VRAM</button>
+            <button id="refreshVram" title="Refresh VRAM usage">↻</button>
+        </div>
     </div>
 
     <div id="status"></div>

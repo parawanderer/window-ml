@@ -4,7 +4,7 @@
 // with the popup. Text fields persist on change (blur) to avoid chatty writes; the
 // signal updates on input for a responsive UI + the utility-field enable gating.
 import { signal } from "@preact/signals";
-import type { MlConfig, ApiFormat, Theme, LoadedModel } from "../contract";
+import type { MlConfig, ApiFormat, Theme, DebugMode, LoadedModel } from "../contract";
 import { DEFAULT_CONFIG, DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX, detectGroundingModel, modelFilterAllows } from "../contract";
 import {
     config, models, fontScale, codeWrap, codeLineNumbers,
@@ -397,6 +397,14 @@ export function Settings() {
                         <option value="dark">Dark</option>
                         <option value="light">Light</option>
                     </select></label>
+                <label class="set-field"><span>Debug panel</span>
+                    <select value={c.debugMode} onChange={(e: any) => setField("debugMode", e.target.value as DebugMode)}>
+                        <option value="off">Off</option>
+                        <option value="overlay">In-page sidebar</option>
+                        <option value="devtools">DevTools panel</option>
+                    </select>
+                    <div class="set-hint">Where this debug log renders. <b>In-page</b> = a slide-out on every page. <b>DevTools</b> = the “window.ml” tab, no on-page overlay. (Same setting as the toolbar popup.)</div>
+                </label>
 
                 <div class="set-group">Code blocks</div>
                 <label class="set-field"><span>Long lines</span>

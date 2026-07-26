@@ -3,11 +3,15 @@
 // host web page can't read across, so the app may safely hold secrets (unlike a
 // shadow-root panel injected into the page DOM, which the page can walk into).
 //
-// This shell owns the slide-out container, tab, and resize handle, and relays
-// the page's `__mlDebug` stream (from injected.js, main world) into the iframe.
-// injected.js is unchanged: it still emits only after the `__mlSidebar:"ready"`
-// handshake, which the shell sends once the iframe app reports it's listening.
+// This shell owns the slide-out container, tab, and resize handle, and relays the page's
+// `__mlDebug` stream (from injected.js, main world) into the iframe AND up to the background
+// (for the DevTools panel). Config `debugMode` picks the surface: `overlay` mounts this
+// shell; `devtools` attaches the forwarder only (no overlay drawn) and — since there's no
+// iframe app to hand back the `__mlSidebar:"ready"` handshake — posts `ready` itself so
+// injected.js goes live; `off` attaches nothing. injected.js is unchanged: it emits after
+// `ready` regardless of who sent it.
 import { SB_ROOT, SB_HOST, SB_TAB, SB_FRAME, SB_LIGHTBOX, SB_LIGHTBOX_X } from "../ids";
+import type { DebugMode } from "../contract";
 
 const WIDTH_KEY = "ml_debug_width";
 const MIN_W = 280, TAB_W = 34, DEFAULT_W = 400;
@@ -131,12 +135,15 @@ function onWindowMessage(e: MessageEvent): void {
     }
     // The iframe app asks to open an image full-window (ClickableImg).
     if (typeof d.__mlLightbox === "string" && frame && e.source === frame.contentWindow) { showLightbox(d.__mlLightbox); return; }
-    // injected.js (page main world) → relay into the iframe app AND forward to the
-    // background so an optional DevTools panel can mirror the same stream (a panel can't
-    // receive these window-messages). Fire-and-forget; harmless when no panel is open.
+    // injected.js (page main world) → the active surface ONLY (the debugMode surfaces are
+    // exclusive): `overlay` relays into the iframe app (frame is null in devtools mode →
+    // no-op); `devtools` forwards to the background so the panel receives it (a panel can't
+    // read these window-messages). Fire-and-forget; harmless when no panel is open.
     if (d.__mlDebug && e.source === window) {
         frame?.contentWindow?.postMessage(d, "*");
-        try { void chrome.runtime.sendMessage({ type: "ML_DEBUG_EVENT", event: d.__mlDebug }).catch(() => {}); } catch { /* context gone */ }
+        if (mode === "devtools") {
+            try { void chrome.runtime.sendMessage({ type: "ML_DEBUG_EVENT", event: d.__mlDebug }).catch(() => {}); } catch { /* context gone */ }
+        }
         return;
     }
     // The iframe app is listening → handshake injected.js so it starts emitting,
@@ -174,7 +181,17 @@ function startResize(e: PointerEvent): void {
     window.addEventListener("pointerup", onUp);
 }
 
-function mount(): void {
+// Start relaying the debug stream WITHOUT drawing the overlay: add the window listener,
+// clear any stale DevTools-panel buffer for this tab, and tell injected.js debug is on so
+// it starts buffering. Shared by both surfaces — the overlay's iframe app posts `ready`
+// when it loads; devtools mode has no app, so applyMode posts `ready` itself.
+function attach(): void {
+    window.addEventListener("message", onWindowMessage);
+    try { void chrome.runtime.sendMessage({ type: "ML_DEBUG_RESET" }).catch(() => {}); } catch { /* context gone */ }
+    window.postMessage({ __mlSidebar: "present" }, "*");
+}
+
+function mountOverlay(): void {
     if (shellHost) return;
     // Host the shell's chrome (container/tab/resize/iframe) inside a shadow root
     // so the page's CSS can't bleed into it (e.g. a global `div { opacity: .8 }`,
@@ -219,30 +236,35 @@ function mount(): void {
     (document.documentElement || document.body).append(shellHost);
 
     chrome.storage.local.get({ [WIDTH_KEY]: DEFAULT_W }, (d: any) => setWidth(d[WIDTH_KEY] || DEFAULT_W));
-    window.addEventListener("message", onWindowMessage);
-    // Clear any DevTools-panel buffer for this tab — a fresh mount means a fresh page
-    // (or a re-enable), so stale events from a prior load shouldn't replay into a panel.
-    try { void chrome.runtime.sendMessage({ type: "ML_DEBUG_RESET" }).catch(() => {}); } catch { /* context gone */ }
-    // Tell injected.js a sidebar now exists so it starts BUFFERING debug events
-    // immediately — before the iframe app finishes loading and handshakes `ready`.
-    // Events emitted in that load window get replayed on ready instead of dropped.
-    window.postMessage({ __mlSidebar: "present" }, "*");
 }
 
-function unmount(): void {
-    if (!shellHost) return;
+// Detach everything: remove the overlay DOM (if any), drop the listener, and tell
+// injected.js debug is off (stop emitting + drop its ring). A no-op when already off.
+function teardown(): void {
+    if (mode === "off") return;
     hideLightbox();
+    if (shellHost) { shellHost.remove(); shellHost = panel = frame = shadowRoot = null; }
     window.removeEventListener("message", onWindowMessage);
-    shellHost.remove();
-    shellHost = panel = frame = shadowRoot = null;
-    // Tell injected.js (main world) the sidebar is gone so it stops emitting AND
-    // drops its buffered events — switching the sidebar off must stop all tracking,
-    // not just hide the UI. Posted last, after the listener is detached, so we don't
-    // handle our own message.
+    // Posted last, after the listener is detached, so we don't handle our own message.
     window.postMessage({ __mlSidebar: "gone" }, "*");
 }
 
-chrome.storage.sync.get({ sidebar: false }, (cfg) => { if (cfg.sidebar) mount(); });
+// The single entry point for the three debug surfaces. `off` draws nothing and forwards
+// nothing (zero cost). `overlay` mounts the in-page shell. `devtools` forwards the stream
+// to the background (for the DevTools panel) but draws NO overlay — so it must post `ready`
+// itself (there's no iframe app to hand back the handshake).
+let mode: DebugMode = "off";
+function applyMode(next: DebugMode): void {
+    if (next === mode) return;
+    teardown();
+    mode = next;
+    if (mode === "off") return;
+    attach();
+    if (mode === "overlay") mountOverlay();
+    else window.postMessage({ __mlSidebar: "ready" }, "*");   // devtools: no app → go live now
+}
+
+chrome.storage.sync.get({ debugMode: "off" }, (cfg) => applyMode(cfg.debugMode as DebugMode));
 chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === "sync" && changes.sidebar) { if (changes.sidebar.newValue) mount(); else unmount(); }
+    if (area === "sync" && changes.debugMode) applyMode((changes.debugMode.newValue || "off") as DebugMode);
 });

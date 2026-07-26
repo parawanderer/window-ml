@@ -486,8 +486,19 @@ the panel by an **event-agnostic ONE-WAY stream**: `injected.js` → shell (forw
 out to any connected `ml-devtools` port → `panel.ts` relays into the iframe (queuing until
 the app handshakes `ready`). The buffer **replays on connect** (a panel opened mid-run
 catches up); a fresh shell mount sends `ML_DEBUG_RESET` so stale events don't replay after
-navigation. Spec + the deferred "panel-only" mode (suppress the overlay, needs
-`injected.js` emit-gating changes): `docs/spec/DEVTOOLS_PANEL_PLAN.md`.
+navigation. Spec: `docs/spec/DEVTOOLS_PANEL_PLAN.md`.
+
+**Debug surface (`debugMode`).** One config, three values — `"off"` / `"overlay"` /
+`"devtools"` (was the `sidebar` boolean) — set in the toolbar popup or Settings → Appearance.
+`shell.ts` `applyMode` drives it: `overlay` mounts the in-page shell; `devtools` **attaches
+the forwarder only** (relays `__mlDebug` to the background for the panel, draws NO overlay) and
+posts `__mlSidebar:"ready"` **itself** (no iframe app to hand the handshake back) so injected.js
+goes live; `off` attaches nothing (zero cost). The shell still acks `__mlSidebarShot` in
+devtools mode so `look` screenshots work with no overlay to hide. The surfaces are
+**exclusive** — the shell forwards to the background ONLY in `devtools` mode (overlay events
+stay on the page). A DevTools panel can't be un-registered, so it's always a tab; `panel.ts`
+reads `debugMode` and, when it isn't the active surface (`off`/`overlay`), swaps the app for a
+self-explaining note instead of a misleading empty log.
 
 **Extending the sidebar — will it work in both surfaces?** *View/read features come free:*
 a new debug **event kind** (the transport forwards any `__mlDebug` payload), a new

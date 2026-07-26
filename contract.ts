@@ -9,6 +9,10 @@
 
 export type ApiFormat = "openai" | "ollama";
 export type Theme = "auto" | "dark" | "light";
+// Where the debug UI renders: nowhere (zero cost), the in-page overlay (content-script
+// shadow-root shell), or the DevTools "window.ml" panel only (no in-page overlay). In
+// devtools mode the shell still forwards events to the background so the panel receives them.
+export type DebugMode = "off" | "overlay" | "devtools";
 
 /** Full config held in chrome.storage.sync (background + popup own it). */
 export interface MlConfig {
@@ -20,7 +24,7 @@ export interface MlConfig {
     // Optional regex WHITELIST: when set, the wrapper only calls models whose id
     // matches it (every resolved model — main/ocr/grounding/utility). Empty = no filter.
     modelFilter: string;
-    sidebar: boolean;
+    debugMode: DebugMode;   // where the debug UI renders (off / in-page overlay / DevTools panel)
     theme: Theme;
     // Small "utility" model for cheap side tasks (e.g. session-title summaries).
     // Empty → fall back to the main `model`. numCtx/forceCpu apply only when set.
@@ -82,7 +86,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     apiFormat: "openai",
     ocrModel: "",
     modelFilter: "",
-    sidebar: false,
+    debugMode: "off",
     theme: "auto",
     utilityModel: "",
     utilityNumCtx: 4096,
