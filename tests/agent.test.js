@@ -1049,6 +1049,57 @@ test("autoApproveReadonly OFF: read-only exec still prompts (the flag gates it)"
     assert.equal(approvals, 1, "with the flag off, every exec is gated as before");
 });
 
+// Combined backend: the scripted model turns + a stubbed PYTHON_EXEC that records the
+// payload (so tests can assert the `hardened` flag) and returns a fixed result.
+const pyBackend = (turns, onPy) => {
+    const model = scriptedModel(turns);
+    return (m) => {
+        if (m.type === "PYTHON_EXEC") { if (onPy) onPy(m.payload); return { data: { ok: true, value: [5, 6], stdout: "hi\n" } }; }
+        return model(m);
+    };
+};
+const runPyAgent = async ({ config, code, args = {}, approve }) => {
+    let pyPayload = null;
+    const world = loadPageWorld({
+        config: { model: "", ocrModel: "", ...config },
+        onRuntimeMessage: pyBackend([toolCall("python_exec", { code, ...args }, "c1"), reply("done")], p => (pyPayload = p)),
+    });
+    const win = world.context.window;
+    const events = [];
+    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    win.postMessage({ __mlSidebar: "ready" });
+    await new Promise(r => setTimeout(r, 0));
+    let approvals = 0;
+    await world.ml.agent("x", { tools: [world.ml.pythonTool()], vision: false, approve: () => { approvals++; return approve ? approve() : true; } });
+    return { approvals, pyPayload, step: events.find(e => e.kind === "agent-step" && e.tool === "python_exec") };
+};
+
+test("autoApprovePython: a readonly python_exec runs with NO approval prompt (sandbox provenance, hardened)", async () => {
+    const { approvals, pyPayload, step } = await runPyAgent({ config: { autoApprovePython: true }, code: "return [5, 6]" });
+    assert.equal(approvals, 0, "readonly python was auto-approved (gate never called)");
+    assert.equal(step.approval, "sandbox", "step tagged auto-approved (sandbox)");
+    assert.equal(pyPayload.hardened, true, "readonly mode → the offscreen run is hardened");
+});
+
+test("autoApprovePython: a full-mode python_exec still prompts (network needs approval, not hardened)", async () => {
+    const { approvals, pyPayload, step } = await runPyAgent({ config: { autoApprovePython: true }, code: "return 1", args: { mode: "full" } });
+    assert.equal(approvals, 1, "full mode always asks, even with the flag on");
+    assert.equal(step.approval, "user");
+    assert.equal(pyPayload.hardened, false, "full mode → the offscreen run is NOT hardened");
+});
+
+test("autoApprovePython: code with hidden/bidi characters still prompts", async () => {
+    const { approvals, step } = await runPyAgent({ config: { autoApprovePython: true }, code: "return 1  # ​hidden" });
+    assert.equal(approvals, 1, "a zero-width space forces the manual prompt (the suspicious-char check)");
+    assert.equal(step.approval, "user");
+});
+
+test("autoApprovePython OFF: a readonly python_exec still prompts (the flag gates it)", async () => {
+    const { approvals, pyPayload } = await runPyAgent({ config: { autoApprovePython: false }, code: "return [5, 6]" });
+    assert.equal(approvals, 1, "with the flag off, every python_exec is gated");
+    assert.equal(pyPayload.hardened, true, "still hardened — readonly mode is the default regardless of approval");
+});
+
 test("agent routes a tool's DOM nodes to onStep/transcript but never to the model", async () => {
     const world = loadPageWorld({
         onRuntimeMessage: scriptedModel([toolCall("grab", {}, "c1"), reply("done")])

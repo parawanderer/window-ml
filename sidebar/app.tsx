@@ -587,10 +587,11 @@ const toolFailed = (result?: string): boolean => !!result && /^(Error:|Denied)/.
 // also the slot a future interactive-approval control will resolve into.
 const APPROVAL = {
     readonly: { label: "auto-approved", tip: "Auto-approved by the read-only exec setting." },
+    sandbox: { label: "auto-approved", tip: "Auto-approved by the python_exec setting — a readonly-mode run is isolated by construction (no network / JS scope / DOM / filesystem)." },
     user: { label: "approved", tip: "Approved by you." },
     denied: { label: "denied", tip: "Denied by you." },
 } as const;
-const ApprovalBadge = ({ approval }: { approval: "readonly" | "user" | "denied" }) => (
+const ApprovalBadge = ({ approval }: { approval: "readonly" | "sandbox" | "user" | "denied" }) => (
     <span class="tt">
         <span class={`appr ${approval === "denied" ? "no" : "yes"}`}>{APPROVAL[approval].label}</span>
         <span class="tt-pop left" role="tooltip">{APPROVAL[approval].tip}</span>

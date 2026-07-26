@@ -427,7 +427,7 @@ test("GET_CONFIG returns the model/ocrModel/apiFormat and withholds the URL and 
     const res = await bg.send({ type: "GET_CONFIG", payload: {} });
     assert.deepEqual(res.data, {
         model: "qwen3:235b", ocrModel: "qwen2.5vl", apiFormat: "ollama",
-        utilityModel: "", utilityNumCtx: 4096, utilityForceCpu: false, autoApproveReadonly: false,
+        utilityModel: "", utilityNumCtx: 4096, utilityForceCpu: false, autoApproveReadonly: false, autoApprovePython: false,
         groundingEnabled: false, groundingModel: "", groundingRange: 1000,
     });
     // The page must never see the server URL or API key (security invariant).

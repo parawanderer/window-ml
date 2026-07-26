@@ -406,13 +406,31 @@ runs in an **offscreen document** (`offscreen.ts`, extension-origin, its CSP all
 (numpy/Pillow, bundled offline in `dist/pyodide/`, lazy-loaded). The relay is the usual
 contract — `PYTHON_EXEC_REQUEST` (page) → `PYTHON_EXEC` (bg). `ml.pythonExec(code, { image })`
 screenshots `image` (a selector or `@pt`/`@box`) into the sandbox as `img` (PIL) + `img_np`
-(numpy); the code runs in a **sandboxed namespace** (no network/fs/DOM) under
+(numpy); the code runs in a **sandboxed namespace** (no DOM/fs) under
 `contextlib.redirect_stdout` (byte-exact stdout, newlines intact) with its own try/except
-(traceback captured, partial stdout preserved). Returns come back as **text by default**;
-`cast:"pt"`/`"box"` validate the return and mint a clickable `@pt`/`@box` (mismatch → an
-honest error, never a guess), and a `to_base64(...)` image return is always shown. The debug
-render is the two-slot `python-in`/`python-out` (above). *(Planned: bundle pandas + a
-table-selector `df` input mode — `docs/spec/PYTHON_EXEC_RENDERER.md`.)*
+(traceback captured, partial stdout preserved). A per-run namespace reset wipes non-`_`
+globals so one run can't leak state into the next; the result is serialized via Python
+`json.dumps` (leak-proof — no nested JsProxy) with a numpy-scalar `.item()` coercer, and both
+`return X` and a bare top-level `result = X` are captured (`global result` + a return
+fallback). Returns come back as **text by default**; `cast:"pt"`/`"box"` validate the return
+and mint a clickable `@pt`/`@box` (mismatch → an honest error, never a guess), and a
+`to_base64(...)` image return is always shown. The debug render is the two-slot
+`python-in`/`python-out` (above).
+
+**Two capability modes (agent-declared) + auto-approve.** The tool takes `mode`:
+`"readonly"` (default) **hardens** the offscreen sandbox for that run — unregisters *and*
+purges `sys.modules['js']`/`['pyodide_js']` (an `unregisterJsModule` alone leaves a prior
+`full` run's cached `JsProxy` reachable), and nulls every network/exfil global
+(fetch/XHR/WebSocket/Worker/… + `navigator.sendBeacon`) so even `pyodide.code.run_js` or a
+leaked proxy hits `undefined` — making it a pure function over the inputs. `"full"` leaves the
+bridges intact (outbound network) and **always** requires manual approval. Restored in
+`finally`; PY_RUN is serialized so the global swap can't race. Config `autoApprovePython`
+(off by default, Advanced settings) auto-approves **readonly-mode** calls (badge provenance
+`sandbox`) — but a `full` mode, or code containing hidden/bidi characters (`suspiciousChars`,
+the same check the manual prompt shows), always falls through to the prompt. The background
+retries PY_RUN once if the offscreen doc was torn down (SW slept → "Receiving end does not
+exist"). *(Planned: bundle pandas + a table-selector `df` input mode —
+`docs/spec/PYTHON_EXEC_RENDERER.md`.)*
 
 **Export log.** The detail-view header has an "Export log" button opening a small
 menu with two formats (chat and agent both). It serialises the in-memory session

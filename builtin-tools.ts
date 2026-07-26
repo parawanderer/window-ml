@@ -851,31 +851,35 @@ export const buildPythonTool = (ml: MlApi): MlTool =>
     ml.defineTool({
         name: "python_exec",
         requiresApproval: true,
-        description: "Run a SANDBOXED Python snippet (numpy + Pillow, WASM — no network/filesystem/DOM) for " +
-            "array/pixel/spatial work you do better in Python than JS: pixel-mask a target and take its centroid, " +
-            "count regions, template-match, BFS a maze, sub-pixel math. Pass `image` (a CSS selector or an @pt:/" +
-            "@box: token) to load that screenshot as `img` (PIL.Image) + `img_np` (H×W×3 uint8). `return` a value — " +
-            "it comes back as TEXT by default (general scripting). To get a CLICKABLE coordinate, set `cast:'pt'` " +
-            "(the return must be [x,y] or {x,y} → minted as an @pt) or `cast:'box'` ([x1,y1,x2,y2] or " +
-            "{left,top,right,bottom} → @box); a mismatched return errors. A base64 image (via to_base64(...)) is " +
-            "always shown. In scope: numpy (np), PIL (Image), stdlib (io, math, collections, itertools…). " +
-            "Coordinates are the SCREENSHOT's pixels — for a clickable @pt, return viewport coordinates.",
+        description: "Run a SANDBOXED Python snippet (numpy + Pillow, WASM) for array/pixel/spatial work you do " +
+            "better in Python than JS: pixel-mask a target and take its centroid, count regions, template-match, " +
+            "BFS a maze, sub-pixel math. Pass `image` (a CSS selector or an @pt:/@box: token) to load that " +
+            "screenshot as `img` (PIL.Image) + `img_np` (H×W×3 uint8). `return` a value — it comes back as TEXT by " +
+            "default (general scripting). To get a CLICKABLE coordinate, set `cast:'pt'` (the return must be [x,y] " +
+            "or {x,y} → minted as an @pt) or `cast:'box'` ([x1,y1,x2,y2] or {left,top,right,bottom} → @box); a " +
+            "mismatched return errors. A base64 image (via to_base64(...)) is always shown. In scope: numpy (np), " +
+            "PIL (Image), stdlib (io, math, collections, itertools…). Coordinates are the SCREENSHOT's pixels — for " +
+            "a clickable @pt, return viewport coordinates. `mode` is 'readonly' by DEFAULT: no network / filesystem " +
+            "/ DOM — a pure function over the inputs (this run may be auto-approved). Only set `mode:'full'` if you " +
+            "genuinely need network (it enables outbound HTTP etc.) — a full-mode run ALWAYS requires human " +
+            "approval, so prefer 'readonly' unless you truly need the network.",
         parameters: {
             type: "object",
             properties: {
                 code: { type: "string", description: "Python. Reference img/img_np; end with a `return`. print() is captured as stdout." },
                 image: { type: "string", description: "Optional CSS selector or @pt:/@box: token to load as img/img_np." },
                 cast: { type: "string", enum: ["pt", "box"], description: "Interpret the return as a clickable coordinate: 'pt' (needs [x,y]/{x,y}) or 'box' ([x1,y1,x2,y2]/{left,top,right,bottom}). Omit for a raw text result." },
+                mode: { type: "string", enum: ["readonly", "full"], description: "'readonly' (default) = isolated sandbox, no network/JS scope (auto-approvable). 'full' = network enabled; ALWAYS asks for approval. Use 'readonly' for pure compute over the inputs." },
             },
             required: ["code"],
         },
-        run: async ({ code, image, cast }: { code: string; image?: string; cast?: "pt" | "box" }): Promise<string | ToolResult> => {
-            const r = await ml.pythonExec(code, { image: image || null });
+        run: async ({ code, image, cast, mode }: { code: string; image?: string; cast?: "pt" | "box"; mode?: "readonly" | "full" }): Promise<string | ToolResult> => {
+            const r = await ml.pythonExec(code, { image: image || null, mode: mode === "full" ? "full" : "readonly" });
             const pre = r.stdout ? `stdout:\n${r.stdout}\n\n` : "";
-            // The In slot: a notebook-cell header (mode + input image + source). Shared by
+            // The In slot: a notebook-cell header (cell mode + input image + source). Shared by
             // every return path. The Out slot varies (stdout + one of image/token/value/error).
-            const mode = cast === "pt" ? "pt" as const : cast === "box" ? "box" as const : "script" as const;
-            const renderIn: RenderDescriptor = { type: "python-in", mode, code, ...(r.inputImage ? { image: r.inputImage } : {}) };
+            const cellMode = cast === "pt" ? "pt" as const : cast === "box" ? "box" as const : "script" as const;
+            const renderIn: RenderDescriptor = { type: "python-in", mode: cellMode, code, ...(r.inputImage ? { image: r.inputImage } : {}) };
             const stdout = r.stdout || undefined;
             const done = (content: string, out: Omit<Extract<RenderDescriptor, { type: "python-out" }>, "type" | "stdout">): ToolResult =>
                 ({ content, renderIn, render: { type: "python-out", stdout, ...out } });

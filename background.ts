@@ -688,8 +688,17 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     if (message.type === "PYTHON_EXEC") {
         // Route the sandboxed-Python run to the offscreen Pyodide host (the service worker
         // can't run WASM). Spin the offscreen doc up on first use, then relay PY_RUN to it.
-        ensureOffscreen()
-            .then(() => chrome.runtime.sendMessage({ type: "PY_RUN", code: message.payload?.code, image: message.payload?.image ?? null }))
+        const payload = { type: "PY_RUN", code: message.payload?.code, image: message.payload?.image ?? null, hardened: message.payload?.hardened !== false };
+        const attempt = () => ensureOffscreen().then(() => chrome.runtime.sendMessage(payload));
+        attempt()
+            .catch((err) => {
+                // The offscreen doc can be gone (SW slept and the doc was torn down, or a
+                // stale cached-ready) → "Receiving end does not exist." Drop the cache,
+                // recreate the doc, and retry ONCE before surfacing the error.
+                if (!/Receiving end does not exist|Could not establish connection/.test(String(err?.message || err))) throw err;
+                offscreenReady = null;
+                return attempt();
+            })
             .then((res) => sendResponse({ data: res }))
             .catch((err) => sendResponse({ error: err?.message || String(err) }));
         return true;   // async
@@ -744,7 +753,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             .then(config => sendResponse({ data: {
                 model: config.model, ocrModel: config.ocrModel, apiFormat: config.apiFormat,
                 utilityModel: config.utilityModel, utilityNumCtx: config.utilityNumCtx, utilityForceCpu: config.utilityForceCpu,
-                autoApproveReadonly: config.autoApproveReadonly,
+                autoApproveReadonly: config.autoApproveReadonly, autoApprovePython: config.autoApprovePython,
                 groundingEnabled: config.groundingEnabled, groundingModel: config.groundingModel,
                 groundingRange: config.groundingRange,
             } }))

@@ -33,6 +33,7 @@ const TIP = {
     utilityForceCpu: "Run the utility model on CPU (num_gpu: 0) so it never competes with your main model for VRAM. Only used when a utility model is set.",
     autoTitles: "Let the utility model generate a short title for each debug session. Off = sessions just show the first prompt. Only runs when a utility model is set and the panel is open.",
     autoApproveReadonly: "Experimental. Run read-only exec surveys (querySelectorAll → filter → map, no mutation) without an approval prompt, via a mediated interpreter that can't reach window/fetch and never eval()s a string. Anything that mutates or isn't recognised still asks. Also lets these surveys run on Trusted-Types pages where eval is blocked.",
+    autoApprovePython: "Experimental. Run readonly-mode python_exec calls without an approval prompt. A readonly run is isolated by construction — the WASM sandbox has no DOM, no filesystem, and (in this mode) no network or JS/extension scope — so it's a pure function over the injected data and can't affect the page or exfiltrate. A `mode:'full'` call (which the agent must explicitly request to get network) ALWAYS asks. Code with hidden/bidi characters also still asks.",
     groundingEnabled: "Experimental. When on, ml.agent's `locate` tool asks a grounding VLM for bounding-box coordinates. This loads an extra model into VRAM — leave off if memory is tight. Off = locate still works via the Set-of-Marks screenshot tool, which needs no extra model.",
     groundingModel: "A vision model that outputs coordinates (recommended qwen2.5vl:7b, or :3b for lower latency). Blank auto-detects a qwen2.5vl on your server. Real-world grounding accuracy is unproven.",
     groundingRange: "The coordinate scale the model outputs (the divisor for its x,y). The screenshot is sent as a square, so one number covers every convention: 1000 (0-1000 normalized OR qwen2.5vl absolute pixels), 100 (Molmo percent), 1024 (PaliGemma tokens), 1 (0.0-1.0 fractions). Leave at 1000 unless your model uses a different range.",
@@ -417,6 +418,14 @@ export function Settings() {
                     <input type="checkbox" checked={c.autoApproveReadonly}
                         onChange={(e: any) => setField("autoApproveReadonly", e.target.checked)} />
                     <Lbl tip={TIP.autoApproveReadonly}>Auto-approve read-only exec calls</Lbl>
+                </label>
+
+                <div class="set-group">Sandboxed Python</div>
+                <div class="set-note">Auto-approve <b>readonly-mode</b> <code>python_exec</code> calls. The Python runs in a WASM sandbox that is <b>isolated by construction</b> — no DOM, no filesystem, and in readonly mode no network or JS/extension scope — so it's a pure function over the injected image/data and can't touch the page or exfiltrate. A <code>mode:'full'</code> run (network) always asks; code with hidden/bidi characters always asks.</div>
+                <label class="set-check">
+                    <input type="checkbox" checked={c.autoApprovePython}
+                        onChange={(e: any) => setField("autoApprovePython", e.target.checked)} />
+                    <Lbl tip={TIP.autoApprovePython}>Auto-approve readonly python_exec calls</Lbl>
                 </label>
             </> : null}
             </div>

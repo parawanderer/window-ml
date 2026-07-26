@@ -149,7 +149,7 @@ function writeAgent(s: Session, d: Sink): void {
         if (st.tool == null && !st.thought) continue;
         if (st.tool == null && st.thought != null) { d.head(`Step ${st.step} · thought`); d.prose(st.thought); continue; }
         d.head(`Step ${st.step} · ${st.tool || "?"}`);
-        if (st.approval) d.note(st.approval === "readonly" ? "auto-approved (read-only)" : st.approval === "user" ? "approved by user" : "denied by user");
+        if (st.approval) d.note(st.approval === "readonly" ? "auto-approved (read-only)" : st.approval === "sandbox" ? "auto-approved (sandboxed python)" : st.approval === "user" ? "approved by user" : "denied by user");
         if (st.thought) d.prose(st.thought);
         if (st.renderIn && st.renderIn.type === "python-in") {
             // python_exec's notebook-cell In: mode + the input screenshot + the source.

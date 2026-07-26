@@ -386,6 +386,7 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
             // auto-approve fast-path below).
             const agentCfg = await this.config().catch(() => null);
             const autoRO = !!(agentCfg && (agentCfg as { autoApproveReadonly?: boolean }).autoApproveReadonly);
+            const autoPy = !!(agentCfg && (agentCfg as { autoApprovePython?: boolean }).autoApprovePython);
             // #8 + #3: give the agent eyes with no wiring, preferring NATIVE vision.
             // If the agent's OWN model is vision-capable, register a capture-only
             // `look` whose screenshot ml.agent injects straight into the model's
@@ -459,7 +460,7 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
                 tools: toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval, vision: !!(t.capabilities && t.capabilities.includes("vision")) })),
                 maxSteps, think: (think === true || think === false) ? think : null, env, vision: vision ?? null, hints: hints || null,
             } });
-            const emit = (event: { step: number; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: Node[]; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; argIssues?: string[]; approval?: "readonly" | "user" | "denied"; usage?: TokenUsage | null }) => {
+            const emit = (event: { step: number; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: Node[]; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; argIssues?: string[]; approval?: "readonly" | "sandbox" | "user" | "denied"; usage?: TokenUsage | null }) => {
                 if (logDebug) logStep(event);
                 emitDebug({
                     kind: "agent-step", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: event.step },
@@ -559,7 +560,7 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
                     const tool = byName[call.name];
                     let args = (call.arguments || {}) as Record<string, unknown>;
                     let result, elements, image, imageLabel, toolRender, toolRenderIn;
-                    let approval: "readonly" | "user" | "denied" | undefined;
+                    let approval: "readonly" | "sandbox" | "user" | "denied" | undefined;
                     if (!tool) {
                         result = `Error: no tool named "${call.name}".`;
                     } else if (tool.requiresApproval) {
@@ -576,6 +577,20 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
                                 handled = true;
                                 approval = "readonly";
                             } catch { /* outside the dialect / blocked → normal approval path */ }
+                        }
+                        // Experimental fast-path: a READONLY-mode python_exec runs with no
+                        // approval. The offscreen sandbox is hardened for readonly mode (no
+                        // network / JS scope / DOM / filesystem — a pure function over the
+                        // inputs), so it can't affect the page or exfiltrate. A `full`-mode
+                        // call (network) always falls through to the gate. Hidden/bidi chars in
+                        // the code also fall through, so the human sees the suspicious-char
+                        // banner before it runs (the same check the manual prompt applies).
+                        if (!handled && autoPy && tool.name === "python_exec"
+                            && (args as { mode?: unknown }).mode !== "full"
+                            && !suspiciousChars(String((args as { code?: unknown }).code ?? "")).length) {
+                            approval = "sandbox";
+                            ({ result, elements, image, imageLabel, render: toolRender, renderIn: toolRenderIn } = await runTool(tool, args));
+                            handled = true;
                         }
                         if (!handled) {
                             // Approval gate. `approve` may return a boolean or the rich
@@ -920,12 +935,16 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
          *   image via `to_base64(...)`. `print()` output is captured as `stdout`.
          * @param {Object} [opts]
          * @param {string|Element} [opts.image] What to screenshot into the sandbox (omit for none).
+         * @param {"readonly"|"full"} [opts.mode] `"readonly"` (default) hardens the sandbox — no
+         *   network, no JS/extension scope — so it's a pure function over the injected data;
+         *   `"full"` leaves those bridges intact (network etc.), and the agent tool always asks
+         *   for approval before a full-mode run.
          * @returns {Promise<{ ok: boolean, value?: any, stdout: string, error?: string, inputImage?: string }>}
          *   `inputImage` is the resolved screenshot data-URL the sandbox saw (for the debug render).
          */
-        pythonExec: async function(code: string, { image = null }: { image?: string | Element | null } = {}): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string }> {
+        pythonExec: async function(code: string, { image = null, mode = "readonly" }: { image?: string | Element | null; mode?: "readonly" | "full" } = {}): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string }> {
             const img = image != null ? await this.screenshot(image as string | Element) : null;
-            const r = await makeBackgroundTaskPromise("PYTHON_EXEC_REQUEST", "PYTHON_EXEC_RESPONSE", { code, image: img }) as { ok: boolean; value?: unknown; stdout: string; error?: string };
+            const r = await makeBackgroundTaskPromise("PYTHON_EXEC_REQUEST", "PYTHON_EXEC_RESPONSE", { code, image: img, hardened: mode !== "full" }) as { ok: boolean; value?: unknown; stdout: string; error?: string };
             return img ? { ...r, inputImage: img } : r;
         },
         /**

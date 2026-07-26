@@ -29,6 +29,7 @@ export interface MlConfig {
     utilityForceCpu: boolean;   // run it on CPU (num_gpu: 0) so it can't evict the main model
     autoTitles: boolean;        // let the utility model summarise session titles in the debug sidebar
     autoApproveReadonly: boolean;   // experimental: auto-approve read-only exec surveys via the mediated interpreter
+    autoApprovePython: boolean;     // experimental: auto-approve python_exec (the sandbox is isolated by construction)
     // Optional visual-grounding model for ml.agent's `locate` tool (coordinate
     // output). OFF by default — enabling loads a 3rd model into VRAM, so it's opt-in.
     groundingEnabled: boolean;
@@ -88,6 +89,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     utilityForceCpu: false,
     autoTitles: true,
     autoApproveReadonly: false,
+    autoApprovePython: false,
     groundingEnabled: false,
     groundingModel: "",
     groundingRange: DEFAULT_GROUNDING_RANGE,
@@ -110,7 +112,7 @@ export const detectGroundingModel = (models: string[]): string =>
 
 /** The non-secret subset GET_CONFIG exposes to the page (never the URL/key). */
 export type MlPublicConfig = Pick<MlConfig,
-    "model" | "ocrModel" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "groundingEnabled" | "groundingModel" | "groundingRange">;
+    "model" | "ocrModel" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "autoApprovePython" | "groundingEnabled" | "groundingModel" | "groundingRange">;
 
 /* --------------------------- chat wire shapes -------------------------- */
 
@@ -481,7 +483,7 @@ export interface DebugAgentStep extends DebugBase {
     // How an approval-gated tool call was decided (undefined for tools that don't
     // require approval). The sidebar renders it as a green/red provenance badge —
     // and it's the slot a future interactive-approval control resolves into.
-    approval?: "readonly" | "user" | "denied";
+    approval?: "readonly" | "sandbox" | "user" | "denied";
     // Token counts for this step's driver call, when the server reports them. Each
     // step re-sends the full growing history, so the LATEST step's usage is the run's
     // current context occupancy (not a sum across steps — see TokenUsage).
@@ -545,7 +547,7 @@ export interface MlApi {
     typeTool(): MlTool;
     /** Run a sandboxed Python snippet (Pyodide/WASM, numpy + Pillow) with an optional
      *  screenshot injected as `img`/`img_np`. No network/filesystem/DOM. */
-    pythonExec(code: string, opts?: { image?: string | Element | null }): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string }>;
+    pythonExec(code: string, opts?: { image?: string | Element | null; mode?: "readonly" | "full" }): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string }>;
     /** Built-in sandboxed-Python tool factory (numpy/Pillow pixel/array work). */
     pythonTool(): MlTool;
 
