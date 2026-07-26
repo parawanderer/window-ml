@@ -12,8 +12,12 @@ export const PY_PACKAGES: PyPackage[] = [
     { load: "numpy", prelude: "import numpy as np", label: "numpy (np)" },
     { load: "pillow", prelude: "from PIL import Image", label: "PIL (Image)" },
     { load: "pandas", prelude: "import pandas as pd", label: "pandas (pd)" },
-    // Load-only: pandas.read_html needs a parser for the `table` DOM→df HTML fallback.
-    // bs4 + html5lib are pure-Python (light) vs lxml's heavy WASM C-extension.
+    // scipy: loaded + advertised, but NOT pre-imported (heavy — the model does
+    // `from scipy import ndimage` etc. only when it needs it, e.g. connected-components /
+    // blob detection over a screenshot, so a quick coord/table run pays nothing).
+    { load: "scipy", prelude: "", label: "scipy (import scipy)" },
+    // Load-only + hidden: pandas.read_html needs a parser for the `table` DOM→df HTML
+    // fallback. bs4 + html5lib are pure-Python (light) vs lxml's heavy WASM C-extension.
     { load: "beautifulsoup4", prelude: "", label: "" },
     { load: "html5lib", prelude: "", label: "" },
 ];

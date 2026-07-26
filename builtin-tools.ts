@@ -860,7 +860,9 @@ export const buildPythonTool = (ml: MlApi): MlTool =>
             "math, compute it on `df`. `return` a value — it comes back as TEXT by " +
             "default (general scripting). To get a CLICKABLE coordinate, set `cast:'pt'` (the return must be [x,y] " +
             "or {x,y} → minted as an @pt) or `cast:'box'` ([x1,y1,x2,y2] or {left,top,right,bottom} → @box); a " +
-            "mismatched return errors. A base64 image (via to_base64(...)) is always shown. In scope: " + PY_PACKAGE_LABELS + ", " +
+            "mismatched return errors. A base64 image (via to_base64(...)) is always shown. Each call is " +
+            "STATELESS — a fresh namespace, so variables/imports from a previous call do NOT persist; recompute " +
+            "or re-pass what you need, and `return` the result (nothing carries over). In scope: " + PY_PACKAGE_LABELS + ", " +
             "stdlib (io, math, collections, itertools…). Coordinates are the SCREENSHOT's pixels — for " +
             "a clickable @pt, return viewport coordinates. `mode` is 'readonly' by DEFAULT: no network / filesystem " +
             "/ DOM — a pure function over the inputs (this run may be auto-approved). Only set `mode:'full'` if you " +

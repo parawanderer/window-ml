@@ -408,9 +408,11 @@ tool (`buildPythonTool`, like `clickTool`) for pixel/array/spatial work better d
 than JS. The service worker can't run WASM and the page main-world CSP blocks it, so CPython
 runs in an **offscreen document** (`offscreen.ts`, extension-origin, its CSP allows
 `'wasm-unsafe-eval'`): `background.js` `ensureOffscreen()` → `PY_RUN` message → Pyodide
-(numpy/Pillow/**pandas**, bundled offline in `dist/pyodide/`, lazy-loaded — the package set is
-single-sourced in `python-env.ts` `PY_PACKAGES`, which drives `loadPackage`, the prelude
-imports, the tool-description labels, AND the wheel-fetch script). The relay is the usual
+(numpy/Pillow/**pandas**/**scipy**, bundled offline in `dist/pyodide/`, lazy-loaded — the
+package set is single-sourced in `python-env.ts` `PY_PACKAGES`, which drives `loadPackage`, the
+prelude imports, the tool-description labels, AND the wheel-fetch script; scipy is loaded but
+not pre-imported, so a quick coord/table run doesn't pay its import cost). Each call is
+**stateless** (the per-run namespace reset, above) — nothing carries between calls. The relay is the usual
 contract — `PYTHON_EXEC_REQUEST` (page) → `PYTHON_EXEC` (bg). `ml.pythonExec(code, { image })`
 screenshots `image` (a selector or `@pt`/`@box`) into the sandbox as `img` (PIL) + `img_np`
 (numpy); **`{ table }`** (a `<table>`/ARIA-grid selector) loads it as `df` (pandas) — a clean
