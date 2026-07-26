@@ -29,7 +29,7 @@ import type {
 import { detectGroundingModel, DEFAULT_GROUNDING_RANGE } from "./contract";
 import { evalReadonly } from "./readonly-exec";
 import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError } from "./dom";
-import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE } from "./prompts";
+import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, PYTHON_CLAUSE } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, PT_LOOK_RADIUS, BOX_RE, resolveBox } from "./util";
 import { annotate, pickAccentColorForTarget } from "./som";
 import { suspiciousArgsWarning, suspiciousChars } from "./security";
@@ -435,6 +435,7 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
                 if (hasCap("vision")) systemPrompt += VISION_CLAUSE;
                 if (hasCap("answer")) systemPrompt += ANSWER_CLAUSE;
                 if (toolset.some(t => t.name === "wait")) systemPrompt += WAIT_CLAUSE;
+                if (toolset.some(t => t.name === "python_exec")) systemPrompt += PYTHON_CLAUSE;
             }
             if (hints) systemPrompt += `\n\nTask-specific notes:\n${hints}`;
             if (env) {

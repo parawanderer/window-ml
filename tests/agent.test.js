@@ -947,6 +947,20 @@ test("agent-start carries the resolved config (system prompt, tools, maxSteps)",
     assert.equal(start.config.customSystem, false);
     assert.deepEqual(start.config.tools, [{ name: "ping", requiresApproval: false, vision: false }]);
     assert.equal(start.config.maxSteps, 10);
+    assert.ok(!/python_exec/.test(start.config.system), "no python_exec tool → no computation clause");
+});
+
+test("python_exec in the toolset adds the computation-delegation clause to the system prompt", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("done")]) });
+    const win = world.context.window;
+    const events = [];
+    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    win.postMessage({ __mlSidebar: "ready" });
+    await new Promise(r => setTimeout(r, 0));
+    await world.ml.agent("x", { tools: [world.ml.pythonTool()], vision: false });
+    const sys = events.find(e => e.kind === "agent").config.system;
+    assert.match(sys, /python_exec/, "the clause names the tool");
+    assert.match(sys, /do NOT calculate|NEVER|deterministic/i, "and tells the model to delegate computation");
 });
 
 test("agent flags a tool call whose args don't match its parameter schema", async () => {

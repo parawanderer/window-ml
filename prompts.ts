@@ -61,3 +61,12 @@ export const WAIT_CLAUSE =
     "`wait` tool BEFORE you look/read again, and use it GENEROUSLY: prefer `wait({ selector })` " +
     "to wait until a specific element appears (the page has settled), or `wait({ ms })` for a " +
     "fixed pause. Reading a mid-update page gives stale results and wastes steps — waiting is cheap.";
+export const PYTHON_CLAUSE =
+    "\n\nYou have `python_exec` — a REAL sandboxed Python (numpy/Pillow). You are a language " +
+    "model: you predict tokens, you do NOT calculate. So NEVER work out multi-step arithmetic, " +
+    "matrix/array indexing, combinatorics, probability, date math, unit conversions, or any " +
+    "precise numeric result in your head — you will guess a plausible-looking wrong number. " +
+    "Instead WRITE A SCRIPT and run it (readonly mode) to get the exact, deterministic answer, " +
+    "then report what it computed. Same for pixel/array/spatial work over a screenshot (pass " +
+    "`image`). Reserve `full` mode (network) for when you genuinely need it — it always asks the " +
+    "user first.";

@@ -429,8 +429,15 @@ bridges intact (outbound network) and **always** requires manual approval. Resto
 `sandbox`) — but a `full` mode, or code containing hidden/bidi characters (`suspiciousChars`,
 the same check the manual prompt shows), always falls through to the prompt. The background
 retries PY_RUN once if the offscreen doc was torn down (SW slept → "Receiving end does not
-exist"). *(Planned: bundle pandas + a table-selector `df` input mode —
-`docs/spec/PYTHON_EXEC_RENDERER.md`.)*
+exist"). The sandbox's third-party packages are a **single source of truth** in
+`python-env.ts` (`PY_PACKAGES`) — the offscreen `loadPackage`, the prelude imports, and the
+tool description's "in scope" list all derive from it, so adding a package (e.g. pandas) is
+one edit. When `python_exec` is in an `ml.agent` toolset, `PYTHON_CLAUSE` is appended to the
+system prompt telling the model to **delegate** arithmetic/matrix/probability/precise
+computation to it (it predicts tokens, it doesn't calculate) instead of guessing. The
+markdown/PDF export keeps the **raw tool-call args alongside** any rendered In (the sidebar
+has a rendered⇄raw toggle; a static export can't, so it shows both). *(Planned: a
+table-selector `df` input mode — `docs/spec/PYTHON_EXEC_RENDERER.md`.)*
 
 **Export log.** The detail-view header has an "Export log" button opening a small
 menu with two formats (chat and agent both). It serialises the in-memory session

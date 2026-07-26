@@ -6,6 +6,7 @@
 
 import type { MlApi, MlTool, LocateSubstep, ToolResult, RenderDescriptor } from "./contract";
 import { DEFAULT_GROUNDING_RANGE } from "./contract";
+import { PY_PACKAGE_LABELS } from "./python-env";
 import { truncate, errText, elLine, queryAll, selectorError } from "./dom";
 import { settle, VISION_NUM_CTX, cropDataUrl, MIN_SHOT_PX, POINT_RE, PT_LOOK_RADIUS, mintPoint, resolvePoint, nearbyPoint, BOX_RE, mintBox, resolveBox } from "./util";
 import { collectCandidates, buildMarks, annotate, formatBox, letterboxToSquare, projectFromSquare, drawGrid, gridDims, validateCells, cellsBox, collectInBox, elementAtPoint, viewportBox, colorWordHues, pickOverlayColor, pickAccentColor, withHiddenSidebar, regionBox, REGION_NAMES, adjacentCells, type RegionName, type MarkFilter, type Box, type Mark } from "./som";
@@ -857,8 +858,8 @@ export const buildPythonTool = (ml: MlApi): MlTool =>
             "screenshot as `img` (PIL.Image) + `img_np` (H×W×3 uint8). `return` a value — it comes back as TEXT by " +
             "default (general scripting). To get a CLICKABLE coordinate, set `cast:'pt'` (the return must be [x,y] " +
             "or {x,y} → minted as an @pt) or `cast:'box'` ([x1,y1,x2,y2] or {left,top,right,bottom} → @box); a " +
-            "mismatched return errors. A base64 image (via to_base64(...)) is always shown. In scope: numpy (np), " +
-            "PIL (Image), stdlib (io, math, collections, itertools…). Coordinates are the SCREENSHOT's pixels — for " +
+            "mismatched return errors. A base64 image (via to_base64(...)) is always shown. In scope: " + PY_PACKAGE_LABELS + ", " +
+            "stdlib (io, math, collections, itertools…). Coordinates are the SCREENSHOT's pixels — for " +
             "a clickable @pt, return viewport coordinates. `mode` is 'readonly' by DEFAULT: no network / filesystem " +
             "/ DOM — a pure function over the inputs (this run may be auto-approved). Only set `mode:'full'` if you " +
             "genuinely need network (it enables outbound HTTP etc.) — a full-mode run ALWAYS requires human " +

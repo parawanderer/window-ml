@@ -5,13 +5,14 @@
 // only the optional injected image — and return the value + stdout. Pyodide and the
 // numpy/Pillow wheels (bundled in dist/pyodide/) load lazily on the first call.
 
+import { PY_PACKAGE_LOADS, PY_PRELUDE_IMPORTS } from "./python-env";
+
 // Standard prelude injected before the model's code: numpy/PIL in scope, an optional
 // `img` (PIL.Image) + `img_np` (H×W×3 uint8) decoded from the injected screenshot, and a
 // `to_base64()` helper so a script can return a processed image back to the caller.
 const PRELUDE = `
 import io, base64, sys, contextlib
-import numpy as np
-from PIL import Image
+${PY_PRELUDE_IMPORTS}
 
 def to_base64(x):
     if isinstance(x, np.ndarray):
@@ -38,7 +39,7 @@ function getPyodide(): Promise<any> {
         // Dynamic import of the vendored ESM (runtime URL → esbuild leaves it external).
         const { loadPyodide } = await import(chrome.runtime.getURL("pyodide/pyodide.mjs"));
         const py = await loadPyodide({ indexURL: chrome.runtime.getURL("pyodide/") });
-        await py.loadPackage(["numpy", "pillow"]);
+        await py.loadPackage(PY_PACKAGE_LOADS);
         return py;
     })();
     return pyodideReady;
