@@ -251,6 +251,8 @@ details.io[open] > summary .io-preview { display: none; }
 .r-py-img img, .r-py-out .r-image img { max-height: 240px; }
 .r-py-lbl { color: var(--fg-faint); font-size: 0.8em; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 2px; }
 .r-py-token code { color: var(--fg); font-size: 0.95em; word-break: break-all; }
+.r-py-table { display: flex; flex-direction: column; gap: 3px; }
+.r-py-more { font-size: 0.85em; }
 .r-py-err code, .r-py-err .hljs { color: var(--err); }
 .r-elements { display: flex; flex-direction: column; gap: 2px; }
 .r-el { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }

@@ -29,6 +29,26 @@ if _b64:
     img = Image.open(io.BytesIO(_raw)).convert("RGB")
     img_np = np.array(img)
     H, W = img_np.shape[:2]
+
+# Optional page table → a pandas DataFrame 'df'. "rows" = a clean table walked in the page
+# (pad/truncate ragged rows to the header width so DataFrame() can't choke); "html" = the
+# read_html fallback (bs4 parser) for spans/nested/malformed markup.
+df = None
+_tj = globals().get("INJECTED_TABLE_JSON")
+if _tj:
+    import json as _json
+    _t = _json.loads(_tj)
+    if _t.get("kind") == "rows":
+        _cols = _t.get("columns") or []
+        _rows = _t.get("rows") or []
+        if _cols:
+            _w = len(_cols)
+            _rows = [ (list(_r) + [None] * _w)[:_w] for _r in _rows ]
+            df = pd.DataFrame(_rows, columns=_cols)
+        else:
+            df = pd.DataFrame(_rows)
+    else:
+        df = pd.read_html(io.StringIO(_t.get("html") or ""), flavor="bs4")[0]
 `;
 
 const indent = (code: string) => (code || "pass").split("\n").map(l => "    " + l).join("\n");
@@ -87,16 +107,17 @@ function unharden(py: any, saved: Hardened): void {
     try { py.registerJsModule("pyodide_js", py); } catch { /* already present */ }
 }
 
-async function run(code: string, image: string | null, hardened: boolean): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string }> {
+async function run(code: string, image: string | null, hardened: boolean, table: unknown): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string }> {
     const py = await getPyodide();
     py.globals.set("INJECTED_IMAGE_B64", image);
+    py.globals.set("INJECTED_TABLE_JSON", table ? JSON.stringify(table) : null);
     const saved = hardened ? harden(py) : null;
     // Per-run namespace reset (#2 isolation): Pyodide keeps ONE persistent heap across calls,
     // so a prior run's module-level vars would leak into this one. Wipe every non-underscore
     // global before re-running the prelude (which rebuilds its own names) → a clean slate.
-    // Keep INJECTED_IMAGE_B64 — JS set it as a global BEFORE this script runs, and the
-    // prelude (below) reads it to build `img`/`img_np`. Wiping it would null the image.
-    const RESET = `for _k in list(globals().keys()):\n    if not _k.startswith('_') and _k != 'INJECTED_IMAGE_B64':\n        try: del globals()[_k]\n        except Exception: pass\n`;
+    // Keep the JS-injected inputs — set as globals BEFORE this script runs, and read by the
+    // prelude to build img/img_np/df. Wiping them would null the image/table.
+    const RESET = `for _k in list(globals().keys()):\n    if not _k.startswith('_') and _k not in ('INJECTED_IMAGE_B64', 'INJECTED_TABLE_JSON'):\n        try: del globals()[_k]\n        except Exception: pass\n`;
     // The model's code becomes the body of `_user()`. `global result` + a captured return
     // handle BOTH conventions (#5): a `return X` (result = the return) AND a bare top-level
     // `result = X` with no return (the return is None, so we keep the assigned global).
@@ -132,6 +153,7 @@ async function run(code: string, image: string | null, hardened: boolean): Promi
         return { ok: false, stdout: "", error: String((e && e.message) || e) };   // wrapper didn't run (syntax error)
     } finally {
         py.globals.set("INJECTED_IMAGE_B64", null);
+        py.globals.set("INJECTED_TABLE_JSON", null);
         if (saved) unharden(py, saved);
     }
 }
@@ -142,7 +164,7 @@ let runChain: Promise<unknown> = Promise.resolve();
 chrome.runtime.onMessage.addListener((msg: any, _sender, sendResponse) => {
     if (msg?.type !== "PY_RUN") return;
     runChain = runChain
-        .then(() => run(msg.code, msg.image ?? null, msg.hardened !== false))
+        .then(() => run(msg.code, msg.image ?? null, msg.hardened !== false, msg.table ?? null))
         .then(sendResponse, e => sendResponse({ ok: false, stdout: "", error: String(e) }));
     return true;   // keep the channel open for the async result
 });

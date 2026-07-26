@@ -408,10 +408,15 @@ tool (`buildPythonTool`, like `clickTool`) for pixel/array/spatial work better d
 than JS. The service worker can't run WASM and the page main-world CSP blocks it, so CPython
 runs in an **offscreen document** (`offscreen.ts`, extension-origin, its CSP allows
 `'wasm-unsafe-eval'`): `background.js` `ensureOffscreen()` → `PY_RUN` message → Pyodide
-(numpy/Pillow, bundled offline in `dist/pyodide/`, lazy-loaded). The relay is the usual
+(numpy/Pillow/**pandas**, bundled offline in `dist/pyodide/`, lazy-loaded — the package set is
+single-sourced in `python-env.ts` `PY_PACKAGES`, which drives `loadPackage`, the prelude
+imports, the tool-description labels, AND the wheel-fetch script). The relay is the usual
 contract — `PYTHON_EXEC_REQUEST` (page) → `PYTHON_EXEC` (bg). `ml.pythonExec(code, { image })`
 screenshots `image` (a selector or `@pt`/`@box`) into the sandbox as `img` (PIL) + `img_np`
-(numpy); the code runs in a **sandboxed namespace** (no DOM/fs) under
+(numpy); **`{ table }`** (a `<table>`/ARIA-grid selector) loads it as `df` (pandas) — a clean
+table is walked page-side (`extractTable`, case-preserving; col/rowspans or a non-table fall
+back to `pd.read_html(outerHTML)` with the bs4 parser). The code runs in a **sandboxed
+namespace** (no DOM/fs) under
 `contextlib.redirect_stdout` (byte-exact stdout, newlines intact) with its own try/except
 (traceback captured, partial stdout preserved). A per-run namespace reset wipes non-`_`
 globals so one run can't leak state into the next; the result is serialized via Python
@@ -443,8 +448,9 @@ computation to it (it predicts tokens, it doesn't calculate) instead of guessing
 `python_exec` is absent but `exec` is present, `EXEC_COMPUTE_CLAUSE` is the fallback
 (compute deterministically in read-only JS — `Array`/`Math`/`.reduce`). Mutually exclusive. The
 markdown/PDF export keeps the **raw tool-call args alongside** any rendered In (the sidebar
-has a rendered⇄raw toggle; a static export can't, so it shows both). *(Planned: a
-table-selector `df` input mode — `docs/spec/PYTHON_EXEC_RENDERER.md`.)*
+has a rendered⇄raw toggle; a static export can't, so it shows both). The `python-in` render
+shows the input image AND, for a `{ table }` run, the extracted `df` preview (capped);
+`examples/spreadsheet.html` is a table demo with a comment-hidden answer key.
 
 **Export log.** The detail-view header has an "Export log" button opening a small
 menu with two formats (chat and agent both). It serialises the in-memory session

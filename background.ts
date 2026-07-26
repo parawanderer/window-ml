@@ -688,7 +688,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     if (message.type === "PYTHON_EXEC") {
         // Route the sandboxed-Python run to the offscreen Pyodide host (the service worker
         // can't run WASM). Spin the offscreen doc up on first use, then relay PY_RUN to it.
-        const payload = { type: "PY_RUN", code: message.payload?.code, image: message.payload?.image ?? null, hardened: message.payload?.hardened !== false };
+        const payload = { type: "PY_RUN", code: message.payload?.code, image: message.payload?.image ?? null, hardened: message.payload?.hardened !== false, table: message.payload?.table ?? null };
         const attempt = () => ensureOffscreen().then(() => chrome.runtime.sendMessage(payload));
         attempt()
             .catch((err) => {

@@ -36,6 +36,16 @@ interface Sink {
     details(summary: string, body: () => void): void;          // collapsed disclosure
 }
 
+// A GitHub-flavoured markdown table (capped) for the python_exec `df` input preview.
+function mdTable(columns: string[], rows: string[][], max = 20): string {
+    const cols = columns.length ? columns : (rows[0] || []).map((_, i) => String(i));
+    const esc = (s: unknown) => String(s).replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+    const line = (cells: unknown[]) => `| ${cells.map(esc).join(" | ")} |`;
+    const body = rows.slice(0, max).map(line).join("\n");
+    const more = rows.length > max ? `\n\n_… ${rows.length - max} more rows_` : "";
+    return `${line(cols)}\n| ${cols.map(() => "---").join(" | ")} |\n${body}${more}`;
+}
+
 // A fenced block whose fence is longer than any backtick run inside it.
 function fence(text: string, lang = ""): string {
     let n = 3;
@@ -156,10 +166,14 @@ function writeAgent(s: Session, d: Sink): void {
         // toggle, so it keeps both (the raw args are the ground truth the LLM produced).
         let renderedIn = false;
         if (st.renderIn && st.renderIn.type === "python-in") {
-            // python_exec's notebook-cell In: mode + the input screenshot + the source.
+            // python_exec's notebook-cell In: mode + the input screenshot/table + the source.
             const pin = st.renderIn;
             d.note(`Mode: ${pin.mode}`);
             if (pin.image) d.image(pin.image, `step-${st.step}-in`, `step ${st.step} — input image`);
+            if (pin.table) {
+                d.note(`input table → df (${pin.table.rows.length} × ${pin.table.columns.length || pin.table.rows[0]?.length || 0})`, true);
+                d.prose(mdTable(pin.table.columns, pin.table.rows));
+            }
             d.block("In", pin.code, "python");
             renderedIn = true;
         } else if (st.renderIn && st.renderIn.type === "code") {

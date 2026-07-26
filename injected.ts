@@ -28,7 +28,7 @@ import type {
 } from "./contract";
 import { detectGroundingModel, DEFAULT_GROUNDING_RANGE } from "./contract";
 import { evalReadonly } from "./readonly-exec";
-import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError } from "./dom";
+import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable } from "./dom";
 import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, PT_LOOK_RADIUS, BOX_RE, resolveBox } from "./util";
 import { annotate, pickAccentColorForTarget } from "./som";
@@ -960,16 +960,34 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
          *   for approval before a full-mode run.
          * @param {number} [opts.margin] For an `@pt` image: the crop radius (px) around the point.
          *   Defaults to the look-radius. Ignored for `@box`/selectors.
-         * @returns {Promise<{ ok: boolean, value?: any, stdout: string, error?: string, inputImage?: string }>}
-         *   `inputImage` is the resolved screenshot data-URL the sandbox saw (for the debug render).
+         * @param {string|Element} [opts.table] A selector/Element for a page table → loaded into the
+         *   sandbox as `df` (pandas.DataFrame). A clean `<table>`/ARIA grid is walked in the page
+         *   (case-preserving); anything else falls back to `pd.read_html(outerHTML)`.
+         * @returns {Promise<{ ok, value?, stdout, error?, inputImage?, inputTable? }>}
+         *   `inputImage`/`inputTable` are what the sandbox saw (for the debug render).
          */
-        pythonExec: async function(code: string, { image = null, mode = "readonly", margin = 0 }: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number } = {}): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string }> {
+        pythonExec: async function(code: string, { image = null, mode = "readonly", margin = 0, table = null }: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; table?: string | Element | null } = {}): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string; inputTable?: { columns: string[]; rows: string[][] } }> {
             // raw: the sandbox must see the container's/point's actual pixels — NOT the
             // look-verify overlay (the drawn @box outline / @pt marker) or its padding.
             // `margin` sets the crop radius around an @pt (default: the look-radius).
             const img = image != null ? await this.screenshot(image as string | Element, { raw: true, margin }) : null;
-            const r = await makeBackgroundTaskPromise("PYTHON_EXEC_REQUEST", "PYTHON_EXEC_RESPONSE", { code, image: img, hardened: mode !== "full" }) as { ok: boolean; value?: unknown; stdout: string; error?: string };
-            return img ? { ...r, inputImage: img } : r;
+            const tbl = table != null ? this._resolveTable(table) : null;
+            const r = await makeBackgroundTaskPromise("PYTHON_EXEC_REQUEST", "PYTHON_EXEC_RESPONSE", { code, image: img, hardened: mode !== "full", table: tbl }) as { ok: boolean; value?: unknown; stdout: string; error?: string };
+            const extra: { inputImage?: string; inputTable?: { columns: string[]; rows: string[][] } } = {};
+            if (img) extra.inputImage = img;
+            if (tbl && tbl.kind === "rows") extra.inputTable = { columns: tbl.columns, rows: tbl.rows };
+            return Object.keys(extra).length ? { ...r, ...extra } : r;
+        },
+        /**
+         * Resolve a `table` target (selector/Element) to what the sandbox loads as `df`:
+         * a structured `{ kind:"rows", columns, rows }` from a clean table/ARIA grid, else
+         * `{ kind:"html", html }` (the element's outerHTML) for `pd.read_html`. Page-side.
+         */
+        _resolveTable: function(target: string | Element): { kind: "rows"; columns: string[]; rows: string[][] } | { kind: "html"; html: string } {
+            const el = typeof target === "string" ? queryAll(target)[0] : target;
+            if (!(el instanceof Element)) throw new Error(`ml.pythonExec: no table element matches "${String(target)}".`);
+            const t = extractTable(el);
+            return t ? { kind: "rows", columns: t.columns, rows: t.rows } : { kind: "html", html: el.outerHTML };
         },
         /**
          * Agent tool wrapping {@link module:ml.pythonExec} — sandboxed Python (numpy/Pillow)

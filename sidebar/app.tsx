@@ -484,6 +484,11 @@ function PythonInRender({ d }: { d: Extract<RenderDescriptor, { type: "python-in
         <div class="r-python r-py-in">
             <div class="r-py-mode">Mode: <span class="tt"><span class="r-py-modeval">{PY_MODE[d.mode].label}</span><span class="tt-pop left" role="tooltip">{PY_MODE[d.mode].tip}</span></span></div>
             {d.image ? <div class="r-image r-py-img"><ClickableImg src={d.image} alt="input image" /><div class="r-image-label">input image (img / img_np)</div></div> : null}
+            {d.table ? <div class="r-py-table">
+                <div class="r-py-lbl">input table → df ({d.table.rows.length} × {d.table.columns.length || d.table.rows[0]?.length || 0})</div>
+                <RenderTable columns={d.table.columns.length ? d.table.columns : (d.table.rows[0] || []).map((_, i) => String(i))} rows={d.table.rows.slice(0, 20)} />
+                {d.table.rows.length > 20 ? <div class="dim r-py-more">… {d.table.rows.length - 20} more rows</div> : null}
+            </div> : null}
             <Code text={d.code} lang="python" />
         </div>
     );

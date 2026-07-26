@@ -7,11 +7,12 @@ descriptors + RenderPanel cases + export, and the generic `rendered/raw` tooltip
 Tested in `tests/sidebar.test.js` (python render + the migrated two-slot assertions) and
 `tests/agent.test.js` (the `renderIn`/`renderOut` emit shape).
 
-**Next (agreed, not yet designed):** bundle **pandas** into the sandbox and add a
-**table-selector mode** — pass a `<table>` selector and auto-convert it to a `df`
-(pandas.DataFrame) injected like `img`, with a table/df debug render. This is an
-*input-injection* feature (a sibling of the `image` arg), not an output `cast`; it needs
-its own slice (the pandas wheel is heavy → an offline-bundle-size call to make first).
+**pandas + table-selector `df` — SHIPPED.** pandas is bundled (single-sourced in
+`python-env.ts`; ~5 MB with deps), and `python_exec({ table })` (a `<table>`/ARIA-grid
+selector) loads it as `df` — a sibling *input-injection* of the `image` arg. A clean table is
+walked page-side (`dom.ts` `extractTable`, case-preserving); col/rowspans or a non-table fall
+back to `pd.read_html(outerHTML)` (bs4 parser, also bundled). The `python-in` render shows the
+extracted `df` preview. Demo + test: `examples/spreadsheet.html` (a comment-hidden answer key).
 
 ## Goals
 1. **Fix stdout capture** — newlines are being dropped.

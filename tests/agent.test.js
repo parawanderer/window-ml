@@ -1415,6 +1415,72 @@ test("vision:true forces NATIVE look on the agent's own model, bypassing the cap
     assert.equal(res.summary, "It's a settings page.");
 });
 
+// ---- python_exec `table` → df extraction (_resolveTable over a real DOM) ----
+
+test("_resolveTable: a clean <table> with thead → structured rows (case-preserving)", () => {
+    const { ml } = loadDomWorld(`<table id="t">
+        <thead><tr><th>Item</th><th>Qty</th><th>Price</th></tr></thead>
+        <tbody>
+          <tr><td>Apple</td><td>3</td><td>1.50</td></tr>
+          <tr><td>Pear</td><td>2</td><td>2.00</td></tr>
+        </tbody></table>`);
+    const t = ml._resolveTable("#t");
+    assert.equal(t.kind, "rows");
+    assert.deepEqual(t.columns, ["Item", "Qty", "Price"]);
+    assert.deepEqual(t.rows, [["Apple", "3", "1.50"], ["Pear", "2", "2.00"]]);
+});
+
+test("_resolveTable: a first-row <th> (no thead) becomes the header", () => {
+    const { ml } = loadDomWorld(`<table id="t"><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>`);
+    const t = ml._resolveTable("#t");
+    assert.deepEqual(t.columns, ["A", "B"]);
+    assert.deepEqual(t.rows, [["1", "2"]]);
+});
+
+test("_resolveTable: an ARIA grid (role=table/row/columnheader/cell)", () => {
+    const { ml } = loadDomWorld(`<div id="g" role="table">
+        <div role="row"><span role="columnheader">Name</span><span role="columnheader">Age</span></div>
+        <div role="row"><span role="cell">Ada</span><span role="cell">36</span></div>
+      </div>`);
+    const t = ml._resolveTable("#g");
+    assert.equal(t.kind, "rows");
+    assert.deepEqual(t.columns, ["Name", "Age"]);
+    assert.deepEqual(t.rows, [["Ada", "36"]]);
+});
+
+test("_resolveTable: a table with colspan falls back to read_html (kind: html)", () => {
+    const { ml } = loadDomWorld(`<table id="t"><tr><th colspan="2">Merged</th></tr><tr><td>1</td><td>2</td></tr></table>`);
+    const t = ml._resolveTable("#t");
+    assert.equal(t.kind, "html", "spans misalign a flat walk → let pandas.read_html handle it");
+    assert.match(t.html, /colspan/);
+});
+
+test("_resolveTable: a non-table element falls back to its outerHTML", () => {
+    const { ml } = loadDomWorld(`<div id="d"><p>not a table</p></div>`);
+    const t = ml._resolveTable("#d");
+    assert.equal(t.kind, "html");
+    assert.match(t.html, /not a table/);
+});
+
+test("_resolveTable: throws for a selector that matches nothing", () => {
+    const { ml } = loadDomWorld(`<div></div>`);
+    assert.throws(() => ml._resolveTable("#nope"), /no table element matches/);
+});
+
+test("examples/spreadsheet.html: the #sales table extracts to rows that sum to the documented answer", () => {
+    const fs = require("node:fs"), path = require("node:path");
+    const html = fs.readFileSync(path.join(__dirname, "../examples/spreadsheet.html"), "utf8");
+    const table = html.match(/<table id="sales"[\s\S]*?<\/table>/)[0];
+    const { ml } = loadDomWorld(table);
+    const t = ml._resolveTable("#sales");
+    assert.deepEqual(t.columns, ["Rep", "Region", "Q1", "Q2", "Q3", "Q4"]);
+    assert.equal(t.rows.length, 12);
+    // Grand total of Q1–Q4 across all reps — the value the demo documents (6260). Proves the
+    // extracted cells carry the right numbers that pandas' df.sum() would add up to.
+    const total = t.rows.reduce((s, r) => s + r.slice(2).reduce((a, c) => a + Number(c), 0), 0);
+    assert.equal(total, 6260, "extraction matches the demo's expected answer");
+});
+
 test("approveOnce dedups by (tool, args): identical repeats free, new scripts re-ask", () => {
     const { ml, window } = loadDomWorld();
     let asked = 0;

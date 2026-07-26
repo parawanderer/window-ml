@@ -288,3 +288,53 @@ export const selectorError = (selector: string, err: Error): string => {
     }
     return `Invalid selector: ${err.message}`;
 };
+
+/** A page table → a structured `{ columns, rows }` for a pandas DataFrame, or `null` when the
+ *  element isn't a clean table (no recognizable table/ARIA-grid, or it uses col/rowspans — the
+ *  caller then falls back to pandas.read_html on its outerHTML). Case-preserving (unlike
+ *  normalizeText): cell VALUES must survive verbatim for the df. Rows/cols capped so a wrong
+ *  selector can't extract a runaway grid. Native `<table>` and ARIA `role=table/grid/treegrid`. */
+const MAX_TABLE_ROWS = 5000, MAX_TABLE_COLS = 200;
+const cellText = (c: Element): string => (c.textContent || "").replace(/\s+/g, " ").trim();
+const hasSpans = (t: Element): boolean =>
+    [...t.querySelectorAll("td,th,[role='cell'],[role='gridcell'],[role='columnheader']")]
+        .some(c => parseInt(c.getAttribute("colspan") || "1", 10) > 1 || parseInt(c.getAttribute("rowspan") || "1", 10) > 1);
+
+export function extractTable(el: Element): { columns: string[]; rows: string[][] } | null {
+    const GRID = '[role="table"],[role="grid"],[role="treegrid"]';
+    const table = el.matches("table") ? el
+        : el.matches(GRID) ? el
+        : el.querySelector("table") || el.querySelector(GRID);
+    if (!table) return null;
+    if (hasSpans(table)) return null;   // col/rowspans misalign a flat walk → let read_html handle it
+
+    const cap = (rows: string[][]): { columns: string[]; rows: string[][] } | null => {
+        if (!rows.length) return null;
+        return { columns: [], rows: rows.slice(0, MAX_TABLE_ROWS).map(r => r.slice(0, MAX_TABLE_COLS)) };
+    };
+
+    if (table.matches("table")) {
+        const trs = [...table.querySelectorAll("tr")];
+        if (!trs.length) return null;
+        let headerRow = table.querySelector("thead tr");
+        let bodyRows = [...table.querySelectorAll("tbody tr")];
+        if (!headerRow && trs[0].querySelector("th")) { headerRow = trs[0]; bodyRows = trs.slice(1); }
+        if (!bodyRows.length) bodyRows = headerRow ? trs.filter(t => t !== headerRow) : trs;
+        const out = cap(bodyRows.map(tr => [...tr.querySelectorAll("th,td")].map(cellText)));
+        if (!out) return null;
+        if (headerRow) out.columns = [...headerRow.querySelectorAll("th,td")].map(cellText).slice(0, MAX_TABLE_COLS);
+        return out;
+    }
+
+    // ARIA grid: role=row holds columnheader / cell / gridcell.
+    const rowEls = [...table.querySelectorAll('[role="row"]')];
+    if (!rowEls.length) return null;
+    const heads = (r: Element) => [...r.querySelectorAll('[role="columnheader"]')];
+    const cells = (r: Element) => [...r.querySelectorAll('[role="cell"],[role="gridcell"]')];
+    const hdr = rowEls.find(r => heads(r).length);
+    const bodyEls = hdr ? rowEls.filter(r => r !== hdr) : rowEls;
+    const out = cap(bodyEls.map(r => { const c = cells(r); return (c.length ? c : [...r.children]).map(cellText); }));
+    if (!out) return null;
+    if (hdr) out.columns = heads(hdr).map(cellText).slice(0, MAX_TABLE_COLS);
+    return out;
+}

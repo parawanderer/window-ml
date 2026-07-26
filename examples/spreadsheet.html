@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Quarterly Sales — a table demo for ml.pythonExec({ table }) → pandas df</title>
+<style>
+  body { font: 15px system-ui, sans-serif; margin: 28px 32px; color: #111; }
+  h1 { font-size: 18px; margin-bottom: 6px; }
+  p { max-width: 80ch; color: #444; }
+  code { font: 12px ui-monospace, monospace; background: #f0f0f2; padding: 1px 5px; border-radius: 4px; }
+  .card { max-width: 720px; border: 1px solid #e2e2e6; border-radius: 10px; overflow: hidden; margin-top: 18px; }
+  .card h2 { font-size: 14px; margin: 0; padding: 12px 16px; background: #f7f7f9; border-bottom: 1px solid #e2e2e6; }
+  table { border-collapse: collapse; width: 100%; font: 13px system-ui, sans-serif; }
+  th, td { padding: 8px 14px; text-align: right; border-bottom: 1px solid #eee; }
+  th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
+  thead th { background: #fbfbfc; color: #555; font-weight: 600; position: sticky; top: 0; }
+  tbody tr:hover { background: #f6f8ff; }
+  td.num { font-variant-numeric: tabular-nums; }
+  .hint { color: #888; font-size: 13px; margin-top: 16px; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #1b1b1f; color: #eee; } p { color: #bbb; } code { background: #2a2a30; }
+    .card { border-color: #33333a; } .card h2 { background: #232329; border-color: #33333a; color: #ccc; }
+    th, td { border-color: #2a2a30; } thead th { background: #202026; color: #aaa; }
+    tbody tr:hover { background: #23232b; }
+  }
+</style>
+</head>
+<body>
+  <h1>Quarterly Sales by Rep</h1>
+  <p>A plain rendered <code>&lt;table&gt;</code> — the kind of thing a "corporate app" shows and an LLM would
+  otherwise try to add up in its head (and get wrong). Point <code>ml.pythonExec</code> at it with
+  <code>{ table: "#sales" }</code> and it lands in the sandbox as a pandas <code>df</code> for exact math.</p>
+
+  <p><b>Try:</b></p>
+  <p><code>await ml.agent("What's the grand total of all quarters, the top rep by annual total, and the
+  highest-grossing region? Use python_exec on the #sales table — don't eyeball it.",
+  { extraTools: [ml.pythonTool()] })</code></p>
+
+  <!--
+    ANSWER KEY (in a comment → NOT in the DOM, so findByText can't cheat; the model must COMPUTE it):
+      • Grand total of Q1–Q4 across all reps   = 6260
+      • Column totals: Q1=1455, Q2=1590, Q3=1555, Q4=1660
+      • Top rep by annual total                = Gia (850)   [runner-up: Kim 810]
+      • Region totals: East=2440, North=1760, South=1230, West=830
+      • Highest-grossing region                = East (2440)
+      • Average annual total per rep           ≈ 521.67
+  -->
+
+  <div class="card">
+    <h2>FY sales ($k)</h2>
+    <table id="sales">
+      <thead>
+        <tr><th>Rep</th><th>Region</th><th>Q1</th><th>Q2</th><th>Q3</th><th>Q4</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Ada</td><td>North</td><td class="num">120</td><td class="num">150</td><td class="num">130</td><td class="num">160</td></tr>
+        <tr><td>Ben</td><td>South</td><td class="num">90</td><td class="num">110</td><td class="num">95</td><td class="num">105</td></tr>
+        <tr><td>Cara</td><td>East</td><td class="num">200</td><td class="num">180</td><td class="num">210</td><td class="num">190</td></tr>
+        <tr><td>Dan</td><td>West</td><td class="num">75</td><td class="num">80</td><td class="num">85</td><td class="num">90</td></tr>
+        <tr><td>Eve</td><td>North</td><td class="num">140</td><td class="num">160</td><td class="num">155</td><td class="num">165</td></tr>
+        <tr><td>Finn</td><td>South</td><td class="num">100</td><td class="num">120</td><td class="num">110</td><td class="num">130</td></tr>
+        <tr><td>Gia</td><td>East</td><td class="num">210</td><td class="num">220</td><td class="num">205</td><td class="num">215</td></tr>
+        <tr><td>Hal</td><td>West</td><td class="num">60</td><td class="num">70</td><td class="num">65</td><td class="num">75</td></tr>
+        <tr><td>Ivy</td><td>North</td><td class="num">130</td><td class="num">145</td><td class="num">150</td><td class="num">155</td></tr>
+        <tr><td>Jon</td><td>South</td><td class="num">85</td><td class="num">95</td><td class="num">90</td><td class="num">100</td></tr>
+        <tr><td>Kim</td><td>East</td><td class="num">195</td><td class="num">205</td><td class="num">200</td><td class="num">210</td></tr>
+        <tr><td>Leo</td><td>West</td><td class="num">50</td><td class="num">55</td><td class="num">60</td><td class="num">65</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p class="hint">The expected answers live in an HTML comment (view source) so the DOM text carries no
+  totals — a correct answer has to come from <code>df</code>, not from reading a number off the page.</p>
+</body>
+</html>

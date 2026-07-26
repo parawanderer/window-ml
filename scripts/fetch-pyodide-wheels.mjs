@@ -3,7 +3,7 @@
 // bundle from the Pyodide CDN — filenames + version keyed to the INSTALLED pyodide so
 // they can't drift. Output dir is gitignored; run `npm run fetch-pyodide` once after
 // clone (build.mjs copies these + the core into dist/pyodide/). No runtime network after.
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile, readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
@@ -12,8 +12,14 @@ const lock = require("pyodide/pyodide-lock.json");
 const pk = lock.packages;
 const find = n => pk[n] || pk[Object.keys(pk).find(k => k.toLowerCase() === n.toLowerCase())];
 
-// numpy + Pillow, plus any transitive deps declared in the lock (currently none).
-const wheels = new Set(), queue = ["numpy", "pillow"];
+// The top-level packages are the single source of truth in python-env.ts (PY_PACKAGES) —
+// grep the `load:` values so this can't drift from what the sandbox actually loads. Their
+// transitive deps are resolved from the lock below.
+const envSrc = await readFile(new URL("../python-env.ts", import.meta.url), "utf8");
+const seed = [...envSrc.matchAll(/load:\s*"([^"]+)"/g)].map(m => m[1]);
+if (!seed.length) throw new Error("no `load:` packages found in python-env.ts");
+
+const wheels = new Set(), queue = [...seed];
 while (queue.length) {
     const p = find(queue.pop());
     if (!p || wheels.has(p.file_name)) continue;

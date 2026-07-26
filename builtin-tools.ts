@@ -852,10 +852,12 @@ export const buildPythonTool = (ml: MlApi): MlTool =>
     ml.defineTool({
         name: "python_exec",
         requiresApproval: true,
-        description: "Run a SANDBOXED Python snippet (numpy + Pillow, WASM) for array/pixel/spatial work you do " +
-            "better in Python than JS: pixel-mask a target and take its centroid, count regions, template-match, " +
-            "BFS a maze, sub-pixel math. Pass `image` (a CSS selector or an @pt:/@box: token) to load that " +
-            "screenshot as `img` (PIL.Image) + `img_np` (H×W×3 uint8). `return` a value — it comes back as TEXT by " +
+        description: "Run a SANDBOXED Python snippet (numpy + Pillow + pandas, WASM) for array/pixel/spatial/table " +
+            "work you do better in Python than JS: pixel-mask a target and take its centroid, count regions, " +
+            "template-match, BFS a maze, sub-pixel math, or SUM/AVG/GROUP a table. Pass `image` (a CSS selector or " +
+            "an @pt:/@box: token) to load that screenshot as `img` (PIL.Image) + `img_np` (H×W×3 uint8), or `table` " +
+            "(a selector for a <table>/ARIA grid) to load it as `df` (pandas.DataFrame) — never eyeball spreadsheet " +
+            "math, compute it on `df`. `return` a value — it comes back as TEXT by " +
             "default (general scripting). To get a CLICKABLE coordinate, set `cast:'pt'` (the return must be [x,y] " +
             "or {x,y} → minted as an @pt) or `cast:'box'` ([x1,y1,x2,y2] or {left,top,right,bottom} → @box); a " +
             "mismatched return errors. A base64 image (via to_base64(...)) is always shown. In scope: " + PY_PACKAGE_LABELS + ", " +
@@ -872,16 +874,18 @@ export const buildPythonTool = (ml: MlApi): MlTool =>
                 cast: { type: "string", enum: ["pt", "box"], description: "Interpret the return as a clickable coordinate: 'pt' (needs [x,y]/{x,y}) or 'box' ([x1,y1,x2,y2]/{left,top,right,bottom}). Omit for a raw text result." },
                 mode: { type: "string", enum: ["readonly", "full"], description: "'readonly' (default) = isolated sandbox, no network/JS scope (auto-approvable). 'full' = network enabled; ALWAYS asks for approval. Use 'readonly' for pure compute over the inputs." },
                 margin: { type: "number", description: "For an @pt image only: the crop RADIUS in px around the point (a bigger margin = more context). Omit for the default. Ignored for @box / CSS selectors." },
+                table: { type: "string", description: "Optional CSS selector for a page table (<table> or ARIA grid) → loaded as `df` (pandas.DataFrame). Use for spreadsheet/table math instead of eyeballing cells." },
             },
             required: ["code"],
         },
-        run: async ({ code, image, cast, mode, margin }: { code: string; image?: string; cast?: "pt" | "box"; mode?: "readonly" | "full"; margin?: number }): Promise<string | ToolResult> => {
-            const r = await ml.pythonExec(code, { image: image || null, mode: mode === "full" ? "full" : "readonly", margin: typeof margin === "number" ? margin : 0 });
+        run: async ({ code, image, cast, mode, margin, table }: { code: string; image?: string; cast?: "pt" | "box"; mode?: "readonly" | "full"; margin?: number; table?: string }): Promise<string | ToolResult> => {
+            const r = await ml.pythonExec(code, { image: image || null, mode: mode === "full" ? "full" : "readonly", margin: typeof margin === "number" ? margin : 0, table: table || null });
             const pre = r.stdout ? `stdout:\n${r.stdout}\n\n` : "";
-            // The In slot: a notebook-cell header (cell mode + input image + source). Shared by
-            // every return path. The Out slot varies (stdout + one of image/token/value/error).
+            // The In slot: a notebook-cell header (cell mode + input image/table + source). Shared
+            // by every return path. The Out slot varies (stdout + one of image/token/value/error).
             const cellMode = cast === "pt" ? "pt" as const : cast === "box" ? "box" as const : "script" as const;
-            const renderIn: RenderDescriptor = { type: "python-in", mode: cellMode, code, ...(r.inputImage ? { image: r.inputImage } : {}) };
+            const renderIn: RenderDescriptor = { type: "python-in", mode: cellMode, code,
+                ...(r.inputImage ? { image: r.inputImage } : {}), ...(r.inputTable ? { table: r.inputTable } : {}) };
             const stdout = r.stdout || undefined;
             const done = (content: string, out: Omit<Extract<RenderDescriptor, { type: "python-out" }>, "type" | "stdout">): ToolResult =>
                 ({ content, renderIn, render: { type: "python-out", stdout, ...out } });
