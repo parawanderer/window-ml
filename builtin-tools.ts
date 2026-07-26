@@ -867,14 +867,15 @@ export const buildPythonTool = (ml: MlApi): MlTool =>
             type: "object",
             properties: {
                 code: { type: "string", description: "Python. Reference img/img_np; end with a `return`. print() is captured as stdout." },
-                image: { type: "string", description: "Optional CSS selector or @pt:/@box: token to load as img/img_np." },
+                image: { type: "string", description: "Optional CSS selector or @pt:/@box: token to load as img/img_np. An @box loads the exact container content; an @pt loads a square neighbourhood around the point." },
                 cast: { type: "string", enum: ["pt", "box"], description: "Interpret the return as a clickable coordinate: 'pt' (needs [x,y]/{x,y}) or 'box' ([x1,y1,x2,y2]/{left,top,right,bottom}). Omit for a raw text result." },
                 mode: { type: "string", enum: ["readonly", "full"], description: "'readonly' (default) = isolated sandbox, no network/JS scope (auto-approvable). 'full' = network enabled; ALWAYS asks for approval. Use 'readonly' for pure compute over the inputs." },
+                margin: { type: "number", description: "For an @pt image only: the crop RADIUS in px around the point (a bigger margin = more context). Omit for the default. Ignored for @box / CSS selectors." },
             },
             required: ["code"],
         },
-        run: async ({ code, image, cast, mode }: { code: string; image?: string; cast?: "pt" | "box"; mode?: "readonly" | "full" }): Promise<string | ToolResult> => {
-            const r = await ml.pythonExec(code, { image: image || null, mode: mode === "full" ? "full" : "readonly" });
+        run: async ({ code, image, cast, mode, margin }: { code: string; image?: string; cast?: "pt" | "box"; mode?: "readonly" | "full"; margin?: number }): Promise<string | ToolResult> => {
+            const r = await ml.pythonExec(code, { image: image || null, mode: mode === "full" ? "full" : "readonly", margin: typeof margin === "number" ? margin : 0 });
             const pre = r.stdout ? `stdout:\n${r.stdout}\n\n` : "";
             // The In slot: a notebook-cell header (cell mode + input image + source). Shared by
             // every return path. The Out slot varies (stdout + one of image/token/value/error).

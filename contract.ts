@@ -547,7 +547,7 @@ export interface MlApi {
     typeTool(): MlTool;
     /** Run a sandboxed Python snippet (Pyodide/WASM, numpy + Pillow) with an optional
      *  screenshot injected as `img`/`img_np`. No network/filesystem/DOM. */
-    pythonExec(code: string, opts?: { image?: string | Element | null; mode?: "readonly" | "full" }): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string }>;
+    pythonExec(code: string, opts?: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number }): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string }>;
     /** Built-in sandboxed-Python tool factory (numpy/Pillow pixel/array work). */
     pythonTool(): MlTool;
 
@@ -555,7 +555,7 @@ export interface MlApi {
     /** OCR/describe an image (element, url or data URL). */
     read(image: string | HTMLImageElement, opts?: { model?: string | null; prompt?: string | null }): Promise<string>;
     /** Capture the tab (or an element) to a data URL. */
-    screenshot(target?: string | Element | null, opts?: { scroll?: boolean; fullPage?: boolean; index?: number; raw?: boolean }): Promise<string>;
+    screenshot(target?: string | Element | null, opts?: { scroll?: boolean; fullPage?: boolean; index?: number; raw?: boolean; margin?: number }): Promise<string>;
 
     /* ---- server / model management ---- */
     models(): Promise<string[]>;

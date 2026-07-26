@@ -731,9 +731,13 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
          * @param {boolean} [options.scroll=true] Set false to skip scroll-into-view.
          * @param {boolean} [options.fullPage=false] Set true to capture the full page (stitched).
          * @param {number} [options.index=0] Which match of a selector to shoot (0-based).
+         * @param {boolean} [options.raw=false] For an `@pt`/`@box` token: return the plain crop
+         *   (no verify overlay/padding — the actual pixels). Default draws the marker/outline.
+         * @param {number} [options.margin=0] For an `@pt` token: the crop radius (px) around the
+         *   point. 0 = the default look-radius. Ignored otherwise.
          * @returns {Promise<string>} The screenshot as a PNG data URL.
          */
-        screenshot: async function(target: string | Element | null = null, { scroll = true, fullPage = false, index = 0, raw = false }: { scroll?: boolean; fullPage?: boolean; index?: number; raw?: boolean } = {}): Promise<string> {
+        screenshot: async function(target: string | Element | null = null, { scroll = true, fullPage = false, index = 0, raw = false, margin = 0 }: { scroll?: boolean; fullPage?: boolean; index?: number; raw?: boolean; margin?: number } = {}): Promise<string> {
             // Hide the debug sidebar overlay (if mounted) for the shot, so it isn't
             // captured into the agent's `look`; restore after. No wait when the
             // sidebar is off (no #ml-sb-root) — it's a no-op then.
@@ -750,7 +754,7 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
             if (typeof target === "string" && POINT_RE.test(target.trim())) {
                 const pt = resolvePoint(target);
                 if (!pt) throw new Error(`Unknown point token "${target}" — re-run locate for a fresh one.`);
-                const dpr = window.devicePixelRatio || 1, R = PT_LOOK_RADIUS;
+                const dpr = window.devicePixelRatio || 1, R = margin > 0 ? margin : PT_LOOK_RADIUS;
                 const left = Math.max(0, pt.x - R), top = Math.max(0, pt.y - R);
                 const rect = { left, top, width: Math.min(window.innerWidth, pt.x + R) - left, height: Math.min(window.innerHeight, pt.y + R) - top };
                 const cropped = await cropDataUrl(await viewport(), rect, dpr);
@@ -944,13 +948,16 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
          *   network, no JS/extension scope — so it's a pure function over the injected data;
          *   `"full"` leaves those bridges intact (network etc.), and the agent tool always asks
          *   for approval before a full-mode run.
+         * @param {number} [opts.margin] For an `@pt` image: the crop radius (px) around the point.
+         *   Defaults to the look-radius. Ignored for `@box`/selectors.
          * @returns {Promise<{ ok: boolean, value?: any, stdout: string, error?: string, inputImage?: string }>}
          *   `inputImage` is the resolved screenshot data-URL the sandbox saw (for the debug render).
          */
-        pythonExec: async function(code: string, { image = null, mode = "readonly" }: { image?: string | Element | null; mode?: "readonly" | "full" } = {}): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string }> {
+        pythonExec: async function(code: string, { image = null, mode = "readonly", margin = 0 }: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number } = {}): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string }> {
             // raw: the sandbox must see the container's/point's actual pixels — NOT the
             // look-verify overlay (the drawn @box outline / @pt marker) or its padding.
-            const img = image != null ? await this.screenshot(image as string | Element, { raw: true }) : null;
+            // `margin` sets the crop radius around an @pt (default: the look-radius).
+            const img = image != null ? await this.screenshot(image as string | Element, { raw: true, margin }) : null;
             const r = await makeBackgroundTaskPromise("PYTHON_EXEC_REQUEST", "PYTHON_EXEC_RESPONSE", { code, image: img, hardened: mode !== "full" }) as { ok: boolean; value?: unknown; stdout: string; error?: string };
             return img ? { ...r, inputImage: img } : r;
         },
