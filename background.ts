@@ -685,6 +685,15 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     // forget — no response. RESET clears a tab's buffer on navigation (fresh page).
     if (message.type === "ML_DEBUG_EVENT") { if (sender.tab?.id != null) relayDebugEvent(sender.tab.id, message.event); return; }
     if (message.type === "ML_DEBUG_RESET") { if (sender.tab?.id != null) debugBuffer.delete(sender.tab.id); return; }
+    if (message.type === "PYTHON_EXEC") {
+        // Route the sandboxed-Python run to the offscreen Pyodide host (the service worker
+        // can't run WASM). Spin the offscreen doc up on first use, then relay PY_RUN to it.
+        ensureOffscreen()
+            .then(() => chrome.runtime.sendMessage({ type: "PY_RUN", code: message.payload?.code, image: message.payload?.image ?? null }))
+            .then((res) => sendResponse({ data: res }))
+            .catch((err) => sendResponse({ error: err?.message || String(err) }));
+        return true;   // async
+    }
     if (message.type === "FETCH_LLM") {
         fetchLLM(message.payload)
             // raw (ml.step) returns { content, tool_calls } as data; normal chat
@@ -863,3 +872,25 @@ chrome.runtime.onConnect.addListener((port) => {
         if (set) { set.delete(port); if (!set.size) devtoolsPorts.delete(tid); }
     });
 });
+
+// ---- Offscreen Pyodide host (python_exec) ----
+// The service worker can't run WASM, so python_exec runs in an offscreen document
+// (extension-origin, 'wasm-unsafe-eval' CSP). Created lazily on first use, reused after.
+let offscreenReady: Promise<void> | null = null;
+function ensureOffscreen(): Promise<void> {
+    if (offscreenReady) return offscreenReady;
+    offscreenReady = (async () => {
+        if (await chrome.offscreen.hasDocument?.()) return;
+        try {
+            await chrome.offscreen.createDocument({
+                url: "offscreen.html",
+                reasons: [chrome.offscreen.Reason.WORKERS],
+                justification: "Runs the sandboxed Python (Pyodide/WASM) execution for the python_exec tool.",
+            });
+        } catch (e) {
+            if (!(await chrome.offscreen.hasDocument?.())) throw e;   // tolerate a concurrent create
+        }
+    })();
+    offscreenReady.catch(() => { offscreenReady = null; });   // let a failed create be retried
+    return offscreenReady;
+}

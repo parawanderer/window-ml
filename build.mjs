@@ -15,6 +15,8 @@ const ENTRIES = {
     content: "content.ts",
     background: "background.ts",
     popup: "popup.ts",
+    // Offscreen document hosting the Pyodide runtime for the python_exec tool.
+    offscreen: "offscreen.ts",
     // Content-script shell (hosts the iframe) + the Preact app that runs inside
     // the sidebar.html iframe.
     "sidebar-shell": "sidebar/shell.ts",
@@ -34,6 +36,7 @@ const ASSETS = [
     ["sidebar/sidebar.css", "sidebar.css"],
     ["sidebar/devtools.html", "devtools.html"],
     ["sidebar/panel.html", "panel.html"],
+    ["offscreen.html", "offscreen.html"],
 ];
 
 const watch = process.argv.includes("--watch");

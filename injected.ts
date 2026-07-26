@@ -38,7 +38,7 @@ import { makeDomTools } from "./tools";
 import { hideSidebarForShot, makeBackgroundTaskPromise, makeChatRequest, makeStreamingTaskPromise } from "./bridge";
 import { validateArgs, validateExtend } from "./validate";
 import { renderArgs, logStep, defaultApprove, normalizeApproval, formatReadonlyExec } from "./approval";
-import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool } from "./builtin-tools";
+import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPythonTool } from "./builtin-tools";
 
 (function() {
 
@@ -901,6 +901,34 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool } from ".
          */
         typeTool: function(): MlTool {
             return buildTypeTool(this);
+        },
+        /**
+         * Run a sandboxed Python snippet (Pyodide/WASM in an offscreen doc) with numpy +
+         * Pillow — for pixel/array/spatial work Python does better than JS. `image` (a CSS
+         * selector, an `@pt:`/`@box:` token, or an Element) is screenshotted and injected as
+         * `img` (PIL.Image) + `img_np` (H×W×3 uint8). The sandbox has NO network/filesystem/
+         * DOM access. Needs the bundled Pyodide (`npm i` + `npm run fetch-pyodide`).
+         *
+         * @param {string} code Python. Reference `img`/`img_np`; `return` a value, or a base64
+         *   image via `to_base64(...)`. `print()` output is captured as `stdout`.
+         * @param {Object} [opts]
+         * @param {string|Element} [opts.image] What to screenshot into the sandbox (omit for none).
+         * @returns {Promise<{ ok: boolean, value?: any, stdout: string, error?: string }>}
+         */
+        pythonExec: async function(code: string, { image = null }: { image?: string | Element | null } = {}): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string }> {
+            const img = image != null ? await this.screenshot(image as string | Element) : null;
+            return makeBackgroundTaskPromise("PYTHON_EXEC_REQUEST", "PYTHON_EXEC_RESPONSE", { code, image: img });
+        },
+        /**
+         * Agent tool wrapping {@link module:ml.pythonExec} — sandboxed Python (numpy/Pillow)
+         * for pixel/array work. Opt-in like clickTool; `requiresApproval` (arbitrary code). A
+         * returned `[x,y]`/`{x,y}` becomes a clickable `@pt`, a box an `@box`, a base64 image is
+         * shown — the same coordinate currency as locate.
+         *
+         * @returns {MlTool} A tool with `name: "python_exec"` and `requiresApproval: true`.
+         */
+        pythonTool: function(): MlTool {
+            return buildPythonTool(this);
         },
         /**
          * Pick a vision model for the auto-registered `look` tool (see ml.agent's `vision` option).

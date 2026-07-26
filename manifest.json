@@ -2,7 +2,10 @@
     "manifest_version": 3,
     "name": "window.ml",
     "version": "1.0",
-    "permissions": ["scripting", "activeTab", "storage"],
+    "permissions": ["scripting", "activeTab", "storage", "offscreen"],
+    "content_security_policy": {
+      "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+    },
     "host_permissions": [
       "<all_urls>"
     ],

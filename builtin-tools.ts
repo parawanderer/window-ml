@@ -4,7 +4,7 @@
 // window.ml keeps thin delegating method wrappers. Not in the default read-only
 // domTools; opt in via extraTools, gated by the approval flow.
 
-import type { MlApi, MlTool, LocateSubstep } from "./contract";
+import type { MlApi, MlTool, LocateSubstep, ToolResult } from "./contract";
 import { DEFAULT_GROUNDING_RANGE } from "./contract";
 import { truncate, errText, elLine, queryAll, selectorError } from "./dom";
 import { settle, VISION_NUM_CTX, cropDataUrl, MIN_SHOT_PX, POINT_RE, PT_LOOK_RADIUS, mintPoint, resolvePoint, nearbyPoint, BOX_RE, mintBox, resolveBox } from "./util";
@@ -831,3 +831,54 @@ export const buildTypeTool = (ml: MlApi): MlTool => {
         }
     });
 };
+
+// --- python_exec: a sandboxed Python (Pyodide/WASM) tool for pixel/array work ---
+// The value the script returns is interpreted into the SAME coordinate currency as
+// locate: a point → @pt, a box → @box, a data-URL → an image render. The model only
+// describes/computes; we mint the token (delegation-safe — no coordinates authored here).
+const asPoint = (v: unknown): { x: number; y: number } | null => {
+    if (Array.isArray(v) && v.length === 2 && v.every(n => typeof n === "number")) return { x: v[0], y: v[1] };
+    if (v && typeof v === "object" && typeof (v as any).x === "number" && typeof (v as any).y === "number") return { x: (v as any).x, y: (v as any).y };
+    return null;
+};
+const asBoxVal = (v: unknown): Box | null => {
+    if (Array.isArray(v) && v.length === 4 && v.every(n => typeof n === "number")) return { left: v[0], top: v[1], right: v[2], bottom: v[3] };
+    if (v && typeof v === "object" && ["left", "top", "right", "bottom"].every(k => typeof (v as any)[k] === "number")) return v as Box;
+    return null;
+};
+
+export const buildPythonTool = (ml: MlApi): MlTool =>
+    ml.defineTool({
+        name: "python_exec",
+        requiresApproval: true,
+        description: "Run a SANDBOXED Python snippet (numpy + Pillow, WASM — no network/filesystem/DOM) for " +
+            "array/pixel/spatial work you do better in Python than JS: pixel-mask a target and take its centroid, " +
+            "count regions, template-match, BFS a maze, sub-pixel math. Pass `image` (a CSS selector or an @pt:/" +
+            "@box: token) to load that screenshot as `img` (PIL.Image) + `img_np` (H×W×3 uint8). `return` a value: " +
+            "a [x,y] or {x,y} becomes a clickable @pt; a [x1,y1,x2,y2] or {left,top,right,bottom} an @box; a base64 " +
+            "image (via to_base64(...)) is shown; anything else is returned as text. In scope: numpy (np), PIL " +
+            "(Image), stdlib (io, math, collections, itertools…). Coordinates are the SCREENSHOT's pixels — for a " +
+            "clickable @pt, return viewport coordinates.",
+        parameters: {
+            type: "object",
+            properties: {
+                code: { type: "string", description: "Python. Reference img/img_np; end with a `return`. print() is captured as stdout." },
+                image: { type: "string", description: "Optional CSS selector or @pt:/@box: token to load as img/img_np." },
+            },
+            required: ["code"],
+        },
+        run: async ({ code, image }: { code: string; image?: string }): Promise<string | ToolResult> => {
+            const r = await ml.pythonExec(code, { image: image || null });
+            const pre = r.stdout ? `stdout:\n${r.stdout}\n\n` : "";
+            if (!r.ok) return `Python error: ${r.error}${r.stdout ? `\n\nstdout:\n${r.stdout}` : ""}`;
+            const v = r.value;
+            if (typeof v === "string" && /^data:image\//.test(v)) {
+                return { content: `${pre}Returned an image.`, render: { type: "image", src: v, label: "python_exec" } };
+            }
+            const pt = asPoint(v);
+            if (pt) { const t = mintPoint(pt.x, pt.y); return `${pre}→ ${t} at (${Math.round(pt.x)}, ${Math.round(pt.y)}). Verify then click: look({ selector: "${t}" }) → click({ selector: "${t}" }).`; }
+            const bx = asBoxVal(v);
+            if (bx) { const t = mintBox(bx); return `${pre}→ ${t} (a ${Math.round(bx.right - bx.left)}×${Math.round(bx.bottom - bx.top)}px region). Scope into it: locate({ selector: "${t}", description: "…" }).`; }
+            return `${pre}${typeof v === "string" ? v : JSON.stringify(v)}`;
+        },
+    });

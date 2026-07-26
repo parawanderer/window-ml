@@ -348,13 +348,13 @@ export type PageRequestType =
     | "LLM_REQUEST" | "LLM_STREAM_REQUEST" | "B64_REQUEST" | "LIST_MODELS_REQUEST"
     | "GET_MODEL_REQUEST" | "CONFIG_REQUEST" | "SET_MODEL_REQUEST" | "CAPS_REQUEST"
     | "PS_REQUEST" | "UNLOAD_REQUEST" | "CAPTURE_TAB_REQUEST"
-    | "SAVE_SESSION_REQUEST" | "GET_SESSION_REQUEST";
+    | "SAVE_SESSION_REQUEST" | "GET_SESSION_REQUEST" | "PYTHON_EXEC_REQUEST";
 
 /** Message types the background worker's onMessage listener handles. */
 export type BackgroundMessageType =
     | "FETCH_LLM" | "FETCH_IMAGE_B64" | "LIST_MODELS" | "GET_MODEL" | "GET_CONFIG"
     | "SET_MODEL" | "MODEL_CAPS" | "OLLAMA_PS" | "OLLAMA_UNLOAD" | "CAPTURE_TAB"
-    | "SAVE_SESSION" | "GET_SESSION";
+    | "SAVE_SESSION" | "GET_SESSION" | "PYTHON_EXEC";
 
 /** A resumable chat session persisted to chrome.storage.local for { save: true }
  *  sessions (main world can't touch storage → background round-trip). No secrets:
@@ -531,6 +531,11 @@ export interface MlApi {
     clickTool(): MlTool;
     /** Built-in type tool factory. */
     typeTool(): MlTool;
+    /** Run a sandboxed Python snippet (Pyodide/WASM, numpy + Pillow) with an optional
+     *  screenshot injected as `img`/`img_np`. No network/filesystem/DOM. */
+    pythonExec(code: string, opts?: { image?: string | Element | null }): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string }>;
+    /** Built-in sandboxed-Python tool factory (numpy/Pillow pixel/array work). */
+    pythonTool(): MlTool;
 
     /* ---- vision / OCR / capture ---- */
     /** OCR/describe an image (element, url or data URL). */
