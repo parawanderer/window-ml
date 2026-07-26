@@ -733,7 +733,7 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
          * @param {number} [options.index=0] Which match of a selector to shoot (0-based).
          * @returns {Promise<string>} The screenshot as a PNG data URL.
          */
-        screenshot: async function(target: string | Element | null = null, { scroll = true, fullPage = false, index = 0 }: { scroll?: boolean; fullPage?: boolean; index?: number } = {}): Promise<string> {
+        screenshot: async function(target: string | Element | null = null, { scroll = true, fullPage = false, index = 0, raw = false }: { scroll?: boolean; fullPage?: boolean; index?: number; raw?: boolean } = {}): Promise<string> {
             // Hide the debug sidebar overlay (if mounted) for the shot, so it isn't
             // captured into the agent's `look`; restore after. No wait when the
             // sidebar is off (no #ml-sb-root) — it's a no-op then.
@@ -754,6 +754,7 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
                 const left = Math.max(0, pt.x - R), top = Math.max(0, pt.y - R);
                 const rect = { left, top, width: Math.min(window.innerWidth, pt.x + R) - left, height: Math.min(window.innerHeight, pt.y + R) - top };
                 const cropped = await cropDataUrl(await viewport(), rect, dpr);
+                if (raw) return cropped;   // pythonExec: raw pixels of the neighbourhood, no marker overlay
                 const marker = { left: pt.x - left - 12, top: pt.y - top - 12, width: 24, height: 24 };
                 // Contrast the marker with the background AND the target under it (in image px).
                 const color = await pickAccentColorForTarget(cropped, { left: marker.left * dpr, top: marker.top * dpr, width: marker.width * dpr, height: marker.height * dpr });
@@ -766,10 +767,14 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
             if (typeof target === "string" && BOX_RE.test(target.trim())) {
                 const bx = resolveBox(target);
                 if (!bx) throw new Error(`Unknown container token "${target}" — re-run locate({ container: true }) for a fresh one.`);
-                const dpr = window.devicePixelRatio || 1, pad = 16;
+                // raw (pythonExec): the EXACT box content — no padding, no outline — so the
+                // pixels the sandbox sees are the container's, not the marker's. Non-raw
+                // (look verify): pad + outline so the driver can see what it scoped to.
+                const dpr = window.devicePixelRatio || 1, pad = raw ? 0 : 16;
                 const left = Math.max(0, bx.left - pad), top = Math.max(0, bx.top - pad);
                 const rect = { left, top, width: Math.min(window.innerWidth, bx.right + pad) - left, height: Math.min(window.innerHeight, bx.bottom + pad) - top };
                 const cropped = await cropDataUrl(await viewport(), rect, dpr);
+                if (raw) return cropped;
                 const outline = { left: bx.left - left, top: bx.top - top, width: bx.right - bx.left, height: bx.bottom - bx.top };
                 const color = await pickAccentColorForTarget(cropped, { left: outline.left * dpr, top: outline.top * dpr, width: outline.width * dpr, height: outline.height * dpr });
                 return annotate(cropped, [{ rect: outline, color, label: "container" }], dpr);
@@ -943,7 +948,9 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
          *   `inputImage` is the resolved screenshot data-URL the sandbox saw (for the debug render).
          */
         pythonExec: async function(code: string, { image = null, mode = "readonly" }: { image?: string | Element | null; mode?: "readonly" | "full" } = {}): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string }> {
-            const img = image != null ? await this.screenshot(image as string | Element) : null;
+            // raw: the sandbox must see the container's/point's actual pixels — NOT the
+            // look-verify overlay (the drawn @box outline / @pt marker) or its padding.
+            const img = image != null ? await this.screenshot(image as string | Element, { raw: true }) : null;
             const r = await makeBackgroundTaskPromise("PYTHON_EXEC_REQUEST", "PYTHON_EXEC_RESPONSE", { code, image: img, hardened: mode !== "full" }) as { ok: boolean; value?: unknown; stdout: string; error?: string };
             return img ? { ...r, inputImage: img } : r;
         },

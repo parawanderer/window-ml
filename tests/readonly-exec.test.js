@@ -66,6 +66,16 @@ test("pure computation: arrows, ternary, optional chaining, template-free litera
     assert.equal(run("null?.foo").value, undefined);
 });
 
+// Optional-chained COMPUTED member `?.[…]` must not double-consume the '[' (a review flagged
+// a possible double-eat — but `is()` is a pure peek, so `parseComputed` does the only eat).
+// The last case also exercises binary '-' next to the '[' (the other flagged edge case).
+test("optional-chained computed member ?.[…] parses (no spurious double-eat)", () => {
+    assert.equal(run("[10,20,30]?.[1]").value, 20);
+    assert.equal(run("const a = [1,2,3]; a?.[0]").value, 1);
+    assert.equal(run("({ x: { y: 5 } })?.['x']?.['y']").value, 5);
+    assert.equal(run("const arr = [7,8,9]; arr?.[arr.length - 1]").value, 9);
+});
+
 test("captures console output alongside the value", () => {
     const { value, logs } = run("console.log('n:', [1,2].length); [1,2].length");
     assert.equal(value, 2);

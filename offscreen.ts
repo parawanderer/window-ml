@@ -93,7 +93,9 @@ async function run(code: string, image: string | null, hardened: boolean): Promi
     // Per-run namespace reset (#2 isolation): Pyodide keeps ONE persistent heap across calls,
     // so a prior run's module-level vars would leak into this one. Wipe every non-underscore
     // global before re-running the prelude (which rebuilds its own names) → a clean slate.
-    const RESET = `for _k in list(globals().keys()):\n    if not _k.startswith('_'):\n        try: del globals()[_k]\n        except Exception: pass\n`;
+    // Keep INJECTED_IMAGE_B64 — JS set it as a global BEFORE this script runs, and the
+    // prelude (below) reads it to build `img`/`img_np`. Wiping it would null the image.
+    const RESET = `for _k in list(globals().keys()):\n    if not _k.startswith('_') and _k != 'INJECTED_IMAGE_B64':\n        try: del globals()[_k]\n        except Exception: pass\n`;
     // The model's code becomes the body of `_user()`. `global result` + a captured return
     // handle BOTH conventions (#5): a `return X` (result = the return) AND a bare top-level
     // `result = X` with no return (the return is None, so we keep the assigned global).

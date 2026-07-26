@@ -555,7 +555,7 @@ export interface MlApi {
     /** OCR/describe an image (element, url or data URL). */
     read(image: string | HTMLImageElement, opts?: { model?: string | null; prompt?: string | null }): Promise<string>;
     /** Capture the tab (or an element) to a data URL. */
-    screenshot(target?: string | Element | null, opts?: { scroll?: boolean; fullPage?: boolean; index?: number }): Promise<string>;
+    screenshot(target?: string | Element | null, opts?: { scroll?: boolean; fullPage?: boolean; index?: number; raw?: boolean }): Promise<string>;
 
     /* ---- server / model management ---- */
     models(): Promise<string[]>;
