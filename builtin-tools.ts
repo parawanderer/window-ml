@@ -7,7 +7,7 @@
 import type { MlApi, MlTool, LocateSubstep, ToolResult, RenderDescriptor } from "./contract";
 import { DEFAULT_GROUNDING_RANGE } from "./contract";
 import { PY_PACKAGE_LABELS } from "./python-env";
-import { truncate, clipOut, errText, elLine, queryAll, selectorError } from "./dom";
+import { truncate, clipOut, errText, elLine, queryAll, selectorError, googleSheetCsvUrl } from "./dom";
 
 // Cap on python_exec output (stdout / value / error) fed back to the model — bigger than
 // exec's 500 (data output legitimately runs longer) but still bounds a runaway result.
@@ -853,8 +853,17 @@ const asBoxVal = (v: unknown): Box | null => {
     return null;
 };
 
-export const buildPythonTool = (ml: MlApi): MlTool =>
-    ml.defineTool({
+export const buildPythonTool = (ml: MlApi): MlTool => {
+    // Dynamic hint: if the agent is ON a Google Sheet, tell it it can load THIS sheet with
+    // `sheet:'current'` (no URL). A general `sheet` (any Sheets URL) is documented too.
+    const onSheet = typeof location !== "undefined" && !!googleSheetCsvUrl(location.href);
+    const SHEET_DOC = " Pass `sheet` = a Google Sheets URL to load that sheet as `df` (its CSV is fetched " +
+        "with the user's Google login → works on PRIVATE corporate sheets; an external URL ALWAYS asks for " +
+        "approval), or `sheet:'current'` when you're already on the sheet's page (no URL needed, auto-approvable). " +
+        "The `sheet` PARAMETER does the loading: `df` arrives ALREADY parsed — do NOT write pd.read_csv('current') / " +
+        "read_html / open(...) in your code (there is no filesystem; 'current' is not a path); just use `df`." +
+        (onSheet ? " YOU ARE CURRENTLY ON A GOOGLE SHEET — use `sheet:'current'` to load it as `df`." : "");
+    return ml.defineTool({
         name: "python_exec",
         requiresApproval: true,
         description: "Run a SANDBOXED Python snippet (numpy + Pillow + pandas, WASM) for array/pixel/spatial/table " +
@@ -875,7 +884,7 @@ export const buildPythonTool = (ml: MlApi): MlTool =>
             "a clickable @pt, return viewport coordinates. `mode` is 'readonly' by DEFAULT: no network / filesystem " +
             "/ DOM — a pure function over the inputs (this run may be auto-approved). Only set `mode:'full'` if you " +
             "genuinely need network (it enables outbound HTTP etc.) — a full-mode run ALWAYS requires human " +
-            "approval, so prefer 'readonly' unless you truly need the network.",
+            "approval, so prefer 'readonly' unless you truly need the network." + SHEET_DOC,
         parameters: {
             type: "object",
             properties: {
@@ -886,15 +895,16 @@ export const buildPythonTool = (ml: MlApi): MlTool =>
                 margin: { type: "number", description: "For an @pt image only: the crop RADIUS in px around the point (a bigger margin = more context). Omit for the default. Ignored for @box / CSS selectors." },
                 table: { type: "string", description: "Optional CSS selector for a page table (<table> or ARIA grid) → loaded as `df` (pandas.DataFrame). Use for spreadsheet/table math instead of eyeballing cells. Matches the FIRST element if several match — narrow it (id / :nth-of-type) to pick another." },
                 tableRaw: { type: "boolean", description: "Load `table` cells as raw STRINGS (skip the default numeric/currency auto-cast). Use only for ZIP/SKU/leading-zero IDs that casting would corrupt." },
+                sheet: { type: "string", description: "A Google Sheets URL → loaded as `df` (CSV fetched with the user's Google login). Use 'current' when you're already on the sheet's page. An external URL always needs approval." },
             },
             required: ["code"],
         },
-        run: async ({ code, image, cast, mode, margin, table, tableRaw }: { code: string; image?: string; cast?: "pt" | "box"; mode?: "readonly" | "full"; margin?: number; table?: string; tableRaw?: boolean }): Promise<string | ToolResult> => {
+        run: async ({ code, image, cast, mode, margin, table, tableRaw, sheet }: { code: string; image?: string; cast?: "pt" | "box"; mode?: "readonly" | "full"; margin?: number; table?: string; tableRaw?: boolean; sheet?: string }): Promise<string | ToolResult> => {
             // A `table` selector loads the FIRST match — warn if it's ambiguous (loading the
             // wrong table and computing on it would silently give wrong numbers).
             let tableNote = "";
             if (table) { try { const n = ml._queryAll(table).length; if (n > 1) tableNote = `⚠ selector "${table}" matched ${n} elements — loaded the FIRST as \`df\`. If the numbers look off, narrow it (an id, or :nth-of-type(N)) to pick another.\n\n`; } catch { /* invalid selector → pythonExec/_resolveTable errors below */ } }
-            const r = await ml.pythonExec(code, { image: image || null, mode: mode === "full" ? "full" : "readonly", margin: typeof margin === "number" ? margin : 0, table: table || null, tableRaw: !!tableRaw });
+            const r = await ml.pythonExec(code, { image: image || null, mode: mode === "full" ? "full" : "readonly", margin: typeof margin === "number" ? margin : 0, table: table || null, tableRaw: !!tableRaw, sheet: sheet || null });
             // Cap stdout/value/error fed back to the model so a runaway result (e.g. a
             // string-concat blowup) can't flood the context — with a "[+N truncated]" note.
             const stdoutClipped = clipOut(r.stdout || "", PY_OUT_MAX);
@@ -909,7 +919,19 @@ export const buildPythonTool = (ml: MlApi): MlTool =>
             const done = (content: string, out: Omit<Extract<RenderDescriptor, { type: "python-out" }>, "type" | "stdout">): ToolResult =>
                 ({ content, renderIn, render: { type: "python-out", stdout, ...out } });
 
-            if (!r.ok) { const err = clipOut(r.error || "", PY_OUT_MAX); return done(`${tableNote}Python error: ${err}${stdoutClipped ? `\n\nstdout:\n${stdoutClipped}` : ""}`, { error: err }); }
+            if (!r.ok) {
+                const err = clipOut(r.error || "", PY_OUT_MAX);
+                // Don't fight a hallucinated load pattern with docs alone — when data was PRELOADED
+                // and the code errored trying to (re)load it (read_csv/read_html/open/requests/…),
+                // redirect to the preloaded var. Fires on the failure, so it covers every variant
+                // instead of enumerating them. (Observed: `pd.read_csv('current')` → FileNotFound.)
+                const loaded = [r.inputTable ? "`df`" : "", r.inputImage ? "`img`/`img_np`" : ""].filter(Boolean).join(" and ");
+                const looksLikeReload = /read_csv|read_html|read_excel|read_json|open\(|FileNotFoundError|No such file|ModuleNotFound|requests|urllib|urlopen|http|fetch|ConnectionError|storage_options/i.test(err);
+                const hint = loaded && looksLikeReload
+                    ? `\n\nHint: the tool ALREADY loaded your data as ${loaded} (the table/sheet/image PARAMETER did it) — reference it directly; do not read_csv/read_html/open/fetch anything (the sandbox has no filesystem or network in readonly mode).`
+                    : "";
+                return done(`${tableNote}Python error: ${err}${hint}${stdoutClipped ? `\n\nstdout:\n${stdoutClipped}` : ""}`, { error: err });
+            }
             const v = r.value;
             // An image return is unambiguous → always shown (no cast needed).
             if (typeof v === "string" && /^data:image\//.test(v)) {
@@ -933,3 +955,4 @@ export const buildPythonTool = (ml: MlApi): MlTool =>
             return done(`${pre}${text}`, { value: text });
         },
     });
+};

@@ -152,6 +152,49 @@ async function freeVram() {
     });
 }
 
+// ---- Google Sheets host access (python_exec `sheet`) ----
+// The background CSV fetch needs docs.google.com host permission, which "On click" site
+// access withholds (activeTab covers content scripts, not the SW fetch). Request it — plus
+// the hosts the export can redirect to (login / large-file viewer) — in one click, from the
+// user gesture. These are all within the manifest's <all_urls>, so request() can re-grant them.
+const SHEETS_ORIGINS = ["https://docs.google.com/*", "https://accounts.google.com/*", "https://*.googleusercontent.com/*"];
+
+function reflectSheetsAccess(granted: boolean) {
+    const btn = $("sheetsAccess"), hint = document.getElementById("sheetsHint")!;
+    // Summary reflects state at a glance (green ✓ when all granted, like the connection block);
+    // the block collapses when everything's granted and opens when a grant is still needed.
+    const status = document.getElementById("permsStatus")!;
+    const perms = document.getElementById("perms") as HTMLDetailsElement;
+    status.textContent = "Permissions ";
+    const tag = document.createElement("span");
+    tag.className = granted ? "ok" : "todo";
+    tag.textContent = granted ? "✓ Google Sheets" : "Google Sheets access off";
+    status.append(tag);
+    perms.open = !granted;
+    if (granted) {
+        btn.textContent = "Enabled ✓"; (btn as unknown as HTMLButtonElement).disabled = true;
+        hint.innerHTML = `<span class="ok">Google Sheets access granted.</span>`;
+    } else {
+        btn.textContent = "Enable"; (btn as unknown as HTMLButtonElement).disabled = false;
+        hint.innerHTML = `Lets <code>python_exec</code> load a Google Sheet (the <code>sheet</code> arg) as a pandas DataFrame — needs host access to docs.google.com.`;
+    }
+}
+
+async function refreshSheetsAccess() {
+    try { reflectSheetsAccess(await chrome.permissions.contains({ origins: SHEETS_ORIGINS })); }
+    catch { document.getElementById("sheetsSection")?.remove(); /* API missing → hide it */ }
+}
+
+async function enableSheetsAccess() {
+    try {
+        const granted = await chrome.permissions.request({ origins: SHEETS_ORIGINS });
+        reflectSheetsAccess(granted);
+        setStatus(granted ? "Google Sheets access granted." : "Access not granted — you can also allow it via the browser's Extensions manager (Site access → On all sites).", granted ? "ok" : "err");
+    } catch (e: any) {
+        setStatus(`Couldn't request access: ${e?.message || e}. Allow it manually: Extensions manager → this extension → Site access → On all sites.`, "err");
+    }
+}
+
 // Renders per-model VRAM usage from Ollama's /api/ps (used only — Ollama's API
 // doesn't report total GPU capacity, so there's no denominator to show).
 function renderVram(models: LoadedModel[]) {
@@ -195,8 +238,10 @@ $("save").addEventListener("click", save);
 $("unload").addEventListener("click", freeVram);
 $("test").addEventListener("click", saveAndTest);
 $("refreshVram").addEventListener("click", refreshVram);
+$("sheetsAccess").addEventListener("click", enableSheetsAccess);
 
 // Populate the form, then auto-fetch the model list (no Load button — the
 // datalist just fills in). refreshVram in parallel.
 loadForm().then(loadModels);
 refreshVram();
+refreshSheetsAccess();

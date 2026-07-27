@@ -121,6 +121,19 @@
     </select>
     <div class="hint">Where the ml-call debug log renders. <b>In-page</b> = a slide-out on every page. <b>DevTools</b> = the “window.ml” tab in DevTools, no on-page overlay.</div>
 
+    <!-- Optional host-permission grants. One-click for python_exec's Google Sheets (`sheet`) loader:
+         the background fetch needs docs.google.com host access, which "On click" site-access withholds;
+         the export can redirect across Google domains, so we request the related origins too.
+         Collapsible like the connection block — collapsed once everything's granted (unobtrusive),
+         expanded when something still needs a click. -->
+    <details class="conn" id="perms">
+        <summary><span id="permsStatus"></span></summary>
+        <div class="free-row">
+            <div id="sheetsHint" class="hint">Lets <code>python_exec</code> load a Google Sheet (the <code>sheet</code> arg) as a pandas DataFrame — needs host access to docs.google.com.</div>
+            <button id="sheetsAccess" title="Grant host access to Google Sheets (docs.google.com)">Enable</button>
+        </div>
+    </details>
+
     <div id="vramSection" style="display:none">
         <label>VRAM</label>
         <div class="free-row">

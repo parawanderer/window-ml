@@ -385,3 +385,39 @@ export function castTableColumns(columns: string[], rows: string[][]): (string |
     }
     return out;
 }
+
+/** A Google Sheets URL → its spreadsheet id (the stable `/d/<id>` key), or null if it isn't a
+ *  Sheets URL. Used to cache a per-session access approval by the SPREADSHEET (its tabs share it). */
+export const googleSheetId = (url: string): string | null => {
+    const m = /^https?:\/\/docs\.google\.com\/spreadsheets\/d\/([A-Za-z0-9_-]+)/.exec(String(url || ""));
+    return m ? m[1] : null;
+};
+
+/** A Google Sheets URL → its CSV export URL (fetched credentialed → the user's own data),
+ *  or null if it isn't a Sheets URL. Pulls the spreadsheet id + the gid (the specific tab,
+ *  default 0). Pure — the CSV then flows through the same parse→auto-cast→df path as `table`. */
+export const googleSheetCsvUrl = (url: string): string | null => {
+    const id = googleSheetId(url);
+    if (!id) return null;
+    const gid = /[#?&]gid=([0-9]+)/.exec(url);
+    return `https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=${gid ? gid[1] : "0"}`;
+};
+
+/** Parse RFC-4180 CSV → an array of rows (each an array of string cells). Handles quoted
+ *  fields with embedded commas, newlines, and doubled "" quotes. Pure. */
+export function parseCsv(text: string): string[][] {
+    const s = String(text == null ? "" : text).replace(/\r\n?/g, "\n");
+    const rows: string[][] = []; let row: string[] = [], field = "", inQ = false;
+    for (let i = 0; i < s.length; i++) {
+        const c = s[i];
+        if (inQ) {
+            if (c === '"') { if (s[i + 1] === '"') { field += '"'; i++; } else inQ = false; }
+            else field += c;
+        } else if (c === '"') inQ = true;
+        else if (c === ",") { row.push(field); field = ""; }
+        else if (c === "\n") { row.push(field); rows.push(row); row = []; field = ""; }
+        else field += c;
+    }
+    if (field !== "" || row.length) { row.push(field); rows.push(row); }
+    return rows;
+}

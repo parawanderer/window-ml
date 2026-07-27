@@ -69,7 +69,8 @@ export const EXEC_COMPUTE_CLAUSE =
     "`.reduce`/`Math.*` to get the EXACT result before you answer. It's clunkier than a dedicated " +
     "calculator, but infinitely better than guessing — the final number must come from code, not your head.";
 export const PYTHON_CLAUSE =
-    "\n\nYou have `python_exec` — a REAL sandboxed Python (numpy/Pillow). You are a language " +
+    "\n\nYou have `python_exec` — a REAL sandboxed Python (its tool description lists the available " +
+    "libraries). You are a language " +
     "model: you predict tokens, you do NOT calculate. So NEVER work out multi-step arithmetic, " +
     "matrix/array indexing, combinatorics, probability, date math, unit conversions, or any " +
     "precise numeric result in your head — you will guess a plausible-looking wrong number. " +

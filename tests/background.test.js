@@ -1077,3 +1077,39 @@ test("devtools panel: buffers debug events per tab, replays on connect, relays l
     panel2.send({ type: "ml-devtools-init", tabId: 7 });
     assert.deepEqual(panel2.messages.find(m => Array.isArray(m.replay)).replay, [], "reset → nothing to replay");
 });
+
+// ---- FETCH_SHEET: credentialed Google Sheets CSV export ----
+
+test("FETCH_SHEET returns the CSV body, fetched with the user's Google cookies", async () => {
+    let opts = null;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => { opts = call.opts; return { ok: true, status: 200, headers: { get: () => "text/csv" }, text: async () => "Rep,Q1\nAda,120\n" }; },
+    });
+    const res = await bg.send({ type: "FETCH_SHEET", payload: { url: "https://docs.google.com/spreadsheets/d/A/export?format=csv&gid=0" } });
+    assert.equal(res.data, "Rep,Q1\nAda,120\n");
+    assert.equal(opts.credentials, "include", "credentialed so a private sheet the user can see works");
+});
+
+test("FETCH_SHEET REFUSES a non-Sheets URL without fetching (the credentialed-fetch guard)", async () => {
+    // The approval gate is client-side; a hostile page can post FETCH_SHEET raw. This background
+    // check is the only thing stopping a cookie-authenticated read of an arbitrary URL.
+    let fetched = false;
+    const bg = loadBackground({ config: baseConfig(), onFetch: () => { fetched = true; return { ok: true, status: 200, headers: { get: () => "text/csv" }, text: async () => "x" }; } });
+    for (const url of ["https://evil.example/steal", "https://docs.google.com/document/d/abc/export", "https://accounts.google.com/o/oauth2/auth"]) {
+        const res = await bg.send({ type: "FETCH_SHEET", payload: { url } });
+        assert.match(res.error, /only Google Sheets CSV-export URLs/, `refused: ${url}`);
+    }
+    assert.equal(fetched, false, "no credentialed fetch ever issued for a disallowed URL");
+});
+
+test("FETCH_SHEET: an HTML login page (not signed in / no access) → an authenticate-and-retry error", async () => {
+    // When the user lacks access, Google redirects the CSV export to an HTML sign-in page.
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => ({ ok: true, status: 200, headers: { get: () => "text/html" }, text: async () => "<!doctype html><html>Sign in</html>" }),
+    });
+    const res = await bg.send({ type: "FETCH_SHEET", payload: { url: "https://docs.google.com/spreadsheets/d/A/export?format=csv&gid=0" } });
+    assert.equal(res.data, undefined);
+    assert.match(res.error, /Tell the USER to open the sheet's link/);
+});

@@ -28,7 +28,7 @@ import type {
 } from "./contract";
 import { detectGroundingModel, DEFAULT_GROUNDING_RANGE } from "./contract";
 import { evalReadonly } from "./readonly-exec";
-import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns } from "./dom";
+import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, parseCsv } from "./dom";
 import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, PT_LOOK_RADIUS, BOX_RE, resolveBox } from "./util";
 import { annotate, pickAccentColorForTarget } from "./som";
@@ -42,6 +42,10 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
 
 (function() {
 
+    // Spreadsheets the user has approved `python_exec` access to THIS page session (keyed by
+    // Google spreadsheet id). Lets a repeat call to the same sheet skip the external-sheet
+    // re-prompt. Page-scoped (module lifetime) — gone on reload; never persisted.
+    const approvedSheets = new Set<string>();
 
     // ---- Agent tool helpers (page-context DOM introspection) ----
     // These keep observations SMALL on purpose: the point of the agent is to
@@ -594,8 +598,19 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
                         // inputs), so it can't affect the page or exfiltrate. A `full`-mode
                         // call (network) always falls through to the gate. Hidden/bidi chars in
                         // the code also fall through, so the human sees the suspicious-char
-                        // banner before it runs (the same check the manual prompt applies).
-                        if (!handled && autoPy && tool.name === "python_exec"
+                        // banner before it runs (the same check the manual prompt applies). An
+                        // EXTERNAL `sheet` (a Google Sheets URL that isn't the current page) also
+                        // always asks — fetching arbitrary Google data the user didn't navigate
+                        // to is privileged; `sheet:'current'` (the page they're on) is fine. But once
+                        // the user has approved a given SPREADSHEET this page-session, don't re-escalate
+                        // subsequent calls to it (they granted access to that resource) — this only
+                        // lifts the external-sheet escalation, so a non-autoPy run is still gated on
+                        // the code as usual; the cache just stops re-asking for the same sheet.
+                        const sheetArg = (args as { sheet?: unknown }).sheet;
+                        const externalSheet = typeof sheetArg === "string" && sheetArg !== "current";
+                        const sheetId = externalSheet ? googleSheetId(String(sheetArg)) : null;
+                        const escalated = externalSheet && !(sheetId && approvedSheets.has(sheetId));
+                        if (!handled && autoPy && tool.name === "python_exec" && !escalated
                             && (args as { mode?: unknown }).mode !== "full"
                             && !suspiciousChars(String((args as { code?: unknown }).code ?? "")).length) {
                             approval = "sandbox";
@@ -615,6 +630,11 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
                             } else {
                                 approval = "user";
                                 args = decision.arguments;   // possibly caller-edited before running
+                                // Remember an approved external sheet for the rest of this page session,
+                                // so a follow-up call to the same spreadsheet doesn't re-prompt (keyed by
+                                // the FINAL args, in case the user edited the sheet before approving).
+                                const approvedId = googleSheetId(String((args as { sheet?: unknown }).sheet ?? ""));
+                                if (approvedId) approvedSheets.add(approvedId);
                                 ({ result, elements, image, imageLabel, render: toolRender, renderIn: toolRenderIn } = await runTool(tool, args));
                             }
                         }
@@ -963,15 +983,31 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
          * @param {string|Element} [opts.table] A selector/Element for a page table → loaded into the
          *   sandbox as `df` (pandas.DataFrame). A clean `<table>`/ARIA grid is walked in the page
          *   (case-preserving); anything else falls back to `pd.read_html(outerHTML)`.
+         * @param {string} [opts.sheet] A Google Sheets URL (or `"current"` when you're on the
+         *   sheet's page) → its CSV export is fetched with your Google login and loaded as `df`.
          * @returns {Promise<{ ok, value?, stdout, error?, inputImage?, inputTable? }>}
          *   `inputImage`/`inputTable` are what the sandbox saw (for the debug render).
          */
-        pythonExec: async function(code: string, { image = null, mode = "readonly", margin = 0, table = null, tableRaw = false }: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; table?: string | Element | null; tableRaw?: boolean } = {}): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string; inputTable?: { columns: string[]; rows: (string | number | null)[][] } }> {
+        pythonExec: async function(code: string, { image = null, mode = "readonly", margin = 0, table = null, tableRaw = false, sheet = null }: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; table?: string | Element | null; tableRaw?: boolean; sheet?: string | null } = {}): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string; inputTable?: { columns: string[]; rows: (string | number | null)[][] } }> {
             // raw: the sandbox must see the container's/point's actual pixels — NOT the
             // look-verify overlay (the drawn @box outline / @pt marker) or its padding.
             // `margin` sets the crop radius around an @pt (default: the look-radius).
             const img = image != null ? await this.screenshot(image as string | Element, { raw: true, margin }) : null;
-            const tbl = table != null ? this._resolveTable(table, tableRaw) : null;
+            // `sheet` → the Google Sheet's CSV, fetched credentialed in the background, parsed
+            // into the same {columns, rows} a page `table` yields → identical auto-cast → df path.
+            let tbl: { kind: "rows"; columns: string[]; rows: (string | number | null)[][] } | { kind: "html"; html: string } | null = null;
+            if (sheet != null) {
+                const target = sheet === "current" ? (typeof location !== "undefined" ? location.href : "") : sheet;
+                const csvUrl = googleSheetCsvUrl(target);
+                if (!csvUrl) throw new Error(sheet === "current"
+                    ? "pythonExec sheet:'current' — this page isn't a Google Sheet."
+                    : `pythonExec sheet — "${sheet}" isn't a Google Sheets URL.`);
+                const csv = await makeBackgroundTaskPromise<string>("FETCH_SHEET_REQUEST", "FETCH_SHEET_RESPONSE", { url: csvUrl });
+                const all = parseCsv(csv), columns = all[0] || [], dataRows = all.slice(1);
+                tbl = { kind: "rows", columns, rows: tableRaw ? dataRows : castTableColumns(columns, dataRows) };
+            } else if (table != null) {
+                tbl = this._resolveTable(table, tableRaw);
+            }
             const r = await makeBackgroundTaskPromise("PYTHON_EXEC_REQUEST", "PYTHON_EXEC_RESPONSE", { code, image: img, hardened: mode !== "full", table: tbl }) as { ok: boolean; value?: unknown; stdout: string; error?: string };
             const extra: { inputImage?: string; inputTable?: { columns: string[]; rows: (string | number | null)[][] } } = {};
             if (img) extra.inputImage = img;
@@ -1105,6 +1141,7 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
         // with _parseJSON below) so tests and console debugging can reach them.
         _truncate: truncate,
         _suspiciousChars: suspiciousChars,
+        _renderArgs: renderArgs,
         _elPath: elPath,
         _describeSkeleton: describeSkeleton,
         _queryAll: queryAll,

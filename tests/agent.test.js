@@ -1093,6 +1093,7 @@ const pyBackend = (turns, onPy) => {
     const model = scriptedModel(turns);
     return (m) => {
         if (m.type === "PYTHON_EXEC") { if (onPy) onPy(m.payload); return { data: { ok: true, value: [5, 6], stdout: "hi\n" } }; }
+        if (m.type === "FETCH_SHEET") return { data: "a,b\n1,2\n" };
         return model(m);
     };
 };
@@ -1136,6 +1137,60 @@ test("autoApprovePython OFF: a readonly python_exec still prompts (the flag gate
     const { approvals, pyPayload } = await runPyAgent({ config: { autoApprovePython: false }, code: "return [5, 6]" });
     assert.equal(approvals, 1, "with the flag off, every python_exec is gated");
     assert.equal(pyPayload.hardened, true, "still hardened — readonly mode is the default regardless of approval");
+});
+
+test("autoApprovePython: an EXTERNAL `sheet` still prompts (a privileged cross-origin fetch)", async () => {
+    const { approvals, step } = await runPyAgent({ config: { autoApprovePython: true }, code: "return df.sum()", args: { sheet: "https://docs.google.com/spreadsheets/d/ABC/edit" } });
+    assert.equal(approvals, 1, "pulling an arbitrary sheet from a URL always asks, even readonly");
+    assert.equal(step.approval, "user");
+});
+
+test("autoApprovePython: sheet:'current' is auto-approved (you're already on the page)", async () => {
+    const { approvals, step } = await runPyAgent({ config: { autoApprovePython: true }, code: "return df.sum()", args: { sheet: "current" } });
+    assert.equal(approvals, 0, "the sheet you're looking at is as safe as a readonly DOM survey");
+    assert.equal(step.approval, "sandbox");
+});
+
+// Run an agent with a scripted sequence of python_exec calls (autoApprovePython ON), counting
+// approval prompts + capturing the per-step approval provenance. For the sheet-cache tests.
+const runPySeq = async (calls) => {
+    const world = loadPageWorld({
+        config: { model: "", ocrModel: "", autoApprovePython: true },
+        onRuntimeMessage: pyBackend([...calls.map((a, i) => toolCall("python_exec", a, "c" + i)), reply("done")]),
+    });
+    const win = world.context.window, events = [];
+    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    win.postMessage({ __mlSidebar: "ready" });
+    await new Promise(r => setTimeout(r, 0));
+    let approvals = 0;
+    await world.ml.agent("x", { tools: [world.ml.pythonTool()], vision: false, approve: () => { approvals++; return true; } });
+    return { approvals, steps: events.filter(e => e.kind === "agent-step" && e.tool === "python_exec") };
+};
+
+test("external-sheet approval is CACHED per page session — a repeat call to the same sheet doesn't re-prompt", async () => {
+    const sheet = "https://docs.google.com/spreadsheets/d/ABC/edit#gid=0";
+    // Two calls to the same spreadsheet (different gid on the 2nd → same id).
+    const { approvals, steps } = await runPySeq([
+        { code: "return df.shape", sheet },
+        { code: "return df.sum()", sheet: "https://docs.google.com/spreadsheets/d/ABC/edit#gid=7" },
+    ]);
+    assert.equal(approvals, 1, "only the FIRST call to the spreadsheet prompts");
+    assert.equal(steps[0].approval, "user", "first call: user-approved");
+    assert.equal(steps[1].approval, "sandbox", "second call to the same spreadsheet: auto (cached)");
+});
+
+test("the sheet cache is per-spreadsheet — a DIFFERENT sheet still prompts", async () => {
+    const { approvals } = await runPySeq([
+        { code: "return df.shape", sheet: "https://docs.google.com/spreadsheets/d/AAA/edit" },
+        { code: "return df.shape", sheet: "https://docs.google.com/spreadsheets/d/BBB/edit" },
+    ]);
+    assert.equal(approvals, 2, "each distinct spreadsheet is approved on its own");
+});
+
+test("_renderArgs hoists the data source (sheet/table) above the code blob for the approval prompt", () => {
+    const { ml } = loadDomWorld(`<div></div>`);
+    const out = ml._renderArgs({ code: "return df.sum()", sheet: "https://docs.google.com/spreadsheets/d/X/edit" });
+    assert.ok(out.indexOf("sheet:") < out.indexOf("code:"), "sheet is shown before the code");
 });
 
 test("agent routes a tool's DOM nodes to onStep/transcript but never to the model", async () => {
@@ -1512,6 +1567,60 @@ test("python_exec tool: an ambiguous `table` selector warns it loaded the FIRST"
 test("_resolveTable: throws for a selector that matches nothing", () => {
     const { ml } = loadDomWorld(`<div></div>`);
     assert.throws(() => ml._resolveTable("#nope"), /no table element matches/);
+});
+
+// ---- python_exec `sheet` → Google Sheets CSV (googleSheetCsvUrl + parseCsv + the FETCH_SHEET relay) ----
+
+test("pythonExec sheet: derives the CSV export URL, fetches it, and parses + casts to a df", async () => {
+    let sheetUrl = null, pyTable = null;
+    const world = loadPageWorld({
+        onRuntimeMessage: (m) => {
+            if (m.type === "FETCH_SHEET") { sheetUrl = m.payload.url; return { data: "Rep,Q1\nAda,120\nBen,90\n" }; }
+            if (m.type === "PYTHON_EXEC") { pyTable = m.payload.table; return { data: { ok: true, value: "210", stdout: "" } }; }
+            return undefined;
+        },
+    });
+    await world.ml.pythonExec("return df['Q1'].sum()", { sheet: "https://docs.google.com/spreadsheets/d/ABC123/edit#gid=42" });
+    assert.equal(sheetUrl, "https://docs.google.com/spreadsheets/d/ABC123/export?format=csv&gid=42", "id + gid → the CSV export endpoint");
+    assert.deepEqual(pyTable.columns, ["Rep", "Q1"]);
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(pyTable.rows)), [["Ada", 120], ["Ben", 90]], "Q1 auto-cast to numbers, so pandas sums instead of concatenating");
+});
+
+test("pythonExec sheet: a URL with no gid defaults to the first tab (gid=0)", async () => {
+    let sheetUrl = null;
+    const world = loadPageWorld({
+        onRuntimeMessage: (m) => {
+            if (m.type === "FETCH_SHEET") { sheetUrl = m.payload.url; return { data: "a\n1\n" }; }
+            return { data: { ok: true, value: "1", stdout: "" } };
+        },
+    });
+    await world.ml.pythonExec("return 1", { sheet: "https://docs.google.com/spreadsheets/d/XYZ/edit" });
+    assert.match(sheetUrl, /export\?format=csv&gid=0$/);
+});
+
+test("pythonExec sheet: a non-Google-Sheets URL errors before any fetch", async () => {
+    let fetched = false;
+    const world = loadPageWorld({
+        onRuntimeMessage: (m) => { if (m.type === "FETCH_SHEET") fetched = true; return { data: { ok: true, value: 1, stdout: "" } }; },
+    });
+    await assert.rejects(world.ml.pythonExec("return 1", { sheet: "https://example.com/foo" }), /isn't a Google Sheets URL/);
+    assert.equal(fetched, false, "we never issue the privileged fetch for a non-Sheets URL");
+});
+
+test("parseCsv (via sheet): quoted fields with embedded commas, newlines, and doubled quotes", async () => {
+    let cols = null, rows = null;
+    const csv = 'Name,Note\n"Ada, L.","said ""hi""\nthere"\nBen,plain\n';
+    const world = loadPageWorld({
+        onRuntimeMessage: (m) => {
+            if (m.type === "FETCH_SHEET") return { data: csv };
+            if (m.type === "PYTHON_EXEC") { cols = m.payload.table.columns; rows = m.payload.table.rows; return { data: { ok: true, value: 1, stdout: "" } }; }
+            return undefined;
+        },
+    });
+    // tableRaw so the quoted text survives verbatim (no numeric cast).
+    await world.ml.pythonExec("return 1", { sheet: "https://docs.google.com/spreadsheets/d/Q/edit", tableRaw: true });
+    assert.deepEqual(cols, ["Name", "Note"]);
+    assert.deepEqual(JSON.parse(JSON.stringify(rows)), [["Ada, L.", 'said "hi"\nthere'], ["Ben", "plain"]]);
 });
 
 test("examples/spreadsheet.html ridiculous table: dirty cells coerce to null, the rest sum to 116153", () => {

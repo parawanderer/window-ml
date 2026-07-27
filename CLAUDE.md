@@ -40,7 +40,7 @@ To add a new one, touch three files:
 
 Existing message types: `FETCH_LLM`, `LIST_MODELS`, `GET_MODEL`, `GET_CONFIG`,
 `SET_MODEL`, `MODEL_CAPS`, `OLLAMA_PS`, `OLLAMA_UNLOAD`, `FETCH_IMAGE_B64`,
-`CAPTURE_TAB`, `SAVE_SESSION`, `GET_SESSION`.
+`CAPTURE_TAB`, `SAVE_SESSION`, `GET_SESSION`, `PYTHON_EXEC`, `FETCH_SHEET`.
 
 **Resume (`ml.resumeChat(hash)`).** Continue a chat by its session hash.
 Same-tab sessions resume from an in-memory `sessionRegistry` (every `createChat`
@@ -420,7 +420,31 @@ table is walked page-side (`extractTable`, case-preserving; col/rowspans or a no
 back to `pd.read_html(outerHTML)` with the bs4 parser). Numeric columns are **auto-cast
 page-side** (`dom.ts` `castTableColumns`, pure/tested: a column ≥90%-numeric after stripping
 currency/commas/%/accounting-parens → `number|null`, else strings) so `df.sum()` adds instead
-of string-CONCATENATING — `{ tableRaw }` skips it for ZIP/SKU/leading-zero IDs. The tool
+of string-CONCATENATING — `{ tableRaw }` skips it for ZIP/SKU/leading-zero IDs. **`{ sheet }`**
+loads a **Google Sheet** as `df` — the DOM path is useless (Sheets renders to canvas), so
+`googleSheetCsvUrl` (dom.ts, pure) derives the `/export?format=csv&gid=…` endpoint and a new
+`FETCH_SHEET` background message fetches it **credentialed** (`credentials:"include"` → the
+user's own Google login, so PRIVATE corporate sheets work), then `parseCsv` (dom.ts,
+RFC-4180) + the same `castTableColumns` pipeline. No access / not signed in → Google serves an
+HTML login page instead of CSV; `fetchSheetCsv` detects that and returns an actionable error
+telling the model to **have the USER authenticate in-browser and retry**. `sheet` is a Sheets
+URL (an **external** one **always** requires approval — it's a privileged cross-origin fetch)
+**or `'current'`** (the sheet you're already on → auto-approvable like a readonly survey; the
+tool description gains a "YOU ARE CURRENTLY ON A GOOGLE SHEET" hint when `location` is one). An
+approved external sheet is **cached per page-session** (`approvedSheets`, keyed by `googleSheetId`
+— the spreadsheet, so its tabs share it): a repeat call to the same sheet skips the re-prompt
+(lifts only the external-sheet escalation, so a non-autoPy run is still gated on the code). The
+approval prompt **hoists the data source** (`renderArgs` ranks `sheet`/`table`/`image` above the
+`code` blob) so the human sees *which* sheet before the script. **Host access:** the SW's
+credentialed fetch needs the `docs.google.com` host permission, which "On click" site-access
+withholds (activeTab covers content scripts, NOT the background fetch) — so a withheld fetch
+returns an actionable error (walks the user to the popup's **"Enable Google Sheets access"**
+button, or "On all sites"), best-effort `chrome.action.openPopup()`s to it, and the popup's
+collapsible **Permissions** block one-click `chrome.permissions.request`s the Google origins
+(docs/accounts/googleusercontent — the export can redirect across them). And when data is
+preloaded but the code errors trying to (re)load it (`pd.read_csv('current')`/read_html/open/
+requests), the tool **appends a redirect hint** ("use `df`/`img` directly") — catching any
+hallucinated load pattern on the failure instead of enumerating them. The tool
 description frames the sandbox as "appending a cell to a live Jupyter notebook" (img/img_np/df
 are pre-loaded) with a df/img snippet. Output (stdout/value/error) is capped by `clipOut`
 (dom.ts, shared with `exec`) with a `[+N chars truncated]` count so a runaway result can't
@@ -605,7 +629,18 @@ it per format: `params.think` (openai) vs a top-level `think` (ollama native).
   `GET_CONFIG` public subset — the page can't read the filter.
 - The background's cross-origin fetches rely on `<all_urls>` host permission,
   which "On click" site access withholds for third-party hosts (e.g. image
-  CDNs) — a known limitation, not a bug.
+  CDNs) — a known limitation, not a bug. The popup's **Permissions → "Enable
+  Google Sheets access"** requests just the Google origins at runtime
+  (`chrome.permissions.request`), a narrower grant than "On all sites".
+- **A privileged/credentialed background fetch MUST validate its target host —
+  the client-side approval gate does NOT protect it.** The agent approval lives
+  in `injected.ts`, but raw messages (`FETCH_SHEET`, …) are reachable by any page
+  through the content-script relay, so a hostile page can call the handler
+  directly. `FETCH_SHEET` fetches `credentials:"include"` (the user's cookies),
+  so it's hard-locked to the `docs.google.com/.../export?` shape (`SHEET_URL_OK`)
+  — without it, it's a cookie-authenticated "read any URL" exfil primitive.
+  (`FETCH_IMAGE_B64` is *uncredentialed* — default `same-origin` — so it can read
+  cross-origin public bytes but not the user's authenticated data.)
 
 ## Gotchas (hard-won)
 

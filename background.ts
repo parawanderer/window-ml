@@ -718,6 +718,14 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             .catch((err) => sendResponse({ error: err?.message || String(err) }));
         return true;   // async
     }
+    if (message.type === "FETCH_SHEET") {
+        // Fetch a Google Sheet's CSV export CREDENTIALED (the user's own Google session), so
+        // it works on private corporate sheets — the DOM path is useless (Sheets is canvas).
+        fetchSheetCsv(message.payload?.url)
+            .then((csv) => sendResponse({ data: csv }))
+            .catch((err) => sendResponse({ error: err?.message || String(err) }));
+        return true;   // async
+    }
     if (message.type === "FETCH_LLM") {
         fetchLLM(message.payload)
             // raw (ml.step) returns { content, tool_calls } as data; normal chat
@@ -905,6 +913,60 @@ chrome.runtime.onConnect.addListener((port) => {
         if (set) { set.delete(port); if (!set.size) devtoolsPorts.delete(tid); }
     });
 });
+
+// ---- Google Sheets CSV fetch (python_exec `sheet`) ----
+// Fetch the sheet's CSV export with the user's own cookies (credentials:"include"), so a
+// PRIVATE sheet they can see works — the page DOM can't (Sheets renders to canvas). If they
+// aren't signed in / lack access, Google redirects the export to an HTML login page instead
+// of CSV; detect that and return an actionable error the model relays to the user.
+// Only a Google Sheets CSV-export URL may be fetched here. This is the ONLY defense against a
+// hostile page: the approval gate lives client-side (injected.ts), but the raw FETCH_SHEET message
+// is reachable by any page via the content-script relay, and this fetch is CREDENTIALED — without
+// this check it's a cookie-authenticated "read any URL" (SSRF/exfil) primitive. Confine it to the
+// docs.google.com export endpoint; Google's own redirects (login/large-file) are still followed.
+const SHEET_URL_OK = /^https:\/\/docs\.google\.com\/spreadsheets\/d\/[A-Za-z0-9_-]+\/export\?/;
+
+async function fetchSheetCsv(url: string): Promise<string> {
+    if (!url) throw new Error("No sheet URL.");
+    if (!SHEET_URL_OK.test(url)) throw new Error("Refused: only Google Sheets CSV-export URLs can be fetched here.");
+    let res: Response;
+    try { res = await fetch(url, { credentials: "include", redirect: "follow" }); }
+    catch (e: any) {
+        // A network throw here is usually the extension's SERVICE-WORKER host access being WITHHELD:
+        // "On click" grants activeTab (content scripts on the tab) but NOT the background fetch's
+        // host permission, so the CSV fetch is unauthorized even while you're ON the sheet. And the
+        // export can REDIRECT (login → accounts.google.com; big files → *.googleusercontent.com), so
+        // whitelisting only docs.google.com can still fail on the hop → recommend "On all sites".
+        // The popup's "Enable Google Sheets access" button requests these persistently in one click.
+        let granted = true;
+        try { granted = await chrome.permissions.contains({ origins: ["https://docs.google.com/*"] }); } catch { /* older Chrome → assume granted, fall through to the generic error */ }
+        if (!granted) {
+            // Nudge the user straight to the one-click grant: pop the toolbar popup, where the
+            // "Permissions → Enable" button lives. Best-effort — openPopup needs a focused window
+            // and is Chrome 127+, so tolerate a throw; the message below still guides them.
+            try { await (chrome.action as any).openPopup?.(); } catch { /* no gesture / unsupported → rely on the message */ }
+            throw new Error(
+                "Can't fetch this Google Sheet — the extension has no host access to docs.google.com (\"On click\" " +
+                "site access lets it run on the page but NOT make the background request that pulls the CSV). " +
+                "Tell the USER: I've opened this extension's toolbar popup — under \"Permissions\", click \"Enable " +
+                "Google Sheets access\" (one click). If it didn't open, click the extension's icon in the browser " +
+                "toolbar and do the same. (Or: the browser's Extensions manager → this extension → \"Site access\" " +
+                "→ \"On all sites\", recommended since the export can redirect across Google domains.) Then have them " +
+                "ask me to try again. It's a browser permission, not a Google login."
+            );
+        }
+        throw new Error(`Couldn't reach the sheet (${e?.message || e}).`);
+    }
+    const body = await res.text();
+    const ct = res.headers.get("content-type") || "";
+    if (!res.ok || /text\/html/i.test(ct) || /^﻿?\s*<(!doctype|html)\b/i.test(body)) {
+        throw new Error(
+            "Not signed in to Google, or no access to this sheet. Tell the USER to open the " +
+            "sheet's link in this browser, sign in (or request access), then ask you to try again."
+        );
+    }
+    return body;
+}
 
 // ---- Offscreen Pyodide host (python_exec) ----
 // The service worker can't run WASM, so python_exec runs in an offscreen document

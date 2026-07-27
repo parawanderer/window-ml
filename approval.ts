@@ -7,7 +7,18 @@ import type { ApprovalRequest, ApprovalDecision } from "./contract";
 import { clipOut, elPath } from "./dom";
 import { suspiciousArgsWarning } from "./security";
 
+// In an approval prompt the DATA SOURCE (which sheet/table/image/url this call touches) is what
+// the human most needs to see — but a long `code`/`js` blob renders first by insertion order and
+// pushes it off-screen. Rank context keys to the top and the code blob to the bottom (stable sort
+// keeps everything else in insertion order), so "which sheet is it pulling?" is the first line.
+const ARG_FRONT = ["sheet", "table", "url", "image", "selector", "index", "mode", "cast", "tableRaw"];
+const ARG_BACK = ["code", "js"];
+const argRank = (k: string): number => {
+    const f = ARG_FRONT.indexOf(k);
+    return f !== -1 ? f : ARG_BACK.includes(k) ? 1000 : 500;
+};
 export const renderArgs = (args: unknown): string => Object.entries(args || {})
+    .sort((a, b) => argRank(a[0]) - argRank(b[0]))
     .map(([k, v]) => `${k}:\n${typeof v === "string" ? v : JSON.stringify(v)}`)
     .join("\n\n");
 
