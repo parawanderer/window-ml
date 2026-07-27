@@ -107,6 +107,12 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .set-test-title { color: var(--fg-dim); font-size: 0.82em; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; }
 .test-btn { align-self: flex-end; background: var(--panel-2); color: var(--fg); border: none; border-radius: 5px; padding: 4px 12px; font-size: 0.92em; cursor: pointer; }
 .test-btn:hover { background: var(--panel-2-hover); }
+.test-btn:disabled { opacity: .6; cursor: default; }
+/* Python-sandbox environment probe row: a button + the version readout beside it. */
+.py-env { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.py-env .test-btn { align-self: auto; }
+.py-env-ok { color: var(--fg-dim); font: 0.85em ui-monospace, SFMono-Regular, Menlo, monospace; }
+.py-env-err { color: var(--err); font-size: 0.85em; }
 .test-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 16px; }
 .test-row { display: flex; align-items: center; gap: 7px; font-size: 0.92em; min-width: 0; position: relative; }
 .test-row:hover .tt-pop { opacity: 1; }

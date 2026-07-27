@@ -6,6 +6,7 @@
 import { signal } from "@preact/signals";
 import type { MlConfig, ApiFormat, Theme, DebugMode, LoadedModel } from "../contract";
 import { DEFAULT_CONFIG, DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX, detectGroundingModel, modelFilterAllows } from "../contract";
+import { PY_PACKAGES } from "../python-env";
 import {
     config, models, fontScale, codeWrap, codeLineNumbers,
     MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY,
@@ -20,6 +21,28 @@ function setField(key: keyof MlConfig, value: string | number | boolean, persist
     config.value = { ...config.value, [key]: value };
     if (persist) chrome.storage.sync.set({ [key]: value });
     if (key === "theme") applyTheme();
+}
+
+// --- Python sandbox environment probe (Settings → Advanced) --------------------
+// The packages are static (PY_PACKAGES). The VERSION needs the real sandbox, so it's a
+// one-click probe (not auto — spinning up ~24 MB of Pyodide just to open Settings is rude).
+// The settings iframe messages the background's PYTHON_EXEC directly (like the model tests).
+const pyEnv = signal<{ state: "idle" | "probing" | "ok" | "err"; text?: string }>({ state: "idle" });
+const PY_PROBE = "import sys\n_out = {'python': sys.version.split()[0]}\n" +
+    "for _l, _m in [('numpy','numpy'), ('Pillow','PIL'), ('pandas','pandas'), ('scipy','scipy')]:\n" +
+    "    try:\n        _out[_l] = getattr(__import__(_m), '__version__', '?')\n    except Exception:\n        _out[_l] = '—'\n" +
+    "return _out";
+function probePython(): void {
+    pyEnv.value = { state: "probing" };
+    chrome.runtime.sendMessage({ type: "PYTHON_EXEC", payload: { code: PY_PROBE, hardened: true } }, (resp: any) => {
+        if (chrome.runtime.lastError) { pyEnv.value = { state: "err", text: chrome.runtime.lastError.message }; return; }
+        if (resp?.error) { pyEnv.value = { state: "err", text: resp.error }; return; }
+        const r = resp?.data;
+        if (!r || !r.ok) { pyEnv.value = { state: "err", text: (r && r.error) || "probe failed" }; return; }
+        const v = (r.value || {}) as Record<string, string>;
+        const pkgs = Object.entries(v).filter(([k]) => k !== "python").map(([k, ver]) => `${k} ${ver}`).join(" · ");
+        pyEnv.value = { state: "ok", text: `Python ${v.python || "?"} · ${pkgs}` };
+    });
 }
 
 // Clarification text — same wording as the popup's hints (keep in sync).
@@ -421,6 +444,7 @@ export function Settings() {
             </> : null}
 
             {tab === "advanced" ? <>
+                <div class="set-group">JavaScript</div>
                 <div class="set-note">Auto-approve <b>read-only</b> <code>exec</code> surveys (querySelectorAll → filter → map, no mutation). They run through a mediated interpreter that never touches <code>window</code>/<code>fetch</code> and never <code>eval</code>s a string (so it also works on Trusted-Types pages). Anything mutating or unrecognised still asks for approval.</div>
                 <label class="set-check">
                     <input type="checkbox" checked={c.autoApproveReadonly}
@@ -435,6 +459,18 @@ export function Settings() {
                         onChange={(e: any) => setField("autoApprovePython", e.target.checked)} />
                     <Lbl tip={TIP.autoApprovePython}>Auto-approve readonly python_exec calls</Lbl>
                 </label>
+
+                <div class="set-field"><span>Environment</span>
+                    <div class="set-hint">Bundled packages: {PY_PACKAGES.map(p => p.load).join(", ")}, + the Python stdlib.</div>
+                    <div class="py-env">
+                        <button class="test-btn" disabled={pyEnv.value.state === "probing"} onClick={probePython}>
+                            {pyEnv.value.state === "probing" ? "probing…" : "Probe sandbox"}
+                        </button>
+                        {pyEnv.value.state === "ok" ? <span class="py-env-ok">{pyEnv.value.text}</span> : null}
+                        {pyEnv.value.state === "err" ? <span class="py-env-err">{pyEnv.value.text}</span> : null}
+                    </div>
+                    <div class="set-hint">Runs a tiny script in the sandbox to report the actual Python + package versions (first run loads Pyodide, ~1–2s).</div>
+                </div>
             </> : null}
             </div>
         </div>
