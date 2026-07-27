@@ -884,17 +884,21 @@ export const buildPythonTool = (ml: MlApi): MlTool =>
                 cast: { type: "string", enum: ["pt", "box"], description: "Interpret the return as a clickable coordinate: 'pt' (needs [x,y]/{x,y}) or 'box' ([x1,y1,x2,y2]/{left,top,right,bottom}). Omit for a raw text result." },
                 mode: { type: "string", enum: ["readonly", "full"], description: "'readonly' (default) = isolated sandbox, no network/JS scope (auto-approvable). 'full' = network enabled; ALWAYS asks for approval. Use 'readonly' for pure compute over the inputs." },
                 margin: { type: "number", description: "For an @pt image only: the crop RADIUS in px around the point (a bigger margin = more context). Omit for the default. Ignored for @box / CSS selectors." },
-                table: { type: "string", description: "Optional CSS selector for a page table (<table> or ARIA grid) → loaded as `df` (pandas.DataFrame). Use for spreadsheet/table math instead of eyeballing cells." },
+                table: { type: "string", description: "Optional CSS selector for a page table (<table> or ARIA grid) → loaded as `df` (pandas.DataFrame). Use for spreadsheet/table math instead of eyeballing cells. Matches the FIRST element if several match — narrow it (id / :nth-of-type) to pick another." },
                 tableRaw: { type: "boolean", description: "Load `table` cells as raw STRINGS (skip the default numeric/currency auto-cast). Use only for ZIP/SKU/leading-zero IDs that casting would corrupt." },
             },
             required: ["code"],
         },
         run: async ({ code, image, cast, mode, margin, table, tableRaw }: { code: string; image?: string; cast?: "pt" | "box"; mode?: "readonly" | "full"; margin?: number; table?: string; tableRaw?: boolean }): Promise<string | ToolResult> => {
+            // A `table` selector loads the FIRST match — warn if it's ambiguous (loading the
+            // wrong table and computing on it would silently give wrong numbers).
+            let tableNote = "";
+            if (table) { try { const n = ml._queryAll(table).length; if (n > 1) tableNote = `⚠ selector "${table}" matched ${n} elements — loaded the FIRST as \`df\`. If the numbers look off, narrow it (an id, or :nth-of-type(N)) to pick another.\n\n`; } catch { /* invalid selector → pythonExec/_resolveTable errors below */ } }
             const r = await ml.pythonExec(code, { image: image || null, mode: mode === "full" ? "full" : "readonly", margin: typeof margin === "number" ? margin : 0, table: table || null, tableRaw: !!tableRaw });
             // Cap stdout/value/error fed back to the model so a runaway result (e.g. a
             // string-concat blowup) can't flood the context — with a "[+N truncated]" note.
             const stdoutClipped = clipOut(r.stdout || "", PY_OUT_MAX);
-            const pre = stdoutClipped ? `stdout:\n${stdoutClipped}\n\n` : "";
+            const pre = tableNote + (stdoutClipped ? `stdout:\n${stdoutClipped}\n\n` : "");
             const stringify = (x: unknown) => clipOut(typeof x === "string" ? x : JSON.stringify(x), PY_OUT_MAX);
             // The In slot: a notebook-cell header (cell mode + input image/table + source). Shared
             // by every return path. The Out slot varies (stdout + one of image/token/value/error).
@@ -905,7 +909,7 @@ export const buildPythonTool = (ml: MlApi): MlTool =>
             const done = (content: string, out: Omit<Extract<RenderDescriptor, { type: "python-out" }>, "type" | "stdout">): ToolResult =>
                 ({ content, renderIn, render: { type: "python-out", stdout, ...out } });
 
-            if (!r.ok) { const err = clipOut(r.error || "", PY_OUT_MAX); return done(`Python error: ${err}${stdoutClipped ? `\n\nstdout:\n${stdoutClipped}` : ""}`, { error: err }); }
+            if (!r.ok) { const err = clipOut(r.error || "", PY_OUT_MAX); return done(`${tableNote}Python error: ${err}${stdoutClipped ? `\n\nstdout:\n${stdoutClipped}` : ""}`, { error: err }); }
             const v = r.value;
             // An image return is unambiguous → always shown (no cast needed).
             if (typeof v === "string" && /^data:image\//.test(v)) {

@@ -479,6 +479,79 @@ const PY_MODE = {
     pt: { label: "cast: pt", tip: "The return is validated as a point ([x,y]/{x,y}) and minted as a clickable @pt." },
     box: { label: "cast: box", tip: "The return is validated as a box and minted as an @box region." },
 } as const;
+// A Jupyter/DataFrame-style preview of the injected `df`: a numbered index gutter, sticky
+// header, zebra rows + vertical rules, right-aligned monospace numbers — plus click-to-sort
+// (cycles asc→desc→none, preserving the pandas index), drag-to-resize columns, collapse, and
+// copy-CSV. Zero-dep (no grid library — it's a capped debug preview). Human-only, so it shows
+// up to PY_DF_ROWS rows, not the model's cap.
+const PY_DF_ROWS = 200;
+const csvField = (v: string | number | null): string => {
+    const s = v == null ? "" : String(v);
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
+function PyDfTable({ columns, rows }: { columns: string[]; rows: (string | number | null)[][] }) {
+    const cols = columns.length ? columns : (rows[0] || []).map((_, i) => String(i));
+    const [collapsed, setCollapsed] = useState(false);
+    const [sort, setSort] = useState<{ c: number; dir: 1 | -1 } | null>(null);
+    const [widths, setWidths] = useState<Record<number, number>>({});
+    const [copied, setCopied] = useState(false);
+
+    // Sort a [originalIndex, row] view so the gutter keeps the pandas index (like sort_values);
+    // numbers compare numerically, strings by locale, nulls (NaN) always sink to the bottom.
+    let view = rows.map((r, i) => [i, r] as [number, (string | number | null)[]]);
+    if (sort) view = [...view].sort(([, a], [, b]) => {
+        const x = a[sort.c], y = b[sort.c];
+        if (x == null) return y == null ? 0 : 1;
+        if (y == null) return -1;
+        return (typeof x === "number" && typeof y === "number" ? x - y : String(x).localeCompare(String(y))) * sort.dir;
+    });
+    const shown = view.slice(0, PY_DF_ROWS);
+
+    const cycleSort = (c: number) => setSort(s => !s || s.c !== c ? { c, dir: 1 } : s.dir === 1 ? { c, dir: -1 } : null);
+    const copyCsv = () => {
+        const csv = [cols.map(csvField).join(","), ...rows.map(r => cols.map((_, j) => csvField(r[j])).join(","))].join("\n");
+        navigator.clipboard?.writeText(csv).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200); }, () => {});
+    };
+    const startResize = (c: number, e: any) => {
+        e.preventDefault(); e.stopPropagation();
+        const th = (e.currentTarget as HTMLElement).parentElement as HTMLElement;
+        const startX = e.clientX, startW = widths[c] ?? th.offsetWidth;
+        const onMove = (ev: PointerEvent) => setWidths(w => ({ ...w, [c]: Math.max(40, startW + ev.clientX - startX) }));
+        const onUp = () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp); };
+        window.addEventListener("pointermove", onMove); window.addEventListener("pointerup", onUp);
+    };
+
+    return (
+        <div class="r-df">
+            <div class="r-df-bar">
+                <button class="r-df-btn" onClick={() => setCollapsed(v => !v)}>{collapsed ? "▸ show table" : "▾ hide table"}</button>
+                {!collapsed ? <button class="r-df-btn" onClick={copyCsv}>{copied ? "copied ✓" : "copy CSV"}</button> : null}
+            </div>
+            {collapsed ? null : <>
+                <div class="r-df-scroll">
+                    <table class="r-df-table">
+                        <thead><tr>
+                            <th class="r-df-idx"></th>
+                            {cols.map((c, j) => (
+                                <th key={j} style={widths[j] ? { width: `${widths[j]}px` } : undefined} onClick={() => cycleSort(j)} title="click to sort">
+                                    {c}{sort && sort.c === j ? <span class="r-df-sort">{sort.dir === 1 ? " ▲" : " ▼"}</span> : null}
+                                    <span class="r-df-resize" title="drag to resize" onPointerDown={(e: any) => startResize(j, e)} onClick={(e: any) => e.stopPropagation()} />
+                                </th>
+                            ))}
+                        </tr></thead>
+                        <tbody>{shown.map(([origIdx, row], i) => (
+                            <tr key={i}>
+                                <td class="r-df-idx">{origIdx}</td>
+                                {cols.map((_, j) => { const c = row[j]; return <td key={j} class={typeof c === "number" ? "r-td-num" : (c == null ? "r-td-nan" : undefined)}>{c == null ? "NaN" : String(c)}</td>; })}
+                            </tr>
+                        ))}</tbody>
+                    </table>
+                </div>
+                {rows.length > PY_DF_ROWS ? <div class="dim r-py-more">… {rows.length - PY_DF_ROWS} more rows</div> : null}
+            </>}
+        </div>
+    );
+}
 function PythonInRender({ d }: { d: Extract<RenderDescriptor, { type: "python-in" }> }) {
     return (
         <div class="r-python r-py-in">
@@ -486,8 +559,7 @@ function PythonInRender({ d }: { d: Extract<RenderDescriptor, { type: "python-in
             {d.image ? <div class="r-image r-py-img"><ClickableImg src={d.image} alt="input image" /><div class="r-image-label">input image (img / img_np)</div></div> : null}
             {d.table ? <div class="r-py-table">
                 <div class="r-py-lbl">input table → df ({d.table.rows.length} × {d.table.columns.length || d.table.rows[0]?.length || 0})</div>
-                <RenderTable columns={d.table.columns.length ? d.table.columns : (d.table.rows[0] || []).map((_, i) => String(i))} rows={d.table.rows.slice(0, 20)} />
-                {d.table.rows.length > 20 ? <div class="dim r-py-more">… {d.table.rows.length - 20} more rows</div> : null}
+                <PyDfTable columns={d.table.columns} rows={d.table.rows} />
             </div> : null}
             <Code text={d.code} lang="python" />
         </div>

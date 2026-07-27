@@ -347,6 +347,11 @@ test("describeElement describes the first match (+ node) and handles bad input",
     assert.equal(res.elements[0].tagName, "DIV");
     assert.match(run(ml, "describeElement", { selector: "((" }), /Invalid selector/);
     assert.match(run(ml, "describeElement", { selector: ".nope" }), /No element matches/);
+    // A single-element tool warns when the selector was ambiguous (used the first of N).
+    const { ml: ml2 } = loadDomWorld('<div class="row">a</div><div class="row">b</div><div class="row">c</div>');
+    assert.match(run(ml2, "describeElement", { selector: ".row" }).content, /matched 3 elements — using the FIRST/);
+    assert.match(run(ml2, "ancestors", { selector: ".row" }).content, /matched 3 elements — using the FIRST/);
+    assert.doesNotMatch(run(ml, "describeElement", { selector: ".card" }).content, /matched/); // unique → no note
 });
 
 test("selectorError blames :contains placement only when it truly survives mid-selector", () => {
@@ -1493,9 +1498,47 @@ test("_resolveTable: a non-table element falls back to its outerHTML", () => {
     assert.match(t.html, /not a table/);
 });
 
+test("python_exec tool: an ambiguous `table` selector warns it loaded the FIRST", async () => {
+    const { ml } = loadDomWorld(`<table class="t"><tr><td>1</td></tr></table><table class="t"><tr><td>2</td></tr></table>`);
+    ml.pythonExec = async () => ({ ok: true, value: "ok", stdout: "", inputTable: { columns: [], rows: [[1]] } });
+    const out = await ml.pythonTool().run({ code: "return 1", table: ".t" });
+    assert.match(out.content, /matched 2 elements — loaded the FIRST/);
+    // A unique selector → no warning.
+    const { ml: ml2 } = loadDomWorld(`<table id="only"><tr><td>1</td></tr></table>`);
+    ml2.pythonExec = async () => ({ ok: true, value: "ok", stdout: "" });
+    assert.doesNotMatch((await ml2.pythonTool().run({ code: "return 1", table: "#only" })).content, /matched/);
+});
+
 test("_resolveTable: throws for a selector that matches nothing", () => {
     const { ml } = loadDomWorld(`<div></div>`);
     assert.throws(() => ml._resolveTable("#nope"), /no table element matches/);
+});
+
+test("examples/spreadsheet.html ridiculous table: dirty cells coerce to null, the rest sum to 116153", () => {
+    // Rebuild the demo's giant table the same deterministic way (seed 1337) and confirm the
+    // auto-cast turns the formatted/junk cells into number|null so the sum matches the key.
+    const mulberry32 = (a) => () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+    const REGIONS = ["North", "South", "East", "West", "Central"], MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const rand = mulberry32(1337), N = 40, data = [];
+    for (let i = 0; i < N; i++) { const mv = []; for (let m = 0; m < 12; m++) mv.push(Math.floor(rand() * 400) + 50); data.push({ id: String(i + 1).padStart(5, "0"), rep: "Rep " + (i + 1), region: REGIONS[i % 5], mv }); }
+    const display = data.map(d => d.mv.map(v => String(v)));
+    for (const [r, m, s] of [[3, 2, ""], [8, 6, "N/A"], [13, 1, "1,250"], [18, 8, "$300"], [23, 4, "(180)"], [28, 10, "12O0"], [33, 7, "  "]]) display[r][m] = s;
+    const cols = ["ID", "Rep", "Region", ...MONTHS];
+    const body = data.map((d, i) => `<tr><td>${d.id}</td><td>${d.rep}</td><td>${d.region}</td>${display[i].map(s => `<td>${s}</td>`).join("")}</tr>`).join("");
+    const html = `<table id="bigsales"><thead><tr>${cols.map(c => `<th>${c}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table>`;
+
+    const { ml } = loadDomWorld(html);
+    const rows = JSON.parse(JSON.stringify(ml._resolveTable("#bigsales").rows));
+    // month columns are indices 3..14; sum the numbers (nulls skipped, like pandas NaN).
+    const total = rows.reduce((s, r) => s + r.slice(3).reduce((a, c) => a + (typeof c === "number" ? c : 0), 0), 0);
+    assert.equal(total, 116153, "matches the demo's documented grand total");
+    // The formatted cells cast; the junk (typo, blank, N/A) → null.
+    assert.equal(rows[13][1 + 3], 1250, "1,250 → 1250");           // Feb col
+    assert.equal(rows[23][4 + 3], -180, "(180) → -180");           // May col
+    assert.equal(rows[28][10 + 3], null, "12O0 typo → null");      // Nov col
+    // ID column has leading zeros → default cast drops them; tableRaw preserves.
+    assert.equal(typeof rows[0][0], "number");
+    assert.equal(JSON.parse(JSON.stringify(ml._resolveTable("#bigsales", true).rows))[0][0], "00001");
 });
 
 test("examples/spreadsheet.html: the #sales table extracts to rows that sum to the documented answer", () => {

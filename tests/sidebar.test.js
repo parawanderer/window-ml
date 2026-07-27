@@ -1177,6 +1177,28 @@ test("export: keeps the raw args alongside a rendered In (both, since there's no
     assert.match(text, /"cast": "pt"/, "the raw args carry the full tool call the model emitted (not just the code)");
 });
 
+test("export: a python_exec df renders as a real <table> (PDF) and a GFM table (markdown)", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("pytab", "compute", "m", 10));
+    await w.dispatch(agentStep("pytab", 1, {
+        tool: "python_exec", arguments: { code: "return df['Q1'].sum()", table: "#sales" }, result: "210",
+        renderIn: { type: "python-in", mode: "script", code: "return df['Q1'].sum()", table: { columns: ["Rep", "Q1"], rows: [["Ada", 120], ["Ben", 90]] } },
+        renderOut: { type: "python-out", value: "210" },
+    }));
+    await w.dispatch(agentResult("pytab", "done", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+
+    const md = await (await captureExport(w)).blob.text();
+    assert.match(md, /\| Rep \| Q1 \|/, "markdown → GFM table header");
+    assert.match(md, /\| Ada \| 120 \|/, "markdown → GFM row (all rows, uncapped)");
+
+    const { html } = await capturePrint(w);
+    assert.match(html, /<table class="dftable">/, "PDF → a real table, not markdown pipes");
+    assert.match(html, /<td class="num">120<\/td>/, "numeric cell tagged for right-align");
+    assert.match(html, /<td class="">Ada<\/td>/, "string cell");
+});
+
 test("export: skips a usage-only step (no bare 'Step N · ?' header)", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("expu", "answer directly", "gemma4:31b"));

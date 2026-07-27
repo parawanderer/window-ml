@@ -9,6 +9,11 @@ import { truncate, clipOut, elPath, normalizeText, clickSelector, elLine, descri
 import { INTERACTIVE_SEL, roleOf, accessibleName, ariaState, hasLayout, styleHidden, isFaded } from "./a11y";
 import { pageContext } from "./util";
 
+// A single-element tool (describeElement/ancestors) uses the FIRST of N matches — say so, so
+// a loose selector's wrong pick doesn't silently mislead the run (the model can narrow it).
+const firstOfNote = (selector: string, count: number): string =>
+    count > 1 ? `⚠ "${selector}" matched ${count} elements — using the FIRST (#0). Narrow it (an id, or :nth-of-type(N)), or countMatches to list them.\n\n` : "";
+
 // Pass this array (or a superset — `[...ml.domTools, myTool]`) to ml.agent. Each
 // tool returns a short string; observations never balloon into raw HTML.
 export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): MlTool[] => {
@@ -149,11 +154,12 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
                 required: ["selector"]
             },
             run: ({ selector, depth = 2 }: { selector: string; depth?: number }): string | ToolResult => {
-                let el: Element | undefined;
-                try { el = queryAll(selector)[0]; }
+                let els: Element[];
+                try { els = queryAll(selector); }
                 catch (e) { return selectorError(selector, e as Error); }
+                const el = els[0];
                 if (!el) return `No element matches "${selector}".`;
-                return { content: describeSkeleton(el, Math.min(Math.max(depth, 0), 4)), elements: [el] };
+                return { content: firstOfNote(selector, els.length) + describeSkeleton(el, Math.min(Math.max(depth, 0), 4)), elements: [el] };
             }
         }),
         T({
@@ -168,9 +174,10 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
                 required: ["selector"]
             },
             run: ({ selector }: { selector: string }): string | ToolResult => {
-                let el: Element | undefined;
-                try { el = queryAll(selector)[0]; }
+                let els: Element[];
+                try { els = queryAll(selector); }
                 catch (e) { return selectorError(selector, e as Error); }
+                const el = els[0];
                 if (!el) return `No element matches "${selector}".`;
                 const chain: string[] = [];
                 let node: Node | null = el, i = 0;
@@ -179,7 +186,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
                     node = node.parentElement;
                     i++;
                 }
-                return { content: chain.join("\n"), elements: [el] };
+                return { content: firstOfNote(selector, els.length) + chain.join("\n"), elements: [el] };
             }
         }),
         T({

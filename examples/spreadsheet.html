@@ -71,5 +71,80 @@
 
   <p class="hint">The expected answers live in an HTML comment (view source) so the DOM text carries no
   totals — a correct answer has to come from <code>df</code>, not from reading a number off the page.</p>
+
+  <!-- ───────────────────────── Ridiculous mode ───────────────────────── -->
+  <h1 style="margin-top:28px">😈 Ridiculous mode</h1>
+  <p>A big table (40 reps × 12 months) in a box that scrolls <b>both ways</b> — you can't see it all
+  at once, so eyeballing/transcribing every cell is hopeless. It also has <b>dirty cells</b>: blanks,
+  <code>N/A</code>, a comma <code>1,250</code>, currency <code>$300</code>, an accounting negative
+  <code>(180)</code>, and a typo <code>12O0</code> (letter O). The only sane path is
+  <code>python_exec({ table: "#bigsales" })</code> — the auto-cast coerces the formatted cells and
+  turns the junk into <code>NaN</code>, and pandas skips those in <code>.sum()</code>.</p>
+  <p><b>Try:</b> <code>await ml.agent("Grand total of ALL months across ALL reps (ignore bad/missing
+  cells), and the top region by total. Use python_exec on #bigsales — the table scrolls, don't try to
+  read it.", { extraTools: [ml.pythonTool()] })</code></p>
+
+  <!--
+    ANSWER KEY (JS-generated, seed 1337 — also console.logged when you open it):
+      • Grand total of all 12 months (dirty cells coerced to NaN, skipped) = 116153
+      • Region totals: West=24069, East=23508, South=23063, North=22994, Central=22519
+      • Top region by total = West (24069)
+      • The ID column has leading zeros (00001…) — casting drops them, so if a task needs IDs use tableRaw.
+  -->
+
+  <button id="bigToggle" style="padding:8px 14px;border:1px solid #ccc;border-radius:8px;cursor:pointer">
+    Show the giant scrolling table</button>
+  <div id="bigWrap" style="display:none;margin-top:14px">
+    <div id="bigScroll" style="max-height:460px;overflow:auto;border:1px solid #e2e2e6;border-radius:10px">
+      <table id="bigsales"></table>
+    </div>
+    <p class="hint">Scrolls vertically (40 rows) and horizontally (15 columns). The answer is in the
+    devtools console when you open this, and in an HTML comment above.</p>
+  </div>
+
+  <style>
+    #bigsales { border-collapse: separate; border-spacing: 0; width: max-content; }
+    #bigsales th, #bigsales td { border-bottom: 1px solid #eee; border-right: 1px solid #f2f2f4; padding: 6px 12px; white-space: nowrap; }
+    #bigsales thead th { position: sticky; top: 0; background: #fbfbfc; color: #555; z-index: 1; }
+    #bigsales td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    @media (prefers-color-scheme: dark) { #bigsales th, #bigsales td { border-color: #2a2a30; } #bigsales thead th { background: #202026; color: #aaa; } }
+  </style>
+
+  <script>
+    // Deterministic (seed 1337) so the answer key is stable. mulberry32 PRNG.
+    const mulberry32 = (a) => () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+    // Mirrors dom.ts parseNumericCell — so the console answer matches what python_exec computes.
+    const parseNum = (v) => { let s = String(v == null ? "" : v).trim(); if (!s) return null; const p = /^\((.*)\)$/.exec(s); if (p) s = "-" + p[1]; s = s.replace(/[,$€£¥%\s]/g, ""); if (!/^[-+]?(\d+\.?\d*|\.\d+)$/.test(s)) return null; const n = Number(s); return Number.isFinite(n) ? n : null; };
+    const REGIONS = ["North", "South", "East", "West", "Central"];
+    const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    let built = false;
+    function buildBig() {
+      if (built) return; built = true;
+      const rand = mulberry32(1337), N = 40, data = [];
+      for (let i = 0; i < N; i++) {
+        const mv = []; for (let m = 0; m < 12; m++) mv.push(Math.floor(rand() * 400) + 50);
+        data.push({ id: String(i + 1).padStart(5, "0"), rep: "Rep " + (i + 1), region: REGIONS[i % 5], mv });
+      }
+      const display = data.map(d => d.mv.map(v => String(v)));
+      for (const [r, m, s] of [[3, 2, ""], [8, 6, "N/A"], [13, 1, "1,250"], [18, 8, "$300"], [23, 4, "(180)"], [28, 10, "12O0"], [33, 7, "  "]]) display[r][m] = s;
+      const cols = ["ID", "Rep", "Region", ...MONTHS];
+      let html = "<thead><tr>" + cols.map(c => `<th>${c}</th>`).join("") + "</tr></thead><tbody>";
+      for (let i = 0; i < N; i++) html += `<tr><td>${data[i].id}</td><td>${data[i].rep}</td><td>${data[i].region}</td>${display[i].map(s => `<td class="num">${s}</td>`).join("")}</tr>`;
+      document.getElementById("bigsales").innerHTML = html + "</tbody>";
+      // Compute + log the answer key (dirty cells → null, skipped — like pandas NaN in .sum()).
+      let grand = 0; const byRegion = {};
+      for (let i = 0; i < N; i++) { let rs = 0; for (let m = 0; m < 12; m++) { const n = parseNum(display[i][m]); if (n != null) { grand += n; rs += n; } } byRegion[data[i].region] = (byRegion[data[i].region] || 0) + rs; }
+      const top = Object.entries(byRegion).sort((a, b) => b[1] - a[1])[0];
+      console.log(`🔑 Ridiculous-table answer: grand total = ${grand} · top region = ${top[0]} (${top[1]})`);
+    }
+    const btn = document.getElementById("bigToggle");
+    btn.addEventListener("click", () => {
+      const wrap = document.getElementById("bigWrap");
+      const show = wrap.style.display === "none";
+      wrap.style.display = show ? "block" : "none";
+      btn.textContent = show ? "Hide the giant scrolling table" : "Show the giant scrolling table";
+      if (show) buildBig();
+    });
+  </script>
 </body>
 </html>

@@ -254,6 +254,32 @@ details.io[open] > summary .io-preview { display: none; }
 .r-py-table { display: flex; flex-direction: column; gap: 3px; }
 .r-py-more { font-size: 0.85em; }
 .r-py-err code, .r-py-err .hljs { color: var(--err); }
+/* Jupyter/DataFrame-style df preview: scroll box (both axes), sticky header, zebra rows, a
+   numbered index gutter, right-aligned monospace numbers (a numeric column reads as one). */
+.r-df-bar { display: flex; gap: 6px; margin-bottom: 3px; }
+.r-df-btn { background: var(--panel-2); color: var(--fg-dim); border: 1px solid var(--border); border-radius: 5px;
+  padding: 1px 8px; font-size: 0.78em; cursor: pointer; }
+.r-df-btn:hover { background: var(--panel-2-hover); color: var(--fg); }
+.r-df-scroll { max-height: 320px; overflow: auto; border: 1px solid var(--border); border-radius: 6px; }
+.r-df-table { border-collapse: separate; border-spacing: 0; font-size: 0.86em; width: max-content; min-width: 100%; }
+/* vertical rules (the alignment cue) + horizontal separators */
+.r-df-table th, .r-df-table td { padding: 3px 9px; white-space: nowrap; border-bottom: 1px solid var(--border);
+  border-right: 1px solid var(--border); text-align: left; }
+.r-df-table th:last-child, .r-df-table td:last-child { border-right: 0; }
+.r-df-table thead th { position: sticky; top: 0; z-index: 1; background: var(--panel-2); color: var(--fg-dim);
+  font-weight: 600; cursor: pointer; user-select: none; }
+.r-df-table thead th:hover { color: var(--fg); }
+.r-df-sort { color: var(--accent); }
+/* drag handle on the right edge of each header cell (thead th is the positioning context). */
+.r-df-resize { position: absolute; top: 0; right: -3px; width: 7px; height: 100%; cursor: col-resize; z-index: 3; }
+.r-df-table tbody tr:nth-child(even) { background: color-mix(in srgb, var(--fg) 4%, transparent); }
+.r-df-table tbody tr:hover { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.r-df-table .r-td-num { text-align: right; font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.r-df-table .r-td-nan { color: var(--fg-faint); font-style: italic; }
+/* The index gutter: sticky on the left too, dimmed, monospace — like Jupyter's row numbers. */
+.r-df-table .r-df-idx { position: sticky; left: 0; background: var(--panel); color: var(--fg-faint);
+  text-align: right; font: 0.9em ui-monospace, monospace; border-right: 1px solid var(--border); z-index: 1; }
+.r-df-table thead .r-df-idx { z-index: 2; background: var(--panel-2); }
 .r-elements { display: flex; flex-direction: column; gap: 2px; }
 .r-el { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
 .r-el-idx { color: var(--fg-faint); font: 0.8em ui-monospace, SFMono-Regular, Menlo, monospace; flex: 0 0 auto; }

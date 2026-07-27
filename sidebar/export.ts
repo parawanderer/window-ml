@@ -34,16 +34,7 @@ interface Sink {
     inline(label: string, value: string, opts?: { code?: boolean; muted?: boolean }): void;
     image(src: string, base: string, alt: string): void;       // `base` names the sidecar
     details(summary: string, body: () => void): void;          // collapsed disclosure
-}
-
-// A GitHub-flavoured markdown table (capped) for the python_exec `df` input preview.
-function mdTable(columns: string[], rows: (string | number | null)[][], max = 20): string {
-    const cols = columns.length ? columns : (rows[0] || []).map((_, i) => String(i));
-    const esc = (s: unknown) => (s == null ? "" : String(s)).replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
-    const line = (cells: unknown[]) => `| ${cells.map(esc).join(" | ")} |`;
-    const body = rows.slice(0, max).map(line).join("\n");
-    const more = rows.length > max ? `\n\n_… ${rows.length - max} more rows_` : "";
-    return `${line(cols)}\n| ${cols.map(() => "---").join(" | ")} |\n${body}${more}`;
+    table(columns: string[], rows: (string | number | null)[][]): void;   // a real data table (df preview)
 }
 
 // A fenced block whose fence is longer than any backtick run inside it.
@@ -96,6 +87,12 @@ function mdSink() {
             o.push(`![${alt}](${name})`, "");
         },
         details: (summary, body) => { o.push(`<details><summary>${summary}</summary>`, ""); body(); o.push("</details>", ""); },
+        table: (columns, rows) => {
+            const cols = columns.length ? columns : (rows[0] || []).map((_, i) => String(i));
+            const esc = (s: unknown) => (s == null ? "" : String(s)).replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+            const line = (cells: unknown[]) => `| ${cells.map(esc).join(" | ")} |`;
+            o.push(line(cols), `| ${cols.map(() => "---").join(" | ")} |`, ...rows.map(r => line(cols.map((_, j) => r[j]))), "");
+        },
     };
     return { sink, done: () => ({ md: o.join("\n"), images }) };
 }
@@ -125,6 +122,12 @@ function htmlSink() {
         inline: (label, v, opts) => o.push(`<p class="lbl">${escapeHtml(label)}: ${opts?.code ? `<code>${escapeHtml(v)}</code>` : `<span class="val">${em(v, opts?.muted)}</span>`}</p>`),
         image: (src, _base, alt) => o.push(`<img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}">`),
         details: (summary, body) => { o.push(`<details open><summary>${escapeHtml(summary)}</summary>`); body(); o.push("</details>"); },
+        table: (columns, rows) => {
+            const cols = columns.length ? columns : (rows[0] || []).map((_, i) => String(i));
+            const th = `<tr><th class="idx"></th>${cols.map(c => `<th>${escapeHtml(c)}</th>`).join("")}</tr>`;
+            const tds = (r: (string | number | null)[]) => cols.map((_, j) => { const c = r[j]; return `<td class="${typeof c === "number" ? "num" : (c == null ? "nan" : "")}">${c == null ? "NaN" : escapeHtml(String(c))}</td>`; }).join("");
+            o.push(`<table class="dftable"><thead>${th}</thead><tbody>${rows.map((r, i) => `<tr><td class="idx">${i}</td>${tds(r)}</tr>`).join("")}</tbody></table>`);
+        },
     };
     return { sink, done: () => o.join("\n") };
 }
@@ -172,7 +175,7 @@ function writeAgent(s: Session, d: Sink): void {
             if (pin.image) d.image(pin.image, `step-${st.step}-in`, `step ${st.step} — input image`);
             if (pin.table) {
                 d.note(`input table → df (${pin.table.rows.length} × ${pin.table.columns.length || pin.table.rows[0]?.length || 0})`, true);
-                d.prose(mdTable(pin.table.columns, pin.table.rows));
+                d.table(pin.table.columns, pin.table.rows);
             }
             d.block("In", pin.code, "python");
             renderedIn = true;
@@ -293,6 +296,15 @@ details { margin: .3em 0 .6em; }
 summary { color: #52525b; cursor: default; }
 .md > :first-child { margin-top: 0; }
 .md ul { margin: .3em 0; padding-left: 1.2em; }
+/* python_exec df preview — a real table (all rows), zebra + numeric alignment; rows may span pages. */
+table.dftable { border-collapse: collapse; margin: .3em 0 .8em; font-size: .82em; }
+table.dftable th, table.dftable td { border: 1px solid #d4d4d8; padding: 2px 8px; text-align: left; white-space: nowrap; }
+table.dftable thead th { background: #f4f4f5; color: #3f3f46; font-weight: 600; }
+table.dftable tbody tr:nth-child(even) { background: #fafafa; }
+table.dftable td.num { text-align: right; font-variant-numeric: tabular-nums; font-family: ui-monospace, monospace; }
+table.dftable td.nan { color: #a1a1aa; font-style: italic; }
+table.dftable .idx { color: #a1a1aa; text-align: right; font-family: ui-monospace, monospace; background: #fafafa; }
+table.dftable thead tr { break-inside: avoid; }
 .md a { color: #4338ca; }
 table { border-collapse: collapse; }
 /* Long unbroken tokens (selectors, data URLs) must wrap, not overflow the page. */

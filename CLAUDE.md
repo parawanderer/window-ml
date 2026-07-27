@@ -457,8 +457,15 @@ computation to it (it predicts tokens, it doesn't calculate) instead of guessing
 (compute deterministically in read-only JS — `Array`/`Math`/`.reduce`). Mutually exclusive. The
 markdown/PDF export keeps the **raw tool-call args alongside** any rendered In (the sidebar
 has a rendered⇄raw toggle; a static export can't, so it shows both). The `python-in` render
-shows the input image AND, for a `{ table }` run, the extracted `df` preview (capped);
-`examples/spreadsheet.html` is a table demo with a comment-hidden answer key.
+shows the input image AND, for a `{ table }` run, a **Jupyter/DataFrame-style `df` preview**
+(`PyDfTable`: numbered index gutter, sticky header, zebra rows + vertical rules, right-aligned
+monospace numbers, `NaN` styling, both-axis scroll — plus click-to-sort, drag-to-resize columns,
+collapse, and copy-CSV; all zero-dep, no grid library). The export draws a **real `<table>`**
+(a `table` Sink verb → `<table class="dftable">` for HTML/PDF, a GFM table for `.md`, uncapped).
+A `table` selector loads the **FIRST** match; a `>1`-match warning is prepended (python_exec,
+and the single-element `describeElement`/`ancestors` via `firstOfNote`) so a wrong pick isn't
+silent. `examples/spreadsheet.html` is a table demo (a small static table + a toggleable
+**Ridiculous mode**: a 40×12 dirty scrolling table) — both with comment-hidden answer keys.
 
 **Export log.** The detail-view header has an "Export log" button opening a small
 menu with two formats (chat and agent both). It serialises the in-memory session
@@ -572,8 +579,6 @@ it per format: `params.think` (openai) vs a top-level `think` (ollama native).
 
 - **Plain JS in docs/examples** — `document.querySelector`, never jQuery-style
   `$`/`$$` (those are devtools-only and read as dated).
-- **Zero runtime dependencies.** The shipped extension uses only built-ins; the
-  only dev dependency is `jsdom`, for the DOM-helper tests (never bundled).
 - **Tests: `npm test`** (Node ≥ 20, `node:test`). `tests/helpers.js` loads the
   real extension files into `node:vm` sandboxes with mocked `chrome`/`fetch`/
   `window`, so tests exercise the shipped code with no build step. Add a
