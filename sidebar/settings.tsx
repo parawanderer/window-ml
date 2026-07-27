@@ -453,12 +453,6 @@ export function Settings() {
                 </label>
 
                 <div class="set-group">Sandboxed Python</div>
-                <div class="set-note">Auto-approve <b>readonly-mode</b> <code>python_exec</code> calls. The Python runs in a WASM sandbox that is <b>isolated by construction</b> — no DOM, no filesystem, and in readonly mode no network or JS/extension scope — so it's a pure function over the injected image/data and can't touch the page or exfiltrate. A <code>mode:'full'</code> run (network) always asks; code with hidden/bidi characters always asks.</div>
-                <label class="set-check">
-                    <input type="checkbox" checked={c.autoApprovePython}
-                        onChange={(e: any) => setField("autoApprovePython", e.target.checked)} />
-                    <Lbl tip={TIP.autoApprovePython}>Auto-approve readonly python_exec calls</Lbl>
-                </label>
 
                 <div class="set-field"><span>Environment</span>
                     <div class="set-hint">Bundled packages: {PY_PACKAGES.map(p => p.load).join(", ")}, + the Python stdlib.</div>
@@ -471,6 +465,14 @@ export function Settings() {
                     </div>
                     <div class="set-hint">Runs a tiny script in the sandbox to report the actual Python + package versions (first run loads Pyodide, ~1–2s).</div>
                 </div>
+
+                <div class="set-note">Auto-approve <b>readonly-mode</b> <code>python_exec</code> calls. The Python runs in a WASM sandbox that is <b>isolated by construction</b> — no DOM, no filesystem, and in readonly mode no network or JS/extension scope — so it's a pure function over the injected image/data and can't touch the page or exfiltrate. A <code>mode:'full'</code> run (network) always asks; code with hidden/bidi characters always asks.</div>
+                <label class="set-check">
+                    <input type="checkbox" checked={c.autoApprovePython}
+                        onChange={(e: any) => setField("autoApprovePython", e.target.checked)} />
+                    <Lbl tip={TIP.autoApprovePython}>Auto-approve readonly python_exec calls</Lbl>
+                </label>
+
             </> : null}
             </div>
         </div>
