@@ -354,10 +354,15 @@ model, and call `ml.agent`. What's built in:
 - **A safety gate** — `exec` (arbitrary page JS) is approval-gated; the default
   is a blocking `confirm()`. Pass your own `approve({ tool, arguments })`.
 - **A step cap** (`maxSteps`, default 10) and a full `transcript`.
+- **Cancellable** — pass an `AbortSignal` as `signal`; `controller.abort()` stops
+  the loop at the next step boundary and **resolves** `{ cancelled: true }` with
+  the partial transcript (it doesn't throw). Compose it with a timeout, a UI
+  "stop" button, etc.
 
 Returns `{ summary, steps, transcript, elements }` (`elements` holds any DOM
-nodes the agent designated as its answer). Nudge it without rewriting the prompt
-via `hints`, and watch every thought and tool call in the console with
+nodes the agent designated as its answer; a `hitCap`/`cancelled` flag marks a run
+that stopped early). Nudge it without rewriting the prompt via `hints`, cancel it
+with `signal`, and watch every thought and tool call in the console with
 `logDebug` (or pass your own `onStep`):
 
 ```js
@@ -367,6 +372,16 @@ const res = await ml.agent("Hide items that can't be delivered today.", {
   maxSteps: 45
 });
 console.log(res.summary);
+```
+
+Cancel it from a "stop" button, or give it a hard deadline:
+
+```js
+const ctl = new AbortController();
+stopButton.onclick = () => ctl.abort();
+const res = await ml.agent("Reconcile the two tables.", { signal: ctl.signal });
+// …or a timeout: ml.agent(task, { signal: AbortSignal.timeout(30_000) })
+if (res.cancelled) console.log(`stopped early after ${res.steps} steps`);
 ```
 
 `ml.agent` is a *composition* of `ml.step`, not a black box — the loop, tool

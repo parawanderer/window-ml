@@ -126,7 +126,11 @@ clear error if every mode still hands the call back. `tool_calls` are normalized
 object args + no ids (`buildMessage` drops `tool_call_id` for Ollama tool
 results). The **agent loop lives client-side** (`ml.step` in `injected.js`);
 the extension deliberately ships no loop/whitelist/overseer — callers compose
-those, keeping `window.ml` a primitive.
+those, keeping `window.ml` a primitive. **`ml.agent({ signal })`** takes an
+`AbortSignal`: checked at each step boundary (before the model call, and after it
+before running a tool), an abort stops the loop and **resolves** `{ cancelled: true }`
+with the partial transcript (mirroring `hitCap`, not a reject) — cancellation is at
+step granularity (an in-flight model call for the current step still completes).
 
 **Read-only `exec` auto-approve (experimental).** `exec` is `requiresApproval`,
 but the config flag `autoApproveReadonly` (off by default) lets a **read-only DOM
@@ -356,7 +360,7 @@ canvas auto-upgrade, `@pt` dedup). Illustrated end-to-end in `docs/LOCATE-VISION
 (not `chat`): `agent` (run start: task + model), `agent-step` (one per step — a
 thought OR a tool call with args/result; `elements` is a **count**, since real
 DOM nodes can't cross the window bus — they still reach `onStep`), and
-`agent-result` (summary + steps + `hitCap`). All share the run's own session
+`agent-result` (summary + steps + `hitCap` + `cancelled`). All share the run's own session
 hash (an agent run isn't a `createChat`), so the sidebar renders it as a distinct
 "agent" session. It reuses `onStep`'s existing event stream — the tracer was
 already there, this just tees it to `emitDebug`. A depth counter (`inAgentRun`)

@@ -293,6 +293,7 @@ export interface AgentResult {
     transcript: AgentTranscriptEntry[];
     elements: Node[];               // nodes designated via an answer-capable tool
     hitCap?: boolean;
+    cancelled?: boolean;            // the caller aborted via opts.signal (partial transcript preserved)
 }
 
 /** One live tracer event from ml.agent's `onStep` (a transcript entry + the
@@ -322,6 +323,7 @@ export interface AgentOptions {
     env?: boolean;                  // prepend page-context note to the system prompt
     vision?: boolean | string | null;   // auto-wire a `look` tool (null = probe)
     logDebug?: boolean;            // install the built-in console tracer
+    signal?: AbortSignal | null;   // abort the loop between steps → resolves { cancelled: true } with the partial run
 }
 
 /* ----------------------------- call options ---------------------------- */
@@ -503,7 +505,7 @@ export interface DebugAgentStep extends DebugBase {
     // current context occupancy (not a sum across steps — see TokenUsage).
     usage?: TokenUsage | null;
 }
-export interface DebugAgentResult extends DebugBase { kind: "agent-result"; summary: string; steps: number; hitCap: boolean; }
+export interface DebugAgentResult extends DebugBase { kind: "agent-result"; summary: string; steps: number; hitCap: boolean; cancelled?: boolean; }
 
 /** The event stream injected.js emits over window.postMessage for the sidebar. */
 export type MlDebugEvent = DebugChatStart | DebugChatResult | DebugChatError

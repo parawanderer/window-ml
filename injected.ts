@@ -388,11 +388,16 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          * @param {boolean} [opts.logDebug=false] Install a built-in console tracer
          *   ({@link module:ml._logStep}) that logs each thought and tool call —
          *   the quickest way to watch a run. Composes with `onStep` (both fire).
-         * @returns {Promise<{summary: string, steps: number, transcript: Array<{thought?: string, tool?: string, arguments?: Object, result?: string, elements?: Node[]}>, elements: Node[], hitCap?: boolean}>}
+         * @param {AbortSignal} [opts.signal] Cancel the run. Checked at each step boundary
+         *   (before the model call, before running a tool); on abort the loop stops and the
+         *   promise RESOLVES with `{ cancelled: true }` and the partial transcript (it does
+         *   not reject, matching the `hitCap` convention). An in-flight model call for the
+         *   current step still completes — cancellation is at step granularity.
+         * @returns {Promise<{summary: string, steps: number, transcript: Array<{thought?: string, tool?: string, arguments?: Object, result?: string, elements?: Node[]}>, elements: Node[], hitCap?: boolean, cancelled?: boolean}>}
          *   `elements` is the live DOM node(s) the model designated via an
          *   `answer`-capable tool (empty for tasks that just act on the page).
          */
-        agent: async function(task: string, { tools = null, extraTools = [], system = null, hints = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false }: {
+        agent: async function(task: string, { tools = null, extraTools = [], system = null, hints = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null }: {
             tools?: MlTool[] | null;
             extraTools?: MlTool[];
             system?: string | null;
@@ -405,6 +410,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             env?: boolean;
             vision?: boolean | string | null;
             logDebug?: boolean;
+            signal?: AbortSignal | null;
         } = {}): Promise<AgentResult> {
             const toolset = [...(tools || this.domTools || []), ...extraTools];
             // Config, fetched once (used for vision resolution + the read-only exec
@@ -532,13 +538,22 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 return { in: inD, out: outD };
             };
             const finish = (r: AgentResult): AgentResult => {
-                emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: r.steps }, summary: r.summary, steps: r.steps, hitCap: !!r.hitCap });
+                emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: r.steps }, summary: r.summary, steps: r.steps, hitCap: !!r.hitCap, cancelled: !!r.cancelled });
                 return r;
             };
+            // Caller aborted via opts.signal → stop the loop, resolve (not reject) with the partial
+            // run marked cancelled, mirroring the hitCap convention (the transcript so far is useful).
+            const cancelled = (step: number): AgentResult =>
+                finish({ summary: "Cancelled by the caller.", steps: step, transcript, elements: answered, cancelled: true });
             enterAgentRun();   // suppress orphan chat sessions from internal tool chats (see emitDebug); finally-decremented below
             try {
             for (let step = 1; step <= maxSteps; step++) {
+                // Cancellation is checked at each step boundary — before the model call, and again
+                // after it (the long wait) before running a tool — so an abort stops promptly at
+                // whichever boundary comes next. `step - 1` steps are complete at this point.
+                if (signal?.aborted) return cancelled(step - 1);
                 const msg = await this.step(messages, { tools: toolDefs, model, think });
+                if (signal?.aborted) return cancelled(step - 1);
                 if (!msg.tool_calls || !msg.tool_calls.length) {
                     // Final answer step: emit its usage (the run's peak context) with no tool.
                     if (msg.usage) emit({ step, usage: msg.usage });

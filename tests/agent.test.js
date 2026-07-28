@@ -548,6 +548,34 @@ test("agent runs a tool, feeds the result back, and stops on a plain reply", asy
     assert.deepEqual(sent.at(-1), { role: "tool", tool_call_id: "c1", content: "pong1" });
 });
 
+test("agent: a pre-aborted signal cancels before any model call (resolves, doesn't reject)", async () => {
+    const ac = new AbortController();
+    ac.abort();
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("should-not-run")]) });
+    const res = await world.ml.agent("x", { vision: false, signal: ac.signal });
+    assert.equal(res.cancelled, true);
+    assert.equal(res.steps, 0);
+    assert.match(res.summary, /Cancelled/);
+    assert.equal(world.runtimeCalls.filter(c => c.payload && c.payload.messages).length, 0, "no model call was made");
+});
+
+test("agent: aborting mid-run stops at the next step boundary with the partial transcript + a cancelled event", async () => {
+    const ac = new AbortController();
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall("cut", {}, "c1"), reply("should-not-reach")]) });
+    const cut = world.ml.defineTool({ name: "cut", run: () => { ac.abort(); return "snip"; } });   // abort DURING step 1
+    const events = [], win = world.context.window;
+    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    win.postMessage({ __mlSidebar: "ready" });
+    await new Promise(r => setTimeout(r, 0));
+    const res = await world.ml.agent("x", { tools: [cut], vision: false, signal: ac.signal });
+    assert.equal(res.cancelled, true);
+    assert.equal(res.steps, 1, "step 1 (the cut tool) completed; aborted before step 2's model call");
+    assert.equal(res.transcript.length, 1);
+    assert.equal(res.transcript[0].result, "snip");
+    assert.notEqual(res.summary, "should-not-reach", "the loop never reached the model's next turn");
+    assert.equal(events.find(e => e.kind === "agent-result").cancelled, true, "the agent-result debug event is marked cancelled");
+});
+
 test("a tool call missing a required arg short-circuits with the schema error (tool NOT run)", async () => {
     let ran = 0;
     const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall("needsIt", { y: 1 }, "c1"), reply("ok")]) });
