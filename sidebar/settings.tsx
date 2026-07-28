@@ -457,13 +457,15 @@ export function Settings() {
                 <div class="set-field"><span>Environment</span>
                     <div class="set-hint">Bundled packages: {PY_PACKAGES.map(p => p.load).join(", ")}, + the Python stdlib.</div>
                     <div class="py-env">
-                        <button class="test-btn" disabled={pyEnv.value.state === "probing"} onClick={probePython}>
-                            {pyEnv.value.state === "probing" ? "probing…" : "Probe sandbox"}
-                        </button>
+                        <span class="tt">
+                            <button class="test-btn" disabled={pyEnv.value.state === "probing"} onClick={probePython}>
+                                {pyEnv.value.state === "probing" ? "probing…" : "Probe sandbox"}
+                            </button>
+                            <span class="tt-pop left" role="tooltip">Runs a tiny script in the sandbox to report the actual Python + package versions (first run loads Pyodide, ~1–2s).</span>
+                        </span>
                         {pyEnv.value.state === "ok" ? <span class="py-env-ok">{pyEnv.value.text}</span> : null}
                         {pyEnv.value.state === "err" ? <span class="py-env-err">{pyEnv.value.text}</span> : null}
                     </div>
-                    <div class="set-hint">Runs a tiny script in the sandbox to report the actual Python + package versions (first run loads Pyodide, ~1–2s).</div>
                 </div>
 
                 <div class="set-note">Auto-approve <b>readonly-mode</b> <code>python_exec</code> calls. The Python runs in a WASM sandbox that is <b>isolated by construction</b> — no DOM, no filesystem, and in readonly mode no network or JS/extension scope — so it's a pure function over the injected image/data and can't touch the page or exfiltrate. A <code>mode:'full'</code> run (network) always asks; code with hidden/bidi characters always asks.</div>

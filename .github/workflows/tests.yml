@@ -22,6 +22,17 @@ jobs:
       # are caught separately by `typecheck`. Live tests self-skip without keys.
       - run: npm ci
       - run: npm run typecheck
+      # Fetch the python_exec wheels (numpy/pandas/… from the Pyodide CDN) so the real-CPython
+      # tests in tests/python.test.js run instead of self-skipping. Cached by pyodide version +
+      # package set, so the CDN is hit only when those change.
+      - name: Cache pyodide wheels
+        id: pyocache
+        uses: actions/cache@v4
+        with:
+          path: pyodide-wheels
+          key: pyodide-wheels-${{ hashFiles('package-lock.json', 'python-env.ts') }}
+      - if: steps.pyocache.outputs.cache-hit != 'true'
+        run: npm run fetch-pyodide
       - run: npm test
 
   # Build the loadable extension and upload it, so users can grab a ready-to-load
@@ -35,6 +46,16 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # The artifact must include the python_exec runtime (dist/pyodide/) or the loaded extension
+      # can't run python_exec — build.mjs copies pyodide-wheels/ in, so fetch them first.
+      - name: Cache pyodide wheels
+        id: pyocache
+        uses: actions/cache@v4
+        with:
+          path: pyodide-wheels
+          key: pyodide-wheels-${{ hashFiles('package-lock.json', 'python-env.ts') }}
+      - if: steps.pyocache.outputs.cache-hit != 'true'
+        run: npm run fetch-pyodide
       - run: npm run build
       - uses: actions/upload-artifact@v4
         with:

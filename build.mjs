@@ -96,6 +96,9 @@ if (watch) {
     // Set-of-Marks hit-test engine.
     await esbuild.build({ entryPoints: { "readonly-exec": "readonly-exec.ts" }, outdir: "dist", bundle: true, format: "cjs", platform: "node", logLevel: "info" });
     await esbuild.build({ entryPoints: { "som": "som.ts" }, outdir: "dist", bundle: true, format: "cjs", platform: "node", logLevel: "info" });
+    // The python_exec runtime (PRELUDE + wrapUserCode) — bundled standalone so tests/python.test.js
+    // exercises the EXACT script the offscreen sandbox runs against real CPython (Pyodide-in-Node).
+    await esbuild.build({ entryPoints: { "python-runtime": "python-runtime.ts" }, outdir: "dist", bundle: true, format: "cjs", platform: "node", logLevel: "info" });
     copyAssets();
     copyPyodide();
     // Regenerate the standalone visual preview of som's canvas annotate() (gitignored —

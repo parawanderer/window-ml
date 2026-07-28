@@ -475,7 +475,11 @@ purges `sys.modules['js']`/`['pyodide_js']` (an `unregisterJsModule` alone leave
 (fetch/XHR/WebSocket/Worker/… + `navigator.sendBeacon`) so even `pyodide.code.run_js` or a
 leaked proxy hits `undefined` — making it a pure function over the inputs. `"full"` leaves the
 bridges intact (outbound network) and **always** requires manual approval. Restored in
-`finally`; PY_RUN is serialized so the global swap can't race. Config `autoApprovePython`
+`finally`; PY_RUN is serialized so the global swap can't race. `harden`/`unharden` live in
+`python-runtime.ts` (chrome-free) and are **escape-tested against real Pyodide**
+(`tests/python.test.js`): a hardened run can't `import js`/`pyodide_js` or reach
+`pyodide.code.run_js`, a `full` run's cached `import js` is still purged, and `full` mode
+genuinely leaves the bridge open (why it needs approval). Config `autoApprovePython`
 (off by default, Advanced settings) auto-approves **readonly-mode** calls (badge provenance
 `sandbox`) — but a `full` mode, or code containing hidden/bidi characters (`suspiciousChars`,
 the same check the manual prompt shows), always falls through to the prompt. The background
@@ -619,7 +623,16 @@ it per format: `params.think` (openai) vs a top-level `think` (ollama native).
   `tests/relay.test.js` for any new primitive. DOM-manipulating helpers
   (the agent tools) are tested against a real DOM via `loadDomWorld(html)`, which
   boots `injected.js` over a `jsdom` document. Live tests (`tests/live.test.js`)
-  are opt-in via `.env` (see `.env.example`). CI runs offline tests on push.
+  are opt-in via `.env` (see `.env.example`). **Real-CPython tests**
+  (`tests/python.test.js`) load Pyodide-in-Node against the shared
+  `python-runtime.ts` (built to `dist/python-runtime.js`) — the actual PRELUDE +
+  `wrapUserCode` the offscreen sandbox runs, so the tables→df/auto-cast/`tables`
+  dict/read_html/return-capture/RESET-isolation behaviour is checked against real
+  pandas, not a copy. They need the bundled wheels (`dist/pyodide/`, from
+  `npm run fetch-pyodide`) and **self-skip** when absent, so a bundle-less
+  `npm test` stays green. CI fetches the wheels (cached by pyodide version) for
+  both the test job (so these run) and the build job (so the uploaded extension
+  artifact can actually run `python_exec`).
 
 ## Security invariants (don't regress these)
 
