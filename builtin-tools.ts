@@ -854,57 +854,57 @@ const asBoxVal = (v: unknown): Box | null => {
 };
 
 export const buildPythonTool = (ml: MlApi): MlTool => {
-    // Dynamic hint: if the agent is ON a Google Sheet, tell it it can load THIS sheet with
-    // `sheet:'current'` (no URL). A general `sheet` (any Sheets URL) is documented too.
+    // Dynamic hint appended when the agent is ON a Google Sheet — it can load THIS sheet with
+    // tables:'current' (no URL, auto-approvable).
     const onSheet = typeof location !== "undefined" && !!googleSheetCsvUrl(location.href);
-    const SHEET_DOC = " Pass `sheet` = a Google Sheets URL to load that sheet as `df` (its CSV is fetched " +
-        "with the user's Google login → works on PRIVATE corporate sheets; an external URL ALWAYS asks for " +
-        "approval), or `sheet:'current'` when you're already on the sheet's page (no URL needed, auto-approvable). " +
-        "The `sheet` PARAMETER does the loading: `df` arrives ALREADY parsed — do NOT write pd.read_csv('current') / " +
-        "read_html / open(...) in your code (there is no filesystem; 'current' is not a path); just use `df`." +
-        (onSheet ? " YOU ARE CURRENTLY ON A GOOGLE SHEET — use `sheet:'current'` to load it as `df`." : "");
     return ml.defineTool({
         name: "python_exec",
         requiresApproval: true,
-        description: "Run a SANDBOXED Python snippet (numpy + Pillow + pandas, WASM) for array/pixel/spatial/table " +
-            "work you do better in Python than JS: pixel-mask a target and take its centroid, count regions, " +
-            "template-match, BFS a maze, sub-pixel math, or SUM/AVG/GROUP a table. Think of it as appending ONE " +
-            "cell to a live Jupyter notebook: whatever you pass is ALREADY loaded as a variable — reference it " +
-            "directly, do NOT re-open/re-parse it. Pass `image` (a CSS selector or an @pt:/@box: token) → it's " +
-            "loaded as `img` (PIL.Image) + `img_np` (H×W×3 uint8); pass `table` (a selector for a <table>/ARIA " +
-            "grid) → loaded as `df` (pandas.DataFrame, numeric columns already typed) — never eyeball spreadsheet " +
-            "math, compute it on `df`. E.g. table → `return df.groupby('Region')['Q1'].sum().to_dict()`; image → " +
-            "`return int((img_np[:, :, 0] > 200).sum())`. `return` a value — it comes back as TEXT by " +
-            "default (general scripting). To get a CLICKABLE coordinate, set `cast:'pt'` (the return must be [x,y] " +
-            "or {x,y} → minted as an @pt) or `cast:'box'` ([x1,y1,x2,y2] or {left,top,right,bottom} → @box); a " +
-            "mismatched return errors. A base64 image (via to_base64(...)) is always shown. Each call is " +
-            "STATELESS — a fresh namespace, so variables/imports from a previous call do NOT persist; recompute " +
-            "or re-pass what you need, and `return` the result (nothing carries over). In scope: " + PY_PACKAGE_LABELS + ", " +
-            "stdlib (io, math, collections, itertools…). Coordinates are the SCREENSHOT's pixels — for " +
-            "a clickable @pt, return viewport coordinates. `mode` is 'readonly' by DEFAULT: no network / filesystem " +
-            "/ DOM — a pure function over the inputs (this run may be auto-approved). Only set `mode:'full'` if you " +
-            "genuinely need network (it enables outbound HTTP etc.) — a full-mode run ALWAYS requires human " +
-            "approval, so prefer 'readonly' unless you truly need the network." + SHEET_DOC,
+        description: "Run SANDBOXED Python (numpy/Pillow/pandas, WASM) for array/pixel/spatial/table work better " +
+            "done in Python than JS — pixel-mask & centroid a target, count regions, BFS a maze, or SUM/AVG/GROUP a " +
+            "table. It's ONE cell of a live Jupyter notebook: your inputs are ALREADY loaded — `image`→`img`/`img_np` " +
+            "(PIL + H×W×3 uint8), `tables`→DataFrame(s) — so reference them directly, never re-open/parse/read_csv " +
+            "them. `return` a value → comes back as TEXT (or set `cast` to mint a clickable @pt/@box; a to_base64() " +
+            "image is shown). Each call is STATELESS — a fresh namespace, nothing persists between calls. In scope: " +
+            PY_PACKAGE_LABELS + " + stdlib (io, math, collections, itertools…). `mode` 'readonly' (default) is a pure " +
+            "function over the inputs (may be auto-approved); 'full' enables network but ALWAYS asks the user." +
+            (onSheet ? " YOU ARE CURRENTLY ON A GOOGLE SHEET — pass `tables:'current'` to load it as `df`." : ""),
         parameters: {
             type: "object",
             properties: {
-                code: { type: "string", description: "Python. Reference img/img_np; end with a `return`. print() is captured as stdout." },
+                code: { type: "string", description: "Python. Reference img/img_np/your DataFrame(s); end with a `return`. print() is captured as stdout." },
                 image: { type: "string", description: "Optional CSS selector or @pt:/@box: token to load as img/img_np. An @box loads the exact container content; an @pt loads a square neighbourhood around the point." },
                 cast: { type: "string", enum: ["pt", "box"], description: "Interpret the return as a clickable coordinate: 'pt' (needs [x,y]/{x,y}) or 'box' ([x1,y1,x2,y2]/{left,top,right,bottom}). Omit for a raw text result." },
                 mode: { type: "string", enum: ["readonly", "full"], description: "'readonly' (default) = isolated sandbox, no network/JS scope (auto-approvable). 'full' = network enabled; ALWAYS asks for approval. Use 'readonly' for pure compute over the inputs." },
                 margin: { type: "number", description: "For an @pt image only: the crop RADIUS in px around the point (a bigger margin = more context). Omit for the default. Ignored for @box / CSS selectors." },
-                table: { type: "string", description: "Optional CSS selector for a page table (<table> or ARIA grid) → loaded as `df` (pandas.DataFrame). Use for spreadsheet/table math instead of eyeballing cells. Matches the FIRST element if several match — narrow it (id / :nth-of-type) to pick another." },
-                tableRaw: { type: "boolean", description: "Load `table` cells as raw STRINGS (skip the default numeric/currency auto-cast). Use only for ZIP/SKU/leading-zero IDs that casting would corrupt." },
-                sheet: { type: "string", description: "A Google Sheets URL → loaded as `df` (CSV fetched with the user's Google login). Use 'current' when you're already on the sheet's page. An external URL always needs approval." },
+                tables: {
+                    oneOf: [
+                        { type: "string" },   // a single source → loaded as `df`
+                        { type: "object", additionalProperties: { type: "string" }, propertyNames: { pattern: "^[A-Za-z_][A-Za-z0-9_]*$" } },   // { python_identifier: source }
+                    ],
+                    description: "Spreadsheet/table data → pandas DataFrame(s). A SINGLE source string (a CSS selector for a page <table>/ARIA grid, a Google Sheets URL, or 'current' for the Sheet you're on) → loaded as `df`. OR a map { variable_name: source } (keys = Python identifiers) → each loaded under its name so you can join them, e.g. {\"sales\":\"#report\",\"targets\":\"https://docs.google.com/spreadsheets/d/…\"} → use `sales`/`targets` directly (also in a `tables` dict, tables['sales']). External Sheets URLs need approval. A selector loads the FIRST match. The data arrives ALREADY parsed — use the variable, don't re-load it.",
+                },
+                tableRaw: { type: "boolean", description: "Load table cells as raw STRINGS (skip the default numeric/currency auto-cast). Use only for ZIP/SKU/leading-zero IDs that casting would corrupt." },
             },
             required: ["code"],
         },
-        run: async ({ code, image, cast, mode, margin, table, tableRaw, sheet }: { code: string; image?: string; cast?: "pt" | "box"; mode?: "readonly" | "full"; margin?: number; table?: string; tableRaw?: boolean; sheet?: string }): Promise<string | ToolResult> => {
-            // A `table` selector loads the FIRST match — warn if it's ambiguous (loading the
-            // wrong table and computing on it would silently give wrong numbers).
+        run: async ({ code, image, cast, mode, margin, tableRaw, tables }: { code: string; image?: string; cast?: "pt" | "box"; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Record<string, string> }): Promise<string | ToolResult> => {
+            // A DOM-table selector loads the FIRST match — warn if it's ambiguous (loading the wrong
+            // table and computing on it would silently give wrong numbers). Covers a single-source
+            // `tables` string AND every DOM-selector value in a `tables` map (skipping 'current' /
+            // Sheets-URL entries, which aren't selectors).
+            const domSelectors: [string, string][] = [];
+            const addIfSelector = (name: string, src: unknown) => {
+                if (typeof src === "string" && src !== "current" && !googleSheetCsvUrl(src)) domSelectors.push([name, src]);
+            };
+            if (typeof tables === "string") addIfSelector("df", tables);
+            else if (tables) for (const [name, src] of Object.entries(tables)) addIfSelector(name, src);
             let tableNote = "";
-            if (table) { try { const n = ml._queryAll(table).length; if (n > 1) tableNote = `⚠ selector "${table}" matched ${n} elements — loaded the FIRST as \`df\`. If the numbers look off, narrow it (an id, or :nth-of-type(N)) to pick another.\n\n`; } catch { /* invalid selector → pythonExec/_resolveTable errors below */ } }
-            const r = await ml.pythonExec(code, { image: image || null, mode: mode === "full" ? "full" : "readonly", margin: typeof margin === "number" ? margin : 0, table: table || null, tableRaw: !!tableRaw, sheet: sheet || null });
+            for (const [name, sel] of domSelectors) {
+                try { const n = ml._queryAll(sel).length; if (n > 1) tableNote += `⚠ selector "${sel}" matched ${n} elements — loaded the FIRST as \`${name}\`. If the numbers look off, narrow it (an id, or :nth-of-type(N)).\n`; } catch { /* invalid selector → pythonExec/_resolveTable errors below */ }
+            }
+            if (tableNote) tableNote += "\n";
+            const r = await ml.pythonExec(code, { image: image || null, mode: mode === "full" ? "full" : "readonly", margin: typeof margin === "number" ? margin : 0, tableRaw: !!tableRaw, tables: tables || null });
             // Cap stdout/value/error fed back to the model so a runaway result (e.g. a
             // string-concat blowup) can't flood the context — with a "[+N truncated]" note.
             const stdoutClipped = clipOut(r.stdout || "", PY_OUT_MAX);
@@ -914,7 +914,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             // by every return path. The Out slot varies (stdout + one of image/token/value/error).
             const cellMode = cast === "pt" ? "pt" as const : cast === "box" ? "box" as const : "script" as const;
             const renderIn: RenderDescriptor = { type: "python-in", mode: cellMode, code,
-                ...(r.inputImage ? { image: r.inputImage } : {}), ...(r.inputTable ? { table: r.inputTable } : {}) };
+                ...(r.inputImage ? { image: r.inputImage } : {}), ...(r.inputTables && r.inputTables.length ? { tables: r.inputTables } : {}) };
             const stdout = stdoutClipped || undefined;
             const done = (content: string, out: Omit<Extract<RenderDescriptor, { type: "python-out" }>, "type" | "stdout">): ToolResult =>
                 ({ content, renderIn, render: { type: "python-out", stdout, ...out } });
@@ -925,7 +925,8 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                 // and the code errored trying to (re)load it (read_csv/read_html/open/requests/…),
                 // redirect to the preloaded var. Fires on the failure, so it covers every variant
                 // instead of enumerating them. (Observed: `pd.read_csv('current')` → FileNotFound.)
-                const loaded = [r.inputTable ? "`df`" : "", r.inputImage ? "`img`/`img_np`" : ""].filter(Boolean).join(" and ");
+                const dfNames = (r.inputTables || []).map(t => `\`${t.name}\``).join("/");
+                const loaded = [dfNames, r.inputImage ? "`img`/`img_np`" : ""].filter(Boolean).join(" and ");
                 const looksLikeReload = /read_csv|read_html|read_excel|read_json|open\(|FileNotFoundError|No such file|ModuleNotFound|requests|urllib|urlopen|http|fetch|ConnectionError|storage_options/i.test(err);
                 const hint = loaded && looksLikeReload
                     ? `\n\nHint: the tool ALREADY loaded your data as ${loaded} (the table/sheet/image PARAMETER did it) — reference it directly; do not read_csv/read_html/open/fetch anything (the sandbox has no filesystem or network in readonly mode).`

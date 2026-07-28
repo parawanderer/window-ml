@@ -202,6 +202,15 @@ export interface LocateSubstep {
  *  UI (safe: only known `type`s render; unknown/absent → the default In:/Out:
  *  view). A tool's `render` produces one page-side; built-ins auto-derive
  *  image/elements from the envelope. */
+/** Where a `python_exec` DataFrame came from — for the debug render's source label + tooltip.
+ *  `dom` = a table on the current page (label = the selector); `sheet-current` = the Google Sheet
+ *  you're on (label = its page title); `sheet-external` = a Google Sheet fetched by URL with the
+ *  user's approval (label = its spreadsheet id). */
+export interface TableSource { kind: "dom" | "sheet-current" | "sheet-external"; label: string; }
+/** One loaded DataFrame for the `python-in` render: its variable name, its source, and either a
+ *  rows preview (`columns`+`rows`) or `html: true` (loaded via `pd.read_html`, no clean preview). */
+export interface TablePreview { name: string; source: TableSource; columns?: string[]; rows?: (string | number | null)[][]; html?: boolean; }
+
 export type RenderDescriptor = (
     | { type: "image"; src: string; label?: string }
     | { type: "code"; text: string; lang?: string; format?: boolean }   // format: let the sidebar beautify the source (e.g. exec's JS)
@@ -220,8 +229,9 @@ export type RenderDescriptor = (
         pickedBy?: "model" | "snap";        // model → "Model picked" (a badge); snap → "Snapped to" (DOM hit-test)
       }
     // `python_exec`'s In slot: a notebook-cell header — the run mode (from `cast`), the
-    // input screenshot the script saw, and the Python source (highlighted, NOT beautified).
-    | { type: "python-in"; mode: "script" | "pt" | "box"; code: string; image?: string; table?: { columns: string[]; rows: (string | number | null)[][] } }
+    // input screenshot the script saw, the Python source (highlighted, NOT beautified), and
+    // the loaded DataFrame(s) — each with its variable name + provenance (which sheet/table).
+    | { type: "python-in"; mode: "script" | "pt" | "box"; code: string; image?: string; tables?: TablePreview[] }
     // `python_exec`'s Out slot: captured stdout, a returned image, a minted @pt/@box token,
     // the raw/JSON value, or a Python traceback.
     | { type: "python-out"; stdout?: string; image?: string; token?: string; value?: string; error?: string }
@@ -551,7 +561,7 @@ export interface MlApi {
     typeTool(): MlTool;
     /** Run a sandboxed Python snippet (Pyodide/WASM, numpy + Pillow) with an optional
      *  screenshot injected as `img`/`img_np`. No network/filesystem/DOM. */
-    pythonExec(code: string, opts?: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; table?: string | Element | null; tableRaw?: boolean; sheet?: string | null }): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string; inputTable?: { columns: string[]; rows: (string | number | null)[][] } }>;
+    pythonExec(code: string, opts?: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Element | Record<string, string | Element> | null }): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string; inputTables?: TablePreview[] }>;
     /** Built-in sandboxed-Python tool factory (numpy/Pillow pixel/array work). */
     pythonTool(): MlTool;
 
@@ -588,6 +598,7 @@ export interface MlApi {
     _fetchImageBase64(url: string): Promise<string>;
     _stitchFullPage(capture: () => Promise<string>): Promise<string>;
     _resolveTable(target: string | Element, raw?: boolean): { kind: "rows"; columns: string[]; rows: (string | number | null)[][] } | { kind: "html"; html: string };
+    _loadTable(name: string, src: string | Element, raw?: boolean): Promise<{ name: string; source: TableSource; data: { kind: "rows"; columns: string[]; rows: (string | number | null)[][] } | { kind: "html"; html: string } }>;
     _resolveVisionModel(agentModel: string | null, vision: boolean | string | null): Promise<string | null>;
     _modelSees(model: string | null): Promise<boolean>;
     _nativeLookTool(): MlTool;

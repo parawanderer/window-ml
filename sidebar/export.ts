@@ -173,9 +173,17 @@ function writeAgent(s: Session, d: Sink): void {
             const pin = st.renderIn;
             d.note(`Mode: ${pin.mode}`);
             if (pin.image) d.image(pin.image, `step-${st.step}-in`, `step ${st.step} — input image`);
-            if (pin.table) {
-                d.note(`input table → df (${pin.table.rows.length} × ${pin.table.columns.length || pin.table.rows[0]?.length || 0})`, true);
-                d.table(pin.table.columns, pin.table.rows);
+            for (const t of pin.tables || []) {
+                const cols = t.columns?.length || t.rows?.[0]?.length || 0;
+                const srcLabel = t.source.kind === "sheet-external" ? `external Google Sheet (${t.source.label}), fetched with your approval`
+                    : t.source.kind === "sheet-current" ? `current Google Sheet — ${t.source.label}`
+                    : `page table — ${t.source.label}`;
+                if (t.rows) {
+                    d.note(`input table → ${t.name} (${t.rows.length} × ${cols}) · ${srcLabel}`, true);
+                    d.table(t.columns || [], t.rows);
+                } else {
+                    d.note(`input table → ${t.name} · ${srcLabel} (loaded via pd.read_html)`, true);
+                }
             }
             d.block("In", pin.code, "python");
             renderedIn = true;

@@ -415,27 +415,36 @@ not pre-imported, so a quick coord/table run doesn't pay its import cost). Each 
 **stateless** (the per-run namespace reset, above) — nothing carries between calls. The relay is the usual
 contract — `PYTHON_EXEC_REQUEST` (page) → `PYTHON_EXEC` (bg). `ml.pythonExec(code, { image })`
 screenshots `image` (a selector or `@pt`/`@box`) into the sandbox as `img` (PIL) + `img_np`
-(numpy); **`{ table }`** (a `<table>`/ARIA-grid selector) loads it as `df` (pandas) — a clean
-table is walked page-side (`extractTable`, case-preserving; col/rowspans or a non-table fall
-back to `pd.read_html(outerHTML)` with the bs4 parser). Numeric columns are **auto-cast
-page-side** (`dom.ts` `castTableColumns`, pure/tested: a column ≥90%-numeric after stripping
-currency/commas/%/accounting-parens → `number|null`, else strings) so `df.sum()` adds instead
-of string-CONCATENATING — `{ tableRaw }` skips it for ZIP/SKU/leading-zero IDs. **`{ sheet }`**
-loads a **Google Sheet** as `df` — the DOM path is useless (Sheets renders to canvas), so
-`googleSheetCsvUrl` (dom.ts, pure) derives the `/export?format=csv&gid=…` endpoint and a new
-`FETCH_SHEET` background message fetches it **credentialed** (`credentials:"include"` → the
-user's own Google login, so PRIVATE corporate sheets work), then `parseCsv` (dom.ts,
+(numpy). **Tabular data → DataFrame(s) via `{ tables }`** — ONE unified param that is either a
+single source (→ `df`) or a `{ varName: source }` map (→ each loaded under its name so the model
+can `pd.merge` them; keys validated as Python identifiers by `pyVarNameError`, single-sourced in
+`python-env.ts` beside the prelude's reserved names). Each df is bound BOTH under its name AND in a
+`tables` dict — a model that mirrors the arg name and reaches for `tables['name']` just works
+(the same accommodate-don't-fight tack as the read_csv redirect; `tables` is a reserved key). Each source auto-dispatches by shape
+(`_loadTable`): **a `<table>`/ARIA-grid selector** is walked page-side (`extractTable`,
+case-preserving; col/rowspans or a non-table fall back to `pd.read_html(outerHTML)` with bs4);
+**a Google Sheets URL** or **`'current'`** (the sheet you're on) is fetched as CSV. Numeric
+columns are **auto-cast page-side** (`dom.ts` `castTableColumns`, pure/tested: a column
+≥90%-numeric after stripping currency/commas/%/accounting-parens → `number|null`, else strings)
+so `df.sum()` adds instead of string-CONCATENATING — `{ tableRaw }` skips it for
+ZIP/SKU/leading-zero IDs. The **Google Sheet** path exists because the DOM is useless (Sheets
+renders to canvas): `googleSheetCsvUrl` (dom.ts, pure) derives the `/export?format=csv&gid=…`
+endpoint and a `FETCH_SHEET` background message fetches it **credentialed** (`credentials:"include"`
+→ the user's own Google login, so PRIVATE corporate sheets work), then `parseCsv` (dom.ts,
 RFC-4180) + the same `castTableColumns` pipeline. No access / not signed in → Google serves an
 HTML login page instead of CSV; `fetchSheetCsv` detects that and returns an actionable error
-telling the model to **have the USER authenticate in-browser and retry**. `sheet` is a Sheets
-URL (an **external** one **always** requires approval — it's a privileged cross-origin fetch)
-**or `'current'`** (the sheet you're already on → auto-approvable like a readonly survey; the
-tool description gains a "YOU ARE CURRENTLY ON A GOOGLE SHEET" hint when `location` is one). An
-approved external sheet is **cached per page-session** (`approvedSheets`, keyed by `googleSheetId`
-— the spreadsheet, so its tabs share it): a repeat call to the same sheet skips the re-prompt
-(lifts only the external-sheet escalation, so a non-autoPy run is still gated on the code). The
-approval prompt **hoists the data source** (`renderArgs` ranks `sheet`/`table`/`image` above the
-`code` blob) so the human sees *which* sheet before the script. **Host access:** the SW's
+telling the model to **have the USER authenticate in-browser and retry**. An **external** Sheets
+URL **always** requires approval (a privileged cross-origin fetch); a selector / `'current'` is
+auto-approvable like a readonly survey (the tool description gains a "YOU ARE CURRENTLY ON A
+GOOGLE SHEET" hint when `location` is one). An approved external sheet is **cached per page-session**
+(`approvedSheets`, keyed by `googleSheetId` — the spreadsheet, so its tabs share it): a repeat
+call skips the re-prompt (lifts only the external-sheet escalation, so a non-autoPy run is still
+gated on the code). Escalation scans **every** source (`externalSheetIds` — a bare string or every
+map value), so an external sheet inside a `tables` map still prompts. The debug render
+(`python-in.tables`) shows each df with its **variable name + a source label/tooltip** (`TableSource`:
+dom / sheet-current / sheet-external), mirrored in the export. The approval prompt **hoists the
+data source** (`renderArgs` ranks `tables`/`image` above the `code` blob) so the human sees
+*which* sheet before the script. **Host access:** the SW's
 credentialed fetch needs the `docs.google.com` host permission, which "On click" site-access
 withholds (activeTab covers content scripts, NOT the background fetch) — so a withheld fetch
 returns an actionable error (walks the user to the popup's **"Enable Google Sheets access"**

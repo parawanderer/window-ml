@@ -1182,7 +1182,7 @@ test("export: a python_exec df renders as a real <table> (PDF) and a GFM table (
     await w.dispatch(agentStart("pytab", "compute", "m", 10));
     await w.dispatch(agentStep("pytab", 1, {
         tool: "python_exec", arguments: { code: "return df['Q1'].sum()", table: "#sales" }, result: "210",
-        renderIn: { type: "python-in", mode: "script", code: "return df['Q1'].sum()", table: { columns: ["Rep", "Q1"], rows: [["Ada", 120], ["Ben", 90]] } },
+        renderIn: { type: "python-in", mode: "script", code: "return df['Q1'].sum()", tables: [{ name: "df", source: { kind: "dom", label: "#sales" }, columns: ["Rep", "Q1"], rows: [["Ada", 120], ["Ben", 90]] }] },
         renderOut: { type: "python-out", value: "210" },
     }));
     await w.dispatch(agentResult("pytab", "done", 1));

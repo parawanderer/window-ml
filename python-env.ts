@@ -25,3 +25,33 @@ export const PY_PACKAGES: PyPackage[] = [
 export const PY_PACKAGE_LOADS: string[] = PY_PACKAGES.map(p => p.load);
 export const PY_PRELUDE_IMPORTS: string = PY_PACKAGES.filter(p => p.prelude).map(p => p.prelude).join("\n");
 export const PY_PACKAGE_LABELS: string = PY_PACKAGES.filter(p => p.label).map(p => p.label).join(", ");
+
+// The variable a prelude import line binds ("import numpy as np" → np; "from PIL import Image"
+// → Image; "import pandas as pd" → pd), or null for a load-only ("") package.
+const preludeBinding = (line: string): string | null => {
+    const m = /\bimport\s+\w+\s+as\s+(\w+)/.exec(line) || /\bfrom\s+\S+\s+import\s+(\w+)/.exec(line) || /\bimport\s+(\w+)/.exec(line);
+    return m ? m[1] : null;
+};
+
+// Globals the offscreen PRELUDE binds — a `python_exec` `tables` variable name must not clobber
+// these (it would shadow pd/np/img/etc. and break the run with a confusing error). Lives HERE,
+// beside the package + prelude source, so it can't drift: the library names (np/Image/pd) are
+// DERIVED from PY_PACKAGES; the rest are the prelude's fixed bindings — the stdlib imports
+// (`io, base64, sys, contextlib`), the injected-image vars (`img`/`img_np`/`H`/`W`), the
+// `to_base64` helper, and the `result` return-capture global. Keep in sync with offscreen.ts's
+// PRELUDE if you add a fixed binding there. (`df` is intentionally NOT reserved — a tables entry
+// may name one `df`, overriding the single-source default.)
+export const PY_RESERVED_NAMES: string[] = [
+    "io", "base64", "sys", "contextlib", "to_base64", "img", "img_np", "H", "W", "result", "tables",
+    ...PY_PACKAGES.map(p => preludeBinding(p.prelude)).filter((n): n is string => !!n),
+];
+
+const PY_IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const PY_RESERVED = new Set(PY_RESERVED_NAMES);
+/** Validate a user-supplied `python_exec` `tables` variable name (it becomes a sandbox global):
+ *  must be a valid Python identifier and must not clobber a preloaded name. Returns an error
+ *  message, or null if the name is OK. */
+export const pyVarNameError = (name: string): string | null =>
+    !PY_IDENT_RE.test(name) ? `"${name}" isn't a valid Python variable name.`
+    : PY_RESERVED.has(name) ? `"${name}" is a preloaded/reserved name — pick another.`
+    : null;

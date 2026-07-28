@@ -8,7 +8,7 @@ import { render } from "preact";
 import type { ComponentChildren } from "preact";
 import { useState, useEffect, useRef } from "preact/hooks";
 import { signal } from "@preact/signals";
-import type { MlDebugEvent, DebugSessionConfig, DebugAgentConfig, NeutralMessage, MlConfig, ApiFormat, Theme, LoadedModel, ExtendProfile, RenderDescriptor, LocateSubstep, TokenUsage } from "../contract";
+import type { MlDebugEvent, DebugSessionConfig, DebugAgentConfig, NeutralMessage, MlConfig, ApiFormat, Theme, LoadedModel, ExtendProfile, RenderDescriptor, LocateSubstep, TokenUsage, TableSource } from "../contract";
 import { DEFAULT_CONFIG, fmtCtx } from "../contract";
 import {
     FONT_KEY, WRAP_KEY, LINES_KEY,
@@ -552,15 +552,33 @@ function PyDfTable({ columns, rows }: { columns: string[]; rows: (string | numbe
         </div>
     );
 }
+// A loaded DataFrame's provenance → a short source label + a hover tooltip clarifying where the
+// data came from (so a multi-table run reads clearly, and the human knows what was fetched).
+function tableSourceDesc(s: TableSource): { short: string; tip: string } {
+    switch (s.kind) {
+        case "sheet-external": return { short: `sheet ${s.label}`, tip: "This data was fetched from an EXTERNAL Google Sheet with your approval." };
+        case "sheet-current": return { short: s.label, tip: "This data was fetched from the Google Sheet you're currently on." };
+        default: return { short: s.label, tip: `This data was extracted from a table on the current page (${s.label}).` };
+    }
+}
 function PythonInRender({ d }: { d: Extract<RenderDescriptor, { type: "python-in" }> }) {
     return (
         <div class="r-python r-py-in">
             <div class="r-py-mode">Mode: <span class="tt"><span class="r-py-modeval">{PY_MODE[d.mode].label}</span><span class="tt-pop left" role="tooltip">{PY_MODE[d.mode].tip}</span></span></div>
             {d.image ? <div class="r-image r-py-img"><ClickableImg src={d.image} alt="input image" /><div class="r-image-label">input image (img / img_np)</div></div> : null}
-            {d.table ? <div class="r-py-table">
-                <div class="r-py-lbl">input table → df ({d.table.rows.length} × {d.table.columns.length || d.table.rows[0]?.length || 0})</div>
-                <PyDfTable columns={d.table.columns} rows={d.table.rows} />
-            </div> : null}
+            {(d.tables || []).map((t, i) => {
+                const src = tableSourceDesc(t.source);
+                const cols = t.columns?.length || t.rows?.[0]?.length || 0;
+                return <div key={i} class="r-py-table">
+                    <div class="r-py-lbl">
+                        input table → <b class="r-py-var">{t.name}</b>{t.rows ? ` (${t.rows.length} × ${cols})` : ""}
+                        {" · "}
+                        <span class="tt r-py-src"><span class="r-py-srcval">{src.short}</span><span class="tt-pop left" role="tooltip">{src.tip}</span></span>
+                    </div>
+                    {t.rows ? <PyDfTable columns={t.columns || []} rows={t.rows} />
+                        : <div class="dim r-py-more">loaded via pd.read_html (no clean row preview)</div>}
+                </div>;
+            })}
             <Code text={d.code} lang="python" />
         </div>
     );

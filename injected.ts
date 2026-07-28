@@ -24,7 +24,9 @@ import type {
     StoredSession,
     LoadedModel,
     TokenUsage,
-    MlHistory
+    MlHistory,
+    TableSource,
+    TablePreview
 } from "./contract";
 import { detectGroundingModel, DEFAULT_GROUNDING_RANGE } from "./contract";
 import { evalReadonly } from "./readonly-exec";
@@ -39,6 +41,11 @@ import { hideSidebarForShot, makeBackgroundTaskPromise, makeChatRequest, makeStr
 import { validateArgs, validateExtend } from "./validate";
 import { renderArgs, logStep, defaultApprove, normalizeApproval, formatReadonlyExec } from "./approval";
 import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPythonTool } from "./builtin-tools";
+import { pyVarNameError } from "./python-env";
+
+/** One resolved `python_exec` table source: its var name, provenance, and the payload the sandbox
+ *  builds a DataFrame from (rows or read_html html). Internal to injected.ts. */
+type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; columns: string[]; rows: (string | number | null)[][] } | { kind: "html"; html: string } };
 
 (function() {
 
@@ -46,6 +53,18 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
     // Google spreadsheet id). Lets a repeat call to the same sheet skip the external-sheet
     // re-prompt. Page-scoped (module lifetime) — gone on reload; never persisted.
     const approvedSheets = new Set<string>();
+    // Every EXTERNAL Google Sheet (a Sheets URL that isn't 'current') a python_exec call touches —
+    // whether `tables` is a single source string OR a map of them — as spreadsheet ids. Fetching
+    // arbitrary Google data the user didn't navigate to is privileged, so these drive the approval
+    // escalation regardless of how the source was passed.
+    const externalSheetIds = (args: unknown): string[] => {
+        const t = (args as { tables?: unknown } | null)?.tables;
+        const vals: unknown[] = typeof t === "string" ? [t] : (t && typeof t === "object") ? Object.values(t as Record<string, unknown>) : [];
+        return vals
+            .filter((v): v is string => typeof v === "string" && v !== "current")
+            .map(v => googleSheetId(v))
+            .filter((id): id is string => !!id);
+    };
 
     // ---- Agent tool helpers (page-context DOM introspection) ----
     // These keep observations SMALL on purpose: the point of the agent is to
@@ -599,17 +618,15 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
                         // call (network) always falls through to the gate. Hidden/bidi chars in
                         // the code also fall through, so the human sees the suspicious-char
                         // banner before it runs (the same check the manual prompt applies). An
-                        // EXTERNAL `sheet` (a Google Sheets URL that isn't the current page) also
-                        // always asks — fetching arbitrary Google data the user didn't navigate
-                        // to is privileged; `sheet:'current'` (the page they're on) is fine. But once
-                        // the user has approved a given SPREADSHEET this page-session, don't re-escalate
-                        // subsequent calls to it (they granted access to that resource) — this only
-                        // lifts the external-sheet escalation, so a non-autoPy run is still gated on
-                        // the code as usual; the cache just stops re-asking for the same sheet.
-                        const sheetArg = (args as { sheet?: unknown }).sheet;
-                        const externalSheet = typeof sheetArg === "string" && sheetArg !== "current";
-                        const sheetId = externalSheet ? googleSheetId(String(sheetArg)) : null;
-                        const escalated = externalSheet && !(sheetId && approvedSheets.has(sheetId));
+                        // An EXTERNAL Google Sheet (a Sheets URL that isn't the current page — in the
+                        // `sheet` arg OR any `tables` value) always asks: fetching arbitrary Google
+                        // data the user didn't navigate to is privileged; `'current'` (the page they're
+                        // on) is fine. But once the user has approved a given SPREADSHEET this
+                        // page-session, don't re-escalate subsequent calls to it (they granted access to
+                        // that resource) — this only lifts the external-sheet escalation, so a non-autoPy
+                        // run is still gated on the code as usual; the cache just stops re-asking.
+                        const extIds = externalSheetIds(args);
+                        const escalated = extIds.some(id => !approvedSheets.has(id));
                         if (!handled && autoPy && tool.name === "python_exec" && !escalated
                             && (args as { mode?: unknown }).mode !== "full"
                             && !suspiciousChars(String((args as { code?: unknown }).code ?? "")).length) {
@@ -630,11 +647,10 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
                             } else {
                                 approval = "user";
                                 args = decision.arguments;   // possibly caller-edited before running
-                                // Remember an approved external sheet for the rest of this page session,
-                                // so a follow-up call to the same spreadsheet doesn't re-prompt (keyed by
-                                // the FINAL args, in case the user edited the sheet before approving).
-                                const approvedId = googleSheetId(String((args as { sheet?: unknown }).sheet ?? ""));
-                                if (approvedId) approvedSheets.add(approvedId);
+                                // Remember every approved external sheet for the rest of this page
+                                // session, so a follow-up call to the same spreadsheet doesn't re-prompt
+                                // (keyed off the FINAL args, in case the user edited them before approving).
+                                for (const id of externalSheetIds(args)) approvedSheets.add(id);
                                 ({ result, elements, image, imageLabel, render: toolRender, renderIn: toolRenderIn } = await runTool(tool, args));
                             }
                         }
@@ -980,39 +996,67 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
          *   for approval before a full-mode run.
          * @param {number} [opts.margin] For an `@pt` image: the crop radius (px) around the point.
          *   Defaults to the look-radius. Ignored for `@box`/selectors.
-         * @param {string|Element} [opts.table] A selector/Element for a page table → loaded into the
-         *   sandbox as `df` (pandas.DataFrame). A clean `<table>`/ARIA grid is walked in the page
-         *   (case-preserving); anything else falls back to `pd.read_html(outerHTML)`.
-         * @param {string} [opts.sheet] A Google Sheets URL (or `"current"` when you're on the
-         *   sheet's page) → its CSV export is fetched with your Google login and loaded as `df`.
-         * @returns {Promise<{ ok, value?, stdout, error?, inputImage?, inputTable? }>}
-         *   `inputImage`/`inputTable` are what the sandbox saw (for the debug render).
+         * @param {string|Element|Object} [opts.tables] Spreadsheet/table data to load as pandas
+         *   DataFrame(s). A single source (a CSS selector for a page table, a Google Sheets URL, or
+         *   `"current"`) → loaded as `df`; a map `{ name: source }` → loaded under those variable
+         *   names (so you can join them). A Sheets URL is fetched with the user's Google login; an
+         *   external one requires approval. Each arrives ALREADY parsed — reference it, don't re-load it.
+         * @returns {Promise<{ ok, value?, stdout, error?, inputImage?, inputTables? }>}
+         *   `inputImage`/`inputTables` are what the sandbox saw (for the debug render).
          */
-        pythonExec: async function(code: string, { image = null, mode = "readonly", margin = 0, table = null, tableRaw = false, sheet = null }: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; table?: string | Element | null; tableRaw?: boolean; sheet?: string | null } = {}): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string; inputTable?: { columns: string[]; rows: (string | number | null)[][] } }> {
+        pythonExec: async function(code: string, { image = null, mode = "readonly", margin = 0, tableRaw = false, tables = null }: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Element | Record<string, string | Element> | null } = {}): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string; inputTables?: TablePreview[] }> {
             // raw: the sandbox must see the container's/point's actual pixels — NOT the
             // look-verify overlay (the drawn @box outline / @pt marker) or its padding.
             // `margin` sets the crop radius around an @pt (default: the look-radius).
             const img = image != null ? await this.screenshot(image as string | Element, { raw: true, margin }) : null;
-            // `sheet` → the Google Sheet's CSV, fetched credentialed in the background, parsed
-            // into the same {columns, rows} a page `table` yields → identical auto-cast → df path.
-            let tbl: { kind: "rows"; columns: string[]; rows: (string | number | null)[][] } | { kind: "html"; html: string } | null = null;
-            if (sheet != null) {
-                const target = sheet === "current" ? (typeof location !== "undefined" ? location.href : "") : sheet;
+            // `tables` is a single source (→ `df`) OR a map { name: source }. Normalize to an ordered
+            // [name, src] list; every source auto-dispatches by shape (a Sheets URL / 'current' →
+            // sheet, else a DOM selector/Element) so one call can join a page table and a sheet.
+            const specs: { name: string; src: string | Element }[] = [];
+            if (tables != null) {
+                if (typeof tables === "string" || (typeof Element !== "undefined" && tables instanceof Element)) specs.push({ name: "df", src: tables as string | Element });
+                else for (const [name, src] of Object.entries(tables)) {
+                    const nameErr = pyVarNameError(name);
+                    if (nameErr) throw new Error(`pythonExec tables: ${nameErr}`);
+                    specs.push({ name, src });
+                }
+            }
+            const loaded: LoadedTable[] = [];
+            for (const spec of specs) loaded.push(await this._loadTable(spec.name, spec.src, tableRaw));
+
+            const r = await makeBackgroundTaskPromise("PYTHON_EXEC_REQUEST", "PYTHON_EXEC_RESPONSE",
+                { code, image: img, hardened: mode !== "full", tables: loaded.map(l => ({ name: l.name, data: l.data })) }) as { ok: boolean; value?: unknown; stdout: string; error?: string };
+            const extra: { inputImage?: string; inputTables?: TablePreview[] } = {};
+            if (img) extra.inputImage = img;
+            if (loaded.length) extra.inputTables = loaded.map(l => ({
+                name: l.name, source: l.source,
+                ...(l.data.kind === "rows" ? { columns: l.data.columns, rows: l.data.rows } : { html: true }),
+            }));
+            return Object.keys(extra).length ? { ...r, ...extra } : r;
+        },
+        /**
+         * Resolve ONE `tables` source to a loaded DataFrame spec `{ name, source, data }`, dispatching
+         * by the value's shape: `'current'` or a Google Sheets URL → fetch its CSV; anything else →
+         * a DOM selector/Element (a page table). `source` carries the provenance for the debug
+         * render's label + tooltip. Page-side; async (sheets go through the background fetch).
+         */
+        _loadTable: async function(name: string, src: string | Element, raw = false): Promise<LoadedTable> {
+            const isCurrent = src === "current";
+            if (isCurrent || (typeof src === "string" && googleSheetCsvUrl(src))) {
+                const target = isCurrent ? (typeof location !== "undefined" ? location.href : "") : String(src);
                 const csvUrl = googleSheetCsvUrl(target);
-                if (!csvUrl) throw new Error(sheet === "current"
-                    ? "pythonExec sheet:'current' — this page isn't a Google Sheet."
-                    : `pythonExec sheet — "${sheet}" isn't a Google Sheets URL.`);
+                if (!csvUrl) throw new Error(isCurrent
+                    ? "pythonExec tables:'current' — this page isn't a Google Sheet."
+                    : `pythonExec — "${String(src)}" isn't a Google Sheets URL.`);
                 const csv = await makeBackgroundTaskPromise<string>("FETCH_SHEET_REQUEST", "FETCH_SHEET_RESPONSE", { url: csvUrl });
                 const all = parseCsv(csv), columns = all[0] || [], dataRows = all.slice(1);
-                tbl = { kind: "rows", columns, rows: tableRaw ? dataRows : castTableColumns(columns, dataRows) };
-            } else if (table != null) {
-                tbl = this._resolveTable(table, tableRaw);
+                const source: TableSource = isCurrent
+                    ? { kind: "sheet-current", label: (typeof document !== "undefined" && document.title) ? document.title : "current sheet" }
+                    : { kind: "sheet-external", label: googleSheetId(String(src)) || String(src) };
+                return { name, source, data: { kind: "rows", columns, rows: raw ? dataRows : castTableColumns(columns, dataRows) } };
             }
-            const r = await makeBackgroundTaskPromise("PYTHON_EXEC_REQUEST", "PYTHON_EXEC_RESPONSE", { code, image: img, hardened: mode !== "full", table: tbl }) as { ok: boolean; value?: unknown; stdout: string; error?: string };
-            const extra: { inputImage?: string; inputTable?: { columns: string[]; rows: (string | number | null)[][] } } = {};
-            if (img) extra.inputImage = img;
-            if (tbl && tbl.kind === "rows") extra.inputTable = { columns: tbl.columns, rows: tbl.rows };
-            return Object.keys(extra).length ? { ...r, ...extra } : r;
+            const data = this._resolveTable(src, raw);
+            return { name, source: { kind: "dom", label: typeof src === "string" ? src : elPath(src) }, data };
         },
         /**
          * Resolve a `table` target (selector/Element) to what the sandbox loads as `df`:

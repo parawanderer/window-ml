@@ -11,7 +11,7 @@ import { suspiciousArgsWarning } from "./security";
 // the human most needs to see — but a long `code`/`js` blob renders first by insertion order and
 // pushes it off-screen. Rank context keys to the top and the code blob to the bottom (stable sort
 // keeps everything else in insertion order), so "which sheet is it pulling?" is the first line.
-const ARG_FRONT = ["sheet", "table", "url", "image", "selector", "index", "mode", "cast", "tableRaw"];
+const ARG_FRONT = ["tables", "url", "image", "selector", "index", "mode", "cast", "tableRaw"];
 const ARG_BACK = ["code", "js"];
 const argRank = (k: string): number => {
     const f = ARG_FRONT.indexOf(k);

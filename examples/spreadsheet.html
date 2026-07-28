@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>Quarterly Sales — a table demo for ml.pythonExec({ table }) → pandas df</title>
+<title>Quarterly Sales — a table demo for ml.pythonExec({ tables }) &rarr; pandas df</title>
 <style>
   body { font: 15px system-ui, sans-serif; margin: 28px 32px; color: #111; }
   h1 { font-size: 18px; margin-bottom: 6px; }
@@ -29,7 +29,7 @@
   <h1>Quarterly Sales by Rep</h1>
   <p>A plain rendered <code>&lt;table&gt;</code> — the kind of thing a "corporate app" shows and an LLM would
   otherwise try to add up in its head (and get wrong). Point <code>ml.pythonExec</code> at it with
-  <code>{ table: "#sales" }</code> and it lands in the sandbox as a pandas <code>df</code> for exact math.</p>
+  <code>{ tables: "#sales" }</code> and it lands in the sandbox as a pandas <code>df</code> for exact math.</p>
 
   <p><b>Try:</b></p>
   <p><code>await ml.agent("What's the grand total of all quarters, the top rep by annual total, and the
@@ -78,7 +78,7 @@
   at once, so eyeballing/transcribing every cell is hopeless. It also has <b>dirty cells</b>: blanks,
   <code>N/A</code>, a comma <code>1,250</code>, currency <code>$300</code>, an accounting negative
   <code>(180)</code>, and a typo <code>12O0</code> (letter O). The only sane path is
-  <code>python_exec({ table: "#bigsales" })</code> — the auto-cast coerces the formatted cells and
+  <code>python_exec({ tables: "#bigsales" })</code> — the auto-cast coerces the formatted cells and
   turns the junk into <code>NaN</code>, and pandas skips those in <code>.sum()</code>.</p>
   <p><b>Try:</b> <code>await ml.agent("Grand total of ALL months across ALL reps (ignore bad/missing
   cells), and the top region by total. Use python_exec on #bigsales — the table scrolls, don't try to
