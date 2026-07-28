@@ -1068,7 +1068,24 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             const el = typeof target === "string" ? queryAll(target)[0] : target;
             if (!(el instanceof Element)) throw new Error(`ml.pythonExec: no table element matches "${String(target)}".`);
             const t = extractTable(el);
-            if (!t) return { kind: "html", html: el.outerHTML };
+            if (!t) {
+                // extractTable couldn't parse it (spans/nested/non-table) → the pd.read_html fallback
+                // over outerHTML. That only works if a NON-EMPTY <table> is actually present, so guard
+                // the two ways it isn't — a collapsed/lazily-rendered table (the node exists, its rows
+                // don't) is the common trigger — with an actionable message, instead of the obscure
+                // pandas ValueError it becomes downstream ("No tables found matching pattern '.+'").
+                const label = typeof target === "string" ? target : elPath(el);
+                const tbl = el.matches("table") ? el : el.querySelector("table");
+                if (!tbl) {
+                    // No <table> to read_html. An ARIA grid extractTable couldn't parse gets its own
+                    // message (read_html can't help it — it has no <table> tag by construction).
+                    if (el.matches("[role=table], [role=grid], [role=treegrid]") || el.querySelector("[role=table], [role=grid], [role=treegrid]"))
+                        throw new Error(`ml.pythonExec: "${label}" is an ARIA grid python_exec couldn't parse — it may be empty, virtualized, or missing role=row/cell markup. Reveal/scroll its rows into view, or target a clean <table>.`);
+                    throw new Error(`ml.pythonExec: "${label}" matched a <${el.tagName.toLowerCase()}> with no <table> inside — python_exec needs a <table> or a clean ARIA grid.`);
+                }
+                if (!tbl.querySelector("tr") || !(tbl.textContent || "").trim()) throw new Error(`ml.pythonExec: "${label}" matched an EMPTY table (no rows) — it may be collapsed or lazily rendered. Reveal it first (scroll it into view / click a "show"/"load" control), then retry.`);
+                return { kind: "html", html: el.outerHTML };
+            }
             return { kind: "rows", columns: t.columns, rows: raw ? t.rows : castTableColumns(t.columns, t.rows) };
         },
         /**

@@ -1190,10 +1190,12 @@ test("export: a python_exec df renders as a real <table> (PDF) and a GFM table (
     await w.tick();
 
     const md = await (await captureExport(w)).blob.text();
-    assert.match(md, /\| Rep \| Q1 \|/, "markdown → GFM table header");
+    assert.match(md, /<details><summary>input table → df \(2 × 2\)/, "markdown → the df is collapsed into a disclosure (doesn't flood the .md)");
+    assert.match(md, /\| Rep \| Q1 \|/, "markdown → GFM table header (inside the disclosure)");
     assert.match(md, /\| Ada \| 120 \|/, "markdown → GFM row (all rows, uncapped)");
 
     const { html } = await capturePrint(w);
+    assert.match(html, /<details open><summary>input table → df/, "PDF → the disclosure is OPEN so the table still prints");
     assert.match(html, /<table class="dftable">/, "PDF → a real table, not markdown pipes");
     assert.match(html, /<td class="num">120<\/td>/, "numeric cell tagged for right-align");
     assert.match(html, /<td class="">Ada<\/td>/, "string cell");

@@ -422,8 +422,13 @@ can `pd.merge` them; keys validated as Python identifiers by `pyVarNameError`, s
 `tables` dict — a model that mirrors the arg name and reaches for `tables['name']` just works
 (the same accommodate-don't-fight tack as the read_csv redirect; `tables` is a reserved key). Each source auto-dispatches by shape
 (`_loadTable`): **a `<table>`/ARIA-grid selector** is walked page-side (`extractTable`,
-case-preserving; col/rowspans or a non-table fall back to `pd.read_html(outerHTML)` with bs4);
-**a Google Sheets URL** or **`'current'`** (the sheet you're on) is fetched as CSV. Numeric
+case-preserving; col/rowspans or a non-table fall back to `pd.read_html(outerHTML)` with bs4).
+Before that fallback ships, `_resolveTable` **guards the cases read_html would choke on**: an
+**empty table** (0 rows — a collapsed/lazily-rendered table like the `#bigsales` demo: the node
+exists, its rows don't → pandas' `No tables found matching pattern '.+'`), a wrapper with **no
+`<table>` inside**, or an **unparseable ARIA grid** each throw an actionable page-side message
+("reveal/scroll it into view…") instead of the obscure downstream `ValueError`.
+**A Google Sheets URL** or **`'current'`** (the sheet you're on) is fetched as CSV. Numeric
 columns are **auto-cast page-side** (`dom.ts` `castTableColumns`, pure/tested: a column
 ≥90%-numeric after stripping currency/commas/%/accounting-parens → `number|null`, else strings)
 so `df.sum()` adds instead of string-CONCATENATING — `{ tableRaw }` skips it for

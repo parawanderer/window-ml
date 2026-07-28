@@ -1558,11 +1558,34 @@ test("_resolveTable: a table with colspan falls back to read_html (kind: html)",
     assert.match(t.html, /colspan/);
 });
 
-test("_resolveTable: a non-table element falls back to its outerHTML", () => {
-    const { ml } = loadDomWorld(`<div id="d"><p>not a table</p></div>`);
+test("_resolveTable: a wrapper element AROUND a table falls back to its outerHTML (read_html finds the inner table)", () => {
+    const { ml } = loadDomWorld(`<div id="d"><table><tr><th colspan="2">M</th></tr><tr><td>1</td><td>2</td></tr></table></div>`);
     const t = ml._resolveTable("#d");
     assert.equal(t.kind, "html");
-    assert.match(t.html, /not a table/);
+    assert.match(t.html, /<table>/);
+});
+
+// The `#bigsales` demo trigger: a table that exists in the DOM but is EMPTY (lazily built on a
+// toggle) → extractTable returns null → read_html over `<table></table>` would die with the
+// obscure "No tables found matching pattern '.+'". Guard it page-side with an actionable message.
+test("_resolveTable: an EMPTY table (0 rows) throws a clear, actionable error (not an obscure read_html ValueError)", () => {
+    const { ml } = loadDomWorld(`<table id="t"></table>`);
+    assert.throws(() => ml._resolveTable("#t"), /matched an EMPTY table.*collapsed or lazily rendered/is);
+});
+
+test("_resolveTable: a whitespace-only table (no rows) also throws the empty-table error", () => {
+    const { ml } = loadDomWorld(`<table id="t">   </table>`);
+    assert.throws(() => ml._resolveTable("#t"), /EMPTY table/);
+});
+
+test("_resolveTable: an element with no <table> inside throws (python_exec needs a table)", () => {
+    const { ml } = loadDomWorld(`<div id="d"><p>not a table</p></div>`);
+    assert.throws(() => ml._resolveTable("#d"), /no <table> inside/);
+});
+
+test("_resolveTable: an empty/malformed ARIA grid throws an ARIA-specific message", () => {
+    const { ml } = loadDomWorld(`<div id="g" role="grid"></div>`);   // role=grid but no rows → unparseable
+    assert.throws(() => ml._resolveTable("#g"), /ARIA grid python_exec couldn't parse/);
 });
 
 test("python_exec tool: an ambiguous `table` selector warns it loaded the FIRST", async () => {

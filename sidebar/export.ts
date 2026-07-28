@@ -179,8 +179,10 @@ function writeAgent(s: Session, d: Sink): void {
                     : t.source.kind === "sheet-current" ? `current Google Sheet — ${t.source.label}`
                     : `page table — ${t.source.label}`;
                 if (t.rows) {
-                    d.note(`input table → ${t.name} (${t.rows.length} × ${cols}) · ${srcLabel}`, true);
-                    d.table(t.columns || [], t.rows);
+                    // Collapse the (potentially huge) df into a disclosure so it doesn't flood the
+                    // .md — the summary carries the shape + source. `details` is collapsed in markdown
+                    // but `<details open>` in the print HTML, so the PDF still shows the table.
+                    d.details(`input table → ${t.name} (${t.rows.length} × ${cols}) · ${srcLabel}`, () => d.table(t.columns || [], t.rows!));
                 } else {
                     d.note(`input table → ${t.name} · ${srcLabel} (loaded via pd.read_html)`, true);
                 }
