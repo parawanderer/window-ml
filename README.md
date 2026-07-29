@@ -429,9 +429,35 @@ bridge via `window.postMessage` instead.)
 | `background.js` | Service worker. Owns config, builds per-format request bodies, extracts replies, talks to OpenWebUI/Ollama (CORS-free). |
 | `popup.html/js` | Settings UI (`chrome.storage.sync`), model picker, Save & Test, VRAM usage readout, Free VRAM. |
 
-Security note: config overrides (URL/key) are only accepted from the popup —
-messages relayed from web pages (`sender.tab` set) cannot repoint the saved
-API key at another host, and pages can only ever change the model (validated).
+### Security & trust model
+
+The **hard security perimeter is the background worker**, and it holds no matter
+what page you're on:
+
+- Your **API URL and key are never exposed to the page** — `ml.config()` returns
+  only a non-secret subset. Config overrides (URL/key) are accepted **only from the
+  popup**; a message relayed from a web page (`sender.tab` set) can't repoint the
+  saved key at another host. Pages can only change the **model** (validated against
+  the server list, and filtered by `modelFilter`).
+- Credentialed cross-origin fetches are **host-locked** (the Google Sheets loader
+  only fetches `docs.google.com` exports), and an inline-approval decision is
+  accepted only from an **extension-origin** sender.
+
+But **`window.ml` lives in the page's *main world*** (that's the point — you call it
+from the console/userscripts). So **any page the extension is active on can call it,
+and a *hostile* page can manipulate it**: it can override `window.confirm` to defeat
+the approval prompt, forge the extension's internal page-side messages, or feed
+**prompt-injection** into an `ml.agent` run's context to steer the model. The
+approval gates and `window.ml`'s page-side behavior are human-in-the-loop consent
+against the *model's* proposals — they are **not** a defense against a malicious page,
+because the page owns that world.
+
+**Practical guidance:** keep **Site access** on **"On click"** or a whitelist of
+**pages you trust** (step 2 above), so `window.ml` only exists where you deliberately
+invoke it. Don't run `ml.agent` on a page you don't trust — a malicious page can
+prompt-inject the model or subvert the approval flow. The extension can't protect the
+main world from the page it's injected into; it can only protect your credentials and
+the privileged (background) operations, which it does.
 
 ## Tests
 
