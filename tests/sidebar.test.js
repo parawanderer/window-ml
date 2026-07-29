@@ -747,6 +747,27 @@ test("agent runs render as their own session with steps + a final answer", async
     assert.ok(w.shadow.querySelector(".msg.asst .raw-btn"), "answer has a raw toggle");
 });
 
+test("agent step renders IN-FLIGHT, then the DONE patches it in place (same seq → no duplicate row)", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("ifl", "compute a thing"));
+    // In-flight START: a pending tool call, no result yet.
+    await w.dispatch(agentStep("ifl", 1, { seq: 1, pending: true, tool: "python_exec", arguments: { code: "return 6*7" } }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    let steps = w.shadow.querySelectorAll(".astep.tool");
+    assert.equal(steps.length, 1, "the pending tool call renders while still running");
+    assert.ok(steps[0].classList.contains("pending"), "step marked pending");
+    assert.match(steps[0].querySelector(".astep-preview").textContent, /running/i, "shows a running indicator, not a result");
+
+    // DONE for the same seq → patches the row in place (one step, now with the result).
+    await w.dispatch(agentStep("ifl", 1, { seq: 1, tool: "python_exec", arguments: { code: "return 6*7" }, result: "42" }));
+    await w.tick();
+    steps = w.shadow.querySelectorAll(".astep.tool");
+    assert.equal(steps.length, 1, "no duplicate row — the pending step was PATCHED, not appended");
+    assert.ok(!steps[0].classList.contains("pending"), "no longer pending");
+    assert.match(steps[0].querySelector(".astep-preview").textContent, /42/, "the result filled in");
+});
+
 test("agent view: a usage-only step (no thought/tool) does not render an empty step box", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("aus", "answer directly"));

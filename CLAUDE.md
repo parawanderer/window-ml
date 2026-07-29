@@ -369,10 +369,18 @@ canvas/coordinate half — grid, grid-grounding, `@pt`; and slice 4's settings c
 canvas auto-upgrade, `@pt` dedup). Illustrated end-to-end in `docs/LOCATE-VISION.md`.
 
 **Agent runs in the debug sidebar.** `ml.agent` emits its own debug-event kinds
-(not `chat`): `agent` (run start: task + model), `agent-step` (one per step — a
-thought OR a tool call with args/result; `elements` is a **count**, since real
-DOM nodes can't cross the window bus — they still reach `onStep`), and
-`agent-result` (summary + steps + `hitCap` + `cancelled`). All share the run's own session
+(not `chat`): `agent` (run start: task + model), `agent-step` (a thought OR a tool
+call with args/result; `elements` is a **count**, since real DOM nodes can't cross
+the window bus — they still reach `onStep`), and `agent-result` (summary + steps +
+`hitCap` + `cancelled`). **In-flight rendering:** a tool call emits `agent-step`
+**twice** — a `pending: true` START (name + args + best-effort In render, no result
+yet) the instant it's about to run, then the DONE (result + Out + approval), sharing a
+monotonic `seq`. The sidebar `onDebug` **patches the row in place by `seq`** (immutably —
+signals gotcha) instead of appending, so a running step shows a pulsing "running…" until
+it fills in. The START is **sidebar-only** — `onStep`/`logStep` fire once, on the DONE
+(a pending event has no result). A blocking `confirm()` defers the START's paint until
+approved (the case inline approvals will remove — this is the observability half of that
+keystone). All share the run's own session
 hash (an agent run isn't a `createChat`), so the sidebar renders it as a distinct
 "agent" session. It reuses `onStep`'s existing event stream — the tracer was
 already there, this just tees it to `emitDebug`. A depth counter (`inAgentRun`)

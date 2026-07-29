@@ -496,6 +496,10 @@ export interface DebugAgentConfig {
 export interface DebugAgentStart extends DebugBase { kind: "agent"; task: string; model: string | null; maxSteps: number; config: DebugAgentConfig; }
 export interface DebugAgentStep extends DebugBase {
     kind: "agent-step"; step: number;
+    // A monotonic id per TOOL-call step in a run, so the sidebar can correlate the in-flight START
+    // (pending: true, no result yet) with the completed DONE and patch the row in place. Thoughts
+    // have no seq. `pending` marks the START (render "running…" until the DONE arrives).
+    seq?: number; pending?: boolean;
     thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: number;
     renderIn?: RenderDescriptor;    // rich render for the In slot (the call) — else the raw args
     renderOut?: RenderDescriptor;   // rich render for the Out slot (the result) — else the raw result

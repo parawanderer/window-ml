@@ -36,7 +36,13 @@ function onDebug(ev: MlDebugEvent): void {
     if (ev.kind === "agent-step") {
         const s = sessionMap.get(ev.session.hash);
         if (!s) return;
-        s.steps = [...(s.steps || []), { step: ev.step, thought: ev.thought, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: ev.elements, renderIn: ev.renderIn, renderOut: ev.renderOut, argIssues: ev.argIssues, approval: ev.approval, usage: ev.usage }];
+        const step = { step: ev.step, seq: ev.seq, pending: ev.pending, thought: ev.thought, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: ev.elements, renderIn: ev.renderIn, renderOut: ev.renderOut, argIssues: ev.argIssues, approval: ev.approval, usage: ev.usage };
+        const steps = s.steps || [];
+        // In-flight: a tool step arrives twice — a pending START then the DONE, sharing a `seq`.
+        // Patch the existing row in place (immutably) so it fills in; otherwise append. Thoughts
+        // and single-emit steps have no seq → always append.
+        const i = ev.seq != null ? steps.findIndex(x => x.seq === ev.seq) : -1;
+        s.steps = i >= 0 ? steps.map((x, k) => k === i ? step : x) : [...steps, step];
         s.lastTs = ev.ts; rev.value++; return;
     }
     if (ev.kind === "agent-result") {
@@ -701,15 +707,15 @@ function ToolStep({ st }: { st: AgentStep }) {
     const outRender = st.renderOut;
     const issues = st.argIssues?.length ? st.argIssues : null;
     return (
-        <div class={`astep tool${st.approval ? (st.approval === "denied" ? " appr-no" : " appr-yes") : ""}`}>
+        <div class={`astep tool${st.pending ? " pending" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : " appr-yes") : ""}`}>
             <button class="astep-head" onClick={() => setOpen(v => !v)}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
-                <Dot status={toolFailed(st.result) ? "err" : "ok"} />
+                <Dot status={st.pending ? "pending" : toolFailed(st.result) ? "err" : "ok"} />
                 <span class="tool-name">{st.tool}</span>
                 {st.approval ? <ApprovalBadge approval={st.approval} /> : null}
                 {st.elements ? <span class="tt el-count">{st.elements} el<span class="tt-pop wrap" role="tooltip">DOM nodes returned (reach them in the console via onStep).</span></span> : null}
                 {issues ? <span class="arg-warn" title={issues.join("; ")}><IconWarn />{issues.length}</span> : null}
-                {!open ? <span class="astep-preview">{collapsedPreview(st.result || "").text}</span> : null}
+                {!open ? <span class="astep-preview">{st.pending ? <span class="dim">running…</span> : collapsedPreview(st.result || "").text}</span> : null}
             </button>
             {open
                 ? <div class="astep-body">
@@ -719,8 +725,8 @@ function ToolStep({ st }: { st: AgentStep }) {
                             preview={inlineJson(args || {})} render={inRender} raw={<Code text={pretty(args || {})} lang="json" />} />
                         : null}
                     <IoBlock label="Out" tip="What the tool returned to the model."
-                        preview={inlineText(st.result || "")} render={outRender}
-                        raw={st.result ? <Code text={st.result} lang="text" /> : <span class="dim">(no output)</span>} />
+                        preview={st.pending ? "running…" : inlineText(st.result || "")} render={outRender}
+                        raw={st.result ? <Code text={st.result} lang="text" /> : <span class="dim">{st.pending ? "running…" : "(no output)"}</span>} />
                 </div>
                 : null}
         </div>

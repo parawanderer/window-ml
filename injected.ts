@@ -503,17 +503,21 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 tools: toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval, vision: !!(t.capabilities && t.capabilities.includes("vision")) })),
                 maxSteps, think: (think === true || think === false) ? think : null, env, vision: vision ?? null, hints: hints || null,
             } });
-            const emit = (event: { step: number; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: Node[]; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; argIssues?: string[]; approval?: "readonly" | "sandbox" | "user" | "denied"; usage?: TokenUsage | null }) => {
-                if (logDebug) logStep(event);
+            let stepSeq = 0;   // monotonic id per tool-call step, correlating its in-flight START with its DONE
+            const emit = (event: { step: number; seq?: number; pending?: boolean; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: Node[]; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; argIssues?: string[]; approval?: "readonly" | "sandbox" | "user" | "denied"; usage?: TokenUsage | null }) => {
+                // A `pending` START is a sidebar-render-only event: it has no result yet, so it must
+                // NOT reach onStep/logStep (those fire once per COMPLETED step, or they'd log "→ undefined").
+                if (logDebug && !event.pending) logStep(event);
                 emitDebug({
                     kind: "agent-step", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: event.step },
-                    step: event.step, thought: event.thought, tool: event.tool, arguments: event.arguments,
+                    step: event.step, seq: event.seq, pending: event.pending || undefined,
+                    thought: event.thought, tool: event.tool, arguments: event.arguments,
                     result: event.result, elements: event.elements ? event.elements.length : undefined,
                     renderIn: event.renderIn, renderOut: event.renderOut,
                     argIssues: event.argIssues && event.argIssues.length ? event.argIssues : undefined,
                     approval: event.approval, usage: event.usage || undefined,
                 });
-                if (!onStep) return;
+                if (!onStep || event.pending) return;
                 try { onStep(event); } catch (e) { console.error("ml.agent onStep threw:", e); }
             };
             // Two independent render slots for a tool step, each from its own hook:
@@ -617,6 +621,14 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     let args = (call.arguments || {}) as Record<string, unknown>;
                     let result, elements, image, imageLabel, toolRender, toolRenderIn;
                     let approval: "readonly" | "sandbox" | "user" | "denied" | undefined;
+                    // In-flight START: render the pending tool call NOW (name + args + best-effort In),
+                    // patched by the DONE emit below (same seq). Paints before an auto-approved /
+                    // non-approval tool runs; a blocking confirm() defers it until approved — the case
+                    // inline approvals will remove. Sidebar-only (onStep/logStep skip a pending event).
+                    const seq = ++stepSeq;
+                    emit({ step, seq, tool: call.name, arguments: args, pending: true,
+                        argIssues: tool ? validateArgs(tool.parameters, args) : undefined,
+                        renderIn: descriptorFor(tool, { result: "" }, args).in });
                     if (!tool) {
                         result = `Error: no tool named "${call.name}".`;
                     } else if (tool.requiresApproval) {
@@ -686,7 +698,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     transcript.push(entry);
                     const { in: renderIn, out: renderOut } = descriptorFor(tool, { result, elements, image, imageLabel, render: toolRender, renderIn: toolRenderIn }, args);
                     const argIssues = tool ? validateArgs(tool.parameters, args) : undefined;
-                    emit({ step, ...entry, renderIn, renderOut, argIssues, approval });
+                    emit({ step, seq, ...entry, renderIn, renderOut, argIssues, approval });   // DONE — patches the pending START (same seq)
                     // An answer-capable tool designates the caller-facing result node(s).
                     if (tool && tool.capabilities && tool.capabilities.includes("answer") && elements && elements.length) {
                         answered.push(...elements);

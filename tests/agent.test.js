@@ -785,7 +785,7 @@ test("agent emits debug events (start → steps → result) after the sidebar ha
     assert.equal(start.model, "qwen3:14b");
     const steps = events.filter(e => e.kind === "agent-step");
     assert.ok(steps.some(e => e.thought === "Looking around."), "thought step emitted");
-    const toolStep = steps.find(e => e.tool === "ping");
+    const toolStep = steps.find(e => e.tool === "ping" && !e.pending);
     assert.deepEqual(toolStep.arguments, { x: 1 });
     assert.equal(toolStep.result, "pong");
     assert.ok(events.every(e => e.session.hash === start.session.hash), "all events share the run hash");
@@ -968,7 +968,7 @@ async function agentDebugEvents(tool) {
     win.postMessage({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
     const res = await world.ml.agent("x", { tools: [t], vision: false });
-    return { events, res, step: events.find(e => e.kind === "agent-step" && e.tool === tool.name) };
+    return { events, res, step: events.find(e => e.kind === "agent-step" && e.tool === tool.name && !e.pending) };
 }
 
 test("a custom tool's render() emits a serializable descriptor on its step", async () => {
@@ -1045,7 +1045,7 @@ test("agent flags a tool call whose args don't match its parameter schema", asyn
     win.postMessage({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
     await world.ml.agent("x", { tools: [grab], vision: false });
-    const step = events.find(e => e.kind === "agent-step" && e.tool === "grab");
+    const step = events.find(e => e.kind === "agent-step" && e.tool === "grab" && !e.pending);
     assert.ok(step.argIssues.some(s => /missing required "selector"/.test(s)));
     assert.ok(step.argIssues.some(s => /unknown property "index"/.test(s)));
 });
@@ -1066,7 +1066,7 @@ test("built-in exec renders the run JS as a javascript code descriptor", async (
     await new Promise(r => setTimeout(r, 0));
     const exec = world.ml.domTools.find(t => t.name === "exec");
     await world.ml.agent("x", { tools: [exec], vision: false, approve: () => true });
-    const step = events.find(e => e.kind === "agent-step" && e.tool === "exec");
+    const step = events.find(e => e.kind === "agent-step" && e.tool === "exec" && !e.pending);
     assert.deepEqual(step.renderIn, { type: "code", text: "1 + 1", lang: "javascript", format: true });
 });
 
@@ -1084,7 +1084,7 @@ test("autoApproveReadonly: a read-only exec survey runs with NO approval prompt"
     let approvals = 0;
     await world.ml.agent("x", { tools: [exec], vision: false, approve: () => { approvals++; return true; } });
     assert.equal(approvals, 0, "read-only survey was auto-approved (gate never called)");
-    const step = events.find(e => e.kind === "agent-step" && e.tool === "exec");
+    const step = events.find(e => e.kind === "agent-step" && e.tool === "exec" && !e.pending);
     assert.match(step.result, /\[20,30\]/, "the interpreter actually ran it");
     assert.equal(step.approval, "readonly", "step tagged as auto-approved");
 });
@@ -1103,7 +1103,7 @@ test("autoApproveReadonly: an out-of-dialect exec still goes through the approva
     let approvals = 0;
     await world.ml.agent("x", { tools: [exec], vision: false, approve: () => { approvals++; return true; } });
     assert.equal(approvals, 1, "the IIFE isn't in the read-only dialect → normal approval");
-    assert.equal(events.find(e => e.kind === "agent-step" && e.tool === "exec").approval, "user", "tagged approved-by-user");
+    assert.equal(events.find(e => e.kind === "agent-step" && e.tool === "exec" && !e.pending).approval, "user", "tagged approved-by-user");
 });
 
 test("a denied exec call is tagged 'denied' in its step", async () => {
@@ -1117,7 +1117,7 @@ test("a denied exec call is tagged 'denied' in its step", async () => {
     await new Promise(r => setTimeout(r, 0));
     const exec = world.ml.domTools.find(t => t.name === "exec");
     await world.ml.agent("x", { tools: [exec], vision: false, approve: () => false });
-    assert.equal(events.find(e => e.kind === "agent-step" && e.tool === "exec").approval, "denied");
+    assert.equal(events.find(e => e.kind === "agent-step" && e.tool === "exec" && !e.pending).approval, "denied");
 });
 
 test("autoApproveReadonly OFF: read-only exec still prompts (the flag gates it)", async () => {
@@ -1155,7 +1155,7 @@ const runPyAgent = async ({ config, code, args = {}, approve }) => {
     await new Promise(r => setTimeout(r, 0));
     let approvals = 0;
     await world.ml.agent("x", { tools: [world.ml.pythonTool()], vision: false, approve: () => { approvals++; return approve ? approve() : true; } });
-    return { approvals, pyPayload, step: events.find(e => e.kind === "agent-step" && e.tool === "python_exec") };
+    return { approvals, pyPayload, step: events.find(e => e.kind === "agent-step" && e.tool === "python_exec" && !e.pending) };
 };
 
 test("autoApprovePython: a readonly python_exec runs with NO approval prompt (sandbox provenance, hardened)", async () => {
@@ -1222,7 +1222,7 @@ const runPySeq = async (calls) => {
     await new Promise(r => setTimeout(r, 0));
     let approvals = 0;
     await world.ml.agent("x", { tools: [world.ml.pythonTool()], vision: false, approve: () => { approvals++; return true; } });
-    return { approvals, steps: events.filter(e => e.kind === "agent-step" && e.tool === "python_exec") };
+    return { approvals, steps: events.filter(e => e.kind === "agent-step" && e.tool === "python_exec" && !e.pending) };
 };
 
 test("external-sheet approval is CACHED per page session — a repeat call to the same sheet doesn't re-prompt", async () => {
@@ -1267,7 +1267,7 @@ test("agent routes a tool's DOM nodes to onStep/transcript but never to the mode
     assert.equal(toolMsg.content, "found 1");
     assert.ok(!("elements" in toolMsg));
     // The human-facing channels get the real node.
-    assert.deepEqual(events.find(e => e.tool === "grab").elements, [node]);
+    assert.deepEqual(events.find(e => e.tool === "grab" && !e.pending).elements, [node]);
     assert.deepEqual(res.transcript.find(t => t.tool === "grab").elements, [node]);
 });
 
