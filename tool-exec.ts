@@ -1,0 +1,43 @@
+// Execute ONE agent tool call → a result envelope. This is the single place a tool's `run()` is
+// invoked, with the same arg-validation + error/envelope handling: the page-side agent loop calls it
+// today, and design A's RUN_TOOL_IN_PAGE handler (the background delegating page-context execution to
+// the page) will call the SAME function — so the two paths can't drift. Page-side (a tool's run()
+// touches the DOM and may return real Nodes); the delegation layer reduces `elements` to a count.
+import type { MlTool, ToolResult, RenderDescriptor } from "./contract";
+import { validateArgs } from "./validate";
+import { errText } from "./dom";
+
+export interface ToolEnvelope {
+    result: string;
+    elements?: Node[];
+    image?: string;
+    imageLabel?: string;
+    render?: RenderDescriptor;
+    renderIn?: RenderDescriptor;
+}
+
+export async function executeTool(tool: MlTool, args: Record<string, unknown>): Promise<ToolEnvelope> {
+    // Check the model's args against the tool's schema (the same validateArgs that feeds the debug ⚠
+    // strip) and surface it to the MODEL, not just the sidebar. A MISSING REQUIRED arg means the tool
+    // can't run usefully (e.g. click with no `selector` → a baffling "No element matches undefined"),
+    // so short-circuit with the schema error. Softer issues (unknown/extra prop, bad enum, type
+    // mismatch) don't block — the tool runs and we PREPEND the note, so a lenient validator never
+    // rejects a legitimate call.
+    const issues = validateArgs(tool.parameters, args);
+    if (issues.some(s => s.startsWith("missing required"))) {
+        // "Error:" so the sidebar's toolFailed marks the step failed (red dot), not green — it never ran.
+        return { result: `Error: invalid arguments for "${tool.name}" — ${issues.join("; ")}. Call it again with the correct argument name(s).` };
+    }
+    // Soft issues APPEND (not prepend), so a real "Error:"/"Denied" prefix stays at position 0.
+    const note = issues.length ? `\n\n⚠ Argument schema issue(s): ${issues.join("; ")}` : "";
+    try {
+        const raw = await tool.run(args);
+        // A tool may return a plain string, or { content, elements, image?, render?, renderIn? } to
+        // also hand back real DOM nodes / a screenshot (routed to onStep/the transcript, never the model).
+        if (raw && typeof raw === "object" && typeof (raw as ToolResult).content === "string") {
+            const r = raw as ToolResult;
+            return { result: r.content + note, elements: r.elements, image: r.image, imageLabel: r.imageLabel, render: r.render, renderIn: r.renderIn };
+        }
+        return { result: String(raw) + note };
+    } catch (e) { return { result: `Error: ${errText(e)}` + note }; }
+}

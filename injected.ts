@@ -43,6 +43,7 @@ import { renderArgs, logStep, defaultApprove, normalizeApproval, formatReadonlyE
 import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPythonTool } from "./builtin-tools";
 import { pyVarNameError } from "./python-env";
 import { autoApprovePython } from "./auto-approve";
+import { executeTool } from "./tool-exec";
 
 /** One resolved `python_exec` table source: its var name, provenance, and the payload the sandbox
  *  builds a DataFrame from (rows or read_html html). Internal to injected.ts. */
@@ -570,39 +571,11 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 }
                 messages.push({ role: "assistant" as const, content: msg.content || "", tool_calls: msg.tool_calls });
 
-                // Run a tool, unwrapping its { content, elements } envelope. A tool
-                // may return a plain string, or { content, elements } to also hand
-                // back real DOM nodes — routed to onStep/the transcript for hovering
-                // in devtools, never to the model.
-                const runTool = async (tool: MlTool, args: Record<string, unknown>) => {
-                    // Check the model's args against the tool's schema (the same
-                    // validateArgs that feeds the debug ⚠ strip) and surface it to the
-                    // MODEL, not just the sidebar. A MISSING REQUIRED arg means the tool
-                    // can't run usefully — e.g. click with no `selector` returns a
-                    // baffling "No element matches undefined" — so short-circuit with the
-                    // schema error, which says what to fix. Softer issues (an unknown/
-                    // extra property, a bad enum, a type mismatch) don't block; the tool
-                    // runs and we PREPEND the note, so a lenient validator never rejects a
-                    // legitimate call.
-                    const issues = validateArgs(tool.parameters, args);
-                    if (issues.some(s => s.startsWith("missing required"))) {
-                        // "Error:" so the sidebar's toolFailed marks the step failed (red
-                        // dot), not a green "completed" — the tool never ran.
-                        return { result: `Error: invalid arguments for "${tool.name}" — ${issues.join("; ")}. Call it again with the correct argument name(s).` };
-                    }
-                    // Soft issues APPEND (not prepend), so a real "Error:"/"Denied" prefix
-                    // stays at position 0 where toolFailed can see it.
-                    const note = issues.length ? `\n\n⚠ Argument schema issue(s): ${issues.join("; ")}` : "";
-                    try {
-                        const raw = await tool.run(args);
-                        // A tool may also hand back { image, imageLabel } — a screenshot
-                        // for #3 inline vision, injected into the model's own history.
-                        if (raw && typeof raw === "object" && typeof raw.content === "string") {
-                            return { result: raw.content + note, elements: raw.elements, image: raw.image, imageLabel: raw.imageLabel, render: raw.render, renderIn: raw.renderIn };
-                        }
-                        return { result: String(raw) + note };
-                    } catch (e) { return { result: `Error: ${errText(e)}` + note }; }
-                };
+                // Run a tool → its { result, elements?, image?, render? } envelope. Extracted to
+                // `executeTool` (tool-exec.ts) — the SAME executor design A's RUN_TOOL_IN_PAGE handler
+                // uses, so the page loop and the background-delegated path can't drift. Real DOM nodes
+                // in `elements` reach onStep/the transcript (never the model).
+                const runTool = executeTool;
 
                 const pendingImages = [];   // #3: screenshots captured this turn, injected below
                 for (const call of msg.tool_calls) {
