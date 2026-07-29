@@ -30,7 +30,7 @@ import type {
 } from "./contract";
 import { detectGroundingModel, DEFAULT_GROUNDING_RANGE } from "./contract";
 import { evalReadonly } from "./readonly-exec";
-import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, parseCsv } from "./dom";
+import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv } from "./dom";
 import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, PT_LOOK_RADIUS, BOX_RE, resolveBox } from "./util";
 import { annotate, pickAccentColorForTarget } from "./som";
@@ -42,6 +42,7 @@ import { validateArgs, validateExtend } from "./validate";
 import { renderArgs, logStep, defaultApprove, normalizeApproval, formatReadonlyExec } from "./approval";
 import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPythonTool } from "./builtin-tools";
 import { pyVarNameError } from "./python-env";
+import { autoApprovePython } from "./auto-approve";
 
 /** One resolved `python_exec` table source: its var name, provenance, and the payload the sandbox
  *  builds a DataFrame from (rows or read_html html). Internal to injected.ts. */
@@ -52,19 +53,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
     // Spreadsheets the user has approved `python_exec` access to THIS page session (keyed by
     // Google spreadsheet id). Lets a repeat call to the same sheet skip the external-sheet
     // re-prompt. Page-scoped (module lifetime) — gone on reload; never persisted.
-    const approvedSheets = new Set<string>();
-    // Every EXTERNAL Google Sheet (a Sheets URL that isn't 'current') a python_exec call touches —
-    // whether `tables` is a single source string OR a map of them — as spreadsheet ids. Fetching
-    // arbitrary Google data the user didn't navigate to is privileged, so these drive the approval
-    // escalation regardless of how the source was passed.
-    const externalSheetIds = (args: unknown): string[] => {
-        const t = (args as { tables?: unknown } | null)?.tables;
-        const vals: unknown[] = typeof t === "string" ? [t] : (t && typeof t === "object") ? Object.values(t as Record<string, unknown>) : [];
-        return vals
-            .filter((v): v is string => typeof v === "string" && v !== "current")
-            .map(v => googleSheetId(v))
-            .filter((id): id is string => !!id);
-    };
+    const approvedSheets = new Set<string>();   // spreadsheets the user OK'd this page-session
 
     // ---- Agent tool helpers (page-context DOM introspection) ----
     // These keep observations SMALL on purpose: the point of the agent is to
@@ -660,11 +649,11 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                         // page-session, don't re-escalate subsequent calls to it (they granted access to
                         // that resource) — this only lifts the external-sheet escalation, so a non-autoPy
                         // run is still gated on the code as usual; the cache just stops re-asking.
-                        const extIds = externalSheetIds(args);
-                        const escalated = extIds.some(id => !approvedSheets.has(id));
-                        if (!handled && autoPy && tool.name === "python_exec" && !escalated
-                            && (args as { mode?: unknown }).mode !== "full"
-                            && !suspiciousChars(String((args as { code?: unknown }).code ?? "")).length) {
+                        // The trusted-world auto-approve decision is now the shared `autoApprovePython`
+                        // (auto-approve.ts) — pure, so design A's background loop makes the SAME call
+                        // where the page can't forge it. Here it runs page-side (today's loop).
+                        if (!handled && tool.name === "python_exec"
+                            && autoApprovePython(args, { autoApprovePython: autoPy }, (id: string) => approvedSheets.has(id)) === "sandbox") {
                             approval = "sandbox";
                             ({ result, elements, image, imageLabel, render: toolRender, renderIn: toolRenderIn } = await runTool(tool, args));
                             handled = true;

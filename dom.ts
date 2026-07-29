@@ -393,6 +393,20 @@ export const googleSheetId = (url: string): string | null => {
     return m ? m[1] : null;
 };
 
+/** Every EXTERNAL Google Sheet (a Sheets URL that isn't 'current') a python_exec call touches —
+ *  whether its `tables` arg is a single source string OR a map of them — as spreadsheet ids. Reading
+ *  arbitrary Google data the user didn't navigate to is privileged, so these drive the approval
+ *  escalation + the auto-approve decision. Pure; shared by the page loop and the (design-A) background
+ *  auto-approve so both agree on "which sheets need consent". */
+export const externalSheetIds = (args: unknown): string[] => {
+    const t = (args as { tables?: unknown } | null)?.tables;
+    const vals: unknown[] = typeof t === "string" ? [t] : (t && typeof t === "object") ? Object.values(t as Record<string, unknown>) : [];
+    return vals
+        .filter((v): v is string => typeof v === "string" && v !== "current")
+        .map(v => googleSheetId(v))
+        .filter((id): id is string => !!id);
+};
+
 /** A Google Sheets URL → its CSV export URL (fetched credentialed → the user's own data),
  *  or null if it isn't a Sheets URL. Pulls the spreadsheet id + the gid (the specific tab,
  *  default 0). Pure — the CSV then flows through the same parse→auto-cast→df path as `table`. */

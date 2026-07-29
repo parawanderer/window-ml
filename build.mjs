@@ -102,6 +102,8 @@ if (watch) {
     // The world-agnostic agent orchestrator (design A) — bundled standalone so its gate-before-execute
     // security invariant is unit-tested (tests/agent-loop.test.js) with a mocked model/executor/gate.
     await esbuild.build({ entryPoints: { "agent-loop": "agent-loop.ts" }, outdir: "dist", bundle: true, format: "cjs", platform: "node", logLevel: "info" });
+    // The trusted-world auto-approve decision (design A) — pure, bundled standalone for its unit tests.
+    await esbuild.build({ entryPoints: { "auto-approve": "auto-approve.ts" }, outdir: "dist", bundle: true, format: "cjs", platform: "node", logLevel: "info" });
     copyAssets();
     copyPyodide();
     // Regenerate the standalone visual preview of som's canvas annotate() (gitignored —
