@@ -88,15 +88,29 @@ export const makeBackgroundTaskPromise = <T = unknown>(
  * @param {FetchLlmPayload} payload The chat request payload.
  * @returns {Promise<{content: string, sources: Array}>} The chat response.
  */
-export const makeChatRequest = (payload: FetchLlmPayload): Promise<{ content: string; sources: unknown[]; model: string | null; reasoning: string | null; usage: TokenUsage | null }> => {
+export const makeChatRequest = (payload: FetchLlmPayload, signal?: AbortSignal | null): Promise<{ content: string; sources: unknown[]; model: string | null; reasoning: string | null; usage: TokenUsage | null }> => {
     return new Promise((resolve, reject) => {
         const requestId = Math.random().toString(36).substring(7);
+        const cleanup = () => {
+            window.removeEventListener("message", handle);
+            if (signal) signal.removeEventListener("abort", onAbort);
+        };
         function handle(event: MessageEvent) {
             const d = event.data;
             if (!d || d.type !== "LLM_RESPONSE" || d.requestId !== requestId) return;
-            window.removeEventListener("message", handle);
+            cleanup();
             if (d.error) reject(d.error);
             else resolve({ content: d.result, sources: d.sources || [], model: d.model ?? null, reasoning: d.reasoning ?? null, usage: d.usage ?? null });
+        }
+        // Abort → kill the in-flight fetch (ABORT_REQUEST → ABORT_TASK) and reject now.
+        function onAbort() {
+            cleanup();
+            window.postMessage({ type: "ABORT_REQUEST", requestId }, "*");
+            const e = new Error("Aborted"); e.name = "AbortError"; reject(e);
+        }
+        if (signal) {
+            if (signal.aborted) { onAbort(); return; }
+            signal.addEventListener("abort", onAbort);
         }
         window.addEventListener("message", handle);
         window.postMessage({ type: "LLM_REQUEST", requestId, payload }, "*");
@@ -114,11 +128,16 @@ export const makeChatRequest = (payload: FetchLlmPayload): Promise<{ content: st
  */
 export const makeStreamingTaskPromise = (
     payload: FetchLlmPayload,
-    onToken: (delta: string, full: string) => void
+    onToken: (delta: string, full: string) => void,
+    signal?: AbortSignal | null
 ): Promise<{ content: string; sources: unknown[]; model: string | null; reasoning: string | null; usage: TokenUsage | null }> => {
     return new Promise((resolve, reject) => {
         const requestId = Math.random().toString(36).substring(7);
         let full = "";
+        const cleanup = () => {
+            window.removeEventListener("message", handle);
+            if (signal) signal.removeEventListener("abort", onAbort);
+        };
 
         function handle(event: MessageEvent) {
             const d = event.data;
@@ -129,14 +148,25 @@ export const makeStreamingTaskPromise = (
                 // A throwing caller callback shouldn't break the stream.
                 try { onToken(delta, full); } catch (e) { console.error("ml onToken threw:", e); }
             } else if (d.type === "LLM_STREAM_DONE") {
-                window.removeEventListener("message", handle);
+                cleanup();
                 resolve({ content: d.content != null ? d.content : full, sources: d.sources || [], model: d.model ?? null, reasoning: d.reasoning ?? null, usage: d.usage ?? null });
             } else if (d.type === "LLM_STREAM_ERROR") {
-                window.removeEventListener("message", handle);
+                cleanup();
                 reject(d.error);
             }
         }
+        // Abort: tell content.js to disconnect the Port (→ background aborts the streaming fetch) and
+        // reject now so the caller unblocks — no waiting on the rest of a slow generation.
+        function onAbort() {
+            cleanup();
+            window.postMessage({ type: "ABORT_REQUEST", requestId }, "*");
+            const e = new Error("Aborted"); e.name = "AbortError"; reject(e);
+        }
 
+        if (signal) {
+            if (signal.aborted) { onAbort(); return; }
+            signal.addEventListener("abort", onAbort);
+        }
         window.addEventListener("message", handle);
         window.postMessage({ type: "LLM_STREAM_REQUEST", requestId, payload }, "*");
     });

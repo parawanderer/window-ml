@@ -146,18 +146,22 @@ function loadBackground({ config = {}, onFetch, onCaptureTab }) {
             const messages = [];
             const clientHandlers = [];
             const backgroundHandlers = [];
+            const disconnectHandlers = [];   // background-side port.onDisconnect listeners
             const port = {
                 name,
                 onMessage: { addListener: (fn) => backgroundHandlers.push(fn) },
                 postMessage: (msg) => { messages.push(msg); for (const h of clientHandlers) h(msg); },
-                onDisconnect: { addListener: () => {} },
+                onDisconnect: { addListener: (fn) => disconnectHandlers.push(fn) },
                 disconnect: () => {}
             };
             for (const fn of connectListeners) fn(port);
             return {
                 messages,
                 onMessage: (fn) => clientHandlers.push(fn),
-                send: (msg) => { for (const h of backgroundHandlers) h(msg); }
+                send: (msg) => { for (const h of backgroundHandlers) h(msg); },
+                // Simulate content.js disconnecting the port (what an ABORT_REQUEST triggers) →
+                // fires the background's onDisconnect handlers, which abort the streaming fetch.
+                disconnect: () => { for (const h of disconnectHandlers) h(); }
             };
         }
     };

@@ -168,6 +168,9 @@ Options (all optional, both for `chat` and `createChat`):
     onToken: (tok) => { out.textContent += tok; }   // paints as it generates
   });
   ```
+- `signal` — an `AbortSignal`. `controller.abort()` cancels the request and
+  **kills the in-flight fetch** (streaming disconnects its port; both stop a slow
+  generation), rejecting the call with an `AbortError`.
 - `schema` — a JSON Schema object. Constrains the reply to matching JSON and
   returns it **parsed** (an object), not a string. Turns `window.ml` into a
   classifier/extractor — the primitive for DOM-scripting against a policy:
@@ -436,7 +439,7 @@ API key at another host, and pages can only ever change the model (validated).
 npm test
 ```
 
-No dependencies — Node's built-in `node:test` runner (Node ≥ 20). Since the
+The tests use Node's built-in `node:test` runner (Node ≥ 20). Since the
 extension files are plain scripts, not modules, `tests/helpers.js` loads them
 into `node:vm` sandboxes with mocked `chrome`/`fetch`/`window` globals, so the
 tests exercise the exact files Chrome runs:

@@ -1144,3 +1144,23 @@ test("ABORT_TASK for an unknown requestId is a harmless no-op", async () => {
     const res = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }] }, requestId: "r2" });
     assert.equal(res.data, "ok", "a later request is unaffected");
 });
+
+test("LLM_STREAM: disconnecting the Port aborts the streaming fetch (ml.chat's signal → killed generation)", async () => {
+    let sawSignal = false, aborted = false;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => new Promise((_, reject) => {
+            sawSignal = !!call.opts.signal;
+            const abort = () => { aborted = true; const e = new Error("aborted"); e.name = "AbortError"; reject(e); };
+            if (call.opts.signal.aborted) return abort();
+            call.opts.signal.addEventListener("abort", abort);
+        }),
+    });
+    const port = bg.connect("LLM_STREAM");
+    port.send({ payload: { messages: [{ role: "user", content: "hi" }] } });   // starts streamLLM
+    await new Promise(r => setTimeout(r, 0));   // let streamLLM reach the in-flight fetch
+    port.disconnect();                          // content.js disconnects the port on abort
+    await new Promise(r => setTimeout(r, 0));
+    assert.equal(sawSignal, true, "the streaming fetch received an AbortSignal");
+    assert.equal(aborted, true, "disconnecting the port aborted the fetch");
+});

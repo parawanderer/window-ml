@@ -504,8 +504,8 @@ async function fetchLLM(payload: FetchLlmPayload, signal?: AbortSignal): Promise
 // Text-only — no schema/raw/tools; toolIds is supported (streams each
 // server-side mode; a handed-back attempt streams no content, so nothing is
 // emitted to the caller before we retry the next mode).
-async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: string) => void): Promise<{ content: string; sources: unknown[]; model: string; reasoning: string | null; usage: TokenUsage | null }> {
-    const { format, body, send, model } = await prepareRequest(payload);
+async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: string) => void, signal?: AbortSignal): Promise<{ content: string; sources: unknown[]; model: string; reasoning: string | null; usage: TokenUsage | null }> {
+    const { format, body, send, model } = await prepareRequest(payload, signal);
 
     const consume = async (res: Response) => {
         const reader = res.body!.getReader();
@@ -878,10 +878,16 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
 // port also keeps the MV3 service worker alive for the request's duration.
 chrome.runtime.onConnect.addListener((port) => {
     if (port.name !== "LLM_STREAM") return;
+    // The Port IS the cancellation channel: content.js disconnects it when the caller aborts
+    // (ml.chat's signal) → abort the streaming fetch so a slow generation stops. `closed` guards
+    // against posting to the dead port after a disconnect.
+    const ctl = new AbortController();
+    let closed = false;
+    port.onDisconnect.addListener(() => { closed = true; ctl.abort(); });
     port.onMessage.addListener((message: any) => {
-        streamLLM(message.payload, (delta) => port.postMessage({ type: "chunk", delta }))
-            .then(({ content, sources, model, reasoning, usage }) => port.postMessage({ type: "done", content, sources, model, reasoning, usage }))
-            .catch((err) => port.postMessage({ type: "error", error: err.message }));
+        streamLLM(message.payload, (delta) => { if (!closed) port.postMessage({ type: "chunk", delta }); }, ctl.signal)
+            .then(({ content, sources, model, reasoning, usage }) => { if (!closed) port.postMessage({ type: "done", content, sources, model, reasoning, usage }); })
+            .catch((err) => { if (!closed) port.postMessage({ type: "error", error: err.message }); });
     });
 });
 

@@ -51,19 +51,25 @@ const sendRuntimeMessage = (type: BackgroundMessageType, requestId: string, payl
 
 interface StreamMsg { type: "chunk" | "done" | "error"; delta?: string; content?: string; sources?: unknown; model?: string; reasoning?: string; usage?: unknown; error?: string; }
 
+// Live streaming Ports, keyed by requestId, so an ABORT_REQUEST from the page can disconnect the
+// matching one — disconnecting the Port is what tells the background to abort the streaming fetch.
+const streamPorts = new Map<string, chrome.runtime.Port>();
+
 // Streaming can't use the one-shot sendMessage (it answers once), so it rides a
 // long-lived Port: forward the payload, relay each { chunk | done | error } back.
 const startStream = (requestId: string, payload: unknown): void => {
     const port = chrome.runtime.connect({ name: "LLM_STREAM" });
+    streamPorts.set(requestId, port);
+    const end = () => { streamPorts.delete(requestId); port.disconnect(); };
     port.onMessage.addListener((msg: StreamMsg) => {
         if (msg.type === "chunk") {
             window.postMessage({ type: "LLM_STREAM_CHUNK", requestId, delta: msg.delta }, "*");
         } else if (msg.type === "done") {
             window.postMessage({ type: "LLM_STREAM_DONE", requestId, content: msg.content, sources: msg.sources, model: msg.model, reasoning: msg.reasoning, usage: msg.usage }, "*");
-            port.disconnect();
+            end();
         } else if (msg.type === "error") {
             window.postMessage({ type: "LLM_STREAM_ERROR", requestId, error: msg.error }, "*");
-            port.disconnect();
+            end();
         }
     });
     port.postMessage({ payload });
@@ -82,8 +88,12 @@ window.addEventListener("message", (event: MessageEvent) => {
         return;
     }
     if (data.type === "ABORT_REQUEST") {
-        // Fire-and-forget: cancel the in-flight background task for this requestId (no response).
-        chrome.runtime.sendMessage({ type: "ABORT_TASK", payload: { requestId } });
+        // Cancel the in-flight task for this requestId. Streaming rides a Port → disconnecting it is
+        // what aborts the fetch (the background listens on onDisconnect). Non-streaming has no port →
+        // relay ABORT_TASK so the background aborts the FETCH_LLM controller. Fire-and-forget.
+        const port = streamPorts.get(requestId);
+        if (port) { streamPorts.delete(requestId); port.disconnect(); }
+        else chrome.runtime.sendMessage({ type: "ABORT_TASK", payload: { requestId } });
         return;
     }
     // 3. Forward to the background worker (to bypass CORS).

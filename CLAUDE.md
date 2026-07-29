@@ -83,7 +83,12 @@ has a `streamChunk(line)` parser (OpenAI SSE vs Ollama NDJSON). Streaming is
 text-only (skipped when `schema` set) but supports `toolIds` — it streams each
 `SERVER_TOOL_MODES` attempt, and a handed-back attempt emits no content, so
 nothing reaches the caller before the retry. The call still resolves to the
-full string, so history behaves exactly as non-streaming.
+full string, so history behaves exactly as non-streaming. **Cancel** (`ml.chat({ onToken,
+signal })`): the Port IS the cancel channel — on abort `makeStreamingTaskPromise` posts
+`ABORT_REQUEST`, `content.js` **disconnects the matching Port** (tracked in `streamPorts` by
+requestId), and `background.js` `onConnect`'s `port.onDisconnect` aborts the streaming fetch (a
+`closed` guard stops posting to the dead port). Non-streaming `ml.chat`/`ml.step` cancel the same
+way but via `ABORT_TASK` → the `inflight` `FETCH_LLM` controller (no port). Both kill the fetch.
 
 ## Config
 

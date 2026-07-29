@@ -143,7 +143,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                  * @param {(delta: string, full: string) => void} [options.onToken=null] Streaming callback.
                  * @returns {Promise<string|Object>} The model's reply (parsed if schema set).
                  */
-                chat: async function(this: MlHistory, prompt: string, { images = [], model = this.model, extend = this.extend, numCtx = this.numCtx, numGpu = this.numGpu, think = this.think, schema = this.schema, toolIds = this.toolIds, maxTokens = this.maxTokens, save = this.save, onToken }: {
+                chat: async function(this: MlHistory, prompt: string, { images = [], model = this.model, extend = this.extend, numCtx = this.numCtx, numGpu = this.numGpu, think = this.think, schema = this.schema, toolIds = this.toolIds, maxTokens = this.maxTokens, save = this.save, onToken, signal = null }: {
                     images?: (string | HTMLImageElement)[];
                     model?: string | null;
                     extend?: ExtendProfile | null;
@@ -155,6 +155,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     maxTokens?: number | null;
                     save?: boolean;
                     onToken?: (delta: string, full: string) => void;
+                    signal?: AbortSignal | null;
                 } = {}): Promise<string | Record<string, unknown>> {
                     validateExtend(extend);
                     const userMessage: NeutralMessage = { role: "user", content: prompt };
@@ -198,8 +199,8 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     let content, sources, resolvedModel, reasoning, usage;
                     try {
                         ({ content, sources, model: resolvedModel, reasoning, usage } = (typeof onToken === "function" && !schema)
-                            ? await makeStreamingTaskPromise(requestPayload, onToken)
-                            : await makeChatRequest(requestPayload));
+                            ? await makeStreamingTaskPromise(requestPayload, onToken, signal)
+                            : await makeChatRequest(requestPayload, signal));
                     } catch (err) {
                         emitDebug({ kind: "chat-error", id: debug, ts: Date.now(), save, session, error: String((err as Error).message || err) });
                         throw err;

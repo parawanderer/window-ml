@@ -348,6 +348,7 @@ export interface ChatOptions {
     maxTokens?: number | null;
     save?: boolean;
     onToken?: (delta: string, full: string) => void;
+    signal?: AbortSignal | null;   // abort the request (streaming disconnects the Port; both kill the fetch)
 }
 
 /** A stateful multi-turn chat (the object ml.createChat returns). Its methods'
