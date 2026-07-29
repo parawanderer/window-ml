@@ -99,6 +99,9 @@ if (watch) {
     // The python_exec runtime (PRELUDE + wrapUserCode) — bundled standalone so tests/python.test.js
     // exercises the EXACT script the offscreen sandbox runs against real CPython (Pyodide-in-Node).
     await esbuild.build({ entryPoints: { "python-runtime": "python-runtime.ts" }, outdir: "dist", bundle: true, format: "cjs", platform: "node", logLevel: "info" });
+    // The world-agnostic agent orchestrator (design A) — bundled standalone so its gate-before-execute
+    // security invariant is unit-tested (tests/agent-loop.test.js) with a mocked model/executor/gate.
+    await esbuild.build({ entryPoints: { "agent-loop": "agent-loop.ts" }, outdir: "dist", bundle: true, format: "cjs", platform: "node", logLevel: "info" });
     copyAssets();
     copyPyodide();
     // Regenerate the standalone visual preview of som's canvas annotate() (gitignored —
