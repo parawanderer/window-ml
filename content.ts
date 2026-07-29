@@ -32,7 +32,9 @@ const HANDLE_MAP: Partial<Record<PageRequestType, RelayEntry>> = {
 interface BgResponse { data?: unknown; sources?: unknown; model?: unknown; reasoning?: unknown; usage?: unknown; error?: string; }
 
 const sendRuntimeMessage = (type: BackgroundMessageType, requestId: string, payload: unknown, responseType: string): void => {
-    chrome.runtime.sendMessage({ type, payload }, (response: BgResponse | undefined) => {
+    // requestId travels to the background too, so it can key an AbortController for the task
+    // (see ABORT_REQUEST below → ABORT_TASK). Only FETCH_LLM currently registers one.
+    chrome.runtime.sendMessage({ type, payload, requestId }, (response: BgResponse | undefined) => {
         // Send the response back to the main world.
         window.postMessage({
             type: responseType,
@@ -77,6 +79,11 @@ window.addEventListener("message", (event: MessageEvent) => {
 
     if (data.type === "LLM_STREAM_REQUEST") {
         startStream(requestId, data.payload);
+        return;
+    }
+    if (data.type === "ABORT_REQUEST") {
+        // Fire-and-forget: cancel the in-flight background task for this requestId (no response).
+        chrome.runtime.sendMessage({ type: "ABORT_TASK", payload: { requestId } });
         return;
     }
     // 3. Forward to the background worker (to bypass CORS).

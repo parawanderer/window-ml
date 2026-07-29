@@ -307,6 +307,7 @@ export interface StepOptions {
     tools?: unknown[];              // client-side tool definitions
     model?: string | null;
     think?: boolean | null;
+    signal?: AbortSignal | null;   // abort kills the in-flight model fetch and rejects the call
 }
 
 /** Options for ml.agent — the loop, whitelist, cap and approval gate. */
@@ -377,13 +378,15 @@ export type PageRequestType =
     | "LLM_REQUEST" | "LLM_STREAM_REQUEST" | "B64_REQUEST" | "LIST_MODELS_REQUEST"
     | "GET_MODEL_REQUEST" | "CONFIG_REQUEST" | "SET_MODEL_REQUEST" | "CAPS_REQUEST"
     | "PS_REQUEST" | "UNLOAD_REQUEST" | "CAPTURE_TAB_REQUEST"
-    | "SAVE_SESSION_REQUEST" | "GET_SESSION_REQUEST" | "PYTHON_EXEC_REQUEST" | "FETCH_SHEET_REQUEST";
+    | "SAVE_SESSION_REQUEST" | "GET_SESSION_REQUEST" | "PYTHON_EXEC_REQUEST" | "FETCH_SHEET_REQUEST"
+    | "ABORT_REQUEST";   // cancel an in-flight background task by requestId (handled specially, not via HANDLE_MAP)
 
 /** Message types the background worker's onMessage listener handles. */
 export type BackgroundMessageType =
     | "FETCH_LLM" | "FETCH_IMAGE_B64" | "LIST_MODELS" | "GET_MODEL" | "GET_CONFIG"
     | "SET_MODEL" | "MODEL_CAPS" | "OLLAMA_PS" | "OLLAMA_UNLOAD" | "CAPTURE_TAB"
-    | "SAVE_SESSION" | "GET_SESSION" | "PYTHON_EXEC" | "FETCH_SHEET";
+    | "SAVE_SESSION" | "GET_SESSION" | "PYTHON_EXEC" | "FETCH_SHEET"
+    | "ABORT_TASK";   // abort the AbortController registered for a requestId (only FETCH_LLM registers one today)
 
 /** A resumable chat session persisted to chrome.storage.local for { save: true }
  *  sessions (main world can't touch storage → background round-trip). No secrets:

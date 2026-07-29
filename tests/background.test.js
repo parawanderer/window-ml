@@ -1113,3 +1113,34 @@ test("FETCH_SHEET: an HTML login page (not signed in / no access) → an authent
     assert.equal(res.data, undefined);
     assert.match(res.error, /Tell the USER to open the sheet's link/);
 });
+
+// ---- ABORT_TASK: cancel an in-flight FETCH_LLM (ml.agent's signal → killed generation) ----
+
+test("ABORT_TASK aborts the in-flight FETCH_LLM fetch for its requestId (kills a slow generation)", async () => {
+    let sawSignal = false;
+    const bg = loadBackground({
+        config: baseConfig(),
+        // A fetch that honours the AbortSignal like the real one: hang until aborted, then reject —
+        // and reject immediately if the signal is ALREADY aborted (a listener added post-abort never fires).
+        onFetch: (call) => new Promise((_, reject) => {
+            sawSignal = !!call.opts.signal;
+            const abort = () => { const e = new Error("aborted by signal"); e.name = "AbortError"; reject(e); };
+            if (call.opts.signal.aborted) return abort();
+            call.opts.signal.addEventListener("abort", abort);
+        }),
+    });
+    const pending = bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }] }, requestId: "r1" });
+    await new Promise(r => setTimeout(r, 0));   // let the fetch get in-flight before we abort it
+    bg.send({ type: "ABORT_TASK", payload: { requestId: "r1" } });   // fire-and-forget (no response)
+    const res = await pending;
+    assert.equal(sawSignal, true, "the FETCH_LLM fetch received an AbortSignal");
+    assert.match(res.error, /abort/i, "aborting the task rejects the in-flight request");
+});
+
+test("ABORT_TASK for an unknown requestId is a harmless no-op", async () => {
+    const bg = loadBackground({ config: baseConfig(), onFetch: () => jsonResponse({ choices: [{ message: { content: "ok" } }] }) });
+    // No throw, nothing to abort.
+    bg.send({ type: "ABORT_TASK", payload: { requestId: "nope" } });
+    const res = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }] }, requestId: "r2" });
+    assert.equal(res.data, "ok", "a later request is unaffected");
+});

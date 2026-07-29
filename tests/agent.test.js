@@ -576,6 +576,23 @@ test("agent: aborting mid-run stops at the next step boundary with the partial t
     assert.equal(events.find(e => e.kind === "agent-result").cancelled, true, "the agent-result debug event is marked cancelled");
 });
 
+test("agent: aborting DURING the model call rejects the fetch and resolves as cancelled (ABORT relayed)", async () => {
+    const ac = new AbortController();
+    let abortRelayed = false;
+    const world = loadPageWorld({
+        onRuntimeMessage: (m) => {
+            if (m.type === "FETCH_LLM") { ac.abort(); return undefined; }        // abort mid-request (before any response)
+            if (m.type === "ABORT_TASK") { abortRelayed = true; return undefined; }
+            return undefined;
+        },
+    });
+    const res = await world.ml.agent("x", { vision: false, signal: ac.signal });
+    await new Promise(r => setTimeout(r, 0));   // let the ABORT_REQUEST relay flush
+    assert.equal(res.cancelled, true);
+    assert.equal(res.steps, 0, "aborted during step 1's model call → 0 completed steps");
+    assert.equal(abortRelayed, true, "an ABORT_TASK was relayed to the background to kill the in-flight fetch");
+});
+
 test("a tool call missing a required arg short-circuits with the schema error (tool NOT run)", async () => {
     let ran = 0;
     const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall("needsIt", { y: 1 }, "c1"), reply("ok")]) });

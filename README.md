@@ -355,9 +355,9 @@ model, and call `ml.agent`. What's built in:
   is a blocking `confirm()`. Pass your own `approve({ tool, arguments })`.
 - **A step cap** (`maxSteps`, default 10) and a full `transcript`.
 - **Cancellable** — pass an `AbortSignal` as `signal`; `controller.abort()` stops
-  the loop at the next step boundary and **resolves** `{ cancelled: true }` with
-  the partial transcript (it doesn't throw). Compose it with a timeout, a UI
-  "stop" button, etc.
+  the loop and **kills the in-flight model request** (no waiting on a slow local
+  generation), then **resolves** `{ cancelled: true }` with the partial transcript
+  (it doesn't throw). Compose it with a timeout, a UI "stop" button, etc.
 
 Returns `{ summary, steps, transcript, elements }` (`elements` holds any DOM
 nodes the agent designated as its answer; a `hitCap`/`cancelled` flag marks a run

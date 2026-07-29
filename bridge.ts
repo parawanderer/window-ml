@@ -41,14 +41,19 @@ export const makeBackgroundTaskPromise = <T = unknown>(
     requestType: string,
     responseType: string,
     payload: unknown,
-    callbackOnResponseSuccess?: (result: unknown) => T
+    callbackOnResponseSuccess?: (result: unknown) => T,
+    signal?: AbortSignal | null
 ): Promise<T> => {
     return new Promise((resolve, reject) => {
         const requestId = Math.random().toString(36).substring(7);
+        const cleanup = () => {
+            window.removeEventListener("message", handleResponse);
+            if (signal) signal.removeEventListener("abort", onAbort);
+        };
 
         function handleResponse(event: MessageEvent) {
             if (event.data.type === responseType && event.data.requestId === requestId) {
-                window.removeEventListener("message", handleResponse);
+                cleanup();
                 if (event.data.error) {
                     reject(event.data.error);
                 } else {
@@ -58,14 +63,21 @@ export const makeBackgroundTaskPromise = <T = unknown>(
                 }
             }
         }
+        // Caller aborted (e.g. ml.agent's signal): tell the background to kill the in-flight task
+        // (only FETCH_LLM's fetch is actually cancelled today) and reject this promise now so the
+        // awaiting caller unblocks immediately rather than waiting for a slow generation to finish.
+        function onAbort() {
+            cleanup();
+            window.postMessage({ type: "ABORT_REQUEST", requestId }, "*");
+            const e = new Error("Aborted"); e.name = "AbortError"; reject(e);
+        }
 
+        if (signal) {
+            if (signal.aborted) { onAbort(); return; }
+            signal.addEventListener("abort", onAbort);
+        }
         window.addEventListener("message", handleResponse);
-
-        window.postMessage({
-            type: requestType,
-            requestId: requestId,
-            payload: payload
-        }, "*");
+        window.postMessage({ type: requestType, requestId, payload }, "*");
     });
 };
 

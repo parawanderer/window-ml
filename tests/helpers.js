@@ -89,6 +89,7 @@ function loadBackground({ config = {}, onFetch, onCaptureTab }) {
         URL,
         TextDecoder,
         TextEncoder,
+        AbortController,   // FETCH_LLM registers one per request (for ABORT_TASK cancellation)
         fetch: async (url, opts = {}) => {
             const call = {
                 url: String(url),
@@ -224,6 +225,8 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps } = {}) {
             runtime: {
                 getURL: (p) => `chrome-extension://test/${p}`,
                 sendMessage: (message, cb) => {
+                    // The callback is OPTIONAL in the real API — fire-and-forget messages
+                    // (e.g. ABORT_TASK) pass none, so never assume `cb` exists.
                     queueMicrotask(async () => {
                         let response = onRuntimeMessage ? await onRuntimeMessage(message) : undefined;
                         // Fall back to the default probe answer for the agent's
@@ -231,10 +234,10 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps } = {}) {
                         // runtimeCalls so model-call indices stay stable for tests.
                         if (response === undefined) {
                             const probe = probeReply(message);
-                            if (probe !== undefined) return cb(probe);
+                            if (probe !== undefined) return void (cb && cb(probe));
                         }
                         runtimeCalls.push(message);
-                        cb(response);
+                        if (cb) cb(response);
                     });
                 },
                 // Streaming Port. content.js posts { payload }; the test's onStream

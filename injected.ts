@@ -289,15 +289,18 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          * @param {boolean} [options.think=null] Thinking flag; null omits it.
          * @returns {Promise<{content: string, tool_calls: Array<{id?: string, name: string, arguments: Object}>}>} The assistant message with tool calls.
          */
-        step: async function(messages: NeutralMessage[], { tools = [], model = null, think = null }: {
+        step: async function(messages: NeutralMessage[], { tools = [], model = null, think = null, signal = null }: {
             tools?: unknown[];
             model?: string | null;
             think?: boolean | null;
+            signal?: AbortSignal | null;
         } = {}): Promise<{ content: string; tool_calls: ToolCall[]; usage?: TokenUsage | null }> {
             return makeBackgroundTaskPromise(
                 "LLM_REQUEST",
                 "LLM_RESPONSE",
-                { "messages": messages, "tools": tools, "model": model, "think": think, "raw": true }
+                { "messages": messages, "tools": tools, "model": model, "think": think, "raw": true },
+                undefined,
+                signal,   // abort kills the in-flight fetch AND rejects here (the agent loop converts it to a clean cancel)
             );
         },
         /**
@@ -389,10 +392,10 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          *   ({@link module:ml._logStep}) that logs each thought and tool call —
          *   the quickest way to watch a run. Composes with `onStep` (both fire).
          * @param {AbortSignal} [opts.signal] Cancel the run. Checked at each step boundary
-         *   (before the model call, before running a tool); on abort the loop stops and the
-         *   promise RESOLVES with `{ cancelled: true }` and the partial transcript (it does
-         *   not reject, matching the `hitCap` convention). An in-flight model call for the
-         *   current step still completes — cancellation is at step granularity.
+         *   (before the model call, before running a tool), AND it kills the in-flight model
+         *   request (the signal reaches the background fetch, which aborts). On abort the loop
+         *   stops and the promise RESOLVES with `{ cancelled: true }` and the partial transcript
+         *   (it does not reject, matching the `hitCap` convention).
          * @returns {Promise<{summary: string, steps: number, transcript: Array<{thought?: string, tool?: string, arguments?: Object, result?: string, elements?: Node[]}>, elements: Node[], hitCap?: boolean, cancelled?: boolean}>}
          *   `elements` is the live DOM node(s) the model designated via an
          *   `answer`-capable tool (empty for tasks that just act on the page).
@@ -550,9 +553,13 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             for (let step = 1; step <= maxSteps; step++) {
                 // Cancellation is checked at each step boundary — before the model call, and again
                 // after it (the long wait) before running a tool — so an abort stops promptly at
-                // whichever boundary comes next. `step - 1` steps are complete at this point.
+                // whichever boundary comes next. `step - 1` steps are complete at this point. The
+                // signal is ALSO passed into the model call, so an abort mid-request kills the fetch
+                // and rejects here — caught and turned into the same clean cancel.
                 if (signal?.aborted) return cancelled(step - 1);
-                const msg = await this.step(messages, { tools: toolDefs, model, think });
+                let msg;
+                try { msg = await this.step(messages, { tools: toolDefs, model, think, signal }); }
+                catch (e) { if (signal?.aborted) return cancelled(step - 1); throw e; }
                 if (signal?.aborted) return cancelled(step - 1);
                 if (!msg.tool_calls || !msg.tool_calls.length) {
                     // Final answer step: emit its usage (the run's peak context) with no tool.

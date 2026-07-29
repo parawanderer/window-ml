@@ -40,7 +40,9 @@ To add a new one, touch three files:
 
 Existing message types: `FETCH_LLM`, `LIST_MODELS`, `GET_MODEL`, `GET_CONFIG`,
 `SET_MODEL`, `MODEL_CAPS`, `OLLAMA_PS`, `OLLAMA_UNLOAD`, `FETCH_IMAGE_B64`,
-`CAPTURE_TAB`, `SAVE_SESSION`, `GET_SESSION`, `PYTHON_EXEC`, `FETCH_SHEET`.
+`CAPTURE_TAB`, `SAVE_SESSION`, `GET_SESSION`, `PYTHON_EXEC`, `FETCH_SHEET`. Plus
+**`ABORT_TASK`** (cancel an in-flight task by requestId; the page posts `ABORT_REQUEST`,
+`content.js` relays it) and the streaming `LLM_STREAM_*` port — both handled outside HANDLE_MAP.
 
 **Resume (`ml.resumeChat(hash)`).** Continue a chat by its session hash.
 Same-tab sessions resume from an in-memory `sessionRegistry` (every `createChat`
@@ -129,8 +131,13 @@ the extension deliberately ships no loop/whitelist/overseer — callers compose
 those, keeping `window.ml` a primitive. **`ml.agent({ signal })`** takes an
 `AbortSignal`: checked at each step boundary (before the model call, and after it
 before running a tool), an abort stops the loop and **resolves** `{ cancelled: true }`
-with the partial transcript (mirroring `hitCap`, not a reject) — cancellation is at
-step granularity (an in-flight model call for the current step still completes).
+with the partial transcript (mirroring `hitCap`, not a reject). It also **kills the
+in-flight request**: the signal threads `ml.step` → `makeBackgroundTaskPromise`, which
+on abort posts an **`ABORT_REQUEST`** (→ `content.js` → **`ABORT_TASK`**) so the
+background aborts the fetch keyed by that requestId (a per-request `AbortController` in
+an `inflight` map — `FETCH_LLM` is the only registered honorer today), AND rejects the
+page-side promise immediately so the loop's try/catch converts it to the same clean
+cancel — no waiting on a slow local generation.
 
 **Read-only `exec` auto-approve (experimental).** `exec` is `requiresApproval`,
 but the config flag `autoApproveReadonly` (off by default) lets a **read-only DOM

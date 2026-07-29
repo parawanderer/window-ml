@@ -299,7 +299,7 @@ async function modelSupportsVision(config: MlConfig, model: string): Promise<boo
 // fail-fast, builds the wire body, and returns a `send(body, stream)` that does
 // the privileged fetch (returning parsed JSON, or the raw Response when
 // streaming). fetchLLM and streamLLM both build on this.
-async function prepareRequest(payload: FetchLlmPayload) {
+async function prepareRequest(payload: FetchLlmPayload, signal?: AbortSignal) {
     const config = await getConfig();
     const headers = authHeaders(config);
 
@@ -420,6 +420,7 @@ async function prepareRequest(payload: FetchLlmPayload) {
             method: "POST",
             headers,
             body: JSON.stringify({ ...requestBody, stream }),
+            signal,   // ABORT_TASK → this fetch rejects with an AbortError (kills a slow generation)
         });
         if (!res.ok) {
             const text = await res.text().catch(() => "");
@@ -443,8 +444,8 @@ const HANDBACK_ERROR =
     'Function Calling to the server-side loop ("Legacy" on OpenWebUI v0.10.0+, ' +
     '"Default" on older builds), or check that the tool id is correct.';
 
-async function fetchLLM(payload: FetchLlmPayload): Promise<LlmResult | { content: string | null; tool_calls: ToolCall[]; usage: TokenUsage | null }> {
-    const { config, format, body, send, model } = await prepareRequest(payload);
+async function fetchLLM(payload: FetchLlmPayload, signal?: AbortSignal): Promise<LlmResult | { content: string | null; tool_calls: ToolCall[]; usage: TokenUsage | null }> {
+    const { config, format, body, send, model } = await prepareRequest(payload, signal);
 
     let data: any;
     if (payload.toolIds?.length && !payload.raw) {
@@ -694,6 +695,10 @@ async function unloadModels(modelName?: string): Promise<string[]> {
     return targets;
 }
 
+// In-flight FETCH_LLM AbortControllers, keyed by the page's requestId, so an ABORT_TASK message
+// (ml.agent's signal fired) can cancel the actual fetch. Deleted when the request settles.
+const inflight = new Map<string, AbortController>();
+
 chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     // The content-script shell forwards each __mlDebug event here so a DevTools panel
     // (which can't see page window-messages) can mirror the overlay's stream. Fire-and-
@@ -726,8 +731,21 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             .catch((err) => sendResponse({ error: err?.message || String(err) }));
         return true;   // async
     }
+    if (message.type === "ABORT_TASK") {
+        // Cancel an in-flight task by its requestId (currently only FETCH_LLM registers a
+        // controller). Fire-and-forget — no sendResponse, so don't keep the channel open.
+        const ctl = inflight.get(message.payload?.requestId);
+        if (ctl) { ctl.abort(); inflight.delete(message.payload.requestId); }
+        return;
+    }
     if (message.type === "FETCH_LLM") {
-        fetchLLM(message.payload)
+        // Register an AbortController keyed by requestId so an ABORT_TASK (from ml.agent's signal)
+        // can kill the in-flight fetch — don't leave a slow local generation running after cancel.
+        const rid: string | undefined = message.requestId;
+        const ctl = new AbortController();
+        if (rid) inflight.set(rid, ctl);
+        const done = () => { if (rid) inflight.delete(rid); };
+        fetchLLM(message.payload, ctl.signal)
             // raw (ml.step) returns { content, tool_calls } as data; normal chat
             // returns the content string, with sources alongside only when present.
             .then((result: any) => {
@@ -738,7 +756,8 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 if (result.usage) resp.usage = result.usage;
                 sendResponse(resp);
             })
-            .catch(err => sendResponse({ error: err.message }));
+            .catch(err => sendResponse({ error: err.message }))
+            .finally(done);
         return true; // Keep channel open for async fetch
 
     } else if (message.type === "LIST_MODELS") {
