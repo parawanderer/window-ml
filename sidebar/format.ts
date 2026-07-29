@@ -108,11 +108,41 @@ export function markdown(src: string): string {
         .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
         .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>")
         .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    // GFM table helpers. Cells are already-escaped `text` (never raw source), so
+    // inline() on a cell is as safe as anywhere else. Leading/trailing pipes optional.
+    const splitRow = (l: string): string[] => {
+        let s = l.trim();
+        if (s.startsWith("|")) s = s.slice(1);
+        if (s.endsWith("|")) s = s.slice(0, -1);
+        return s.split("|").map(c => c.trim());
+    };
+    const alignOf = (cell: string): string | null => {          // separator cell → alignment ("" = none), else null
+        const m = cell.match(/^(:?)-+(:?)$/);
+        if (!m) return null;
+        return m[1] && m[2] ? "center" : m[2] ? "right" : m[1] ? "left" : "";
+    };
+    const isSep = (l: string): boolean => { const c = splitRow(l); return c.length > 0 && c.every(x => alignOf(x) !== null); };
+    const cell = (c: string, tag: string, a: string | null) =>
+        `<${tag}${a ? ` style="text-align:${a}"` : ""}>${inline(c)}</${tag}>`;
     const out: string[] = [];
     let list: string[] | null = null;
     const flush = () => { if (list) { out.push("<ul>" + list.join("") + "</ul>"); list = null; } };
-    for (const raw of text.split("\n")) {
-        const line = raw.trimEnd();
+    const lines = text.split("\n");
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trimEnd();
+        // Table = a pipe header row immediately followed by a separator row.
+        if (line.includes("|") && i + 1 < lines.length && isSep(lines[i + 1])) {
+            flush();
+            const aligns = splitRow(lines[i + 1]).map(alignOf);
+            const head = splitRow(line).map((c, j) => cell(c, "th", aligns[j] || null)).join("");
+            const body: string[] = [];
+            i += 2;                                             // consume header + separator
+            for (; i < lines.length && lines[i].includes("|"); i++)
+                body.push("<tr>" + splitRow(lines[i]).map((c, j) => cell(c, "td", aligns[j] || null)).join("") + "</tr>");
+            i--;                                                // step back onto the last consumed row (loop re-increments)
+            out.push(`<div class="md-table-wrap"><table class="md-table"><thead><tr>${head}</tr></thead><tbody>${body.join("")}</tbody></table></div>`);
+            continue;
+        }
         const h = line.match(/^(#{1,6})\s+(.*)$/);
         const li = line.match(/^[-*]\s+(.*)$/);
         if (h) { flush(); out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`); }

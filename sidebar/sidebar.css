@@ -483,6 +483,13 @@ details.io[open] > summary .io-preview { display: none; }
     max-width: 100%; overflow-x: auto;
 }
 .md pre.code code { background: none; padding: 0; }
+
+/* GFM tables. Wrapper scrolls a wide table instead of widening the panel. */
+.md-table-wrap { overflow-x: auto; margin: 4px 0; }
+.md-table { border-collapse: collapse; font-size: 0.95em; }
+.md-table th, .md-table td { border: 1px solid var(--border); padding: 3px 7px; text-align: left; }
+.md-table th { background: var(--panel); font-weight: 600; }
+.md-table tbody tr:nth-child(even) { background: var(--panel); }
 /* Assistant-reply code blocks get breathing room; the bare `.code` exec
    previews (not inside `.md`) stay tight. */
 .md pre.code { padding: 0.75em; }

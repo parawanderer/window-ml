@@ -90,6 +90,42 @@ test("detail shows the options-first-message and renders assistant markdown with
     assert.match(w.shadow.querySelector(".msg.asst .code").textContent, /\*\*bold\*\*/);
 });
 
+test("assistant markdown renders a GFM table (aligned, XSS-safe); a lone pipe stays a paragraph", async () => {
+    const w = await loadSidebarWorld();
+    const md = [
+        "| Name | Score |",
+        "| :--- | ---: |",
+        "| <script>alert(1)</script> | 10 |",
+        "| **Ada** | 20 |",
+        "",
+        "Just a | pipe in a paragraph.",
+    ].join("\n");
+    await w.dispatch(chatStart("ttt", 0, "q"));
+    await w.dispatch(chatResult("ttt", 0, md));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+
+    const body = w.shadow.querySelector(".msg.asst .md");
+    const table = body.querySelector("table.md-table");
+    assert.ok(table, "GFM table rendered as a real <table>");
+    const th = [...table.querySelectorAll("thead th")];
+    assert.deepEqual(th.map(n => n.textContent), ["Name", "Score"], "header cells → <th>");
+    assert.equal(th[0].style.textAlign, "left", "separator :--- → left align");
+    assert.equal(th[1].style.textAlign, "right", "separator ---: → right align");
+
+    const rows = table.querySelectorAll("tbody tr");
+    assert.equal(rows.length, 2, "two body rows → <td>");
+    assert.ok(rows[1].querySelector("strong"), "inline() runs on cells (**Ada** → <strong>)");
+
+    // XSS: a <script> in a cell is escaped text, never live HTML.
+    assert.ok(!body.querySelector("script"), "no live <script> from a cell");
+    assert.match(body.innerHTML, /&lt;script&gt;/, "script tag escaped, not rendered");
+
+    // A pipe outside a table header/separator pair stays an ordinary paragraph.
+    const ps = [...body.querySelectorAll("p")].map(n => n.textContent);
+    assert.ok(ps.includes("Just a | pipe in a paragraph."), "lone pipe line → <p>, not a table");
+});
+
 test("composer usage gauge: fills against the loaded model's context window (occupancy = latest turn, not a sum)", async () => {
     const w = await loadSidebarWorld({
         vram: [{ model: "gemma4:31b", vramGB: 21, contextLength: 1000, expiresAt: null }],
