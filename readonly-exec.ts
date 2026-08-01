@@ -312,6 +312,11 @@ const DENIED_PROPS = new Set([
 // The ONLY methods a call may invoke — read/query/pure. No effectful method
 // (click/submit/setAttribute/appendChild/remove/fetch/open/…) appears, so even a
 // leaked `window` can't do anything: `window.fetch(…)` → method not allowlisted.
+// A live DOM collection (NodeList/HTMLCollection) — array-like with a numeric length + an `item()`
+// method, but NOT an Array. Detected structurally (no cross-realm/global dependency; works in jsdom).
+const isDomCollection = (x: any): boolean =>
+    x != null && typeof x === "object" && !Array.isArray(x) && typeof x.length === "number" && typeof x.item === "function";
+
 const ALLOWED_METHODS = new Set([
     // DOM read / query
     "querySelector", "querySelectorAll", "getElementById", "getElementsByClassName",
@@ -363,7 +368,9 @@ class Evaluator {
         const key = node.computed ? this.guardKey(this.eval(node.prop, scope)) : this.guardKey(node.prop);
         const v = (obj as any)?.[key];
         if (typeof v === "function") return METHOD_REF;
-        return v;
+        // Uniformly with querySelectorAll (evalCall), a collection PROPERTY (.children/.rows/.cells/…)
+        // reads as a real Array too — so `el.children.map(…)` works like `qsa('x').map(…)`.
+        return isDomCollection(v) ? Array.from(v as ArrayLike<unknown>) : v;
     }
 
     eval(node: Node, scope: any): unknown {
@@ -478,7 +485,12 @@ class Evaluator {
             if (!ALLOWED_METHODS.has(key)) throw new NotInDialect(`method '${key}' not allowed`);
             const fn = obj?.[key];
             if (typeof fn !== "function") throw new NotInDialect(`'${key}' is not callable`);
-            return fn.apply(obj, this.evalArgs(node.args, scope));
+            const out = fn.apply(obj, this.evalArgs(node.args, scope));
+            // Accommodate a common model mistake: querySelectorAll / getElementsBy* return a NodeList /
+            // HTMLCollection, which have no .map/.filter, so `querySelectorAll('x').map(…)` throws (the
+            // model forgets to spread). In this read-only dialect it's safe to just hand back a real
+            // Array, so the survey runs instead of falling through to the manual gate.
+            return isDomCollection(out) ? Array.from(out as ArrayLike<unknown>) : out;
         }
         // Ident(args) — only whitelisted coercion/parse builtins.
         if (callee.type === "Ident" && CALLABLE_ROOTS.has(callee.name) && callee.name in scope) {

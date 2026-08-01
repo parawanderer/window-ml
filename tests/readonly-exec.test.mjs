@@ -154,3 +154,18 @@ for (const [name, js] of Object.entries(OUT)) {
         assert.throws(() => run(js), e => e instanceof NotInDialect || e instanceof Denied);
     });
 }
+
+// --- Accommodate: DOM collections read as real Arrays (NodeList/HTMLCollection have no .map) ---
+
+test("querySelectorAll(...).map works WITHOUT spreading — the NodeList is coerced to an Array", () => {
+    // Models often forget Array.from/[...]; the read-only dialect just hands back a real list.
+    assert.deepEqual(run(`document.querySelectorAll('input').map(el => el.id)`).value, ["a", "d"]);
+});
+
+test("a collection PROPERTY (.children) reads as an Array too — uniform with querySelectorAll", () => {
+    assert.deepEqual(run(`document.body.children.map(c => c.id)`).value, ["a", "b", "c", "d"]);
+});
+
+test("the coerced Array chains filter → map (all allowed) like a normal array", () => {
+    assert.deepEqual(run(`document.querySelectorAll('input').filter(el => el.id === 'd').map(el => el.placeholder)`).value, ["other"]);
+});
