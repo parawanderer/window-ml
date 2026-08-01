@@ -51,7 +51,7 @@ export interface AgentLoopDeps {
     // → no inline vision (a text-only driver). World-specific (the neutral message shape).
     pushToolImages?(messages: unknown[], images: { image: string; label: string }[]): void;
     // Debug/telemetry hook (agent-step events: pending START then the DONE, sharing `seq`).
-    emit?(ev: { step: number; seq?: number; pending?: boolean; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; approval?: Approval; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor }): void;
+    emit?(ev: { step: number; seq?: number; pending?: boolean; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; approval?: Approval; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; usage?: unknown }): void;
 }
 
 export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number; signal?: AbortSignal | null; }
@@ -80,10 +80,18 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         const msg = await deps.callModel(messages, { tools, step });
         if (signal?.aborted) return cancelled(step - 1);
         if (!msg.tool_calls || !msg.tool_calls.length) {
+            // Final-answer step: emit its usage (the run's peak context) so the sidebar's usage gauge
+            // measures the same on the background path as it does page-side — a usage-only step event.
+            if (msg.usage) deps.emit?.({ step, usage: msg.usage });
             return { summary: (msg.content || "").trim(), steps: step - 1, transcript, elements: [] };
         }
+        // The step's token usage rides the thought emit (or a usage-only emit when there's no prose),
+        // matching the page-side loop so a background run's usage gauge isn't blank.
         const thought = (msg.content || "").trim();
-        if (thought) { transcript.push({ thought }); deps.emit?.({ step, thought }); }
+        if (thought || msg.usage) {
+            if (thought) transcript.push({ thought });
+            deps.emit?.({ step, thought: thought || undefined, usage: msg.usage });
+        }
         deps.pushAssistant(messages, msg);
 
         const pendingImages: { image: string; label: string }[] = [];   // inline vision — injected after the step

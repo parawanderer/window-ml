@@ -107,6 +107,29 @@ test("a tool step emits a pending START then a DONE with the same seq", async ()
     assert.equal(steps[0].seq, steps[1].seq, "same seq → the sidebar patches the row");
 });
 
+test("token usage is emitted per step (so the background run's usage gauge isn't blank)", async () => {
+    // A thought+tool step carries usage on its thought emit; the final-answer step emits usage-only.
+    const { deps, calls } = makeDeps({ turns: [
+        { content: "thinking", tool_calls: [{ id: "c1", name: "safe", arguments: {} }], usage: { totalTokens: 100 } },
+        { content: "done", tool_calls: [], usage: { totalTokens: 250 } },
+    ] });
+    await runAgentLoop("x", { tools: [{ name: "safe" }] }, deps);
+    const withUsage = calls.emits.filter(e => e.usage);
+    assert.equal(withUsage.length, 2, "step 1 (thought) + the final-answer step both carry usage");
+    assert.deepEqual(withUsage.map(e => e.usage.totalTokens), [100, 250]);
+    // The final one (the sidebar reads the LAST) reflects the run's peak context.
+    assert.equal(withUsage[withUsage.length - 1].usage.totalTokens, 250);
+});
+
+test("a step with usage but NO prose still emits usage (usage-only emit)", async () => {
+    const { deps, calls } = makeDeps({ turns: [
+        { content: "", tool_calls: [{ id: "c1", name: "safe", arguments: {} }], usage: { totalTokens: 42 } },
+        reply("done"),
+    ] });
+    await runAgentLoop("x", { tools: [{ name: "safe" }] }, deps);
+    assert.ok(calls.emits.some(e => e.usage && e.usage.totalTokens === 42), "usage rides even without a thought");
+});
+
 test("inline vision: a tool that returns an image → pushToolImages injects it after the step", async () => {
     const { deps } = makeDeps({ turns: [toolCall("look"), reply("done")] });
     deps.runTool = async () => ({ result: "captured", image: "data:img,SHOT", imageLabel: "viewport" });
