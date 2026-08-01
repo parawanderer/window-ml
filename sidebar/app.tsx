@@ -475,6 +475,7 @@ function SessionRow({ s, profile }: { s: Session; profile: "utility" | "default"
 // registry is keyed by `type`; a tool supplies one (page-side) or we auto-derive
 // image/elements, else the default In:/Out: renders the raw result. ---
 function RenderElements({ items }: { items: { path: string; text?: string; index?: number }[] }) {
+    const single = items.length === 1;   // one element → the #0 badge is noise; just show the element
     return (
         <div class="r-elements">
             {items.map((it, i) => {
@@ -491,7 +492,7 @@ function RenderElements({ items }: { items: { path: string; text?: string; index
                         title={isTok ? undefined : "right-click to copy a reference"}
                         onPointerEnter={() => (isTok ? highlightToken(it.path) : highlightEl(it.path))} onPointerLeave={clearHighlight}
                         onContextMenu={isTok ? undefined : menu}>
-                        <span class="r-el-idx">#{it.index ?? i}</span>
+                        {single ? null : <span class="r-el-idx">#{it.index ?? i}</span>}
                         {it.text ? <span class="r-el-text">«{it.text}»</span> : null}
                         <code class="r-el-path">{it.path}</code>
                     </div>

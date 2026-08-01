@@ -821,7 +821,22 @@ test("agent tool steps render descriptors (image / elements / table)", async () 
     assert.match(w.shadow.querySelector(".r-image-label").textContent, /viewport/);
     assert.equal(w.shadow.querySelectorAll(".r-el").length, 2, "elements list rendered");
     assert.match(w.shadow.querySelector(".r-el-text").textContent, /Black cat/);
-    assert.equal(w.shadow.querySelectorAll(".r-table td").length, 4, "table cells rendered");
+    assert.equal(w.shadow.querySelectorAll(".r-el-idx").length, 2, "multiple elements → each shows its #N badge");
+    assert.equal(w.shadow.querySelector(".r-table td") ? w.shadow.querySelectorAll(".r-table td").length : 0, 4, "table cells rendered");
+});
+
+test("a SINGLE-element render hides the #0 badge (it's just the one element)", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("one", "find the button"));
+    await w.dispatch(agentStep("one", 1, { tool: "locate", arguments: {}, renderOut: { type: "elements", items: [{ path: "#go", text: "Go" }] } }));
+    await w.dispatch(agentResult("one", "done", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    w.shadow.querySelector(".astep.tool .astep-head").click();
+    await w.tick();
+    assert.equal(w.shadow.querySelectorAll(".r-el").length, 1, "one element rendered");
+    assert.equal(w.shadow.querySelector(".r-el-idx"), null, "no #0 badge for a single element");
+    assert.match(w.shadow.querySelector(".r-el-path").textContent, /#go/, "the element still shows");
 });
 
 // Helper: build a locate render descriptor from an array of substeps + the final pick.
