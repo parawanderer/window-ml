@@ -69,15 +69,23 @@ const indent = (code: string) => (code || "pass").split("\n").map(l => "    " + 
 //   in the on-failure message): uncredentialed (no cookies — for a PRIVATE sheet use the `tables` param,
 //   which fetches credentialed) + text-only + subject to CORS/host-permissions like any extension fetch.
 //   Guarded: if pyodide.http can't load, full mode falls back to the raw (socket-bound) original.
-const netPolicy = (hardened: boolean): string => /* python */ `
+const netPolicy = (hardened: boolean): string => {
+    let policy = /* python */ `
 import urllib.request as _mlnet
 if not hasattr(_mlnet.OpenerDirector, "_ml_orig_open"):
     _mlnet.OpenerDirector._ml_orig_open = _mlnet.OpenerDirector.open
-${hardened
-    ? `def _ml_blocked_open(self, *_a, **_k):
+`;
+
+    if (hardened) {
+        policy += /* python */ `
+def _ml_blocked_open(self, *_a, **_k):
     raise RuntimeError("network is disabled in readonly python_exec — the tool ALREADY loaded your table/sheet/image via the tables/image parameter, so reference it directly (e.g. df, df_remote, img). For a live fetch, re-run in mode:'full'.")
-_mlnet.OpenerDirector.open = _ml_blocked_open`
-    : `try:
+_mlnet.OpenerDirector.open = _ml_blocked_open
+`;
+
+    } else {
+        policy += /* python */ `
+try:
     import pyodide.http as _mlph, io as _mlio
     class _MlResp(_mlio.BytesIO):   # a subclass has a __dict__, so urllib/pandas can poke .headers/.status/.url
         def geturl(self): return getattr(self, "url", None)
@@ -94,8 +102,13 @@ _mlnet.OpenerDirector.open = _ml_blocked_open`
         return _r
     _mlnet.OpenerDirector.open = _ml_working_open
 except Exception:
-    _mlnet.OpenerDirector.open = _mlnet.OpenerDirector._ml_orig_open`}
+    _mlnet.OpenerDirector.open = _mlnet.OpenerDirector._ml_orig_open
 `;
+
+    }
+
+    return policy;
+}
 
 // Per-run namespace reset (isolation): Pyodide keeps ONE persistent heap across calls, so a prior
 // run's module-level vars would leak into the next. Wipe every non-underscore global before the
