@@ -239,6 +239,9 @@ function writeAgent(s: Session, d: Sink): void {
         } else if (st.renderOut && st.renderOut.type === "python-out" && st.renderOut.image) {
             // A to_base64 image return — the stdout/value live in the result block below.
             d.image(st.renderOut.image, `step-${st.step}`, `step ${st.step} — returned image`);
+        } else if (st.renderOut && st.renderOut.type === "python-out" && st.renderOut.df) {
+            // A returned DataFrame → a real table (GFM / <table>), like the input-table render.
+            d.details("value (DataFrame)", () => d.table(st.renderOut.df!.columns, st.renderOut.df!.rows));
         }
         if (st.result != null && st.result !== "") d.block("Out", st.result);
         else if (st.elements != null) d.inline("Out", `${st.elements} element(s)`);

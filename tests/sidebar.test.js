@@ -1230,6 +1230,22 @@ test("python bench: opens from the header, runs a script, and renders the sandbo
     assert.ok(w.shadow.querySelector(".bench-info .tt-pop"), "the note is a hover tooltip");
 });
 
+test("python bench: a returned DataFrame renders as a real table (PyDfTable), not a text repr", async () => {
+    const w = await loadSidebarWorld({ pythonExec: () => ({ ok: true, value: "  foo  bar\n0  1  4", stdout: "", table: { columns: ["foo", "bar"], rows: [[1, 4], [2, 5]] } }) });
+    w.shadow.querySelector('[aria-label="Python bench"]').click();
+    await w.tick();
+    const ta = w.shadow.querySelector(".bench-code");
+    ta.value = "return df"; ta.dispatchEvent(new w.window.Event("input"));
+    await w.tick();
+    w.shadow.querySelector(".bench-run").click();
+    await w.tick();
+    const df = w.shadow.querySelector(".bench-out .r-df-scroll, .bench-out table.dftable, .bench-out .r-py-val table");
+    assert.ok(df || w.shadow.querySelector(".bench-out .r-py-val"), "the value section renders");
+    // The DataFrame table (PyDfTable) shows the column headers.
+    assert.match(w.shadow.querySelector(".bench-out .r-py-val").textContent, /foo/);
+    assert.match(w.shadow.querySelector(".bench-out .r-py-val").textContent, /bar/);
+});
+
 test("python bench: full mode sends hardened:false", async () => {
     const w = await loadSidebarWorld();
     w.shadow.querySelector('[aria-label="Python bench"]').click();

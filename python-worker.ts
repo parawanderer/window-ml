@@ -14,7 +14,7 @@ import { PY_PACKAGE_LOADS } from "./python-env";
 import { wrapUserCode, harden, unharden } from "./python-runtime";
 
 type RunMsg = { id: number; code: string; image: string | null; hardened: boolean; tables: unknown };
-type RunResult = { ok: boolean; value?: unknown; stdout: string; error?: string };
+type RunResult = { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] } };
 
 let pyodideReady: Promise<any> | null = null;
 function getPyodide(): Promise<any> {
@@ -49,10 +49,14 @@ async function run(code: string, image: string | null, hardened: boolean, tables
         const stdout = String(py.globals.get("_stdout") ?? "");
         const err = py.globals.get("_err");
         if (err) return { ok: false, stdout, error: String(err) };
+        // A DataFrame/Series result also arrives structurally ({columns, rows}) so the UI can draw a real table.
+        const tableJson = py.globals.get("_json_table");
+        let table: RunResult["table"];
+        if (typeof tableJson === "string") { try { table = JSON.parse(tableJson); } catch { /* keep text */ } }
         const jsonResult = py.globals.get("_json_result");
         if (typeof jsonResult === "string") {
             let value: unknown; try { value = JSON.parse(jsonResult); } catch { value = jsonResult; }
-            return { ok: true, value, stdout };
+            return { ok: true, value, stdout, ...(table ? { table } : {}) };
         }
         // Fallback for a non-JSON-serializable return (rare — models return images via
         // to_base64): convert via toJs, then destroy the proxy so it can't leak.

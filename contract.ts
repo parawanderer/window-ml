@@ -242,7 +242,7 @@ export type RenderDescriptor = (
     | { type: "python-in"; mode: "script" | "pt" | "box"; code: string; image?: string; imageToken?: string; tables?: TablePreview[] }
     // `python_exec`'s Out slot: captured stdout, a returned image, a minted @pt/@box token,
     // the raw/JSON value, or a Python traceback.
-    | { type: "python-out"; stdout?: string; image?: string; token?: string; value?: string; error?: string }
+    | { type: "python-out"; stdout?: string; image?: string; token?: string; value?: string; error?: string; df?: { columns: string[]; rows: (string | number | null)[][] } }
 );
 // The slot a descriptor fills is decided by which hook produced it (a tool's `render()`
 // method / run()-returned `renderIn` → the In slot; a run()-returned `render` / an
@@ -662,7 +662,7 @@ export interface MlApi {
     typeTool(): MlTool;
     /** Run a sandboxed Python snippet (Pyodide/WASM, numpy + Pillow) with an optional
      *  screenshot injected as `img`/`img_np`. No network/filesystem/DOM. */
-    pythonExec(code: string, opts?: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Element | Record<string, string | Element> | null }): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox }>;
+    pythonExec(code: string, opts?: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Element | Record<string, string | Element> | null }): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; resultTable?: { columns: string[]; rows: (string | number | null)[][] } }>;
     /** Built-in sandboxed-Python tool factory (numpy/Pillow pixel/array work). */
     pythonTool(): MlTool;
 

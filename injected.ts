@@ -1075,10 +1075,11 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             for (const spec of specs) loaded.push(await this._loadTable(spec.name, spec.src, tableRaw));
 
             const r = await makeBackgroundTaskPromise("PYTHON_EXEC_REQUEST", "PYTHON_EXEC_RESPONSE",
-                { code, image: img, hardened: mode !== "full", tables: loaded.map(l => ({ name: l.name, data: l.data })) }) as { ok: boolean; value?: unknown; stdout: string; error?: string };
-            const extra: { inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox } = {};
+                { code, image: img, hardened: mode !== "full", tables: loaded.map(l => ({ name: l.name, data: l.data })) }) as { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] } };
+            const extra: { inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; resultTable?: { columns: string[]; rows: (string | number | null)[][] } } = {};
             if (img) extra.inputImage = img;
             if (imageBox) extra.imageBox = imageBox;   // for cast:'pt'/'box' → project image px → viewport
+            if (r.table) extra.resultTable = r.table;   // a returned DataFrame → the UI renders a real table
             if (loaded.length) extra.inputTables = loaded.map(l => ({
                 name: l.name, source: l.source,
                 ...(l.data.kind === "rows" ? { columns: l.data.columns, rows: l.data.rows } : { html: true }),

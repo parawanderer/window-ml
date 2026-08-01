@@ -688,7 +688,8 @@ function PythonOutRender({ d }: { d: Extract<RenderDescriptor, { type: "python-o
             {d.image ? <div class="r-image"><ClickableImg src={d.image} alt="output image" /><div class="r-image-label">returned image</div></div> : null}
             {d.token ? <PyOutSection label="token" cls="r-py-token"><code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code></PyOutSection> : null}
             {d.error ? <PyOutSection label="error" cls="r-py-err"><Code text={d.error} lang="text" /></PyOutSection> : null}
-            {d.value != null && !d.image && !d.token && !d.error ? <PyOutSection label="value" cls="r-py-val"><Code text={d.value} lang="json" /></PyOutSection> : null}
+            {d.df && !d.error ? <PyOutSection label="value (DataFrame)" cls="r-py-val"><PyDfTable columns={d.df.columns} rows={d.df.rows} /></PyOutSection> : null}
+            {d.value != null && !d.image && !d.token && !d.error && !d.df ? <PyOutSection label="value" cls="r-py-val"><Code text={d.value} lang="json" /></PyOutSection> : null}
         </div>
     );
 }
@@ -1347,9 +1348,10 @@ function ExportMenu({ hash }: { hash: string }) {
 }
 
 // Shape a raw PYTHON_EXEC response into a `python-out` descriptor for RenderPanel.
-function pyBenchDescriptor(r: { ok: boolean; value?: unknown; stdout: string; error?: string }): RenderDescriptor {
+function pyBenchDescriptor(r: { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] } }): RenderDescriptor {
     const stdout = r.stdout || undefined;
     if (!r.ok) return { type: "python-out", stdout, error: r.error || "error" };
+    if (r.table) return { type: "python-out", stdout, df: r.table };   // a returned DataFrame → real table
     const v = r.value;
     if (typeof v === "string" && /^data:image\//.test(v)) return { type: "python-out", stdout, image: v };
     const value = v == null ? undefined : (typeof v === "string" ? v : JSON.stringify(v, null, 2));

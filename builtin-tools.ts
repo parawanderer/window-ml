@@ -1054,6 +1054,9 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                             : asBoxList(v)
                                 ? ` — this looks like a LIST of ${asBoxList(v)!.length} candidate BOXES but you didn't set \`cast\`, so it's dead text. Return the SINGLE best one with cast:"box" to get a clickable @box:… .`
                                 : "";
+            // A returned DataFrame/Series → render a real table (the sidebar draws PyDfTable); the model
+            // still gets the text repr in `content` for reasoning. Applies to both the agent run and the bench.
+            if (r.resultTable) return done(`${pre}${text}`, { value: text, df: r.resultTable });
             return done(`${pre}${text}${castHint}`, { value: text });
         },
     });

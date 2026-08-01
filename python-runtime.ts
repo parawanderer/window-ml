@@ -206,6 +206,17 @@ try:
     _json_result = _json.dumps(result, default=lambda o: o.item() if hasattr(o, 'item') else str(o))
 except Exception:
     _json_result = None
+# If the result is a DataFrame/Series, ALSO serialize it structurally ({columns, rows}) so the UI can
+# render a real table (PyDfTable) instead of a text repr. Capped rows; a Series becomes a 1-col frame.
+_json_table = None
+try:
+    _cls = result.__class__.__name__
+    if _cls in ('DataFrame', 'Series') and hasattr(result, 'to_json'):
+        _dfr = result.to_frame() if _cls == 'Series' else result
+        _split = _json.loads(_dfr.head(200).to_json(orient='split', date_format='iso'))
+        _json_table = _json.dumps({'columns': [str(_c) for _c in _split.get('columns', [])], 'rows': _split.get('data', [])})
+except Exception:
+    _json_table = None
 `;
 
 // --- Sandbox hardening (the `readonly` mode) --------------------------------------

@@ -40,7 +40,9 @@ async function pyRun(code, { tables = null, image = null, hardened = false } = {
     if (py.globals.get("_err")) return { ok: false, stdout, error: String(py.globals.get("_err")) };
     const jr = py.globals.get("_json_result");
     let value; try { value = JSON.parse(jr); } catch { value = jr; }
-    return { ok: true, value, stdout };
+    const tj = py.globals.get("_json_table");
+    let table; if (typeof tj === "string") { try { table = JSON.parse(tj); } catch { /* */ } }
+    return { ok: true, value, stdout, table };
 }
 const rows = (name, columns, r) => ({ name, data: { kind: "rows", columns, rows: r } });
 
@@ -87,6 +89,19 @@ test("a bare TRAILING EXPRESSION is the return value (Jupyter/REPL-style: `df` =
     const ret = await pyRun("import pandas as pd\ndf = pd.DataFrame({'a': [1, 2]})\nreturn df['a'].sum()");
     assert.equal(bare.value, 3);
     assert.deepEqual(bare.value, ret.value, "bare trailing expr === explicit return");
+});
+
+test("a returned DataFrame is ALSO serialized structurally ({columns, rows}) for a real-table render", { skip }, async () => {
+    const r = await pyRun("import pandas as pd\ndf = pd.DataFrame({'foo': [1, 2, 3], 'bar': [4, 5, 6]})\ndf");
+    assert.ok(r.table, "a df return yields a structural table");
+    assert.deepEqual(r.table.columns, ["foo", "bar"]);
+    assert.deepEqual(r.table.rows, [[1, 4], [2, 5], [3, 6]]);
+    // A non-df return has no table.
+    assert.equal((await pyRun("return 42")).table, undefined);
+    // A Series becomes a 1-column frame.
+    const s = await pyRun("import pandas as pd\npd.Series([10, 20], name='v')");
+    assert.deepEqual(s.table.columns, ["v"]);
+    assert.deepEqual(s.table.rows, [[10], [20]]);
 });
 
 test("a trailing statement that ISN'T an expression is untouched (no bogus return)", { skip }, async () => {
