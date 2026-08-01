@@ -15,8 +15,11 @@ const ENTRIES = {
     content: "content.ts",
     background: "background.ts",
     popup: "popup.ts",
-    // Offscreen document hosting the Pyodide runtime for the python_exec tool.
+    // Offscreen document hosting the Pyodide runtime for the python_exec tool, and the
+    // dedicated worker it spawns to run Pyodide OFF the shared main thread (keeps the
+    // sidebar UI responsive during a long run).
     offscreen: "offscreen.ts",
+    "python-worker": "python-worker.ts",
     // Content-script shell (hosts the iframe) + the Preact app that runs inside
     // the sidebar.html iframe.
     "sidebar-shell": "sidebar/shell.ts",
