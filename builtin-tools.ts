@@ -58,6 +58,17 @@ const clickAt = (x: number, y: number): Element | null => {
     return el;
 };
 
+// The In render for a tool that TARGETS one element/coordinate (click / look): its `selector` — a CSS
+// selector OR an @pt/@box token — as a hoverable ref, so the sidebar outlines it on the page. No
+// selector (a viewport/page look) → null (raw args). The sidebar picks element- vs point/box-highlight
+// by the path shape, so this stays agnostic.
+export const targetRender = (args: Record<string, unknown>): RenderDescriptor | null => {
+    const sel = typeof args.selector === "string" ? args.selector.trim() : "";
+    if (!sel) return null;
+    const idx = typeof args.index === "number" ? args.index : undefined;
+    return { type: "elements", items: [{ path: sel, ...(idx ? { index: idx } : {}) }] };
+};
+
 export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512 }: { model?: string | null; maxTokens?: number } = {}): MlTool => {
     return ml.defineTool({
         name: "look",
@@ -77,6 +88,8 @@ export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512 }: { mo
                 margin: { type: "number", description: "For an @pt: token only — the crop RADIUS in px around the point (bigger = more context). Ignored for CSS selectors." }
             }
         },
+        // In: the target as a hoverable ref (hover → outline it on the page). No selector (viewport/page) → raw args.
+        render: (_input, args) => targetRender(args),
         run: async ({ selector, question, scope, index, margin }: { selector?: string; question?: string; scope?: "viewport" | "page"; index?: number; margin?: number } = {}) => {
             const fullPage = scope === "page" && !selector;
             // An @pt point token → screenshot returns a cropped, MARKED view of the click spot
@@ -760,15 +773,9 @@ export const buildClickTool = (ml: MlApi): MlTool => {
             },
             required: ["selector"]
         },
-        // Approval preview In: render the CSS target as a hoverable element ref (hover → the sidebar
-        // outlines it on the page, so you see WHAT you're approving before you click). An @pt/@box
-        // isn't a DOM selector → fall back to raw args.
-        render: (_input, args) => {
-            const sel = typeof args.selector === "string" ? args.selector : "";
-            if (!sel || POINT_RE.test(sel.trim()) || BOX_RE.test(sel.trim())) return null;
-            const idx = typeof args.index === "number" ? args.index : undefined;
-            return { type: "elements", items: [{ path: sel, ...(idx ? { index: idx } : {}) }] };
-        },
+        // In: the target as a hoverable ref (hover → the sidebar outlines it on the page, so you see
+        // WHAT you're approving). A CSS selector highlights the element; an @pt/@box, the point/region.
+        render: (_input, args) => targetRender(args),
         run: async ({ selector, index = 0 }: { selector: string; index?: number }): Promise<string> => {
             // A container token is a REGION, not a click target — steer to a point inside it.
             if (BOX_RE.test((selector || "").trim())) {

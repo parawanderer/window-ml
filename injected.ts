@@ -41,7 +41,7 @@ import { makeDomTools } from "./tools";
 import { hideSidebarForShot, makeBackgroundTaskPromise, makeChatRequest, makeStreamingTaskPromise } from "./bridge";
 import { validateArgs, validateExtend } from "./validate";
 import { renderArgs, logStep, defaultApprove, normalizeApproval, formatReadonlyExec } from "./approval";
-import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPythonTool } from "./builtin-tools";
+import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPythonTool, targetRender } from "./builtin-tools";
 import { pyVarNameError } from "./python-env";
 import { autoApprovePython } from "./auto-approve";
 import { executeTool } from "./tool-exec";
@@ -1229,6 +1229,8 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                         margin: { type: "number", description: "For an @pt: token only — the crop RADIUS in px around the point (bigger = more context). Ignored for CSS selectors." }
                     }
                 },
+                // In: the target as a hoverable ref (hover → outline it on the page). No selector → raw args.
+                render: (_input, args) => targetRender(args),
                 run: async ({ selector, scope, index, margin }: { selector?: string; scope?: "viewport" | "page"; index?: number; margin?: number } = {}): Promise<string | ToolResult> => {
                     const fullPage = scope === "page" && !selector;
                     let shot;

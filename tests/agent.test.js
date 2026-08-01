@@ -1816,15 +1816,16 @@ test("tables:'current' with no data table (and not a Sheet) → a clear error", 
     await assert.rejects(ml._loadTable("df", "current"), /neither a Google Sheet nor has a table with data/);
 });
 
-test("click tool render(): a CSS selector → a hoverable element ref; @pt/@box → raw args (null)", () => {
+test("click/look render(): the target (CSS selector OR @pt/@box) → a hoverable element ref; no selector → null", () => {
     const { ml } = loadDomWorld();
-    const click = ml.clickTool();
-    // A CSS selector renders as an `elements` descriptor so the approval In can hover→highlight it.
-    assert.deepEqual(click.render({}, { selector: "#go" }), { type: "elements", items: [{ path: "#go" }] });
-    assert.deepEqual(click.render({}, { selector: ".x", index: 2 }), { type: "elements", items: [{ path: ".x", index: 2 }] });
-    // A canvas @pt / @box isn't a queryable selector → no element render (falls back to raw args).
-    assert.equal(click.render({}, { selector: "@pt:abc123" }), null);
-    assert.equal(click.render({}, { selector: "@box:def456" }), null);
+    for (const tool of [ml.clickTool(), ml.lookTool()]) {   // shared targetRender
+        assert.deepEqual(tool.render({}, { selector: "#go" }), { type: "elements", items: [{ path: "#go" }] });
+        assert.deepEqual(tool.render({}, { selector: ".x", index: 2 }), { type: "elements", items: [{ path: ".x", index: 2 }] });
+        // A canvas @pt/@box is a valid target too — the sidebar highlights it as a point/region.
+        assert.deepEqual(tool.render({}, { selector: "@pt:abc123" }), { type: "elements", items: [{ path: "@pt:abc123" }] });
+        // No selector (a viewport/page look) → raw args.
+        assert.equal(tool.render({}, {}), null);
+    }
 });
 
 // ---- python_exec cast:'pt'/'box' projects image-pixel coords → viewport (dpr + element offset) ----

@@ -441,15 +441,19 @@ function SessionRow({ s, profile }: { s: Session; profile: "utility" | "default"
 function RenderElements({ items }: { items: { path: string; text?: string; index?: number }[] }) {
     return (
         <div class="r-elements">
-            {items.map((it, i) => (
-                // Hover → outline the element on the page (DevTools-style; the shell owns the page DOM).
-                <div class="r-el" key={it.index ?? i}
-                    onPointerEnter={() => highlightEl(it.path)} onPointerLeave={clearHighlight}>
-                    <span class="r-el-idx">#{it.index ?? i}</span>
-                    {it.text ? <span class="r-el-text">«{it.text}»</span> : null}
-                    <code class="r-el-path">{it.path}</code>
-                </div>
-            ))}
+            {items.map((it, i) => {
+                // Hover → outline it on the page (DevTools-style). A path that's an @pt/@box highlights
+                // the point/region (via injected); a CSS selector highlights the element.
+                const isTok = /^@(?:pt|box):[0-9a-f]+$/.test(it.path);
+                return (
+                    <div class="r-el" key={it.index ?? i}
+                        onPointerEnter={() => (isTok ? highlightToken(it.path) : highlightEl(it.path))} onPointerLeave={clearHighlight}>
+                        <span class="r-el-idx">#{it.index ?? i}</span>
+                        {it.text ? <span class="r-el-text">«{it.text}»</span> : null}
+                        <code class="r-el-path">{it.path}</code>
+                    </div>
+                );
+            })}
         </div>
     );
 }
