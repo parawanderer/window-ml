@@ -761,6 +761,19 @@ test("agent runs render as their own session with steps + a final answer", async
     assert.ok(w.shadow.querySelector(".msg.asst .raw-btn"), "answer has a raw toggle");
 });
 
+test("a FINAL-answer turn with only reasoning (no thought/tool) still renders its thinking block", async () => {
+    // The model thinks in reasoning_content and puts its answer in content → the content becomes the
+    // summary (answer bubble), the reasoning is a reasoning-only step. It must NOT be filtered out.
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("fin", "what is 6*7"));
+    await w.dispatch(agentStep("fin", 1, { reasoning: "6 times 7 is 42." }));   // reasoning-only, no thought/tool
+    await w.dispatch(agentResult("fin", "It's 42.", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    assert.ok(w.shadow.querySelector(".athought.athinking"), "the final turn's thinking block renders (not filtered out)");
+    assert.match(w.shadow.querySelector(".msg.asst").textContent, /It's 42/, "the content shows as the answer");
+});
+
 test("agent step: reasoning_content renders as a distinct 'thinking' block, separate from the prose thought", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("rsn", "click the red guy"));

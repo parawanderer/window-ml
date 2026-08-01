@@ -1008,9 +1008,11 @@ function AgentRunView({ s }: { s: Session }) {
                 <div class="mrow"><span class="who">task</span><span class="sp" /><Stamp ts={s.createdTs} /></div>
                 <div class="utext">{s.task}</div>
             </div>
-            {/* Skip an empty step group — one carrying only a usage sample (the final
-                answer's token counts), no thought or tool, would render a bare pill. */}
-            {turns.filter(t => t.thought || t.tools.length).map(t => <AgentTurn key={t.step} turn={t} max={s.maxSteps} hash={s.hash} />)}
+            {/* Skip an empty step group — one carrying only a usage sample (the final answer's token
+                counts), no thought/reasoning/tool, would render a bare pill. But KEEP a reasoning-only
+                turn: the final-answer turn puts its content in the summary (below) and its thinking here,
+                so without `t.reasoning` the final think block would vanish. */}
+            {turns.filter(t => t.thought || t.reasoning || t.tools.length).map(t => <AgentTurn key={t.step} turn={t} max={s.maxSteps} hash={s.hash} />)}
             {s.summary != null
                 ? <ReplyBubble content={s.summary} status={s.status} model={s.model}
                     profile={sessionProfile(s)} ts={s.lastTs}
