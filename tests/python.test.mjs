@@ -150,9 +150,35 @@ test("readonly: pandas read_csv(url) hits the SAME clean error (the funnel is Op
     assert.match(r.error, /network is disabled in readonly python_exec/, "the patch catches pandas' urlopen regardless of how it imported it");
 });
 
-test("full mode restores the real urlopen — a prior readonly run's block doesn't leak forward", { skip }, async () => {
+test("full mode installs the working fetch (NOT the readonly block) — no leak between modes", { skip }, async () => {
     await pyRun("x = 1", { hardened: true });   // a readonly run installs the block
     const r = await pyRun("import urllib.request\nreturn urllib.request.OpenerDirector.open.__name__", { hardened: false });
     assert.equal(r.ok, true);
-    assert.equal(r.value, "open", "the original OpenerDirector.open is restored, not _ml_blocked_open");
+    assert.equal(r.value, "_ml_working_open", "full mode routes urllib through the working (open_url) fetch, not _ml_blocked_open");
+});
+
+test("full mode: pd.read_csv(url) actually works — urllib routed through pyodide.http.open_url", { skip }, async () => {
+    // node-pyodide has no XMLHttpRequest, so mock open_url to a StringIO; this exercises the response
+    // shim + the whole pandas → urllib → OpenerDirector.open → open_url pipeline.
+    const r = await pyRun(
+        "import io, pyodide.http\n" +
+        "pyodide.http.open_url = lambda u: io.StringIO('a,b\\n1,2\\n3,4\\n')\n" +
+        "import pandas as pd\n" +
+        "return pd.read_csv('http://example.com/data.csv').to_dict('records')",
+        { hardened: false });
+    assert.equal(r.ok, true, r.error);
+    assert.deepEqual(r.value, [{ a: 1, b: 2 }, { a: 3, b: 4 }]);
+});
+
+test("full mode: a failed fetch raises a clear host-permissions error (not a raw JS/CORS dump)", { skip }, async () => {
+    const r = await pyRun(
+        "import pyodide.http\n" +
+        "def _boom(u):\n    raise Exception('NetworkError: CORS')\n" +
+        "pyodide.http.open_url = _boom\n" +
+        "import pandas as pd\n" +
+        "return pd.read_csv('http://example.com/data.csv')",
+        { hardened: false });
+    assert.equal(r.ok, false);
+    assert.match(r.error, /full-mode fetch of .* failed/);
+    assert.match(r.error, /site access \/ host permissions/);
 });

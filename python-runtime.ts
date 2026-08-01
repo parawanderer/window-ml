@@ -56,15 +56,19 @@ if _tsj:
 
 const indent = (code: string) => (code || "pass").split("\n").map(l => "    " + l).join("\n");
 
-// Network policy (DX, not a security boundary). In readonly mode there is no network anyway — WASM
-// has no raw sockets, and harden() nulls the JS fetch bridge — but a `pd.read_csv(url)` /
-// `urllib.request.urlopen(url)` dies deep in the socket layer with a confusing 40-line traceback
-// ("[Errno 23] Host is unreachable"). pandas' read_csv/read_html and urllib all funnel through
-// `urllib.request.OpenerDirector.open`, so patch THAT (robust to however urlopen was imported) to
-// raise one clear, actionable line at the call site, steering the model to the already-loaded data.
-// The original is saved once (module state persists across runs in Pyodide's single heap) and the
-// policy is (re)set EVERY run by mode — so a prior readonly run can't leave the block installed for a
-// later full run (which restores the real open; a working full-mode fetch swap is a separate change).
+// Network policy. pandas' read_csv/read_html and urllib all funnel through
+// `urllib.request.OpenerDirector.open`, so patch THAT (robust to however urlopen was imported). The
+// original is saved once (module state persists across runs in Pyodide's single heap) and the policy
+// is (re)set EVERY run by mode — so switching modes can't leave the wrong open installed.
+//
+// - readonly (DX, not a security boundary): there is no network anyway — WASM has no raw sockets, and
+//   harden() nulls the JS fetch bridge — but urllib dies deep in the socket layer with a confusing
+//   40-line "[Errno 23] Host is unreachable". Replace it with one clear line steering to the loaded data.
+// - full: make the sync pandas idiom actually WORK by routing urllib through Pyodide's SYNCHRONOUS
+//   `pyodide.http.open_url` (a sync XHR) wrapped in a minimal urllib-response shim. Caveats (surfaced
+//   in the on-failure message): uncredentialed (no cookies — for a PRIVATE sheet use the `tables` param,
+//   which fetches credentialed) + text-only + subject to CORS/host-permissions like any extension fetch.
+//   Guarded: if pyodide.http can't load, full mode falls back to the raw (socket-bound) original.
 const netPolicy = (hardened: boolean): string => /* python */ `
 import urllib.request as _mlnet
 if not hasattr(_mlnet.OpenerDirector, "_ml_orig_open"):
@@ -73,7 +77,24 @@ ${hardened
     ? `def _ml_blocked_open(self, *_a, **_k):
     raise RuntimeError("network is disabled in readonly python_exec — the tool ALREADY loaded your table/sheet/image via the tables/image parameter, so reference it directly (e.g. df, df_remote, img). For a live fetch, re-run in mode:'full'.")
 _mlnet.OpenerDirector.open = _ml_blocked_open`
-    : `_mlnet.OpenerDirector.open = _mlnet.OpenerDirector._ml_orig_open`}
+    : `try:
+    import pyodide.http as _mlph, io as _mlio
+    class _MlResp(_mlio.BytesIO):   # a subclass has a __dict__, so urllib/pandas can poke .headers/.status/.url
+        def geturl(self): return getattr(self, "url", None)
+        def info(self): return getattr(self, "headers", {})
+        def getcode(self): return getattr(self, "status", 200)
+    def _ml_working_open(self, fullurl, data=None, timeout=None):
+        _u = fullurl.full_url if hasattr(fullurl, "full_url") else fullurl
+        try:
+            _text = _mlph.open_url(_u).getvalue()   # synchronous XHR → StringIO of the response text
+        except Exception as _e:
+            raise RuntimeError("full-mode fetch of " + repr(_u) + " failed (" + str(_e) + "). Pyodide fetches via the browser: the host must allow CORS and the extension must have access to it (check site access / host permissions). This path is UNCREDENTIALED + text-only — for a private Google Sheet use the tool's tables param instead (it fetches with your login).")
+        _r = _MlResp(_text.encode())
+        _r.headers = {}; _r.status = 200; _r.url = _u
+        return _r
+    _mlnet.OpenerDirector.open = _ml_working_open
+except Exception:
+    _mlnet.OpenerDirector.open = _mlnet.OpenerDirector._ml_orig_open`}
 `;
 
 // Per-run namespace reset (isolation): Pyodide keeps ONE persistent heap across calls, so a prior
