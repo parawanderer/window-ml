@@ -215,6 +215,12 @@ const pickedHover = (picked?: string): { onPointerEnter?: () => void; onPointerL
     if (!tok && !sel) return {};
     return { onPointerEnter: () => (tok ? highlightToken(tok) : highlightEl(sel)), onPointerLeave: clearHighlight };
 };
+// Hover handlers for any string that MENTIONS an @pt/@box token (e.g. a look image's label
+// `element "@pt:…"`) — hover → outline it on the page. Only fires when a token is present.
+const tokenHover = (s?: string): { onPointerEnter?: () => void; onPointerLeave?: () => void } => {
+    const tok = s?.match(/@(?:pt|box):[0-9a-f]+/)?.[0];
+    return tok ? { onPointerEnter: () => highlightToken(tok), onPointerLeave: clearHighlight } : {};
+};
 
 // Design A: the sidebar's approve/deny for a background-hosted run's pending gate. We post it to the
 // SHELL (our parent), which — because it can prove the message came from this real extension iframe
@@ -635,7 +641,13 @@ function PythonOutRender({ d }: { d: Extract<RenderDescriptor, { type: "python-o
 
 function RenderPanel({ d }: { d: RenderDescriptor }) {
     switch (d.type) {
-        case "image": return <div class="r-image"><ClickableImg src={d.src} alt={d.label || "image"} />{d.label ? <div class="r-image-label">{d.label}</div> : null}</div>;
+        case "image": {
+            // If the label references an @pt/@box (e.g. look's `element "@pt:…"`), hovering the shot
+            // outlines that point/region on the page — same overlay setup.
+            const th = tokenHover(d.label);
+            return <div class={`r-image${th.onPointerEnter ? " r-hoverable" : ""}`} {...th}>
+                <ClickableImg src={d.src} alt={d.label || "image"} />{d.label ? <div class="r-image-label">{d.label}</div> : null}</div>;
+        }
         case "code": return <Code text={d.text} lang={d.lang} format={d.format} />;
         case "table": return <RenderTable columns={d.columns} rows={d.rows} />;
         case "keyval": return <div class="r-keyval">{d.pairs.map(([k, v], i) => <div class="r-kv" key={i}><span class="r-k">{k}</span><span class="r-v">{v}</span></div>)}</div>;
