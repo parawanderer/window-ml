@@ -30,7 +30,7 @@ import type {
 } from "./contract";
 import { detectGroundingModel, DEFAULT_GROUNDING_RANGE } from "./contract";
 import { evalReadonly } from "./readonly-exec";
-import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv } from "./dom";
+import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables } from "./dom";
 import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, PT_LOOK_RADIUS, BOX_RE, resolveBox } from "./util";
 import { annotate, pickAccentColorForTarget } from "./som";
@@ -1062,9 +1062,21 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             if (isCurrent || (typeof src === "string" && googleSheetCsvUrl(src))) {
                 const target = isCurrent ? (typeof location !== "undefined" ? location.href : "") : String(src);
                 const csvUrl = googleSheetCsvUrl(target);
-                if (!csvUrl) throw new Error(isCurrent
-                    ? "pythonExec tables:'current' — this page isn't a Google Sheet."
-                    : `pythonExec — "${String(src)}" isn't a Google Sheets URL.`);
+                if (!csvUrl) {
+                    // `current` on a NON-sheet page → the page's single non-empty <table> (the shorthand
+                    // the tool only advertises when there's exactly one). 0 or >1 → say so, steer to a selector.
+                    if (isCurrent) {
+                        const tables = typeof document !== "undefined" ? nonEmptyTables(document) : [];
+                        if (tables.length === 1) {
+                            const data = this._resolveTable(tables[0], raw);
+                            return { name, source: { kind: "dom", label: "current page table" }, data };
+                        }
+                        throw new Error(tables.length === 0
+                            ? "pythonExec tables:'current' — this page is neither a Google Sheet nor has a table with data. Pass a CSS selector."
+                            : `pythonExec tables:'current' — this page has ${tables.length} tables (ambiguous). Pass a CSS selector to pick one.`);
+                    }
+                    throw new Error(`pythonExec — "${String(src)}" isn't a Google Sheets URL.`);
+                }
                 const csv = await makeBackgroundTaskPromise<string>("FETCH_SHEET_REQUEST", "FETCH_SHEET_RESPONSE", { url: csvUrl });
                 const all = parseCsv(csv), columns = all[0] || [], dataRows = all.slice(1);
                 const source: TableSource = isCurrent

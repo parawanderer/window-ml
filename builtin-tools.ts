@@ -7,7 +7,7 @@
 import type { MlApi, MlTool, LocateSubstep, ToolResult, RenderDescriptor } from "./contract";
 import { DEFAULT_GROUNDING_RANGE } from "./contract";
 import { PY_PACKAGE_LABELS } from "./python-env";
-import { truncate, clipOut, errText, elLine, queryAll, selectorError, googleSheetCsvUrl } from "./dom";
+import { truncate, clipOut, errText, elLine, queryAll, selectorError, googleSheetCsvUrl, nonEmptyTables } from "./dom";
 
 // Cap on python_exec output (stdout / value / error) fed back to the model — bigger than
 // exec's 500 (data output legitimately runs longer) but still bounds a runaway result.
@@ -854,9 +854,22 @@ const asBoxVal = (v: unknown): Box | null => {
 };
 
 export const buildPythonTool = (ml: MlApi): MlTool => {
-    // Dynamic hint appended when the agent is ON a Google Sheet — it can load THIS sheet with
-    // tables:'current' (no URL, auto-approvable).
+    // `current` is only advertised when it actually resolves to something — the page is a Google Sheet,
+    // OR it has EXACTLY one non-empty table (then 'current' = that table). Otherwise 'current' is left
+    // out of the description entirely, since it confuses models into using it where it can't work.
     const onSheet = typeof location !== "undefined" && !!googleSheetCsvUrl(location.href);
+    const singleTable = !onSheet && typeof document !== "undefined" && nonEmptyTables(document).length === 1;
+    const currentHint = onSheet
+        ? " YOU ARE CURRENTLY ON A GOOGLE SHEET — pass `tables:'current'` to load it as `df`."
+        : singleTable ? " THIS PAGE HAS ONE TABLE — pass `tables:'current'` to load it as `df`." : "";
+    const currentClause = onSheet ? " Or `'current'` for THIS Google Sheet."
+        : singleTable ? " Or `'current'` for the one table on this page." : "";
+    const tablesDesc = "Spreadsheet/table data → pandas DataFrame(s). A SINGLE source string (a CSS selector " +
+        "for a page <table>/ARIA grid, or a Google Sheets URL) → loaded as `df`." + currentClause +
+        " OR a map { variable_name: source } (keys = Python identifiers) → each loaded under its name so you can " +
+        "join them, e.g. {\"sales\":\"#report\",\"targets\":\"https://docs.google.com/spreadsheets/d/…\"} → use " +
+        "`sales`/`targets` directly (also in a `tables` dict, tables['sales']). External Sheets URLs need approval. " +
+        "A selector loads the FIRST match. The data arrives ALREADY parsed — use the variable, don't re-load it.";
     return ml.defineTool({
         name: "python_exec",
         requiresApproval: true,
@@ -868,7 +881,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             "image is shown). Each call is STATELESS — a fresh namespace, nothing persists between calls. In scope: " +
             PY_PACKAGE_LABELS + " + stdlib (io, math, collections, itertools…). `mode` 'readonly' (default) is a pure " +
             "function over the inputs (may be auto-approved); 'full' enables network but ALWAYS asks the user." +
-            (onSheet ? " YOU ARE CURRENTLY ON A GOOGLE SHEET — pass `tables:'current'` to load it as `df`." : ""),
+            currentHint,
         parameters: {
             type: "object",
             properties: {
@@ -882,7 +895,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                         { type: "string" },   // a single source → loaded as `df`
                         { type: "object", additionalProperties: { type: "string" }, propertyNames: { pattern: "^[A-Za-z_][A-Za-z0-9_]*$" } },   // { python_identifier: source }
                     ],
-                    description: "Spreadsheet/table data → pandas DataFrame(s). A SINGLE source string (a CSS selector for a page <table>/ARIA grid, a Google Sheets URL, or 'current' for the Sheet you're on) → loaded as `df`. OR a map { variable_name: source } (keys = Python identifiers) → each loaded under its name so you can join them, e.g. {\"sales\":\"#report\",\"targets\":\"https://docs.google.com/spreadsheets/d/…\"} → use `sales`/`targets` directly (also in a `tables` dict, tables['sales']). External Sheets URLs need approval. A selector loads the FIRST match. The data arrives ALREADY parsed — use the variable, don't re-load it.",
+                    description: tablesDesc,
                 },
                 tableRaw: { type: "boolean", description: "Load table cells as raw STRINGS (skip the default numeric/currency auto-cast). Use only for ZIP/SKU/leading-zero IDs that casting would corrupt." },
             },

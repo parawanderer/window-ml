@@ -1723,12 +1723,12 @@ test("pythonExec tables: a URL with no gid defaults to the first tab (gid=0)", a
     assert.match(sheetUrl, /export\?format=csv&gid=0$/);
 });
 
-test("pythonExec tables:'current' off a Google Sheet errors before any fetch", async () => {
+test("pythonExec tables:'current' off a Google Sheet (with no table) errors before any fetch", async () => {
     let fetched = false;
     const world = loadPageWorld({
         onRuntimeMessage: (m) => { if (m.type === "FETCH_SHEET") fetched = true; return { data: { ok: true, value: 1, stdout: "" } }; },
     });
-    await assert.rejects(world.ml.pythonExec("return 1", { tables: "current" }), /isn't a Google Sheet/);
+    await assert.rejects(world.ml.pythonExec("return 1", { tables: "current" }), /neither a Google Sheet nor has a table with data/);
     assert.equal(fetched, false, "no privileged fetch when the page isn't a sheet");
 });
 
@@ -1794,6 +1794,35 @@ test("examples/spreadsheet.html: the #sales table extracts to rows that sum to t
     // extracted cells carry the right numbers that pandas' df.sum() would add up to.
     const total = t.rows.reduce((s, r) => s + r.slice(2).reduce((a, c) => a + Number(c), 0), 0);
     assert.equal(total, 6260, "extraction matches the demo's expected answer");
+});
+
+// ---- python_exec tables:'current' shorthand (non-sheet page) ----
+
+test("tables:'current' loads the page's SINGLE non-empty table (not just a Google Sheet)", async () => {
+    const { ml } = loadDomWorld('<table id="sales"><tr><th>A</th></tr><tr><td>1</td></tr></table><table id="empty"></table>');
+    const loaded = await ml._loadTable("df", "current");
+    assert.equal(loaded.source.kind, "dom");
+    assert.deepEqual(loaded.data.columns, ["A"]);
+    assert.deepEqual(loaded.data.rows, [[1]]);   // the empty table is ignored; numeric cast applied
+});
+
+test("tables:'current' is ambiguous with >1 non-empty table → an actionable error steers to a selector", async () => {
+    const { ml } = loadDomWorld('<table><tr><td>1</td></tr></table><table><tr><td>2</td></tr></table>');
+    await assert.rejects(ml._loadTable("df", "current"), /has 2 tables \(ambiguous\)\. Pass a CSS selector/);
+});
+
+test("tables:'current' with no data table (and not a Sheet) → a clear error", async () => {
+    const { ml } = loadDomWorld('<table id="empty"></table><p>no data</p>');
+    await assert.rejects(ml._loadTable("df", "current"), /neither a Google Sheet nor has a table with data/);
+});
+
+test("the tool description only advertises 'current' when it resolves — one table → yes, none → no", () => {
+    const one = loadDomWorld('<table><tr><td>1</td></tr></table>').ml.pythonTool();
+    assert.match(one.description, /THIS PAGE HAS ONE TABLE/);
+    assert.match(one.parameters.properties.tables.description, /one table on this page/);
+    const none = loadDomWorld('<p>no tables</p>').ml.pythonTool();
+    assert.doesNotMatch(none.description, /current/);
+    assert.doesNotMatch(none.parameters.properties.tables.description, /'current'/);
 });
 
 test("approveOnce dedups by (tool, args): identical repeats free, new scripts re-ask", () => {

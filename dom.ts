@@ -308,6 +308,17 @@ export const selectorError = (selector: string, err: Error): string => {
  *  normalizeText): cell VALUES must survive verbatim for the df. Rows/cols capped so a wrong
  *  selector can't extract a runaway grid. Native `<table>` and ARIA `role=table/grid/treegrid`. */
 const MAX_TABLE_ROWS = 5000, MAX_TABLE_COLS = 200;
+
+/** Page `<table>`s that actually hold data — at least one `<td>` (a data cell), so a collapsed /
+ *  header-only / lazily-rendered table (e.g. the empty `#bigsales`) is excluded. Shared by the
+ *  python_exec `current` shorthand (which resolves to the SINGLE non-empty table when the page isn't
+ *  a Google Sheet) and the tool description (which only advertises `current` when there's exactly one,
+ *  or the page is a Sheet). Pure over the given root. */
+export const nonEmptyTables = (root: Document | Element): HTMLTableElement[] =>
+    (root && typeof root.querySelectorAll === "function")
+        ? [...root.querySelectorAll("table")].filter(t => t.querySelector("td")) as HTMLTableElement[]
+        : [];
+
 const cellText = (c: Element): string => (c.textContent || "").replace(/\s+/g, " ").trim();
 const hasSpans = (t: Element): boolean =>
     [...t.querySelectorAll("td,th,[role='cell'],[role='gridcell'],[role='columnheader']")]
