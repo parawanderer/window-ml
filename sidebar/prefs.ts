@@ -5,6 +5,7 @@
 // applyTheme is their only consumer.
 import atomOneDark from "highlight.js/styles/atom-one-dark.css";
 import atomOneLight from "highlight.js/styles/atom-one-light.css";
+import katexCss from "katex/dist/katex.min.css";
 import { config, fontScale, codeWrap, codeLineNumbers, BASE_FS } from "./store";
 
 let hljsStyleEl: HTMLStyleElement | null = null;   // holds the active Atom One theme
@@ -24,6 +25,11 @@ themeMedia.addEventListener("change", applyTheme);
 // Create the <style> element that holds the active highlight theme + apply once.
 // Called from mount() (needs document.head to exist).
 export const initThemeStyle = (): void => {
+    // KaTeX's stylesheet (static, theme-independent). Its @font-face url()s are `fonts/KaTeX_*.woff2`,
+    // resolved relative to sidebar.html → the fonts copied to dist/fonts/ by the build. Injected once.
+    const katexStyle = document.createElement("style");
+    katexStyle.textContent = katexCss;
+    document.head.append(katexStyle);
     hljsStyleEl = document.createElement("style");
     document.head.append(hljsStyleEl);
     applyTheme();

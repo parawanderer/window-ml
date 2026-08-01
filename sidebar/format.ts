@@ -13,6 +13,7 @@ import xml from "highlight.js/lib/languages/xml";
 import cssLang from "highlight.js/lib/languages/css";
 import mdLang from "highlight.js/lib/languages/markdown";
 import { js_beautify } from "js-beautify/js/lib/beautify.js";
+import katex from "katex";
 import type { NeutralMessage } from "../contract";
 import type { Session, Status } from "./store";
 
@@ -94,7 +95,9 @@ export function htmlLines(html: string): string[] {
     return lines;
 }
 
-export function markdown(src: string): string {
+// `math: true` renders LaTeX ($…$, $$…$$, \(…\), \[…\]) with KaTeX. Off for the export (keeps raw
+// LaTeX source — no bundled fonts in the print doc); the live sidebar turns it on.
+export function markdown(src: string, opts: { math?: boolean } = {}): string {
     const codeBlocks: string[] = [];
     // Pull fenced code from the RAW source first (highlighted, not double-escaped),
     // stashed behind an ASCII placeholder restored at the end.
@@ -102,7 +105,21 @@ export function markdown(src: string): string {
         codeBlocks.push(`<pre class="code"><code class="hljs">${highlight(code.replace(/\n$/, ""), lang || undefined)}</code></pre>`);
         return `\n@@CODE${codeBlocks.length - 1}@@\n`;
     });
-    const text = escapeHtml(stashed);
+    // Stash rendered math behind placeholders BEFORE escaping — KaTeX output is trusted HTML that must
+    // NOT be re-escaped or mangled by the inline formatter. Display ($$…$$ / \[…\]) before inline
+    // ($…$ / \(…\)). The inline-`$` guards (no space just inside, no trailing digit) skip currency.
+    const mathBlocks: string[] = [];
+    const renderMath = (tex: string, display: boolean): string => {
+        try { return katex.renderToString(tex.trim(), { displayMode: display, throwOnError: false, output: "html" }); }
+        catch { return escapeHtml(tex); }
+    };
+    const stashMath = (tex: string, display: boolean): string => { mathBlocks.push(renderMath(tex, display)); return `@@MATH${mathBlocks.length - 1}@@`; };
+    const mathed = !opts.math ? stashed : stashed
+        .replace(/\$\$([\s\S]+?)\$\$/g, (_, t: string) => stashMath(t, true))
+        .replace(/\\\[([\s\S]+?)\\\]/g, (_, t: string) => stashMath(t, true))
+        .replace(/\\\(([\s\S]+?)\\\)/g, (_, t: string) => stashMath(t, false))
+        .replace(/(?<![\\$])\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\d)/g, (_, t: string) => stashMath(t, false));
+    const text = escapeHtml(mathed);
     const inline = (t: string): string => t
         .replace(/`([^`]+)`/g, "<code>$1</code>")
         .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
@@ -151,7 +168,9 @@ export function markdown(src: string): string {
         else { flush(); out.push(`<p>${inline(line)}</p>`); }
     }
     flush();
-    return out.join("").replace(/@@CODE(\d+)@@/g, (_, i: string) => codeBlocks[+i]);
+    return out.join("")
+        .replace(/@@MATH(\d+)@@/g, (_, i: string) => mathBlocks[+i])
+        .replace(/@@CODE(\d+)@@/g, (_, i: string) => codeBlocks[+i]);
 }
 
 export function lastUser(messages: NeutralMessage[]): string {

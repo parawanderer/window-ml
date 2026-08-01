@@ -10,7 +10,7 @@ import { useState, useEffect, useRef } from "preact/hooks";
 import { signal } from "@preact/signals";
 import type { MlDebugEvent, DebugSessionConfig, DebugAgentConfig, NeutralMessage, MlConfig, ApiFormat, Theme, LoadedModel, ExtendProfile, RenderDescriptor, LocateSubstep, TokenUsage, TableSource } from "../contract";
 import { DEFAULT_CONFIG, fmtCtx } from "../contract";
-import { elementReference } from "../dom";
+import { elementReference, externalSheetIds } from "../dom";
 import {
     FONT_KEY, WRAP_KEY, LINES_KEY,
     sessionMap, rev, view, fontScale, codeWrap, codeLineNumbers, config, models,
@@ -411,7 +411,7 @@ function ReplyBubble({ content, status, model, profile, ts, reasoning = null, so
             </div>
             {/* Reasoning/thinking text (separate from the reply), collapsed by default. */}
             {hasReply && !collapsed && reasoning
-                ? <details class="thinking"><summary>thinking</summary><div class="md" dangerouslySetInnerHTML={{ __html: markdown(reasoning) }} /></details>
+                ? <details class="thinking"><summary>thinking</summary><div class="md" dangerouslySetInnerHTML={{ __html: markdown(reasoning, { math: true }) }} /></details>
                 : null}
             {status === "pending"
                 ? <div class="pending-note">…thinking</div>
@@ -421,7 +421,7 @@ function ReplyBubble({ content, status, model, profile, ts, reasoning = null, so
                         ? <div class="asst-collapsed" onClick={() => setCollapsed(false)}>{preview!.text}{preview!.more ? <span class="more"> …</span> : null}</div>
                         : showRaw
                             ? <Code text={content} lang="markdown" />
-                            : <div class="md" dangerouslySetInnerHTML={{ __html: markdown(content) }} />}
+                            : <div class="md" dangerouslySetInnerHTML={{ __html: markdown(content, { math: true }) }} />}
             {sources?.length
                 ? <details class="sources"><summary>{`sources (${sources.length})`}</summary><Code text={pretty(sources)} lang="json" /></details>
                 : null}
@@ -780,7 +780,7 @@ function ThoughtBlock({ thought, kind = "thought" }: { thought: string; kind?: "
                 <span class="who">{kind}</span>
                 {!open ? <span class="astep-preview">{thinking ? `~${tokEst} tokens` : `${p.text}${p.more ? " …" : ""}`}</span> : null}
             </button>
-            {open ? <div class="md astep-body" dangerouslySetInnerHTML={{ __html: markdown(thought) }} /> : null}
+            {open ? <div class="md astep-body" dangerouslySetInnerHTML={{ __html: markdown(thought, { math: true }) }} /> : null}
         </div>
     );
 }
@@ -805,11 +805,12 @@ const ApprovalBadge = ({ approval }: { approval: "readonly" | "sandbox" | "user"
     </span>
 );
 
-// The distinct EXTERNAL Google Sheet ids a python-in render loads. Approving such a call grants
-// the run access to those spreadsheets for the rest of the page-session, so the gate discloses it.
-function externalSheetGrant(d?: RenderDescriptor): string[] {
-    if (!d || d.type !== "python-in") return [];
-    return [...new Set((d.tables || []).filter(t => t.source.kind === "sheet-external").map(t => t.source.label))];
+// The distinct EXTERNAL Google Sheet ids a python_exec call will load — read from the ARGS (`tables`),
+// NOT the rendered In: at approval time the tables aren't fetched yet (the pre-run preview is code-only),
+// so the render has no sheet source. Approving grants the run those spreadsheets for the rest of the
+// page-session, so the gate discloses it. Same detection as the background's escalation (externalSheetIds).
+function externalSheetGrant(args?: Record<string, unknown>): string[] {
+    return args ? [...new Set(externalSheetIds(args))] : [];
 }
 
 function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
@@ -835,7 +836,7 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     // Consent scope: approving a python_exec that loads an EXTERNAL Google Sheet caches that
     // spreadsheet for the rest of the page-session (later calls to it won't re-prompt). Tell the
     // human the approval is a session-scoped grant, not a one-shot.
-    const sheetGrants = awaiting ? externalSheetGrant(inRender) : [];
+    const sheetGrants = awaiting ? externalSheetGrant(st.arguments) : [];
     return (
         <div class={`astep tool${st.pending ? " pending" : ""}${awaiting ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : " appr-yes") : ""}`}>
             <button class="astep-head" onClick={() => setExpanded(v => !v)}>

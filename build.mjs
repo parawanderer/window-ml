@@ -64,6 +64,16 @@ function copyAssets() {
     for (const [src, dst] of ASSETS) cpSync(src, `dist/${dst}`);
 }
 
+// KaTeX web fonts → dist/fonts/. katex.min.css (bundled into sidebar-app as text, injected as a
+// <style>) references `fonts/KaTeX_*.woff2`, resolved relative to sidebar.html. Copy the woff2s
+// (modern; the css also lists woff/ttf fallbacks a modern browser never fetches). Static → copy once.
+function copyKatexFonts() {
+    const dir = "node_modules/katex/dist/fonts";
+    if (!existsSync(dir)) { console.warn("⚠ katex not installed — math rendering disabled (npm i)."); return; }
+    mkdirSync("dist/fonts", { recursive: true });
+    for (const f of readdirSync(dir)) if (f.endsWith(".woff2")) cpSync(`${dir}/${f}`, `dist/fonts/${f}`);
+}
+
 // Offline python_exec runtime → dist/pyodide/: the Pyodide CORE (from the `pyodide` npm
 // devDep) + the numpy/Pillow wheels (from `npm run fetch-pyodide`, which the npm package
 // doesn't ship). All optional — a missing piece just means the python_exec tool won't
@@ -89,7 +99,7 @@ if (watch) {
     const sidebarCtx = await esbuild.context({ ...base, entryPoints: { "sidebar-app": sidebarApp }, minify: true, plugins: [copyPlugin] });
     await coreCtx.watch();
     await sidebarCtx.watch();
-    copyPyodide();   // once — static, not worth recopying on every rebuild
+    copyPyodide(); copyKatexFonts();   // once — static, not worth recopying on every rebuild
     console.log("watching… (dist/)");
 } else {
     await esbuild.build({ ...base, entryPoints: coreEntries });
@@ -101,6 +111,7 @@ if (watch) {
     // The vm/integration tests still read the BUNDLES above as text, so those entries stay.
     copyAssets();
     copyPyodide();
+    copyKatexFonts();
     // Regenerate the standalone visual preview of som's canvas annotate() (gitignored —
     // it's a build artifact). Open tools/annotate-preview.html to eyeball label placement.
     await generatePreview();
