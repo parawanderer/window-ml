@@ -34,7 +34,7 @@ async function pyRun(code, { tables = null, image = null, hardened = false } = {
     py.globals.set("INJECTED_IMAGE_B64", image);
     py.globals.set("INJECTED_TABLES_JSON", Array.isArray(tables) && tables.length ? JSON.stringify(tables) : null);
     const saved = hardened ? harden(py) : null;
-    try { await py.runPythonAsync(wrapUserCode(code)); }
+    try { await py.runPythonAsync(wrapUserCode(code, hardened)); }
     finally { if (saved) unharden(py, saved); }
     const stdout = String(py.globals.get("_stdout") ?? "");
     if (py.globals.get("_err")) return { ok: false, stdout, error: String(py.globals.get("_err")) };
@@ -133,4 +133,26 @@ test("hardened: a cached `import js` from a prior FULL run is PURGED (not just u
 test("unharden restores the bridge — a later FULL run can import js again", { skip }, async () => {
     await pyRun("import js\nreturn 1", { hardened: true });   // harden + unharden (finally)
     assert.equal((await pyRun("import js\nreturn 1")).ok, true, "the swap is fully reversible");
+});
+
+// ---- readonly network policy (DX): a fetch gives ONE clear error, not a socket traceback ----
+
+test("readonly: urllib.request.urlopen raises the clean extension error, not a raw socket traceback", { skip }, async () => {
+    const r = await pyRun("import urllib.request\nurllib.request.urlopen('http://example.com/data.csv')", { hardened: true });
+    assert.equal(r.ok, false);
+    assert.match(r.error, /network is disabled in readonly python_exec/);
+    assert.doesNotMatch(r.error, /create_connection|Host is unreachable/, "no 40-line socket traceback");
+});
+
+test("readonly: pandas read_csv(url) hits the SAME clean error (the funnel is OpenerDirector.open)", { skip }, async () => {
+    const r = await pyRun("import pandas as pd\nreturn pd.read_csv('http://example.com/data.csv')", { hardened: true });
+    assert.equal(r.ok, false);
+    assert.match(r.error, /network is disabled in readonly python_exec/, "the patch catches pandas' urlopen regardless of how it imported it");
+});
+
+test("full mode restores the real urlopen — a prior readonly run's block doesn't leak forward", { skip }, async () => {
+    await pyRun("x = 1", { hardened: true });   // a readonly run installs the block
+    const r = await pyRun("import urllib.request\nreturn urllib.request.OpenerDirector.open.__name__", { hardened: false });
+    assert.equal(r.ok, true);
+    assert.equal(r.value, "open", "the original OpenerDirector.open is restored, not _ml_blocked_open");
 });

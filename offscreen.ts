@@ -38,7 +38,7 @@ async function run(code: string, image: string | null, hardened: boolean, tables
         // RESET (per-run isolation) + PRELUDE (preloaded vars) + the user's code, wrapped to capture
         // stdout / a `return`-or-bare-`result=` value / a traceback → `python-runtime.ts` (shared so
         // the exact script is exercised against real CPython in tests). Reads back _stdout/_err/_json_result.
-        await py.runPythonAsync(wrapUserCode(code));
+        await py.runPythonAsync(wrapUserCode(code, hardened));
         const stdout = String(py.globals.get("_stdout") ?? "");
         const err = py.globals.get("_err");
         if (err) return { ok: false, stdout, error: String(err) };

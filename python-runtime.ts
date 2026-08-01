@@ -56,6 +56,26 @@ if _tsj:
 
 const indent = (code: string) => (code || "pass").split("\n").map(l => "    " + l).join("\n");
 
+// Network policy (DX, not a security boundary). In readonly mode there is no network anyway — WASM
+// has no raw sockets, and harden() nulls the JS fetch bridge — but a `pd.read_csv(url)` /
+// `urllib.request.urlopen(url)` dies deep in the socket layer with a confusing 40-line traceback
+// ("[Errno 23] Host is unreachable"). pandas' read_csv/read_html and urllib all funnel through
+// `urllib.request.OpenerDirector.open`, so patch THAT (robust to however urlopen was imported) to
+// raise one clear, actionable line at the call site, steering the model to the already-loaded data.
+// The original is saved once (module state persists across runs in Pyodide's single heap) and the
+// policy is (re)set EVERY run by mode — so a prior readonly run can't leave the block installed for a
+// later full run (which restores the real open; a working full-mode fetch swap is a separate change).
+const netPolicy = (hardened: boolean): string => /* python */ `
+import urllib.request as _mlnet
+if not hasattr(_mlnet.OpenerDirector, "_ml_orig_open"):
+    _mlnet.OpenerDirector._ml_orig_open = _mlnet.OpenerDirector.open
+${hardened
+    ? `def _ml_blocked_open(self, *_a, **_k):
+    raise RuntimeError("network is disabled in readonly python_exec — the tool ALREADY loaded your table/sheet/image via the tables/image parameter, so reference it directly (e.g. df, df_remote, img). For a live fetch, re-run in mode:'full'.")
+_mlnet.OpenerDirector.open = _ml_blocked_open`
+    : `_mlnet.OpenerDirector.open = _mlnet.OpenerDirector._ml_orig_open`}
+`;
+
 // Per-run namespace reset (isolation): Pyodide keeps ONE persistent heap across calls, so a prior
 // run's module-level vars would leak into the next. Wipe every non-underscore global before the
 // prelude re-runs (rebuilding its own names). Keep the JS-injected inputs (set before this runs).
@@ -73,8 +93,9 @@ for _k in list(globals().keys()):
 // is JSON-serialized in Python (leak-proof — no JsProxy to destroy; numpy scalars coerced via
 // `.item()`), with a `null` sentinel when it isn't serializable. Reads: `_stdout`, `_err`,
 // `_json_result`, `result`.
-export const wrapUserCode = (code: string): string => /* python */ `
+export const wrapUserCode = (code: string, hardened = true): string => /* python */ `
 ${RESET}${PRELUDE}
+${netPolicy(hardened)}
 result = None
 def _user():
     global result
