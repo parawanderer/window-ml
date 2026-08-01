@@ -2008,6 +2008,19 @@ test("_describeSkeleton flags hidden children with a count at the depth cutoff",
     assert.ok(ml._describeSkeleton(document.querySelector("ul"), 1).split("\n").length >= 4);
 });
 
+test("_describeSkeleton flags an empty ROOT '(no child elements)' — but not expanded leaves", () => {
+    // An empty container (e.g. a collapsed/lazily-rendered #bigsales table) would otherwise be a
+    // bare, useless single line. Root only, so a leaf inside an expanded tree stays clean.
+    const empty = loadDomWorld('<div id="bigsales"></div>');
+    assert.equal(empty.ml._describeSkeleton(empty.document.querySelector("#bigsales"), 2),
+        "div#bigsales (no child elements)");
+    // A LEAF within an expanded tree must NOT get the note (only the root does).
+    const tree = loadDomWorld("<ul><li>a</li></ul>");
+    const out = tree.ml._describeSkeleton(tree.document.querySelector("ul"), 2);
+    assert.match(out, /ul\n {2}li "a"$/);
+    assert.ok(!/no child elements/.test(out), "leaves in an expanded tree don't each get the note");
+});
+
 test("_describeSkeleton recurses to depth and indents children", () => {
     const { ml, document } = loadDomWorld("<ul><li>one</li><li>two</li></ul>");
     assert.equal(ml._describeSkeleton(document.querySelector("ul"), 1), 'ul\n  li "one"\n  li "two"');

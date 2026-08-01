@@ -189,6 +189,11 @@ export const describeSkeleton = (el: Element, depth: number, indent = ""): strin
         // Depth exhausted here — flag that children exist so the model knows to
         // describeElement deeper instead of mistaking this for a leaf.
         out += ` › ${el.children.length} child${el.children.length === 1 ? "" : "ren"}`;
+    } else if (!indent) {
+        // No child elements at all. Say so at the ROOT (not every leaf of an expanded tree) so an
+        // empty container — e.g. a collapsed/lazily-rendered table like #bigsales — reads as "empty"
+        // instead of a bare, useless single line.
+        out += " (no child elements)";
     }
     return out;
 };
