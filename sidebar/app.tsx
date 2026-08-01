@@ -21,7 +21,7 @@ import { pretty, shortStamp, fullStamp, truncate, collapsedPreview, highlight, b
 import { annotatedConfig, turnProfile, shownModel, sessionProfile } from "./model";
 import { exportSession, printSession } from "./export";
 import { applyTheme, applyFont, applyCodePrefs, initThemeStyle } from "./prefs";
-import { IconCopy, IconCheck, IconWarn, IconChevron, IconGear, IconExport, IconVram, IconSend, IconUsage, IconBench } from "./icons";
+import { IconCopy, IconCheck, IconWarn, IconChevron, IconGear, IconExport, IconVram, IconSend, IconUsage, IconBench, IconSheet } from "./icons";
 import { Settings } from "./settings";
 
 function onDebug(ev: MlDebugEvent): void {
@@ -663,7 +663,9 @@ function PythonInRender({ d }: { d: Extract<RenderDescriptor, { type: "python-in
                     <div class="r-py-lbl">
                         input table → <b class="r-py-var">{t.name}</b>{t.rows ? ` (${t.rows.length} × ${cols})` : ""}
                         {" · "}
-                        <span class="tt r-py-src"><span class="r-py-srcval">{src.short}</span><span class="tt-pop left" role="tooltip">{src.tip}</span></span>
+                        {t.source.kind === "sheet-external"
+                            ? <SheetChip id={t.source.label} />   /* the raw 44-char id → a friendly chip */
+                            : <span class="tt r-py-src"><span class="r-py-srcval">{src.short}</span><span class="tt-pop left" role="tooltip">{src.tip}</span></span>}
                     </div>
                     {t.rows ? <PyDfTable columns={t.columns || []} rows={t.rows} />
                         : <div class="dim r-py-more">loaded via pd.read_html (no clean row preview)</div>}
@@ -813,6 +815,19 @@ const ApprovalBadge = ({ approval }: { approval: "readonly" | "sandbox" | "user"
     </span>
 );
 
+// A Google Docs-style smart chip for a Google Sheet reference: an icon + a friendly label instead of
+// the raw 44-char id, hoverable for the full id, opening the sheet on click. Reused in the approval
+// note and the python-in source label. (The real sheet TITLE would need a fetch; "Google Sheet" is the
+// friendly stand-in — the loaded df already carries the model's own variable name beside it.)
+function SheetChip({ id, label }: { id: string; label?: string }) {
+    return (
+        <a class="tt sheet-chip" href={`https://docs.google.com/spreadsheets/d/${id}/edit`} target="_blank" rel="noopener" onClick={e => e.stopPropagation()}>
+            <IconSheet /><span class="sheet-chip-name">{label || "Google Sheet"}</span>
+            <span class="tt-pop wrap left" role="tooltip">Google Sheet · {id}</span>
+        </a>
+    );
+}
+
 // The distinct EXTERNAL Google Sheet ids a python_exec call will load — read from the ARGS (`tables`),
 // NOT the rendered In: at approval time the tables aren't fetched yet (the pre-run preview is code-only),
 // so the render has no sheet source. Approving grants the run those spreadsheets for the rest of the
@@ -873,7 +888,7 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
             {awaiting
                 ? <div class="astep-approve" ref={approveRef}>
                     {sheetGrants.length
-                        ? <div class="appr-note"><IconWarn /><span>Approving grants this run access to {sheetGrants.length === 1 ? "Google Sheet" : "Google Sheets"} <b>{sheetGrants.join(", ")}</b> for the rest of this session — later calls to {sheetGrants.length === 1 ? "it" : "them"} won't re-prompt.</span></div>
+                        ? <div class="appr-note"><IconWarn /><span>Approving grants this run access to {sheetGrants.map((id, i) => <SheetChip key={i} id={id} />)} for the rest of this session — later calls to {sheetGrants.length === 1 ? "it" : "them"} won't re-prompt.</span></div>
                         : null}
                     <div class="appr-row">
                         <span class="appr-ask">Approve running <b>{st.tool}</b>?</span>

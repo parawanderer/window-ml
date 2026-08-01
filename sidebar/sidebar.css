@@ -245,6 +245,14 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
     padding-bottom: 5px; border-bottom: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); }
 .astep-approve .appr-note svg { flex: none; width: 13px; height: 13px; margin-top: 1px; color: var(--warn); }
 .astep-approve .appr-note b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+/* Google Docs-style smart chip for a Sheet reference: icon + friendly name, hoverable for the id. */
+.sheet-chip { display: inline-flex; align-items: center; gap: 3px; vertical-align: baseline;
+    background: var(--panel-2); border: 1px solid var(--border); border-radius: 999px; padding: 0 7px 0 5px;
+    color: var(--fg); text-decoration: none; font-size: 0.92em; line-height: 1.6; cursor: pointer; white-space: nowrap; }
+.sheet-chip:hover { background: var(--panel-2-hover); border-color: var(--accent); }
+.sheet-chip svg { color: var(--ok); flex: none; }
+.sheet-chip-name { font-weight: 500; }
 .astep-approve .appr-ask { color: var(--fg); font-size: 0.9em; }
 .astep-approve .appr-ask b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .appr-btn { font-size: 0.82em; font-weight: 700; padding: 3px 12px; border-radius: 6px; border: 1px solid; cursor: pointer; background: none; }

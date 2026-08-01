@@ -62,3 +62,10 @@ export const IconUsage = () => (
         <path d="M8 12 11 7" />
     </svg>
 );
+// A spreadsheet grid — the smart-chip icon for a Google Sheet reference.
+export const IconSheet = () => (
+    <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4">
+        <rect x="2.5" y="2.5" width="11" height="11" rx="1.5" />
+        <path d="M2.5 6.5h11M2.5 10h11M6.5 6.5v7" stroke-width="1.2" />
+    </svg>
+);

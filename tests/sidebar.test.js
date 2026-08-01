@@ -1154,7 +1154,11 @@ test("awaiting approval of a python_exec that loads an EXTERNAL sheet warns it's
     const note = w.shadow.querySelector(".astep-approve .appr-note");
     assert.ok(note, "the approval bar shows a session-grant note (from the args, pre-run)");
     assert.match(note.textContent, /rest of this session/i, "explains the grant is session-scoped");
-    assert.match(note.textContent, /SHEETID/, "names the spreadsheet being granted");
+    // A smart chip (not the raw 44-char id): a link to the sheet, the id in its tooltip.
+    const chip = note.querySelector(".sheet-chip");
+    assert.ok(chip, "the sheet is a smart chip, not a raw id");
+    assert.match(chip.getAttribute("href"), /spreadsheets\/d\/SHEETID/, "chip links to the sheet");
+    assert.match(chip.querySelector(".tt-pop").textContent, /SHEETID/, "the full id is on hover");
     // A page-table run (a selector, not a Sheets URL) must NOT show the grant note.
     await w.dispatch(agentStep("shg", 2, {
         seq: 2, pending: true, awaitingApproval: true, tool: "python_exec",
