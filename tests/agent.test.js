@@ -1894,29 +1894,54 @@ test("cast:'box' projects both corners; the reported size is the VIEWPORT (dpr-s
     assert.match(res.content, /100×50px region/);   // 200/2 × 100/2, not 200×100
 });
 
-test("no-cast return that LOOKS like a point → hints to re-run with cast:'pt'", async () => {
+test("no-cast return that LOOKS like a point (with an image) → hints to re-run with cast:'pt'", async () => {
     const { ml } = loadDomWorld();
     // The observed dumb move: the script computed {x,y} but omitted `cast`, so it's dead text.
     ml.pythonExec = async () => ({ ok: true, value: { x: 421, y: 32 }, stdout: "" });
-    const res = await ml.pythonTool().run({ code: "return {'x': int(x), 'y': int(y)}" });
+    const res = await ml.pythonTool().run({ code: "return {'x': int(x), 'y': int(y)}", image: "#stage" });
     assert.match(res.content, /looks like a POINT/);
     assert.match(res.content, /cast:"pt"/, "names the exact cast to add");
     assert.match(res.content, /421/, "still shows the computed value");
 });
 
-test("no-cast return that LOOKS like a box → hints to re-run with cast:'box'", async () => {
+test("no-cast return that LOOKS like a box (with an image) → hints to re-run with cast:'box'", async () => {
     const { ml } = loadDomWorld();
     ml.pythonExec = async () => ({ ok: true, value: [10, 20, 110, 80], stdout: "" });
-    const res = await ml.pythonTool().run({ code: "return [10,20,110,80]" });
+    const res = await ml.pythonTool().run({ code: "return [10,20,110,80]", image: "#stage" });
     assert.match(res.content, /looks like a BOX/);
     assert.match(res.content, /cast:"box"/);
+});
+
+test("no-cast return that is a LIST of candidate points (with an image) → hints to pick one + cast:'pt'", async () => {
+    const { ml } = loadDomWorld();
+    // The newest way the model snuck coordinates out: [[666,529],[697,529]].
+    ml.pythonExec = async () => ({ ok: true, value: [[666, 529], [697, 529]], stdout: "" });
+    const res = await ml.pythonTool().run({ code: "return final_candidates", image: "#stage" });
+    assert.match(res.content, /LIST of 2 candidate POINTS/);
+    assert.match(res.content, /cast:"pt"/);
+});
+
+test("cast:'pt' on a LIST of points is rejected with a 'return ONE' message (not the generic mismatch)", async () => {
+    const { ml } = loadDomWorld();
+    ml.pythonExec = async () => ({ ok: true, value: [[666, 529], [697, 529]], stdout: "" });
+    const res = await ml.pythonTool().run({ code: "return final_candidates", cast: "pt", image: "#stage" });
+    assert.match(res.content, /LIST of 2 points — return the SINGLE best one/);
+});
+
+test("the coordinate nudge is GATED on an image — a point-shaped return with NO image gets no hint", async () => {
+    const { ml } = loadDomWorld();
+    // No image was loaded → two numbers are almost certainly data, not a click target.
+    ml.pythonExec = async () => ({ ok: true, value: { x: 421, y: 32 }, stdout: "" });
+    const res = await ml.pythonTool().run({ code: "return {'x': 421, 'y': 32}" });
+    assert.doesNotMatch(res.content, /looks like a POINT|cast:"pt"/, "no nudge without an image");
+    assert.match(res.content, /421/, "still returns the value as text");
 });
 
 test("no-cast return that is plain data (not a coordinate) gets NO cast hint", async () => {
     const { ml } = loadDomWorld();
     ml.pythonExec = async () => ({ ok: true, value: 42, stdout: "" });
-    const res = await ml.pythonTool().run({ code: "return 6*7" });
-    assert.doesNotMatch(res.content, /looks like a POINT|looks like a BOX/);
+    const res = await ml.pythonTool().run({ code: "return 6*7", image: "#stage" });
+    assert.doesNotMatch(res.content, /looks like a POINT|looks like a BOX|LIST of/);
     assert.match(res.content, /42/);
 });
 

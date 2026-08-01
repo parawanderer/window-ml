@@ -891,6 +891,13 @@ const asBoxVal = (v: unknown): Box | null => {
     if (v && typeof v === "object" && ["left", "top", "right", "bottom"].every(k => typeof (v as any)[k] === "number")) return v as Box;
     return null;
 };
+// A LIST of points/boxes — the model keeps finding new ways to hand back coordinates (here:
+// [[666,529],[697,529]], multiple candidates). A single [x,y]/4-array is NOT a list (its members
+// are numbers, not points/boxes), so these don't clash with asPoint/asBoxVal above.
+const asPointList = (v: unknown): { x: number; y: number }[] | null =>
+    Array.isArray(v) && v.length > 0 && v.every(it => asPoint(it)) ? v.map(it => asPoint(it)!) : null;
+const asBoxList = (v: unknown): Box[] | null =>
+    Array.isArray(v) && v.length > 0 && v.every(it => asBoxVal(it)) ? v.map(it => asBoxVal(it)!) : null;
 
 export const buildPythonTool = (ml: MlApi): MlTool => {
     // `current` is only advertised when it actually resolves to something — the page is a Google Sheet,
@@ -1006,7 +1013,12 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             // script that returns two numbers). A mismatch is an honest error, not a guess.
             if (cast === "pt") {
                 const raw = asPoint(v);
-                if (!raw) return done(`${pre}cast:'pt' but the return isn't a point ([x,y] or {x,y}): ${stringify(v)}`, { value: stringify(v) });
+                if (!raw) {
+                    // A common miss: the script returned a LIST of candidate points — say so specifically.
+                    const list = asPointList(v);
+                    const why = list ? `it's a LIST of ${list.length} points — return the SINGLE best one as [x, y]` : `the return isn't a point ([x,y] or {x,y})`;
+                    return done(`${pre}cast:'pt' but ${why}: ${stringify(v)}`, { value: stringify(v) });
+                }
                 // The script computed the point in the input IMAGE's pixels; project it back to viewport
                 // coords (crop offset + dpr) so the @pt clicks the right spot. No image → already viewport.
                 const pt = r.imageBox ? projectShotPoint(raw, r.imageBox) : raw;
@@ -1015,20 +1027,33 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             }
             if (cast === "box") {
                 const raw = asBoxVal(v);
-                if (!raw) return done(`${pre}cast:'box' but the return isn't a box ([x1,y1,x2,y2] or {left,top,right,bottom}): ${stringify(v)}`, { value: stringify(v) });
+                if (!raw) {
+                    const list = asBoxList(v);
+                    const why = list ? `it's a LIST of ${list.length} boxes — return the SINGLE best one` : `the return isn't a box ([x1,y1,x2,y2] or {left,top,right,bottom})`;
+                    return done(`${pre}cast:'box' but ${why}: ${stringify(v)}`, { value: stringify(v) });
+                }
                 const bx = r.imageBox ? projectShotBox(raw, r.imageBox) : raw;   // image px → viewport
                 const t = mintBox(bx);
                 return done(`${pre}→ ${t} (a ${Math.round(bx.right - bx.left)}×${Math.round(bx.bottom - bx.top)}px region). Scope into it: locate({ selector: "${t}", description: "…" }).`, { token: t });
             }
             const text = stringify(v);
             // The return LOOKS like a coordinate but no `cast` was set, so it came back as dead TEXT the
-            // model can't click. Nudge it to re-run the SAME script with the matching cast → a clickable
-            // @pt/@box. Covers both point casts (pt for {x,y}/[x,y], box for {left,top,right,bottom}/4-array).
-            const castHint = asPoint(v)
-                ? ` — this looks like a POINT but you didn't set \`cast\`, so it's just text you can't click. Re-run this exact script with cast:"pt" to mint a clickable coordinate (returns @pt:… → look()/click() it).`
-                : asBoxVal(v)
-                    ? ` — this looks like a BOX but you didn't set \`cast\`, so it's just text. Re-run this exact script with cast:"box" to mint a clickable region (returns @box:… → scope into it with locate()).`
-                    : "";
+            // model can't click. Nudge it to re-run with the matching cast → a clickable @pt/@box. Covers a
+            // single point/box AND a LIST of candidates (pt for {x,y}/[x,y], box for the 4-forms).
+            // GATED on an image being passed: a coordinate is only a meaningful click target when it was
+            // derived from a screenshot the tool loaded (cast then projects image-px → viewport). Without an
+            // image the two numbers are almost certainly just data, and nudging to cast would be wrong.
+            const hadImage = typeof image === "string" && image.trim().length > 0;
+            const castHint = !hadImage ? ""
+                : asPoint(v)
+                    ? ` — this looks like a POINT but you didn't set \`cast\`, so it's just text you can't click. Re-run this exact script with cast:"pt" to mint a clickable coordinate (returns @pt:… → look()/click() it).`
+                    : asBoxVal(v)
+                        ? ` — this looks like a BOX but you didn't set \`cast\`, so it's just text. Re-run this exact script with cast:"box" to mint a clickable region (returns @box:… → scope into it with locate()).`
+                        : asPointList(v)
+                            ? ` — this looks like a LIST of ${asPointList(v)!.length} candidate POINTS but you didn't set \`cast\`, so it's dead text. Pick the SINGLE best one and return just that ([x, y]) with cast:"pt" to get a clickable @pt:… .`
+                            : asBoxList(v)
+                                ? ` — this looks like a LIST of ${asBoxList(v)!.length} candidate BOXES but you didn't set \`cast\`, so it's dead text. Return the SINGLE best one with cast:"box" to get a clickable @box:… .`
+                                : "";
             return done(`${pre}${text}${castHint}`, { value: text });
         },
     });
