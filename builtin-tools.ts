@@ -570,8 +570,14 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 // cellStep (carried in priorSubsteps) as the first substep. For plain grounding
                 // priorSubsteps is empty, so this is a no-op there.
                 const groundMode = (strategy === "grid-grounding" || autoUpgraded) ? "grid-grounding" as const : "grounding" as const;
+                // For a grid→grounding CHAIN the two stages run on DIFFERENT models — the grid cell-pick
+                // on the reader (the agent's own vision model, `model || groundingModel`) and the snap on
+                // the grounding model — so show both, matching the substeps (e.g. "gemma4:31b → qwen2.5vl:7b").
+                const gridReader = String(model || groundingModel);
+                const headModel = (groundMode === "grid-grounding" && gridReader !== String(groundingModel))
+                    ? `${gridReader} → ${groundingModel}` : String(groundingModel);
                 const groundResult = (substeps: LocateSubstep[], extra: { picked?: string; pickedBy?: "model" | "snap" } = {}) =>
-                    ({ type: "locate" as const, mode: groundMode, model: String(groundingModel), substeps: [...priorSubsteps, ...substeps], ...extra });
+                    ({ type: "locate" as const, mode: groundMode, model: headModel, substeps: [...priorSubsteps, ...substeps], ...extra });
                 // When an AUTO-UPGRADED grounding whiffs, don't degrade to marks-on-canvas —
                 // return the plain-grid cell CENTRE we stashed (the upgrade must never regress).
                 const returnAutoUpFallback = async (extra: LocateSubstep[] = []) => {
