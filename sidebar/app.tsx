@@ -721,7 +721,9 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     const awaiting = !!(st.awaitingApproval && st.pending && !decided && hash && st.seq != null);
     // A pending approval AUTO-UNFURLS the In so you review the call before deciding (no extra click).
     const open = expanded || awaiting;
-    const decide = (ok: boolean) => { setDecided(true); sendApproval(hash!, st.seq!, ok); };
+    // Keep the step expanded after you decide (setExpanded), so it doesn't collapse when `awaiting`
+    // clears — you see the Out result fill in on the same open cell.
+    const decide = (ok: boolean) => { setExpanded(true); setDecided(true); sendApproval(hash!, st.seq!, ok); };
     return (
         <div class={`astep tool${st.pending ? " pending" : ""}${awaiting ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : " appr-yes") : ""}`}>
             <button class="astep-head" onClick={() => setExpanded(v => !v)}>
