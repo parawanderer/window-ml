@@ -12,6 +12,7 @@
 // is `runAgentLoop` (agent-loop.ts), assembled background-side in a later slice.
 import type { MlTool, PageToolEnvelope } from "./contract";
 import { executeTool } from "./tool-exec";
+import { descriptorFor } from "./render-descriptor";
 
 /** One active agent run's page-side state: its toolset by name, and the DOM nodes designated by
  *  answer-capable tools (assembled into AgentResult.elements — nodes can't cross the bus). */
@@ -52,11 +53,14 @@ export async function runDelegatedTool(runId: string, name: string, args: Record
     if (env.elements && env.elements.length && tool.capabilities && tool.capabilities.includes("answer")) {
         run.answered.push(...env.elements);
     }
+    // Compute the debug-render slots HERE (page-side) — the tool's render() method + its live nodes
+    // live here, so the background emits the same rendered In/Out the page loop would.
+    const { in: renderIn, out: renderOut } = descriptorFor(tool, env, args);
     return {
         result: env.result,
         elementCount: env.elements ? env.elements.length : undefined,
         image: env.image, imageLabel: env.imageLabel,
-        render: env.render, renderIn: env.renderIn,
+        renderIn, renderOut,
     };
 }
 

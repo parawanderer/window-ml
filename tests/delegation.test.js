@@ -45,18 +45,27 @@ test("an answer-capable tool's nodes are STASHED page-side for AgentResult.eleme
     assert.equal(getRun("r3"), undefined, "the run is gone after endRun");
 });
 
-test("serializable render descriptors + image cross back untouched", async () => {
+test("run()-precomputed render slots become renderIn/renderOut (descriptorFor)", async () => {
     registerRun("r4", [tool({ run: async () => ({
-        content: "c", image: "data:image/png;base64,AAA", imageLabel: "shot",
-        render: { type: "image", src: "data:image/png;base64,BBB" },
-        renderIn: { type: "code", text: "1+1" },
+        content: "c",
+        render: { type: "image", src: "data:image/png;base64,BBB" },   // Out precomputed
+        renderIn: { type: "code", text: "1+1" },                        // In precomputed
     }) })]);
     const env = await runDelegatedTool("r4", "probe", {});
-    assert.equal(env.image, "data:image/png;base64,AAA");
-    assert.equal(env.imageLabel, "shot");
-    assert.deepEqual(env.render, { type: "image", src: "data:image/png;base64,BBB" });
     assert.deepEqual(env.renderIn, { type: "code", text: "1+1" });
+    assert.deepEqual(env.renderOut, { type: "image", src: "data:image/png;base64,BBB" });
     endRun("r4");
+});
+
+test("the Out slot auto-derives an image; the In slot uses the tool's render() method", async () => {
+    registerRun("r4b", [tool({
+        render: (_input, args) => ({ type: "code", text: String(args.js || "") }),   // In from the method
+        run: async () => ({ content: "c", image: "data:image/png;base64,AAA", imageLabel: "shot" }),
+    })]);
+    const env = await runDelegatedTool("r4b", "probe", { js: "doThing()" });
+    assert.deepEqual(env.renderIn, { type: "code", text: "doThing()" });
+    assert.deepEqual(env.renderOut, { type: "image", src: "data:image/png;base64,AAA", label: "shot" });
+    endRun("r4b");
 });
 
 test("an unknown tool name → a clean error envelope (never a throw)", async () => {

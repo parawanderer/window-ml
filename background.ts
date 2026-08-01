@@ -755,8 +755,10 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 },
                 delegateTool: async (name, args) => {
                     const env = await chrome.tabs.sendMessage(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name, args } })
-                        .catch((e: unknown) => ({ result: `Error: could not reach the page to run "${name}" (${(e as Error)?.message || e}).` }));
-                    return { result: (env && (env as { result?: string }).result) || `Error: the page returned nothing for tool "${name}".` };
+                        .catch((e: unknown) => ({ result: `Error: could not reach the page to run "${name}" (${(e as Error)?.message || e}).` })) as Partial<import("./contract").PageToolEnvelope>;
+                    // The page already computed the rendered In/Out slots (descriptorFor) — forward them so
+                    // the sidebar shows the rich view, not just raw JSON.
+                    return { result: env?.result || `Error: the page returned nothing for tool "${name}".`, renderIn: env?.renderIn, renderOut: env?.renderOut };
                 },
                 approve: ({ tool, arguments: args, seq, step }) => new Promise<ApprovalDecision>((resolve) => {
                     pendingApprovals.set(`${runId}:${seq}`, (decision) => {

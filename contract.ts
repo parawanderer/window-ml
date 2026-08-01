@@ -449,10 +449,12 @@ export interface RunToolInPagePayload {
 export interface PageToolEnvelope {
     result: string;
     elementCount?: number;      // real nodes stay page-side; the background only learns how many
-    image?: string;             // screenshot data-URL (inline vision / debug render)
+    image?: string;             // screenshot data-URL (inline vision — reserved for the parity work)
     imageLabel?: string;
-    render?: RenderDescriptor;   // Out slot — a visualization of the result
-    renderIn?: RenderDescriptor; // In slot — a visualization of the call
+    // The debug-render slots, computed PAGE-SIDE (descriptorFor) since the tool's render() method + its
+    // live envelope live there — so a background-hosted run shows the same rendered In/Out as the page.
+    renderIn?: RenderDescriptor;   // In slot — a visualization of the call
+    renderOut?: RenderDescriptor;  // Out slot — a visualization of the result
 }
 
 /** A resumable chat session persisted to chrome.storage.local for { save: true }

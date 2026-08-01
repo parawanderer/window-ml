@@ -12,11 +12,13 @@
 // No chrome, no DOM → builds standalone (dist/agent-loop.js) and is unit-tested against a mocked
 // model / executor / gate in tests/agent-loop.test.js.
 
-import type { AgentResult, AgentTranscriptEntry, ApprovalDecision, ToolCall } from "./contract";
+import type { AgentResult, AgentTranscriptEntry, ApprovalDecision, ToolCall, RenderDescriptor } from "./contract";
 
 export type Approval = "readonly" | "sandbox" | "user" | "denied";
 export interface ToolMeta { name: string; requiresApproval?: boolean; capabilities?: string[]; }
-export interface ToolRunResult { result: string; elements?: unknown[]; }
+// The tool's serializable result. `renderIn`/`renderOut` are the debug-render slots computed by the
+// executor's world (page-side for the delegated path) so the emitter can show a rendered In/Out.
+export interface ToolRunResult { result: string; elements?: unknown[]; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; }
 
 export interface AgentLoopDeps {
     // One model turn → the assistant message (content + normalized tool_calls + usage).
@@ -37,7 +39,7 @@ export interface AgentLoopDeps {
     pushAssistant(messages: unknown[], msg: { content?: string | null; tool_calls?: ToolCall[] }): void;
     pushToolResult(messages: unknown[], call: ToolCall, result: string): void;
     // Debug/telemetry hook (agent-step events: pending START then the DONE, sharing `seq`).
-    emit?(ev: { step: number; seq?: number; pending?: boolean; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; approval?: Approval }): void;
+    emit?(ev: { step: number; seq?: number; pending?: boolean; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; approval?: Approval; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor }): void;
 }
 
 export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number; signal?: AbortSignal | null; }
@@ -78,13 +80,14 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             const s = ++seq;
             deps.emit?.({ step, seq: s, pending: true, tool: call.name, arguments: args });   // in-flight START
             let result: string, approval: Approval | undefined;
+            let tr: ToolRunResult | undefined;   // the full result — its render slots ride the DONE emit
             if (!meta) {
                 result = `Error: no tool named "${call.name}".`;
             } else if (meta.requiresApproval) {
                 const auto = deps.autoApprove?.(call.name, args) || null;
                 if (auto) {
                     approval = auto;
-                    result = (await deps.runTool(call.name, args)).result;   // trusted auto-approve → execute
+                    tr = await deps.runTool(call.name, args); result = tr.result;   // trusted auto-approve → execute
                 } else {
                     const d = normalize(await deps.approve({ tool: call.name, arguments: args, seq: s, step }), args);
                     if (!d.approved) {
@@ -96,15 +99,15 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                     } else {
                         approval = "user";
                         args = d.arguments;                                   // possibly gate-edited
-                        result = (await deps.runTool(call.name, args)).result;   // EXECUTE ONLY AFTER APPROVE
+                        tr = await deps.runTool(call.name, args); result = tr.result;   // EXECUTE ONLY AFTER APPROVE
                     }
                 }
             } else {
-                result = (await deps.runTool(call.name, args)).result;       // non-approval tool
+                tr = await deps.runTool(call.name, args); result = tr.result;   // non-approval tool
             }
             result = String(result);
             transcript.push({ tool: call.name, arguments: args, result });
-            deps.emit?.({ step, seq: s, tool: call.name, arguments: args, result, approval });   // DONE (patches the START)
+            deps.emit?.({ step, seq: s, tool: call.name, arguments: args, result, approval, renderIn: tr?.renderIn, renderOut: tr?.renderOut });   // DONE (patches the START)
             deps.pushToolResult(messages, call, result);
         }
     }

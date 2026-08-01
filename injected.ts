@@ -45,6 +45,7 @@ import { pyVarNameError } from "./python-env";
 import { autoApprovePython } from "./auto-approve";
 import { executeTool } from "./tool-exec";
 import { installToolDelegation, registerRun, endRun } from "./run-delegation";
+import { descriptorFor } from "./render-descriptor";
 
 /** One resolved `python_exec` table source: its var name, provenance, and the payload the sandbox
  *  builds a DataFrame from (rows or read_html html). Internal to injected.ts. */
@@ -551,31 +552,9 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 if (!onStep || event.pending) return;
                 try { onStep(event); } catch (e) { console.error("ml.agent onStep threw:", e); }
             };
-            // Two independent render slots for a tool step, each from its own hook:
-            //  · IN  = a visualization of the CALL — run()-returned `renderIn` wins, else
-            //          the tool's `render(input, args)` method (page-side, defensive).
-            //  · OUT = a visualization of the RESULT — run()-returned `render` wins, else
-            //          an auto-derived image/elements from the envelope.
-            // Either may be undefined → the sidebar falls back to that block's raw view.
-            const descriptorFor = (tool: MlTool | undefined, input: ToolRenderInput, args: Record<string, unknown>): { in?: RenderDescriptor; out?: RenderDescriptor } => {
-                let inD: RenderDescriptor | undefined;
-                if (input.renderIn && input.renderIn.type) inD = input.renderIn;   // run() precomputed the In (e.g. python's cell header)
-                else if (tool?.render) {
-                    try { const d = tool.render(input, args); if (d && d.type) inD = d; }   // the render() method (e.g. exec's pretty JS)
-                    catch (e) { console.error(`ml tool "${tool.name}" render threw:`, e); }
-                }
-                let outD: RenderDescriptor | undefined;
-                if (input.render && input.render.type) outD = input.render;   // run() precomputed the Out (e.g. locate's marks)
-                else if (input.image) outD = { type: "image", src: input.image, label: input.imageLabel };
-                else if (input.elements?.length) outD = {
-                    type: "elements",
-                    items: input.elements.slice(0, 50).map((el: Node, i: number) => ({
-                        path: (typeof Element !== "undefined" && el instanceof Element) ? elPath(el) : String(el.nodeName || "node"),
-                        text: truncate((el as Element).textContent || "", 60), index: i,
-                    })),
-                };
-                return { in: inD, out: outD };
-            };
+            // The two render slots for a tool step (In = the call, Out = the result) are computed by
+            // the shared `descriptorFor` (render-descriptor.ts) — the SAME function run-delegation.ts
+            // uses on the background path, so both surfaces render identically.
             const finish = (r: AgentResult): AgentResult => {
                 emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: r.steps }, summary: r.summary, steps: r.steps, hitCap: !!r.hitCap, cancelled: !!r.cancelled });
                 return r;
