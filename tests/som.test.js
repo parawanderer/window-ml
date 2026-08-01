@@ -1,5 +1,5 @@
 "use strict";
-// The Set-of-Marks hit-test engine (som.ts, built to dist/som.js). elementFromPoint
+// The Set-of-Marks hit-test engine (som.ts). elementFromPoint
 // is a jsdom no-op, so collectCandidates/drawGrid (which need real layout + canvas)
 // can't run here — but representativeFor is the accessibility-agnostic CORE (climb a
 // raw hit to the meaningful element) and IS testable against a real DOM.
@@ -15,7 +15,7 @@ function world(html) {
     global.getComputedStyle = dom.window.getComputedStyle.bind(dom.window);
     return dom.window.document;
 }
-const som = require("../dist/som.js");
+const som = require("../som.ts");
 const { representativeFor, isClickish, buildMarks, viewportBox, formatBox, projectFromSquare, gridDims, validateCells, cellsBox, adjacentCells, colorWordHues, pickOverlayHex, regionBox, REGION_OVERLAP } = som;
 
 test("colorWordHues extracts hues from colour words in a description (for overlay avoidance)", () => {

@@ -2,7 +2,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert");
 const { JSDOM } = require("jsdom");
-const { evalReadonly, NotInDialect, Denied } = require("../dist/readonly-exec.js");
+const { evalReadonly, NotInDialect, Denied } = require("../readonly-exec.ts");
 
 function world() {
     const dom = new JSDOM(`<!doctype html><body>

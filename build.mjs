@@ -91,25 +91,11 @@ if (watch) {
 } else {
     await esbuild.build({ ...base, entryPoints: coreEntries });
     await esbuild.build({ ...base, entryPoints: { "sidebar-app": sidebarApp }, minify: true });
-    // Standalone CJS builds for node unit tests (the same modules are bundled into
-    // injected.js via their imports): the read-only exec interpreter + the
-    // Set-of-Marks hit-test engine.
-    await esbuild.build({ entryPoints: { "readonly-exec": "readonly-exec.ts" }, outdir: "dist", bundle: true, format: "cjs", platform: "node", logLevel: "info" });
-    await esbuild.build({ entryPoints: { "som": "som.ts" }, outdir: "dist", bundle: true, format: "cjs", platform: "node", logLevel: "info" });
-    // The python_exec runtime (PRELUDE + wrapUserCode) — bundled standalone so tests/python.test.js
-    // exercises the EXACT script the offscreen sandbox runs against real CPython (Pyodide-in-Node).
-    await esbuild.build({ entryPoints: { "python-runtime": "python-runtime.ts" }, outdir: "dist", bundle: true, format: "cjs", platform: "node", logLevel: "info" });
-    // The world-agnostic agent orchestrator (design A) — bundled standalone so its gate-before-execute
-    // security invariant is unit-tested (tests/agent-loop.test.js) with a mocked model/executor/gate.
-    await esbuild.build({ entryPoints: { "agent-loop": "agent-loop.ts" }, outdir: "dist", bundle: true, format: "cjs", platform: "node", logLevel: "info" });
-    // The trusted-world auto-approve decision (design A) — pure, bundled standalone for its unit tests.
-    await esbuild.build({ entryPoints: { "auto-approve": "auto-approve.ts" }, outdir: "dist", bundle: true, format: "cjs", platform: "node", logLevel: "info" });
-    // Design A page-side tool delegation (registerRun/runDelegatedTool/endRun) — bundled standalone so
-    // the envelope reduction + answer-node stash are unit-tested without the window round-trip.
-    await esbuild.build({ entryPoints: { "run-delegation": "run-delegation.ts" }, outdir: "dist", bundle: true, format: "cjs", platform: "node", logLevel: "info" });
-    // Design A background host (runBackgroundAgent) — assembles runAgentLoop with the neutral-message
-    // builders + trusted autoApprove; chrome-free so the assembly is unit-tested (tests/agent-host.test.js).
-    await esbuild.build({ entryPoints: { "agent-host": "agent-host.ts" }, outdir: "dist", bundle: true, format: "cjs", platform: "node", logLevel: "info" });
+    // NOTE: the pure modules (som, readonly-exec, python-runtime, agent-loop, auto-approve,
+    // run-delegation, agent-host) used to be bundled here as standalone CJS for the node unit
+    // tests. They aren't anymore — those tests `require("../<name>.ts")` directly under the
+    // `tsx` loader (`npm test`), so go-to-definition/find-usages resolves into the source.
+    // The vm/integration tests still read the BUNDLES above as text, so those entries stay.
     copyAssets();
     copyPyodide();
     // Regenerate the standalone visual preview of som's canvas annotate() (gitignored —

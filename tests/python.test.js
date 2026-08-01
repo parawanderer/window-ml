@@ -1,5 +1,5 @@
 // REAL-CPython tests for the python_exec sandbox runtime — Pyodide-in-Node exercising the exact
-// PRELUDE + wrapper the offscreen document runs (python-runtime.ts → dist/python-runtime.js), so
+// PRELUDE + wrapper the offscreen document runs (python-runtime.ts), so
 // the drift-prone Python (tables→DataFrame building, numeric auto-cast, the `tables` dict, read_html
 // fallback, return/stdout/traceback capture, per-run isolation) is verified against actual pandas —
 // not a re-implementation. Opt-in: needs the bundled wheels (dist/pyodide/, from `npm run
@@ -12,7 +12,7 @@ const fs = require("node:fs");
 const PYODIDE_DIR = path.resolve(__dirname, "../dist/pyodide");
 const hasPyodide = fs.existsSync(path.join(PYODIDE_DIR, "pyodide.mjs"));
 const skip = hasPyodide ? false : "no dist/pyodide — run `npm run fetch-pyodide` to enable";
-const { wrapUserCode, harden, unharden } = hasPyodide ? require("../dist/python-runtime.js") : {};
+const { wrapUserCode, harden, unharden } = hasPyodide ? require("../python-runtime.ts") : {};
 
 let py = null;
 before(async () => {

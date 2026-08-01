@@ -1,10 +1,10 @@
-// Design A — the background host (agent-host.ts → dist/agent-host.js). Drives runBackgroundAgent with a
+// Design A — the background host (agent-host.ts). Drives runBackgroundAgent with a
 // scripted model + mocked delegateTool/approve, asserting the assembly: neutral-message building, the
 // TRUSTED python auto-approve skipping the gate (and full-mode / external-sheet still asking), a
 // non-approval tool delegating straight through, and the gate-before-execute invariant end-to-end.
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { runBackgroundAgent } = require("../dist/agent-host.js");
+const { runBackgroundAgent } = require("../agent-host.ts");
 
 // A model that plays a scripted list of assistant turns (one per step).
 const scriptedModel = (turns) => {

@@ -17,5 +17,8 @@
         "forceConsistentCasingInFileNames": true
     },
     "include": ["**/*.ts", "**/*.tsx", "**/*.js"],
-    "exclude": ["node_modules", "dist", "tests"]
+    // tests/ is INCLUDED (not type-checked — checkJs is false) purely so the
+    // language service indexes it: that's what lets go-to-definition and
+    // find-references cross between a test and the .ts source it imports.
+    "exclude": ["node_modules", "dist"]
 }

@@ -1,10 +1,10 @@
-// The world-agnostic agent orchestrator (agent-loop.ts → dist/agent-loop.js), design A's reusable
+// The world-agnostic agent orchestrator (agent-loop.ts), design A's reusable
 // heart. These lock the SECURITY INVARIANT that makes moving the loop to the background safe:
 // a requiresApproval tool's executor is invoked ONLY after the gate (or a trusted auto-approve)
 // grants it — the decision never depends on the executor, so a hostile executor can't self-approve.
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { runAgentLoop } = require("../dist/agent-loop.js");
+const { runAgentLoop } = require("../agent-loop.ts");
 
 // Deps factory: scripted model turns + spies recording the ORDER of approve/runTool calls.
 function makeDeps({ turns = [], approve, autoApprove } = {}) {
