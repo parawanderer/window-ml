@@ -571,7 +571,8 @@ export interface DebugChatError extends DebugBase { kind: "chat-error"; error: s
 export interface DebugAgentConfig {
     system: string;         // the resolved system prompt the model actually received
     customSystem: boolean;  // caller supplied their own `system` (vs the built-in preamble)
-    tools: { name: string; requiresApproval: boolean; vision?: boolean }[];
+    // description/parameters let the sidebar show the FULL tool definitions (a JSON tree), not just names.
+    tools: { name: string; requiresApproval: boolean; vision?: boolean; description?: string; parameters?: JsonSchema }[];
     maxSteps: number;
     think: boolean | null;
     env: boolean;

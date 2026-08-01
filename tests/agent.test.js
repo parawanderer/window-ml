@@ -1027,7 +1027,15 @@ test("agent-start carries the resolved config (system prompt, tools, maxSteps)",
     assert.ok(start.config, "config emitted");
     assert.match(start.config.system, /automation agent/, "the resolved system prompt");
     assert.equal(start.config.customSystem, false);
-    assert.deepEqual(start.config.tools, [{ name: "ping", requiresApproval: false, vision: false }]);
+    // The config carries the FULL tool defs (name/approval/vision + description + parameter schema)
+    // so the sidebar can render an expandable JSON tree of each tool.
+    assert.equal(start.config.tools.length, 1);
+    const [t] = start.config.tools;
+    assert.equal(t.name, "ping");
+    assert.equal(t.requiresApproval, false);
+    assert.equal(t.vision, false);
+    assert.equal(t.description, "");
+    assert.deepEqual(t.parameters, { type: "object", properties: {} });
     assert.equal(start.config.maxSteps, 10);
     assert.ok(!/python_exec/.test(start.config.system), "no python_exec tool → no computation clause");
 });

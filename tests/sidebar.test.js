@@ -1049,6 +1049,75 @@ test("python_exec render: a Python error surfaces the traceback in the Out block
     assert.match(toolStep.querySelector(".r-py-err").textContent, /ZeroDivisionError/, "traceback shown");
 });
 
+test("awaiting approval of a python_exec that loads an EXTERNAL sheet warns it's a session-scoped grant", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("shg", "sum the sheet"));
+    // A pending, approval-gated python_exec whose In loads an external Google Sheet.
+    await w.dispatch(agentStep("shg", 1, {
+        seq: 1, pending: true, awaitingApproval: true, tool: "python_exec",
+        arguments: { code: "return df['A'].sum()", tables: "https://docs.google.com/spreadsheets/d/SHEETID/edit" },
+        renderIn: { type: "python-in", mode: "script", code: "return df['A'].sum()",
+            tables: [{ name: "df", source: { kind: "sheet-external", label: "SHEETID" }, columns: ["A"], rows: [[1]] }] },
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+
+    const note = w.shadow.querySelector(".astep-approve .appr-note");
+    assert.ok(note, "the approval bar shows a session-grant note");
+    assert.match(note.textContent, /rest of this session/i, "explains the grant is session-scoped");
+    assert.match(note.textContent, /SHEETID/, "names the spreadsheet being granted");
+    // A page-table run (dom source) must NOT show the grant note.
+    await w.dispatch(agentStep("shg", 2, {
+        seq: 2, pending: true, awaitingApproval: true, tool: "python_exec",
+        arguments: { code: "return df.sum()", table: "#t" },
+        renderIn: { type: "python-in", mode: "script", code: "return df.sum()",
+            tables: [{ name: "df", source: { kind: "dom", label: "#t" }, columns: ["A"], rows: [[1]] }] },
+    }));
+    await w.tick();
+    const notes = [...w.shadow.querySelectorAll(".astep-approve .appr-note")];
+    assert.equal(notes.length, 1, "only the external-sheet step warns — a page-table step doesn't");
+});
+
+test("agent options: the tool definitions viewer renders a JSON tree of each tool's parameter schema", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("tdv", "do stuff", "m", 10, {
+        system: "you are an automation agent", customSystem: false, maxSteps: 10,
+        think: null, env: true, vision: null, hints: null,
+        tools: [{
+            name: "click", requiresApproval: true, vision: false,
+            description: "Click an element by selector.",
+            parameters: { type: "object", properties: { selector: { type: "string", description: "a CSS selector" } }, required: ["selector"] },
+        }],
+    }));
+    await w.dispatch(agentResult("tdv", "done", 0));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+
+    // Open the "agent options" block, then reveal the tool definitions.
+    w.shadow.querySelector(".block .block-head").click();
+    await w.tick();
+    const toolsBtn = [...w.shadow.querySelectorAll(".raw-btn")].find(b => /tool definitions/.test(b.textContent));
+    assert.ok(toolsBtn, "a 'tool definitions' toggle appears when the config carries full defs");
+    toolsBtn.click();
+    await w.tick();
+
+    const def = w.shadow.querySelector(".tooldef");
+    // Collapsed by default: the name + badges show, the description/params don't.
+    assert.match(def.querySelector(".tooldef-name").textContent, /click/, "the tool name");
+    assert.ok(def.querySelector(".tooldef-warn"), "requiresApproval shows a warn marker (even collapsed)");
+    assert.equal(def.querySelector(".tooldef-desc"), null, "description hidden until expanded");
+    // Expand the card → description + params appear.
+    def.querySelector(".tooldef-head.clickable").click();
+    await w.tick();
+    assert.match(def.querySelector(".tooldef-desc").textContent, /Click an element/, "the description");
+    // The JSON tree: a foldable `parameters` root; expanding it reveals the schema keys.
+    const root = def.querySelector(".tooldef-params .jt-branch");
+    assert.match(root.textContent, /parameters/, "the tree roots at `parameters`");
+    root.click();   // expand
+    await w.tick();
+    assert.match(def.querySelector(".tooldef-params").textContent, /selector/, "expanded tree shows a nested property");
+});
+
 test("agent tool steps carry an approval provenance badge (auto/user green, denied red)", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("apv", "run"));

@@ -781,6 +781,13 @@ const ApprovalBadge = ({ approval }: { approval: "readonly" | "sandbox" | "user"
     </span>
 );
 
+// The distinct EXTERNAL Google Sheet ids a python-in render loads. Approving such a call grants
+// the run access to those spreadsheets for the rest of the page-session, so the gate discloses it.
+function externalSheetGrant(d?: RenderDescriptor): string[] {
+    if (!d || d.type !== "python-in") return [];
+    return [...new Set((d.tables || []).filter(t => t.source.kind === "sheet-external").map(t => t.source.label))];
+}
+
 function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     const [expanded, setExpanded] = useState(false);
     const [decided, setDecided] = useState(false);   // hide the controls the instant we click (before the DONE lands)
@@ -801,6 +808,10 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     // When a step starts awaiting approval, scroll it into view so a gate mid-run isn't missed.
     const approveRef = useRef<HTMLDivElement>(null);
     useEffect(() => { if (awaiting) approveRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }, [awaiting]);
+    // Consent scope: approving a python_exec that loads an EXTERNAL Google Sheet caches that
+    // spreadsheet for the rest of the page-session (later calls to it won't re-prompt). Tell the
+    // human the approval is a session-scoped grant, not a one-shot.
+    const sheetGrants = awaiting ? externalSheetGrant(inRender) : [];
     return (
         <div class={`astep tool${st.pending ? " pending" : ""}${awaiting ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : " appr-yes") : ""}`}>
             <button class="astep-head" onClick={() => setExpanded(v => !v)}>
@@ -828,10 +839,15 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                 before the approve/deny controls, and it reads as the last thing to act on. */}
             {awaiting
                 ? <div class="astep-approve" ref={approveRef}>
-                    <span class="appr-ask">Approve running <b>{st.tool}</b>?</span>
-                    <span class="sp" />
-                    <button class="appr-btn no" onClick={() => decide(false)}>Deny</button>
-                    <button class="appr-btn yes" onClick={() => decide(true)}>Approve</button>
+                    {sheetGrants.length
+                        ? <div class="appr-note"><IconWarn /><span>Approving grants this run access to {sheetGrants.length === 1 ? "Google Sheet" : "Google Sheets"} <b>{sheetGrants.join(", ")}</b> for the rest of this session — later calls to {sheetGrants.length === 1 ? "it" : "them"} won't re-prompt.</span></div>
+                        : null}
+                    <div class="appr-row">
+                        <span class="appr-ask">Approve running <b>{st.tool}</b>?</span>
+                        <span class="sp" />
+                        <button class="appr-btn no" onClick={() => decide(false)}>Deny</button>
+                        <button class="appr-btn yes" onClick={() => decide(true)}>Approve</button>
+                    </div>
                 </div>
                 : null}
         </div>
@@ -852,17 +868,81 @@ function AgentTurn({ turn, max, hash }: { turn: AgentTurnGroup; max?: number; ha
 // The agent run's setup (model, maxSteps, tools, env/vision/hints, + the resolved
 // system prompt) — a collapsed block at the top, the agent analogue of chat's
 // OptionsBlock.
+// A zero-dep collapsible JSON tree (DevTools-console style): objects/arrays fold with a one-line
+// preview, primitives render inline + typed. Used to inspect the agent's full tool definitions.
+function jtPreview(v: object): string {
+    if (Array.isArray(v)) return v.length ? `[ ${v.length} item${v.length === 1 ? "" : "s"} ]` : "[ ]";
+    const keys = Object.keys(v);
+    if (!keys.length) return "{ }";
+    return `{ ${keys.slice(0, 4).join(", ")}${keys.length > 4 ? ", …" : ""} }`;
+}
+function JsonNode({ k, v, depth = 0, defaultOpen }: { k?: string; v: unknown; depth?: number; defaultOpen?: boolean }) {
+    const branch = !!v && typeof v === "object";
+    const [open, setOpen] = useState(defaultOpen ?? depth < 1);
+    const pad = { paddingLeft: `${depth * 13}px` };
+    if (!branch) {
+        const t = v === null ? "null" : typeof v;
+        return <div class="jt-row" style={pad}>
+            {k != null ? <span class="jt-key">{k}:</span> : null}
+            <span class={`jt-val jt-${t}`}>{typeof v === "string" ? JSON.stringify(v) : String(v)}</span>
+        </div>;
+    }
+    const arr = Array.isArray(v);
+    const entries: [string, unknown][] = arr
+        ? (v as unknown[]).map((x, i) => [String(i), x])
+        : Object.entries(v as Record<string, unknown>);
+    return <div class="jt-node">
+        <div class="jt-row jt-branch" style={pad} role="button" onClick={() => setOpen(o => !o)}>
+            <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
+            {k != null ? <span class="jt-key">{k}:</span> : null}
+            {open ? <span class="jt-brace">{arr ? "[" : "{"}</span> : <span class="jt-preview">{jtPreview(v as object)}</span>}
+        </div>
+        {open ? <>
+            {entries.map(([ek, ev]) => <JsonNode key={ek} k={arr ? undefined : ek} v={ev} depth={depth + 1} />)}
+            <div class="jt-row" style={pad}><span class="jt-brace">{arr ? "]" : "}"}</span></div>
+        </> : null}
+    </div>;
+}
+// The agent's full tool definitions — name, approval/vision badges, description, and a JSON tree of
+// the parameter schema the model actually sees. Older debug events carry names only; those degrade
+// to just the head + description (no tree), since parameters weren't plumbed through then.
+function ToolDefCard({ t }: { t: DebugAgentConfig["tools"][number] }) {
+    const [open, setOpen] = useState(false);   // collapsed → just the tool name + badges
+    const hasBody = !!(t.description || t.parameters);
+    return <div class="tooldef">
+        <div class={`tooldef-head${hasBody ? " clickable" : ""}`} role={hasBody ? "button" : undefined} onClick={hasBody ? () => setOpen(v => !v) : undefined}>
+            {hasBody ? <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span> : null}
+            <b class="tooldef-name">{t.name}</b>
+            {t.requiresApproval ? <span class="tt tooldef-warn"><IconWarn /><span class="tt-pop wrap left" role="tooltip">Calling this tool requires your approval.</span></span> : null}
+            {t.vision ? <span class="tt tooldef-badge">vision<span class="tt-pop wrap left" role="tooltip">A vision tool — it sends a screenshot to a vision-capable model (the agent's own model if it sees, else the OCR/vision reader). Only wired when such a model resolves.</span></span> : null}
+        </div>
+        {open ? <>
+            {t.description ? <div class="tooldef-desc md" dangerouslySetInnerHTML={{ __html: markdown(t.description) }} /> : null}
+            {t.parameters ? <div class="tooldef-params"><JsonNode k="parameters" v={t.parameters} defaultOpen={false} /></div> : null}
+        </> : null}
+    </div>;
+}
+function ToolDefsView({ tools }: { tools: DebugAgentConfig["tools"] }) {
+    return <div class="tooldefs">{tools.map((t, i) => <ToolDefCard key={i} t={t} />)}</div>;
+}
+
 function AgentOptionsBlock({ s }: { s: Session }) {
     const c = s.agentConfig;
     const [open, setOpen] = useState(false);
     const [showSys, setShowSys] = useState(false);
+    const [showTools, setShowTools] = useState(false);
     if (!c) return null;
+    // The full defs (description + parameter schema) are only in newer events; older ones carry names
+    // only, so the "show tool defs" viewer would just repeat the summary line — hide it then.
+    const hasToolDefs = c.tools.some(t => t.description || t.parameters);
     const lines = [`model: ${s.model || "default"}`, `maxSteps: ${c.maxSteps}`];
     if (c.think != null) lines.push(`think: ${c.think}`);
     if (!c.env) lines.push("env: false");
     if (c.vision != null && c.vision !== true) lines.push(`vision: ${JSON.stringify(c.vision)}`);
     if (c.hints) lines.push(`hints: ${truncate(c.hints, 140)}`);
-    lines.push(`tools (${c.tools.length}): ${c.tools.map(t => t.name + (t.requiresApproval ? " ⚠" : "")).join(", ")}`);
+    // The full-defs viewer below lists every tool; only fall back to a one-line names summary when
+    // those defs aren't available (older events), so the two don't duplicate.
+    if (!hasToolDefs) lines.push(`tools (${c.tools.length}): ${c.tools.map(t => t.name + (t.requiresApproval ? " ⚠" : "")).join(", ")}`);
     // Vision wasn't disabled, yet nothing vision-capable got wired → no reader
     // resolved, so look/locate silently aren't available. Flag it.
     const noVision = c.vision !== false && !c.tools.some(t => t.vision);
@@ -881,6 +961,12 @@ function AgentOptionsBlock({ s }: { s: Session }) {
                         <button class="raw-btn" onClick={() => setShowSys(v => !v)}>{showSys ? "hide" : "show"} system prompt{c.customSystem ? " (custom)" : ""}</button>
                         {showSys ? <Code text={c.system} lang="markdown" /> : null}
                     </div>
+                    {hasToolDefs
+                        ? <div class="sys-block">
+                            <button class="raw-btn" onClick={() => setShowTools(v => !v)}>{showTools ? "hide" : "show"} tool definitions ({c.tools.length})</button>
+                            {showTools ? <ToolDefsView tools={c.tools} /> : null}
+                        </div>
+                        : null}
                 </div>
                 : null}
         </div>
