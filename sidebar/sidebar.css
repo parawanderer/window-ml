@@ -169,8 +169,8 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 
 /* Python bench — a debug workbench that runs scripts against the model's sandbox. */
 .bench { display: flex; flex-direction: column; gap: 8px; }
-.bench-note { color: var(--fg-dim); font-size: 0.85em; line-height: 1.45; }
-.bench-note code { background: var(--panel-2); border-radius: 3px; padding: 0 3px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.bench-info { color: var(--fg-faint); cursor: help; font-size: 1.05em; margin-right: 2px; }
+.bench-info:hover { color: var(--fg-dim); }
 .bench-code { width: 100%; min-height: 180px; resize: vertical; box-sizing: border-box;
     background: var(--panel); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 9px;
     font: 0.88em/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 4; white-space: pre; overflow: auto; }
@@ -299,6 +299,14 @@ details.io[open] > summary .io-preview { display: none; }
 .r-py-modeval { color: var(--fg); font-weight: 600; cursor: help; border-bottom: 1px dotted var(--fg-faint); }
 .r-py-img img, .r-py-out .r-image img { max-height: 240px; }
 .r-py-lbl { color: var(--fg-faint); font-size: 0.8em; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 2px; }
+/* A python-out section (stdout/value/error/token) folds on its own — same disclosure idea as the
+   In:/Out: blocks. The summary IS the label; a small triangle marks it clickable. */
+.r-py-sec { margin-bottom: 6px; }
+.r-py-sec:last-child { margin-bottom: 0; }
+.r-py-sec > summary { cursor: pointer; list-style: none; user-select: none; display: flex; align-items: center; gap: 4px; }
+.r-py-sec > summary::-webkit-details-marker { display: none; }
+.r-py-sec > summary::before { content: "▸"; color: var(--fg-faint); font-size: 0.7em; transition: transform .12s; }
+.r-py-sec[open] > summary::before { transform: rotate(90deg); }
 .r-py-token code { color: var(--fg); font-size: 0.95em; word-break: break-all; }
 .r-py-table { display: flex; flex-direction: column; gap: 3px; }
 .r-py-more { font-size: 0.85em; }

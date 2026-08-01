@@ -1219,6 +1219,11 @@ test("python bench: opens from the header, runs a script, and renders the sandbo
     const out = w.shadow.querySelector(".bench-out .r-py-out");
     assert.ok(out, "result renders in the python-out panel");
     assert.match(out.textContent, /hi/, "stdout shown");
+    // stdout is a collapsible section (a <details>), like the other blocks.
+    assert.equal(out.querySelector(".r-py-stdout").tagName, "DETAILS", "stdout is a collapsible section");
+    // The info note is a tooltip now, not always-shown prose.
+    assert.equal(w.shadow.querySelector(".bench-note"), null, "no always-shown note");
+    assert.ok(w.shadow.querySelector(".bench-info .tt-pop"), "the note is a hover tooltip");
 });
 
 test("python bench: full mode sends hardened:false", async () => {

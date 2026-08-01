@@ -673,16 +673,22 @@ function PythonInRender({ d }: { d: Extract<RenderDescriptor, { type: "python-in
         </div>
     );
 }
+// A collapsible section of the python-out block (stdout / value / error / token). Same disclosure
+// pattern as the In:/Out: blocks — open by default, its label is the summary. A big stdout can be
+// folded away to get to the value.
+function PyOutSection({ label, cls, children }: { label: string; cls: string; children: ComponentChildren }) {
+    return <details class={`r-py-sec ${cls}`} open><summary class="r-py-lbl">{label}</summary>{children}</details>;
+}
 // `python_exec`'s Out slot: captured stdout, then one of a returned image / a minted
 // @pt·@box token / the raw value / a Python traceback.
 function PythonOutRender({ d }: { d: Extract<RenderDescriptor, { type: "python-out" }> }) {
     return (
         <div class="r-python r-py-out">
-            {d.stdout ? <div class="r-py-stdout"><div class="r-py-lbl">stdout</div><Code text={d.stdout} lang="text" /></div> : null}
+            {d.stdout ? <PyOutSection label="stdout" cls="r-py-stdout"><Code text={d.stdout} lang="text" /></PyOutSection> : null}
             {d.image ? <div class="r-image"><ClickableImg src={d.image} alt="output image" /><div class="r-image-label">returned image</div></div> : null}
-            {d.token ? <div class="r-py-token"><div class="r-py-lbl">token</div><code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code></div> : null}
-            {d.error ? <div class="r-py-err"><div class="r-py-lbl">error</div><Code text={d.error} lang="text" /></div> : null}
-            {d.value != null && !d.image && !d.token && !d.error ? <div class="r-py-val"><div class="r-py-lbl">value</div><Code text={d.value} lang="json" /></div> : null}
+            {d.token ? <PyOutSection label="token" cls="r-py-token"><code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code></PyOutSection> : null}
+            {d.error ? <PyOutSection label="error" cls="r-py-err"><Code text={d.error} lang="text" /></PyOutSection> : null}
+            {d.value != null && !d.image && !d.token && !d.error ? <PyOutSection label="value" cls="r-py-val"><Code text={d.value} lang="json" /></PyOutSection> : null}
         </div>
     );
 }
@@ -1388,9 +1394,9 @@ function PythonBench() {
     const empty = result?.ok && !result.stdout && result.value == null;
     return (
         <div class="bench">
-            <div class="bench-note">Runs against the SAME sandbox <code>python_exec</code> uses (offscreen → worker → Pyodide). Code-only — no page image/tables. <code>return</code> a value; <code>print()</code> is captured. 15s cap.</div>
             <textarea ref={taRef} class="bench-code code" spellcheck={false} value={code} onInput={e => setCode((e.target as HTMLTextAreaElement).value)} onKeyDown={onKey} placeholder="return 6 * 7" />
             <div class="bench-bar">
+                <span class="tt bench-info" aria-label="about the bench">ⓘ<span class="tt-pop wrap left" role="tooltip">Runs against the SAME sandbox python_exec uses (offscreen → worker → Pyodide). Code-only — no page image/tables. `return` a value; print() is captured. 15s cap.</span></span>
                 <label class="bench-mode">mode
                     <select value={mode} onChange={e => setMode((e.target as HTMLSelectElement).value === "full" ? "full" : "readonly")}>
                         <option value="readonly">readonly (sandboxed)</option>
