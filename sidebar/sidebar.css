@@ -459,6 +459,9 @@ details.io[open] > summary .io-preview { display: none; }
 
 /* ----------------------------- detail view ------------------------------ */
 .block { background: var(--panel); border: 1px solid var(--border); border-radius: 7px; overflow: hidden; margin-bottom: 8px; }
+/* The agent-options block hosts the tool-def cards, whose badge tooltips hang below the trigger — a
+   bottom-row card's pop would be clipped by the block's own `overflow: hidden`, so let it escape. */
+.block.agent-opts { overflow: visible; }
 .block-head { display: flex; align-items: center; gap: 6px; padding: 5px 9px; cursor: pointer; user-select: none; }
 .block:has(.tbody) .block-head { border-bottom: 1px solid var(--border); }
 .block-label { color: var(--fg-dim); font-size: 0.92em; font-weight: 600; }
