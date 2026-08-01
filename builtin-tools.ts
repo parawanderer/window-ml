@@ -888,6 +888,15 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             },
             required: ["code"],
         },
+        // Pre-run In render — shown during the approval WAIT, when run() hasn't produced its full
+        // python-in yet (the input image + DataFrame previews need the tables loaded). Show the
+        // highlighted code as a notebook cell now; post-run, run()'s renderIn wins in descriptorFor.
+        render: (_input, args) => {
+            const code = typeof args.code === "string" ? args.code : "";
+            if (!code) return null;
+            const mode = args.cast === "pt" ? "pt" as const : args.cast === "box" ? "box" as const : "script" as const;
+            return { type: "python-in", mode, code };
+        },
         run: async ({ code, image, cast, mode, margin, tableRaw, tables }: { code: string; image?: string; cast?: "pt" | "box"; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Record<string, string> }): Promise<string | ToolResult> => {
             // A DOM-table selector loads the FIRST match — warn if it's ambiguous (loading the wrong
             // table and computing on it would silently give wrong numbers). Covers a single-source

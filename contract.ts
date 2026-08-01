@@ -439,6 +439,10 @@ export interface RunToolInPagePayload {
     runId: string;
     name: string;
     args: Record<string, unknown>;
+    // Render-only: DON'T run the tool — just compute its In render (descriptorFor) for the approval
+    // preview, so a blocking gate shows a pretty In (e.g. exec's beautified JS, python's code cell)
+    // instead of raw args. The tool's run() never fires, so this is side-effect-free.
+    renderOnly?: boolean;
 }
 
 /** The result of a delegated tool call, crossing back from the page to the background. Only the

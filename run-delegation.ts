@@ -42,11 +42,16 @@ export function getRun(runId: string): PageRun | undefined { return runs.get(run
 /** Run ONE delegated tool call for a background-hosted run → a serializable envelope for the bus.
  *  executeTool already validates args + catches errors (never throws), so this only reduces the
  *  envelope: real nodes → a count, and an answer-capable tool's nodes are stashed page-side. */
-export async function runDelegatedTool(runId: string, name: string, args: Record<string, unknown>): Promise<PageToolEnvelope> {
+export async function runDelegatedTool(runId: string, name: string, args: Record<string, unknown>, renderOnly = false): Promise<PageToolEnvelope> {
     const run = runs.get(runId);
     if (!run) return { result: `Error: no active agent run "${runId}" on this page (it may have ended).` };
     const tool = run.byName[name];
     if (!tool) return { result: `Error: no tool named "${name}".` };
+    // Approval preview: compute the In render for the CALL without RUNNING the tool (side-effect-free).
+    if (renderOnly) {
+        const { in: renderIn } = descriptorFor(tool, { result: "" }, args);
+        return { result: "", renderIn };
+    }
     const env = await executeTool(tool, args);
     // An answer-capable tool designates the caller-facing result node(s) → stash them page-side; only
     // the COUNT crosses to the background (the nodes reach the caller via AgentResult.elements).
@@ -70,8 +75,8 @@ export async function runDelegatedTool(runId: string, name: string, args: Record
 export function installToolDelegation(): void {
     window.addEventListener("message", async (event: MessageEvent) => {
         if (event.source !== window || !event.data || event.data.type !== "PAGE_TOOL_RUN") return;
-        const { callId, runId, name, args } = event.data as { callId: string; runId: string; name: string; args: Record<string, unknown> };
-        const envelope = await runDelegatedTool(runId, name, args || {});
+        const { callId, runId, name, args, renderOnly } = event.data as { callId: string; runId: string; name: string; args: Record<string, unknown>; renderOnly?: boolean };
+        const envelope = await runDelegatedTool(runId, name, args || {}, !!renderOnly);
         window.postMessage({ type: "PAGE_TOOL_RESULT", callId, envelope }, "*");
     });
 }

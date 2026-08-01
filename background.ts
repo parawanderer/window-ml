@@ -760,15 +760,25 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     // the sidebar shows the rich view, not just raw JSON.
                     return { result: env?.result || `Error: the page returned nothing for tool "${name}".`, renderIn: env?.renderIn, renderOut: env?.renderOut };
                 },
-                approve: ({ tool, arguments: args, seq, step }) => new Promise<ApprovalDecision>((resolve) => {
-                    pendingApprovals.set(`${runId}:${seq}`, (decision) => {
-                        const ok = decision === true || (typeof decision === "object" && !!decision && decision.approved);
-                        if (ok && tool === "python_exec") for (const id of externalSheetIds(args)) approvedSheets.add(id);
-                        resolve(decision);
+                approve: async ({ tool, arguments: args, seq, step }) => {
+                    // Ask the page to compute the In render for THIS call (without running the tool) so the
+                    // blocking approval shows a pretty In — exec's beautified JS, python's code cell — not
+                    // raw args. Best-effort: raw args on any failure. (Out has nothing to render pre-run.)
+                    let renderIn: unknown;
+                    try {
+                        const env = await chrome.tabs.sendMessage(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name: tool, args, renderOnly: true } }) as { renderIn?: unknown };
+                        renderIn = env?.renderIn;
+                    } catch { /* page gone → no preview, fall back to raw args */ }
+                    return new Promise<ApprovalDecision>((resolve) => {
+                        pendingApprovals.set(`${runId}:${seq}`, (decision) => {
+                            const ok = decision === true || (typeof decision === "object" && !!decision && decision.approved);
+                            if (ok && tool === "python_exec") for (const id of externalSheetIds(args)) approvedSheets.add(id);
+                            resolve(decision);
+                        });
+                        // Patch the pending step to show approve/deny (awaitingApproval) + the In preview.
+                        emitStep({ step, seq, pending: true, awaitingApproval: true, tool, arguments: args, renderIn });
                     });
-                    // Patch the pending step to show approve/deny (awaitingApproval) instead of "running…".
-                    emitStep({ step, seq, pending: true, awaitingApproval: true, tool, arguments: args });
-                }),
+                },
                 isSheetApproved: (id) => approvedSheets.has(id),
                 emit: (ev) => emitStep(ev as Record<string, unknown>),
                 signal: null,
