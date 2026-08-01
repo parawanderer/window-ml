@@ -9,7 +9,7 @@
 //          image / elements descriptor from the envelope.
 // Either may be undefined → the sidebar renders that block's raw view. Page-side (touches Element/DOM).
 import type { MlTool, RenderDescriptor, ToolRenderInput } from "./contract";
-import { elPath, truncate } from "./dom";
+import { clickSelector, truncate } from "./dom";
 
 export function descriptorFor(
     tool: MlTool | undefined,
@@ -27,9 +27,14 @@ export function descriptorFor(
     else if (input.image) outD = { type: "image", src: input.image, label: input.imageLabel };
     else if (input.elements?.length) outD = {
         type: "elements",
-        items: input.elements.slice(0, 50).map((el: Node, i: number) => ({
-            path: (typeof Element !== "undefined" && el instanceof Element) ? elPath(el) : String(el.nodeName || "node"),
-            text: truncate((el as Element).textContent || "", 60), index: i,
+        // Use clickSelector — the SAME stateless currency the tools hand the model in their text
+        // output (click/type/answer take it) — so the rendered list PAIRS with what the model sees,
+        // and "copy reference" / hover-highlight resolve the same node. NOT elPath (a full path that
+        // wouldn't match), and no `index`: clickSelector is unique, so the reference is a bare
+        // querySelector and the display badge falls back to the array position.
+        items: input.elements.slice(0, 50).map((el: Node) => ({
+            path: (typeof Element !== "undefined" && el instanceof Element) ? clickSelector(el) : String(el.nodeName || "node"),
+            text: truncate((el as Element).textContent || "", 60),
         })),
     };
     return { in: inD, out: outD };

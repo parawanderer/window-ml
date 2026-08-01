@@ -43,7 +43,14 @@ function onDebug(ev: MlDebugEvent): void {
         // Patch the existing row in place (immutably) so it fills in; otherwise append. Thoughts
         // and single-emit steps have no seq → always append.
         const i = ev.seq != null ? steps.findIndex(x => x.seq === ev.seq) : -1;
-        s.steps = i >= 0 ? steps.map((x, k) => k === i ? step : x) : [...steps, step];
+        // When patching the pending START with its DONE, COALESCE the render slots: a DENIED call's
+        // DONE carries no renderIn/renderOut (the tool never ran → no envelope), which would blank
+        // out the In preview the awaiting-approval START already showed. A render only ever appears,
+        // never legitimately vanishes, so keep the existing one when the DONE doesn't supply a newer.
+        const merged = i >= 0
+            ? { ...step, renderIn: step.renderIn ?? steps[i].renderIn, renderOut: step.renderOut ?? steps[i].renderOut }
+            : step;
+        s.steps = i >= 0 ? steps.map((x, k) => k === i ? merged : x) : [...steps, step];
         s.lastTs = ev.ts; rev.value++; return;
     }
     if (ev.kind === "agent-result") {
@@ -947,7 +954,7 @@ function AgentOptionsBlock({ s }: { s: Session }) {
     // resolved, so look/locate silently aren't available. Flag it.
     const noVision = c.vision !== false && !c.tools.some(t => t.vision);
     return (
-        <div class="block">
+        <div class="block agent-opts">
             <div class="block-head" role="button" onClick={() => setOpen(v => !v)}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
                 <span class="block-label">agent options</span>

@@ -58,6 +58,26 @@ test("run()-precomputed render slots become renderIn/renderOut (descriptorFor)",
     endRun("r4");
 });
 
+test("auto-derived elements render uses clickSelector (the model's currency), NOT elPath", async () => {
+    // The rendered element list must PAIR with the selectors the tool hands the model in its text
+    // (click/type/answer take clickSelector). elPath's full path wouldn't match; also no bogus
+    // querySelectorAll index (clickSelector is unique → a bare document.querySelector).
+    const dom = new JSDOM('<body><div class="bar"><button id="go">Go</button><button>x</button></div></body>');
+    const prevDoc = globalThis.document, prevEl = globalThis.Element;
+    globalThis.document = dom.window.document; globalThis.Element = dom.window.Element;
+    try {
+        const el = dom.window.document.querySelector("#go");
+        registerRun("rcs", [tool({ run: async () => ({ content: "found", elements: [el] }) })]);
+        const env = await runDelegatedTool("rcs", "probe", {});
+        endRun("rcs");
+        assert.equal(env.renderOut.type, "elements");
+        assert.equal(env.renderOut.items[0].path, "#go", "clickSelector's id — not elPath's 'body > div.bar > button#go'");
+        assert.ok(!("index" in env.renderOut.items[0]), "no querySelectorAll index (the selector is already unique)");
+    } finally {
+        globalThis.document = prevDoc; globalThis.Element = prevEl;
+    }
+});
+
 test("the Out slot auto-derives an image; the In slot uses the tool's render() method", async () => {
     registerRun("r4b", [tool({
         render: (_input, args) => ({ type: "code", text: String(args.js || "") }),   // In from the method

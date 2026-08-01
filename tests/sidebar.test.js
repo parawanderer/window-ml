@@ -1137,6 +1137,31 @@ test("agent tool steps carry an approval provenance badge (auto/user green, deni
     assert.ok(steps[2].classList.contains("appr-no"), "denied step gets the red outline");
 });
 
+test("denying a gated step KEEPS its In render (the DONE's blank renderIn doesn't clobber the START's)", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("dng", "click something"));
+    // The awaiting-approval START carries the In preview (e.g. click's targeted @pt).
+    await w.dispatch(agentStep("dng", 1, {
+        seq: 1, pending: true, awaitingApproval: true, tool: "click",
+        arguments: { selector: "@pt:ce6c8a40" },
+        renderIn: { type: "elements", items: [{ path: "@pt:ce6c8a40" }] },
+    }));
+    // The DONE after DENIAL: result + approval, but NO renderIn/renderOut — the tool never ran.
+    await w.dispatch(agentStep("dng", 1, {
+        seq: 1, tool: "click", arguments: { selector: "@pt:ce6c8a40" },
+        result: "Denied by the user. Do not retry this exact call; try another approach.", approval: "denied",
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const toolStep = w.shadow.querySelector(".astep.tool");
+    toolStep.querySelector(".astep-head").click();
+    await w.tick();
+    // The In still renders the elements descriptor (not raw JSON) despite the blank DONE.
+    assert.ok(toolStep.querySelector(".r-el"), "the In render persists after denial");
+    assert.match(toolStep.querySelector(".r-el-path").textContent, /@pt:ce6c8a40/);
+    assert.match(toolStep.textContent, /Denied by the user/, "the denial result still shows");
+});
+
 test("exec code is beautified for display when the descriptor sets format", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("bty", "run js"));
