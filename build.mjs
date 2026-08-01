@@ -107,6 +107,9 @@ if (watch) {
     // Design A page-side tool delegation (registerRun/runDelegatedTool/endRun) — bundled standalone so
     // the envelope reduction + answer-node stash are unit-tested without the window round-trip.
     await esbuild.build({ entryPoints: { "run-delegation": "run-delegation.ts" }, outdir: "dist", bundle: true, format: "cjs", platform: "node", logLevel: "info" });
+    // Design A background host (runBackgroundAgent) — assembles runAgentLoop with the neutral-message
+    // builders + trusted autoApprove; chrome-free so the assembly is unit-tested (tests/agent-host.test.js).
+    await esbuild.build({ entryPoints: { "agent-host": "agent-host.ts" }, outdir: "dist", bundle: true, format: "cjs", platform: "node", logLevel: "info" });
     copyAssets();
     copyPyodide();
     // Regenerate the standalone visual preview of som's canvas annotate() (gitignored —
