@@ -63,6 +63,17 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
     const pushToolResult = (messages: NeutralMessage[], call: ToolCall, result: string): void => {
         messages.push({ role: "tool", tool_call_id: call.id, content: result });
     };
+    // Inline vision: a tool RESULT can't carry an image, but a user turn can — so a native `look`
+    // screenshot reaches the (vision-capable) driver model on its next turn. Mirrors the page loop.
+    const pushToolImages = (messages: NeutralMessage[], images: { image: string; label: string }[]): void => {
+        const labels = images.map(p => p.label).join(", ");
+        messages.push({
+            role: "user",
+            content: `Screenshot${images.length > 1 ? "s" : ""} you requested (${labels}). ` +
+                "Describe what you see, then take the next action — or give your final answer if the task is done.",
+            images: images.map(p => p.image),
+        });
+    };
 
     const loopDeps: AgentLoopDeps = {
         callModel: (messages, o) => deps.callModel(messages as NeutralMessage[], { tools: o.tools, model: cfg.model, think: cfg.think, step: o.step }),
@@ -76,6 +87,7 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
         buildMessages: buildMessages as AgentLoopDeps["buildMessages"],
         pushAssistant: pushAssistant as AgentLoopDeps["pushAssistant"],
         pushToolResult: pushToolResult as AgentLoopDeps["pushToolResult"],
+        pushToolImages: pushToolImages as AgentLoopDeps["pushToolImages"],
         emit: deps.emit,
     };
     return runAgentLoop(cfg.task, { tools: cfg.tools, maxSteps: cfg.maxSteps, signal: deps.signal }, loopDeps);

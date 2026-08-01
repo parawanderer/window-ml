@@ -100,3 +100,20 @@ test("emit fires a pending START then a DONE with the approval provenance", asyn
     assert.equal(done.approval, "sandbox", "the DONE carries the auto-approve provenance");
     assert.equal(pend.seq, done.seq, "START and DONE share a seq so the sidebar patches in place");
 });
+
+test("inline vision: a native look screenshot reaches the NEXT model turn as a user image", async () => {
+    // The design-A parity fix — the background loop injects the delegated tool's screenshot into the
+    // model's history (a tool result can't carry an image), so a vision-capable driver sees the pixels.
+    const seen = [];
+    const deps = baseDeps({
+        callModel: async (messages) => {
+            seen.push(messages.map(m => ({ role: m.role, images: m.images })));
+            return seen.length === 1 ? call("look") : answer("saw it");
+        },
+        delegateTool: async () => ({ result: "captured", image: "data:image/png;base64,SHOT", imageLabel: "viewport" }),
+    });
+    await runBackgroundAgent({ task: "t", systemPrompt: "S", tools: [{ name: "look", capabilities: ["vision"] }] }, deps);
+    const imgTurn = seen[1].find(m => m.role === "user" && m.images);   // the 2nd call's messages
+    assert.ok(imgTurn, "a user turn carrying the screenshot was injected before the next model call");
+    assert.deepEqual(imgTurn.images, ["data:image/png;base64,SHOT"]);
+});

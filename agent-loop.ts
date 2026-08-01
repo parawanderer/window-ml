@@ -18,7 +18,9 @@ export type Approval = "readonly" | "sandbox" | "user" | "denied";
 export interface ToolMeta { name: string; requiresApproval?: boolean; capabilities?: string[]; }
 // The tool's serializable result. `renderIn`/`renderOut` are the debug-render slots computed by the
 // executor's world (page-side for the delegated path) so the emitter can show a rendered In/Out.
-export interface ToolRunResult { result: string; elements?: unknown[]; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; }
+// `image` is a screenshot a vision tool (native `look`) captured — INLINE VISION: it's injected into
+// the model's next turn as a user image (via pushToolImages) so the model reasons over the real pixels.
+export interface ToolRunResult { result: string; elements?: unknown[]; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; image?: string; imageLabel?: string; }
 
 export interface AgentLoopDeps {
     // One model turn → the assistant message (content + normalized tool_calls + usage).
@@ -38,6 +40,10 @@ export interface AgentLoopDeps {
     // Append the assistant tool-call message / a tool-result message to the running history.
     pushAssistant(messages: unknown[], msg: { content?: string | null; tool_calls?: ToolCall[] }): void;
     pushToolResult(messages: unknown[], call: ToolCall, result: string): void;
+    // Inline vision: after a step, inject any screenshots the step's tools captured as a user turn, so
+    // the NEXT model call sees the pixels (a tool RESULT can't carry an image; a user turn can). Omit
+    // → no inline vision (a text-only driver). World-specific (the neutral message shape).
+    pushToolImages?(messages: unknown[], images: { image: string; label: string }[]): void;
     // Debug/telemetry hook (agent-step events: pending START then the DONE, sharing `seq`).
     emit?(ev: { step: number; seq?: number; pending?: boolean; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; approval?: Approval; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor }): void;
 }
@@ -74,6 +80,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         if (thought) { transcript.push({ thought }); deps.emit?.({ step, thought }); }
         deps.pushAssistant(messages, msg);
 
+        const pendingImages: { image: string; label: string }[] = [];   // inline vision — injected after the step
         for (const call of msg.tool_calls) {
             const meta = byName.get(call.name);
             let args = (call.arguments || {}) as Record<string, unknown>;
@@ -109,7 +116,11 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             transcript.push({ tool: call.name, arguments: args, result });
             deps.emit?.({ step, seq: s, tool: call.name, arguments: args, result, approval, renderIn: tr?.renderIn, renderOut: tr?.renderOut });   // DONE (patches the START)
             deps.pushToolResult(messages, call, result);
+            if (tr?.image) pendingImages.push({ image: tr.image, label: tr.imageLabel || "screenshot" });
         }
+        // Inline vision: hand any screenshots this step captured to the model as a user turn, so the
+        // next step reasons over the real pixels (the native `look` path; a text-only driver omits the dep).
+        if (pendingImages.length) deps.pushToolImages?.(messages, pendingImages);
     }
     return { summary: `Stopped at the ${maxSteps}-step cap without finishing.`, steps: maxSteps, transcript, elements: [], hitCap: true };
 }

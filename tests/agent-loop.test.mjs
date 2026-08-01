@@ -106,3 +106,20 @@ test("a tool step emits a pending START then a DONE with the same seq", async ()
     assert.equal(steps[1].pending, undefined);
     assert.equal(steps[0].seq, steps[1].seq, "same seq → the sidebar patches the row");
 });
+
+test("inline vision: a tool that returns an image → pushToolImages injects it after the step", async () => {
+    const { deps } = makeDeps({ turns: [toolCall("look"), reply("done")] });
+    deps.runTool = async () => ({ result: "captured", image: "data:img,SHOT", imageLabel: "viewport" });
+    const pushed = [];
+    deps.pushToolImages = (m, imgs) => { pushed.push(imgs); };
+    await runAgentLoop("x", { tools: [{ name: "look", capabilities: ["vision"] }] }, deps);
+    assert.deepEqual(pushed, [[{ image: "data:img,SHOT", label: "viewport" }]], "the screenshot is handed to the next turn");
+});
+
+test("no image → pushToolImages is never called (text-only driver / non-vision tool)", async () => {
+    const { deps } = makeDeps({ turns: [toolCall("noop"), reply("done")] });   // default runTool returns no image
+    let called = false;
+    deps.pushToolImages = () => { called = true; };
+    await runAgentLoop("x", { tools: [{ name: "noop" }] }, deps);
+    assert.equal(called, false);
+});

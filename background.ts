@@ -757,8 +757,9 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     const env = await chrome.tabs.sendMessage(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name, args } })
                         .catch((e: unknown) => ({ result: `Error: could not reach the page to run "${name}" (${(e as Error)?.message || e}).` })) as Partial<import("./contract").PageToolEnvelope>;
                     // The page already computed the rendered In/Out slots (descriptorFor) — forward them so
-                    // the sidebar shows the rich view, not just raw JSON.
-                    return { result: env?.result || `Error: the page returned nothing for tool "${name}".`, renderIn: env?.renderIn, renderOut: env?.renderOut };
+                    // the sidebar shows the rich view. `image` rides along for INLINE VISION (native look):
+                    // the loop injects it into the model's next turn (pushToolImages).
+                    return { result: env?.result || `Error: the page returned nothing for tool "${name}".`, renderIn: env?.renderIn, renderOut: env?.renderOut, image: env?.image, imageLabel: env?.imageLabel };
                 },
                 approve: async ({ tool, arguments: args, seq, step }) => {
                     // Ask the page to compute the In render for THIS call (without running the tool) so the
