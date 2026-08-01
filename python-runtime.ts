@@ -52,6 +52,52 @@ if _tsj:
         _df = _build_df(_entry["data"])
         globals()[_entry["name"]] = _df
         tables[_entry["name"]] = _df
+
+# --- Loader interception (DX, not a security boundary) ---------------------------------------
+# Models have strong pre-training habits — Image.open(path), pd.read_csv(name), pd.read_html(
+# selector) — and reach for them with the SELECTOR/name they passed to the tool (observed:
+# Image.open('canvas#stage'), pd.read_csv('current')). This sandbox has no filesystem, so those
+# only ever throw FileNotFoundError, burning a whole turn. Their INTENT is obvious: the
+# already-loaded img / a loaded DataFrame. Redirect the call to the in-memory object — but ONLY
+# when we actually HAVE it, and never for a real file-like/URL — so nothing legitimate is
+# hijacked (a genuine http read_csv, or Image.open(BytesIO(...)), passes straight through). The
+# on-error redirect hint in builtin-tools.ts stays as the fallback for what this can't resolve.
+#
+# Patched ONCE — the module attrs (Image.open/pd.read_*) and the _-prefixed originals both
+# survive RESET (module state persists on Pyodide's single heap; _-names aren't cleared). The
+# patched funcs resolve img/tables DYNAMICALLY from globals() each call, so across runs they
+# always see the CURRENT run's freshly-loaded data, never a stale closure.
+def _ml_pick_table(_name):
+    _t = globals().get("tables") or {}
+    if isinstance(_name, str) and _name in _t: return _t[_name]
+    if len(_t) == 1: return next(iter(_t.values()))   # one table loaded → that's the one they meant
+    return None
+def _ml_tableish(_s):
+    # A string that names a loaded table, not a real resource (not a URL, not raw HTML).
+    return isinstance(_s, str) and "://" not in _s and not _s.lstrip().startswith("<")
+if "_ml_orig_image_open" not in globals():
+    _ml_orig_image_open = Image.open
+    def _ml_image_open(_fp, *_a, **_k):
+        # No str can name a real file here → if an image is loaded, that's what they meant.
+        if isinstance(_fp, str) and globals().get("img") is not None: return globals()["img"]
+        return _ml_orig_image_open(_fp, *_a, **_k)
+    Image.open = _ml_image_open
+if "_ml_orig_read_csv" not in globals():
+    _ml_orig_read_csv = pd.read_csv
+    def _ml_read_csv(_fp, *_a, **_k):
+        if _ml_tableish(_fp):
+            _t = _ml_pick_table(_fp)
+            if _t is not None: return _t
+        return _ml_orig_read_csv(_fp, *_a, **_k)
+    pd.read_csv = _ml_read_csv
+if "_ml_orig_read_html" not in globals():
+    _ml_orig_read_html = pd.read_html
+    def _ml_read_html(_fp, *_a, **_k):
+        if _ml_tableish(_fp):
+            _t = _ml_pick_table(_fp)
+            if _t is not None: return [_t]   # read_html returns a LIST of tables
+        return _ml_orig_read_html(_fp, *_a, **_k)
+    pd.read_html = _ml_read_html
 `;
 
 const indent = (code: string) => (code || "pass").split("\n").map(l => "    " + l).join("\n");

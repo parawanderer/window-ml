@@ -182,3 +182,53 @@ test("full mode: a failed fetch raises a clear host-permissions error (not a raw
     assert.match(r.error, /full-mode fetch of .* failed/);
     assert.match(r.error, /site access \/ host permissions/);
 });
+
+// --- Loader interception: the model's Image.open(selector)/read_csv(name) habits resolve to the
+// pre-loaded img/df instead of throwing FileNotFoundError and burning a turn. ------------------
+const TINY_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+test("loader: Image.open(selector) returns the pre-loaded img (no filesystem to hit)", { skip }, async () => {
+    // The exact observed failure: Image.open('canvas#stage'). Any str → the loaded img (identity).
+    const r = await pyRun("return [Image.open('canvas#stage') is img, Image.open('#foo') is img]", { image: TINY_PNG });
+    assert.deepEqual(r.value, [true, true]);
+});
+
+test("loader: with NO image loaded, Image.open falls through (nothing to redirect to)", { skip }, async () => {
+    const r = await pyRun("return Image.open('#x')");   // no image injected → original runs → errors
+    assert.equal(r.ok, false);
+});
+
+test("loader: Image.open(BytesIO(...)) is NOT hijacked — a real file-like still opens", { skip }, async () => {
+    // A non-str arg passes straight to the original, even with an image loaded.
+    const r = await pyRun("import io\nreturn Image.open(io.BytesIO(base64.b64decode(INJECTED_IMAGE_B64.split(',')[-1]))).size == img.size", { image: TINY_PNG });
+    assert.equal(r.value, true);
+});
+
+test("loader: pd.read_csv('current') returns the one loaded df", { skip }, async () => {
+    const r = await pyRun("return int(pd.read_csv('current')['Q1'].sum())", { tables: [rows("df", ["Rep", "Q1"], [["Ada", 120], ["Ben", 90]])] });
+    assert.equal(r.value, 210);
+});
+
+test("loader: pd.read_html(selector) returns [df] so read_html(...)[0] works", { skip }, async () => {
+    const r = await pyRun("return int(pd.read_html('#sales')[0]['Q1'].sum())", { tables: [rows("df", ["Rep", "Q1"], [["Ada", 120], ["Ben", 90]])] });
+    assert.equal(r.value, 210);
+});
+
+test("loader: read_csv(name) picks the MATCHING table when several are loaded", { skip }, async () => {
+    const r = await pyRun("return int(pd.read_csv('targets')['Goal'].sum())", {
+        tables: [rows("sales", ["Rep", "Q1"], [["Ada", 120]]), rows("targets", ["Rep", "Goal"], [["Ada", 100], ["Ben", 200]])] });
+    assert.equal(r.value, 300);
+});
+
+test("loader: a real URL is NOT hijacked even with a table loaded (readonly → the clean net error)", { skip }, async () => {
+    const r = await pyRun("return pd.read_csv('https://example.com/x.csv')", { tables: [rows("df", ["A"], [[1]])], hardened: true });
+    assert.equal(r.ok, false, "'://' → not tableish → falls through to the real (blocked) loader");
+});
+
+test("loader: patched loaders see the CURRENT run's data across runs (no stale closure)", { skip }, async () => {
+    // Patched ONCE, but resolve img/tables from globals() each call — so run 2's data wins.
+    const a = await pyRun("return int(pd.read_csv('current')['V'].sum())", { tables: [rows("df", ["V"], [[5]])] });
+    const b = await pyRun("return int(pd.read_csv('current')['V'].sum())", { tables: [rows("df", ["V"], [[9]])] });
+    assert.equal(a.value, 5);
+    assert.equal(b.value, 9);
+});
