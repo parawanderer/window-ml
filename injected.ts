@@ -498,14 +498,15 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             } });
 
             // ── Design A: route through the BACKGROUND loop when a debug surface is active ──
-            // The approval gate then lives at the extension origin (the sidebar), unforgeable by the page
-            // — a page-set window.confirm or a hostile approve() can't grant it. The page still built the
-            // toolset + system prompt above and registers the LIVE tools under runHash; the background
-            // delegates each call back via RUN_TOOL_IN_PAGE and gates approval through the sidebar. Only
-            // the OVERLAY surface is wired today; devtools/off fall through to the in-page loop below.
+            // The approval gate then lives at the extension origin (the sidebar/panel), unforgeable by the
+            // page — a page-set window.confirm or a hostile approve() can't grant it. The page still built
+            // the toolset + system prompt above and registers the LIVE tools under runHash; the background
+            // delegates each call back via RUN_TOOL_IN_PAGE and gates approval through the surface. BOTH
+            // debug surfaces route here now (overlay → the in-page iframe app; devtools → the panel app,
+            // via the panel's reverse channel); only `off` falls through to the in-page loop below.
             // Caveats (v1): the caller's `approve`/`onStep`/`logDebug` and rich tool renders (screenshots)
-            // don't apply on this path yet — the sidebar IS the gate, and steps stream as debug events.
-            if (agentCfg?.debugMode === "overlay") {
+            // don't apply on this path yet — the surface IS the gate, and steps stream as debug events.
+            if (agentCfg?.debugMode === "overlay" || agentCfg?.debugMode === "devtools") {
                 registerRun(runHash, toolset);
                 const descriptors = toolset.map(t => ({
                     name: t.name, description: t.description, parameters: t.parameters,
@@ -516,7 +517,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     const res = await makeBackgroundTaskPromise<AgentResult>("START_RUN_REQUEST", "START_RUN_RESPONSE", {
                         runId: runHash, task, systemPrompt, tools: descriptors,
                         model: runModel, think: (think === true || think === false) ? think : null,
-                        maxSteps, autoApprovePython: autoPy, autoApproveReadonly: autoRO, surface: "overlay",
+                        maxSteps, autoApprovePython: autoPy, autoApproveReadonly: autoRO, surface: agentCfg.debugMode,
                     }, undefined, signal);
                     // The real DOM nodes an answer-capable tool returned stayed page-side (they can't cross
                     // the bus) — assemble AgentResult.elements from the page-side run record here.

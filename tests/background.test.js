@@ -1078,6 +1078,26 @@ test("devtools panel: buffers debug events per tab, replays on connect, relays l
     assert.deepEqual(panel2.messages.find(m => Array.isArray(m.replay)).replay, [], "reset → nothing to replay");
 });
 
+test("START_RUN (surface 'devtools') fans a background run's step events to the PANEL port, not the page", async () => {
+    // DevTools parity: a background-hosted run in devtools mode streams its agent-step events to the
+    // panel via relayDebugEvent (the ml-devtools ports), NOT chrome.tabs.sendMessage (which the harness
+    // doesn't even mock — so if the wrong branch ran, this would throw). A no-tool reply keeps it to a
+    // single usage-only step, so no page delegation is needed.
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => jsonResponse({ choices: [{ message: { content: "done" } }], usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 } }),
+    });
+    const panel = bg.connect("ml-devtools");
+    panel.send({ type: "ml-devtools-init", tabId: 7 });
+    await bg.send({ type: "START_RUN", payload: {
+        runId: "run1", task: "x", systemPrompt: "sys", tools: [], model: "m", think: null,
+        maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools",
+    } }, { tab: { id: 7 } });
+    const steps = panel.messages.filter(m => m.__mlDebug && m.__mlDebug.kind === "agent-step");
+    assert.ok(steps.length >= 1, "the run's agent-step events reached the panel via relayDebugEvent");
+    assert.ok(steps.some(s => s.__mlDebug.usage && s.__mlDebug.usage.totalTokens === 12), "the usage step fanned to the panel");
+});
+
 // ---- FETCH_SHEET: credentialed Google Sheets CSV export ----
 
 test("FETCH_SHEET returns the CSV body, fetched with the user's Google cookies", async () => {

@@ -75,6 +75,15 @@ window.addEventListener("message", (e: MessageEvent) => {
         for (const evt of queue.splice(0)) frame.contentWindow?.postMessage({ __mlDebug: evt }, "*");
         return;
     }
+    // Design A reverse channel: the app's approve/deny for a background-hosted run's gate. Forward it to
+    // the background as SET_APPROVAL. Unforgeable by the inspected page — this fires ONLY for a message
+    // from the real panel-app iframe (the e.source check above), and a web page can't postMessage into a
+    // DevTools page. panel.ts (a devtools extension page) can chrome.runtime.sendMessage directly; the
+    // page has no such path (it's not an extension context, and SET_APPROVAL isn't a content-relayed type).
+    if (d.__mlSidebarApp === "approval" && typeof d.hash === "string" && typeof d.seq === "number") {
+        void chrome.runtime.sendMessage({ type: "SET_APPROVAL", payload: { runId: d.hash, seq: d.seq, decision: !!d.decision } }).catch(() => {});
+        return;
+    }
     if (typeof d.__mlLightbox === "string") showLightbox(d.__mlLightbox);
 });
 

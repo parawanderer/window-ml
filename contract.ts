@@ -426,7 +426,7 @@ export interface StartRunPayload {
     maxSteps: number;
     autoApprovePython: boolean;    // trusted config flag → the background may auto-approve readonly python
     autoApproveReadonly: boolean;  // trusted config flag → the background may auto-approve an in-dialect exec survey
-    surface: "overlay";           // which debug surface is active (only the overlay is wired for background runs today)
+    surface: "overlay" | "devtools";   // which debug surface hosts the run's gate/stream (both route through the background)
 }
 
 /** SET_APPROVAL payload — the sidebar app's decision for a pending background-run approval, keyed by

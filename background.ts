@@ -714,9 +714,12 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     if (message.type === "ML_DEBUG_EVENT") { if (sender.tab?.id != null) relayDebugEvent(sender.tab.id, message.event); return; }
     if (message.type === "ML_DEBUG_RESET") { if (sender.tab?.id != null) resetDebug(sender.tab.id); return; }
     if (message.type === "SET_APPROVAL") {
-        // The sidebar's approve/deny for a pending background-run gate. Only reaches here via the shell,
-        // which forwards it ONLY when it came from the real extension iframe (e.source === frame) — a page
-        // can't forge that, so a page-set window.confirm / a hostile approve() has no effect. Design A's crux.
+        // The surface's approve/deny for a pending background-run gate. Reaches here only from a TRUSTED
+        // extension context: the content-script shell (overlay) or panel.ts (devtools) — each forwards it
+        // ONLY for a message from the real extension-iframe app (e.source === frame). A web page can't
+        // forge it: it's not an extension context (can't chrome.runtime.sendMessage), and SET_APPROVAL is
+        // not a content-relayed HANDLE_MAP type — so a page-set window.confirm / hostile approve() can't
+        // reach here even though the page knows its own runId. Design A's crux.
         const p = message.payload as SetApprovalPayload;
         const resolve = pendingApprovals.get(`${p.runId}:${p.seq}`);
         if (resolve) {
@@ -737,14 +740,20 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         const toolMetas: ToolMeta[] = p.tools.map(t => ({ name: t.name, requiresApproval: t.requiresApproval, capabilities: t.capabilities }));
         const toolDefs = p.tools.map(t => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
         const approvedSheets = new Set<string>();   // external sheets approved this run (isSheetApproved)
-        // Debug fan-out for this run → the active surface. Overlay: re-post to the page window
-        // (ML_DEBUG_TO_PAGE → content.js → the shell → the iframe app). The panel isn't wired for
-        // background runs yet (its reverse channel doesn't exist), hence surface is overlay-only.
+        // Debug fan-out for this run → the active surface.
+        //  · overlay: re-post to the PAGE window (ML_DEBUG_TO_PAGE → content.js → the shell → the iframe
+        //    app), where the overlay app is mounted.
+        //  · devtools: there's no iframe app on the page — fan straight to the panel via relayDebugEvent
+        //    (→ the ml-devtools ports + the per-tab replay buffer, so a panel opened mid-run catches up).
+        //    The page-emitted `agent`/`agent-result` events already reach the panel via the shell's
+        //    __mlDebug→ML_DEBUG_EVENT forward; this covers the background-emitted agent-STEP events.
         const emitStep = (ev: Record<string, unknown>): void => {
-            chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event: {
+            const event = {
                 kind: "agent-step", id: runId, ts: Date.now(), save: false,
                 session: { hash: runId, turn: (ev.step as number) || 0 }, ...ev,
-            } }).catch(() => { /* tab gone / no receiver */ });
+            };
+            if (p.surface === "devtools") relayDebugEvent(tabId, event);
+            else chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => { /* tab gone / no receiver */ });
         };
         runBackgroundAgent(
             { task: p.task, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython },
