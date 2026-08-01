@@ -239,7 +239,7 @@ export type RenderDescriptor = (
     // `python_exec`'s In slot: a notebook-cell header — the run mode (from `cast`), the
     // input screenshot the script saw, the Python source (highlighted, NOT beautified), and
     // the loaded DataFrame(s) — each with its variable name + provenance (which sheet/table).
-    | { type: "python-in"; mode: "script" | "pt" | "box"; code: string; image?: string; tables?: TablePreview[] }
+    | { type: "python-in"; mode: "script" | "pt" | "box"; code: string; image?: string; imageToken?: string; tables?: TablePreview[] }
     // `python_exec`'s Out slot: captured stdout, a returned image, a minted @pt/@box token,
     // the raw/JSON value, or a Python traceback.
     | { type: "python-out"; stdout?: string; image?: string; token?: string; value?: string; error?: string }

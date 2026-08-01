@@ -203,7 +203,18 @@ const openLightbox = (src: string) => window.parent.postMessage({ __mlLightbox: 
 // rect and outlines it WITHOUT touching the element. Overlay-surface only — a no-op in the devtools
 // panel, whose parent can't reach the page.
 const highlightEl = (selector: string) => window.parent.postMessage({ __mlHighlight: { selector } }, "*");
+// A canvas @pt/@box token — the shell resolves it (via injected) to a point marker / box outline.
+const highlightToken = (token: string) => window.parent.postMessage({ __mlHighlight: { token } }, "*");
 const clearHighlight = () => window.parent.postMessage({ __mlHighlight: null }, "*");
+// Hover handlers for a locate `picked` string, which is EITHER an @pt/@box token OR "… → selector" —
+// so the same overlay works in both point mode and element mode.
+const pickedHover = (picked?: string): { onPointerEnter?: () => void; onPointerLeave?: () => void } => {
+    if (!picked) return {};
+    const tok = picked.match(/@(?:pt|box):[0-9a-f]+/)?.[0];
+    const sel = tok ? "" : (picked.split("→").pop() || "").trim();
+    if (!tok && !sel) return {};
+    return { onPointerEnter: () => (tok ? highlightToken(tok) : highlightEl(sel)), onPointerLeave: clearHighlight };
+};
 
 // Design A: the sidebar's approve/deny for a background-hosted run's pending gate. We post it to the
 // SHELL (our parent), which — because it can prove the message came from this real extension iframe
@@ -489,7 +500,7 @@ function LocateRender({ d }: { d: Extract<RenderDescriptor, { type: "locate" }> 
             </div>
             {d.substeps.map((s, i) => <LocateSubstepView key={i} s={s} n={i + 1} />)}
             <div class="r-loc-picked">
-                <span class="tt">{d.pickedBy === "model" ? "Model picked" : "Snapped to"}<span class="tt-pop left" role="tooltip">{d.pickedBy === "model" ? "The model chose this by badge number (Set-of-Marks)." : d.pickedBy === "snap" ? "The model localized a region; the DOM hit-test chose this actual element." : "No element was selected."}</span></span>: {d.picked ? <code>{d.picked}</code> : <span class="dim">(none)</span>}
+                <span class="tt">{d.pickedBy === "model" ? "Model picked" : "Snapped to"}<span class="tt-pop left" role="tooltip">{d.pickedBy === "model" ? "The model chose this by badge number (Set-of-Marks)." : d.pickedBy === "snap" ? "The model localized a region; the DOM hit-test chose this actual element." : "No element was selected."}</span></span>: {d.picked ? <code class="r-hoverable" {...pickedHover(d.picked)}>{d.picked}</code> : <span class="dim">(none)</span>}
             </div>
         </div>
     );
@@ -588,7 +599,9 @@ function PythonInRender({ d }: { d: Extract<RenderDescriptor, { type: "python-in
     return (
         <div class="r-python r-py-in">
             <div class="r-py-mode">Mode: <span class="tt"><span class="r-py-modeval">{PY_MODE[d.mode].label}</span><span class="tt-pop left" role="tooltip">{PY_MODE[d.mode].tip}</span></span></div>
-            {d.image ? <div class="r-image r-py-img"><ClickableImg src={d.image} alt="input image" /><div class="r-image-label">input image (img / img_np)</div></div> : null}
+            {d.image ? <div class="r-image r-py-img"
+                {...(d.imageToken ? { onPointerEnter: () => highlightToken(d.imageToken!), onPointerLeave: clearHighlight } : {})}>
+                <ClickableImg src={d.image} alt="input image" /><div class="r-image-label">input image (img / img_np){d.imageToken ? " — hover to locate on page" : ""}</div></div> : null}
             {(d.tables || []).map((t, i) => {
                 const src = tableSourceDesc(t.source);
                 const cols = t.columns?.length || t.rows?.[0]?.length || 0;
@@ -613,7 +626,7 @@ function PythonOutRender({ d }: { d: Extract<RenderDescriptor, { type: "python-o
         <div class="r-python r-py-out">
             {d.stdout ? <div class="r-py-stdout"><div class="r-py-lbl">stdout</div><Code text={d.stdout} lang="text" /></div> : null}
             {d.image ? <div class="r-image"><ClickableImg src={d.image} alt="output image" /><div class="r-image-label">returned image</div></div> : null}
-            {d.token ? <div class="r-py-token"><div class="r-py-lbl">token</div><code>{d.token}</code></div> : null}
+            {d.token ? <div class="r-py-token"><div class="r-py-lbl">token</div><code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code></div> : null}
             {d.error ? <div class="r-py-err"><div class="r-py-lbl">error</div><Code text={d.error} lang="text" /></div> : null}
             {d.value != null && !d.image && !d.token && !d.error ? <div class="r-py-val"><div class="r-py-lbl">value</div><Code text={d.value} lang="json" /></div> : null}
         </div>

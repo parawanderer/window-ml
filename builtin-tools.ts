@@ -950,8 +950,11 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             // The In slot: a notebook-cell header (cell mode + input image/table + source). Shared
             // by every return path. The Out slot varies (stdout + one of image/token/value/error).
             const cellMode = cast === "pt" ? "pt" as const : cast === "box" ? "box" as const : "script" as const;
+            // If the input image was captured from an @pt/@box, carry the token so hovering the image in
+            // the sidebar highlights that point/region back on the page.
+            const imageToken = typeof image === "string" && (POINT_RE.test(image.trim()) || BOX_RE.test(image.trim())) ? image.trim() : undefined;
             const renderIn: RenderDescriptor = { type: "python-in", mode: cellMode, code,
-                ...(r.inputImage ? { image: r.inputImage } : {}), ...(r.inputTables && r.inputTables.length ? { tables: r.inputTables } : {}) };
+                ...(r.inputImage ? { image: r.inputImage } : {}), ...(imageToken ? { imageToken } : {}), ...(r.inputTables && r.inputTables.length ? { tables: r.inputTables } : {}) };
             const stdout = stdoutClipped || undefined;
             const done = (content: string, out: Omit<Extract<RenderDescriptor, { type: "python-out" }>, "type" | "stdout">): ToolResult =>
                 ({ content, renderIn, render: { type: "python-out", stdout, ...out } });

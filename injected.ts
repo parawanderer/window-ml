@@ -1456,6 +1456,17 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
     // as PAGE_TOOL_RUN). A no-op until an agent run registers a toolset via _registerRun.
     installToolDelegation();
 
+    // Sidebar hover-highlight for @pt/@box: the shell (a content script) can't read this main-world
+    // point/box registry, so it asks us to resolve a token to viewport coords, then draws the overlay
+    // itself (in its shadow root — no page mutation). `seq` echoes back so a stale hover is ignored.
+    window.addEventListener("message", (e: MessageEvent) => {
+        if (e.source !== window || !e.data || e.data.type !== "ML_HL_RESOLVE") return;
+        const token = String(e.data.token || "");
+        const point = resolvePoint(token);
+        const box = point ? null : resolveBox(token);
+        window.postMessage({ type: "ML_HL_AT", seq: e.data.seq, point: point || null, box: box || null }, "*");
+    });
+
     // Readiness signal for scripts (e.g. userscripts) that may run before this
     // one injects. Resolves immediately since window.ml is fully synchronous:
     //   const ml = await (window.ml?.ready

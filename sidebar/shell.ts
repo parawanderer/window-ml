@@ -113,20 +113,33 @@ function showLightbox(src: string): void {
 // no page-DOM mutation, no layout thrash, no MutationObserver noise. The shell shares the page DOM (a
 // content script), so it can resolve the selector + rect itself. Off-target / not-found → just hide.
 let highlightEl: HTMLElement | null = null;
-function hideHighlight(): void { if (highlightEl) { highlightEl.remove(); highlightEl = null; } }
-function showHighlight(ref: { selector?: string; index?: number } | null): void {
-    if (!shadowRoot || !ref || !ref.selector) return hideHighlight();
-    let el: Element | null = null;
-    try { el = document.querySelectorAll(ref.selector)[ref.index || 0] || null; } catch { el = null; }   // invalid selector (e.g. an @pt token) → no throw
-    if (!el) return hideHighlight();
-    const r = el.getBoundingClientRect();
-    if (!r.width && !r.height) return hideHighlight();   // hidden/collapsed — nothing to show
+let hlSeq = 0;   // monotonic — a later hover/clear invalidates a still-pending async token resolve
+function drawHighlight(left: number, top: number, width: number, height: number, label: string): void {
+    if (!shadowRoot) return;
     if (!highlightEl) { highlightEl = document.createElement("div"); highlightEl.id = SB_HIGHLIGHT; shadowRoot.append(highlightEl); }
-    Object.assign(highlightEl.style, { left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px` });
-    const label = document.createElement("div");
-    label.className = "ml-hl-label";
-    label.textContent = `${el.tagName.toLowerCase()} · ${Math.round(r.width)}×${Math.round(r.height)}`;
-    highlightEl.replaceChildren(label);
+    Object.assign(highlightEl.style, { left: `${left}px`, top: `${top}px`, width: `${width}px`, height: `${height}px` });
+    const lab = document.createElement("div");
+    lab.className = "ml-hl-label";
+    lab.textContent = label;
+    highlightEl.replaceChildren(lab);
+}
+function hideHighlight(): void { hlSeq++; if (highlightEl) { highlightEl.remove(); highlightEl = null; } }
+// Highlight a page target on hover. ELEMENT mode (`selector`): the shell shares the page DOM, so it
+// resolves the rect itself. POINT/BOX mode (`token`, an @pt/@box): only the main world knows the
+// coords, so ask injected to resolve (ML_HL_RESOLVE → ML_HL_AT) and draw on the reply.
+function showHighlight(ref: { selector?: string; index?: number; token?: string } | null): void {
+    const seq = ++hlSeq;
+    if (!shadowRoot || !ref) return hideHighlight();
+    if (ref.selector) {
+        let el: Element | null = null;
+        try { el = document.querySelectorAll(ref.selector)[ref.index || 0] || null; } catch { el = null; }
+        if (!el) return hideHighlight();
+        const r = el.getBoundingClientRect();
+        if (!r.width && !r.height) return hideHighlight();   // hidden/collapsed — nothing to show
+        drawHighlight(r.left, r.top, r.width, r.height, `${el.tagName.toLowerCase()} · ${Math.round(r.width)}×${Math.round(r.height)}`);
+    } else if (ref.token) {
+        window.postMessage({ type: "ML_HL_RESOLVE", token: ref.token, seq }, "*");   // injected replies with the coords
+    } else hideHighlight();
 }
 
 // While the overlay is hidden for a shot it stops being a hit-test target, so a wheel
@@ -173,6 +186,15 @@ function onWindowMessage(e: MessageEvent): void {
     // The iframe app asks to highlight a page element on hover (a rendered element ref). Draw the
     // overlay box; null clears it. Origin-checked (only the real iframe), like the lightbox.
     if ("__mlHighlight" in d && frame && e.source === frame.contentWindow) { showHighlight(d.__mlHighlight); return; }
+    // injected resolved an @pt/@box token to viewport coords → draw a point marker / box outline (unless
+    // a newer hover superseded it, or the token was stale and didn't resolve).
+    if (d.type === "ML_HL_AT" && e.source === window) {
+        if (d.seq !== hlSeq) return;
+        if (d.point) drawHighlight(d.point.x - 10, d.point.y - 10, 20, 20, `point · ${Math.round(d.point.x)}, ${Math.round(d.point.y)}`);
+        else if (d.box) drawHighlight(d.box.left, d.box.top, d.box.right - d.box.left, d.box.bottom - d.box.top, `box · ${Math.round(d.box.right - d.box.left)}×${Math.round(d.box.bottom - d.box.top)}`);
+        else hideHighlight();
+        return;
+    }
     // injected.js (page main world) → the active surface ONLY (the debugMode surfaces are
     // exclusive): `overlay` relays into the iframe app (frame is null in devtools mode →
     // no-op); `devtools` forwards to the background so the panel receives it (a panel can't
