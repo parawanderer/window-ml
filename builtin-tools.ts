@@ -1023,7 +1023,10 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                 // coords (crop offset + dpr) so the @pt clicks the right spot. No image → already viewport.
                 const pt = r.imageBox ? projectShotPoint(raw, r.imageBox) : raw;
                 const t = mintPoint(pt.x, pt.y);
-                return done(`${pre}→ ${t} at (${Math.round(pt.x)}, ${Math.round(pt.y)}). Verify then click: look({ selector: "${t}" }) → click({ selector: "${t}" }).`, { token: t });
+                // Models keep thinking the @pt is "displaced" — they compare it to their IMAGE-space
+                // coords and see a mismatch. Spell out that we already projected image px → viewport.
+                const proj = r.imageBox ? ` (You passed an image and cast to @pt, so your IMAGE-pixel coordinates were AUTOMATICALLY projected to VIEWPORT space — ${t} at (${Math.round(pt.x)}, ${Math.round(pt.y)}) IS the correct on-screen click point, not a displaced one; don't re-adjust for scale/offset.)` : "";
+                return done(`${pre}→ ${t} at (${Math.round(pt.x)}, ${Math.round(pt.y)}).${proj} Verify then click: look({ selector: "${t}" }) → click({ selector: "${t}" }).`, { token: t });
             }
             if (cast === "box") {
                 const raw = asBoxVal(v);
@@ -1034,7 +1037,8 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                 }
                 const bx = r.imageBox ? projectShotBox(raw, r.imageBox) : raw;   // image px → viewport
                 const t = mintBox(bx);
-                return done(`${pre}→ ${t} (a ${Math.round(bx.right - bx.left)}×${Math.round(bx.bottom - bx.top)}px region). Scope into it: locate({ selector: "${t}", description: "…" }).`, { token: t });
+                const proj = r.imageBox ? ` (You passed an image and cast to @box, so your IMAGE-pixel coordinates were AUTOMATICALLY projected to VIEWPORT space — this region is already in on-screen coordinates; don't re-adjust for scale/offset.)` : "";
+                return done(`${pre}→ ${t} (a ${Math.round(bx.right - bx.left)}×${Math.round(bx.bottom - bx.top)}px region).${proj} Scope into it: locate({ selector: "${t}", description: "…" }).`, { token: t });
             }
             const text = stringify(v);
             // The return LOOKS like a coordinate but no `cast` was set, so it came back as dead TEXT the

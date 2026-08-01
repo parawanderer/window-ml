@@ -1878,13 +1878,17 @@ test("cast:'pt' projects the image-pixel point through the crop transform before
     const res = await ml.pythonTool().run({ cast: "pt", code: "return [100,50]", image: "#stage" });
     // viewport = (10 + 100/2, 20 + 50/2) = (60, 45) — NOT the raw (100, 50).
     assert.match(res.content, /at \(60, 45\)/);
+    // With an image, the result SPELLS OUT that image-px were projected to viewport (models kept
+    // reading the projection as a "displaced" bug).
+    assert.match(res.content, /projected to VIEWPORT space/);
 });
 
-test("cast:'pt' with NO image mints the point as-is (already viewport coords)", async () => {
+test("cast:'pt' with NO image mints the point as-is (already viewport coords) — no projection note", async () => {
     const { ml } = loadDomWorld();
     ml.pythonExec = async () => ({ ok: true, value: [300, 200], stdout: "" });   // no imageBox
     const res = await ml.pythonTool().run({ cast: "pt", code: "return [300,200]" });
     assert.match(res.content, /at \(300, 200\)/);
+    assert.doesNotMatch(res.content, /projected to VIEWPORT/, "no image → coords were already viewport, no note");
 });
 
 test("cast:'box' projects both corners; the reported size is the VIEWPORT (dpr-shrunk) box", async () => {
