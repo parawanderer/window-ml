@@ -99,6 +99,17 @@ export const elPath = (el: Element): string => {
     return parts.join(" > ");
 };
 
+/** A copy-pasteable JS reference to the element a selector path (as elPath produces) locates:
+ *  `document.querySelector('<path>')`, or `document.querySelectorAll('<path>')[i]` for a non-zero
+ *  index. Backslashes (CSS escapes elPath emits, e.g. Tailwind `\/`) and single quotes are escaped for
+ *  the JS string literal, so the emitted line evaluates to the right selector. Pure. */
+export const elementReference = (path: string, index?: number): string => {
+    const q = `'${String(path).replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+    return typeof index === "number" && index > 0
+        ? `document.querySelectorAll(${q})[${index}]`
+        : `document.querySelector(${q})`;
+};
+
 /**
  * Fold typographic punctuation + whitespace to ASCII so a search for
  * "web-browser" matches a page that rendered "web‑browser" (non-breaking

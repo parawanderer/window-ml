@@ -308,6 +308,13 @@ details.io[open] > summary .io-preview { display: none; }
 .r-hoverable { border-radius: 3px; padding: 0 3px; cursor: default; }
 .r-hoverable:hover { background: color-mix(in srgb, var(--accent) 20%, transparent); }
 .r-py-img { cursor: default; }
+/* Custom right-click context menu (a web iframe can't use the native OS menu). */
+.ctx-backdrop { position: fixed; inset: 0; z-index: 1000; }
+.ctx-menu { position: fixed; min-width: 200px; padding: 4px; background: var(--panel, #1f2430); border: 1px solid var(--border);
+    border-radius: 7px; box-shadow: 0 8px 28px rgba(0,0,0,.5); display: flex; flex-direction: column; }
+.ctx-item { display: block; width: 100%; text-align: left; padding: 6px 10px; border: none; border-radius: 4px; background: none;
+    color: var(--fg); font: inherit; font-size: 0.9em; cursor: default; white-space: nowrap; }
+.ctx-item:hover { background: var(--accent); color: var(--accent-fg); }
 .r-el-idx { color: var(--fg-faint); font: 0.8em ui-monospace, SFMono-Regular, Menlo, monospace; flex: 0 0 auto; }
 .r-el-text { color: var(--fg); }
 .r-el-path { color: var(--fg-dim); font: 0.82em ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }

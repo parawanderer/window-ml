@@ -10,6 +10,7 @@ import { useState, useEffect, useRef } from "preact/hooks";
 import { signal } from "@preact/signals";
 import type { MlDebugEvent, DebugSessionConfig, DebugAgentConfig, NeutralMessage, MlConfig, ApiFormat, Theme, LoadedModel, ExtendProfile, RenderDescriptor, LocateSubstep, TokenUsage, TableSource } from "../contract";
 import { DEFAULT_CONFIG, fmtCtx } from "../contract";
+import { elementReference } from "../dom";
 import {
     FONT_KEY, WRAP_KEY, LINES_KEY,
     sessionMap, rev, view, fontScale, codeWrap, codeLineNumbers, config, models,
@@ -191,6 +192,34 @@ function useCopy(): { copied: boolean; copy: (text: string) => void } {
     const copy = (text: string) =>
         copyText(text).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1200); }).catch(() => {});
     return { copied, copy };
+}
+
+// A lightweight custom context menu. A web-page/iframe can't invoke the native OS menu with custom
+// items (that's privileged DevTools-only), so we render our own popup at the cursor. Rendered once in
+// App; opened via openCtxMenu(e, items); dismissed on outside-click / Esc / blur / item-click.
+interface CtxItem { label: string; run: () => void; }
+const ctxMenu = signal<{ x: number; y: number; items: CtxItem[] } | null>(null);
+const openCtxMenu = (e: MouseEvent, items: CtxItem[]): void => { e.preventDefault(); ctxMenu.value = { x: e.clientX, y: e.clientY, items }; };
+function ContextMenu() {
+    const m = ctxMenu.value;
+    useEffect(() => {
+        if (!m) return;
+        const close = () => (ctxMenu.value = null);
+        const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+        window.addEventListener("keydown", onKey);
+        window.addEventListener("blur", close);
+        return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("blur", close); };
+    }, [m]);
+    if (!m) return null;
+    const left = Math.min(m.x, window.innerWidth - 240);           // keep it on-screen (it's small)
+    const top = Math.min(m.y, window.innerHeight - (m.items.length * 30 + 14));
+    return (
+        <div class="ctx-backdrop" onPointerDown={() => (ctxMenu.value = null)} onContextMenu={e => { e.preventDefault(); ctxMenu.value = null; }}>
+            <div class="ctx-menu" style={`left:${left}px;top:${top}px`} onPointerDown={e => e.stopPropagation()}>
+                {m.items.map((it, i) => <button class="ctx-item" key={i} onClick={() => { it.run(); ctxMenu.value = null; }}>{it.label}</button>)}
+            </div>
+        </div>
+    );
 }
 
 // A debug image that opens full-window on click. The lightbox lives in the shell
@@ -443,11 +472,18 @@ function RenderElements({ items }: { items: { path: string; text?: string; index
         <div class="r-elements">
             {items.map((it, i) => {
                 // Hover → outline it on the page (DevTools-style). A path that's an @pt/@box highlights
-                // the point/region (via injected); a CSS selector highlights the element.
+                // the point/region (via injected); a CSS selector highlights the element. Right-click a
+                // selector row → a menu to copy a JS reference (nothing sensible for an @pt/@box).
                 const isTok = /^@(?:pt|box):[0-9a-f]+$/.test(it.path);
+                const menu = (e: MouseEvent) => openCtxMenu(e, [
+                    { label: "Copy document.querySelector(…)", run: () => copyText(elementReference(it.path, it.index)) },
+                    { label: "Copy selector", run: () => copyText(it.path) },
+                ]);
                 return (
                     <div class="r-el" key={it.index ?? i}
-                        onPointerEnter={() => (isTok ? highlightToken(it.path) : highlightEl(it.path))} onPointerLeave={clearHighlight}>
+                        title={isTok ? undefined : "right-click to copy a reference"}
+                        onPointerEnter={() => (isTok ? highlightToken(it.path) : highlightEl(it.path))} onPointerLeave={clearHighlight}
+                        onContextMenu={isTok ? undefined : menu}>
                         <span class="r-el-idx">#{it.index ?? i}</span>
                         {it.text ? <span class="r-el-text">«{it.text}»</span> : null}
                         <code class="r-el-path">{it.path}</code>
@@ -762,6 +798,9 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     // Keep the step expanded after you decide (setExpanded), so it doesn't collapse when `awaiting`
     // clears — you see the Out result fill in on the same open cell.
     const decide = (ok: boolean) => { setExpanded(true); setDecided(true); sendApproval(hash!, st.seq!, ok); };
+    // When a step starts awaiting approval, scroll it into view so a gate mid-run isn't missed.
+    const approveRef = useRef<HTMLDivElement>(null);
+    useEffect(() => { if (awaiting) approveRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }, [awaiting]);
     return (
         <div class={`astep tool${st.pending ? " pending" : ""}${awaiting ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : " appr-yes") : ""}`}>
             <button class="astep-head" onClick={() => setExpanded(v => !v)}>
@@ -788,7 +827,7 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
             {/* Approval bar at the BOTTOM — after In/Out — so you review the call (its rendered In)
                 before the approve/deny controls, and it reads as the last thing to act on. */}
             {awaiting
-                ? <div class="astep-approve">
+                ? <div class="astep-approve" ref={approveRef}>
                     <span class="appr-ask">Approve running <b>{st.tool}</b>?</span>
                     <span class="sp" />
                     <button class="appr-btn no" onClick={() => decide(false)}>Deny</button>
@@ -1227,6 +1266,7 @@ function App() {
     useEffect(() => { pollPs(); }, [v.name, vramOpen.value, open]);
     return (
         <div class="app">
+            <ContextMenu />
             <div class="head">
                 {v.name !== "list" ? <button class="tt nav" aria-label="Back to sessions" onClick={() => (view.value = { name: "list" })}>‹<span class="tt-pop left" role="tooltip">Back to sessions</span></button> : null}
                 {detailSession
