@@ -21,7 +21,7 @@ import { pretty, shortStamp, fullStamp, truncate, collapsedPreview, highlight, b
 import { annotatedConfig, turnProfile, shownModel, sessionProfile } from "./model";
 import { exportSession, printSession } from "./export";
 import { applyTheme, applyFont, applyCodePrefs, initThemeStyle } from "./prefs";
-import { IconCopy, IconCheck, IconWarn, IconChevron, IconGear, IconExport, IconVram, IconSend, IconUsage } from "./icons";
+import { IconCopy, IconCheck, IconWarn, IconChevron, IconGear, IconExport, IconVram, IconSend, IconUsage, IconBench } from "./icons";
 import { Settings } from "./settings";
 
 function onDebug(ev: MlDebugEvent): void {
@@ -1329,6 +1329,79 @@ function ExportMenu({ hash }: { hash: string }) {
     );
 }
 
+// Shape a raw PYTHON_EXEC response into a `python-out` descriptor for RenderPanel.
+function pyBenchDescriptor(r: { ok: boolean; value?: unknown; stdout: string; error?: string }): RenderDescriptor {
+    const stdout = r.stdout || undefined;
+    if (!r.ok) return { type: "python-out", stdout, error: r.error || "error" };
+    const v = r.value;
+    if (typeof v === "string" && /^data:image\//.test(v)) return { type: "python-out", stdout, image: v };
+    const value = v == null ? undefined : (typeof v === "string" ? v : JSON.stringify(v, null, 2));
+    return { type: "python-out", stdout, value };
+}
+// A standalone Python workbench: run scripts against the SAME sandbox the python_exec tool uses
+// (offscreen → worker → Pyodide) with a readonly/full mode selector, for debugging. Code-only — no
+// page image/tables (the sidebar iframe can't screenshot the page). The sidebar already talks to the
+// background directly (LIST_MODELS/OLLAMA_PS), so this is just one more message. Script + mode persist
+// in localStorage so they survive navigation. A full-mode run here is USER-initiated in the trusted
+// UI, so it just runs — no approval prompt (you are the approver).
+// Guarded localStorage — the bench persists its script/mode there, but an opaque origin (jsdom, or a
+// locked-down context) throws SecurityError on access, so degrade to no-persist instead of crashing.
+const lsGet = (k: string): string | null => { try { return localStorage.getItem(k); } catch { return null; } };
+const lsSet = (k: string, v: string): void => { try { localStorage.setItem(k, v); } catch { /* opaque origin — skip */ } };
+function PythonBench() {
+    const [code, setCode] = useState(() => lsGet("ml_bench_code") ?? "import numpy as np\nreturn int(np.arange(10).sum())");
+    const [mode, setMode] = useState<"readonly" | "full">(() => (lsGet("ml_bench_mode") === "full" ? "full" : "readonly"));
+    const [running, setRunning] = useState(false);
+    const [result, setResult] = useState<{ ok: boolean; value?: unknown; stdout: string; error?: string } | null>(null);
+    const taRef = useRef<HTMLTextAreaElement>(null);
+    const run = () => {
+        if (running || !code.trim()) return;
+        setRunning(true); setResult(null);
+        lsSet("ml_bench_code", code); lsSet("ml_bench_mode", mode);
+        try {
+            chrome.runtime.sendMessage({ type: "PYTHON_EXEC", payload: { code, hardened: mode === "readonly", image: null, tables: null } },
+                (resp: any) => {
+                    // The background wraps the offscreen result: { data: PyResult } | { error }.
+                    const r = resp?.data ?? (resp?.error ? { ok: false, stdout: "", error: resp.error } : null);
+                    setResult(r || { ok: false, stdout: "", error: "No response from the sandbox." });
+                    setRunning(false);
+                });
+        } catch (e) { setResult({ ok: false, stdout: "", error: String(e) }); setRunning(false); }
+    };
+    // Tab inserts spaces (don't escape the field); Cmd/Ctrl+Enter runs.
+    const onKey = (e: KeyboardEvent) => {
+        const ta = taRef.current;
+        if (e.key === "Tab" && ta) {
+            e.preventDefault();
+            const s = ta.selectionStart, en = ta.selectionEnd;
+            setCode(code.slice(0, s) + "    " + code.slice(en));
+            requestAnimationFrame(() => { ta.selectionStart = ta.selectionEnd = s + 4; });
+        } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); run(); }
+    };
+    const outD = result ? pyBenchDescriptor(result) : null;
+    const empty = result?.ok && !result.stdout && result.value == null;
+    return (
+        <div class="bench">
+            <div class="bench-note">Runs against the SAME sandbox <code>python_exec</code> uses (offscreen → worker → Pyodide). Code-only — no page image/tables. <code>return</code> a value; <code>print()</code> is captured. 15s cap.</div>
+            <textarea ref={taRef} class="bench-code code" spellcheck={false} value={code} onInput={e => setCode((e.target as HTMLTextAreaElement).value)} onKeyDown={onKey} placeholder="return 6 * 7" />
+            <div class="bench-bar">
+                <label class="bench-mode">mode
+                    <select value={mode} onChange={e => setMode((e.target as HTMLSelectElement).value === "full" ? "full" : "readonly")}>
+                        <option value="readonly">readonly (sandboxed)</option>
+                        <option value="full">full (network)</option>
+                    </select>
+                </label>
+                <span class="sp" />
+                <span class="bench-kbd dim">⌘/Ctrl+↵</span>
+                <button class="bench-run" disabled={running || !code.trim()} onClick={run}>{running ? "running…" : "Run"}</button>
+            </div>
+            {outD
+                ? <div class="bench-out"><div class="io-label">Out:</div>{empty ? <span class="dim">(ran — no output, no return)</span> : <RenderPanel d={outD} />}</div>
+                : running ? <div class="bench-out dim">running…</div> : null}
+        </div>
+    );
+}
+
 function App() {
     const v = view.value;
     // Subscribe to session-data changes. This read MUST land in always-rendered
@@ -1341,6 +1414,7 @@ function App() {
     // The iframe body IS the panel; the slide-out shell (tab/resize/container)
     // lives in the content-script host (sidebar/shell.ts), not here.
     const inSettings = v.name === "settings";
+    const inBench = v.name === "bench";
     const detailSession = v.name === "detail" ? sessionMap.get(v.hash) : null;
     // Lazily summarise session titles whenever the data or open-state changes.
     // `open` is read (not just used in deps) so App re-renders on open/close.
@@ -1369,18 +1443,20 @@ function App() {
                         <ProfileBadge profile={sessionProfile(detailSession)} />
                         {detailSession.kind === "agent" ? <AgentBadge /> : null}
                     </>
-                    : <b>{inSettings ? "Settings" : `Sessions (${sessionMap.size})`}</b>}
+                    : <b>{inSettings ? "Settings" : inBench ? "Python bench" : `Sessions (${sessionMap.size})`}</b>}
                 <span class="sp" />
                 {v.name === "detail" ? <Hash hash={v.hash} /> : null}
                 {v.name === "detail" ? <ExportMenu hash={v.hash} /> : null}
-                {!inSettings ? <button class={`tt hbtn${vramOpen.value ? " on" : ""}`} aria-label="VRAM monitor" onClick={() => (vramOpen.value = !vramOpen.value)}><IconVram /><span class="tt-pop" role="tooltip">VRAM monitor</span></button> : null}
-                {!inSettings ? <button class="tt hbtn" aria-label="Settings" onClick={() => { fetchModels(); view.value = { name: "settings" }; }}><IconGear /><span class="tt-pop" role="tooltip">Settings</span></button> : null}
+                {!inSettings && !inBench ? <button class={`tt hbtn${vramOpen.value ? " on" : ""}`} aria-label="VRAM monitor" onClick={() => (vramOpen.value = !vramOpen.value)}><IconVram /><span class="tt-pop" role="tooltip">VRAM monitor</span></button> : null}
+                {!inSettings && !inBench ? <button class="tt hbtn" aria-label="Python bench" onClick={() => (view.value = { name: "bench" })}><IconBench /><span class="tt-pop" role="tooltip">Python bench — run scripts in the sandbox</span></button> : null}
+                {!inSettings && !inBench ? <button class="tt hbtn" aria-label="Settings" onClick={() => { fetchModels(); view.value = { name: "settings" }; }}><IconGear /><span class="tt-pop" role="tooltip">Settings</span></button> : null}
             </div>
-            {vramOpen.value && !inSettings ? <VramPanel /> : null}
+            {vramOpen.value && !inSettings && !inBench ? <VramPanel /> : null}
             <div class="view" data-rev={r}>
                 {v.name === "settings" ? <Settings />
-                    : v.name === "list" ? <ListView />
-                        : <DetailView hash={v.hash} />}
+                    : v.name === "bench" ? <PythonBench />
+                        : v.name === "list" ? <ListView />
+                            : <DetailView hash={v.hash} />}
             </div>
             {detailSession ? <Composer s={detailSession} /> : null}
         </div>

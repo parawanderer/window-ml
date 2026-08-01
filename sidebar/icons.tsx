@@ -49,6 +49,12 @@ export const IconSend = () => (
         <path d="M6 12 3.27 4.36a.6.6 0 0 1 .82-.74l16.2 7.83a.6.6 0 0 1 0 1.08l-16.2 7.83a.6.6 0 0 1-.82-.74L6 12Zm0 0h6" />
     </svg>
 );
+// Terminal `>_` — the python debug bench (run scripts against the model's sandbox).
+export const IconBench = () => (
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m5 8 4 4-4 4M12 16h7" />
+    </svg>
+);
 // Usage gauge — a half-dial with a needle. Marks the context-usage bar.
 export const IconUsage = () => (
     <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">

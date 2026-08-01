@@ -48,7 +48,7 @@ export interface Session {
 // --- state: a Map (O(1) lookup) + a version signal to notify Preact of changes ---
 export const sessionMap = new Map<string, Session>();
 export const rev = signal(0);
-export const view = signal<{ name: "list" } | { name: "detail"; hash: string } | { name: "settings" }>({ name: "list" });
+export const view = signal<{ name: "list" } | { name: "detail"; hash: string } | { name: "settings" } | { name: "bench" }>({ name: "list" });
 export const fontScale = signal(1);
 export const codeWrap = signal(true);          // wrap long code lines vs. horizontal scroll
 export const codeLineNumbers = signal(false);  // show a line-number gutter on code blocks

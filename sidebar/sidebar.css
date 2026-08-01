@@ -166,6 +166,26 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
    wraps, or scrolls inside its own box (code blocks, tables), never the page. */
 .view { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 8px; min-width: 0; }
 .empty { color: var(--fg-faint); padding: 16px 8px; text-align: center; }
+
+/* Python bench — a debug workbench that runs scripts against the model's sandbox. */
+.bench { display: flex; flex-direction: column; gap: 8px; }
+.bench-note { color: var(--fg-dim); font-size: 0.85em; line-height: 1.45; }
+.bench-note code { background: var(--panel-2); border-radius: 3px; padding: 0 3px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.bench-code { width: 100%; min-height: 180px; resize: vertical; box-sizing: border-box;
+    background: var(--panel); color: var(--fg); border: 1px solid var(--border); border-radius: 6px; padding: 8px 9px;
+    font: 0.88em/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; tab-size: 4; white-space: pre; overflow: auto; }
+.bench-code:focus { outline: none; border-color: var(--accent); }
+.bench-bar { display: flex; align-items: center; gap: 8px; }
+.bench-mode { display: flex; align-items: center; gap: 5px; color: var(--fg-dim); font-size: 0.85em; }
+.bench-mode select { background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: 5px; padding: 3px 6px; font: inherit; font-size: 0.92em; cursor: pointer; }
+.bench-mode select:focus { outline: none; border-color: var(--accent); }
+.bench-kbd { font-size: 0.78em; font-variant-numeric: tabular-nums; }
+.bench-run { font-size: 0.86em; font-weight: 700; padding: 4px 16px; border-radius: 6px; border: 1px solid var(--accent-strong);
+    color: var(--accent-fg); background: var(--accent); cursor: pointer; }
+.bench-run:hover:not(:disabled) { filter: brightness(1.08); }
+.bench-run:disabled { opacity: 0.5; cursor: default; }
+.bench-out { display: flex; flex-direction: column; gap: 4px; }
+.bench-out .io-label { color: var(--fg-dim); font-size: 0.85em; font-weight: 600; }
 .sp { flex: 1; }
 .tag { font-size: 0.75em; font-weight: 700; letter-spacing: .04em; padding: 1px 5px; border-radius: 999px; text-transform: uppercase; }
 .tag.session { background: var(--panel-2); color: var(--fg-dim); }

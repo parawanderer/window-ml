@@ -331,8 +331,9 @@ function closeSidebarWorlds() {
 // document (sidebar.html): renders into #root, no shadow root. In the real
 // extension the content-script shell relays __mlDebug in from the parent window;
 // in jsdom window.parent === window, so dispatch posts with source: win.
-async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaModels = null, fetchLlm = () => ({ data: "OK" }), vram = [], psError = null, caps = null } = {}) {
+async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaModels = null, fetchLlm = () => ({ data: "OK" }), vram = [], psError = null, caps = null, pythonExec = null } = {}) {
     const unloadCalls = [];
+    const pyCalls = [];   // PYTHON_EXEC payloads the app sent (the bench)
     let psVram = vram;   // mutable so a test can change the resident set mid-run (setVram)
     const dom = new JSDOM(`<!doctype html><html><body><div id="root"></div></body></html>`, { runScripts: "outside-only", pretendToBeVisual: true });
     const win = dom.window;
@@ -360,6 +361,7 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaMode
                 else if (type === "MODEL_CAPS") cb({ data: typeof caps === "function" ? caps(msg.payload && msg.payload.model) : caps });
                 else if (type === "OLLAMA_PS") cb(psError ? { error: psError } : { data: psVram });
                 else if (type === "OLLAMA_UNLOAD") { unloadCalls.push(msg.payload); cb({ data: [] }); }
+                else if (type === "PYTHON_EXEC") { pyCalls.push(msg.payload); cb({ data: typeof pythonExec === "function" ? pythonExec(msg.payload) : (pythonExec || { ok: true, value: 42, stdout: "" }) }); }   // background wraps: { data: PyResult }
                 else cb({ data: null });
             },
         },
@@ -389,7 +391,7 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaMode
     // has run, then flush the resulting async state update + re-render.
     const flush = async () => { await new Promise((r) => win.setTimeout(r, 30)); await tick(); };
     const setVram = (v) => { psVram = v; };   // change the resident set a later poll will see
-    return { window: win, shadow: win.document, dispatch, raw, tick, flush, changeListeners, syncStore, localStore, unloadCalls, setVram };
+    return { window: win, shadow: win.document, dispatch, raw, tick, flush, changeListeners, syncStore, localStore, unloadCalls, pyCalls, setVram };
 }
 
 module.exports = { jsonResponse, htmlResponse, streamResponse, loadBackground, loadPageWorld, loadDomWorld, loadSidebarWorld, closeSidebarWorlds, loadDotEnv };

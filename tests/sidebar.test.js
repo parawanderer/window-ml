@@ -1162,6 +1162,43 @@ test("denying a gated step KEEPS its In render (the DONE's blank renderIn doesn'
     assert.match(toolStep.textContent, /Denied by the user/, "the denial result still shows");
 });
 
+test("python bench: opens from the header, runs a script, and renders the sandbox result", async () => {
+    const w = await loadSidebarWorld({ pythonExec: (p) => ({ ok: true, value: p.hardened ? 1 : 2, stdout: "hi\n" }) });
+    w.shadow.querySelector('[aria-label="Python bench"]').click();
+    await w.tick();
+    const ta = w.shadow.querySelector(".bench-code");
+    assert.ok(ta, "the code editor renders");
+    ta.value = "print('hi')\nreturn 1";
+    ta.dispatchEvent(new w.window.Event("input"));
+    await w.tick();
+    w.shadow.querySelector(".bench-run").click();
+    await w.tick();
+    // The PYTHON_EXEC payload carried the code; default mode readonly → hardened.
+    assert.equal(w.pyCalls.length, 1);
+    assert.match(w.pyCalls[0].code, /print\('hi'\)/);
+    assert.equal(w.pyCalls[0].hardened, true, "readonly mode → hardened");
+    // The result renders through the python-out panel (stdout).
+    const out = w.shadow.querySelector(".bench-out .r-py-out");
+    assert.ok(out, "result renders in the python-out panel");
+    assert.match(out.textContent, /hi/, "stdout shown");
+});
+
+test("python bench: full mode sends hardened:false", async () => {
+    const w = await loadSidebarWorld();
+    w.shadow.querySelector('[aria-label="Python bench"]').click();
+    await w.tick();
+    const sel = w.shadow.querySelector(".bench-mode select");
+    sel.value = "full";
+    sel.dispatchEvent(new w.window.Event("change"));
+    const ta = w.shadow.querySelector(".bench-code");
+    ta.value = "return 1";
+    ta.dispatchEvent(new w.window.Event("input"));
+    await w.tick();
+    w.shadow.querySelector(".bench-run").click();
+    await w.tick();
+    assert.equal(w.pyCalls[0].hardened, false, "full mode → not hardened");
+});
+
 test("exec code is beautified for display when the descriptor sets format", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("bty", "run js"));
