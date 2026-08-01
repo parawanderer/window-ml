@@ -3,6 +3,7 @@
 // into injected.js.
 
 import { truncate } from "./dom";
+import type { ShotBox } from "./contract";
 
 /**
  * Compact "where and when am I" snapshot: URL, title, page language, and the
@@ -132,3 +133,17 @@ export const resolveBox = (token: string): PtBox | null => {
     const m = BOX_RE.exec((token || "").trim());
     return m ? boxRegistry.get(m[1]) || null : null;
 };
+
+// --- Screenshot coordinate transform (project image-pixel coords → viewport) -----------
+// A raw element/region screenshot (ml.screenshot({ raw:true })) is CROPPED to the target's
+// viewport rect and SCALED by devicePixelRatio. So a pixel (px,py) in that image maps to the
+// viewport CSS coordinate `left + px/dpr`, `top + py/dpr`. python_exec analyses the image
+// (np.array(img)) and returns coords in IMAGE pixels; @pt/@box click in VIEWPORT coords — so a
+// cast:'pt'/'box' MUST project through this transform first, or the click lands off-target (on a
+// Retina display, ~dpr× too far, plus the missing element offset). Pure.
+export const projectShotPoint = (p: { x: number; y: number }, t: ShotBox): { x: number; y: number } =>
+    ({ x: t.left + p.x / (t.dpr || 1), y: t.top + p.y / (t.dpr || 1) });
+export const projectShotBox = (b: PtBox, t: ShotBox): PtBox => ({
+    left: t.left + b.left / (t.dpr || 1), top: t.top + b.top / (t.dpr || 1),
+    right: t.left + b.right / (t.dpr || 1), bottom: t.top + b.bottom / (t.dpr || 1),
+});

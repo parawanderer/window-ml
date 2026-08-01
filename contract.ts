@@ -60,6 +60,12 @@ export const DEFAULT_GROUNDING_RANGE = 1000;
  *  page (util/builtin-tools) and the sidebar's model-test both cap identically. */
 export const VISION_NUM_CTX = 8192;
 
+/** The crop transform of a raw element/region screenshot: the crop's top-left in VIEWPORT (CSS) px
+ *  and the devicePixelRatio it was captured at. A pixel (px,py) in that image maps to viewport CSS
+ *  `left + px/dpr`, `top + py/dpr` — so a python_exec coordinate (computed in image pixels) can be
+ *  projected back to the viewport for a clickable @pt/@box (see util.ts projectShotPoint/Box). */
+export interface ShotBox { left: number; top: number; dpr: number; }
+
 /** Whether a model id passes the optional `modelFilter` regex whitelist. Empty /
  *  whitespace filter → everything allowed. An INVALID regex → everything allowed
  *  (fail-OPEN: a typo shouldn't silently brick every call; the settings UI flags an
@@ -653,7 +659,7 @@ export interface MlApi {
     typeTool(): MlTool;
     /** Run a sandboxed Python snippet (Pyodide/WASM, numpy + Pillow) with an optional
      *  screenshot injected as `img`/`img_np`. No network/filesystem/DOM. */
-    pythonExec(code: string, opts?: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Element | Record<string, string | Element> | null }): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string; inputTables?: TablePreview[] }>;
+    pythonExec(code: string, opts?: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Element | Record<string, string | Element> | null }): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox }>;
     /** Built-in sandboxed-Python tool factory (numpy/Pillow pixel/array work). */
     pythonTool(): MlTool;
 
@@ -698,6 +704,9 @@ export interface MlApi {
     _resolveVisionModel(agentModel: string | null, vision: boolean | string | null): Promise<string | null>;
     _modelSees(model: string | null): Promise<boolean>;
     _nativeLookTool(): MlTool;
+    /** The crop transform (viewport top-left + dpr) of a raw screenshot of `target` — so a python_exec
+     *  image-pixel coordinate can be projected to the viewport for a clickable @pt/@box. */
+    _shotBox(target: string | Element, margin?: number): ShotBox | null;
 }
 
 /* --------------------------- global augmentation -------------------------- */

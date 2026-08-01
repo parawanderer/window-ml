@@ -1816,6 +1816,31 @@ test("tables:'current' with no data table (and not a Sheet) → a clear error", 
     await assert.rejects(ml._loadTable("df", "current"), /neither a Google Sheet nor has a table with data/);
 });
 
+// ---- python_exec cast:'pt'/'box' projects image-pixel coords → viewport (dpr + element offset) ----
+
+test("cast:'pt' projects the image-pixel point through the crop transform before minting", async () => {
+    const { ml } = loadDomWorld();
+    // Stub pythonExec: the sandbox returned an IMAGE-pixel point, plus the crop transform.
+    ml.pythonExec = async () => ({ ok: true, value: [100, 50], stdout: "", imageBox: { left: 10, top: 20, dpr: 2 } });
+    const res = await ml.pythonTool().run({ cast: "pt", code: "return [100,50]", image: "#stage" });
+    // viewport = (10 + 100/2, 20 + 50/2) = (60, 45) — NOT the raw (100, 50).
+    assert.match(res.content, /at \(60, 45\)/);
+});
+
+test("cast:'pt' with NO image mints the point as-is (already viewport coords)", async () => {
+    const { ml } = loadDomWorld();
+    ml.pythonExec = async () => ({ ok: true, value: [300, 200], stdout: "" });   // no imageBox
+    const res = await ml.pythonTool().run({ cast: "pt", code: "return [300,200]" });
+    assert.match(res.content, /at \(300, 200\)/);
+});
+
+test("cast:'box' projects both corners; the reported size is the VIEWPORT (dpr-shrunk) box", async () => {
+    const { ml } = loadDomWorld();
+    ml.pythonExec = async () => ({ ok: true, value: [0, 0, 200, 100], stdout: "", imageBox: { left: 10, top: 20, dpr: 2 } });
+    const res = await ml.pythonTool().run({ cast: "box", code: "return [0,0,200,100]", image: "#stage" });
+    assert.match(res.content, /100×50px region/);   // 200/2 × 100/2, not 200×100
+});
+
 test("the tool description only advertises 'current' when it resolves — one table → yes, none → no", () => {
     const one = loadDomWorld('<table><tr><td>1</td></tr></table>').ml.pythonTool();
     assert.match(one.description, /THIS PAGE HAS ONE TABLE/);

@@ -12,7 +12,7 @@ import { truncate, clipOut, errText, elLine, queryAll, selectorError, googleShee
 // Cap on python_exec output (stdout / value / error) fed back to the model — bigger than
 // exec's 500 (data output legitimately runs longer) but still bounds a runaway result.
 const PY_OUT_MAX = 2000;
-import { settle, VISION_NUM_CTX, cropDataUrl, MIN_SHOT_PX, POINT_RE, PT_LOOK_RADIUS, mintPoint, resolvePoint, nearbyPoint, BOX_RE, mintBox, resolveBox } from "./util";
+import { settle, VISION_NUM_CTX, cropDataUrl, MIN_SHOT_PX, POINT_RE, PT_LOOK_RADIUS, mintPoint, resolvePoint, nearbyPoint, BOX_RE, mintBox, resolveBox, projectShotPoint, projectShotBox } from "./util";
 import { collectCandidates, buildMarks, annotate, formatBox, letterboxToSquare, projectFromSquare, drawGrid, gridDims, validateCells, cellsBox, collectInBox, elementAtPoint, viewportBox, colorWordHues, pickOverlayColor, pickAccentColor, withHiddenSidebar, regionBox, REGION_NAMES, adjacentCells, type RegionName, type MarkFilter, type Box, type Mark } from "./som";
 
 // --- Coordinate targets (canvas / WebGL) -----------------------------------
@@ -963,14 +963,18 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             // Coordinates are opt-in via `cast` (auto-detecting [x,y] would mangle a general
             // script that returns two numbers). A mismatch is an honest error, not a guess.
             if (cast === "pt") {
-                const pt = asPoint(v);
-                if (!pt) return done(`${pre}cast:'pt' but the return isn't a point ([x,y] or {x,y}): ${stringify(v)}`, { value: stringify(v) });
+                const raw = asPoint(v);
+                if (!raw) return done(`${pre}cast:'pt' but the return isn't a point ([x,y] or {x,y}): ${stringify(v)}`, { value: stringify(v) });
+                // The script computed the point in the input IMAGE's pixels; project it back to viewport
+                // coords (crop offset + dpr) so the @pt clicks the right spot. No image → already viewport.
+                const pt = r.imageBox ? projectShotPoint(raw, r.imageBox) : raw;
                 const t = mintPoint(pt.x, pt.y);
                 return done(`${pre}→ ${t} at (${Math.round(pt.x)}, ${Math.round(pt.y)}). Verify then click: look({ selector: "${t}" }) → click({ selector: "${t}" }).`, { token: t });
             }
             if (cast === "box") {
-                const bx = asBoxVal(v);
-                if (!bx) return done(`${pre}cast:'box' but the return isn't a box ([x1,y1,x2,y2] or {left,top,right,bottom}): ${stringify(v)}`, { value: stringify(v) });
+                const raw = asBoxVal(v);
+                if (!raw) return done(`${pre}cast:'box' but the return isn't a box ([x1,y1,x2,y2] or {left,top,right,bottom}): ${stringify(v)}`, { value: stringify(v) });
+                const bx = r.imageBox ? projectShotBox(raw, r.imageBox) : raw;   // image px → viewport
                 const t = mintBox(bx);
                 return done(`${pre}→ ${t} (a ${Math.round(bx.right - bx.left)}×${Math.round(bx.bottom - bx.top)}px region). Scope into it: locate({ selector: "${t}", description: "…" }).`, { token: t });
             }

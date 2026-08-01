@@ -33,6 +33,7 @@ import { evalReadonly } from "./readonly-exec";
 import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables } from "./dom";
 import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, PT_LOOK_RADIUS, BOX_RE, resolveBox } from "./util";
+import type { ShotBox } from "./contract";
 import { annotate, pickAccentColorForTarget } from "./som";
 import { suspiciousArgsWarning, suspiciousChars } from "./security";
 import { emitDebug, debugId, shortHash, sessionRegistry, enterAgentRun, exitAgentRun } from "./bus";
@@ -872,6 +873,32 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             return cropDataUrl(await viewport(), rect, window.devicePixelRatio || 1);
         },
         /**
+         * The crop transform of a raw ml.screenshot({ raw:true }) of `target`: the crop's viewport
+         * top-left (CSS px) + the dpr it was captured at. So a python_exec coordinate — computed in
+         * the returned image's PIXELS — can be projected back to the viewport for a clickable @pt/@box
+         * (projectShotPoint/Box). Mirrors screenshot's raw crop rects: @pt → a PT_LOOK_RADIUS/`margin`
+         * box; @box → the box (pad 0); a selector/Element → its bounding rect. Call AFTER the shot so a
+         * scrolled-into-view element's rect is settled.
+         *
+         * @returns {ShotBox|null} null if the target doesn't resolve.
+         */
+        _shotBox: function(target: string | Element, margin = 0): ShotBox | null {
+            const dpr = window.devicePixelRatio || 1;
+            if (typeof target === "string" && POINT_RE.test(target.trim())) {
+                const pt = resolvePoint(target); if (!pt) return null;
+                const R = margin > 0 ? margin : PT_LOOK_RADIUS;
+                return { left: Math.max(0, pt.x - R), top: Math.max(0, pt.y - R), dpr };
+            }
+            if (typeof target === "string" && BOX_RE.test(target.trim())) {
+                const bx = resolveBox(target); if (!bx) return null;
+                return { left: Math.max(0, bx.left), top: Math.max(0, bx.top), dpr };   // raw: pad 0
+            }
+            const el = typeof target === "string" ? queryAll(target)[0] : target;
+            if (!(el instanceof Element)) return null;
+            const r = el.getBoundingClientRect();
+            return { left: r.left, top: r.top, dpr };
+        },
+        /**
          * Scroll the page in viewport-height steps, capture each, and stitch them
          * vertically into one tall PNG data URL. Browser-only (canvas). Paces
          * captures to respect captureVisibleTab's 2/sec limit, with backoff retries.
@@ -1021,11 +1048,15 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          * @returns {Promise<{ ok, value?, stdout, error?, inputImage?, inputTables? }>}
          *   `inputImage`/`inputTables` are what the sandbox saw (for the debug render).
          */
-        pythonExec: async function(code: string, { image = null, mode = "readonly", margin = 0, tableRaw = false, tables = null }: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Element | Record<string, string | Element> | null } = {}): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string; inputTables?: TablePreview[] }> {
+        pythonExec: async function(code: string, { image = null, mode = "readonly", margin = 0, tableRaw = false, tables = null }: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Element | Record<string, string | Element> | null } = {}): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox }> {
             // raw: the sandbox must see the container's/point's actual pixels — NOT the
             // look-verify overlay (the drawn @box outline / @pt marker) or its padding.
             // `margin` sets the crop radius around an @pt (default: the look-radius).
             const img = image != null ? await this.screenshot(image as string | Element, { raw: true, margin }) : null;
+            // The image's crop transform (viewport top-left + dpr), so a cast:'pt'/'box' can project
+            // the sandbox's IMAGE-pixel coordinate back to the viewport (else @pt/@box click off-target
+            // on a dpr>1 display / an offset element). Computed AFTER the shot (post scroll-into-view).
+            const imageBox = image != null ? this._shotBox(image as string | Element, margin) : null;
             // `tables` is a single source (→ `df`) OR a map { name: source }. Normalize to an ordered
             // [name, src] list; every source auto-dispatches by shape (a Sheets URL / 'current' →
             // sheet, else a DOM selector/Element) so one call can join a page table and a sheet.
@@ -1043,8 +1074,9 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
 
             const r = await makeBackgroundTaskPromise("PYTHON_EXEC_REQUEST", "PYTHON_EXEC_RESPONSE",
                 { code, image: img, hardened: mode !== "full", tables: loaded.map(l => ({ name: l.name, data: l.data })) }) as { ok: boolean; value?: unknown; stdout: string; error?: string };
-            const extra: { inputImage?: string; inputTables?: TablePreview[] } = {};
+            const extra: { inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox } = {};
             if (img) extra.inputImage = img;
+            if (imageBox) extra.imageBox = imageBox;   // for cast:'pt'/'box' → project image px → viewport
             if (loaded.length) extra.inputTables = loaded.map(l => ({
                 name: l.name, source: l.source,
                 ...(l.data.kind === "rows" ? { columns: l.data.columns, rows: l.data.rows } : { html: true }),
