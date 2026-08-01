@@ -1,0 +1,13 @@
+{
+  // The unit tests (.mjs) import the .ts sources directly, which needs the tsx loader — same as
+  // `npm test` (`node --import tsx …`). The Node.js Testing extension runs the worker from cwd `/`, so
+  // a bare `tsx` doesn't resolve — point at tsx's loader by ${workspaceFolder}-absolute path.
+  // (nodejsParameters is deprecated → use `extensions`: each entry maps test file-extensions to the
+  // node `parameters` used to run them. tsx's package main IS dist/loader.mjs.)
+  "nodejs-testing.extensions": [
+    {
+      "extensions": ["mjs", "cjs", "js"],
+      "parameters": ["--import", "${workspaceFolder}/node_modules/tsx/dist/loader.mjs"]
+    }
+  ]
+}
