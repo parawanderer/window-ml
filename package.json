@@ -7,7 +7,7 @@
         "fetch-pyodide": "node scripts/fetch-pyodide-wheels.mjs",
         "typecheck": "tsc --noEmit",
         "pretest": "npm run build",
-        "test": "node --import tsx --test --test-concurrency=1 tests/*.test.js"
+        "test": "node --import tsx --test --test-concurrency=1 tests/*.test.js tests/*.test.mjs"
     },
     "devDependencies": {
         "@types/chrome": "^0.2.2",

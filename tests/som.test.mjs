@@ -3,11 +3,12 @@
 // is a jsdom no-op, so collectCandidates/drawGrid (which need real layout + canvas)
 // can't run here — but representativeFor is the accessibility-agnostic CORE (climb a
 // raw hit to the meaningful element) and IS testable against a real DOM.
-const { test } = require("node:test");
-const assert = require("node:assert");
-const { JSDOM } = require("jsdom");
+import { test } from "node:test";
+import assert from "node:assert";
+import { JSDOM } from "jsdom";
+import * as som from "../som.ts";
 
-// som.js reads global document/window/getComputedStyle at call time; wire them.
+// som.ts reads global document/window/getComputedStyle at call time; wire them.
 function world(html) {
     const dom = new JSDOM(`<!doctype html><body>${html}</body>`);
     global.window = dom.window;
@@ -15,7 +16,6 @@ function world(html) {
     global.getComputedStyle = dom.window.getComputedStyle.bind(dom.window);
     return dom.window.document;
 }
-const som = require("../som.ts");
 const { representativeFor, isClickish, buildMarks, viewportBox, formatBox, projectFromSquare, gridDims, validateCells, cellsBox, adjacentCells, colorWordHues, pickOverlayHex, regionBox, REGION_OVERLAP } = som;
 
 test("colorWordHues extracts hues from colour words in a description (for overlay avoidance)", () => {

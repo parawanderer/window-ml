@@ -16,7 +16,8 @@
         "isolatedModules": true,
         "forceConsistentCasingInFileNames": true
     },
-    "include": ["**/*.ts", "**/*.tsx", "**/*.js"],
+    // "**/*.js" does NOT cover .mjs — the ESM unit tests (tests/*.test.mjs) need it spelled out.
+    "include": ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.mjs"],
     // tests/ is INCLUDED (not type-checked — checkJs is false) purely so the
     // language service indexes it: that's what lets go-to-definition and
     // find-references cross between a test and the .ts source it imports.

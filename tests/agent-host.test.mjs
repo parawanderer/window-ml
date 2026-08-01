@@ -2,9 +2,9 @@
 // scripted model + mocked delegateTool/approve, asserting the assembly: neutral-message building, the
 // TRUSTED python auto-approve skipping the gate (and full-mode / external-sheet still asking), a
 // non-approval tool delegating straight through, and the gate-before-execute invariant end-to-end.
-const { test } = require("node:test");
-const assert = require("node:assert");
-const { runBackgroundAgent } = require("../agent-host.ts");
+import { test } from "node:test";
+import assert from "node:assert";
+import { runBackgroundAgent } from "../agent-host.ts";
 
 // A model that plays a scripted list of assistant turns (one per step).
 const scriptedModel = (turns) => {

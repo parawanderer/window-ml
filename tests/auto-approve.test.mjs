@@ -1,9 +1,9 @@
 // The trusted-world auto-approve decision (auto-approve.ts). In design A this
 // runs in the BACKGROUND (unforgeable), deciding whether a privileged python_exec may skip the gate.
 // Pure, so it's tested directly — the SAME function the page loop uses today.
-const { test } = require("node:test");
-const assert = require("node:assert");
-const { autoApprovePython } = require("../auto-approve.ts");
+import { test } from "node:test";
+import assert from "node:assert";
+import { autoApprovePython } from "../auto-approve.ts";
 
 const ON = { autoApprovePython: true };
 const yes = () => true, no = () => false;

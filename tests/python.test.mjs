@@ -4,15 +4,17 @@
 // fallback, return/stdout/traceback capture, per-run isolation) is verified against actual pandas —
 // not a re-implementation. Opt-in: needs the bundled wheels (dist/pyodide/, from `npm run
 // fetch-pyodide`); self-SKIPS when absent (so a bundle-less `npm test` stays green). CI fetches them.
-const { test, before } = require("node:test");
-const assert = require("node:assert");
-const path = require("node:path");
-const fs = require("node:fs");
+import { test, before } from "node:test";
+import assert from "node:assert";
+import path from "node:path";
+import fs from "node:fs";
+// Static (not conditional-require) — python-runtime.ts is chrome-free and side-effect-free,
+// so importing it costs nothing when the wheels are absent; `skip` still gates every test.
+import { wrapUserCode, harden, unharden } from "../python-runtime.ts";
 
-const PYODIDE_DIR = path.resolve(__dirname, "../dist/pyodide");
+const PYODIDE_DIR = path.resolve(import.meta.dirname, "../dist/pyodide");
 const hasPyodide = fs.existsSync(path.join(PYODIDE_DIR, "pyodide.mjs"));
 const skip = hasPyodide ? false : "no dist/pyodide — run `npm run fetch-pyodide` to enable";
-const { wrapUserCode, harden, unharden } = hasPyodide ? require("../python-runtime.ts") : {};
 
 let py = null;
 before(async () => {

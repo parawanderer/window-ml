@@ -1,8 +1,8 @@
 "use strict";
-const { test } = require("node:test");
-const assert = require("node:assert");
-const { JSDOM } = require("jsdom");
-const { evalReadonly, NotInDialect, Denied } = require("../readonly-exec.ts");
+import { test } from "node:test";
+import assert from "node:assert";
+import { JSDOM } from "jsdom";
+import { evalReadonly, NotInDialect, Denied } from "../readonly-exec.ts";
 
 function world() {
     const dom = new JSDOM(`<!doctype html><body>

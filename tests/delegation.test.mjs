@@ -2,10 +2,10 @@
 //  1. The pure registry + envelope reduction (run-delegation.ts), unit-tested directly.
 //  2. The window round-trip through the REAL content.js reverse channel (loadPageWorld): the
 //     background's RUN_TOOL_IN_PAGE → PAGE_TOOL_RUN → executeTool → PAGE_TOOL_RESULT → sendResponse.
-const { test } = require("node:test");
-const assert = require("node:assert");
-const { registerRun, runDelegatedTool, endRun, getRun } = require("../run-delegation.ts");
-const { loadPageWorld } = require("./helpers");
+import { test } from "node:test";
+import assert from "node:assert";
+import { registerRun, runDelegatedTool, endRun, getRun } from "../run-delegation.ts";
+import { loadPageWorld } from "./helpers.js";
 
 const tool = (over = {}) => ({
     name: "probe", description: "", parameters: { type: "object", properties: {} },
