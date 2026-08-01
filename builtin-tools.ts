@@ -135,6 +135,14 @@ export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512 }: { mo
     });
 };
 
+// A coordinate baked into a locate `description` — "(664, 280)", "664, 280", "x=664, y=280".
+// The vision reader localizes by PIXELS, not numbers, so it's dead weight; and it's a tell that
+// the model already knows roughly WHERE the target is (usually from a prior @pt it located) and is
+// re-guessing with grounding instead of reusing that. The parenthesised form and the x=/y= form are
+// unmistakable; the bare pair requires a SPACE after the comma so a thousands separator ("12,345")
+// doesn't trip it.
+const COORD_IN_DESC = /\(\s*-?\d{1,4}\s*,\s*-?\d{1,4}\s*\)|\b[xy]\s*[=:]\s*-?\d{2,4}\b|\b\d{2,4}\s*,\s+\d{2,4}\b/i;
+
 // Delegated Set-of-Marks locator (see docs/spec + som.ts). Screenshots the
 // viewport, hit-test-sweeps for candidate elements (works on non-semantic UIs),
 // draws numbered badges in memory, and asks a VISION model which badge matches the
@@ -219,6 +227,15 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
         },
         run: async ({ description, filter = "clickables", margin = 0, strategy = "auto", selector, index = 0, gridSize, cells, region: regionName, container = false }: { description: string; filter?: MarkFilter; margin?: number; strategy?: "auto" | "grounding" | "marks" | "grid" | "grid-grounding"; selector?: string; index?: number; gridSize?: number; cells?: number[]; region?: RegionName; container?: boolean }) => {
             if (!description) return "Provide a `description` of the element to find.";
+            // Coordinates in the description mean the model already knows roughly where the target is
+            // and is re-guessing with grounding — steer it to REUSE that knowledge. Skip when already
+            // scoped to an @pt/@box (then it's doing the right thing; the coords are just noise).
+            const alreadyScoped = typeof selector === "string" && (POINT_RE.test(selector.trim()) || BOX_RE.test(selector.trim()));
+            if (COORD_IN_DESC.test(description) && !alreadyScoped) {
+                return `Your \`description\` contains COORDINATES — the vision model localizes by pixels, not numbers, so they're ignored. But it means you already know roughly WHERE the target is; use that instead of re-guessing with grounding:\n` +
+                    `• If those coordinates came from an \`@pt:…\` token you located earlier, RE-SEARCH the box around it: locate({ description: "<appearance only, drop the coordinates>", selector: "@pt:…", strategy: "grounding", margin: 100 }) — the point IS the scope; \`margin\` (40–120) grows the box if the target sits near its edge. This reuses the verified point instead of guessing a fresh coordinate.\n` +
+                    `• If you have NO such token, narrow by rough area: locate({ description: "<appearance only>", region: "center", strategy: "grid" }) — pick the \`region\` (left/right/top-left/center/…) nearest that spot. Then remove the coordinates from the description.`;
+            }
             const dpr = window.devicePixelRatio || 1;
             const RED = "#ff2d55", YELLOW = "#eab308";
             const rectOf = (b: Box) => ({ left: b.left, top: b.top, width: b.right - b.left, height: b.bottom - b.top });
@@ -1004,7 +1021,15 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                 return done(`${pre}→ ${t} (a ${Math.round(bx.right - bx.left)}×${Math.round(bx.bottom - bx.top)}px region). Scope into it: locate({ selector: "${t}", description: "…" }).`, { token: t });
             }
             const text = stringify(v);
-            return done(`${pre}${text}`, { value: text });
+            // The return LOOKS like a coordinate but no `cast` was set, so it came back as dead TEXT the
+            // model can't click. Nudge it to re-run the SAME script with the matching cast → a clickable
+            // @pt/@box. Covers both point casts (pt for {x,y}/[x,y], box for {left,top,right,bottom}/4-array).
+            const castHint = asPoint(v)
+                ? ` — this looks like a POINT but you didn't set \`cast\`, so it's just text you can't click. Re-run this exact script with cast:"pt" to mint a clickable coordinate (returns @pt:… → look()/click() it).`
+                : asBoxVal(v)
+                    ? ` — this looks like a BOX but you didn't set \`cast\`, so it's just text. Re-run this exact script with cast:"box" to mint a clickable region (returns @box:… → scope into it with locate()).`
+                    : "";
+            return done(`${pre}${text}${castHint}`, { value: text });
         },
     });
 };

@@ -922,6 +922,39 @@ test("locate: container:true without a grounding model is refused with guidance"
     assert.match(String(out), /container mode.*needs a grounding model/);
 });
 
+test("locate: COORDINATES in the description are caught → steer to reuse an @pt / region+grid (no vision call)", async () => {
+    const { ml } = loadDomWorld('<div>hi</div>');
+    const lt = ml.locateTool({ model: "vlm", groundingModel: "qwen2.5vl" });
+    // The exact shape from the observed run: appearance + a baked-in "(x, y)".
+    for (const desc of [
+        "the red guy with a red cap. He is located around (664, 280).",
+        "the star icon at 664, 280",
+        "the toggle, x=664, y=280",
+    ]) {
+        const out = String(await lt.run({ description: desc, selector: "canvas#stage", strategy: "grounding" }));
+        assert.match(out, /contains COORDINATES/, `caught for: ${desc}`);
+        assert.match(out, /selector: "@pt:…", strategy: "grounding", margin: 100/, "steers to reuse an @pt with margin");
+        assert.match(out, /region: "center", strategy: "grid"/, "offers the region+grid fallback");
+    }
+});
+
+test("locate: coordinate-steer does NOT fire when already scoped to an @pt (that's the right call)", async () => {
+    const { ml } = loadDomWorld('<div>hi</div>');
+    // Scoped to an @pt already → the coords are just noise; don't block. (Unknown token errors instead.)
+    const out = String(await ml.locateTool({ model: "vlm", groundingModel: "qwen2.5vl" })
+        .run({ description: "the red guy around (664, 280)", selector: "@pt:deadbeef", strategy: "grounding" }));
+    assert.doesNotMatch(out, /contains COORDINATES/, "already @pt-scoped → no coordinate steer");
+});
+
+test("locate: a legit description with a thousands-separated number is NOT mistaken for coordinates", async () => {
+    const { ml } = loadDomWorld('<button>Buy</button>');
+    // "12,345" (no space after comma) is a quantity, not a coordinate pair — must not trip the guard.
+    // A missing container selector then short-circuits, proving we passed the coord check without firing it.
+    const out = String(await ml.locateTool({ model: "vlm" }).run({ description: 'the "12,345 items" button', selector: "#nope" }));
+    assert.doesNotMatch(out, /contains COORDINATES/, "a thousands separator isn't a coordinate");
+    assert.match(out, /No element matches "#nope"/, "fell through to the normal selector path");
+});
+
 test("locate scoping: a missing container selector short-circuits (no screenshot attempt)", async () => {
     const { ml } = loadDomWorld('<div id="box">hi</div>');
     const out = await ml.locateTool({ model: "vlm" }).run({ description: "the star", selector: "#nope" });
@@ -1859,6 +1892,32 @@ test("cast:'box' projects both corners; the reported size is the VIEWPORT (dpr-s
     ml.pythonExec = async () => ({ ok: true, value: [0, 0, 200, 100], stdout: "", imageBox: { left: 10, top: 20, dpr: 2 } });
     const res = await ml.pythonTool().run({ cast: "box", code: "return [0,0,200,100]", image: "#stage" });
     assert.match(res.content, /100×50px region/);   // 200/2 × 100/2, not 200×100
+});
+
+test("no-cast return that LOOKS like a point → hints to re-run with cast:'pt'", async () => {
+    const { ml } = loadDomWorld();
+    // The observed dumb move: the script computed {x,y} but omitted `cast`, so it's dead text.
+    ml.pythonExec = async () => ({ ok: true, value: { x: 421, y: 32 }, stdout: "" });
+    const res = await ml.pythonTool().run({ code: "return {'x': int(x), 'y': int(y)}" });
+    assert.match(res.content, /looks like a POINT/);
+    assert.match(res.content, /cast:"pt"/, "names the exact cast to add");
+    assert.match(res.content, /421/, "still shows the computed value");
+});
+
+test("no-cast return that LOOKS like a box → hints to re-run with cast:'box'", async () => {
+    const { ml } = loadDomWorld();
+    ml.pythonExec = async () => ({ ok: true, value: [10, 20, 110, 80], stdout: "" });
+    const res = await ml.pythonTool().run({ code: "return [10,20,110,80]" });
+    assert.match(res.content, /looks like a BOX/);
+    assert.match(res.content, /cast:"box"/);
+});
+
+test("no-cast return that is plain data (not a coordinate) gets NO cast hint", async () => {
+    const { ml } = loadDomWorld();
+    ml.pythonExec = async () => ({ ok: true, value: 42, stdout: "" });
+    const res = await ml.pythonTool().run({ code: "return 6*7" });
+    assert.doesNotMatch(res.content, /looks like a POINT|looks like a BOX/);
+    assert.match(res.content, /42/);
 });
 
 test("the tool description only advertises 'current' when it resolves — one table → yes, none → no", () => {
