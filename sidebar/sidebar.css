@@ -201,6 +201,18 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .appr { font-size: 0.72em; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; padding: 0 6px; border-radius: 999px; border: 1px solid; flex: 0 0 auto; line-height: 1.6; }
 .appr.yes { color: var(--ok); border-color: var(--ok); }
 .appr.no { color: var(--err); border-color: var(--err); }
+
+/* Design A: a background-hosted call blocked on the human gate. A warn-edged bar with approve/deny —
+   the decision is made HERE (extension iframe), unforgeable by the page. */
+.astep.tool.awaiting { border-left-color: var(--warn); }
+.astep-approve { display: flex; align-items: center; gap: 8px; margin: 4px 0 6px; padding: 6px 8px; border-radius: 6px;
+    background: color-mix(in srgb, var(--warn) 14%, transparent); border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); }
+.astep-approve .appr-ask { color: var(--fg); font-size: 0.9em; }
+.astep-approve .appr-ask b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.appr-btn { font-size: 0.82em; font-weight: 700; padding: 3px 12px; border-radius: 6px; border: 1px solid; cursor: pointer; background: none; }
+.appr-btn.yes { color: var(--accent-fg); background: var(--ok); border-color: var(--ok); }
+.appr-btn.no { color: var(--err); border-color: var(--err); }
+.appr-btn:hover { filter: brightness(1.08); }
 /* rendered ⇄ raw toggle for a descriptor step */
 /* No `overflow: hidden` here — it would clip the buttons' hover tooltip (which hangs
    below the toggle). The rounded ends come from the first/last button instead. */

@@ -2,8 +2,11 @@
 // extracts replies, and makes the privileged (host-permissioned) fetches. All
 // server JSON is genuinely opaque, so it's typed `any`; our own data uses the
 // shared contract types.
-import type { MlConfig, ApiFormat, NeutralMessage, ToolCall, FetchLlmPayload, LlmResult, LoadedModel, JsonSchema, TokenUsage } from "./contract";
+import type { MlConfig, ApiFormat, NeutralMessage, ToolCall, FetchLlmPayload, LlmResult, LoadedModel, JsonSchema, TokenUsage, StartRunPayload, SetApprovalPayload, ApprovalDecision } from "./contract";
 import { DEFAULT_CONFIG, modelFilterAllows } from "./contract";   // single source of truth (see contract.ts)
+import { runBackgroundAgent } from "./agent-host";   // design A: the background-hosted agent loop
+import type { ToolMeta } from "./agent-loop";
+import { externalSheetIds } from "./dom";   // track approved external sheets across a run
 
 // The wire body we assemble for a chat request (grows per format/options).
 interface ChatBody {
@@ -699,12 +702,80 @@ async function unloadModels(modelName?: string): Promise<string[]> {
 // (ml.agent's signal fired) can cancel the actual fetch. Deleted when the request settles.
 const inflight = new Map<string, AbortController>();
 
+// Design A: pending background-run approvals, keyed by `${runId}:${seq}`, resolved by a SET_APPROVAL
+// message the sidebar app sends (origin-authed by the shell — it only forwards a decision from the real
+// extension iframe). The approve/deny decision is made here and never crosses the page: the point of A.
+const pendingApprovals = new Map<string, (d: ApprovalDecision) => void>();
+
 chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     // The content-script shell forwards each __mlDebug event here so a DevTools panel
     // (which can't see page window-messages) can mirror the overlay's stream. Fire-and-
     // forget — no response. RESET clears a tab's buffer on navigation (fresh page).
     if (message.type === "ML_DEBUG_EVENT") { if (sender.tab?.id != null) relayDebugEvent(sender.tab.id, message.event); return; }
     if (message.type === "ML_DEBUG_RESET") { if (sender.tab?.id != null) resetDebug(sender.tab.id); return; }
+    if (message.type === "SET_APPROVAL") {
+        // The sidebar's approve/deny for a pending background-run gate. Only reaches here via the shell,
+        // which forwards it ONLY when it came from the real extension iframe (e.source === frame) — a page
+        // can't forge that, so a page-set window.confirm / a hostile approve() has no effect. Design A's crux.
+        const p = message.payload as SetApprovalPayload;
+        const resolve = pendingApprovals.get(`${p.runId}:${p.seq}`);
+        if (resolve) {
+            pendingApprovals.delete(`${p.runId}:${p.seq}`);
+            resolve(p.decision ? { approved: true } : { approved: false, feedback: p.feedback });
+        }
+        return;   // fire-and-forget
+    }
+    if (message.type === "START_RUN") {
+        // Design A: run an ml.agent loop HERE (extension origin), delegating each tool back to the page
+        // (RUN_TOOL_IN_PAGE) and gating approval through the sidebar. The page built the toolset + system
+        // prompt (it has the DOM/config/factories) and registered the live tools under runId; we hold only
+        // serializable descriptors. sender.tab.id is the delegation + debug-fanout target.
+        const tabId = sender.tab?.id;
+        if (tabId == null) { sendResponse({ error: "START_RUN must come from a tab (content script)." }); return true; }
+        const p = message.payload as StartRunPayload;
+        const runId = p.runId;
+        const toolMetas: ToolMeta[] = p.tools.map(t => ({ name: t.name, requiresApproval: t.requiresApproval, capabilities: t.capabilities }));
+        const toolDefs = p.tools.map(t => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
+        const approvedSheets = new Set<string>();   // external sheets approved this run (isSheetApproved)
+        // Debug fan-out for this run → the active surface. Overlay: re-post to the page window
+        // (ML_DEBUG_TO_PAGE → content.js → the shell → the iframe app). The panel isn't wired for
+        // background runs yet (its reverse channel doesn't exist), hence surface is overlay-only.
+        const emitStep = (ev: Record<string, unknown>): void => {
+            chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event: {
+                kind: "agent-step", id: runId, ts: Date.now(), save: false,
+                session: { hash: runId, turn: (ev.step as number) || 0 }, ...ev,
+            } }).catch(() => { /* tab gone / no receiver */ });
+        };
+        runBackgroundAgent(
+            { task: p.task, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython },
+            {
+                callModel: async (messages) => {
+                    const r = await fetchLLM({ messages, tools: toolDefs, model: p.model, think: p.think, raw: true }) as { content: string | null; tool_calls: ToolCall[]; usage: TokenUsage | null };
+                    return { content: r.content, tool_calls: r.tool_calls, usage: r.usage };
+                },
+                delegateTool: async (name, args) => {
+                    const env = await chrome.tabs.sendMessage(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name, args } })
+                        .catch((e: unknown) => ({ result: `Error: could not reach the page to run "${name}" (${(e as Error)?.message || e}).` }));
+                    return { result: (env && (env as { result?: string }).result) || `Error: the page returned nothing for tool "${name}".` };
+                },
+                approve: ({ tool, arguments: args, seq, step }) => new Promise<ApprovalDecision>((resolve) => {
+                    pendingApprovals.set(`${runId}:${seq}`, (decision) => {
+                        const ok = decision === true || (typeof decision === "object" && !!decision && decision.approved);
+                        if (ok && tool === "python_exec") for (const id of externalSheetIds(args)) approvedSheets.add(id);
+                        resolve(decision);
+                    });
+                    // Patch the pending step to show approve/deny (awaitingApproval) instead of "running…".
+                    emitStep({ step, seq, pending: true, awaitingApproval: true, tool, arguments: args });
+                }),
+                isSheetApproved: (id) => approvedSheets.has(id),
+                emit: (ev) => emitStep(ev as Record<string, unknown>),
+                signal: null,
+            },
+        )
+            .then((res) => sendResponse({ data: res }))
+            .catch((err) => sendResponse({ error: err?.message || String(err) }));
+        return true;   // async: sendResponse fires when the whole run finishes
+    }
     if (message.type === "PYTHON_EXEC") {
         // Route the sandboxed-Python run to the offscreen Pyodide host (the service worker
         // can't run WASM). Spin the offscreen doc up on first use, then relay PY_RUN to it.
@@ -797,7 +868,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 utilityModel: config.utilityModel, utilityNumCtx: config.utilityNumCtx, utilityForceCpu: config.utilityForceCpu,
                 autoApproveReadonly: config.autoApproveReadonly, autoApprovePython: config.autoApprovePython,
                 groundingEnabled: config.groundingEnabled, groundingModel: config.groundingModel,
-                groundingRange: config.groundingRange,
+                groundingRange: config.groundingRange, debugMode: config.debugMode,
             } }))
             .catch(err => sendResponse({ error: err.message }));
         return true;

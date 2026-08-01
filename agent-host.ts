@@ -39,7 +39,7 @@ export interface RunAgentHostDeps {
     // a requiresApproval tool ONLY after the gate — the untrusted execution point.
     delegateTool(name: string, args: Record<string, unknown>): Promise<{ result: string }>;
     // The approval gate — the sidebar, in design A (origin-authed; the decision never crosses the page).
-    approve(req: { tool: string; arguments: Record<string, unknown> }): Promise<ApprovalDecision>;
+    approve(req: { tool: string; arguments: Record<string, unknown>; seq?: number; step?: number }): Promise<ApprovalDecision>;
     // Whether an external Google spreadsheet was already approved this run (trusted, background-side) —
     // lets a repeat python_exec on the same sheet skip the re-prompt without re-escalating.
     isSheetApproved?(id: string): boolean;

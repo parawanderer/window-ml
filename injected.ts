@@ -494,6 +494,46 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 tools: toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval, vision: !!(t.capabilities && t.capabilities.includes("vision")) })),
                 maxSteps, think: (think === true || think === false) ? think : null, env, vision: vision ?? null, hints: hints || null,
             } });
+
+            // ── Design A: route through the BACKGROUND loop when a debug surface is active ──
+            // The approval gate then lives at the extension origin (the sidebar), unforgeable by the page
+            // — a page-set window.confirm or a hostile approve() can't grant it. The page still built the
+            // toolset + system prompt above and registers the LIVE tools under runHash; the background
+            // delegates each call back via RUN_TOOL_IN_PAGE and gates approval through the sidebar. Only
+            // the OVERLAY surface is wired today; devtools/off fall through to the in-page loop below.
+            // Caveats (v1): the caller's `approve`/`onStep`/`logDebug` and rich tool renders (screenshots)
+            // don't apply on this path yet — the sidebar IS the gate, and steps stream as debug events.
+            if (agentCfg?.debugMode === "overlay") {
+                registerRun(runHash, toolset);
+                const descriptors = toolset.map(t => ({
+                    name: t.name, description: t.description, parameters: t.parameters,
+                    requiresApproval: !!t.requiresApproval, capabilities: t.capabilities || [],
+                }));
+                enterAgentRun();   // suppress orphan chat sessions from a delegated tool's internal ml.chat
+                try {
+                    const res = await makeBackgroundTaskPromise<AgentResult>("START_RUN_REQUEST", "START_RUN_RESPONSE", {
+                        runId: runHash, task, systemPrompt, tools: descriptors,
+                        model: runModel, think: (think === true || think === false) ? think : null,
+                        maxSteps, autoApprovePython: autoPy, surface: "overlay",
+                    }, undefined, signal);
+                    // The real DOM nodes an answer-capable tool returned stayed page-side (they can't cross
+                    // the bus) — assemble AgentResult.elements from the page-side run record here.
+                    const run = endRun(runHash);
+                    const full: AgentResult = { ...res, elements: run ? run.answered : [] };
+                    emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: res.steps }, summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled });
+                    return full;
+                } catch (e) {
+                    const run = endRun(runHash);
+                    // A caller abort rejects the round-trip; mirror the page loop's clean cancel (resolve,
+                    // not throw) with the partial run. (The background fetch isn't killed yet — v1 caveat.)
+                    if (signal?.aborted) {
+                        emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, summary: "Cancelled by the caller.", steps: 0, hitCap: false, cancelled: true });
+                        return { summary: "Cancelled by the caller.", steps: 0, transcript: [], elements: run ? run.answered : [], cancelled: true };
+                    }
+                    throw e;
+                } finally { exitAgentRun(); }
+            }
+
             let stepSeq = 0;   // monotonic id per tool-call step, correlating its in-flight START with its DONE
             const emit = (event: { step: number; seq?: number; pending?: boolean; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: Node[]; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; argIssues?: string[]; approval?: "readonly" | "sandbox" | "user" | "denied"; usage?: TokenUsage | null }) => {
                 // A `pending` START is a sidebar-render-only event: it has no result yet, so it must

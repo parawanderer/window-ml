@@ -36,7 +36,7 @@ function onDebug(ev: MlDebugEvent): void {
     if (ev.kind === "agent-step") {
         const s = sessionMap.get(ev.session.hash);
         if (!s) return;
-        const step = { step: ev.step, seq: ev.seq, pending: ev.pending, thought: ev.thought, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: ev.elements, renderIn: ev.renderIn, renderOut: ev.renderOut, argIssues: ev.argIssues, approval: ev.approval, usage: ev.usage };
+        const step = { step: ev.step, seq: ev.seq, pending: ev.pending, awaitingApproval: ev.awaitingApproval, thought: ev.thought, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: ev.elements, renderIn: ev.renderIn, renderOut: ev.renderOut, argIssues: ev.argIssues, approval: ev.approval, usage: ev.usage };
         const steps = s.steps || [];
         // In-flight: a tool step arrives twice — a pending START then the DONE, sharing a `seq`.
         // Patch the existing row in place (immutably) so it fills in; otherwise append. Thoughts
@@ -197,6 +197,14 @@ function useCopy(): { copied: boolean; copy: (text: string) => void } {
 // (parent), not this iframe, so it fills the whole browser rather than the
 // ~sidebar-width frame — post the src up and the shell renders the overlay.
 const openLightbox = (src: string) => window.parent.postMessage({ __mlLightbox: src }, "*");
+
+// Design A: the sidebar's approve/deny for a background-hosted run's pending gate. We post it to the
+// SHELL (our parent), which — because it can prove the message came from this real extension iframe
+// (e.source === frame.contentWindow, unforgeable by the page) — forwards it to the background as
+// SET_APPROVAL. That authentication is the whole point: the decision is made HERE and the page can't
+// spoof it. Keyed by the run hash + the step's seq.
+const sendApproval = (hash: string, seq: number, decision: boolean) =>
+    window.parent.postMessage({ __mlSidebarApp: "approval", hash, seq, decision }, "*");
 // No tooltip here on purpose: `cursor: zoom-in` is the standard affordance for
 // "click to enlarge", and a pop anchored under a full-width screenshot (locate
 // renders stack several) would land far from the pointer and just add noise.
@@ -699,15 +707,21 @@ const ApprovalBadge = ({ approval }: { approval: "readonly" | "sandbox" | "user"
     </span>
 );
 
-function ToolStep({ st }: { st: AgentStep }) {
+function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     const [open, setOpen] = useState(false);
+    const [decided, setDecided] = useState(false);   // hide the controls the instant we click (before the DONE lands)
     const args = st.arguments && Object.keys(st.arguments).length ? st.arguments : null;
     // Each slot renders from its own descriptor; the block falls back to raw when absent.
     const inRender = st.renderIn;
     const outRender = st.renderOut;
     const issues = st.argIssues?.length ? st.argIssues : null;
+    // Design A: a background-hosted call blocked on the human gate. Render approve/deny here — the
+    // decision is made in this (extension-origin) iframe, unforgeable by the page. Needs the run hash +
+    // the step seq to correlate; without them (a page-loop run) fall back to the plain pending view.
+    const awaiting = !!(st.awaitingApproval && st.pending && !decided && hash && st.seq != null);
+    const decide = (ok: boolean) => { setDecided(true); sendApproval(hash!, st.seq!, ok); };
     return (
-        <div class={`astep tool${st.pending ? " pending" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : " appr-yes") : ""}`}>
+        <div class={`astep tool${st.pending ? " pending" : ""}${awaiting ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : " appr-yes") : ""}`}>
             <button class="astep-head" onClick={() => setOpen(v => !v)}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
                 <Dot status={st.pending ? "pending" : toolFailed(st.result) ? "err" : "ok"} />
@@ -715,8 +729,16 @@ function ToolStep({ st }: { st: AgentStep }) {
                 {st.approval ? <ApprovalBadge approval={st.approval} /> : null}
                 {st.elements ? <span class="tt el-count">{st.elements} el<span class="tt-pop wrap" role="tooltip">DOM nodes returned (reach them in the console via onStep).</span></span> : null}
                 {issues ? <span class="arg-warn" title={issues.join("; ")}><IconWarn />{issues.length}</span> : null}
-                {!open ? <span class="astep-preview">{st.pending ? <span class="dim">running…</span> : collapsedPreview(st.result || "").text}</span> : null}
+                {!open ? <span class="astep-preview">{awaiting ? <span class="dim">needs approval</span> : st.pending ? <span class="dim">running…</span> : collapsedPreview(st.result || "").text}</span> : null}
             </button>
+            {awaiting
+                ? <div class="astep-approve">
+                    <span class="appr-ask">Approve running <b>{st.tool}</b>?</span>
+                    <span class="sp" />
+                    <button class="appr-btn no" onClick={() => decide(false)}>Deny</button>
+                    <button class="appr-btn yes" onClick={() => decide(true)}>Approve</button>
+                </div>
+                : null}
             {open
                 ? <div class="astep-body">
                     {issues ? <div class="tt tt-row arg-issues"><IconWarn /><span>arg schema: {issues.join("; ")}</span><span class="tt-pop wrap left" role="tooltip">The args don't match this tool's parameter schema.</span></div> : null}
@@ -734,12 +756,12 @@ function ToolStep({ st }: { st: AgentStep }) {
 }
 
 // One turn = the pill + the thought + the tool calls it batched.
-function AgentTurn({ turn, max }: { turn: AgentTurnGroup; max?: number }) {
+function AgentTurn({ turn, max, hash }: { turn: AgentTurnGroup; max?: number; hash?: string }) {
     return (
         <div class="aturn">
             <div class="aturn-head"><StepPill step={turn.step} max={max} /></div>
             {turn.thought ? <ThoughtBlock thought={turn.thought} /> : null}
-            {turn.tools.map((st, i) => <ToolStep key={`${st.tool}-${i}`} st={st} />)}
+            {turn.tools.map((st, i) => <ToolStep key={`${st.tool}-${i}`} st={st} hash={hash} />)}
         </div>
     );
 }
@@ -793,7 +815,7 @@ function AgentRunView({ s }: { s: Session }) {
             </div>
             {/* Skip an empty step group — one carrying only a usage sample (the final
                 answer's token counts), no thought or tool, would render a bare pill. */}
-            {turns.filter(t => t.thought || t.tools.length).map(t => <AgentTurn key={t.step} turn={t} max={s.maxSteps} />)}
+            {turns.filter(t => t.thought || t.tools.length).map(t => <AgentTurn key={t.step} turn={t} max={s.maxSteps} hash={s.hash} />)}
             {s.summary != null
                 ? <ReplyBubble content={s.summary} status={s.status} model={s.model}
                     profile={sessionProfile(s)} ts={s.lastTs}

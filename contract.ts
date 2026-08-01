@@ -114,9 +114,11 @@ export const fmtCtx = (n: number): string => {
 export const detectGroundingModel = (models: string[]): string =>
     models.find(m => m === "qwen2.5vl:7b") || models.find(m => m === "qwen2.5vl:3b") || models.find(m => /qwen.*vl/i.test(m)) || "";
 
-/** The non-secret subset GET_CONFIG exposes to the page (never the URL/key). */
+/** The non-secret subset GET_CONFIG exposes to the page (never the URL/key). `debugMode` is here so
+ *  ml.agent can decide whether to route a run through the unforgeable BACKGROUND loop (design A —
+ *  when a debug surface is enabled) or the in-page loop (off). It's UI state, not a secret. */
 export type MlPublicConfig = Pick<MlConfig,
-    "model" | "ocrModel" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "autoApprovePython" | "groundingEnabled" | "groundingModel" | "groundingRange">;
+    "model" | "ocrModel" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "autoApprovePython" | "groundingEnabled" | "groundingModel" | "groundingRange" | "debugMode">;
 
 /* --------------------------- chat wire shapes -------------------------- */
 
@@ -380,6 +382,7 @@ export type PageRequestType =
     | "GET_MODEL_REQUEST" | "CONFIG_REQUEST" | "SET_MODEL_REQUEST" | "CAPS_REQUEST"
     | "PS_REQUEST" | "UNLOAD_REQUEST" | "CAPTURE_TAB_REQUEST"
     | "SAVE_SESSION_REQUEST" | "GET_SESSION_REQUEST" | "PYTHON_EXEC_REQUEST" | "FETCH_SHEET_REQUEST"
+    | "START_RUN_REQUEST"   // design A: kick off a background-hosted ml.agent loop
     | "ABORT_REQUEST";   // cancel an in-flight background task by requestId (handled specially, not via HANDLE_MAP)
 
 /** Message types the background worker's onMessage listener handles. */
@@ -387,7 +390,9 @@ export type BackgroundMessageType =
     | "FETCH_LLM" | "FETCH_IMAGE_B64" | "LIST_MODELS" | "GET_MODEL" | "GET_CONFIG"
     | "SET_MODEL" | "MODEL_CAPS" | "OLLAMA_PS" | "OLLAMA_UNLOAD" | "CAPTURE_TAB"
     | "SAVE_SESSION" | "GET_SESSION" | "PYTHON_EXEC" | "FETCH_SHEET"
-    | "ABORT_TASK";   // abort the AbortController registered for a requestId (only FETCH_LLM registers one today)
+    | "ABORT_TASK"    // abort the AbortController registered for a requestId (only FETCH_LLM registers one today)
+    | "START_RUN"     // design A: run an ml.agent loop in the background (unforgeable gate); tools delegate to the page
+    | "SET_APPROVAL"; // design A: the sidebar's approve/deny decision for a pending background-run gate (origin-authed)
 
 /* ------------------- design A: background → page tool delegation ------------------- */
 
@@ -397,7 +402,35 @@ export type BackgroundMessageType =
  *  where the DOM is, so the background asks the page to run a named tool by `chrome.tabs.sendMessage`.
  *  content.ts relays it to the main world as a `PAGE_TOOL_RUN` window message and returns the page's
  *  `PAGE_TOOL_RESULT` envelope via sendResponse. */
-export type ContentMessageType = "RUN_TOOL_IN_PAGE";
+export type ContentMessageType =
+    | "RUN_TOOL_IN_PAGE"   // background → page: run a named tool from an active run's toolset
+    | "ML_DEBUG_TO_PAGE";  // background → page: a debug event from a background-hosted run, re-posted as __mlDebug for the overlay
+
+/** START_RUN payload — everything the background needs to run an ml.agent loop with tool execution
+ *  delegated back to the page. The system prompt + toolset are built PAGE-SIDE (they need page context,
+ *  the vision/answer/compute clauses, and the live tool factories); the background receives the resolved
+ *  prompt + serializable tool descriptors (the run() functions stay on the page, keyed by `runId`). */
+export interface StartRunPayload {
+    runId: string;
+    task: string;
+    systemPrompt: string;
+    tools: { name: string; description: string; parameters: JsonSchema; requiresApproval: boolean; capabilities: string[] }[];
+    model: string | null;
+    think: boolean | null;
+    maxSteps: number;
+    autoApprovePython: boolean;   // the trusted config flag, so the background can auto-approve readonly python
+    surface: "overlay";           // which debug surface is active (only the overlay is wired for background runs today)
+}
+
+/** SET_APPROVAL payload — the sidebar app's decision for a pending background-run approval, keyed by
+ *  the run + the step's `seq`. Origin-authed: the shell only forwards it when the message came from the
+ *  real extension-origin iframe (e.source === frame.contentWindow), which a page can't forge. */
+export interface SetApprovalPayload {
+    runId: string;
+    seq: number;
+    decision: boolean;
+    feedback?: string;
+}
 
 /** RUN_TOOL_IN_PAGE payload — run a named tool from an active agent run's page-side toolset. The
  *  `callId` correlating the window round-trip is minted content-side (not here); the background
@@ -533,6 +566,9 @@ export interface DebugAgentStep extends DebugBase {
     // (pending: true, no result yet) with the completed DONE and patch the row in place. Thoughts
     // have no seq. `pending` marks the START (render "running…" until the DONE arrives).
     seq?: number; pending?: boolean;
+    // Design A: a pending step whose background-hosted tool is BLOCKED on the human gate. The sidebar
+    // renders approve/deny controls (instead of "running…") and posts the decision back via SET_APPROVAL.
+    awaitingApproval?: boolean;
     thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: number;
     renderIn?: RenderDescriptor;    // rich render for the In slot (the call) — else the raw args
     renderOut?: RenderDescriptor;   // rich render for the Out slot (the result) — else the raw result

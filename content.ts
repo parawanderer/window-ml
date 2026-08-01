@@ -27,6 +27,9 @@ const HANDLE_MAP: Partial<Record<PageRequestType, RelayEntry>> = {
     GET_SESSION_REQUEST: { type: "GET_SESSION", responseType: "GET_SESSION_RESPONSE" },
     PYTHON_EXEC_REQUEST: { type: "PYTHON_EXEC", responseType: "PYTHON_EXEC_RESPONSE" },
     FETCH_SHEET_REQUEST: { type: "FETCH_SHEET", responseType: "FETCH_SHEET_RESPONSE" },
+    // Design A: kick off a background-hosted ml.agent loop. The single response carries the final
+    // AgentResult (the run's debug events stream separately via ML_DEBUG_TO_PAGE, below).
+    START_RUN_REQUEST: { type: "START_RUN", responseType: "START_RUN_RESPONSE" },
 };
 
 interface BgResponse { data?: unknown; sources?: unknown; model?: unknown; reasoning?: unknown; usage?: unknown; error?: string; }
@@ -82,7 +85,13 @@ interface PageMessage { type?: string; requestId?: string; payload?: unknown; }
 // lands here. We relay it to the main world as a PAGE_TOOL_RUN window message, await the matching
 // PAGE_TOOL_RESULT (correlated by a locally-minted callId), and hand the envelope back via
 // sendResponse. Returning true keeps the message channel open for that async reply.
-chrome.runtime.onMessage.addListener((message: PageMessage, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message: PageMessage & { event?: unknown }, _sender, sendResponse) => {
+    // A debug event from a background-hosted run → re-post it on the page window as __mlDebug, so the
+    // overlay shell (which reads page window-messages) relays it into the sidebar app. Fire-and-forget.
+    if (message && message.type === "ML_DEBUG_TO_PAGE") {
+        window.postMessage({ __mlDebug: message.event }, "*");
+        return undefined;
+    }
     if (!message || message.type !== "RUN_TOOL_IN_PAGE") return undefined;
     const { runId, name, args } = (message.payload || {}) as { runId: string; name: string; args: unknown };
     const callId = Math.random().toString(36).slice(2);

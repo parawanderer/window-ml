@@ -152,6 +152,17 @@ function onWindowMessage(e: MessageEvent): void {
         }
         return;
     }
+    // Design A: the iframe app's approve/deny for a background-hosted run's pending gate. We forward it
+    // to the background as SET_APPROVAL — but ONLY because we can prove it came from the real extension
+    // iframe (e.source === frame.contentWindow), which the page cannot forge. THIS is what makes the
+    // approval unforgeable: a page-set window.confirm or a spoofed window-message can't reach here.
+    if (d.__mlSidebarApp === "approval" && frame && e.source === frame.contentWindow
+        && typeof d.hash === "string" && typeof d.seq === "number") {
+        try {
+            void chrome.runtime.sendMessage({ type: "SET_APPROVAL", payload: { runId: d.hash, seq: d.seq, decision: !!d.decision } }).catch(() => {});
+        } catch { /* extension context gone */ }
+        return;
+    }
     // The iframe app is listening → handshake injected.js so it starts emitting,
     // and tell the app the current open state (so it can pause polling when hidden).
     if (d.__mlSidebarApp === "ready" && frame && e.source === frame.contentWindow) {

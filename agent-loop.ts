@@ -24,8 +24,9 @@ export interface AgentLoopDeps {
     // Execute a tool by name — LOCAL (page-side today) or DELEGATED (background → page, safe mode).
     // Reached for a requiresApproval tool ONLY after the gate. This is the untrusted delegation point.
     runTool(name: string, args: Record<string, unknown>): Promise<ToolRunResult>;
-    // The approval gate (UI). Reached ONLY for a requiresApproval tool that isn't auto-approved.
-    approve(req: { tool: string; arguments: Record<string, unknown> }): Promise<ApprovalDecision>;
+    // The approval gate (UI). Reached ONLY for a requiresApproval tool that isn't auto-approved. `seq`
+    // and `step` identify the pending step so a background gate can correlate its async decision to it.
+    approve(req: { tool: string; arguments: Record<string, unknown>; seq?: number; step?: number }): Promise<ApprovalDecision>;
     // Pure auto-approve decision, made in the TRUSTED world (readonly-exec dialect / python readonly /
     // suspicious-char / external-sheet). Returns the provenance to skip the gate, or null to require
     // it. NEVER delegated — a forged "it's auto-approved" is exactly the threat design A closes.
@@ -85,7 +86,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                     approval = auto;
                     result = (await deps.runTool(call.name, args)).result;   // trusted auto-approve → execute
                 } else {
-                    const d = normalize(await deps.approve({ tool: call.name, arguments: args }), args);
+                    const d = normalize(await deps.approve({ tool: call.name, arguments: args, seq: s, step }), args);
                     if (!d.approved) {
                         approval = "denied";
                         result = d.feedback
