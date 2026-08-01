@@ -1,10 +1,10 @@
 // Design A — page-side tool delegation (run-delegation.ts). Two angles:
-//  1. The pure registry + envelope reduction (dist/run-delegation.js), unit-tested directly.
+//  1. The pure registry + envelope reduction (run-delegation.ts), unit-tested directly.
 //  2. The window round-trip through the REAL content.js reverse channel (loadPageWorld): the
 //     background's RUN_TOOL_IN_PAGE → PAGE_TOOL_RUN → executeTool → PAGE_TOOL_RESULT → sendResponse.
 const { test } = require("node:test");
 const assert = require("node:assert");
-const { registerRun, runDelegatedTool, endRun, getRun } = require("../dist/run-delegation.js");
+const { registerRun, runDelegatedTool, endRun, getRun } = require("../run-delegation.ts");
 const { loadPageWorld } = require("./helpers");
 
 const tool = (over = {}) => ({
@@ -66,6 +66,29 @@ test("the Out slot auto-derives an image; the In slot uses the tool's render() m
     assert.deepEqual(env.renderIn, { type: "code", text: "doThing()" });
     assert.deepEqual(env.renderOut, { type: "image", src: "data:image/png;base64,AAA", label: "shot" });
     endRun("r4b");
+});
+
+test("renderOnly computes the In render WITHOUT running the tool (approval preview)", async () => {
+    // The background asks for this before a blocking approval — it must be side-effect-free (the tool
+    // hasn't been approved yet), yet still produce the pretty In (e.g. exec's beautified JS).
+    let ran = false;
+    registerRun("rr", [tool({
+        render: (_i, args) => ({ type: "code", text: String(args.js || ""), format: true }),
+        run: async () => { ran = true; return "SHOULD NOT RUN"; },
+    })]);
+    const env = await runDelegatedTool("rr", "probe", { js: "doThing()" }, true);
+    assert.equal(ran, false, "renderOnly must NOT execute the tool — approval hasn't happened yet");
+    assert.equal(env.result, "");
+    assert.deepEqual(env.renderIn, { type: "code", text: "doThing()", format: true });
+    endRun("rr");
+});
+
+test("renderOnly with no render() method → empty result, no renderIn (falls back to raw args)", async () => {
+    registerRun("rr2", [tool()]);   // no render method + no run()-returned renderIn (nothing ran)
+    const env = await runDelegatedTool("rr2", "probe", {}, true);
+    assert.equal(env.result, "");
+    assert.equal(env.renderIn, undefined);
+    endRun("rr2");
 });
 
 test("an unknown tool name → a clean error envelope (never a throw)", async () => {
