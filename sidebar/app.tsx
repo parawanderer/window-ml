@@ -731,14 +731,6 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                 {issues ? <span class="arg-warn" title={issues.join("; ")}><IconWarn />{issues.length}</span> : null}
                 {!open ? <span class="astep-preview">{awaiting ? <span class="dim">needs approval</span> : st.pending ? <span class="dim">running…</span> : collapsedPreview(st.result || "").text}</span> : null}
             </button>
-            {awaiting
-                ? <div class="astep-approve">
-                    <span class="appr-ask">Approve running <b>{st.tool}</b>?</span>
-                    <span class="sp" />
-                    <button class="appr-btn no" onClick={() => decide(false)}>Deny</button>
-                    <button class="appr-btn yes" onClick={() => decide(true)}>Approve</button>
-                </div>
-                : null}
             {open
                 ? <div class="astep-body">
                     {issues ? <div class="tt tt-row arg-issues"><IconWarn /><span>arg schema: {issues.join("; ")}</span><span class="tt-pop wrap left" role="tooltip">The args don't match this tool's parameter schema.</span></div> : null}
@@ -749,6 +741,16 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                     <IoBlock label="Out" tip="What the tool returned to the model."
                         preview={st.pending ? "running…" : inlineText(st.result || "")} render={outRender}
                         raw={st.result ? <Code text={st.result} lang="text" /> : <span class="dim">{st.pending ? "running…" : "(no output)"}</span>} />
+                </div>
+                : null}
+            {/* Approval bar at the BOTTOM — after In/Out — so you review the call (its rendered In)
+                before the approve/deny controls, and it reads as the last thing to act on. */}
+            {awaiting
+                ? <div class="astep-approve">
+                    <span class="appr-ask">Approve running <b>{st.tool}</b>?</span>
+                    <span class="sp" />
+                    <button class="appr-btn no" onClick={() => decide(false)}>Deny</button>
+                    <button class="appr-btn yes" onClick={() => decide(true)}>Approve</button>
                 </div>
                 : null}
         </div>
