@@ -431,7 +431,13 @@ a line wraps because each source line is its own flex row.
 tool (`buildPythonTool`, like `clickTool`) for pixel/array/spatial work better done in Python
 than JS. The service worker can't run WASM and the page main-world CSP blocks it, so CPython
 runs in an **offscreen document** (`offscreen.ts`, extension-origin, its CSP allows
-`'wasm-unsafe-eval'`): `background.js` `ensureOffscreen()` → `PY_RUN` message → Pyodide
+`'wasm-unsafe-eval'`): `background.js` `ensureOffscreen()` → `PY_RUN` message → the offscreen
+doc, which relays to a **dedicated worker** (`python-worker.ts`) that actually runs Pyodide.
+The worker exists because the offscreen doc shares a renderer process with the sidebar iframe,
+so a compute-bound run on the main thread froze the sidebar's clicks (scroll — compositor thread
+— still worked); off-main-thread keeps the UI responsive. The worker is chrome-free (resolves
+Pyodide URLs via `self.location`), owns the run-serialization invariant, and `offscreen.ts` is a
+thin id-matched relay. Pyodide is
 (numpy/Pillow/**pandas**/**scipy**, bundled offline in `dist/pyodide/`, lazy-loaded — the
 package set is single-sourced in `python-env.ts` `PY_PACKAGES`, which drives `loadPackage`, the
 prelude imports, the tool-description labels, AND the wheel-fetch script; scipy is loaded but
@@ -479,10 +485,18 @@ withholds (activeTab covers content scripts, NOT the background fetch) — so a 
 returns an actionable error (walks the user to the popup's **"Enable Google Sheets access"**
 button, or "On all sites"), best-effort `chrome.action.openPopup()`s to it, and the popup's
 collapsible **Permissions** block one-click `chrome.permissions.request`s the Google origins
-(docs/accounts/googleusercontent — the export can redirect across them). And when data is
-preloaded but the code errors trying to (re)load it (`pd.read_csv('current')`/read_html/open/
-requests), the tool **appends a redirect hint** ("use `df`/`img` directly") — catching any
-hallucinated load pattern on the failure instead of enumerating them. The tool
+(docs/accounts/googleusercontent — the export can redirect across them). **Loader
+interception (PRELUDE, `python-runtime.ts`):** models reach for their pre-training loader idioms
+with the selector/name they passed — `Image.open('canvas#stage')`, `pd.read_csv('current')`,
+`pd.read_html('#sel')` — and the fs-less sandbox would just throw, burning a turn. The prelude
+patches `Image.open`/`pd.read_csv`/`pd.read_html` to return the pre-loaded `img`/`df` **when it's
+actually loaded** (never for a real file-like or a URL — a genuine http `read_csv` /
+`Image.open(BytesIO)` passes through). Patched once (module attrs + `_`-prefixed originals survive
+RESET; funcs resolve `img`/`tables` from `globals()` each call → current-run data, no stale
+closure). And when that CAN'T resolve it — data preloaded but the code still errors trying to
+(re)load it (`read_excel`/`read_json`/`open`/`requests`, an ambiguous name across many tables, a
+URL in readonly), the tool **appends a redirect hint** ("use `df`/`img` directly") as the
+fallback, catching any hallucinated load pattern on the failure. The tool
 description frames the sandbox as "appending a cell to a live Jupyter notebook" (img/img_np/df
 are pre-loaded) with a df/img snippet. Output (stdout/value/error) is capped by `clipOut`
 (dom.ts, shared with `exec`) with a `[+N chars truncated]` count so a runaway result can't
@@ -501,9 +515,13 @@ and mint a clickable `@pt`/`@box` (mismatch → an honest error, never a guess),
 `"readonly"` (default) **hardens** the offscreen sandbox for that run — unregisters *and*
 purges `sys.modules['js']`/`['pyodide_js']` (an `unregisterJsModule` alone leaves a prior
 `full` run's cached `JsProxy` reachable), and nulls every network/exfil global
-(fetch/XHR/WebSocket/Worker/… + `navigator.sendBeacon`) so even `pyodide.code.run_js` or a
-leaked proxy hits `undefined` — making it a pure function over the inputs. `"full"` leaves the
-bridges intact (outbound network) and **always** requires manual approval. Restored in
+(fetch/XHR/WebSocket/Worker/**`importScripts`**/… + `navigator.sendBeacon`) so even
+`pyodide.code.run_js` or a leaked proxy hits `undefined` — making it a pure function over the
+inputs. Since Pyodide now runs in the **worker**, `js` resolves to the WorkerGlobalScope (not the
+offscreen document), so `importScripts` — a worker-only fetch+eval vector — is in the null-list
+too, and full mode's `import js` correspondingly has NO `js.document`/`js.window` (a worker has
+no DOM), only network. `"full"` leaves the bridges intact (outbound network) and **always**
+requires manual approval. Restored in
 `finally`; PY_RUN is serialized so the global swap can't race. `harden`/`unharden` live in
 `python-runtime.ts` (chrome-free) and are **escape-tested against real Pyodide**
 (`tests/python.test.js`): a hardened run can't `import js`/`pyodide_js` or reach
