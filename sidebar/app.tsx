@@ -708,7 +708,7 @@ const ApprovalBadge = ({ approval }: { approval: "readonly" | "sandbox" | "user"
 );
 
 function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
-    const [open, setOpen] = useState(false);
+    const [expanded, setExpanded] = useState(false);
     const [decided, setDecided] = useState(false);   // hide the controls the instant we click (before the DONE lands)
     const args = st.arguments && Object.keys(st.arguments).length ? st.arguments : null;
     // Each slot renders from its own descriptor; the block falls back to raw when absent.
@@ -719,10 +719,12 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     // decision is made in this (extension-origin) iframe, unforgeable by the page. Needs the run hash +
     // the step seq to correlate; without them (a page-loop run) fall back to the plain pending view.
     const awaiting = !!(st.awaitingApproval && st.pending && !decided && hash && st.seq != null);
+    // A pending approval AUTO-UNFURLS the In so you review the call before deciding (no extra click).
+    const open = expanded || awaiting;
     const decide = (ok: boolean) => { setDecided(true); sendApproval(hash!, st.seq!, ok); };
     return (
         <div class={`astep tool${st.pending ? " pending" : ""}${awaiting ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : " appr-yes") : ""}`}>
-            <button class="astep-head" onClick={() => setOpen(v => !v)}>
+            <button class="astep-head" onClick={() => setExpanded(v => !v)}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
                 <Dot status={st.pending ? "pending" : toolFailed(st.result) ? "err" : "ok"} />
                 <span class="tool-name">{st.tool}</span>
