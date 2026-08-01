@@ -13,6 +13,8 @@
 import type { MlTool, PageToolEnvelope } from "./contract";
 import { executeTool } from "./tool-exec";
 import { descriptorFor } from "./render-descriptor";
+import { evalReadonly } from "./readonly-exec";
+import { formatReadonlyExec } from "./approval";
 
 /** One active agent run's page-side state: its toolset by name, and the DOM nodes designated by
  *  answer-capable tools (assembled into AgentResult.elements — nodes can't cross the bus). */
@@ -42,15 +44,27 @@ export function getRun(runId: string): PageRun | undefined { return runs.get(run
 /** Run ONE delegated tool call for a background-hosted run → a serializable envelope for the bus.
  *  executeTool already validates args + catches errors (never throws), so this only reduces the
  *  envelope: real nodes → a count, and an answer-capable tool's nodes are stashed page-side. */
-export async function runDelegatedTool(runId: string, name: string, args: Record<string, unknown>, renderOnly = false): Promise<PageToolEnvelope> {
+export async function runDelegatedTool(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean } = {}): Promise<PageToolEnvelope> {
     const run = runs.get(runId);
     if (!run) return { result: `Error: no active agent run "${runId}" on this page (it may have ended).` };
     const tool = run.byName[name];
     if (!tool) return { result: `Error: no tool named "${name}".` };
     // Approval preview: compute the In render for the CALL without RUNNING the tool (side-effect-free).
-    if (renderOnly) {
+    if (opts.renderOnly) {
         const { in: renderIn } = descriptorFor(tool, { result: "" }, args);
         return { result: "", renderIn };
+    }
+    // Read-only try (exec only): run the mediated interpreter (no eval, no mutation). If in-dialect it
+    // BOTH decides auto-approve AND produces the result → the background skips the gate. Out-of-dialect
+    // (any NotInDialect/Denied throw) → readonly:false, so the background falls through to the human gate.
+    if (opts.readonlyTry) {
+        if (name !== "exec" || typeof (args as { js?: unknown }).js !== "string") return { result: "", readonly: false };
+        try {
+            const ro = evalReadonly((args as { js: string }).js, document);
+            const { result, elements } = formatReadonlyExec(ro.value, ro.logs);
+            const { in: renderIn, out: renderOut } = descriptorFor(tool, { result, elements }, args);
+            return { result, elementCount: elements ? elements.length : undefined, renderIn, renderOut, readonly: true };
+        } catch { return { result: "", readonly: false }; }
     }
     const env = await executeTool(tool, args);
     // An answer-capable tool designates the caller-facing result node(s) → stash them page-side; only
@@ -75,8 +89,8 @@ export async function runDelegatedTool(runId: string, name: string, args: Record
 export function installToolDelegation(): void {
     window.addEventListener("message", async (event: MessageEvent) => {
         if (event.source !== window || !event.data || event.data.type !== "PAGE_TOOL_RUN") return;
-        const { callId, runId, name, args, renderOnly } = event.data as { callId: string; runId: string; name: string; args: Record<string, unknown>; renderOnly?: boolean };
-        const envelope = await runDelegatedTool(runId, name, args || {}, !!renderOnly);
+        const { callId, runId, name, args, renderOnly, readonlyTry } = event.data as { callId: string; runId: string; name: string; args: Record<string, unknown>; renderOnly?: boolean; readonlyTry?: boolean };
+        const envelope = await runDelegatedTool(runId, name, args || {}, { renderOnly: !!renderOnly, readonlyTry: !!readonlyTry });
         window.postMessage({ type: "PAGE_TOOL_RESULT", callId, envelope }, "*");
     });
 }

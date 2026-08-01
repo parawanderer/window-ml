@@ -418,7 +418,8 @@ export interface StartRunPayload {
     model: string | null;
     think: boolean | null;
     maxSteps: number;
-    autoApprovePython: boolean;   // the trusted config flag, so the background can auto-approve readonly python
+    autoApprovePython: boolean;    // trusted config flag → the background may auto-approve readonly python
+    autoApproveReadonly: boolean;  // trusted config flag → the background may auto-approve an in-dialect exec survey
     surface: "overlay";           // which debug surface is active (only the overlay is wired for background runs today)
 }
 
@@ -443,6 +444,11 @@ export interface RunToolInPagePayload {
     // preview, so a blocking gate shows a pretty In (e.g. exec's beautified JS, python's code cell)
     // instead of raw args. The tool's run() never fires, so this is side-effect-free.
     renderOnly?: boolean;
+    // Read-only try (design A, exec only): attempt the call via the mediated read-only interpreter
+    // (evalReadonly — no eval, no mutation). If it's in-dialect it BOTH decides "auto-approve" AND
+    // produces the result, so the background can skip the human gate; out-of-dialect → falls through.
+    // Side-effect-free either way (the interpreter can't mutate), which is why it needn't be gated.
+    readonlyTry?: boolean;
 }
 
 /** The result of a delegated tool call, crossing back from the page to the background. Only the
@@ -459,6 +465,7 @@ export interface PageToolEnvelope {
     // live envelope live there — so a background-hosted run shows the same rendered In/Out as the page.
     renderIn?: RenderDescriptor;   // In slot — a visualization of the call
     renderOut?: RenderDescriptor;  // Out slot — a visualization of the result
+    readonly?: boolean;            // a readonlyTry that the mediated interpreter HANDLED (→ auto-approve)
 }
 
 /** A resumable chat session persisted to chrome.storage.local for { save: true }

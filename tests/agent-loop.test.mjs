@@ -123,3 +123,22 @@ test("no image → pushToolImages is never called (text-only driver / non-vision
     await runAgentLoop("x", { tools: [{ name: "noop" }] }, deps);
     assert.equal(called, false);
 });
+
+test("tryReadonly: an in-dialect readonly result skips BOTH the gate and runTool", async () => {
+    const { deps, calls } = makeDeps({ turns: [toolCall("exec", { js: "survey()" }), reply("done")] });
+    deps.tryReadonly = async () => ({ result: "readonly-result" });   // the interpreter handled it
+    const res = await runAgentLoop("x", { tools: [{ name: "exec", requiresApproval: true }] }, deps);
+    assert.equal(calls.approve.length, 0, "no human gate — a side-effect-free read is auto-approved");
+    assert.equal(calls.runTool.length, 0, "runTool skipped — the interpreter already produced the result");
+    assert.equal(res.transcript[0].result, "readonly-result");
+    const done = calls.emits.find(e => e.tool === "exec" && !e.pending);
+    assert.equal(done.approval, "readonly");
+});
+
+test("tryReadonly returning null → falls through to the normal gate", async () => {
+    const { deps, calls } = makeDeps({ turns: [toolCall("exec"), reply("done")], approve: () => true });
+    deps.tryReadonly = async () => null;   // out-of-dialect / mutating
+    await runAgentLoop("x", { tools: [{ name: "exec", requiresApproval: true }] }, deps);
+    assert.equal(calls.approve.length, 1, "out-of-dialect → the gate is consulted");
+    assert.equal(calls.runTool.length, 1);
+});

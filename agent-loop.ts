@@ -31,10 +31,16 @@ export interface AgentLoopDeps {
     // The approval gate (UI). Reached ONLY for a requiresApproval tool that isn't auto-approved. `seq`
     // and `step` identify the pending step so a background gate can correlate its async decision to it.
     approve(req: { tool: string; arguments: Record<string, unknown>; seq?: number; step?: number }): Promise<ApprovalDecision>;
-    // Pure auto-approve decision, made in the TRUSTED world (readonly-exec dialect / python readonly /
-    // suspicious-char / external-sheet). Returns the provenance to skip the gate, or null to require
-    // it. NEVER delegated — a forged "it's auto-approved" is exactly the threat design A closes.
+    // Pure auto-approve decision, made in the TRUSTED world (python readonly / suspicious-char /
+    // external-sheet). Returns the provenance to skip the gate, or null to require it. NEVER delegated —
+    // a forged "it's auto-approved" is exactly the threat design A closes.
     autoApprove?(name: string, args: Record<string, unknown>): "readonly" | "sandbox" | null;
+    // Read-only try (exec only): attempt the call via the mediated read-only interpreter, which is
+    // side-effect-free (it can't mutate) — so it BOTH decides "auto-approve" AND returns the result. A
+    // non-null result skips the gate AND runTool (the interpreter already ran it). null → gate as normal.
+    // Page-delegated on the background path; safe to delegate BECAUSE it can't do anything a mutation
+    // could. Reached before autoApprove/the gate for a requiresApproval tool.
+    tryReadonly?(name: string, args: Record<string, unknown>): Promise<ToolRunResult | null>;
     // Build the initial neutral message array (system + user(task)) — world-specific (page context).
     buildMessages(task: string): unknown[];
     // Append the assistant tool-call message / a tool-result message to the running history.
@@ -91,8 +97,14 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             if (!meta) {
                 result = `Error: no tool named "${call.name}".`;
             } else if (meta.requiresApproval) {
-                const auto = deps.autoApprove?.(call.name, args) || null;
-                if (auto) {
+                // Read-only try FIRST: the mediated interpreter can't mutate, so if the call is in its
+                // dialect it's already run safely — auto-approve with its result, no gate, no runTool.
+                const ro = deps.tryReadonly ? await deps.tryReadonly(call.name, args) : null;
+                const auto = ro ? null : (deps.autoApprove?.(call.name, args) || null);
+                if (ro) {
+                    approval = "readonly";
+                    tr = ro; result = ro.result;   // the interpreter already produced the result
+                } else if (auto) {
                     approval = auto;
                     tr = await deps.runTool(call.name, args); result = tr.result;   // trusted auto-approve → execute
                 } else {

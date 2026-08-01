@@ -515,7 +515,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     const res = await makeBackgroundTaskPromise<AgentResult>("START_RUN_REQUEST", "START_RUN_RESPONSE", {
                         runId: runHash, task, systemPrompt, tools: descriptors,
                         model: runModel, think: (think === true || think === false) ? think : null,
-                        maxSteps, autoApprovePython: autoPy, surface: "overlay",
+                        maxSteps, autoApprovePython: autoPy, autoApproveReadonly: autoRO, surface: "overlay",
                     }, undefined, signal);
                     // The real DOM nodes an answer-capable tool returned stayed page-side (they can't cross
                     // the bus) — assemble AgentResult.elements from the page-side run record here.

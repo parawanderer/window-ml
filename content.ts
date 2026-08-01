@@ -93,7 +93,7 @@ chrome.runtime.onMessage.addListener((message: PageMessage & { event?: unknown }
         return undefined;
     }
     if (!message || message.type !== "RUN_TOOL_IN_PAGE") return undefined;
-    const { runId, name, args, renderOnly } = (message.payload || {}) as { runId: string; name: string; args: unknown; renderOnly?: boolean };
+    const { runId, name, args, renderOnly, readonlyTry } = (message.payload || {}) as { runId: string; name: string; args: unknown; renderOnly?: boolean; readonlyTry?: boolean };
     const callId = Math.random().toString(36).slice(2);
     const onResult = (event: MessageEvent) => {
         if (event.source !== window || !event.data || event.data.type !== "PAGE_TOOL_RESULT" || event.data.callId !== callId) return;
@@ -101,7 +101,7 @@ chrome.runtime.onMessage.addListener((message: PageMessage & { event?: unknown }
         sendResponse(event.data.envelope);
     };
     window.addEventListener("message", onResult);
-    window.postMessage({ type: "PAGE_TOOL_RUN", callId, runId, name, args, renderOnly }, "*");
+    window.postMessage({ type: "PAGE_TOOL_RUN", callId, runId, name, args, renderOnly, readonlyTry }, "*");
     return true;   // async sendResponse (the window round-trip completes later)
 });
 

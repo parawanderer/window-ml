@@ -4,6 +4,7 @@
 //     background's RUN_TOOL_IN_PAGE → PAGE_TOOL_RUN → executeTool → PAGE_TOOL_RESULT → sendResponse.
 import { test } from "node:test";
 import assert from "node:assert";
+import { JSDOM } from "jsdom";
 import { registerRun, runDelegatedTool, endRun, getRun } from "../run-delegation.ts";
 import { loadPageWorld } from "./helpers.js";
 
@@ -76,7 +77,7 @@ test("renderOnly computes the In render WITHOUT running the tool (approval previ
         render: (_i, args) => ({ type: "code", text: String(args.js || ""), format: true }),
         run: async () => { ran = true; return "SHOULD NOT RUN"; },
     })]);
-    const env = await runDelegatedTool("rr", "probe", { js: "doThing()" }, true);
+    const env = await runDelegatedTool("rr", "probe", { js: "doThing()" }, { renderOnly: true });
     assert.equal(ran, false, "renderOnly must NOT execute the tool — approval hasn't happened yet");
     assert.equal(env.result, "");
     assert.deepEqual(env.renderIn, { type: "code", text: "doThing()", format: true });
@@ -85,10 +86,39 @@ test("renderOnly computes the In render WITHOUT running the tool (approval previ
 
 test("renderOnly with no render() method → empty result, no renderIn (falls back to raw args)", async () => {
     registerRun("rr2", [tool()]);   // no render method + no run()-returned renderIn (nothing ran)
-    const env = await runDelegatedTool("rr2", "probe", {}, true);
+    const env = await runDelegatedTool("rr2", "probe", {}, { renderOnly: true });
     assert.equal(env.result, "");
     assert.equal(env.renderIn, undefined);
     endRun("rr2");
+});
+
+test("readonlyTry: an in-dialect exec survey runs via the INTERPRETER (readonly:true, tool.run never called)", async () => {
+    const dom = new JSDOM('<button class="x">A</button><button class="x">B</button>');
+    const [prevDoc, prevEl] = [globalThis.document, globalThis.Element];
+    globalThis.document = dom.window.document; globalThis.Element = dom.window.Element;
+    try {
+        let ran = false;
+        registerRun("ro", [{
+            name: "exec", description: "", parameters: { type: "object", properties: {} },
+            requiresApproval: true, capabilities: [],
+            render: (_i, a) => ({ type: "code", text: String(a.js), format: true }),
+            run: () => { ran = true; return "eval-backed run() SHOULD NOT be called"; },
+        }]);
+        const env = await runDelegatedTool("ro", "exec",
+            { js: "[...document.querySelectorAll('.x')].map(e => e.textContent)" }, { readonlyTry: true });
+        assert.equal(env.readonly, true, "the interpreter handled it → auto-approvable");
+        assert.equal(ran, false, "the tool's eval-backed run() is never invoked — the interpreter ran it");
+        assert.match(env.result, /A|B/);
+        assert.ok(env.renderIn, "the pretty-JS In render is computed too");
+        endRun("ro");
+    } finally { globalThis.document = prevDoc; globalThis.Element = prevEl; }
+});
+
+test("readonlyTry: a non-exec tool or non-string js → readonly:false (falls through to the gate)", async () => {
+    registerRun("ro2", [tool({ name: "click" }), tool({ name: "exec" })]);
+    assert.equal((await runDelegatedTool("ro2", "click", { x: 1 }, { readonlyTry: true })).readonly, false, "only exec is tried");
+    assert.equal((await runDelegatedTool("ro2", "exec", { js: 123 }, { readonlyTry: true })).readonly, false, "non-string js");
+    endRun("ro2");
 });
 
 test("an unknown tool name → a clean error envelope (never a throw)", async () => {

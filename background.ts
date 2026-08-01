@@ -761,6 +761,15 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     // the loop injects it into the model's next turn (pushToolImages).
                     return { result: env?.result || `Error: the page returned nothing for tool "${name}".`, renderIn: env?.renderIn, renderOut: env?.renderOut, image: env?.image, imageLabel: env?.imageLabel };
                 },
+                // Read-only try (exec only, and only when the user enabled autoApproveReadonly): ask the
+                // page to run the call through the mediated interpreter — side-effect-free, so if it's
+                // in-dialect it BOTH auto-approves AND returns the result, and the human gate is skipped.
+                tryReadonly: p.autoApproveReadonly ? async (name, args) => {
+                    if (name !== "exec") return null;
+                    const env = await chrome.tabs.sendMessage(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name, args, readonlyTry: true } })
+                        .catch(() => null) as Partial<import("./contract").PageToolEnvelope> | null;
+                    return env && env.readonly ? { result: env.result || "", renderIn: env.renderIn, renderOut: env.renderOut } : null;
+                } : undefined,
                 approve: async ({ tool, arguments: args, seq, step }) => {
                     // Ask the page to compute the In render for THIS call (without running the tool) so the
                     // blocking approval shows a pretty In — exec's beautified JS, python's code cell — not
