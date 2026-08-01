@@ -743,7 +743,7 @@ test("agent runs render as their own session with steps + a final answer", async
     // Both steps are turn 1 → grouped into one turn card (thought + the tool call).
     assert.equal(w.shadow.querySelectorAll(".aturn").length, 1, "one turn group");
     assert.match(w.shadow.querySelector(".step-pill").textContent, /step 1\/10/, "turn pill shows step/max");
-    assert.ok(w.shadow.querySelector(".athought"), "the turn's thought is shown");
+    assert.ok(w.shadow.querySelector(".aturn-prose"), "the turn's prose (content) is shown");
     const toolStep = w.shadow.querySelector(".astep.tool");
     assert.match(toolStep.querySelector(".tool-name").textContent, /look/);
     assert.match(toolStep.querySelector(".el-count").textContent, /1 el/);
@@ -774,6 +774,23 @@ test("a FINAL-answer turn with only reasoning (no thought/tool) still renders it
     assert.match(w.shadow.querySelector(".msg.asst").textContent, /It's 42/, "the content shows as the answer");
 });
 
+test("a delegated look's Out renders the reader's image + which model + its output (not element text)", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("lk", "look at the card"));
+    await w.dispatch(agentStep("lk", 1, { tool: "look", arguments: { selector: "#card" }, result: "a sponsored product card",
+        renderOut: { type: "look", image: "data:image/png;base64,SHOT", model: "qwen2.5vl", output: "a sponsored product card", label: 'the element "#card"' } }));
+    await w.dispatch(agentResult("lk", "done", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    w.shadow.querySelector(".astep.tool .astep-head").click();
+    await w.tick();
+    const look = w.shadow.querySelector(".r-look");
+    assert.ok(look, "the look Out renders");
+    assert.equal(look.querySelector("img").getAttribute("src"), "data:image/png;base64,SHOT", "the exact image the reader saw");
+    assert.match(look.querySelector(".r-image-label").textContent, /viewed by.*qwen2\.5vl/, "names which model read it");
+    assert.match(look.querySelector(".r-look-out").textContent, /sponsored product card/, "the model's output");
+});
+
 test("agent step: reasoning_content renders as a distinct 'thinking' block, separate from the prose thought", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("rsn", "click the red guy"));
@@ -795,10 +812,12 @@ test("agent step: reasoning_content renders as a distinct 'thinking' block, sepa
     thinking.querySelector(".astep-head").click();
     await w.tick();
     assert.match(thinking.textContent, /red cap and blue overalls/, "reasoning shown");
-    // The prose thought is a SEPARATE block, labelled 'thought'.
-    const thought = [...w.shadow.querySelectorAll(".athought")].find(b => !b.classList.contains("athinking"));
-    assert.ok(thought, "the prose thought is its own block");
-    assert.match(thought.querySelector(".who").textContent, /thought/);
+    // The content is rendered as PROSE (like the answer) — no 'thought' label or status dot, expanded.
+    const prose = w.shadow.querySelector(".aturn-prose");
+    assert.ok(prose, "content renders as its own prose block");
+    assert.equal(prose.querySelector(".who"), null, "no 'thought' label on the prose");
+    assert.equal(prose.querySelector(".dot"), null, "no status dot on the prose");
+    assert.match(prose.querySelector(".md").textContent, /I'll click it/, "the content prose is shown, expanded");
 });
 
 test("agent step renders IN-FLIGHT, then the DONE patches it in place (same seq → no duplicate row)", async () => {
@@ -1728,7 +1747,7 @@ test("agent tool In/Out carry a grey inline preview (minified args / newline-col
     assert.match(outB.querySelector(".io-preview").textContent, /Clicked the button\. Page title: Foo\./, "Out preview collapses newlines");
 });
 
-test("agent thought + failed tool show status dots", async () => {
+test("agent content is plain prose (no status dot); a failed tool call shows an err dot", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("agd", "thing"));
     await w.dispatch(agentStep("agd", 1, { thought: "hmm" }));
@@ -1737,7 +1756,8 @@ test("agent thought + failed tool show status dots", async () => {
 
     w.shadow.querySelector(".row").click();
     await w.tick();
-    assert.ok(w.shadow.querySelector(".athought .dot.ok"), "thought has an ok status dot");
+    assert.ok(w.shadow.querySelector(".aturn-prose"), "content renders as prose");
+    assert.equal(w.shadow.querySelector(".aturn-prose .dot"), null, "the content prose has no status dot");
     assert.ok(w.shadow.querySelector(".astep.tool .dot.err"), "failed tool call flagged err");
 });
 

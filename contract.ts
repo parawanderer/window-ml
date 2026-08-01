@@ -243,6 +243,10 @@ export type RenderDescriptor = (
     // `python_exec`'s Out slot: captured stdout, a returned image, a minted @pt/@box token,
     // the raw/JSON value, or a Python traceback.
     | { type: "python-out"; stdout?: string; image?: string; token?: string; value?: string; error?: string; df?: { columns: string[]; rows: (string | number | null)[][] } }
+    // A DELEGATED `look`'s Out slot: the exact image the vision reader saw, WHICH model read it, and
+    // its text output — so a sub-call look reads like `locate`'s substeps (the native look just shows
+    // the screenshot, since the agent itself is the viewer).
+    | { type: "look"; image: string; model?: string | null; output: string; label?: string }
 );
 // The slot a descriptor fills is decided by which hook produced it (a tool's `render()`
 // method / run()-returned `renderIn` → the In slot; a run()-returned `render` / an

@@ -694,6 +694,20 @@ function PythonOutRender({ d }: { d: Extract<RenderDescriptor, { type: "python-o
     );
 }
 
+// A DELEGATED look's Out: the exact image the reader saw + which model read it + its text output —
+// so it reads like a locate sub-call, not the weird auto-derived element text it used to show.
+function LookRender({ d }: { d: Extract<RenderDescriptor, { type: "look" }> }) {
+    return (
+        <div class="r-look">
+            <div class="r-image">
+                <ClickableImg src={d.image} alt={d.label || "look"} />
+                <div class="r-image-label">{d.label ? `${d.label} · ` : ""}viewed by <b>{d.model || "default"}</b></div>
+            </div>
+            <div class="r-look-out md" dangerouslySetInnerHTML={{ __html: markdown(d.output, { math: true }) }} />
+        </div>
+    );
+}
+
 function RenderPanel({ d }: { d: RenderDescriptor }) {
     switch (d.type) {
         case "image": {
@@ -710,6 +724,7 @@ function RenderPanel({ d }: { d: RenderDescriptor }) {
         case "locate": return <LocateRender d={d} />;
         case "python-in": return <PythonInRender d={d} />;
         case "python-out": return <PythonOutRender d={d} />;
+        case "look": return <LookRender d={d} />;
         default: return <Code text={pretty(d)} lang="json" />;   // unknown type → dump it
     }
 }
@@ -760,25 +775,18 @@ function groupTurns(steps: AgentStep[]): AgentTurnGroup[] {
 const StepPill = ({ step, max }: { step: number; max?: number }) =>
     <span class="step-pill">step {step}{max ? `/${max}` : ""}</span>;
 
-// A turn's prose (content, `kind:"thought"`) OR its separate reasoning channel
-// (reasoning_content, `kind:"thinking"`) — the two are DISTINCT: `content` is what the model
-// says, `reasoning` is how it thinks. Both use the same collapsible pattern (collapsed to the
-// first line); a thinking block is dimmed to read as secondary to the prose.
-function ThoughtBlock({ thought, kind = "thought" }: { thought: string; kind?: "thought" | "thinking" }) {
+// The turn's separate reasoning channel (reasoning_content) — how the model THINKS, distinct from
+// what it says (the prose). Dim, COLLAPSED by default (its text is mostly noise); the preview is just
+// a ~token estimate (the server reports reasoning_tokens:0). No status dot — it's not a step that fails.
+function ThoughtBlock({ thought }: { thought: string }) {
     const [open, setOpen] = useState(false);
-    const thinking = kind === "thinking";
-    const p = collapsedPreview(thought);
-    // Thinking can't "fail" (it's not a step) → no status dot. Collapsed, its text is mostly noise, so
-    // show only how much it thought — an ESTIMATE (~chars/4), since the server doesn't break out
-    // reasoning_tokens (it reported 0). Expand to actually read it.
-    const tokEst = Math.max(1, Math.round(thought.length / 4));
+    const tokEst = Math.max(1, Math.round(thought.length / 4));   // ~chars/4 (no real reasoning_tokens)
     return (
-        <div class={`athought${thinking ? " athinking" : ""}`}>
+        <div class="athought athinking">
             <button class="astep-head" onClick={() => setOpen(v => !v)}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
-                {thinking ? null : <Dot status="ok" />}
-                <span class="who">{kind}</span>
-                {!open ? <span class="astep-preview">{thinking ? `~${tokEst} tokens` : `${p.text}${p.more ? " …" : ""}`}</span> : null}
+                <span class="who">thinking</span>
+                {!open ? <span class="astep-preview">~{tokEst} tokens</span> : null}
             </button>
             {open ? <div class="md astep-body" dangerouslySetInnerHTML={{ __html: markdown(thought, { math: true }) }} /> : null}
         </div>
@@ -879,13 +887,30 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     );
 }
 
-// One turn = the pill + the thought + the tool calls it batched.
+// A turn's PROSE (content) — what the model SAYS this step. Rendered like the final answer: plain
+// markdown, EXPANDED by default, no status dot / "thought" label / box. Collapsible via a subtle
+// chevron (→ a one-line preview), same affordance the answer bubble uses.
+function TurnProse({ text }: { text: string }) {
+    const [collapsed, setCollapsed] = useState(false);
+    const p = collapsedPreview(text);
+    return (
+        <div class={`aturn-prose${collapsed ? " collapsed" : ""}`}>
+            <button class="who-toggle prose-tri" title={collapsed ? "expand" : "collapse"} onClick={() => setCollapsed(v => !v)}>
+                <span class={`tri${collapsed ? "" : " open"}`} aria-hidden="true"><IconChevron /></span>
+            </button>
+            {collapsed
+                ? <span class="asst-collapsed" onClick={() => setCollapsed(false)}>{p.text}{p.more ? " …" : ""}</span>
+                : <div class="md" dangerouslySetInnerHTML={{ __html: markdown(text, { math: true }) }} />}
+        </div>
+    );
+}
+// One turn = the pill + the thinking + the prose + the tool calls it batched.
 function AgentTurn({ turn, max, hash }: { turn: AgentTurnGroup; max?: number; hash?: string }) {
     return (
         <div class="aturn">
             <div class="aturn-head"><StepPill step={turn.step} max={max} /></div>
-            {turn.reasoning ? <ThoughtBlock thought={turn.reasoning} kind="thinking" /> : null}
-            {turn.thought ? <ThoughtBlock thought={turn.thought} kind="thought" /> : null}
+            {turn.reasoning ? <ThoughtBlock thought={turn.reasoning} /> : null}
+            {turn.thought ? <TurnProse text={turn.thought} /> : null}
             {turn.tools.map((st, i) => <ToolStep key={`${st.tool}-${i}`} st={st} hash={hash} />)}
         </div>
     );

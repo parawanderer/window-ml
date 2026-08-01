@@ -241,7 +241,12 @@ function writeAgent(s: Session, d: Sink): void {
             d.image(st.renderOut.image, `step-${st.step}`, `step ${st.step} — returned image`);
         } else if (st.renderOut && st.renderOut.type === "python-out" && st.renderOut.df) {
             // A returned DataFrame → a real table (GFM / <table>), like the input-table render.
-            d.details("value (DataFrame)", () => d.table(st.renderOut.df!.columns, st.renderOut.df!.rows));
+            const df = st.renderOut.df;   // local: TS drops the narrowing inside the closure otherwise
+            d.details("value (DataFrame)", () => d.table(df.columns, df.rows));
+        } else if (st.renderOut && st.renderOut.type === "look") {
+            // A delegated look: the image the reader saw + which model + its output.
+            d.image(st.renderOut.image, `step-${st.step}`, `step ${st.step} — ${st.renderOut.label || "look"} · viewed by ${st.renderOut.model || "default"}`);
+            if (st.renderOut.output) d.prose(st.renderOut.output);
         }
         if (st.result != null && st.result !== "") d.block("Out", st.result);
         else if (st.elements != null) d.inline("Out", `${st.elements} element(s)`);

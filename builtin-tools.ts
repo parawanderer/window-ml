@@ -126,11 +126,14 @@ export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512 }: { mo
                 ? `\n\n(Verify before clicking. If the target IS visible in this preview but the mark isn't on it, re-locate just this area to snap onto it: locate({ description: "…", selector: "${selector}", strategy: "grounding" }) — searches only this box (add margin: 40–120 if the target is partly cut off at the edge). If the target ISN'T in this preview at all, it's the wrong spot: change \`region\`/description, don't re-verify here.)`
                 : "";
             // Attach the inspected element on the side-channel (debug-only,
-            // never to the model). Guarded so a stub-DOM/bad selector no-ops
-            // and the return stays a plain string for viewport/no-selector.
+            // never to the model). Guarded so a stub-DOM/bad selector no-ops.
             let elements;
             if (selector) { try { const el = queryAll(selector)[index || 0]; if (el) elements = [el]; } catch {} }
-            return elements ? { content: description + pointTip, elements } : description + pointTip;
+            // A `look` Out render: the EXACT image the reader saw, WHICH model read it, and its output —
+            // so a delegated look reads like a locate substep, not the weird auto-derived element text.
+            // (`model` is the resolved reader passed at wiring; `output` is the raw model reply, no tip.)
+            const render: RenderDescriptor = { type: "look", image: shot, model, output: description, label: subject };
+            return { content: description + pointTip, render, ...(elements ? { elements } : {}) };
         }
     });
 };

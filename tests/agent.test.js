@@ -2011,7 +2011,11 @@ test("lookTool screenshots the element and asks the vision model about it", asyn
     const look = world.ml.lookTool();
     assert.equal(look.name, "look");
     const out = await look.run({ selector: "#card", question: "is it sponsored?" });
-    assert.equal(out, "yes, it looks sponsored");
+    assert.equal(out.content, "yes, it looks sponsored");
+    // A `look` Out render: the image the reader saw + which model + its output.
+    assert.equal(out.render.type, "look");
+    assert.equal(out.render.image, "data:image/png;base64,SHOT", "the exact image the reader saw");
+    assert.match(out.render.output, /sponsored/, "the model's output");
 });
 
 test("lookTool falls back to a default prompt and forwards a vision model", async () => {
@@ -2024,7 +2028,9 @@ test("lookTool falls back to a default prompt and forwards a vision model", asyn
     });
     world.ml.screenshot = async () => "data:image/png;base64,SHOT";
     const look = world.ml.lookTool({ model: "qwen2.5vl" });
-    assert.equal(await look.run({ selector: "#x" }), "a product card");
+    const out = await look.run({ selector: "#x" });
+    assert.equal(out.content, "a product card");
+    assert.equal(out.render.model, "qwen2.5vl", "the render names WHICH model read the image");
 });
 
 test("lookTool caps the vision generation by default (roadmap #11 wedge guard)", async () => {
@@ -2054,7 +2060,7 @@ test("lookTool with no selector screenshots the whole page to orient", async () 
 
     const out = await world.ml.lookTool().run({});          // no selector
     assert.equal(target, null, "whole-page screenshot (no element target)");
-    assert.equal(out, "an Amazon search results page");
+    assert.equal(out.content, "an Amazon search results page");
 });
 
 test("lookTool scope:'page' stitches and frames it as a downscaled overview", async () => {
