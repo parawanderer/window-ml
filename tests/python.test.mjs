@@ -78,6 +78,26 @@ test("captures a `return` value AND a bare top-level `result =`", { skip }, asyn
     assert.equal((await pyRun("result = 6 * 7")).value, 42);   // no return → the assigned global survives
 });
 
+test("a bare TRAILING EXPRESSION is the return value (Jupyter/REPL-style: `df` == `return df`)", { skip }, async () => {
+    assert.equal((await pyRun("6 * 7")).value, 42, "a lone expression is the result");
+    // Statements then a trailing expression — the expression wins, like a notebook cell.
+    assert.equal((await pyRun("x = 6\ny = 7\nx * y")).value, 42);
+    // Equivalent to the explicit return.
+    const bare = await pyRun("import pandas as pd\ndf = pd.DataFrame({'a': [1, 2]})\ndf['a'].sum()");
+    const ret = await pyRun("import pandas as pd\ndf = pd.DataFrame({'a': [1, 2]})\nreturn df['a'].sum()");
+    assert.equal(bare.value, 3);
+    assert.deepEqual(bare.value, ret.value, "bare trailing expr === explicit return");
+});
+
+test("a trailing statement that ISN'T an expression is untouched (no bogus return)", { skip }, async () => {
+    // print(...) returns None, so a trailing print stays value-less (stdout only), not `return None` noise.
+    const r = await pyRun("print('hi')");
+    assert.equal(r.value, null);
+    assert.equal(r.stdout, "hi\n");
+    // A trailing assignment isn't an expression → no capture (unless it's the `result =` convention).
+    assert.equal((await pyRun("z = 5")).value, null);
+});
+
 test("stdout is captured byte-exact; the value comes back alongside", { skip }, async () => {
     const r = await pyRun("print('line1')\nprint('line2')\nreturn 9");
     assert.equal(r.stdout, "line1\nline2\n");

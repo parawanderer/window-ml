@@ -931,7 +931,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
         parameters: {
             type: "object",
             properties: {
-                code: { type: "string", description: "Python. Reference img/img_np/your DataFrame(s); end with a `return`. print() is captured as stdout." },
+                code: { type: "string", description: "Python. Reference img/img_np/your DataFrame(s); end with a `return` OR a bare trailing expression (Jupyter-style: a last line `df` is the result). print() is captured as stdout." },
                 image: { type: "string", description: "Optional CSS selector or @pt:/@box: token to load as img/img_np. An @box loads the exact container content; an @pt loads a square neighbourhood around the point." },
                 cast: { type: "string", enum: ["pt", "box"], description: "Interpret the return as a clickable coordinate: 'pt' (needs [x,y]/{x,y}) or 'box' ([x1,y1,x2,y2]/{left,top,right,bottom}). Omit for a raw text result." },
                 mode: { type: "string", enum: ["readonly", "full"], description: "'readonly' (default) = isolated sandbox, no network/JS scope (auto-approvable). 'full' = network enabled; ALWAYS asks for approval. Use 'readonly' for pure compute over the inputs." },

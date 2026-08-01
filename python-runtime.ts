@@ -100,8 +100,6 @@ if "_ml_orig_read_html" not in globals():
     pd.read_html = _ml_read_html
 `;
 
-const indent = (code: string) => (code || "pass").split("\n").map(l => "    " + l).join("\n");
-
 // Network policy. pandas' read_csv/read_html and urllib all funnel through
 // `urllib.request.OpenerDirector.open`, so patch THAT (robust to however urlopen was imported). The
 // original is saved once (module state persists across runs in Pyodide's single heap) and the policy
@@ -166,24 +164,35 @@ for _k in list(globals().keys()):
         except Exception: pass
 `;
 
-// The full script for one run: RESET + PRELUDE + the user's code as the body of `_user()`.
-// `global result` + a captured return handle BOTH conventions — a `return X` (result = the return)
-// AND a bare top-level `result = X` with no return. stdout/stderr are captured IN Python (byte-exact)
-// and the user's runtime errors caught there (traceback + partial stdout both survive). The result
-// is JSON-serialized in Python (leak-proof — no JsProxy to destroy; numpy scalars coerced via
-// `.item()`), with a `null` sentinel when it isn't serializable. Reads: `_stdout`, `_err`,
+// The full script for one run: RESET + PRELUDE + the user's code, run as the body of `_user()`.
+// The body is built at RUNTIME via ast so THREE conventions all work: an explicit `return X`, a bare
+// top-level `result = X`, AND a bare TRAILING EXPRESSION (`df` on the last line ⇒ its value, Jupyter/
+// REPL-style, matching how a notebook cell and the JS `exec` tool surface the last expression). The
+// user source is embedded as a STRING (JSON.stringify → a valid Python string literal), parsed inside a
+// `def _user()` wrapper (so a top-level `return` is legal), and its trailing `Expr` rewritten to a
+// `Return`. stdout/stderr are captured IN Python (byte-exact); runtime AND syntax errors are caught here
+// (traceback + partial stdout survive). The result is JSON-serialized in Python (leak-proof — no JsProxy
+// to destroy; numpy scalars coerced via `.item()`), null when unserializable. Reads: `_stdout`, `_err`,
 // `_json_result`, `result`.
 export const wrapUserCode = (code: string, hardened = true): string => /* python */ `
 ${RESET}${PRELUDE}
 ${netPolicy(hardened)}
 result = None
-def _user():
-    global result
-${indent(code)}
+_ml_src = ${JSON.stringify(code)}
 _out = io.StringIO()
 _err = None
 with contextlib.redirect_stdout(_out), contextlib.redirect_stderr(_out):
     try:
+        import ast as _ast, textwrap as _tw
+        # Parse the code AS _user's body (a top-level \`return\` is only legal inside a function), then
+        # Jupyter-style: a bare trailing EXPRESSION becomes the return value. A leading \`pass\` keeps the
+        # body non-empty (empty code) without ever being the trailing statement of real code.
+        _ml_tree = _ast.parse("def _user():\\n    global result\\n    pass\\n" + _tw.indent(_ml_src, "    "))
+        _ml_body = _ml_tree.body[0].body
+        if isinstance(_ml_body[-1], _ast.Expr):
+            _ml_body[-1] = _ast.copy_location(_ast.Return(_ml_body[-1].value), _ml_body[-1])
+            _ast.fix_missing_locations(_ml_tree)
+        exec(compile(_ml_tree, "<python_exec>", "exec"), globals())
         _ret = _user()
         if _ret is not None:
             result = _ret

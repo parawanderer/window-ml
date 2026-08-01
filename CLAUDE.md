@@ -504,9 +504,12 @@ flood context. The code runs in a **sandboxed namespace** (no DOM/fs) under
 `contextlib.redirect_stdout` (byte-exact stdout, newlines intact) with its own try/except
 (traceback captured, partial stdout preserved). A per-run namespace reset wipes non-`_`
 globals so one run can't leak state into the next; the result is serialized via Python
-`json.dumps` (leak-proof — no nested JsProxy) with a numpy-scalar `.item()` coercer, and both
-`return X` and a bare top-level `result = X` are captured (`global result` + a return
-fallback). Returns come back as **text by default**; `cast:"pt"`/`"box"` validate the return
+`json.dumps` (leak-proof — no nested JsProxy) with a numpy-scalar `.item()` coercer. THREE return
+conventions all work (`wrapUserCode` builds `_user`'s body at runtime via `ast`): an explicit
+`return X`, a bare top-level `result = X` (`global result`), AND a bare **trailing expression**
+(`df` on the last line ⇒ its value — Jupyter/REPL-style, the same convention the JS `exec` tool
+uses; the code is parsed inside a `def _user()` wrapper so a top-level `return` stays legal, and
+its trailing `ast.Expr` is rewritten to a `Return`). Returns come back as **text by default**; `cast:"pt"`/`"box"` validate the return
 and mint a clickable `@pt`/`@box` (mismatch → an honest error, never a guess), and a
 `to_base64(...)` image return is always shown. The debug render is the two-slot
 `python-in`/`python-out` (above).
