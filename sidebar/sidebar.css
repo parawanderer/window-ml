@@ -305,9 +305,12 @@ details.io[open] > summary .io-preview { display: none; }
    In:/Out: blocks. The summary IS the label; a small triangle marks it clickable. */
 .r-py-sec { margin-bottom: 6px; }
 .r-py-sec:last-child { margin-bottom: 0; }
-.r-py-sec > summary { cursor: pointer; list-style: none; user-select: none; display: flex; align-items: center; gap: 4px; }
+.r-py-sec > summary { cursor: pointer; list-style: none; user-select: none; display: flex; align-items: center; gap: 5px; }
 .r-py-sec > summary::-webkit-details-marker { display: none; }
-.r-py-sec > summary::before { content: "▸"; color: var(--fg-faint); font-size: 0.7em; transition: transform .12s; }
+/* A visible disclosure triangle — sized off the ROOT font (not the tiny 0.8em label), so it doesn't
+   shrink into uselessness. Darkens on hover. */
+.r-py-sec > summary::before { content: "▶"; color: var(--fg-dim); font-size: 0.62rem; line-height: 1; transition: transform .12s; flex: none; }
+.r-py-sec > summary:hover::before { color: var(--fg); }
 .r-py-sec[open] > summary::before { transform: rotate(90deg); }
 .r-py-token code { color: var(--fg); font-size: 0.95em; word-break: break-all; }
 .r-py-table { display: flex; flex-direction: column; gap: 3px; }
