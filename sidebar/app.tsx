@@ -37,7 +37,7 @@ function onDebug(ev: MlDebugEvent): void {
     if (ev.kind === "agent-step") {
         const s = sessionMap.get(ev.session.hash);
         if (!s) return;
-        const step = { step: ev.step, seq: ev.seq, pending: ev.pending, awaitingApproval: ev.awaitingApproval, thought: ev.thought, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: ev.elements, renderIn: ev.renderIn, renderOut: ev.renderOut, argIssues: ev.argIssues, approval: ev.approval, usage: ev.usage };
+        const step = { step: ev.step, seq: ev.seq, pending: ev.pending, awaitingApproval: ev.awaitingApproval, thought: ev.thought, reasoning: ev.reasoning, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: ev.elements, renderIn: ev.renderIn, renderOut: ev.renderOut, argIssues: ev.argIssues, approval: ev.approval, usage: ev.usage };
         const steps = s.steps || [];
         // In-flight: a tool step arrives twice — a pending START then the DONE, sharing a `seq`.
         // Patch the existing row in place (immutably) so it fills in; otherwise append. Thoughts
@@ -733,8 +733,9 @@ function IoBlock({ label, tip, preview, render, raw }: { label: string; tip?: st
 const inlineJson = (v: unknown): string => truncate(pretty(v).replace(/\s+/g, " "), 64);
 const inlineText = (s: string): string => truncate(s.replace(/\s+/g, " ").trim(), 72);
 
-// A step of one ml.agent TURN (one LLM call): a thought + its batched tool calls.
-interface AgentTurnGroup { step: number; thought?: string; tools: AgentStep[]; }
+// A step of one ml.agent TURN (one LLM call): the assistant's prose (thought) + its separate
+// reasoning/thinking + its batched tool calls.
+interface AgentTurnGroup { step: number; thought?: string; reasoning?: string | null; tools: AgentStep[]; }
 function groupTurns(steps: AgentStep[]): AgentTurnGroup[] {
     const byStep = new Map<number, AgentTurnGroup>();
     const order: number[] = [];
@@ -742,6 +743,7 @@ function groupTurns(steps: AgentStep[]): AgentTurnGroup[] {
         let t = byStep.get(st.step);
         if (!t) { t = { step: st.step, tools: [] }; byStep.set(st.step, t); order.push(st.step); }
         if (st.thought != null) t.thought = st.thought;
+        if (st.reasoning != null) t.reasoning = st.reasoning;
         if (st.tool) t.tools.push(st);
     }
     return order.map(s => byStep.get(s)!);
@@ -750,17 +752,19 @@ function groupTurns(steps: AgentStep[]): AgentTurnGroup[] {
 const StepPill = ({ step, max }: { step: number; max?: number }) =>
     <span class="step-pill">step {step}{max ? `/${max}` : ""}</span>;
 
-// The model's reasoning for a turn (an LLM completion → status dot). Collapses to
-// its first line.
-function ThoughtBlock({ thought }: { thought: string }) {
+// A turn's prose (content, `kind:"thought"`) OR its separate reasoning channel
+// (reasoning_content, `kind:"thinking"`) — the two are DISTINCT: `content` is what the model
+// says, `reasoning` is how it thinks. Both use the same collapsible pattern (collapsed to the
+// first line); a thinking block is dimmed to read as secondary to the prose.
+function ThoughtBlock({ thought, kind = "thought" }: { thought: string; kind?: "thought" | "thinking" }) {
     const [open, setOpen] = useState(false);
     const p = collapsedPreview(thought);
     return (
-        <div class="athought">
+        <div class={`athought${kind === "thinking" ? " athinking" : ""}`}>
             <button class="astep-head" onClick={() => setOpen(v => !v)}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
                 <Dot status="ok" />
-                <span class="who">thought</span>
+                <span class="who">{kind}</span>
                 {!open ? <span class="astep-preview">{p.text}{p.more ? " …" : ""}</span> : null}
             </button>
             {open ? <div class="md astep-body" dangerouslySetInnerHTML={{ __html: markdown(thought) }} /> : null}
@@ -866,7 +870,8 @@ function AgentTurn({ turn, max, hash }: { turn: AgentTurnGroup; max?: number; ha
     return (
         <div class="aturn">
             <div class="aturn-head"><StepPill step={turn.step} max={max} /></div>
-            {turn.thought ? <ThoughtBlock thought={turn.thought} /> : null}
+            {turn.reasoning ? <ThoughtBlock thought={turn.reasoning} kind="thinking" /> : null}
+            {turn.thought ? <ThoughtBlock thought={turn.thought} kind="thought" /> : null}
             {turn.tools.map((st, i) => <ToolStep key={`${st.tool}-${i}`} st={st} hash={hash} />)}
         </div>
     );

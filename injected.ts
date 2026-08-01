@@ -288,7 +288,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             model?: string | null;
             think?: boolean | null;
             signal?: AbortSignal | null;
-        } = {}): Promise<{ content: string; tool_calls: ToolCall[]; usage?: TokenUsage | null }> {
+        } = {}): Promise<{ content: string; tool_calls: ToolCall[]; reasoning?: string | null; usage?: TokenUsage | null }> {
             return makeBackgroundTaskPromise(
                 "LLM_REQUEST",
                 "LLM_RESPONSE",
@@ -538,14 +538,14 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             }
 
             let stepSeq = 0;   // monotonic id per tool-call step, correlating its in-flight START with its DONE
-            const emit = (event: { step: number; seq?: number; pending?: boolean; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: Node[]; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; argIssues?: string[]; approval?: "readonly" | "sandbox" | "user" | "denied"; usage?: TokenUsage | null }) => {
+            const emit = (event: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: string | null; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: Node[]; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; argIssues?: string[]; approval?: "readonly" | "sandbox" | "user" | "denied"; usage?: TokenUsage | null }) => {
                 // A `pending` START is a sidebar-render-only event: it has no result yet, so it must
                 // NOT reach onStep/logStep (those fire once per COMPLETED step, or they'd log "→ undefined").
                 if (logDebug && !event.pending) logStep(event);
                 emitDebug({
                     kind: "agent-step", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: event.step },
                     step: event.step, seq: event.seq, pending: event.pending || undefined,
-                    thought: event.thought, tool: event.tool, arguments: event.arguments,
+                    thought: event.thought, reasoning: event.reasoning || undefined, tool: event.tool, arguments: event.arguments,
                     result: event.result, elements: event.elements ? event.elements.length : undefined,
                     renderIn: event.renderIn, renderOut: event.renderOut,
                     argIssues: event.argIssues && event.argIssues.length ? event.argIssues : undefined,
@@ -579,17 +579,18 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 catch (e) { if (signal?.aborted) return cancelled(step - 1); throw e; }
                 if (signal?.aborted) return cancelled(step - 1);
                 if (!msg.tool_calls || !msg.tool_calls.length) {
-                    // Final answer step: emit its usage (the run's peak context) with no tool.
-                    if (msg.usage) emit({ step, usage: msg.usage });
+                    // Final answer step: emit its usage (the run's peak context) + reasoning, no tool.
+                    if (msg.usage || msg.reasoning) emit({ step, usage: msg.usage, reasoning: msg.reasoning });
                     return finish({ summary: (msg.content || "").trim(), steps: step - 1, transcript, elements: answered });
                 }
-                // Surface the model's reasoning (its prose before the tool calls)
-                // so callers can watch it think, not just navigate. The step's token
-                // usage rides this emit (or a usage-only emit when there's no prose).
+                // `content` is the assistant's user-facing PROSE (shown as the step's thought);
+                // `reasoning` is its separate thinking channel (rendered as a collapsible think
+                // section). A model that thinks in reasoning_content leaves content empty while
+                // tool-calling, so emit on reasoning too. Usage rides the same emit.
                 const thought = (msg.content || "").trim();
-                if (thought || msg.usage) {
+                if (thought || msg.usage || msg.reasoning) {
                     if (thought) transcript.push({ thought });
-                    emit({ step, thought: thought || undefined, usage: msg.usage });
+                    emit({ step, thought: thought || undefined, reasoning: msg.reasoning, usage: msg.usage });
                 }
                 messages.push({ role: "assistant" as const, content: msg.content || "", tool_calls: msg.tool_calls });
 

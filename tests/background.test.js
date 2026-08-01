@@ -117,6 +117,19 @@ test("FETCH_LLM surfaces token usage — OpenWebUI `usage` block and Ollama-nati
     assert.deepEqual(rL.usage, { promptTokens: 20, completionTokens: 5, totalTokens: 25 }, "total derived when absent");
 });
 
+test("FETCH_LLM raw returns reasoning_content (the agent path) — a tool-call turn with empty content", async () => {
+    // The observed case: content:"" + reasoning_content has the thinking + a tool_call. The raw path
+    // (agent loop) must surface `reasoning` alongside tool_calls, not drop it like it used to.
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => jsonResponse({ choices: [{ message: { content: "", reasoning_content: "The user wants the red guy.", tool_calls: [{ id: "c1", type: "function", function: { name: "exec", arguments: "{}" } }] } }] }),
+    });
+    const res = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "q" }], raw: true } });
+    assert.equal(res.data.reasoning, "The user wants the red guy.", "reasoning_content surfaces on the raw path");
+    assert.equal(res.data.content, "", "content is the (empty) prose");
+    assert.equal(res.data.tool_calls.length, 1, "the tool call still comes through");
+});
+
 test("FETCH_LLM usage is null when the server reports no counts (never a fake 0)", async () => {
     const bg = loadBackground({
         config: baseConfig(),
@@ -531,6 +544,7 @@ test("FETCH_LLM raw mode returns normalized tool_calls (openai, string args)", a
     assert.deepEqual(res.data, {
         content: null,
         tool_calls: [{ id: "call_abc", name: "readDom", arguments: { selector: ".menu" } }],
+        reasoning: null,   // no reasoning_content in this reply
         usage: null,   // this mock reports no counts
     });
 });

@@ -589,7 +589,9 @@ export interface DebugAgentStep extends DebugBase {
     // Design A: a pending step whose background-hosted tool is BLOCKED on the human gate. The sidebar
     // renders approve/deny controls (instead of "running…") and posts the decision back via SET_APPROVAL.
     awaitingApproval?: boolean;
-    thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: number;
+    // `thought` = the assistant's user-facing PROSE (content); `reasoning` = its separate thinking
+    // channel (reasoning_content / message.thinking), rendered as a collapsible "think" section.
+    thought?: string; reasoning?: string | null; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: number;
     renderIn?: RenderDescriptor;    // rich render for the In slot (the call) — else the raw args
     renderOut?: RenderDescriptor;   // rich render for the Out slot (the result) — else the raw result
     argIssues?: string[];        // JSON-Schema mismatches between the args and the tool's parameters
@@ -639,7 +641,7 @@ export interface MlApi {
 
     /* ---- tools / agent ---- */
     /** Low-level single model turn WITH client-side tools; you own the loop. */
-    step(messages: NeutralMessage[], opts?: StepOptions): Promise<{ content: string; tool_calls: ToolCall[]; usage?: TokenUsage | null }>;
+    step(messages: NeutralMessage[], opts?: StepOptions): Promise<{ content: string; tool_calls: ToolCall[]; reasoning?: string | null; usage?: TokenUsage | null }>;
     /** Build one agent tool (JSON-schema signature + page-side run). */
     defineTool(tool?: Partial<MlTool>): MlTool;
     /** Run a full agent loop over a tool registry until it stops or hits maxSteps. */

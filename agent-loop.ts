@@ -23,8 +23,9 @@ export interface ToolMeta { name: string; requiresApproval?: boolean; capabiliti
 export interface ToolRunResult { result: string; elements?: unknown[]; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; image?: string; imageLabel?: string; }
 
 export interface AgentLoopDeps {
-    // One model turn → the assistant message (content + normalized tool_calls + usage).
-    callModel(messages: unknown[], opts: { tools: ToolMeta[]; step: number }): Promise<{ content?: string | null; tool_calls?: ToolCall[]; usage?: unknown }>;
+    // One model turn → the assistant message (content + normalized tool_calls + usage + the separate
+    // reasoning/thinking channel, which the sidebar shows as a collapsible "think" section).
+    callModel(messages: unknown[], opts: { tools: ToolMeta[]; step: number }): Promise<{ content?: string | null; tool_calls?: ToolCall[]; usage?: unknown; reasoning?: unknown }>;
     // Execute a tool by name — LOCAL (page-side today) or DELEGATED (background → page, safe mode).
     // Reached for a requiresApproval tool ONLY after the gate. This is the untrusted delegation point.
     runTool(name: string, args: Record<string, unknown>): Promise<ToolRunResult>;
@@ -51,7 +52,7 @@ export interface AgentLoopDeps {
     // → no inline vision (a text-only driver). World-specific (the neutral message shape).
     pushToolImages?(messages: unknown[], images: { image: string; label: string }[]): void;
     // Debug/telemetry hook (agent-step events: pending START then the DONE, sharing `seq`).
-    emit?(ev: { step: number; seq?: number; pending?: boolean; thought?: string; tool?: string; arguments?: Record<string, unknown>; result?: string; approval?: Approval; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; usage?: unknown }): void;
+    emit?(ev: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: unknown; tool?: string; arguments?: Record<string, unknown>; result?: string; approval?: Approval; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; usage?: unknown }): void;
 }
 
 export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number; signal?: AbortSignal | null; }
@@ -80,17 +81,19 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         const msg = await deps.callModel(messages, { tools, step });
         if (signal?.aborted) return cancelled(step - 1);
         if (!msg.tool_calls || !msg.tool_calls.length) {
-            // Final-answer step: emit its usage (the run's peak context) so the sidebar's usage gauge
-            // measures the same on the background path as it does page-side — a usage-only step event.
-            if (msg.usage) deps.emit?.({ step, usage: msg.usage });
+            // Final-answer step: emit its usage (the run's peak context) + any reasoning so the sidebar's
+            // gauge/think-section match the page-side loop even on a content-less final turn.
+            if (msg.usage || msg.reasoning) deps.emit?.({ step, usage: msg.usage, reasoning: msg.reasoning });
             return { summary: (msg.content || "").trim(), steps: step - 1, transcript, elements: [] };
         }
-        // The step's token usage rides the thought emit (or a usage-only emit when there's no prose),
-        // matching the page-side loop so a background run's usage gauge isn't blank.
+        // The step's prose (content), token usage, and the separate reasoning channel ride one emit
+        // (or a usage/reasoning-only emit when there's no prose — a model that thinks in reasoning_content
+        // and leaves content empty while tool-calling). `thought` = the assistant's prose; `reasoning` =
+        // its thinking (rendered as a collapsible think section, distinct from the prose).
         const thought = (msg.content || "").trim();
-        if (thought || msg.usage) {
+        if (thought || msg.usage || msg.reasoning) {
             if (thought) transcript.push({ thought });
-            deps.emit?.({ step, thought: thought || undefined, usage: msg.usage });
+            deps.emit?.({ step, thought: thought || undefined, reasoning: msg.reasoning, usage: msg.usage });
         }
         deps.pushAssistant(messages, msg);
 

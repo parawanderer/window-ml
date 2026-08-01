@@ -34,7 +34,7 @@ export interface RunAgentHostDeps {
     callModel(
         messages: NeutralMessage[],
         opts: { tools: ToolMeta[]; model?: string | null; think?: boolean | null; step: number },
-    ): Promise<{ content?: string | null; tool_calls?: ToolCall[]; usage?: unknown }>;
+    ): Promise<{ content?: string | null; tool_calls?: ToolCall[]; usage?: unknown; reasoning?: unknown }>;
     // Delegate a tool call to the page (RUN_TOOL_IN_PAGE) → its serializable result string. Reached for
     // a requiresApproval tool ONLY after the gate — the untrusted execution point.
     delegateTool(name: string, args: Record<string, unknown>): Promise<{ result: string }>;

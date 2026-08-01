@@ -747,6 +747,29 @@ test("agent runs render as their own session with steps + a final answer", async
     assert.ok(w.shadow.querySelector(".msg.asst .raw-btn"), "answer has a raw toggle");
 });
 
+test("agent step: reasoning_content renders as a distinct 'thinking' block, separate from the prose thought", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("rsn", "click the red guy"));
+    // A turn where the model thinks in reasoning_content AND says something in content.
+    await w.dispatch(agentStep("rsn", 1, { thought: "I'll click it.", reasoning: "The red guy has a red cap and blue overalls." }));
+    await w.dispatch(agentStep("rsn", 1, { tool: "click", arguments: { selector: "b" }, result: "clicked" }));
+    await w.dispatch(agentResult("rsn", "done", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+
+    const thinking = w.shadow.querySelector(".athought.athinking");
+    assert.ok(thinking, "a distinct thinking block renders");
+    assert.match(thinking.querySelector(".who").textContent, /thinking/);
+    // Expand it → the reasoning text.
+    thinking.querySelector(".astep-head").click();
+    await w.tick();
+    assert.match(thinking.textContent, /red cap and blue overalls/, "reasoning shown");
+    // The prose thought is a SEPARATE block, labelled 'thought'.
+    const thought = [...w.shadow.querySelectorAll(".athought")].find(b => !b.classList.contains("athinking"));
+    assert.ok(thought, "the prose thought is its own block");
+    assert.match(thought.querySelector(".who").textContent, /thought/);
+});
+
 test("agent step renders IN-FLIGHT, then the DONE patches it in place (same seq → no duplicate row)", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("ifl", "compute a thing"));

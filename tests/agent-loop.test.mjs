@@ -121,6 +121,20 @@ test("token usage is emitted per step (so the background run's usage gauge isn't
     assert.equal(withUsage[withUsage.length - 1].usage.totalTokens, 250);
 });
 
+test("reasoning_content is emitted per step, distinct from the content prose", async () => {
+    // The model thinks in reasoning_content and leaves content empty while tool-calling.
+    const { deps, calls } = makeDeps({ turns: [
+        { content: "", reasoning: "Let me find the button.", tool_calls: [{ id: "c1", name: "safe", arguments: {} }] },
+        { content: "done", reasoning: "That worked.", tool_calls: [] },
+    ] });
+    await runAgentLoop("x", { tools: [{ name: "safe" }] }, deps);
+    const withReasoning = calls.emits.filter(e => e.reasoning);
+    assert.equal(withReasoning.length, 2, "both the tool-call turn and the final answer emit reasoning");
+    assert.equal(withReasoning[0].reasoning, "Let me find the button.");
+    assert.equal(withReasoning[0].thought, undefined, "content was empty → no prose thought, but reasoning still emits");
+    assert.equal(withReasoning[1].reasoning, "That worked.");
+});
+
 test("a step with usage but NO prose still emits usage (usage-only emit)", async () => {
     const { deps, calls } = makeDeps({ turns: [
         { content: "", tool_calls: [{ id: "c1", name: "safe", arguments: {} }], usage: { totalTokens: 42 } },

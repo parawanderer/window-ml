@@ -155,14 +155,20 @@ function writeAgent(s: Session, d: Sink): void {
         d.details(`System prompt${c.customSystem ? " (custom)" : ""}`, () => d.code(c.system));
     }
     for (const st of s.steps || []) {
-        // Skip an empty step — a thinking-model's usage-only emit (no thought/tool,
-        // just a token sample). Matches the sidebar's filter; otherwise it serialises
-        // a bare "Step N · ?" header. (A `think:true` step puts its reasoning in the
-        // separate thinking channel, so its content-thought is empty.)
-        if (st.tool == null && !st.thought) continue;
-        if (st.tool == null && st.thought != null) { d.head(`Step ${st.step} · thought`); d.prose(st.thought); continue; }
+        // Skip a truly empty step — a usage-only emit (no prose/reasoning/tool, just a token
+        // sample). Matches the sidebar's filter; otherwise it serialises a bare "Step N · ?" header.
+        if (st.tool == null && !st.thought && !st.reasoning) continue;
+        // A no-tool step is a pure prose/reasoning turn: the assistant's `content` (thought) shown
+        // as prose, its `reasoning_content` as a collapsible "Thinking" section (like the chat export).
+        if (st.tool == null) {
+            d.head(`Step ${st.step} · thought`);
+            if (st.reasoning) d.details("Thinking", () => d.prose(st.reasoning!));
+            if (st.thought) d.prose(st.thought);
+            continue;
+        }
         d.head(`Step ${st.step} · ${st.tool || "?"}`);
         if (st.approval) d.note(st.approval === "readonly" ? "auto-approved (read-only)" : st.approval === "sandbox" ? "auto-approved (sandboxed python)" : st.approval === "user" ? "approved by user" : "denied by user");
+        if (st.reasoning) d.details("Thinking", () => d.prose(st.reasoning!));
         if (st.thought) d.prose(st.thought);
         // In: a rendered view (when the tool supplies one) AND — always — the RAW args
         // the model emitted. The sidebar has a rendered⇄raw toggle; a static export can't

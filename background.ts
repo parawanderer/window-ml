@@ -473,6 +473,9 @@ async function fetchLLM(payload: FetchLlmPayload, signal?: AbortSignal): Promise
         return {
             content: format.extractContent(data) ?? null,
             tool_calls: format.extractToolCalls(data),
+            // The model's separate thinking channel (reasoning_content / message.thinking). The agent
+            // loop surfaces it as a collapsible "think" section, distinct from `content` (its prose).
+            reasoning: format.extractReasoning(data) || null,
             usage: normalizeUsage(data.usage || data),
         };
     }
@@ -759,8 +762,8 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             { task: p.task, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython },
             {
                 callModel: async (messages) => {
-                    const r = await fetchLLM({ messages, tools: toolDefs, model: p.model, think: p.think, raw: true }) as { content: string | null; tool_calls: ToolCall[]; usage: TokenUsage | null };
-                    return { content: r.content, tool_calls: r.tool_calls, usage: r.usage };
+                    const r = await fetchLLM({ messages, tools: toolDefs, model: p.model, think: p.think, raw: true }) as { content: string | null; tool_calls: ToolCall[]; reasoning: string | null; usage: TokenUsage | null };
+                    return { content: r.content, tool_calls: r.tool_calls, reasoning: r.reasoning, usage: r.usage };
                 },
                 delegateTool: async (name, args) => {
                     const env = await chrome.tabs.sendMessage(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name, args } })
