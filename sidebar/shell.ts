@@ -12,7 +12,7 @@
 // and we re-send the handshake on it, so a page-load race (our handshake landing before
 // injected's async <script> is listening — which stranded the devtools panel on Ctrl+R)
 // can't leave it un-live.
-import { SB_ROOT, SB_HOST, SB_TAB, SB_FRAME, SB_LIGHTBOX, SB_LIGHTBOX_X } from "../ids";
+import { SB_ROOT, SB_HOST, SB_TAB, SB_FRAME, SB_LIGHTBOX, SB_LIGHTBOX_X, SB_HIGHLIGHT } from "../ids";
 import type { DebugMode } from "../contract";
 
 const WIDTH_KEY = "ml_debug_width";
@@ -39,6 +39,13 @@ const SHELL_CSS = `
 #${SB_LIGHTBOX_X} { position: fixed; top: 12px; right: 16px; width: 32px; height: 32px; border-radius: 7px;
   border: 1px solid rgba(255,255,255,.35); background: rgba(0,0,0,.5); color: #fff; font: 16px system-ui; cursor: pointer; }
 #${SB_LIGHTBOX_X}:hover { background: rgba(0,0,0,.85); }
+/* DevTools-style hover highlight — a positioned box OVER a page element (never mutating it). Sits
+   below the panel (z-index) and is pointer-events:none so it can't intercept clicks. */
+#${SB_HIGHLIGHT} { position: fixed; z-index: 2147482999; pointer-events: none; box-sizing: border-box;
+  background: rgba(89,131,246,.28); outline: 1px solid rgba(89,131,246,.95); border-radius: 1px; }
+#${SB_HIGHLIGHT} .ml-hl-label { position: absolute; top: 100%; left: 0; margin-top: 2px; padding: 1px 6px;
+  background: #5983f6; color: #fff; font: 500 10px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  border-radius: 3px; white-space: nowrap; max-width: 50vw; overflow: hidden; text-overflow: ellipsis; }
 /* Tooltip primitive — a copy of the app's (sidebar.css), because this shell lives in
    its own shadow root in the PAGE and shares no stylesheet with the iframe. Same rule
    applies: size and typography are pinned absolutely, never inherited — the tab is
@@ -101,6 +108,27 @@ function showLightbox(src: string): void {
     window.addEventListener("keydown", onLightboxKey);
 }
 
+// DevTools-style hover highlight: the app (over a rendered element reference) asks us to outline a
+// page element. We draw a positioned box OVER it in our shadow root — never touching the element, so
+// no page-DOM mutation, no layout thrash, no MutationObserver noise. The shell shares the page DOM (a
+// content script), so it can resolve the selector + rect itself. Off-target / not-found → just hide.
+let highlightEl: HTMLElement | null = null;
+function hideHighlight(): void { if (highlightEl) { highlightEl.remove(); highlightEl = null; } }
+function showHighlight(ref: { selector?: string; index?: number } | null): void {
+    if (!shadowRoot || !ref || !ref.selector) return hideHighlight();
+    let el: Element | null = null;
+    try { el = document.querySelectorAll(ref.selector)[ref.index || 0] || null; } catch { el = null; }   // invalid selector (e.g. an @pt token) → no throw
+    if (!el) return hideHighlight();
+    const r = el.getBoundingClientRect();
+    if (!r.width && !r.height) return hideHighlight();   // hidden/collapsed — nothing to show
+    if (!highlightEl) { highlightEl = document.createElement("div"); highlightEl.id = SB_HIGHLIGHT; shadowRoot.append(highlightEl); }
+    Object.assign(highlightEl.style, { left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px` });
+    const label = document.createElement("div");
+    label.className = "ml-hl-label";
+    label.textContent = `${el.tagName.toLowerCase()} · ${Math.round(r.width)}×${Math.round(r.height)}`;
+    highlightEl.replaceChildren(label);
+}
+
 // While the overlay is hidden for a shot it stops being a hit-test target, so a wheel
 // gesture you were mid-scroll on falls through to the page and moves it — corrupting the
 // very shot we're taking (and leaving the page scrolled). Pin the page scroll for the
@@ -126,6 +154,7 @@ function onWindowMessage(e: MessageEvent): void {
         }
         if (shellHost) shellHost.style.visibility = "hidden";
         if (lightbox) lightbox.style.visibility = "hidden";   // full-viewport overlay — MUST hide too, else the shot is all backdrop
+        hideHighlight();   // a hover box would otherwise land in the capture
         requestAnimationFrame(() => requestAnimationFrame(() => window.postMessage({ __mlSidebarShot: "hidden" }, "*")));
         return;
     }
@@ -141,6 +170,9 @@ function onWindowMessage(e: MessageEvent): void {
     }
     // The iframe app asks to open an image full-window (ClickableImg).
     if (typeof d.__mlLightbox === "string" && frame && e.source === frame.contentWindow) { showLightbox(d.__mlLightbox); return; }
+    // The iframe app asks to highlight a page element on hover (a rendered element ref). Draw the
+    // overlay box; null clears it. Origin-checked (only the real iframe), like the lightbox.
+    if ("__mlHighlight" in d && frame && e.source === frame.contentWindow) { showHighlight(d.__mlHighlight); return; }
     // injected.js (page main world) → the active surface ONLY (the debugMode surfaces are
     // exclusive): `overlay` relays into the iframe app (frame is null in devtools mode →
     // no-op); `devtools` forwards to the background so the panel receives it (a panel can't

@@ -198,6 +198,13 @@ function useCopy(): { copied: boolean; copy: (text: string) => void } {
 // ~sidebar-width frame — post the src up and the shell renders the overlay.
 const openLightbox = (src: string) => window.parent.postMessage({ __mlLightbox: src }, "*");
 
+// Ask the shell to draw / clear a DevTools-style highlight over a page element (on hover of a rendered
+// element reference). The shell owns the page DOM (a content script), so it resolves the selector +
+// rect and outlines it WITHOUT touching the element. Overlay-surface only — a no-op in the devtools
+// panel, whose parent can't reach the page.
+const highlightEl = (selector: string) => window.parent.postMessage({ __mlHighlight: { selector } }, "*");
+const clearHighlight = () => window.parent.postMessage({ __mlHighlight: null }, "*");
+
 // Design A: the sidebar's approve/deny for a background-hosted run's pending gate. We post it to the
 // SHELL (our parent), which — because it can prove the message came from this real extension iframe
 // (e.source === frame.contentWindow, unforgeable by the page) — forwards it to the background as
@@ -418,7 +425,9 @@ function RenderElements({ items }: { items: { path: string; text?: string; index
     return (
         <div class="r-elements">
             {items.map((it, i) => (
-                <div class="r-el" key={it.index ?? i}>
+                // Hover → outline the element on the page (DevTools-style; the shell owns the page DOM).
+                <div class="r-el" key={it.index ?? i}
+                    onPointerEnter={() => highlightEl(it.path)} onPointerLeave={clearHighlight}>
                     <span class="r-el-idx">#{it.index ?? i}</span>
                     {it.text ? <span class="r-el-text">«{it.text}»</span> : null}
                     <code class="r-el-path">{it.path}</code>

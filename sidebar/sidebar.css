@@ -301,7 +301,9 @@ details.io[open] > summary .io-preview { display: none; }
   text-align: right; font: 0.9em ui-monospace, monospace; border-right: 1px solid var(--border); z-index: 1; }
 .r-df-table thead .r-df-idx { z-index: 2; background: var(--panel-2); }
 .r-elements { display: flex; flex-direction: column; gap: 2px; }
-.r-el { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.r-el { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; border-radius: 4px; padding: 1px 4px; margin: 0 -4px; cursor: default; }
+/* Hover cues that this row highlights its element on the page (see highlightEl → the shell overlay). */
+.r-el:hover { background: color-mix(in srgb, var(--accent) 16%, transparent); }
 .r-el-idx { color: var(--fg-faint); font: 0.8em ui-monospace, SFMono-Regular, Menlo, monospace; flex: 0 0 auto; }
 .r-el-text { color: var(--fg); }
 .r-el-path { color: var(--fg-dim); font: 0.82em ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }

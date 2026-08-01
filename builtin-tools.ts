@@ -760,6 +760,15 @@ export const buildClickTool = (ml: MlApi): MlTool => {
             },
             required: ["selector"]
         },
+        // Approval preview In: render the CSS target as a hoverable element ref (hover → the sidebar
+        // outlines it on the page, so you see WHAT you're approving before you click). An @pt/@box
+        // isn't a DOM selector → fall back to raw args.
+        render: (_input, args) => {
+            const sel = typeof args.selector === "string" ? args.selector : "";
+            if (!sel || POINT_RE.test(sel.trim()) || BOX_RE.test(sel.trim())) return null;
+            const idx = typeof args.index === "number" ? args.index : undefined;
+            return { type: "elements", items: [{ path: sel, ...(idx ? { index: idx } : {}) }] };
+        },
         run: async ({ selector, index = 0 }: { selector: string; index?: number }): Promise<string> => {
             // A container token is a REGION, not a click target — steer to a point inside it.
             if (BOX_RE.test((selector || "").trim())) {

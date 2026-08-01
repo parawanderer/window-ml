@@ -8,3 +8,4 @@ export const SB_TAB = "ml-sb-tab";           // the always-visible pull tab
 export const SB_FRAME = "ml-sb-frame";       // the iframe holding the Preact app
 export const SB_LIGHTBOX = "ml-lightbox";    // full-viewport image lightbox (a sibling overlay)
 export const SB_LIGHTBOX_X = "ml-lightbox-x";
+export const SB_HIGHLIGHT = "ml-highlight";  // DevTools-style hover highlight box (positioned over a page element; never mutates it)

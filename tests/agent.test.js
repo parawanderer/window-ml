@@ -1816,6 +1816,17 @@ test("tables:'current' with no data table (and not a Sheet) → a clear error", 
     await assert.rejects(ml._loadTable("df", "current"), /neither a Google Sheet nor has a table with data/);
 });
 
+test("click tool render(): a CSS selector → a hoverable element ref; @pt/@box → raw args (null)", () => {
+    const { ml } = loadDomWorld();
+    const click = ml.clickTool();
+    // A CSS selector renders as an `elements` descriptor so the approval In can hover→highlight it.
+    assert.deepEqual(click.render({}, { selector: "#go" }), { type: "elements", items: [{ path: "#go" }] });
+    assert.deepEqual(click.render({}, { selector: ".x", index: 2 }), { type: "elements", items: [{ path: ".x", index: 2 }] });
+    // A canvas @pt / @box isn't a queryable selector → no element render (falls back to raw args).
+    assert.equal(click.render({}, { selector: "@pt:abc123" }), null);
+    assert.equal(click.render({}, { selector: "@box:def456" }), null);
+});
+
 // ---- python_exec cast:'pt'/'box' projects image-pixel coords → viewport (dpr + element offset) ----
 
 test("cast:'pt' projects the image-pixel point through the crop transform before minting", async () => {
