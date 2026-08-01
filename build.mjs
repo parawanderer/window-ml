@@ -104,6 +104,9 @@ if (watch) {
     await esbuild.build({ entryPoints: { "agent-loop": "agent-loop.ts" }, outdir: "dist", bundle: true, format: "cjs", platform: "node", logLevel: "info" });
     // The trusted-world auto-approve decision (design A) — pure, bundled standalone for its unit tests.
     await esbuild.build({ entryPoints: { "auto-approve": "auto-approve.ts" }, outdir: "dist", bundle: true, format: "cjs", platform: "node", logLevel: "info" });
+    // Design A page-side tool delegation (registerRun/runDelegatedTool/endRun) — bundled standalone so
+    // the envelope reduction + answer-node stash are unit-tested without the window round-trip.
+    await esbuild.build({ entryPoints: { "run-delegation": "run-delegation.ts" }, outdir: "dist", bundle: true, format: "cjs", platform: "node", logLevel: "info" });
     copyAssets();
     copyPyodide();
     // Regenerate the standalone visual preview of som's canvas annotate() (gitignored —

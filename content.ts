@@ -77,6 +77,25 @@ const startStream = (requestId: string, payload: unknown): void => {
 
 interface PageMessage { type?: string; requestId?: string; payload?: unknown; }
 
+// Design A — background → page tool delegation (the REVERSE of the page→background relay below). The
+// background-hosted agent loop runs a page-context tool by `chrome.tabs.sendMessage(tabId, ...)`, which
+// lands here. We relay it to the main world as a PAGE_TOOL_RUN window message, await the matching
+// PAGE_TOOL_RESULT (correlated by a locally-minted callId), and hand the envelope back via
+// sendResponse. Returning true keeps the message channel open for that async reply.
+chrome.runtime.onMessage.addListener((message: PageMessage, _sender, sendResponse) => {
+    if (!message || message.type !== "RUN_TOOL_IN_PAGE") return undefined;
+    const { runId, name, args } = (message.payload || {}) as { runId: string; name: string; args: unknown };
+    const callId = Math.random().toString(36).slice(2);
+    const onResult = (event: MessageEvent) => {
+        if (event.source !== window || !event.data || event.data.type !== "PAGE_TOOL_RESULT" || event.data.callId !== callId) return;
+        window.removeEventListener("message", onResult);
+        sendResponse(event.data.envelope);
+    };
+    window.addEventListener("message", onResult);
+    window.postMessage({ type: "PAGE_TOOL_RUN", callId, runId, name, args }, "*");
+    return true;   // async sendResponse (the window round-trip completes later)
+});
+
 // 2. Listen for messages from injected.js (main world).
 window.addEventListener("message", (event: MessageEvent) => {
     if (event.source !== window || !event.data) return;

@@ -389,6 +389,39 @@ export type BackgroundMessageType =
     | "SAVE_SESSION" | "GET_SESSION" | "PYTHON_EXEC" | "FETCH_SHEET"
     | "ABORT_TASK";   // abort the AbortController registered for a requestId (only FETCH_LLM registers one today)
 
+/* ------------------- design A: background → page tool delegation ------------------- */
+
+/** Message types the CONTENT SCRIPT handles INBOUND from the background — the reverse of the
+ *  page→background relay above. Design A's agent loop lives in the background (extension origin,
+ *  unforgeable approval), but page-context tools (exec/click/type/look/locate/DOM survey) must run
+ *  where the DOM is, so the background asks the page to run a named tool by `chrome.tabs.sendMessage`.
+ *  content.ts relays it to the main world as a `PAGE_TOOL_RUN` window message and returns the page's
+ *  `PAGE_TOOL_RESULT` envelope via sendResponse. */
+export type ContentMessageType = "RUN_TOOL_IN_PAGE";
+
+/** RUN_TOOL_IN_PAGE payload — run a named tool from an active agent run's page-side toolset. The
+ *  `callId` correlating the window round-trip is minted content-side (not here); the background
+ *  correlates its own request via the sendMessage callback. */
+export interface RunToolInPagePayload {
+    runId: string;
+    name: string;
+    args: Record<string, unknown>;
+}
+
+/** The result of a delegated tool call, crossing back from the page to the background. Only the
+ *  SERIALIZABLE parts of a {@link ToolResult} survive the window bus: the result string, a screenshot
+ *  data-URL, the render descriptors (plain data), and an element COUNT. The real DOM Nodes an
+ *  answer-capable tool returns can't cross — they stay page-side and are assembled into
+ *  {@link AgentResult}.elements there. */
+export interface PageToolEnvelope {
+    result: string;
+    elementCount?: number;      // real nodes stay page-side; the background only learns how many
+    image?: string;             // screenshot data-URL (inline vision / debug render)
+    imageLabel?: string;
+    render?: RenderDescriptor;   // Out slot — a visualization of the result
+    renderIn?: RenderDescriptor; // In slot — a visualization of the call
+}
+
 /** A resumable chat session persisted to chrome.storage.local for { save: true }
  *  sessions (main world can't touch storage → background round-trip). No secrets:
  *  just the message history + the createChat options needed to continue it. */
@@ -596,6 +629,10 @@ export interface MlApi {
 
     /* ---- internal plumbing (underscore-prefixed; unstable) ---- */
     _logStep(ev: AgentStepEvent): void;
+    /** Design A — register/end an agent run's page-side toolset so the background loop can run its
+     *  tools via RUN_TOOL_IN_PAGE (see run-delegation.ts). Called by ml.agent's START_RUN shim. */
+    _registerRun(runId: string, tools: MlTool[]): void;
+    _endRun(runId: string): void;
     _truncate(str: string, n: number): string;
     _suspiciousChars(str: string): { index: number; code: string; name: string }[];
     _renderArgs(args: unknown): string;

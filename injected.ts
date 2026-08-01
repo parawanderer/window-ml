@@ -44,6 +44,7 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
 import { pyVarNameError } from "./python-env";
 import { autoApprovePython } from "./auto-approve";
 import { executeTool } from "./tool-exec";
+import { installToolDelegation, registerRun, endRun } from "./run-delegation";
 
 /** One resolved `python_exec` table source: its var name, provenance, and the payload the sandbox
  *  builds a DataFrame from (rows or read_html html). Internal to injected.ts. */
@@ -1195,6 +1196,11 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
         },
         // The built-in ml.agent({ logDebug: true }) tracer; pass as onStep too.
         _logStep: logStep,
+        // Design A tool delegation (run-delegation.ts): register an agent run's live toolset page-side
+        // so the background loop can run its tools via RUN_TOOL_IN_PAGE. ml.agent's START_RUN shim
+        // will call these; exposed under `_` so the transport is unit-testable (tests/delegation.test.js).
+        _registerRun: function(runId: string, tools: MlTool[]): void { registerRun(runId, tools); },
+        _endRun: function(runId: string): void { endRun(runId); },
         // Internal DOM helpers used by the agent tools, exposed under `_` (as
         // with _parseJSON below) so tests and console debugging can reach them.
         _truncate: truncate,
@@ -1382,6 +1388,10 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
     // tools.ts. Pass this array (or a superset — `[...ml.domTools, myTool]`) to
     // ml.agent. defineTool is detached (this-free), so pass it directly.
     window.ml.domTools = makeDomTools(window.ml.defineTool);
+
+    // listen for the background loop's delegated tool-run requests (relayed by content.ts
+    // as PAGE_TOOL_RUN). A no-op until an agent run registers a toolset via _registerRun.
+    installToolDelegation();
 
     // Readiness signal for scripts (e.g. userscripts) that may run before this
     // one injects. Resolves immediately since window.ml is fully synchronous:

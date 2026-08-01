@@ -187,6 +187,7 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps } = {}) {
     const runtimeCalls = [];
     const listeners = {};       // type -> fn[]
     const dispatchedEvents = []; // event types dispatched (for assertions)
+    const runtimeMsgListeners = []; // chrome.runtime.onMessage listeners (content.js's reverse channel)
 
     const win = {
         addEventListener: (type, fn) => {
@@ -258,7 +259,10 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps } = {}) {
                         onDisconnect: { addListener: () => {} },
                         disconnect: () => {}
                     };
-                }
+                },
+                // content.js's REVERSE channel (design A): the background delivers RUN_TOOL_IN_PAGE
+                // here via chrome.tabs.sendMessage. Tests fire it with fireRuntimeMessage() below.
+                onMessage: { addListener: (fn) => runtimeMsgListeners.push(fn) }
             }
         }
     };
@@ -266,7 +270,18 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps } = {}) {
     vm.runInContext(fs.readFileSync(path.join(DIST, "content.js"), "utf8"), context);
     vm.runInContext(fs.readFileSync(path.join(DIST, "injected.js"), "utf8"), context);
 
-    return { ml: win.ml, runtimeCalls, context, dispatchedEvents };
+    // Simulate the background delivering a message to this tab's content script (chrome.tabs.sendMessage
+    // → chrome.runtime.onMessage). Resolves with whatever sendResponse is eventually called with — for
+    // RUN_TOOL_IN_PAGE that's the page's tool envelope, which arrives after the window round-trip.
+    const fireRuntimeMessage = (message, sender = {}) => new Promise((resolve) => {
+        let async = false;
+        for (const fn of runtimeMsgListeners) {
+            if (fn(message, sender, resolve) === true) async = true;
+        }
+        if (!async) resolve(undefined);   // no listener kept the channel open
+    });
+
+    return { ml: win.ml, runtimeCalls, context, dispatchedEvents, fireRuntimeMessage };
 }
 
 // Boots ONLY injected.js over a real jsdom document, so the agent's DOM
