@@ -765,14 +765,19 @@ const StepPill = ({ step, max }: { step: number; max?: number }) =>
 // first line); a thinking block is dimmed to read as secondary to the prose.
 function ThoughtBlock({ thought, kind = "thought" }: { thought: string; kind?: "thought" | "thinking" }) {
     const [open, setOpen] = useState(false);
+    const thinking = kind === "thinking";
     const p = collapsedPreview(thought);
+    // Thinking can't "fail" (it's not a step) → no status dot. Collapsed, its text is mostly noise, so
+    // show only how much it thought — an ESTIMATE (~chars/4), since the server doesn't break out
+    // reasoning_tokens (it reported 0). Expand to actually read it.
+    const tokEst = Math.max(1, Math.round(thought.length / 4));
     return (
-        <div class={`athought${kind === "thinking" ? " athinking" : ""}`}>
+        <div class={`athought${thinking ? " athinking" : ""}`}>
             <button class="astep-head" onClick={() => setOpen(v => !v)}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
-                <Dot status="ok" />
+                {thinking ? null : <Dot status="ok" />}
                 <span class="who">{kind}</span>
-                {!open ? <span class="astep-preview">{p.text}{p.more ? " …" : ""}</span> : null}
+                {!open ? <span class="astep-preview">{thinking ? `~${tokEst} tokens` : `${p.text}${p.more ? " …" : ""}`}</span> : null}
             </button>
             {open ? <div class="md astep-body" dangerouslySetInnerHTML={{ __html: markdown(thought) }} /> : null}
         </div>

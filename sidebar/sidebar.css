@@ -205,6 +205,8 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
    dim its label + preview so the two are visually distinct, per the content/reasoning split. */
 .athinking .who { color: var(--fg-dim); font-weight: 500; font-style: italic; }
 .athinking .astep-preview { font-style: italic; }
+/* The thinking text itself reads dim/secondary — it's how the model thinks, not what it says. */
+.athinking .astep-body, .athinking .astep-body.md, .athinking .astep-body.md p, .athinking .astep-body.md li { color: var(--fg-dim); }
 .astep.tool { border-left: 2px solid var(--accent); padding-left: 8px; margin: 4px 0; }
 .astep-head { display: flex; align-items: center; gap: 6px; width: 100%; background: none; border: none; padding: 3px 0; cursor: pointer; text-align: left; color: inherit; }
 .astep-head:hover .tri { color: var(--fg); }

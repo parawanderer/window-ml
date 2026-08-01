@@ -760,6 +760,10 @@ test("agent step: reasoning_content renders as a distinct 'thinking' block, sepa
     const thinking = w.shadow.querySelector(".athought.athinking");
     assert.ok(thinking, "a distinct thinking block renders");
     assert.match(thinking.querySelector(".who").textContent, /thinking/);
+    // Collapsed: no status dot (thinking can't fail), and the preview is an ~token estimate, NOT the text.
+    assert.equal(thinking.querySelector(".dot"), null, "no status dot on a thinking block");
+    assert.match(thinking.querySelector(".astep-preview").textContent, /~\d+ tokens/, "collapsed shows a token estimate");
+    assert.doesNotMatch(thinking.querySelector(".astep-preview").textContent, /red cap/, "collapsed does NOT spam the reasoning text");
     // Expand it → the reasoning text.
     thinking.querySelector(".astep-head").click();
     await w.tick();
