@@ -326,11 +326,11 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          * @returns {MlTool} The tool with defaults filled in.
          * @throws {Error} If `name` or a `run` function is missing.
          */
-        defineTool: function({ name, description = "", parameters = { type: "object", properties: {} }, run, requiresApproval = false, capabilities = [], render }: Partial<MlTool> = {}): MlTool {
+        defineTool: function({ name, description = "", parameters = { type: "object", properties: {} }, run, requiresApproval = false, capabilities = [], render, precheck }: Partial<MlTool> = {}): MlTool {
             if (!name || typeof run !== "function") {
                 throw new Error("ml.defineTool needs a name and a run(args) function");
             }
-            return { name, description, parameters, run, requiresApproval, capabilities, render };
+            return { name, description, parameters, run, requiresApproval, capabilities, render, precheck };
         },
         /**
          * Run a full agent loop over a tool registry: the model calls tools, we
@@ -511,6 +511,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 const descriptors = toolset.map(t => ({
                     name: t.name, description: t.description, parameters: t.parameters,
                     requiresApproval: !!t.requiresApproval, capabilities: t.capabilities || [],
+                    precheck: typeof t.precheck === "function",   // has a doomed-action precheck → the background delegates it before gating
                 }));
                 enterAgentRun();   // suppress orphan chat sessions from a delegated tool's internal ml.chat
                 try {
@@ -538,7 +539,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             }
 
             let stepSeq = 0;   // monotonic id per tool-call step, correlating its in-flight START with its DONE
-            const emit = (event: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: string | null; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: Node[]; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; argIssues?: string[]; approval?: "readonly" | "sandbox" | "user" | "denied"; usage?: TokenUsage | null }) => {
+            const emit = (event: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: string | null; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: Node[]; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; argIssues?: string[]; approval?: "readonly" | "sandbox" | "user" | "denied" | "skipped"; usage?: TokenUsage | null }) => {
                 // A `pending` START is a sidebar-render-only event: it has no result yet, so it must
                 // NOT reach onStep/logStep (those fire once per COMPLETED step, or they'd log "→ undefined").
                 if (logDebug && !event.pending) logStep(event);
@@ -605,7 +606,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     const tool = byName[call.name];
                     let args = (call.arguments || {}) as Record<string, unknown>;
                     let result, elements, image, imageLabel, toolRender, toolRenderIn;
-                    let approval: "readonly" | "sandbox" | "user" | "denied" | undefined;
+                    let approval: "readonly" | "sandbox" | "user" | "denied" | "skipped" | undefined;
                     // In-flight START: render the pending tool call NOW (name + args + best-effort In),
                     // patched by the DONE emit below (same seq). Paints before an auto-approved /
                     // non-approval tool runs; a blocking confirm() defers it until approved — the case
@@ -653,6 +654,13 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                             approval = "sandbox";
                             ({ result, elements, image, imageLabel, render: toolRender, renderIn: toolRenderIn } = await runTool(tool, args));
                             handled = true;
+                        }
+                        // Doomed-action skip: a side-effect-free precheck (click/type target resolution). If
+                        // the action can't proceed (no element, stale @pt, bad selector), return that error
+                        // WITHOUT gating — approving something that will only fail is pointless friction. No
+                        // approval provenance (it never ran, never gated).
+                        if (!handled && typeof tool.precheck === "function") {
+                            try { const pre = tool.precheck(args); if (pre) { result = pre; approval = "skipped"; handled = true; } } catch { /* precheck threw → fall through to the gate */ }
                         }
                         if (!handled) {
                             // Approval gate. `approve` may return a boolean or the rich

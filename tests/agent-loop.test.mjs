@@ -74,6 +74,25 @@ test("an unknown tool errors without touching the executor", async () => {
     assert.match(res.transcript[0].result, /no tool named "ghost"/);
 });
 
+test("a DOOMED action (precheck error) skips the gate AND the executor — no approval prompt", async () => {
+    const { deps, calls } = makeDeps({ turns: [toolCall("click", { selector: "#nope" }), reply("done")] });
+    deps.precheck = async () => `No element matches "#nope".`;   // the target can't resolve
+    const res = await runAgentLoop("x", { tools: [{ name: "click", requiresApproval: true }] }, deps);
+    assert.equal(calls.approve.length, 0, "no approval prompt for an action that can only fail");
+    assert.equal(calls.runTool.length, 0, "and the executor is NOT reached (no side effect)");
+    assert.match(res.transcript.find(t => t.result)?.result || calls.emits.find(e => e.tool === "click" && !e.pending).result, /No element matches/);
+    // "skipped" provenance — it never ran, never gated, but the UI shows WHY there was no prompt.
+    assert.equal(calls.emits.find(e => e.tool === "click" && !e.pending).approval, "skipped");
+});
+
+test("a precheck that PASSES (null) proceeds to the gate as normal", async () => {
+    const { deps, calls } = makeDeps({ turns: [toolCall("click", { selector: "#ok" }), reply("done")], approve: () => true });
+    deps.precheck = async () => null;   // target resolves → gate
+    await runAgentLoop("x", { tools: [{ name: "click", requiresApproval: true }] }, deps);
+    assert.equal(calls.approve.length, 1, "a resolvable target still gates");
+    assert.equal(calls.runTool.length, 1, "and runs after approval");
+});
+
 test("a plain reply ends with the summary; maxSteps flags hitCap", async () => {
     const { deps } = makeDeps({ turns: [reply("all done")] });
     const r1 = await runAgentLoop("x", { tools: [] }, deps);

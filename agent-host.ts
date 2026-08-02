@@ -41,6 +41,7 @@ export interface RunAgentHostDeps {
     // Read-only try (exec only): page-delegated attempt via the mediated interpreter. A non-null result
     // means it ran safely (no mutation) → skip the gate. Wired only when autoApproveReadonly is on.
     tryReadonly?(name: string, args: Record<string, unknown>): Promise<ToolRunResult | null>;
+    precheck?(name: string, args: Record<string, unknown>): Promise<string | null>;   // doomed-action skip (click/type)
     // The approval gate — the sidebar, in design A (origin-authed; the decision never crosses the page).
     approve(req: { tool: string; arguments: Record<string, unknown>; seq?: number; step?: number }): Promise<ApprovalDecision>;
     // Whether an external Google spreadsheet was already approved this run (trusted, background-side) —
@@ -82,6 +83,7 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
         callModel: (messages, o) => deps.callModel(messages as NeutralMessage[], { tools: o.tools, model: cfg.model, think: cfg.think, step: o.step }),
         runTool: (name, args) => deps.delegateTool(name, args),
         tryReadonly: deps.tryReadonly,
+        precheck: deps.precheck,
         approve: deps.approve,
         // Trusted auto-approve: only python_exec today; a tool not modelled here simply always asks
         // (friction, never less safety — see auto-approve.ts).

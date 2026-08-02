@@ -2119,6 +2119,17 @@ test("screenshot rejects a degenerate 1px-sliver element (roadmap #10)", async (
 
 // ---- interaction tools (opt-in, gated): click / type (#7) ----
 
+test("click/type precheck: a doomed target returns the error side-effect-free (for the gate skip)", () => {
+    const { ml } = loadDomWorld('<button id="go">Go</button><input id="f">');
+    const click = ml.clickTool(), type = ml.typeTool();
+    assert.equal(click.precheck({ selector: "#go" }), null, "a match → null (proceed to the gate)");
+    assert.match(click.precheck({ selector: "#nope" }), /No element matches/, "no match → the error, no click");
+    assert.match(click.precheck({ selector: "@box:deadbeef" }), /container region/, "an @box → the steer, no click");
+    assert.match(click.precheck({ selector: "@pt:deadbeef" }), /Unknown point token|stale/, "a stale @pt → the error");
+    assert.equal(type.precheck({ selector: "#f" }), null);
+    assert.match(type.precheck({ selector: "#nope" }), /No element matches/);
+});
+
 test("clickTool is gated, opt-in, and clicks the selected match", async () => {
     const { ml, document } = loadDomWorld('<button id="b">Go</button><a class="x">1</a><a class="x">2</a>');
     const click = ml.clickTool();

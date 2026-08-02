@@ -44,7 +44,7 @@ export function getRun(runId: string): PageRun | undefined { return runs.get(run
 /** Run ONE delegated tool call for a background-hosted run → a serializable envelope for the bus.
  *  executeTool already validates args + catches errors (never throws), so this only reduces the
  *  envelope: real nodes → a count, and an answer-capable tool's nodes are stashed page-side. */
-export async function runDelegatedTool(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean } = {}): Promise<PageToolEnvelope> {
+export async function runDelegatedTool(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean } = {}): Promise<PageToolEnvelope> {
     const run = runs.get(runId);
     if (!run) return { result: `Error: no active agent run "${runId}" on this page (it may have ended).` };
     const tool = run.byName[name];
@@ -53,6 +53,13 @@ export async function runDelegatedTool(runId: string, name: string, args: Record
     if (opts.renderOnly) {
         const { in: renderIn } = descriptorFor(tool, { result: "" }, args);
         return { result: "", renderIn };
+    }
+    // Doomed-action precheck (click/type): side-effect-free target resolution. A non-null error → the
+    // action can only fail, so the background SKIPS the gate and returns it (no pointless approval).
+    if (opts.precheck) {
+        let pre: string | null = null;
+        try { pre = typeof tool.precheck === "function" ? tool.precheck(args) : null; } catch { pre = null; }
+        return { result: pre || "", precheckFailed: !!pre };
     }
     // Read-only try (exec only): run the mediated interpreter (no eval, no mutation). If in-dialect it
     // BOTH decides auto-approve AND produces the result → the background skips the gate. Out-of-dialect
@@ -89,8 +96,8 @@ export async function runDelegatedTool(runId: string, name: string, args: Record
 export function installToolDelegation(): void {
     window.addEventListener("message", async (event: MessageEvent) => {
         if (event.source !== window || !event.data || event.data.type !== "PAGE_TOOL_RUN") return;
-        const { callId, runId, name, args, renderOnly, readonlyTry } = event.data as { callId: string; runId: string; name: string; args: Record<string, unknown>; renderOnly?: boolean; readonlyTry?: boolean };
-        const envelope = await runDelegatedTool(runId, name, args || {}, { renderOnly: !!renderOnly, readonlyTry: !!readonlyTry });
+        const { callId, runId, name, args, renderOnly, readonlyTry, precheck } = event.data as { callId: string; runId: string; name: string; args: Record<string, unknown>; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean };
+        const envelope = await runDelegatedTool(runId, name, args || {}, { renderOnly: !!renderOnly, readonlyTry: !!readonlyTry, precheck: !!precheck });
         window.postMessage({ type: "PAGE_TOOL_RESULT", callId, envelope }, "*");
     });
 }

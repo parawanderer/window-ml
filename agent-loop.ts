@@ -14,7 +14,7 @@
 
 import type { AgentResult, AgentTranscriptEntry, ApprovalDecision, ToolCall, RenderDescriptor } from "./contract";
 
-export type Approval = "readonly" | "sandbox" | "user" | "denied";
+export type Approval = "readonly" | "sandbox" | "user" | "denied" | "skipped";
 export interface ToolMeta { name: string; requiresApproval?: boolean; capabilities?: string[]; }
 // The tool's serializable result. `renderIn`/`renderOut` are the debug-render slots computed by the
 // executor's world (page-side for the delegated path) so the emitter can show a rendered In/Out.
@@ -42,6 +42,11 @@ export interface AgentLoopDeps {
     // Page-delegated on the background path; safe to delegate BECAUSE it can't do anything a mutation
     // could. Reached before autoApprove/the gate for a requiresApproval tool.
     tryReadonly?(name: string, args: Record<string, unknown>): Promise<ToolRunResult | null>;
+    // Doomed-action precheck (click/type): a side-effect-free target resolution → an ERROR STRING if the
+    // action can only fail (no element / stale @pt / bad selector), else null/"" to proceed to the gate.
+    // The loop uses it to SKIP the approval prompt for an action that would just fail. Page-delegated on
+    // the background path (the DOM is page-side); safe BECAUSE the precheck can't mutate.
+    precheck?(name: string, args: Record<string, unknown>): Promise<string | null>;
     // Build the initial neutral message array (system + user(task)) — world-specific (page context).
     buildMessages(task: string): unknown[];
     // Append the assistant tool-call message / a tool-result message to the running history.
@@ -118,6 +123,12 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 } else if (auto) {
                     approval = auto;
                     tr = await deps.runTool(call.name, args); result = tr.result;   // trusted auto-approve → execute
+                } else if (deps.precheck && (result = (await deps.precheck(call.name, args)) || "")) {
+                    // Doomed-action skip: a side-effect-free precheck (click/type target resolution) found
+                    // the action can only fail (no element / stale @pt / bad selector), so return that error
+                    // WITHOUT gating — approving something that will just fail is pointless friction. It
+                    // never ran; the "skipped" provenance tells the UI why there was no prompt. `result` set above.
+                    approval = "skipped";
                 } else {
                     const d = normalize(await deps.approve({ tool: call.name, arguments: args, seq: s, step }), args);
                     if (!d.approved) {

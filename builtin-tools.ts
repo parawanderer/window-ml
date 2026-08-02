@@ -776,9 +776,21 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
 };
 
 export const buildClickTool = (ml: MlApi): MlTool => {
+    // Side-effect-free resolution → an ERROR STRING if the click is doomed (an @box region, a stale
+    // @pt, an invalid selector, or no match), else null. The loop uses it to SKIP the approval prompt
+    // for an action that would only fail; run() calls it first so the two can't drift.
+    const clickPrecheck = ({ selector, index = 0 }: { selector: string; index?: number }): string | null => {
+        const s = (selector || "").trim();
+        if (BOX_RE.test(s)) return `"${selector}" is an @box container region, not a clickable point. Locate a control INSIDE it first: locate({ selector: "${selector}", description: "…" }) → click the @pt it returns.`;
+        if (POINT_RE.test(s)) return resolvePoint(selector) ? null : `Unknown point token "${selector}" — it may be stale (from an earlier page/run). Re-run locate to get a fresh one.`;
+        let el: Element | undefined;
+        try { el = queryAll(selector)[index]; } catch (e) { return selectorError(selector, e as Error); }
+        return el ? null : `No element matches "${selector}"${index ? ` at index ${index}` : ""}.`;
+    };
     return ml.defineTool({
         name: "click",
         requiresApproval: true,
+        precheck: clickPrecheck,
         description: "Click an element (link, button, tab, search result). REAL SIDE EFFECTS — " +
             "may navigate, submit a form, or expand/collapse. Pass a CSS selector (supports " +
             ":contains()/:has-text()/:eq()); `index` picks the Nth match (0-based). It also accepts " +
@@ -797,14 +809,11 @@ export const buildClickTool = (ml: MlApi): MlTool => {
         // WHAT you're approving). A CSS selector highlights the element; an @pt/@box, the point/region.
         render: (_input, args) => targetRender(args),
         run: async ({ selector, index = 0 }: { selector: string; index?: number }): Promise<string> => {
-            // A container token is a REGION, not a click target — steer to a point inside it.
-            if (BOX_RE.test((selector || "").trim())) {
-                return `"${selector}" is an @box container region, not a clickable point. Locate a control INSIDE it first: locate({ selector: "${selector}", description: "…" }) → click the @pt it returns.`;
-            }
+            const doomed = clickPrecheck({ selector, index });   // @box / stale @pt / bad selector / no match
+            if (doomed) return doomed;
             // A canvas point token from locate → synthesize a click at that coordinate.
             if (POINT_RE.test((selector || "").trim())) {
-                const pt = resolvePoint(selector);
-                if (!pt) return `Unknown point token "${selector}" — it may be stale (from an earlier page/run). Re-run locate to get a fresh one.`;
+                const pt = resolvePoint(selector)!;   // precheck confirmed it resolves
                 const before = (typeof location !== "undefined" && location.href) || "";
                 const hit = clickAt(pt.x, pt.y);
                 if (!hit) return `Nothing is at point (${pt.x}, ${pt.y}) — it may have scrolled off-screen. Re-run locate.`;
@@ -813,10 +822,7 @@ export const buildClickTool = (ml: MlApi): MlTool => {
                 const nav = after && after !== before ? ` Navigated to ${after}.` : "";
                 return `Clicked at (${pt.x}, ${pt.y}) on ${elLine(hit)}.${nav} Page title: ${truncate(document.title || "", 80)}. Re-run look to see the result.`;
             }
-            let el: Element | undefined;
-            try { el = queryAll(selector)[index]; }
-            catch (e) { return selectorError(selector, e as Error); }
-            if (!el) return `No element matches "${selector}"${index ? ` at index ${index}` : ""}.`;
+            const el = queryAll(selector)[index]!;   // precheck confirmed it matches
             const before = (typeof location !== "undefined" && location.href) || "";
             try { el.scrollIntoView({ block: "center", inline: "center" }); } catch {}
             (el as HTMLElement).click();
@@ -830,9 +836,17 @@ export const buildClickTool = (ml: MlApi): MlTool => {
 };
 
 export const buildTypeTool = (ml: MlApi): MlTool => {
+    // Side-effect-free: an error if the field can't resolve (bad selector / no match), else null. Lets
+    // the loop skip the approval prompt for a doomed type; run() calls it first so they can't drift.
+    const typePrecheck = ({ selector, index = 0 }: { selector: string; index?: number }): string | null => {
+        let el: Element | undefined;
+        try { el = queryAll(selector)[index]; } catch (e) { return selectorError(selector, e as Error); }
+        return el ? null : `No element matches "${selector}"${index ? ` at index ${index}` : ""}.`;
+    };
     return ml.defineTool({
         name: "type",
         requiresApproval: true,
+        precheck: typePrecheck,
         description: "Type text into a field (text input, textarea, or contenteditable) — e.g. a " +
             "search box. Pass `selector` and the `text`; `index` picks the Nth match. By default " +
             "it REPLACES the field's value; set append:true to add to it. Set submit:true to press " +
@@ -850,10 +864,9 @@ export const buildTypeTool = (ml: MlApi): MlTool => {
             required: ["selector", "text"]
         },
         run: async ({ selector, text = "", index = 0, append = false, submit = false }: { selector: string; text?: string; index?: number; append?: boolean; submit?: boolean }): Promise<string> => {
-            let el: Element | undefined;
-            try { el = queryAll(selector)[index]; }
-            catch (e) { return selectorError(selector, e as Error); }
-            if (!el) return `No element matches "${selector}"${index ? ` at index ${index}` : ""}.`;
+            const doomed = typePrecheck({ selector, index });
+            if (doomed) return doomed;
+            const el = queryAll(selector)[index]!;   // precheck confirmed it matches
             const input = el as HTMLInputElement;
             const editable = "value" in el;
             const cur = editable ? input.value : (el.textContent || "");

@@ -782,6 +782,15 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                         .catch(() => null) as Partial<import("./contract").PageToolEnvelope> | null;
                     return env && env.readonly ? { result: env.result || "", renderIn: env.renderIn, renderOut: env.renderOut } : null;
                 } : undefined,
+                // Doomed-action precheck (click/type): ask the page to resolve the target side-effect-free.
+                // A non-null error → the gate is SKIPPED and the error returned. Only delegated for tools
+                // that HAVE a precheck (avoids a useless round-trip on every gated call).
+                precheck: async (name, args) => {
+                    if (!p.tools.some((t) => t.name === name && t.precheck)) return null;
+                    const env = await chrome.tabs.sendMessage(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name, args, precheck: true } })
+                        .catch(() => null) as Partial<import("./contract").PageToolEnvelope> | null;
+                    return env && env.precheckFailed ? (env.result || "") : null;
+                },
                 approve: async ({ tool, arguments: args, seq, step }) => {
                     // Ask the page to compute the In render for THIS call (without running the tool) so the
                     // blocking approval shows a pretty In — exec's beautified JS, python's code cell — not

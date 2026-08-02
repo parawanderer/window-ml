@@ -278,6 +278,12 @@ export interface MlTool {
     // is the method form of `ToolResult.renderIn`; `exec` uses it to show pretty JS.
     // Never receives/returns code.
     render?: (input: ToolRenderInput, args: Record<string, unknown>) => RenderDescriptor | null | undefined;
+    // Optional SIDE-EFFECT-FREE pre-check (page-side) for a requiresApproval tool: resolve the target
+    // and return an ERROR STRING if the action is doomed (no element matches, a stale @pt, an invalid
+    // selector), else null to proceed to the gate. The loop uses it to SKIP the approval prompt for an
+    // action that would only fail — approving something that can't do anything is pointless friction.
+    // Must not mutate the DOM or navigate. `click`/`type` implement it (their run() calls it first too).
+    precheck?: (args: any) => string | null;
 }
 
 export interface ApprovalRequest {
@@ -424,7 +430,7 @@ export interface StartRunPayload {
     runId: string;
     task: string;
     systemPrompt: string;
-    tools: { name: string; description: string; parameters: JsonSchema; requiresApproval: boolean; capabilities: string[] }[];
+    tools: { name: string; description: string; parameters: JsonSchema; requiresApproval: boolean; capabilities: string[]; precheck?: boolean }[];
     model: string | null;
     think: boolean | null;
     maxSteps: number;
@@ -459,6 +465,10 @@ export interface RunToolInPagePayload {
     // produces the result, so the background can skip the human gate; out-of-dialect → falls through.
     // Side-effect-free either way (the interpreter can't mutate), which is why it needn't be gated.
     readonlyTry?: boolean;
+    // Doomed-action precheck (design A, click/type): run the tool's side-effect-free precheck (resolve
+    // the target). A non-null error means the action can only fail → the background SKIPS the human gate
+    // and returns it. The tool's run() never fires; the precheck must not mutate the DOM.
+    precheck?: boolean;
 }
 
 /** The result of a delegated tool call, crossing back from the page to the background. Only the
@@ -476,6 +486,7 @@ export interface PageToolEnvelope {
     renderIn?: RenderDescriptor;   // In slot — a visualization of the call
     renderOut?: RenderDescriptor;  // Out slot — a visualization of the result
     readonly?: boolean;            // a readonlyTry that the mediated interpreter HANDLED (→ auto-approve)
+    precheckFailed?: boolean;      // a precheck that found the action doomed (no target) → skip the gate, use `result`
 }
 
 /** A resumable chat session persisted to chrome.storage.local for { save: true }
@@ -602,7 +613,7 @@ export interface DebugAgentStep extends DebugBase {
     // How an approval-gated tool call was decided (undefined for tools that don't
     // require approval). The sidebar renders it as a green/red provenance badge —
     // and it's the slot a future interactive-approval control resolves into.
-    approval?: "readonly" | "sandbox" | "user" | "denied";
+    approval?: "readonly" | "sandbox" | "user" | "denied" | "skipped";
     // Token counts for this step's driver call, when the server reports them. Each
     // step re-sends the full growing history, so the LATEST step's usage is the run's
     // current context occupancy (not a sum across steps — see TokenUsage).

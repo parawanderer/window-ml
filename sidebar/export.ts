@@ -167,7 +167,7 @@ function writeAgent(s: Session, d: Sink): void {
             continue;
         }
         d.head(`Step ${st.step} · ${st.tool || "?"}`);
-        if (st.approval) d.note(st.approval === "readonly" ? "auto-approved (read-only)" : st.approval === "sandbox" ? "auto-approved (sandboxed python)" : st.approval === "user" ? "approved by user" : "denied by user");
+        if (st.approval) d.note(st.approval === "readonly" ? "auto-approved (read-only)" : st.approval === "sandbox" ? "auto-approved (sandboxed python)" : st.approval === "user" ? "approved by user" : st.approval === "skipped" ? "skipped (target didn't resolve — would only fail)" : "denied by user");
         if (st.reasoning) d.details("Thinking", () => d.prose(st.reasoning!));
         if (st.thought) d.prose(st.thought);
         // In: a rendered view (when the tool supplies one) AND — always — the RAW args

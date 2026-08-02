@@ -1245,17 +1245,22 @@ test("agent tool steps carry an approval provenance badge (auto/user green, deni
     await w.dispatch(agentStep("apv", 1, { tool: "exec", arguments: { js: "1" }, result: "1", approval: "readonly", renderIn: { type: "code", text: "1", lang: "javascript" } }));
     await w.dispatch(agentStep("apv", 2, { tool: "click", arguments: { selector: "b" }, result: "clicked", approval: "user" }));
     await w.dispatch(agentStep("apv", 3, { tool: "exec", arguments: { js: "2" }, result: "Denied by the user.", approval: "denied" }));
-    await w.dispatch(agentResult("apv", "done", 3));
+    await w.dispatch(agentStep("apv", 4, { tool: "click", arguments: { selector: "#gone" }, result: 'No element matches "#gone".', approval: "skipped" }));
+    await w.dispatch(agentResult("apv", "done", 4));
     w.shadow.querySelector(".row").click();
     await w.tick();
 
     const steps = [...w.shadow.querySelectorAll(".astep.tool")];
-    assert.equal(steps.length, 3, "three tool steps");
+    assert.equal(steps.length, 4, "four tool steps");
     assert.match(steps[0].querySelector(".appr.yes").textContent, /auto-approved/);
     assert.ok(steps[0].classList.contains("appr-yes"), "auto-approved step gets the green outline");
     assert.match(steps[1].querySelector(".appr.yes").textContent, /approved/);
     assert.match(steps[2].querySelector(".appr.no").textContent, /denied/);
     assert.ok(steps[2].classList.contains("appr-no"), "denied step gets the red outline");
+    // A doomed (precheck-skipped) action gets a neutral grey "skipped" badge — not yes/no.
+    assert.match(steps[3].querySelector(".appr.skip").textContent, /skipped/);
+    assert.ok(steps[3].classList.contains("appr-skip"), "skipped step gets the grey outline");
+    assert.equal(steps[3].querySelector(".appr.yes, .appr.no"), null, "skipped is neither approved nor denied");
 });
 
 test("denying a gated step KEEPS its In render (the DONE's blank renderIn doesn't clobber the START's)", async () => {

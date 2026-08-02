@@ -811,10 +811,11 @@ const APPROVAL = {
     sandbox: { label: "auto-approved", tip: "Auto-approved by the python_exec setting — a readonly-mode run is isolated by construction (no network / JS scope / DOM / filesystem)." },
     user: { label: "approved", tip: "Approved by you." },
     denied: { label: "denied", tip: "Denied by you." },
+    skipped: { label: "skipped", tip: "No prompt needed — the target didn't resolve (no element / stale @pt / bad selector), so the action could only fail. It never ran." },
 } as const;
-const ApprovalBadge = ({ approval }: { approval: "readonly" | "sandbox" | "user" | "denied" }) => (
+const ApprovalBadge = ({ approval }: { approval: keyof typeof APPROVAL }) => (
     <span class="tt">
-        <span class={`appr ${approval === "denied" ? "no" : "yes"}`}>{APPROVAL[approval].label}</span>
+        <span class={`appr ${approval === "denied" ? "no" : approval === "skipped" ? "skip" : "yes"}`}>{APPROVAL[approval].label}</span>
         <span class="tt-pop left" role="tooltip">{APPROVAL[approval].tip}</span>
     </span>
 );
@@ -880,7 +881,7 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     // human the approval is a session-scoped grant, not a one-shot.
     const sheetGrants = awaiting ? externalSheetGrant(st.arguments) : [];
     return (
-        <div class={`astep tool${st.pending ? " pending" : ""}${awaiting ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : " appr-yes") : ""}`}>
+        <div class={`astep tool${st.pending ? " pending" : ""}${awaiting ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : st.approval === "skipped" ? " appr-skip" : " appr-yes") : ""}`}>
             <button class="astep-head" onClick={() => setExpanded(v => !v)}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
                 <Dot status={st.pending ? "pending" : toolFailed(st.result) ? "err" : "ok"} />

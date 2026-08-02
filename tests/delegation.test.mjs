@@ -78,6 +78,20 @@ test("auto-derived elements render uses clickSelector (the model's currency), NO
     }
 });
 
+test("precheck delegation: a doomed action returns precheckFailed + the error, WITHOUT running", async () => {
+    let ran = false;
+    registerRun("rpc", [tool({ name: "click", requiresApproval: true, precheck: () => `No element matches "#x".`, run: () => { ran = true; return "clicked"; } })]);
+    const env = await runDelegatedTool("rpc", "click", { selector: "#x" }, { precheck: true });
+    assert.equal(env.precheckFailed, true, "the precheck flagged the action doomed");
+    assert.match(env.result, /No element matches/);
+    assert.equal(ran, false, "run() was NOT called (side-effect-free)");
+    // A precheck that passes (null) → not failed.
+    registerRun("rpc2", [tool({ name: "click", requiresApproval: true, precheck: () => null })]);
+    const ok = await runDelegatedTool("rpc2", "click", { selector: "#y" }, { precheck: true });
+    assert.equal(ok.precheckFailed, false);
+    endRun("rpc"); endRun("rpc2");
+});
+
 test("the Out slot auto-derives an image; the In slot uses the tool's render() method", async () => {
     registerRun("r4b", [tool({
         render: (_input, args) => ({ type: "code", text: String(args.js || "") }),   // In from the method
