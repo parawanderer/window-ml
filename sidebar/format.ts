@@ -118,7 +118,11 @@ export function markdown(src: string, opts: { math?: boolean } = {}): string {
         .replace(/\$\$([\s\S]+?)\$\$/g, (_, t: string) => stashMath(t, true))
         .replace(/\\\[([\s\S]+?)\\\]/g, (_, t: string) => stashMath(t, true))
         .replace(/\\\(([\s\S]+?)\\\)/g, (_, t: string) => stashMath(t, false))
-        .replace(/(?<![\\$])\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\d)/g, (_, t: string) => stashMath(t, false));
+        // Single-$ inline is ambiguous with currency/prose ("FY sales ($k)". This …" would pair two
+        // $k as math). Only treat it as math when the content carries a real math signal (a LaTeX
+        // command `\`, a superscript `^`, or a subscript `_`) — so `$6 \times 7$` / `$mc^2$` render,
+        // but dollar amounts and prose don't. $$…$$ / \(…\) / \[…\] are explicit → always rendered.
+        .replace(/(?<![\\$])\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\d)/g, (m: string, t: string) => /[\\^_]/.test(t) ? stashMath(t, false) : m);
     const text = escapeHtml(mathed);
     const inline = (t: string): string => t
         .replace(/`([^`]+)`/g, "<code>$1</code>")

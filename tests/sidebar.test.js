@@ -126,7 +126,7 @@ test("assistant markdown renders a GFM table (aligned, XSS-safe); a lone pipe st
     assert.ok(ps.includes("Just a | pipe in a paragraph."), "lone pipe line → <p>, not a table");
 });
 
-test("assistant markdown renders LaTeX math via KaTeX ($…$ inline, $$…$$ display); currency isn't math", async () => {
+test("assistant markdown renders LaTeX math via KaTeX ($…$ inline, $$…$$ display); currency/prose isn't math", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(chatStart("math", 0, "q"));
     await w.dispatch(chatResult("math", 0, "Inline $6 \\times 7 = 42$ and display:\n$$E = mc^2$$\nIt costs $5 or $10."));
@@ -134,10 +134,22 @@ test("assistant markdown renders LaTeX math via KaTeX ($…$ inline, $$…$$ dis
     await w.tick();
     const body = w.shadow.querySelector(".msg.asst .md");
     const kx = body.querySelectorAll(".katex");
-    assert.ok(kx.length >= 2, "both the inline and display math rendered as KaTeX");
+    assert.ok(kx.length >= 2, "both the inline (has \\times) and display math rendered as KaTeX");
     assert.ok(body.querySelector(".katex-display"), "the $$…$$ block is display mode");
     // Currency ("$5 or $10") is NOT treated as math (the space-inside guard).
     assert.match(body.textContent, /It costs \$5 or \$10\./, "currency stays literal, not math");
+});
+
+test("inline $…$ with NO math signal (dollars in prose) is NOT rendered as math — the 'FY sales ($k)' slop", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(chatStart("slop", 0, "q"));
+    // Two $k) in prose used to pair into a giant italic math span.
+    await w.dispatch(chatResult("slop", 0, 'A table titled "FY sales ($k)". This looks like the "FY sales ($k)" big one.'));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const body = w.shadow.querySelector(".msg.asst .md");
+    assert.equal(body.querySelector(".katex"), null, "no KaTeX — the $…$ has no math signal (\\, ^, _)");
+    assert.match(body.textContent, /FY sales \(\$k\)". This looks like the "FY sales \(\$k\)"/, "prose stays literal");
 });
 
 test("composer usage gauge: fills against the loaded model's context window (occupancy = latest turn, not a sum)", async () => {
