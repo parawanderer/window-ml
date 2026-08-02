@@ -242,6 +242,11 @@ const highlightEl = (selector: string) => window.parent.postMessage({ __mlHighli
 // A canvas @pt/@box token — the shell resolves it (via injected) to a point marker / box outline.
 const highlightToken = (token: string) => window.parent.postMessage({ __mlHighlight: { token } }, "*");
 const clearHighlight = () => window.parent.postMessage({ __mlHighlight: null }, "*");
+// The APPROVAL-card highlight: a pulsing GREEN spotlight (kind "approve"), distinct from the blue hover
+// box, so the pending target is unmistakable. The shell replies with the target's on-page position
+// (e.g. "bottom-left") → highlightPos, which the card shows so you know where to look.
+const highlightApprove = (ref: { selector?: string; token?: string }) => window.parent.postMessage({ __mlHighlight: { ...ref, kind: "approve" } }, "*");
+const highlightPos = signal<string>("");
 // Hover handlers for a locate `picked` string, which is EITHER an @pt/@box token OR "… → selector" —
 // so the same overlay works in both point mode and element mode.
 const pickedHover = (picked?: string): { onPointerEnter?: () => void; onPointerLeave?: () => void } => {
@@ -735,6 +740,19 @@ function RenderPanel({ d }: { d: RenderDescriptor }) {
         case "table": return <RenderTable columns={d.columns} rows={d.rows} />;
         case "keyval": return <div class="r-keyval">{d.pairs.map(([k, v], i) => <div class="r-kv" key={i}><span class="r-k">{k}</span><span class="r-v">{v}</span></div>)}</div>;
         case "elements": return <RenderElements items={d.items} />;
+        case "action": {
+            // Debug In view of a tool intent: a hoverable line (hover → outline the target on the page).
+            const tok = d.selector && /^@(?:pt|box):/.test(d.selector);
+            const hover = d.selector ? { onPointerEnter: () => (tok ? highlightToken(d.selector!) : highlightEl(d.selector!)), onPointerLeave: clearHighlight } : {};
+            return (
+                <div class="r-action">
+                    <span class="r-action-verb">{d.verb}</span>{d.kind ? ` the ${d.kind}` : ""}
+                    {d.input != null ? <> “<b>{truncate(d.input, 80)}</b>”</> : null}
+                    {d.target ? <> <b class="r-hoverable" {...hover}>“{d.target}”</b></> : d.selector ? <> <code class="r-hoverable" {...hover}>{d.selector}</code></> : null}
+                    {d.note ? <span class="dim"> · {d.note}</span> : null}
+                </div>
+            );
+        }
         case "locate": return <LocateRender d={d} />;
         case "python-in": return <PythonInRender d={d} />;
         case "python-out": return <PythonOutRender d={d} />;
@@ -1566,6 +1584,23 @@ function ensureCodeSummary(hash: string, seq: number, lang: string, code: string
         { role: "system", content: "You explain what a code snippet DOES in ONE plain-English sentence (≤ 22 words) for a non-programmer about to approve running it. State the effect and any data it touches. No preamble, no code, no restating the language." },
         { role: "user", content: `Explain what this ${lang} code does:\n\n${truncate(code, 1400)}` },
     ];
+    fetchUtilityLine(messages, key);
+}
+// A tool with NO deterministic intent (a custom approval-gated tool, no `action` render) still gets a
+// human description — the utility model paraphrases the call. Same cache/plumbing as the code summary.
+function ensureActionSummary(hash: string, seq: number, tool: string, args: Record<string, unknown>): void {
+    if (!config.value.utilityModel.trim() || !tool) return;
+    const key = stepKey(hash, seq);
+    if (codeSummaryTried.has(key)) return;
+    codeSummaryTried.add(key);
+    const messages = [
+        { role: "system", content: "In ONE short plain-English sentence (≤ 18 words), tell a non-programmer what this tool call will DO, so they can approve it. State the effect. No preamble, no JSON, no tool name." },
+        { role: "user", content: `Tool: ${tool}\nArguments: ${truncate(JSON.stringify(args ?? {}), 800)}` },
+    ];
+    fetchUtilityLine(messages, key);
+}
+// Shared: run a short utility-model call and store the one-line reply as the step's summary.
+function fetchUtilityLine(messages: { role: string; content: string }[], key: string): void {
     chrome.runtime.sendMessage(
         { type: "FETCH_LLM", payload: { messages, extend: "utility", maxTokens: 70, think: false } },
         (resp: any) => {
@@ -1577,19 +1612,19 @@ function ensureCodeSummary(hash: string, seq: number, lang: string, code: string
     );
 }
 
-// The pending tool call's human TARGET (the element's accessible name/text from the enriched
-// targetRender, else the raw selector) and the selector to highlight on the page.
+// A pending call's INTENT: prefer the tool-provided `action` descriptor (deterministic; custom tools
+// too), else a name-based verb for built-ins, else nothing (→ utility-model description).
 const CODE_LANG: Record<string, string> = { exec: "javascript", python_exec: "python" };
-function targetOf(st: AgentStep): string | undefined {
+interface Intent { verb: string; kind?: string; target?: string; selector?: string; input?: string; note?: string; }
+function intentFor(st: AgentStep): Intent | null {
     const ri = st.renderIn;
-    if (ri && ri.type === "elements" && ri.items[0]) return ri.items[0].text || ri.items[0].path;
-    const sel = st.arguments?.selector;
-    return typeof sel === "string" ? sel : undefined;
-}
-function highlightSel(st: AgentStep): string | undefined {
-    const ri = st.renderIn;
-    const path = ri && ri.type === "elements" ? ri.items[0]?.path : undefined;
-    return path || (typeof st.arguments?.selector === "string" ? (st.arguments.selector as string) : undefined);
+    if (ri && ri.type === "action") return { verb: ri.verb, kind: ri.kind, target: ri.target, selector: ri.selector, input: ri.input, note: ri.note };
+    if (ri && ri.type === "elements" && ri.items[0])   // an older/other target render still gives a target + selector
+        return { verb: st.tool === "click" ? "Click" : st.tool === "type" ? "Type" : `Run ${st.tool}`, target: ri.items[0].text || ri.items[0].path, selector: ri.items[0].path };
+    const sel = typeof st.arguments?.selector === "string" ? (st.arguments.selector as string) : undefined;
+    if (st.tool === "click") return { verb: "Click", selector: sel };
+    if (st.tool === "type") return { verb: "Type", selector: sel, input: String(st.arguments?.text ?? "") };
+    return null;
 }
 // For a CODE tool, the actual source — the consent surface (you can't approve code you can't see).
 function codeOf(st: AgentStep): { text: string; lang: string } | null {
@@ -1603,51 +1638,52 @@ function codeOf(st: AgentStep): { text: string; lang: string } | null {
     return { text: src, lang };
 }
 
-// ONE pending approval as an INTENT card (not a debug trace): the action verb + human target — or the
-// code itself, for code tools — the goal for context, and Deny/Approve. While it's up, the real page
-// element is highlighted (the shell's hover-highlight), so you can SEE what's about to happen.
-function ApprovalCard({ st, hash, goal }: { st: AgentStep; hash: string; goal: string }) {
+// The BODY of a pending approval (goal + a plain-English intent, or the code, or a utility-model
+// description) — an intent-verification prompt, not a debug trace. The Deny/Approve controls live in a
+// FIXED footer (CardApp), so a scroll or a drag-collapse never cuts them off. While it's up, the real
+// page element is highlighted (a pulsing green spotlight), and the card names where it is on the page.
+function ApprovalBody({ st, hash, goal }: { st: AgentStep; hash: string; goal: string }) {
     const code = codeOf(st);
+    const intent = intentFor(st);
+    const key = st.seq != null ? stepKey(hash, st.seq) : "";
     useEffect(() => {
-        const sel = highlightSel(st);
-        if (sel) { if (/^@(?:pt|box):[0-9a-f]+/.test(sel)) highlightToken(sel); else highlightEl(sel); }
+        const sel = intent?.selector;
+        if (sel) highlightApprove(/^@(?:pt|box):[0-9a-f]+/.test(sel) ? { token: sel } : { selector: sel });
         if (code && st.seq != null) ensureCodeSummary(hash, st.seq, code.lang, code.text);
-        return () => clearHighlight();
+        else if (!code && !intent?.target && st.seq != null) ensureActionSummary(hash, st.seq, st.tool || "", st.arguments || {});
+        return () => { clearHighlight(); highlightPos.value = ""; };
     }, [st.seq]);
-    const decide = (ok: boolean) => {
-        if (st.seq == null) return;
-        decidedSteps.add(stepKey(hash, st.seq));
-        clearHighlight();
-        sendApproval(hash, st.seq, ok);
-        rev.value++;
-    };
-    const target = targetOf(st);
-    const a = st.arguments || {};
+    const summary = key ? codeSummaries.get(key) : undefined;
+    const pos = highlightPos.value;
     const sheets = externalSheetGrant(st.arguments);
-    const codeSummary = code && st.seq != null ? codeSummaries.get(stepKey(hash, st.seq)) : undefined;
-    const verb = st.tool === "click" ? "Click" : st.tool === "type" ? "Type"
-        : code ? (st.tool === "python_exec" ? "Run Python" : "Run JavaScript") : `Run ${st.tool}`;
+    const isType = !!intent && intent.verb.toLowerCase() === "type";
     return (
         <div class="action">
             <div class="action-goal">{goal}</div>
-            <div class={`action-card${code ? " code" : ""}`}>
-                <div class="action-verb">{verb}</div>
-                {st.tool === "type"
-                    ? <div class="action-body">“{truncate(String(a.text ?? ""), 120)}”{target ? <> into <b class="action-target">{target}</b></> : null}{a.submit ? <span class="action-note"> · then submit</span> : null}</div>
-                    : code
-                        ? <>
-                            {codeSummary ? <div class="action-summary">{codeSummary}</div> : null}
-                            <div class="action-codeblk"><Code text={code.text} lang={code.lang} format={code.lang === "javascript"} /></div>
-                        </>
-                        : target ? <div class="action-body"><b class="action-target">{target}</b></div> : null}
-                {sheets.length
-                    ? <div class="action-sheets"><IconWarn /><span>Grants this run access to {sheets.map((id, i) => <SheetChip key={i} id={id} />)} for the session.</span></div>
-                    : null}
-            </div>
-            <div class="action-btns">
-                <button class="appr-btn no" onClick={() => decide(false)}>Deny</button>
-                <button class="appr-btn yes" onClick={() => decide(true)}>Approve</button>
-            </div>
+            {code
+                ? <div class="action-card code">
+                    <div class="action-verb">{st.tool === "python_exec" ? "Run Python" : "Run JavaScript"}</div>
+                    {summary ? <div class="action-summary">{summary}</div> : null}
+                    <div class="action-codeblk"><Code text={code.text} lang={code.lang} format={code.lang === "javascript"} /></div>
+                  </div>
+                : intent
+                    ? <div class="action-card">
+                        <div class="action-sentence">
+                            Agent wants to <span class="action-verb">{intent.verb.toLowerCase()}</span>
+                            {isType ? <> “<b class="action-target">{truncate(intent.input || "", 100)}</b>” into</> : null}
+                            {" the "}{intent.kind || "element"}
+                            {intent.target ? <> <b class="action-target">“{intent.target}”</b></> : null}
+                            {intent.note ? <span class="action-note"> · {intent.note}</span> : null}.
+                        </div>
+                        {intent.selector ? <div class="action-loc"><span class="loc-dot" aria-hidden="true" />Highlighted on the page{pos ? <> · <b>{pos}</b></> : null}</div> : null}
+                      </div>
+                    : <div class="action-card">
+                        {summary ? <div class="action-summary">{summary}</div>
+                            : <div class="action-body dim">Run <b>{st.tool}</b>{st.arguments && Object.keys(st.arguments).length ? <> with {inlineJson(st.arguments)}</> : null}</div>}
+                      </div>}
+            {sheets.length
+                ? <div class="action-sheets"><IconWarn /><span>Grants this run access to {sheets.map((id, i) => <SheetChip key={i} id={id} />)} for the session.</span></div>
+                : null}
         </div>
     );
 }
@@ -1668,11 +1704,13 @@ function CardApp() {
 
     useEffect(() => { window.parent.postMessage({ __mlSidebarCard: state }, "*"); }, [state]);
     useEffect(() => { if (run) ensureCardTitle(run); }, [hash, r]);
-    // Report our content height so the shell can fit the card (a cross-origin iframe can't auto-size).
-    // A ResizeObserver catches async growth (code highlighting, the summary landing, an image loading).
+    // Report our content height so the shell can FIT the card (a cross-origin iframe can't auto-size).
+    // Measured after two frames (fonts/highlighting settle → a right-first-time fit, no manual drag) and
+    // re-measured by a ResizeObserver on later async growth (the summary landing, an image loading).
     useEffect(() => {
         const post = () => window.parent.postMessage({ __mlSidebarCardH: Math.ceil(document.documentElement.scrollHeight) }, "*");
         post();
+        requestAnimationFrame(() => requestAnimationFrame(post));
         if (typeof ResizeObserver === "undefined") return;
         const ro = new ResizeObserver(post);
         ro.observe(document.documentElement);
@@ -1683,14 +1721,17 @@ function CardApp() {
 
     const title = run.title || truncate(run.task || "Agent run", 80);
     const headline = pending ? "Approval needed" : done ? (run.hitCap ? "Stopped" : "Task complete") : "Working…";
+    const decide = (ok: boolean) => {
+        if (!pendingStep || pendingStep.seq == null) return;
+        decidedSteps.add(stepKey(run.hash, pendingStep.seq));
+        clearHighlight();
+        sendApproval(run.hash, pendingStep.seq, ok);
+        rev.value++;
+    };
     const onClose = (e: Event) => {
         e.stopPropagation();
-        if (pendingStep && pendingStep.seq != null) {   // × on a pending gate = a fast Deny
-            decidedSteps.add(stepKey(run.hash, pendingStep.seq));
-            clearHighlight();
-            sendApproval(run.hash, pendingStep.seq, false);
-            rev.value++;
-        } else cardDismissed.value = run.hash;   // × on a finished card = dismiss
+        if (pendingStep) decide(false);          // × on a pending gate = a fast Deny
+        else cardDismissed.value = run.hash;     // × on a finished card = dismiss
     };
 
     if (state === "toast") {
@@ -1718,9 +1759,17 @@ function CardApp() {
             </div>
             <div class="card-body">
                 {pending && pendingStep
-                    ? <ApprovalCard st={pendingStep} hash={run.hash} goal={title} />
+                    ? <ApprovalBody st={pendingStep} hash={run.hash} goal={title} />
                     : <div class="card-answer md" dangerouslySetInnerHTML={{ __html: markdown(run.summary || "", { math: true }) }} />}
             </div>
+            {/* Deny/Approve as a FIXED footer — outside the scroll area, so it's always visible (a
+                drag-collapse or the scrollbar appearing can never cut or shift the buttons). */}
+            {pending && pendingStep
+                ? <div class="card-foot">
+                    <button class="appr-btn no" onClick={() => decide(false)}>Deny</button>
+                    <button class="appr-btn yes" onClick={() => decide(true)}>Approve</button>
+                  </div>
+                : null}
         </div>
     );
 }
@@ -1861,6 +1910,7 @@ function onMessage(e: MessageEvent): void {
     const d = e.data as any;
     if (e.source !== window.parent || !d) return;
     if (d.__mlDebug) onDebug(d.__mlDebug as MlDebugEvent);
+    else if (typeof d.__mlHighlightPos === "string") highlightPos.value = d.__mlHighlightPos;   // where the approval target sits on the page
     else if (d.__mlDebugReset) resetSessions();
     else if (typeof d.__mlSidebarSurface === "string") {
         // The shell tells us which surface we are. The off-mode card renders a transparent, curated

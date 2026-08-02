@@ -261,6 +261,14 @@ export type RenderDescriptor = (
     // its text output — so a sub-call look reads like `locate`'s substeps (the native look just shows
     // the screenshot, since the agent itself is the viewer).
     | { type: "look"; image: string; model?: string | null; output: string; label?: string }
+    // A tool's INTENT for the user-facing approval card — the deterministic, human-readable description
+    // of what the call will DO, produced by the tool's own `render` (so a custom approval-gated tool can
+    // describe itself; a tool that returns none falls back to a utility-model description). `verb` is the
+    // action ("Click"/"Type"), `kind` the noun ("button"/"link"/"field"/"point"), `target` the human
+    // label (accessible name/text), `selector` the page target to HIGHLIGHT (CSS or @pt/@box), `input`
+    // any value being entered (type), `note` an extra clause ("then submit"). Rendered in the debug In
+    // slot too (as a hoverable line), so both surfaces agree.
+    | { type: "action"; verb: string; kind?: string; target?: string; selector?: string; input?: string; note?: string }
 );
 // The slot a descriptor fills is decided by which hook produced it (a tool's `render()`
 // method / run()-returned `renderIn` → the In slot; a run()-returned `render` / an

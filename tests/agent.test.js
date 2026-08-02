@@ -1874,16 +1874,20 @@ test("tables:'current' with no data table (and not a Sheet) → a clear error", 
     await assert.rejects(ml._loadTable("df", "current"), /neither a Google Sheet nor has a table with data/);
 });
 
-test("click/look render(): the target (CSS selector OR @pt/@box) → a hoverable element ref; no selector → null", () => {
+test("click render() → an action intent; look render() → a hoverable element ref; no selector → null", () => {
     const { ml } = loadDomWorld();
-    for (const tool of [ml.clickTool(), ml.lookTool()]) {   // shared targetRender
-        assert.deepEqual(tool.render({}, { selector: "#go" }), { type: "elements", items: [{ path: "#go" }] });
-        assert.deepEqual(tool.render({}, { selector: ".x", index: 2 }), { type: "elements", items: [{ path: ".x", index: 2 }] });
-        // A canvas @pt/@box is a valid target too — the sidebar highlights it as a point/region.
-        assert.deepEqual(tool.render({}, { selector: "@pt:abc123" }), { type: "elements", items: [{ path: "@pt:abc123" }] });
-        // No selector (a viewport/page look) → raw args.
-        assert.equal(tool.render({}, {}), null);
-    }
+    const click = ml.clickTool(), look = ml.lookTool();
+    // click provides a tool INTENT (verb + the selector to highlight); no DOM match here → no human label.
+    let r = click.render({}, { selector: "#go" });
+    assert.equal(r.type, "action"); assert.equal(r.verb, "Click"); assert.equal(r.selector, "#go");
+    // A canvas @pt is a valid target — kind "point" (nothing to name).
+    r = click.render({}, { selector: "@pt:abc123" });
+    assert.equal(r.type, "action"); assert.equal(r.kind, "point"); assert.equal(r.selector, "@pt:abc123");
+    assert.equal(click.render({}, {}), null);   // no selector → nothing to describe
+    // look shares targetRender → a hoverable elements descriptor (the sidebar outlines it on hover).
+    assert.deepEqual(look.render({}, { selector: "#go" }), { type: "elements", items: [{ path: "#go" }] });
+    assert.deepEqual(look.render({}, { selector: ".x", index: 2 }), { type: "elements", items: [{ path: ".x", index: 2 }] });
+    assert.equal(look.render({}, {}), null);
 });
 
 // ---- python_exec cast:'pt'/'box' projects image-pixel coords → viewport (dpr + element offset) ----

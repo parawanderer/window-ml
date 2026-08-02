@@ -28,6 +28,12 @@ const HIGHLIGHT_CSS = `
 #${SB_HIGHLIGHT} .ml-hl-label { position: absolute; top: 100%; left: 0; margin-top: 2px; padding: 1px 6px;
   background: #5983f6; color: #fff; font: 500 10px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
   border-radius: 3px; white-space: nowrap; max-width: 50vw; overflow: hidden; text-overflow: ellipsis; }
+/* Approval variant: a pulsing GREEN spotlight (vs the blue hover box) so the element awaiting your
+   approval is unmistakable on the page. */
+#${SB_HIGHLIGHT}.ml-hl-approve { background: rgba(34, 197, 94, .22); outline: 2px solid rgba(34, 197, 94, .95);
+  animation: ml-hl-pulse 1.3s ease-in-out infinite; }
+#${SB_HIGHLIGHT}.ml-hl-approve .ml-hl-label { background: #16a34a; }
+@keyframes ml-hl-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, .5); } 50% { box-shadow: 0 0 0 7px rgba(34, 197, 94, 0); } }
 `;
 
 // The off-mode approval CARD: a macOS-notification-style acrylic panel in the bottom-right corner,
@@ -223,22 +229,36 @@ function hlContainer(): ShadowRoot {
     (document.documentElement || document.body).append(hlHost);
     return hlRoot;
 }
+let hlKind: "" | "approve" = "";   // "approve" → the pulsing-green variant + report the on-page position
+// The 3×3 on-page position of a box centre ("top-left" / "bottom" / "centre"), told to the card so the
+// approval can name where to look.
+function posLabel(cx: number, cy: number): string {
+    const W = window.innerWidth, H = window.innerHeight;
+    const parts: string[] = [];
+    if (cy < H / 3) parts.push("top"); else if (cy > H * 2 / 3) parts.push("bottom");
+    if (cx < W / 3) parts.push("left"); else if (cx > W * 2 / 3) parts.push("right");
+    return parts.length ? parts.join("-") : "centre";
+}
 function drawHighlight(left: number, top: number, width: number, height: number, label: string): void {
     const root = hlContainer();
     if (!highlightEl) { highlightEl = document.createElement("div"); highlightEl.id = SB_HIGHLIGHT; root.append(highlightEl); }
+    highlightEl.className = hlKind === "approve" ? "ml-hl-approve" : "";
     Object.assign(highlightEl.style, { left: `${left}px`, top: `${top}px`, width: `${width}px`, height: `${height}px` });
     const lab = document.createElement("div");
     lab.className = "ml-hl-label";
     lab.textContent = label;
     highlightEl.replaceChildren(lab);
+    // Tell the card where on the page the approval target sits (the card is the frame in off mode).
+    if (hlKind === "approve" && frame) frame.contentWindow?.postMessage({ __mlHighlightPos: posLabel(left + width / 2, top + height / 2) }, "*");
 }
-function hideHighlight(): void { hlSeq++; if (highlightEl) { highlightEl.remove(); highlightEl = null; } }
+function hideHighlight(): void { hlSeq++; hlKind = ""; if (highlightEl) { highlightEl.remove(); highlightEl = null; } }
 // Highlight a page target on hover. ELEMENT mode (`selector`): the shell shares the page DOM, so it
 // resolves the rect itself. POINT/BOX mode (`token`, an @pt/@box): only the main world knows the
 // coords, so ask injected to resolve (ML_HL_RESOLVE → ML_HL_AT) and draw on the reply.
-function showHighlight(ref: { selector?: string; index?: number; token?: string } | null): void {
-    const seq = ++hlSeq;
+function showHighlight(ref: { selector?: string; index?: number; token?: string; kind?: string } | null): void {
     if (!ref) return hideHighlight();
+    hlKind = ref.kind === "approve" ? "approve" : "";
+    const seq = ++hlSeq;
     if (ref.selector) {
         let el: Element | null = null;
         try { el = document.querySelectorAll(ref.selector)[ref.index || 0] || null; } catch { el = null; }

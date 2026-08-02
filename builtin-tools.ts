@@ -63,6 +63,38 @@ const clickAt = (x: number, y: number): Element | null => {
 // selector OR an @pt/@box token — as a hoverable ref, so the sidebar outlines it on the page. No
 // selector (a viewport/page look) → null (raw args). The sidebar picks element- vs point/box-highlight
 // by the path shape, so this stays agnostic.
+// The element's human NOUN for an approval intent ("Click the button …"). Tag/role-based, page-side.
+const nounFor = (el: Element): string => {
+    const tag = el.tagName.toLowerCase();
+    if (tag === "a") return "link";
+    if (tag === "button" || el.getAttribute("role") === "button") return "button";
+    if (tag === "input" || tag === "textarea" || tag === "select" || (el as HTMLElement).isContentEditable) return "field";
+    return "element";
+};
+// A tool's INTENT descriptor for the user-facing approval card: the verb + the element's human
+// label/noun + the selector to HIGHLIGHT. Page-side (resolves the DOM). @pt/@box tokens (canvas
+// targets) carry no DOM label — just a point/region kind. A tool returns this from its `render` so the
+// card describes it deterministically (custom approval-gated tools included); see contract's `action`.
+export const actionRender = (verb: string, args: Record<string, unknown>, extra?: { input?: string; note?: string }): RenderDescriptor | null => {
+    const sel = typeof args.selector === "string" ? args.selector.trim() : "";
+    if (!sel) return null;
+    const idx = typeof args.index === "number" ? args.index : 0;
+    let kind: string | undefined; let target: string | undefined;
+    if (/^@pt:/.test(sel)) kind = "point";
+    else if (/^@box:/.test(sel)) kind = "region";
+    else {
+        try {
+            const el = queryAll(sel)[idx];
+            if (el) {
+                const n = accessibleName(el) || (el.textContent || "").trim();
+                if (n) target = truncate(n.replace(/\s+/g, " "), 80);
+                kind = nounFor(el);
+            }
+        } catch { /* bad selector — no label */ }
+    }
+    return { type: "action", verb, kind, target, selector: sel, input: extra?.input, note: extra?.note };
+};
+
 export const targetRender = (args: Record<string, unknown>): RenderDescriptor | null => {
     const sel = typeof args.selector === "string" ? args.selector.trim() : "";
     if (!sel) return null;
@@ -814,9 +846,9 @@ export const buildClickTool = (ml: MlApi): MlTool => {
             },
             required: ["selector"]
         },
-        // In: the target as a hoverable ref (hover → the sidebar outlines it on the page, so you see
-        // WHAT you're approving). A CSS selector highlights the element; an @pt/@box, the point/region.
-        render: (_input, args) => targetRender(args),
+        // In: a tool-provided INTENT (verb + human target + highlight selector) — the approval card reads
+        // it deterministically, and the debug In slot renders it as a hoverable ref (outlines the element).
+        render: (_input, args) => actionRender("Click", args),
         run: async ({ selector, index = 0 }: { selector: string; index?: number }): Promise<string> => {
             const doomed = clickPrecheck({ selector, index });   // @box / stale @pt / bad selector / no match
             if (doomed) return doomed;
@@ -872,9 +904,11 @@ export const buildTypeTool = (ml: MlApi): MlTool => {
             },
             required: ["selector", "text"]
         },
-        // In: the field as a hoverable ref + its human label — so an approval reads "Type … into «Search»"
-        // and highlights the field on the page, like click.
-        render: (_input, args) => targetRender(args),
+        // In: a tool-provided INTENT — "Type «…» into «Search»" + highlight the field, like click.
+        render: (_input, args) => actionRender("Type", args, {
+            input: typeof args.text === "string" ? args.text : undefined,
+            note: args.submit ? "then submit" : undefined,
+        }),
         run: async ({ selector, text = "", index = 0, append = false, submit = false }: { selector: string; text?: string; index?: number; append?: boolean; submit?: boolean }): Promise<string> => {
             const doomed = typePrecheck({ selector, index });
             if (doomed) return doomed;

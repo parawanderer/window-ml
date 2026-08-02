@@ -1996,22 +1996,24 @@ test("card surface: a pending approval shows the action directly + Approve posts
 
     const hash = "cardrun1";
     await w.dispatch(agentStart(hash, "delete the account", "m"));
-    // renderIn carries the enriched human label (accessible name) alongside the selector.
+    // The tool provides an `action` intent descriptor (verb + human target + highlight selector).
     await w.dispatch(agentStep(hash, 1, { seq: 0, pending: true, awaitingApproval: true, tool: "click",
-        arguments: { selector: "#danger" }, renderIn: { type: "elements", items: [{ path: "#danger", text: "Delete account" }] } }));
+        arguments: { selector: "#danger" }, renderIn: { type: "action", verb: "Click", kind: "button", target: "Delete account", selector: "#danger" } }));
     await w.flush();
 
-    // A pending approval reveals the card EXPANDED (urgent — you act on it), showing the intent card.
+    // A pending approval reveals the card EXPANDED (urgent — you act on it), showing the intent sentence.
     assert.ok(posted.some(m => m.__mlSidebarCard === "expanded"), "pending approval shows expanded directly");
     const doc = w.window.document;
     assert.match(doc.querySelector(".card-head-txt").textContent, /Approval needed/);
-    assert.match(doc.querySelector(".action-verb").textContent, /Click/, "plain-English verb");
-    assert.match(doc.querySelector(".action-target").textContent, /Delete account/, "human target, not the selector");
-    // The card highlighted the real element on the page (reusing the shell's hover-highlight).
-    assert.ok(posted.some(m => m.__mlHighlight && m.__mlHighlight.selector === "#danger"), "highlighted the target on the page");
+    const sentence = doc.querySelector(".action-sentence").textContent;
+    assert.match(sentence, /click the button/, "plain-English intent");
+    assert.match(sentence, /Delete account/, "human target, not the selector");
+    // The card highlighted the real element on the page as a pulsing-green approval spotlight.
+    assert.ok(posted.some(m => m.__mlHighlight && m.__mlHighlight.selector === "#danger" && m.__mlHighlight.kind === "approve"), "pulsing highlight on the target");
 
-    const approve = [...doc.querySelectorAll("button")].find(b => b.textContent.trim() === "Approve");
-    assert.ok(approve, "Approve control rendered");
+    // The Deny/Approve controls live in the fixed footer (outside the scroll area).
+    const approve = [...doc.querySelectorAll(".card-foot button")].find(b => b.textContent.trim() === "Approve");
+    assert.ok(approve, "Approve control rendered in the footer");
     approve.click(); await w.flush();
 
     const decision = posted.find(m => m.__mlSidebarApp === "approval");

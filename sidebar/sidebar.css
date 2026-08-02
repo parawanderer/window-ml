@@ -714,8 +714,12 @@ html[data-surface="card"] { color-scheme: normal !important; }
     padding: 9px 8px 9px 13px; border-bottom: 1px solid var(--border); }
 .card-head-txt { font-weight: 650; font-size: 1.05em; }
 /* Content-height, but scroll internally when a long answer/code would exceed the card's cap (the shell
-   caps the iframe at ~72vh, and this max-height keeps the scroll INSIDE the card, not the whole doc). */
-.card-body { max-height: 66vh; overflow-y: auto; overflow-x: hidden; padding: 10px 12px 14px; }
+   caps the iframe at ~72vh, and this max-height keeps the scroll INSIDE the card, not the whole doc).
+   scrollbar-gutter: stable reserves the scrollbar's width so content doesn't SHIFT when it appears. */
+.card-body { max-height: 66vh; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; padding: 10px 12px 14px; }
+/* Deny/Approve footer — pinned below the scroll area, always visible. */
+.card-foot { flex: 0 0 auto; display: flex; gap: 8px; justify-content: flex-end; padding: 10px 12px; border-top: 1px solid var(--border); }
+.card-foot .appr-btn { padding: 6px 18px; font-size: 1em; }
 .card-task { color: var(--fg-dim); font-size: .96em; margin-bottom: 8px; line-height: 1.4; }
 .card-body::-webkit-scrollbar { width: 10px; }
 .card-body::-webkit-scrollbar-track { background: transparent; }
@@ -727,17 +731,25 @@ html[data-surface="card"] { color-scheme: normal !important; }
 .card-answer { line-height: 1.5; }
 .action { display: flex; flex-direction: column; gap: 11px; }
 .action-goal { color: var(--fg-dim); font-size: .95em; line-height: 1.4; }
-.action-card { border: 1px solid var(--border); border-radius: 10px; padding: 11px 12px; background: var(--panel);
+.action-card { border: 1px solid var(--border); border-radius: 10px; padding: 11px 12px;
     display: flex; flex-direction: column; gap: 7px; }
-.action-verb { font-weight: 700; font-size: 1.05em; color: var(--accent); letter-spacing: .01em; }
+/* The intent sentence: "Agent wants to click the button «…»". Verb + target emphasised, plain text. */
+.action-sentence { font-size: 1.04em; line-height: 1.5; word-break: break-word; }
+.action-verb { font-weight: 700; color: var(--fg); }
+.action-target { font-weight: 650; color: var(--fg); }
 .action-body { font-size: 1.02em; line-height: 1.45; word-break: break-word; }
-.action-target { font-weight: 650; }
 .action-note { color: var(--fg-dim); }
+/* "Highlighted on the page · bottom-left" — a pulsing green dot matching the on-page spotlight. */
+.action-loc { display: flex; align-items: center; gap: 7px; color: var(--fg-dim); font-size: .9em; margin-top: 1px; }
+.loc-dot { flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%; background: #22c55e; animation: loc-pulse 1.3s ease-in-out infinite; }
+@keyframes loc-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, .5); } 50% { box-shadow: 0 0 0 5px rgba(34, 197, 94, 0); } }
+@media (prefers-reduced-motion: reduce) { .loc-dot { animation: none; } }
 .action-card.code { gap: 6px; }
 .action-summary { color: var(--fg); font-size: .98em; line-height: 1.4; }   /* utility-model plain-English gloss above the code */
 .action-codeblk { max-height: 42vh; overflow: auto; }
 .action-codeblk .code { margin: 0; }
 .action-sheets { display: flex; gap: 6px; align-items: flex-start; color: var(--warn); font-size: .9em; margin-top: 1px; }
 .action-sheets svg { flex: 0 0 auto; margin-top: 2px; }
-.action-btns { display: flex; gap: 8px; justify-content: flex-end; }
-.action-btns .appr-btn { padding: 6px 18px; font-size: 1em; }
+/* Debug In view of a tool intent (overlay/devtools RenderPanel). */
+.r-action { line-height: 1.5; }
+.r-action-verb { color: var(--accent); font-weight: 600; }
