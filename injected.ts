@@ -497,16 +497,29 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 maxSteps, think: (think === true || think === false) ? think : null, env, vision: vision ?? null, hints: hints || null,
             } });
 
-            // ── Design A: route through the BACKGROUND loop when a debug surface is active ──
-            // The approval gate then lives at the extension origin (the sidebar/panel), unforgeable by the
-            // page — a page-set window.confirm or a hostile approve() can't grant it. The page still built
-            // the toolset + system prompt above and registers the LIVE tools under runHash; the background
-            // delegates each call back via RUN_TOOL_IN_PAGE and gates approval through the surface. BOTH
-            // debug surfaces route here now (overlay → the in-page iframe app; devtools → the panel app,
-            // via the panel's reverse channel); only `off` falls through to the in-page loop below.
-            // Caveats (v1): the caller's `approve`/`onStep`/`logDebug` and rich tool renders (screenshots)
-            // don't apply on this path yet — the surface IS the gate, and steps stream as debug events.
-            if (agentCfg?.debugMode === "overlay" || agentCfg?.debugMode === "devtools") {
+            // ── Design A: route through the BACKGROUND loop so the approval gate lives at the extension
+            // origin (unforgeable by the page — a page-set window.confirm or a hostile approve() can't
+            // grant it). We route when EITHER a debug surface is active (overlay → the in-page iframe app;
+            // devtools → the panel app) OR the run has a requiresApproval tool AND this origin is NOT on
+            // the user's page-approval whitelist. The page built the toolset + system prompt above and
+            // registers the LIVE tools under runHash; the background delegates each call back via
+            // RUN_TOOL_IN_PAGE and gates approval through the surface (in `off` mode, a minimal modal the
+            // content-script shell draws). A WHITELISTED origin (agentCfg.pageApprovalAllowed — the user
+            // explicitly trusts this domain to self-gate) falls through to the in-page loop below, as does
+            // a run with no privileged tool (nothing to gate). Caveats (v1): the caller's
+            // `approve`/`onStep`/`logDebug` and rich tool renders don't apply on the background path.
+            const surface = agentCfg?.debugMode;
+            const hasApprovalTool = toolset.some(t => !!t.requiresApproval);
+            // OFF_CARD_READY gates the off-mode closure: routing a non-whitelisted privileged run to the
+            // background gate is only SAFE once the off-mode approval CARD exists to satisfy it (shell.ts
+            // card container + app card-mode). Until then, off falls through to the page loop (today's
+            // behaviour) so a run can't hang. Flip to true when the card ships. The whole security
+            // foundation (config, pageApprovalAllowed, the background SHOW_APPROVAL gate) is already wired.
+            const OFF_CARD_READY = false;
+            const bgSurface: "overlay" | "devtools" | "off" | null =
+                (surface === "overlay" || surface === "devtools") ? surface
+                    : (OFF_CARD_READY && hasApprovalTool && !agentCfg?.pageApprovalAllowed) ? "off" : null;
+            if (bgSurface) {
                 registerRun(runHash, toolset);
                 const descriptors = toolset.map(t => ({
                     name: t.name, description: t.description, parameters: t.parameters,
@@ -518,7 +531,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     const res = await makeBackgroundTaskPromise<AgentResult>("START_RUN_REQUEST", "START_RUN_RESPONSE", {
                         runId: runHash, task, systemPrompt, tools: descriptors,
                         model: runModel, think: (think === true || think === false) ? think : null,
-                        maxSteps, autoApprovePython: autoPy, autoApproveReadonly: autoRO, surface: agentCfg.debugMode,
+                        maxSteps, autoApprovePython: autoPy, autoApproveReadonly: autoRO, surface: bgSurface,
                     }, undefined, signal);
                     // The real DOM nodes an answer-capable tool returned stayed page-side (they can't cross
                     // the bus) — assemble AgentResult.elements from the page-side run record here.

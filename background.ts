@@ -758,6 +758,10 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         //    (→ the ml-devtools ports + the per-tab replay buffer, so a panel opened mid-run catches up).
         //    The page-emitted `agent`/`agent-result` events already reach the panel via the shell's
         //    __mlDebug→ML_DEBUG_EVENT forward; this covers the background-emitted agent-STEP events.
+        // Fan a run's step events to the page. overlay AND off both stream to the page window
+        // (ML_DEBUG_TO_PAGE → the shell → the iframe app) — off renders them in the corner CARD, a
+        // curated view of the same data; devtools fans to the panel. The card is only made VISIBLE on a
+        // pending gate (SHOW_APPROVAL) / final answer, so a no-approval off run streams to a hidden card.
         const emitStep = (ev: Record<string, unknown>): void => {
             const event = {
                 kind: "agent-step", id: runId, ts: Date.now(), save: false,
@@ -812,10 +816,22 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                         pendingApprovals.set(`${runId}:${seq}`, (decision) => {
                             const ok = decision === true || (typeof decision === "object" && !!decision && decision.approved);
                             if (ok && tool === "python_exec") for (const id of externalSheetIds(args)) approvedSheets.add(id);
+                            if (p.surface === "off") chrome.tabs.sendMessage(tabId, { type: "HIDE_APPROVAL", runId, seq }).catch(() => {});
                             resolve(decision);
                         });
-                        // Patch the pending step to show approve/deny (awaitingApproval) + the In preview.
-                        emitStep({ step, seq, pending: true, awaitingApproval: true, tool, arguments: args, renderIn });
+                        if (p.surface === "off") {
+                            // No debug surface is mounted — ask the content-script shell to draw a minimal
+                            // TRUSTED approval modal (it posts SET_APPROVAL back, unforgeable by the page).
+                            // A plain-string preview keeps the shell render-registry-free.
+                            const preview = (renderIn && typeof renderIn === "object" && (renderIn as { type?: string }).type === "code" && typeof (renderIn as { text?: unknown }).text === "string")
+                                ? String((renderIn as { text: string }).text)
+                                : JSON.stringify(args, null, 2);
+                            const payload: import("./contract").ShowApprovalPayload = { runId, seq: seq ?? 0, tool, preview: preview.slice(0, 4000), sheets: tool === "python_exec" ? [...new Set(externalSheetIds(args))] : [] };
+                            chrome.tabs.sendMessage(tabId, { type: "SHOW_APPROVAL", payload }).catch(() => {});
+                        } else {
+                            // Patch the pending step to show approve/deny (awaitingApproval) + the In preview.
+                            emitStep({ step, seq, pending: true, awaitingApproval: true, tool, arguments: args, renderIn });
+                        }
                     });
                 },
                 isSheetApproved: (id) => approvedSheets.has(id),
@@ -928,13 +944,25 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // Non-secret config the page may read (model/OCR model/format). The URL
         // and API key are deliberately withheld — see the security invariants.
         getConfig()
-            .then(config => sendResponse({ data: {
-                model: config.model, ocrModel: config.ocrModel, apiFormat: config.apiFormat,
-                utilityModel: config.utilityModel, utilityNumCtx: config.utilityNumCtx, utilityForceCpu: config.utilityForceCpu,
-                autoApproveReadonly: config.autoApproveReadonly, autoApprovePython: config.autoApprovePython,
-                groundingEnabled: config.groundingEnabled, groundingModel: config.groundingModel,
-                groundingRange: config.groundingRange, debugMode: config.debugMode,
-            } }))
+            .then(config => {
+                // Compute whether THIS page's origin is on the user's page-approval whitelist. The origin
+                // comes from the trusted `sender` (the content script's tab URL), NOT anything the page
+                // sends — so a page can't claim to be whitelisted. Only the boolean crosses to the page;
+                // the domain list never does.
+                let pageApprovalAllowed = false;
+                try {
+                    const url = sender.tab?.url || sender.url || "";
+                    const host = url ? new URL(url).hostname : "";
+                    pageApprovalAllowed = !!host && (config.pageApprovalDomains || []).includes(host);
+                } catch { /* opaque/blank origin → not allowed */ }
+                sendResponse({ data: {
+                    model: config.model, ocrModel: config.ocrModel, apiFormat: config.apiFormat,
+                    utilityModel: config.utilityModel, utilityNumCtx: config.utilityNumCtx, utilityForceCpu: config.utilityForceCpu,
+                    autoApproveReadonly: config.autoApproveReadonly, autoApprovePython: config.autoApprovePython,
+                    groundingEnabled: config.groundingEnabled, groundingModel: config.groundingModel,
+                    groundingRange: config.groundingRange, debugMode: config.debugMode, pageApprovalAllowed,
+                } });
+            })
             .catch(err => sendResponse({ error: err.message }));
         return true;
 

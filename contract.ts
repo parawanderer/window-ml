@@ -34,6 +34,13 @@ export interface MlConfig {
     autoTitles: boolean;        // let the utility model summarise session titles in the debug sidebar
     autoApproveReadonly: boolean;   // experimental: auto-approve read-only exec surveys via the mediated interpreter
     autoApprovePython: boolean;     // experimental: auto-approve python_exec (the sandbox is isolated by construction)
+    // Hostnames the USER has trusted to supply their OWN ml.agent approval gate (a page's
+    // `approve` callback / the page-loop confirm). Empty by default: EVERY other origin's
+    // privileged tool calls route through the unforgeable background gate + trusted surface,
+    // so a hostile page can't self-approve. Managed only in the trusted Settings/popup UI; the
+    // page never sees this list — GET_CONFIG returns only a computed `pageApprovalAllowed` for
+    // the requesting tab's own origin. Exact-hostname match (e.g. "docs.google.com").
+    pageApprovalDomains: string[];
     // Optional visual-grounding model for ml.agent's `locate` tool (coordinate
     // output). OFF by default — enabling loads a 3rd model into VRAM, so it's opt-in.
     groundingEnabled: boolean;
@@ -100,6 +107,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     autoTitles: true,
     autoApproveReadonly: false,
     autoApprovePython: false,
+    pageApprovalDomains: [],
     groundingEnabled: false,
     groundingModel: "",
     groundingRange: DEFAULT_GROUNDING_RANGE,
@@ -124,7 +132,13 @@ export const detectGroundingModel = (models: string[]): string =>
  *  ml.agent can decide whether to route a run through the unforgeable BACKGROUND loop (design A —
  *  when a debug surface is enabled) or the in-page loop (off). It's UI state, not a secret. */
 export type MlPublicConfig = Pick<MlConfig,
-    "model" | "ocrModel" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "autoApprovePython" | "groundingEnabled" | "groundingModel" | "groundingRange" | "debugMode">;
+    "model" | "ocrModel" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "autoApprovePython" | "groundingEnabled" | "groundingModel" | "groundingRange" | "debugMode"> & {
+    // COMPUTED per request (not stored): whether THIS page's origin is on the user's page-approval
+    // whitelist. When true, ml.agent honours the page's own approve()/confirm gate (the user trusts this
+    // domain); otherwise a privileged tool routes to the unforgeable background gate. The raw domain
+    // list is NEVER sent to the page — only this one boolean for the page's own origin.
+    pageApprovalAllowed?: boolean;
+};
 
 /* --------------------------- chat wire shapes -------------------------- */
 
@@ -436,7 +450,22 @@ export interface StartRunPayload {
     maxSteps: number;
     autoApprovePython: boolean;    // trusted config flag → the background may auto-approve readonly python
     autoApproveReadonly: boolean;  // trusted config flag → the background may auto-approve an in-dialect exec survey
-    surface: "overlay" | "devtools";   // which debug surface hosts the run's gate/stream (both route through the background)
+    // Which surface hosts the run's gate/stream (all route through the background): a debug surface
+    // (overlay/devtools) streams steps + gates in the sidebar app; "off" has no debug UI — the gate is a
+    // minimal approval modal the content-script shell draws on demand (no step stream).
+    surface: "overlay" | "devtools" | "off";
+}
+
+/** SHOW_APPROVAL — the background asks the content-script shell to draw a minimal, trusted approval
+ *  modal for an "off"-mode run's pending gate (no debug surface is mounted). The decision returns via
+ *  SET_APPROVAL, keyed by runId:seq, exactly like the sidebar app's. `preview` is a plain string (the
+ *  pretty In or the args) so the shell needs no render registry. HIDE_APPROVAL dismisses it. */
+export interface ShowApprovalPayload {
+    runId: string;
+    seq: number;
+    tool: string;
+    preview: string;
+    sheets?: string[];   // external Google Sheet ids this approval would grant for the session (disclosure)
 }
 
 /** SET_APPROVAL payload — the sidebar app's decision for a pending background-run approval, keyed by
