@@ -1549,7 +1549,7 @@ function PythonBench() {
  */
 // Which surface this app instance is (the shell posts it once, on our ready handshake).
 const surface = signal<"panel" | "card">("panel");
-const cardExpanded = signal(false);          // user opened the card (expanded) vs. the collapsed toast
+const cardCollapsed = signal(false);         // user collapsed a FINISHED card down to a toast (default: show it)
 const cardDismissed = signal<string>("");    // the run hash the user dismissed (closes a finished card)
 const cardTitleTried = new Set<string>();
 
@@ -1699,23 +1699,44 @@ function CardApp() {
     const visible = !!run && (pending || (done && !dismissed));
     // A pending approval shows the action DIRECTLY (urgent — you act on it); a finished run is a toast
     // you can open to read the answer.
-    const expanded = pending || cardExpanded.value;
+    const expanded = pending || !cardCollapsed.value;   // a finished run shows its answer by default
     const state = !visible ? "hidden" : expanded ? "expanded" : "toast";
 
     useEffect(() => { window.parent.postMessage({ __mlSidebarCard: state }, "*"); }, [state]);
     useEffect(() => { if (run) ensureCardTitle(run); }, [hash, r]);
-    // Report our content height so the shell can FIT the card (a cross-origin iframe can't auto-size).
-    // Measured after two frames (fonts/highlighting settle → a right-first-time fit, no manual drag) and
-    // re-measured by a ResizeObserver on later async growth (the summary landing, an image loading).
+    // Report our natural CONTENT height so the shell can FIT the card (a cross-origin iframe can't
+    // auto-size). We sum the card's children — head + body(scrollHeight = full content) + foot — NOT
+    // documentElement.scrollHeight: the app fills the iframe (height:100%), so measuring the container
+    // would feed its own clamped height back (an oscillation). The shell caps this to the viewport and
+    // the body scrolls. Measured after two frames (fonts/highlighting settle) + on later async growth.
     useEffect(() => {
-        const post = () => window.parent.postMessage({ __mlSidebarCardH: Math.ceil(document.documentElement.scrollHeight) }, "*");
+        const post = () => {
+            const app = document.querySelector(".card-app");
+            const h = app ? [...app.children].reduce((s, c) => s + (c as HTMLElement).scrollHeight, 0) : document.documentElement.scrollHeight;
+            window.parent.postMessage({ __mlSidebarCardH: Math.ceil(h) }, "*");
+        };
         post();
         requestAnimationFrame(() => requestAnimationFrame(post));
         if (typeof ResizeObserver === "undefined") return;
         const ro = new ResizeObserver(post);
-        ro.observe(document.documentElement);
+        ro.observe(document.body);
         return () => ro.disconnect();
     }, [state, r]);
+    // Keyboard: Enter approves, Esc denies — but ONLY from a real keydown INSIDE this trusted iframe (a
+    // page-side global hotkey routed in would reopen the forgery hole, so we deliberately don't do that).
+    // We ask the shell to focus the card frame when an approval appears, so the keys work without a click.
+    useEffect(() => {
+        if (!run || !pendingStep || pendingStep.seq == null) return;
+        const h = run.hash, seq = pendingStep.seq;
+        window.parent.postMessage({ __mlSidebarCardFocus: true }, "*");
+        const decideKey = (ok: boolean) => { decidedSteps.add(stepKey(h, seq)); clearHighlight(); sendApproval(h, seq, ok); rev.value++; };
+        const onKey = (e: KeyboardEvent) => {
+            if (e.key === "Enter") { e.preventDefault(); decideKey(true); }
+            else if (e.key === "Escape") { e.preventDefault(); decideKey(false); }
+        };
+        window.addEventListener("keydown", onKey);
+        return () => window.removeEventListener("keydown", onKey);
+    }, [pending, pendingStep?.seq]);
 
     if (!run) return <div class="card-app" data-rev={r} />;
 
@@ -1737,7 +1758,7 @@ function CardApp() {
     if (state === "toast") {
         return (
             <div class="card-app" data-rev={r}>
-                <div class="card-toast" role="button" title="Click to review" onClick={() => (cardExpanded.value = true)}>
+                <div class="card-toast" role="button" title="Click to review" onClick={() => (cardCollapsed.value = false)}>
                     <span class="card-bot" aria-hidden="true">🤖</span>
                     <span class="card-toast-txt">
                         <span class="card-toast-head">{headline}</span>
@@ -1754,7 +1775,7 @@ function CardApp() {
                 <span class="card-bot" aria-hidden="true">🤖</span>
                 <span class={`card-head-txt${pending ? " pending" : ""}`}>{headline}</span>
                 <span class="sp" />
-                {pending ? null : <button class="card-icon" aria-label="Collapse" title="Collapse" onClick={() => (cardExpanded.value = false)}>▾</button>}
+                {pending ? null : <button class="card-icon" aria-label="Collapse" title="Collapse" onClick={() => (cardCollapsed.value = true)}>▾</button>}
                 <button class="card-x" aria-label={pending ? "Deny" : "Dismiss"} onClick={onClose}>✕</button>
             </div>
             <div class="card-body">
@@ -1766,8 +1787,8 @@ function CardApp() {
                 drag-collapse or the scrollbar appearing can never cut or shift the buttons). */}
             {pending && pendingStep
                 ? <div class="card-foot">
-                    <button class="appr-btn no" onClick={() => decide(false)}>Deny</button>
-                    <button class="appr-btn yes" onClick={() => decide(true)}>Approve</button>
+                    <button class="appr-btn no" onClick={() => decide(false)}>Deny <kbd class="kb">esc</kbd></button>
+                    <button class="appr-btn yes" onClick={() => decide(true)}>Approve <kbd class="kb">⏎</kbd></button>
                   </div>
                 : null}
         </div>

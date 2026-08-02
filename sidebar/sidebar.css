@@ -687,11 +687,11 @@ details.thinking .md { color: var(--fg-dim); font-size: 0.95em; }
 /* Make the iframe DOCUMENT itself transparent so the shell's acrylic shows through: drop the opaque
    canvas background AND `color-scheme` (which otherwise paints a solid dark/light backdrop behind the
    transparent html). `!important` so it wins over the theme's `:root[data-theme=…]` color-scheme. */
-/* Card mode: the document is CONTENT-height (the shell reads scrollHeight to size the iframe — it
-   can't auto-size a cross-origin frame), transparent, no page scroll. */
-html[data-surface="card"], html[data-surface="card"] body { background: transparent !important; overflow: hidden; height: auto; }
+/* Card mode: the app FILLS the iframe (the shell sizes the iframe from the reported CONTENT height —
+   a cross-origin frame can't auto-size — and caps it to the viewport), transparent, no page scroll. */
+html[data-surface="card"], html[data-surface="card"] body { background: transparent !important; overflow: hidden; height: 100%; }
 html[data-surface="card"] { color-scheme: normal !important; }
-.card-app { display: flex; flex-direction: column; color: var(--fg);
+.card-app { height: 100%; min-height: 0; display: flex; flex-direction: column; color: var(--fg);
     font: var(--fs)/1.45 system-ui, -apple-system, sans-serif; }
 
 /* Collapsed toast — a single notification row: 🤖 · headline/summary · close. */
@@ -713,10 +713,10 @@ html[data-surface="card"] { color-scheme: normal !important; }
 .card-head { display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
     padding: 9px 8px 9px 13px; border-bottom: 1px solid var(--border); }
 .card-head-txt { font-weight: 650; font-size: 1.05em; }
-/* Content-height, but scroll internally when a long answer/code would exceed the card's cap (the shell
-   caps the iframe at ~72vh, and this max-height keeps the scroll INSIDE the card, not the whole doc).
+/* Fills the space between the fixed header/footer and scrolls internally when the shell caps the card
+   to the viewport (a long answer/code). min-height:0 lets a flex child actually shrink+scroll.
    scrollbar-gutter: stable reserves the scrollbar's width so content doesn't SHIFT when it appears. */
-.card-body { max-height: 66vh; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; padding: 10px 12px 14px; }
+.card-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; padding: 10px 12px 14px; }
 /* Deny/Approve footer — pinned below the scroll area, always visible. */
 .card-foot { flex: 0 0 auto; display: flex; gap: 8px; justify-content: flex-end; padding: 10px 12px; border-top: 1px solid var(--border); }
 .card-foot .appr-btn { padding: 6px 18px; font-size: 1em; }
@@ -753,3 +753,24 @@ html[data-surface="card"] { color-scheme: normal !important; }
 /* Debug In view of a tool intent (overlay/devtools RenderPanel). */
 .r-action { line-height: 1.5; }
 .r-action-verb { color: var(--accent); font-weight: 600; }
+
+/* Keyboard hint badges on the approve/deny buttons (games-HUD style). */
+.appr-btn { display: inline-flex; align-items: center; gap: 7px; }
+.kb { font: 600 10px/1 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 2px 5px; border-radius: 4px;
+    background: rgba(0, 0, 0, .18); border: 1px solid rgba(0, 0, 0, .18); opacity: .85; }
+
+/* Permissions tab: the self-approval domain whitelist + the Sheets grant. */
+.perm-add { display: flex; gap: 6px; }
+.perm-input, .perm-search { box-sizing: border-box; padding: 6px 8px; border: 1px solid var(--border);
+    border-radius: 6px; background: var(--bg); color: var(--fg); font-size: 0.95em; }
+.perm-input { flex: 1; }
+.perm-input:focus, .perm-search:focus { outline: none; border-color: var(--accent); }
+.perm-search { width: 100%; margin-top: 6px; }
+.perm-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.perm-chip { display: inline-flex; align-items: center; gap: 4px; background: var(--panel-2);
+    border: 1px solid var(--border); border-radius: 14px; padding: 3px 4px 3px 10px; }
+.perm-host { font: 0.9em ui-monospace, SFMono-Regular, Menlo, monospace; }
+.perm-x { background: transparent; border: none; color: var(--fg-faint); cursor: pointer; width: 18px; height: 18px;
+    border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; line-height: 1; }
+.perm-x:hover { background: var(--panel-2-hover); color: var(--err); }
+.perm-ok { color: var(--ok); font-weight: 600; }

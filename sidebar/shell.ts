@@ -30,10 +30,10 @@ const HIGHLIGHT_CSS = `
   border-radius: 3px; white-space: nowrap; max-width: 50vw; overflow: hidden; text-overflow: ellipsis; }
 /* Approval variant: a pulsing GREEN spotlight (vs the blue hover box) so the element awaiting your
    approval is unmistakable on the page. */
-#${SB_HIGHLIGHT}.ml-hl-approve { background: rgba(34, 197, 94, .22); outline: 2px solid rgba(34, 197, 94, .95);
-  animation: ml-hl-pulse 1.3s ease-in-out infinite; }
-#${SB_HIGHLIGHT}.ml-hl-approve .ml-hl-label { background: #16a34a; }
-@keyframes ml-hl-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, .5); } 50% { box-shadow: 0 0 0 7px rgba(34, 197, 94, 0); } }
+#${SB_HIGHLIGHT}.ml-hl-approve { background: rgba(34, 197, 94, .26); outline: 3px solid rgba(34, 197, 94, 1);
+  border-radius: 3px; animation: ml-hl-pulse 1.25s ease-in-out infinite; }
+#${SB_HIGHLIGHT}.ml-hl-approve .ml-hl-label { background: #16a34a; font-size: 11px; padding: 2px 7px; }
+@keyframes ml-hl-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, .6); } 50% { box-shadow: 0 0 0 13px rgba(34, 197, 94, 0); } }
 `;
 
 // The off-mode approval CARD: a macOS-notification-style acrylic panel in the bottom-right corner,
@@ -143,10 +143,12 @@ function sizeCard(): void {
     if (!cardWrap) return;
     const state = cardWrap.dataset.state;
     if (state === "hidden") return;   // keep the current height while it fades out
-    const cap = Math.round(window.innerHeight * 0.72);
+    // NEVER exceed the space between the card's top and bottom margins — else the card runs off-screen
+    // (behind the dock / past the fold). The body scrolls when content is taller than this.
+    const cap = Math.max(120, window.innerHeight - 40);
     // Fit the reported content height (capped); the user's dragged height applies to the EXPANDED card only.
-    const h = (state === "expanded" && cardManualH) ? cardManualH : Math.min(cardAutoH, cap);
-    cardWrap.style.height = `${Math.max(56, h)}px`;
+    const desired = (state === "expanded" && cardManualH) ? cardManualH : cardAutoH;
+    cardWrap.style.height = `${Math.max(56, Math.min(desired, cap))}px`;
 }
 // Drag the top edge (the card is bottom-anchored, so dragging up grows it upward). Double-click resets
 // to auto-fit. Persisted so the size sticks across runs.
@@ -370,6 +372,13 @@ function onWindowMessage(e: MessageEvent): void {
     // it, capped, unless the user dragged a manual height.
     if (typeof d.__mlSidebarCardH === "number" && frame && e.source === frame.contentWindow) {
         cardAutoH = d.__mlSidebarCardH; sizeCard();
+        return;
+    }
+    // The card app asks us to focus its iframe (an approval appeared) so Enter/Esc work without a click.
+    // Moving focus is harmless — the page still can't inject a trusted keypress into this cross-origin
+    // extension frame — so the keyboard gate stays unforgeable.
+    if (d.__mlSidebarCardFocus && frame && e.source === frame.contentWindow) {
+        try { frame.focus(); } catch { /* ignore */ }
         return;
     }
     // The iframe app is listening. OVERLAY: handshake injected.js so it starts emitting, and tell the

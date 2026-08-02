@@ -2011,9 +2011,9 @@ test("card surface: a pending approval shows the action directly + Approve posts
     // The card highlighted the real element on the page as a pulsing-green approval spotlight.
     assert.ok(posted.some(m => m.__mlHighlight && m.__mlHighlight.selector === "#danger" && m.__mlHighlight.kind === "approve"), "pulsing highlight on the target");
 
-    // The Deny/Approve controls live in the fixed footer (outside the scroll area).
-    const approve = [...doc.querySelectorAll(".card-foot button")].find(b => b.textContent.trim() === "Approve");
-    assert.ok(approve, "Approve control rendered in the footer");
+    // The Deny/Approve controls live in the fixed footer (outside the scroll area), with key hints.
+    const approve = doc.querySelector(".card-foot .appr-btn.yes");
+    assert.ok(approve && approve.textContent.includes("Approve"), "Approve control rendered in the footer");
     approve.click(); await w.flush();
 
     const decision = posted.find(m => m.__mlSidebarApp === "approval");
@@ -2036,11 +2036,10 @@ test("card surface: the final answer shows; debug steps/thinking don't leak", as
     await w.dispatch(agentResult(hash, "The page has three sections.", 1));
     await w.flush();
 
-    // Done → the card reveals as a toast; open it to read the answer (only the answer — no debug rows).
-    assert.ok(posted.some(m => m.__mlSidebarCard === "toast"), "revealed on completion");
-    w.window.document.querySelector(".card-toast").click(); await w.flush();
+    // A finished run shows its ANSWER directly (expanded) — no click needed; only the answer, no rows.
+    assert.ok(posted.some(m => m.__mlSidebarCard === "expanded"), "finished run reveals the answer directly");
     const body = w.window.document.querySelector(".card-body");
-    assert.ok(body, "expanded body rendered");
+    assert.ok(body, "answer body rendered");
     assert.doesNotMatch(body.textContent, /thinking about it/, "thinking is hidden in the card");
     assert.ok(!body.querySelector(".astep"), "no debug step rows leak into the card");
     assert.ok(body.querySelector(".card-answer"), "answer rendered as plain markdown");

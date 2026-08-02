@@ -4,6 +4,7 @@
 // with the popup. Text fields persist on change (blur) to avoid chatty writes; the
 // signal updates on input for a responsive UI + the utility-field enable gating.
 import { signal } from "@preact/signals";
+import { useState, useEffect } from "preact/hooks";
 import type { MlConfig, ApiFormat, Theme, DebugMode, LoadedModel } from "../contract";
 import { DEFAULT_CONFIG, DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX, detectGroundingModel, modelFilterAllows } from "../contract";
 import { PY_PACKAGES } from "../python-env";
@@ -301,9 +302,108 @@ const SETTINGS_TABS = [
     { id: "models", label: "Models" },
     { id: "appearance", label: "Appearance" },
     { id: "advanced", label: "Advanced" },
+    { id: "permissions", label: "Permissions" },
 ] as const;
 type SettingsTab = typeof SETTINGS_TABS[number]["id"];
 const settingsTab = signal<SettingsTab>("connection");
+
+// ── Permissions tab ──────────────────────────────────────────────────────────
+// Two grants the USER manages here (the page never touches either): the per-domain
+// approval whitelist (pageApprovalDomains — a site trusted to supply its OWN ml.agent
+// approval gate; every other origin routes privileged tool calls through the extension's
+// unforgeable approval card) and the Google Sheets host permission for python_exec.
+const SHEETS_ORIGINS = ["https://docs.google.com/*", "https://accounts.google.com/*", "https://*.googleusercontent.com/*"];
+const domainInput = signal("");
+const domainSearch = signal("");
+
+// Normalise a user-typed site to a bare hostname (strip scheme/path/port), or null if it isn't a valid
+// hostname. Accepts "docs.google.com", "https://docs.google.com/…", "Example.COM" → "example.com".
+function normDomain(input: string): string | null {
+    let s = input.trim().toLowerCase();
+    if (!s) return null;
+    try { if (/^[a-z]+:\/\//.test(s)) s = new URL(s).hostname; } catch { /* not a URL — treat as a bare host */ }
+    s = s.replace(/^\/+/, "").split("/")[0].split(/[?#:]/)[0];
+    return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(s) ? s : null;
+}
+function setDomains(list: string[]): void {
+    config.value = { ...config.value, pageApprovalDomains: list };
+    chrome.storage.sync.set({ pageApprovalDomains: list });
+}
+
+// The Google Sheets host-permission grant (moved from the popup) — chrome.permissions, extension-origin.
+function SheetsGrant() {
+    const [granted, setGranted] = useState<boolean | null>(null);
+    const [err, setErr] = useState("");
+    useEffect(() => {
+        try { chrome.permissions.contains({ origins: SHEETS_ORIGINS }, (g) => setGranted(!!g)); }
+        catch { setGranted(false); }
+    }, []);
+    const enable = () => {
+        setErr("");
+        try {
+            chrome.permissions.request({ origins: SHEETS_ORIGINS }, (g) => {
+                setGranted(!!g);
+                if (!g) setErr("Not granted — you can also allow it via the browser's Extensions manager (Site access → On all sites).");
+            });
+        } catch (e: any) { setErr(`Couldn't request access: ${e?.message || e}. Allow it manually via the Extensions manager (Site access → On all sites).`); }
+    };
+    if (granted === null) return null;   // still probing / API unavailable
+    return (
+        <details class="set-section" open={!granted}>
+            <summary class="set-group">Google Sheets access{granted ? <span class="perm-ok"> ✓</span> : null}</summary>
+            <div class="set-note">Lets <code>python_exec</code> load a Google Sheet (the <code>tables</code> arg / a Sheets URL) as a pandas DataFrame — the background CSV fetch needs host access to <code>docs.google.com</code>, which “On click” site access withholds. A narrower grant than “On all sites”.</div>
+            {granted
+                ? <div class="set-hint"><span class="perm-ok">Granted.</span> The extension can fetch Google Sheets you're signed into.</div>
+                : <div class="free-row"><button class="test-btn" onClick={enable}>Enable Google Sheets access</button></div>}
+            {err ? <div class="set-err">{err}</div> : null}
+        </details>
+    );
+}
+
+function PermissionsView() {
+    const c = config.value;
+    const domains = c.pageApprovalDomains || [];
+    const parsed = normDomain(domainInput.value);
+    const invalid = !!domainInput.value.trim() && !parsed;
+    const add = () => {
+        if (!parsed) return;
+        if (!domains.includes(parsed)) setDomains([...domains, parsed].sort());
+        domainInput.value = "";
+    };
+    const remove = (d: string) => setDomains(domains.filter(x => x !== d));
+    const q = domainSearch.value.trim().toLowerCase();
+    const shown = q ? domains.filter(d => d.includes(q)) : domains;
+    return (
+        <>
+            <div class="set-note">Sites here are trusted to supply their <b>own</b> <code>ml.agent</code> approval gate (the page's <code>approve()</code> / <code>confirm</code>). <b>Every other site</b> routes a privileged tool call (click, type, exec, python_exec) through the extension's own approval — the corner card — so a page can never silently approve itself. Add a domain only if you fully trust the code on it.</div>
+            <details class="set-section" open>
+                <summary class="set-group">Self-approval whitelist</summary>
+                <div class="perm-add">
+                    <input class={`perm-input${invalid ? " err" : ""}`} type="text" placeholder="example.com" value={domainInput.value}
+                        onInput={(e: any) => (domainInput.value = e.target.value)}
+                        onKeyDown={(e: any) => { if (e.key === "Enter") { e.preventDefault(); add(); } }} />
+                    <button class="test-btn" disabled={!parsed} onClick={add}>Add</button>
+                </div>
+                {invalid ? <div class="set-err">Enter a valid hostname, e.g. <code>docs.google.com</code>.</div> : null}
+                {domains.length > 6
+                    ? <input class="perm-search" type="search" placeholder="Filter domains…" value={domainSearch.value} onInput={(e: any) => (domainSearch.value = e.target.value)} />
+                    : null}
+                {domains.length
+                    ? <div class="perm-list">
+                        {shown.map(d => (
+                            <span class="perm-chip" key={d}>
+                                <span class="perm-host">{d}</span>
+                                <button class="perm-x" aria-label={`Remove ${d}`} title={`Remove ${d}`} onClick={() => remove(d)}>✕</button>
+                            </span>
+                        ))}
+                        {q && !shown.length ? <div class="set-hint">No domains match “{domainSearch.value}”.</div> : null}
+                      </div>
+                    : <div class="set-hint">No trusted domains — every site's privileged agent calls go through the extension's approval card.</div>}
+            </details>
+            <SheetsGrant />
+        </>
+    );
+}
 
 export function Settings() {
     const c = config.value;
@@ -488,6 +588,8 @@ export function Settings() {
                 </details>
 
             </> : null}
+
+            {tab === "permissions" ? <PermissionsView /> : null}
             </div>
         </div>
     );
