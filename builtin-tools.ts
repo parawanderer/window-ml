@@ -872,6 +872,9 @@ export const buildTypeTool = (ml: MlApi): MlTool => {
             },
             required: ["selector", "text"]
         },
+        // In: the field as a hoverable ref + its human label — so an approval reads "Type … into «Search»"
+        // and highlights the field on the page, like click.
+        render: (_input, args) => targetRender(args),
         run: async ({ selector, text = "", index = 0, append = false, submit = false }: { selector: string; text?: string; index?: number; append?: boolean; submit?: boolean }): Promise<string> => {
             const doomed = typePrecheck({ selector, index });
             if (doomed) return doomed;
