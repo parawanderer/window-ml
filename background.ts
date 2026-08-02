@@ -788,7 +788,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             task: p.task, model: p.model, maxSteps: p.maxSteps,
             config: {
                 system: p.systemPrompt, customSystem: false,
-                tools: p.tools.map(t => ({ name: t.name, requiresApproval: t.requiresApproval, vision: t.capabilities.includes("vision"), description: t.description, parameters: t.parameters })),
+                tools: p.tools.map(t => ({ name: t.name, requiresApproval: t.requiresApproval, vision: t.capabilities.includes("vision"), description: t.description, parameters: t.parameters, summary: t.summary })),
                 maxSteps: p.maxSteps, think: p.think, env: true, vision: null, hints: null,
             },
         });

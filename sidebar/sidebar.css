@@ -786,12 +786,18 @@ html[data-surface="card"] { color-scheme: normal !important; }
 .card-work-trace .appr-badge { display: none; }
 .card-work-trace .appr-user, .card-work-trace .appr-denied { display: inline-flex; }
 .card-work-trace .appr-user .appr, .card-work-trace .appr-denied .appr {
-    width: 14px; height: 14px; padding: 0; border: none; border-radius: 50%; font-size: 0; line-height: 0;
+    width: 15px; height: 15px; padding: 0; border-radius: 50%; font-size: 0; line-height: 0;
+    background: transparent; border: 1.5px solid;   /* OUTLINED ring — contrasts better than a filled blob */
     display: inline-flex; align-items: center; justify-content: center; }
-.card-work-trace .appr-user .appr { background: var(--ok); }
-.card-work-trace .appr-denied .appr { background: var(--err); }
-.card-work-trace .appr-user .appr::before { content: "✓"; font: 700 9px/1 system-ui, sans-serif; color: #fff; }
-.card-work-trace .appr-denied .appr::before { content: "✕"; font: 700 8px/1 system-ui, sans-serif; color: #fff; }
+.card-work-trace .appr-user .appr { border-color: var(--ok); }
+.card-work-trace .appr-denied .appr { border-color: var(--err); }
+.card-work-trace .appr-user .appr::before { content: "✓"; font: 800 8px/1 system-ui, sans-serif; color: var(--ok); }
+.card-work-trace .appr-denied .appr::before { content: "✕"; font: 800 7px/1 system-ui, sans-serif; color: var(--err); }
+/* Hollow status dots in the trace too (success + failure), matching the outlined approval icons. */
+.card-work-trace .astep-head .dot.ok, .card-work-trace .astep-head .dot.err {
+    background: transparent; border: 1.5px solid; box-sizing: border-box; }
+.card-work-trace .astep-head .dot.ok { border-color: var(--ok); }
+.card-work-trace .astep-head .dot.err { border-color: var(--err); }
 /* On-demand "Explain this Python/JS" affordance in the Show-work trace. */
 .step-explain-btn { margin-top: 5px; background: transparent; border: 1px dashed var(--border); border-radius: 6px;
     color: var(--fg-dim); font: inherit; font-size: .88em; padding: 3px 9px; cursor: pointer; }

@@ -796,6 +796,20 @@ test("debug In render of a click step is a hoverable element reference, not the 
     assert.ok(!toolStep.querySelector(".action-sentence"), "the user-facing intent sentence stays OUT of the debug log");
 });
 
+test("a tool step shows the tool's short summary as a hover tooltip on its name", async () => {
+    const w = await loadSidebarWorld();
+    const cfg = { system: "", customSystem: false, maxSteps: 10, think: null, env: true, vision: null, hints: null,
+        tools: [{ name: "look", requiresApproval: false, summary: "Screenshots the page so the agent can see it." }] };
+    await w.dispatch(agentStart("tsum", "look at it", "m", 10, cfg));
+    await w.dispatch(agentStep("tsum", 1, { tool: "look", arguments: {}, result: "a screenshot" }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const toolStep = w.shadow.querySelector(".astep.tool");
+    const wrap = toolStep.querySelector(".tool-name-wrap");
+    assert.ok(wrap, "the tool name has a tooltip wrapper (a summary was provided)");
+    assert.match(wrap.querySelector(".tt-pop").textContent, /Screenshots the page/, "the summary is the tooltip");
+});
+
 test("a FINAL-answer turn with only reasoning (no thought/tool) still renders its thinking block", async () => {
     // The model thinks in reasoning_content and puts its answer in content → the content becomes the
     // summary (answer bubble), the reasoning is a reasoning-only step. It must NOT be filtered out.

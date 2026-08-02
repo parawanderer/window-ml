@@ -21,6 +21,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
     return [
         T({
             name: "findByText",
+            summary: "Finds elements on the page by their visible text.",
             description: "Find elements whose visible text contains a snippet. Returns the " +
                 "deepest matching elements (not their containers) as structural paths, so you " +
                 "can walk UP to the repeating card. Start here from a title/label you can see.",
@@ -54,6 +55,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
         }),
         T({
             name: "interactives",
+            summary: "Lists the clickable/interactive elements on the page.",
             description: "List the page's interactive controls the way a SCREEN READER does — each by " +
                 "ROLE + ACCESSIBLE NAME (+ state), with a ready-to-use selector. Use this to LOCATE a control " +
                 "you can't anchor by visible text (icon buttons, toolbar actions, the like/menu buttons): read " +
@@ -142,6 +144,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
         }),
         T({
             name: "describeElement",
+            summary: "Describes one element's structure and attributes.",
             description: "Skeleton of an element and its descendants to a depth: tags, ids, " +
                 "classes, data-* attributes, own text. Use it to walk up/down the tree and " +
                 "spot the repeating container and stable anchors. Never returns innerHTML.",
@@ -164,6 +167,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
         }),
         T({
             name: "ancestors",
+            summary: "Shows an element's parent chain up the DOM.",
             description: "Walk UP from the first element matching a selector: lists each ancestor " +
                 "(tag, id, classes, data-*) from the element out to <body>, numbered by hop. The " +
                 "counterpart to describeElement (which goes DOWN) — use it to find a containing or " +
@@ -191,6 +195,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
         }),
         T({
             name: "countMatches",
+            summary: "Counts how many elements match a selector.",
             description: "How many elements a CSS selector matches. Cheap verification — call " +
                 "this before acting to confirm the count is plausible for the page.",
             parameters: {
@@ -207,6 +212,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
         }),
         T({
             name: "sampleText",
+            summary: "Samples visible text from matching elements.",
             description: "Visible text of the first N elements matching a selector. Use it to " +
                 "confirm a selector grabbed the intended items and not headers/ads.",
             parameters: {
@@ -234,6 +240,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
         }),
         T({
             name: "exec",
+            summary: "Runs read-only JavaScript to inspect the page.",
             description: "Escape hatch: run JS in the page, like one cell in a console. You get back " +
                 "BOTH anything it console.log's AND the final expression's value — so either " +
                 "console.log the data you want to inspect, or make the last line evaluate to it " +
@@ -334,6 +341,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
         }),
         T({
             name: "pageInfo",
+            summary: "Reports the page URL, title, and size.",
             description: "Where and when you are: the page URL, title, language, and the current " +
                 "date/time + locale/timezone. Use it to ground time-relative tasks (what counts as " +
                 "'today'?) and to confirm the site and language before matching text.",
@@ -342,6 +350,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
         }),
         T({
             name: "scroll",
+            summary: "Scrolls the page or an element into view.",
             description: "Scroll the page to reveal below-the-fold or lazy-loaded content, then " +
                 "re-run look/countMatches/findByText to see what appeared. `to`: 'bottom' (default — " +
                 "triggers infinite-scroll/lazy-load), 'top', or 'element' (needs `selector`). Or `by`: " +
@@ -388,6 +397,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
         }),
         T({
             name: "wait",
+            summary: "Waits for an element to appear on the page.",
             description: "Wait for the page to settle after an async update (a click/type/navigation " +
                 "takes effect after a delay, not instantly). Pass `selector` to wait until an element " +
                 "APPEARS (best — waits exactly as long as needed), or `ms` for a fixed pause. Use it " +
@@ -424,6 +434,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
         }),
         T({
             name: "answer",
+            summary: "Marks the final answer / result elements.",
             capabilities: ["answer"],
             description: "Return specific element(s) as your RESULT — use this when the task asks " +
                 "you to find / locate / return an element rather than change the page. Pass the CSS " +

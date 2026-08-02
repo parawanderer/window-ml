@@ -882,6 +882,8 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     const [expanded, setExpanded] = useState(false);
     const [decided, setDecided] = useState(false);   // hide the controls the instant we click (before the DONE lands)
     const args = st.arguments && Object.keys(st.arguments).length ? st.arguments : null;
+    // The tool's own short human-friendly summary (contract MlTool.summary), from the run's tool defs.
+    const toolSummary = hash ? sessionMap.get(hash)?.agentConfig?.tools?.find(t => t.name === st.tool)?.summary : undefined;
     // Each slot renders from its own descriptor; the block falls back to raw when absent.
     const inRender = st.renderIn;
     const outRender = st.renderOut;
@@ -916,7 +918,10 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
             <button class="astep-head" onClick={() => setExpanded(v => !v)}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
                 <Dot status={st.pending ? "pending" : toolFailed(st.result) ? "err" : "ok"} />
-                <span class="tool-name">{st.tool}</span>
+                {/* Tool-authored short summary (contract MlTool.summary) → hover tooltip, both surfaces. */}
+                {toolSummary
+                    ? <span class="tt tool-name-wrap"><span class="tool-name">{st.tool}</span><span class="tt-pop wrap" role="tooltip">{toolSummary}</span></span>
+                    : <span class="tool-name">{st.tool}</span>}
                 {st.approval ? <ApprovalBadge approval={st.approval} /> : null}
                 {st.elements ? <span class="tt el-count">{st.elements} el<span class="tt-pop wrap" role="tooltip">DOM nodes returned (reach them in the console via onStep).</span></span> : null}
                 {issues ? <span class="arg-warn" title={issues.join("; ")}><IconWarn />{issues.length}</span> : null}

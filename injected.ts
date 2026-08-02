@@ -326,11 +326,11 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          * @returns {MlTool} The tool with defaults filled in.
          * @throws {Error} If `name` or a `run` function is missing.
          */
-        defineTool: function({ name, description = "", parameters = { type: "object", properties: {} }, run, requiresApproval = false, capabilities = [], render, precheck }: Partial<MlTool> = {}): MlTool {
+        defineTool: function({ name, description = "", summary, parameters = { type: "object", properties: {} }, run, requiresApproval = false, capabilities = [], render, precheck }: Partial<MlTool> = {}): MlTool {
             if (!name || typeof run !== "function") {
                 throw new Error("ml.defineTool needs a name and a run(args) function");
             }
-            return { name, description, parameters, run, requiresApproval, capabilities, render, precheck };
+            return { name, description, summary, parameters, run, requiresApproval, capabilities, render, precheck };
         },
         /**
          * Run a full agent loop over a tool registry: the model calls tools, we
@@ -493,7 +493,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             const runModel = model || agentCfg?.model || null;
             emitDebug({ kind: "agent", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, task, model: runModel, maxSteps, config: {
                 system: systemPrompt, customSystem: !!system,
-                tools: toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval, vision: !!(t.capabilities && t.capabilities.includes("vision")), description: t.description, parameters: t.parameters })),
+                tools: toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval, vision: !!(t.capabilities && t.capabilities.includes("vision")), description: t.description, parameters: t.parameters, summary: t.summary })),
                 maxSteps, think: (think === true || think === false) ? think : null, env, vision: vision ?? null, hints: hints || null,
             } });
 
@@ -522,7 +522,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 registerRun(runHash, toolset);
                 const descriptors = toolset.map(t => ({
                     name: t.name, description: t.description, parameters: t.parameters,
-                    requiresApproval: !!t.requiresApproval, capabilities: t.capabilities || [],
+                    requiresApproval: !!t.requiresApproval, capabilities: t.capabilities || [], summary: t.summary,
                     precheck: typeof t.precheck === "function",   // has a doomed-action precheck → the background delegates it before gating
                 }));
                 enterAgentRun();   // suppress orphan chat sessions from a delegated tool's internal ml.chat
@@ -1284,6 +1284,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             const ml = this;
             return ml.defineTool({
                 name: "look",
+                summary: "Screenshots the page so the agent can see it.",
                 capabilities: ["vision"],
                 description: "See the page with your OWN eyes — this screenshots the page (or an element) " +
                     "and shows YOU the image directly. Call with NO selector to see the viewport and ORIENT " +

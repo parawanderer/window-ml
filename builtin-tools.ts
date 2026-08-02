@@ -113,6 +113,7 @@ export const targetRender = (args: Record<string, unknown>): RenderDescriptor | 
 export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512 }: { model?: string | null; maxTokens?: number } = {}): MlTool => {
     return ml.defineTool({
         name: "look",
+        summary: "Screenshots the page so the agent can see it.",
         capabilities: ["vision"],
         description: "See the page (or one element) visually. No selector → screenshot the viewport " +
             "to orient. A selector → inspect that element; iterate `index` (0,1,2,…) to judge items in " +
@@ -204,6 +205,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
     const groundCache = new Map<string, GroundCache | null>();
     return ml.defineTool({
         name: "locate",
+        summary: "Finds an on-screen element by describing how it looks.",
         capabilities: ["vision"],
         description: "Find an on-screen control by DESCRIBING how it looks — for unlabelled icons, " +
             "custom widgets, canvas, or any UI you can't reach by text or a guessed selector. Returns a " +
@@ -830,6 +832,7 @@ export const buildClickTool = (ml: MlApi): MlTool => {
     };
     return ml.defineTool({
         name: "click",
+        summary: "Clicks a link, button, or element on the page.",
         requiresApproval: true,
         precheck: clickPrecheck,
         description: "Click an element (link, button, tab, search result). REAL SIDE EFFECTS — " +
@@ -886,6 +889,7 @@ export const buildTypeTool = (ml: MlApi): MlTool => {
     };
     return ml.defineTool({
         name: "type",
+        summary: "Types text into a field or search box.",
         requiresApproval: true,
         precheck: typePrecheck,
         description: "Type text into a field (text input, textarea, or contenteditable) — e.g. a " +
@@ -982,6 +986,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
         "A selector loads the FIRST match. The data arrives ALREADY parsed — use the variable, don't re-load it.";
     return ml.defineTool({
         name: "python_exec",
+        summary: "Runs sandboxed Python (numpy/pandas/Pillow) for data & math.",
         requiresApproval: true,
         description: "Run SANDBOXED Python (numpy/Pillow/pandas, WASM) for array/pixel/spatial/table work better " +
             "done in Python than JS — pixel-mask & centroid a target, count regions, BFS a maze, or SUM/AVG/GROUP a " +

@@ -299,8 +299,12 @@ export interface ToolRenderInput {
 
 export interface MlTool {
     name: string;
-    description: string;
+    description: string;   // the FULL description sent to the model
     parameters: JsonSchema;
+    // Optional SHORT, human-friendly one-liner (≤ ~12 words) for the debug/HUD UI — shown as a tooltip
+    // when you hover the tool name in a step, in BOTH the debug sidebar and the off-mode card. e.g. look:
+    // "Screenshots the page so the agent can see it." A tool that provides none just has no tooltip.
+    summary?: string;
     // Args are model-supplied JSON, so tools may destructure a specific shape
     // (`run({ selector }: { selector: string })`); typed `any` so those narrower
     // signatures stay assignable to this contract.
@@ -464,7 +468,7 @@ export interface StartRunPayload {
     runId: string;
     task: string;
     systemPrompt: string;
-    tools: { name: string; description: string; parameters: JsonSchema; requiresApproval: boolean; capabilities: string[]; precheck?: boolean }[];
+    tools: { name: string; description: string; parameters: JsonSchema; requiresApproval: boolean; capabilities: string[]; precheck?: boolean; summary?: string }[];
     model: string | null;
     think: boolean | null;
     maxSteps: number;
@@ -625,7 +629,7 @@ export interface DebugAgentConfig {
     system: string;         // the resolved system prompt the model actually received
     customSystem: boolean;  // caller supplied their own `system` (vs the built-in preamble)
     // description/parameters let the sidebar show the FULL tool definitions (a JSON tree), not just names.
-    tools: { name: string; requiresApproval: boolean; vision?: boolean; description?: string; parameters?: JsonSchema }[];
+    tools: { name: string; requiresApproval: boolean; vision?: boolean; description?: string; parameters?: JsonSchema; summary?: string }[];
     maxSteps: number;
     think: boolean | null;
     env: boolean;
