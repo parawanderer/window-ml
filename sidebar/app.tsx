@@ -940,7 +940,7 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                     {/* On-demand plain-English gloss for a code step — CARD's Show-work trace only (the debug
                         panel keeps the raw code); needs a utility model. */}
                     {surface.value === "card" && (st.tool === "exec" || st.tool === "python_exec") && hash && st.seq != null && config.value.utilityModel.trim()
-                        ? <CodeExplain hash={hash} seq={st.seq} lang={st.tool === "python_exec" ? "python" : "javascript"} code={codeOf(st)?.text || ""} />
+                        ? <CodeExplain hash={hash} seq={st.seq} lang={st.tool === "python_exec" ? "python" : "javascript"} code={codeOf(st)?.text || ""} result={st.result} />
                         : null}
                 </div>
                 : null}
@@ -1590,15 +1590,22 @@ const codeSummaries = new Map<string, string>();
 const codeSummaryTried = new Set<string>();
 // The actual fetch — needs only a utility model (used directly by the on-demand "Explain" button in the
 // Show-work trace, which the user explicitly clicked, so it isn't gated on the auto-summarise toggle).
-function fetchCodeSummary(hash: string, seq: number, lang: string, code: string): void {
+// `output` (present only in the Show-work trace, where the code has ALREADY run) lets the gloss describe
+// what it actually DID/found, not just what it would do — the approval-card path passes none (pre-run).
+function fetchCodeSummary(hash: string, seq: number, lang: string, code: string, output?: string): void {
     if (!config.value.utilityModel.trim() || !code.trim()) return;
     const key = stepKey(hash, seq);
     if (codeSummaryTried.has(key)) return;
     codeSummaryTried.add(key);
-    const messages = [
-        { role: "system", content: "You explain what a code snippet DOES in ONE plain-English sentence (≤ 22 words) for a non-programmer about to approve running it. State the effect and any data it touches. No preamble, no code, no restating the language." },
-        { role: "user", content: `Explain what this ${lang} code does:\n\n${truncate(code, 1400)}` },
-    ];
+    const messages = output && output.trim()
+        ? [
+            { role: "system", content: "You explain what a code snippet DID in ONE plain-English sentence (≤ 22 words) for a non-programmer, USING its output to say what it found/produced. State the effect and the result. No preamble, no code, no restating the language." },
+            { role: "user", content: `Explain what this ${lang} code did.\n\nCode:\n${truncate(code, 1200)}\n\nOutput:\n${truncate(output, 400)}` },
+        ]
+        : [
+            { role: "system", content: "You explain what a code snippet DOES in ONE plain-English sentence (≤ 22 words) for a non-programmer about to approve running it. State the effect and any data it touches. No preamble, no code, no restating the language." },
+            { role: "user", content: `Explain what this ${lang} code does:\n\n${truncate(code, 1400)}` },
+        ];
     fetchUtilityLine(messages, key);
 }
 // AUTO path (the approval card's gloss) — additionally gated on the auto-summarise toggle.
@@ -1607,12 +1614,12 @@ function ensureCodeSummary(hash: string, seq: number, lang: string, code: string
 }
 // The on-demand "Explain this Python/JS" affordance in the Show-work trace (card surface only). Lazy —
 // ONE utility-model call, only when clicked; shows the gloss inline once it lands.
-function CodeExplain({ hash, seq, lang, code }: { hash: string; seq: number; lang: string; code: string }) {
+function CodeExplain({ hash, seq, lang, code, result }: { hash: string; seq: number; lang: string; code: string; result?: string }) {
     const rv = rev.value;   // subscribe: the gloss lands on a rev bump (ToolStep is signal-memoized → won't); retained via data-rev
     const summary = codeSummaries.get(stepKey(hash, seq));
     if (summary) return <div class="step-explain" data-rev={rv}><span class="step-explain-ic" aria-hidden="true">💡</span><span>{summary}</span></div>;
     if (!code.trim()) return null;
-    return <button class="step-explain-btn" data-rev={rv} onClick={() => fetchCodeSummary(hash, seq, lang, code)}>💡 Explain this {lang === "python" ? "Python" : "JavaScript"}</button>;
+    return <button class="step-explain-btn" data-rev={rv} onClick={() => fetchCodeSummary(hash, seq, lang, code, result)}>💡 Explain this {lang === "python" ? "Python" : "JavaScript"}</button>;
 }
 // A tool with NO deterministic intent (a custom approval-gated tool, no `action` render) still gets a
 // human description — the utility model paraphrases the call. Same cache/plumbing as the code summary.
