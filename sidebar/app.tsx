@@ -875,7 +875,11 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     const decide = (ok: boolean) => { setExpanded(true); setDecided(true); sendApproval(hash!, st.seq!, ok); };
     // When a step starts awaiting approval, scroll it into view so a gate mid-run isn't missed.
     const approveRef = useRef<HTMLDivElement>(null);
-    useEffect(() => { if (awaiting) approveRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }, [awaiting]);
+    // Reveal a new approval prompt ONLY when the user has scrolled up to read — if they're parked at
+    // the bottom, App's stick-to-bottom pins to the true bottom (this scrollIntoView would fight it:
+    // block:"nearest" lands shy of the bottom AND its scroll event flips `atBottom` false, defeating
+    // the pin so the post-approval Out no longer sticks).
+    useEffect(() => { if (awaiting && !atBottom.v) approveRef.current?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }, [awaiting]);
     // Consent scope: approving a python_exec that loads an EXTERNAL Google Sheet caches that
     // spreadsheet for the rest of the page-session (later calls to it won't re-prompt). Tell the
     // human the approval is a session-scoped grant, not a one-shot.
@@ -1484,6 +1488,10 @@ function PythonBench() {
     );
 }
 
+// Whether the detail log is scrolled to the bottom (stick-to-bottom intent). Module-level so the
+// per-step approval reveal (ToolStep) and App's scroll logic share ONE truth — a single App instance.
+const atBottom = { v: true };
+
 function App() {
     const v = view.value;
     // Subscribe to session-data changes. This read MUST land in always-rendered
@@ -1515,32 +1523,33 @@ function App() {
     useEffect(() => { pollPs(); }, [v.name, vramOpen.value, open]);
     // Stick-to-bottom: while a session's detail is open and the user is parked at the bottom,
     // keep the log pinned to the latest as it grows — but if they've scrolled UP to read, leave
-    // them there. `stuck` tracks intent (recomputed on every manual scroll). Opening a detail
-    // jumps to the latest instantly (chat convention) and re-sticks.
+    // them there. `atBottom.v` (module-level so ToolStep can consult it too) tracks intent,
+    // recomputed on every manual scroll. Opening a detail jumps to the latest and re-sticks.
     const viewRef = useRef<HTMLDivElement>(null);
     const contentRef = useRef<HTMLDivElement>(null);
-    const stuck = useRef(true);
     const onViewScroll = () => {
         const el = viewRef.current;
-        if (el) stuck.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+        if (el) atBottom.v = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
     };
-    const pinBottom = (smooth: boolean) => {
+    // Instant, not smooth: a smooth programmatic scroll emits intermediate scroll events where
+    // scrollTop isn't at the bottom yet, which onViewScroll would misread as "user scrolled up" and
+    // flip atBottom false mid-animation — defeating the very stick we're doing when content grows
+    // fast (approve → Out). A single jump lands one scroll event, exactly at the bottom.
+    const pinBottom = () => {
         const el = viewRef.current;
-        if (!el) return;
-        if (el.scrollTo) el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" });
-        else el.scrollTop = el.scrollHeight;
+        if (el) el.scrollTop = el.scrollHeight;
     };
     const detailKey = v.name === "detail" ? v.hash : "";
     // Open/switch a detail → jump straight to the latest and re-stick.
-    useEffect(() => { if (detailKey) { pinBottom(false); stuck.current = true; } }, [detailKey]);
+    useEffect(() => { if (detailKey) { pinBottom(); atBottom.v = true; } }, [detailKey]);
     // Re-pin whenever the content's HEIGHT changes while stuck — this is the key: a new event, an
-    // approval revealing its Out, a screenshot finishing loading, or streaming all grow the content
-    // AFTER the render commits, which a render-keyed effect would miss (it scrolled to the old
+    // approval prompt or its revealed Out, a screenshot finishing loading, or streaming all grow the
+    // content AFTER the render commits, which a render-keyed effect would miss (it scrolled to the old
     // height). A ResizeObserver catches every one. (Guarded for jsdom, which lacks it.)
     useEffect(() => {
         const content = contentRef.current;
         if (!detailKey || !content || typeof ResizeObserver === "undefined") return;
-        const ro = new ResizeObserver(() => { if (stuck.current) pinBottom(true); });
+        const ro = new ResizeObserver(() => { if (atBottom.v) pinBottom(true); });
         ro.observe(content);
         return () => ro.disconnect();
     }, [detailKey]);
