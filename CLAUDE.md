@@ -624,11 +624,15 @@ a new debug **event kind** (the transport forwards any `__mlDebug` payload), a n
 `chrome.storage` renders identically in both — it's the same app. *Two things don't:*
 (1) a **new message the app posts to its parent** (the app→parent protocol is just
 `__mlSidebarApp:"ready"` + `__mlLightbox`, both mirrored in `panel.ts`) must be handled in
-`panel.ts` too; (2) anything that **acts back on the page** (DOM-node highlight) or **sends
-input into the agent** (the session composer) needs a **reverse channel** that doesn't
-exist yet — the transport is one-way (page→panel). The overlay can reach the page (its
-parent is a content script); the panel would need `panel → port → background → content
-script → injected.js`, keyed by the inspected `tabId`.
+`panel.ts` too; (2) anything that **acts back on the page** or **sends input into the
+agent** (the session composer) needs a **reverse channel** — the debug transport itself
+is one-way (page→panel). The overlay can reach the page (its parent is a content script);
+the panel routes `panel → background → content-script shell`, keyed by the inspected
+`tabId`. **Hover-highlight uses exactly this**: the app posts `__mlHighlight`; `panel.ts`
+forwards it to the background as `ML_HL_REMOTE {tabId, ref}`, which `chrome.tabs.sendMessage`s
+to the tab's `shell.ts`, which draws the box (in devtools mode it lazily mounts a
+highlight-only shadow host, since no overlay is present). `SET_APPROVAL` is the same shape.
+A future page-input channel would follow the pattern.
 
 **Sources.** When a tool/RAG runs, OpenWebUI attaches provenance — top-level
 `data.sources` (non-stream) or its own SSE line `{ sources: [...] }` (stream,
