@@ -1549,6 +1549,7 @@ function PythonBench() {
 const surface = signal<"panel" | "card">("panel");
 const cardCollapsed = signal(false);         // user collapsed a FINISHED card down to a toast (default: show it)
 const cardDismissed = signal<string>("");    // the run hash the user dismissed (closes a finished card)
+const cardShowWork = signal(false);          // "Show work" — expand the full step trace under a finished card
 const cardTitleTried = new Set<string>();
 
 const latestAgentRun = (): Session | null => {
@@ -1713,6 +1714,27 @@ function activityFor(run: Session): { icon: string; label: string; short: string
 // tiny pill iframe can't clip it). Coords are iframe-local; the shell offsets by the frame's position.
 const cardCtxMenu = (e: any) => { e.preventDefault(); window.parent.postMessage({ __mlSidebarCornerMenu: { x: e.clientX, y: e.clientY } }, "*"); };
 
+// "Show work" — the audit trail under a finished card. The card already HAS the whole trace (run.steps),
+// it just hides it; this re-renders it with the SAME components the debug sidebar uses (AgentTurn →
+// ToolStep). Collapsed by default; a finished run has no awaiting gate, so no approve buttons appear.
+function ShowWork({ run }: { run: Session }) {
+    const open = cardShowWork.value;
+    const turns = groupTurns(run.steps || []);
+    const n = (run.steps || []).filter(s => s.tool).length;
+    return (
+        <div class="card-work">
+            <button class={`card-work-toggle${open ? " open" : ""}`} onClick={() => (cardShowWork.value = !open)}>
+                <span class="card-work-ic" aria-hidden="true">🛠</span>
+                <span class="card-work-label">{open ? "Hide work" : "Show work"}</span>
+                <span class="card-work-n">{n} {n === 1 ? "step" : "steps"}</span>
+                <span class="sp" />
+                <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
+            </button>
+            {open ? <div class="card-work-trace">{turns.map(t => <AgentTurn key={t.step} turn={t} max={run.maxSteps} hash={run.hash} />)}</div> : null}
+        </div>
+    );
+}
+
 function CardApp() {
     const r = rev.value;   // subscribe to session changes (retained via data-rev below)
     const run = latestAgentRun();
@@ -1733,6 +1755,7 @@ function CardApp() {
 
     useEffect(() => { window.parent.postMessage({ __mlSidebarCard: state }, "*"); }, [state]);
     useEffect(() => { if (run) ensureCardTitle(run); }, [hash, r]);
+    useEffect(() => { cardShowWork.value = false; }, [hash]);   // collapse the trace when a new run starts
     // Report our natural CONTENT height so the shell can FIT the card (a cross-origin iframe can't
     // auto-size). We sum the card's children — head + body(scrollHeight = full content) + foot — NOT
     // documentElement.scrollHeight: the app fills the iframe (height:100%), so measuring the container
@@ -1822,9 +1845,12 @@ function CardApp() {
             <div class="card-body">
                 {pending && pendingStep
                     ? <ApprovalBody st={pendingStep} hash={run.hash} goal={title} />
-                    : run.error
-                        ? <div class="card-error">{run.error}</div>
-                        : <div class="card-answer md" dangerouslySetInnerHTML={{ __html: markdown(run.summary || "", { math: true }) }} />}
+                    : <>
+                        {run.error
+                            ? <div class="card-error">{run.error}</div>
+                            : <div class="card-answer md" dangerouslySetInnerHTML={{ __html: markdown(run.summary || "", { math: true }) }} />}
+                        {(run.steps || []).some(s => s.tool || s.thought || s.reasoning) ? <ShowWork run={run} /> : null}
+                      </>}
             </div>
             {/* Deny/Approve as a FIXED footer — outside the scroll area, so it's always visible (a
                 drag-collapse or the scrollbar appearing can never cut or shift the buttons). */}
