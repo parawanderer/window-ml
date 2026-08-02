@@ -1207,7 +1207,7 @@ const pyBackend = (turns, onPy) => {
     const model = scriptedModel(turns);
     return (m) => {
         if (m.type === "PYTHON_EXEC") { if (onPy) onPy(m.payload); return { data: { ok: true, value: [5, 6], stdout: "hi\n" } }; }
-        if (m.type === "FETCH_SHEET") return { data: "a,b\n1,2\n" };
+        if (m.type === "FETCH_SHEET") return { data: { csv: "a,b\n1,2\n", name: null } };
         return model(m);
     };
 };
@@ -1724,7 +1724,7 @@ test("pythonExec tables: a Sheets URL derives the CSV export URL, fetches it, an
     let sheetUrl = null, pyTable = null;
     const world = loadPageWorld({
         onRuntimeMessage: (m) => {
-            if (m.type === "FETCH_SHEET") { sheetUrl = m.payload.url; return { data: "Rep,Q1\nAda,120\nBen,90\n" }; }
+            if (m.type === "FETCH_SHEET") { sheetUrl = m.payload.url; return { data: { csv: "Rep,Q1\nAda,120\nBen,90\n", name: "FY Sales" } }; }
             if (m.type === "PYTHON_EXEC") { pyTable = m.payload.tables; return { data: { ok: true, value: "210", stdout: "" } }; }
             return undefined;
         },
@@ -1742,7 +1742,7 @@ test("pythonExec tables map: two named sources → two ordered df entries carryi
     let sheetFetches = 0, pyTables = null;
     const world = loadPageWorld({
         onRuntimeMessage: (m) => {
-            if (m.type === "FETCH_SHEET") { sheetFetches++; return { data: "Rep,Q1\nAda,120\n" }; }
+            if (m.type === "FETCH_SHEET") { sheetFetches++; return { data: { csv: "Rep,Q1\nAda,120\n", name: null } }; }
             if (m.type === "PYTHON_EXEC") { pyTables = m.payload.tables; return { data: { ok: true, value: "ok", stdout: "" } }; }
             return undefined;
         },
@@ -1756,7 +1756,7 @@ test("pythonExec tables: a URL with no gid defaults to the first tab (gid=0)", a
     let sheetUrl = null;
     const world = loadPageWorld({
         onRuntimeMessage: (m) => {
-            if (m.type === "FETCH_SHEET") { sheetUrl = m.payload.url; return { data: "a\n1\n" }; }
+            if (m.type === "FETCH_SHEET") { sheetUrl = m.payload.url; return { data: { csv: "a\n1\n", name: null } }; }
             return { data: { ok: true, value: "1", stdout: "" } };
         },
     });
@@ -1785,7 +1785,7 @@ test("parseCsv (via sheet): quoted fields with embedded commas, newlines, and do
     const csv = 'Name,Note\n"Ada, L.","said ""hi""\nthere"\nBen,plain\n';
     const world = loadPageWorld({
         onRuntimeMessage: (m) => {
-            if (m.type === "FETCH_SHEET") return { data: csv };
+            if (m.type === "FETCH_SHEET") return { data: { csv, name: null } };
             if (m.type === "PYTHON_EXEC") { cols = m.payload.tables[0].data.columns; rows = m.payload.tables[0].data.rows; return { data: { ok: true, value: 1, stdout: "" } }; }
             return undefined;
         },

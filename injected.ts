@@ -1112,11 +1112,11 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     }
                     throw new Error(`pythonExec — "${String(src)}" isn't a Google Sheets URL.`);
                 }
-                const csv = await makeBackgroundTaskPromise<string>("FETCH_SHEET_REQUEST", "FETCH_SHEET_RESPONSE", { url: csvUrl });
+                const { csv, name: sheetName } = await makeBackgroundTaskPromise<{ csv: string; name: string | null }>("FETCH_SHEET_REQUEST", "FETCH_SHEET_RESPONSE", { url: csvUrl });
                 const all = parseCsv(csv), columns = all[0] || [], dataRows = all.slice(1);
                 const source: TableSource = isCurrent
                     ? { kind: "sheet-current", label: (typeof document !== "undefined" && document.title) ? document.title : "current sheet" }
-                    : { kind: "sheet-external", label: googleSheetId(String(src)) || String(src) };
+                    : { kind: "sheet-external", label: googleSheetId(String(src)) || String(src), name: sheetName };   // label = id (for the link), name = the real title (chip)
                 return { name, source, data: { kind: "rows", columns, rows: raw ? dataRows : castTableColumns(columns, dataRows) } };
             }
             const data = this._resolveTable(src, raw);

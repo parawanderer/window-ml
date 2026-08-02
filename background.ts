@@ -832,7 +832,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // Fetch a Google Sheet's CSV export CREDENTIALED (the user's own Google session), so
         // it works on private corporate sheets — the DOM path is useless (Sheets is canvas).
         fetchSheetCsv(message.payload?.url)
-            .then((csv) => sendResponse({ data: csv }))
+            .then((r) => sendResponse({ data: r }))   // { csv, name } — name from the export's Content-Disposition
             .catch((err) => sendResponse({ error: err?.message || String(err) }));
         return true;   // async
     }
@@ -1056,7 +1056,7 @@ chrome.runtime.onConnect.addListener((port) => {
 // docs.google.com export endpoint; Google's own redirects (login/large-file) are still followed.
 const SHEET_URL_OK = /^https:\/\/docs\.google\.com\/spreadsheets\/d\/[A-Za-z0-9_-]+\/export\?/;
 
-async function fetchSheetCsv(url: string): Promise<string> {
+async function fetchSheetCsv(url: string): Promise<{ csv: string; name: string | null }> {
     if (!url) throw new Error("No sheet URL.");
     if (!SHEET_URL_OK.test(url)) throw new Error("Refused: only Google Sheets CSV-export URLs can be fetched here.");
     let res: Response;
@@ -1095,7 +1095,17 @@ async function fetchSheetCsv(url: string): Promise<string> {
             "sheet's link in this browser, sign in (or request access), then ask you to try again."
         );
     }
-    return body;
+    // The sheet's TITLE from the export filename — Content-Disposition: attachment; filename="Name - Tab.csv".
+    // Strip the trailing " - <tab>.csv" to get the spreadsheet name (a background fetch with host
+    // permission can read all headers — no CORS restriction). For the smart-chip label.
+    let name: string | null = null;
+    try {
+        const cd = res.headers.get("content-disposition") || "";
+        const raw = /filename\*=(?:UTF-8'')?([^;]+)|filename="?([^";]+)"?/i.exec(cd);
+        const fn = raw ? decodeURIComponent((raw[1] || raw[2] || "").trim()) : "";
+        name = fn.replace(/\.csv$/i, "").replace(/ - [^-]*$/, "").trim() || null;
+    } catch { /* no/garbled header → generic label */ }
+    return { csv: body, name };
 }
 
 // ---- Offscreen Pyodide host (python_exec) ----

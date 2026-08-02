@@ -1078,6 +1078,23 @@ test("agent tool step: descriptor renders its target block; the other stays raw 
     assert.match(inB.textContent, /"js"/, "In raw shows the JSON args");
 });
 
+test("python-in: an external-sheet source renders a smart chip with the real title (not the raw id)", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("pysh", "sum the sheet"));
+    await w.dispatch(agentStep("pysh", 1, { tool: "python_exec", arguments: { code: "return df.sum()" }, result: "ok",
+        renderIn: { type: "python-in", mode: "script", code: "return df.sum()",
+            tables: [{ name: "df", source: { kind: "sheet-external", label: "SHEETID44CHARS", name: "Quarterly Sales" }, columns: ["A"], rows: [[1]] }] } }));
+    await w.dispatch(agentResult("pysh", "done", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    w.shadow.querySelector(".astep.tool .astep-head").click();
+    await w.tick();
+    const chip = w.shadow.querySelector(".r-py-in .sheet-chip");
+    assert.ok(chip, "the sheet source is a smart chip");
+    assert.match(chip.querySelector(".sheet-chip-name").textContent, /Quarterly Sales/, "shows the real title, not the id");
+    assert.match(chip.getAttribute("href"), /spreadsheets\/d\/SHEETID44CHARS/, "links to the sheet by id");
+});
+
 test("python_exec render: In is a notebook cell (mode + input image + source); Out is stdout + token", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("pyc", "click the star"));

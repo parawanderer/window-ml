@@ -664,7 +664,7 @@ function PythonInRender({ d }: { d: Extract<RenderDescriptor, { type: "python-in
                         input table → <b class="r-py-var">{t.name}</b>{t.rows ? ` (${t.rows.length} × ${cols})` : ""}
                         {" · "}
                         {t.source.kind === "sheet-external"
-                            ? <SheetChip id={t.source.label} />   /* the raw 44-char id → a friendly chip */
+                            ? <SheetChip id={t.source.label} label={t.source.name || undefined} />   /* id → a friendly chip; name = the real sheet title */
                             : <span class="tt r-py-src"><span class="r-py-srcval">{src.short}</span><span class="tt-pop left" role="tooltip">{src.tip}</span></span>}
                     </div>
                     {t.rows ? <PyDfTable columns={t.columns || []} rows={t.rows} />
@@ -705,7 +705,11 @@ function LookRender({ d }: { d: Extract<RenderDescriptor, { type: "look" }> }) {
                 <ClickableImg src={d.image} alt={d.label || "look"} />
                 <div class="r-image-label">{d.label ? `${d.label} · ` : ""}viewed by <b>{d.model || "default"}</b></div>
             </div>
-            <div class="r-look-out md" dangerouslySetInnerHTML={{ __html: markdown(d.output, { math: true }) }} />
+            {/* The reader's output can be long → collapsible (open by default), same disclosure as python-out. */}
+            <details class="r-py-sec r-look-out-sec" open>
+                <summary class="r-py-lbl">model output</summary>
+                <div class="r-look-out md" dangerouslySetInnerHTML={{ __html: markdown(d.output, { math: true }) }} />
+            </details>
         </div>
     );
 }

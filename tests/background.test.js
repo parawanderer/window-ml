@@ -1118,10 +1118,11 @@ test("FETCH_SHEET returns the CSV body, fetched with the user's Google cookies",
     let opts = null;
     const bg = loadBackground({
         config: baseConfig(),
-        onFetch: (call) => { opts = call.opts; return { ok: true, status: 200, headers: { get: () => "text/csv" }, text: async () => "Rep,Q1\nAda,120\n" }; },
+        onFetch: (call) => { opts = call.opts; return { ok: true, status: 200, headers: { get: (k) => /content-disposition/i.test(k) ? 'attachment; filename="Quarterly Sales - Sheet1.csv"' : "text/csv" }, text: async () => "Rep,Q1\nAda,120\n" }; },
     });
     const res = await bg.send({ type: "FETCH_SHEET", payload: { url: "https://docs.google.com/spreadsheets/d/A/export?format=csv&gid=0" } });
-    assert.equal(res.data, "Rep,Q1\nAda,120\n");
+    assert.equal(res.data.csv, "Rep,Q1\nAda,120\n");
+    assert.equal(res.data.name, "Quarterly Sales", "the sheet TITLE from Content-Disposition (tab + .csv stripped)");
     assert.equal(opts.credentials, "include", "credentialed so a private sheet the user can see works");
 });
 

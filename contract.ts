@@ -214,7 +214,7 @@ export interface LocateSubstep {
  *  `dom` = a table on the current page (label = the selector); `sheet-current` = the Google Sheet
  *  you're on (label = its page title); `sheet-external` = a Google Sheet fetched by URL with the
  *  user's approval (label = its spreadsheet id). */
-export interface TableSource { kind: "dom" | "sheet-current" | "sheet-external"; label: string; }
+export interface TableSource { kind: "dom" | "sheet-current" | "sheet-external"; label: string; name?: string | null; }
 /** One loaded DataFrame for the `python-in` render: its variable name, its source, and either a
  *  rows preview (`columns`+`rows`) or `html: true` (loaded via `pd.read_html`, no clean preview). */
 export interface TablePreview { name: string; source: TableSource; columns?: string[]; rows?: (string | number | null)[][]; html?: boolean; }
