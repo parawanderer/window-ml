@@ -928,6 +928,12 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 window.scrollTo(0, y);
                 // Wait for the browser to actually paint the new scroll position
                 await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+                // Record where we ACTUALLY landed, not where we asked to go: scrollTo clamps at the
+                // page's max scroll, so the last step captures the bottom viewport (which overlaps the
+                // previous tile) but at a SMALLER offset than `y`. Drawing at the requested `y` painted
+                // that overlap band twice — the duplicated "Ridiculous mode"/torn-row seam. Drawing at
+                // the real scrollY makes the clamped tile overwrite the overlap with identical pixels.
+                const actualY = window.scrollY;
 
                 let url: string | null = null;
                 let retries = 3;
@@ -950,7 +956,9 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 }
 
                 if (!url) throw new Error("Failed to capture after retries due to quota limits.");
-                shots.push({ y, url });
+                shots.push({ y: actualY, url });
+                // A clamped step reached the bottom — further steps would re-capture the same tile.
+                if (actualY + vh >= total) break;
             }
             window.scrollTo(0, startY);
 
