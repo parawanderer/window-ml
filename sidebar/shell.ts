@@ -50,8 +50,11 @@ const CARD_CSS = `
   -webkit-backdrop-filter: blur(26px) saturate(180%); backdrop-filter: blur(26px) saturate(180%);
   border: 1px solid rgba(0, 0, 0, .10);
   box-shadow: 0 14px 46px rgba(0, 0, 0, .26), 0 3px 10px rgba(0, 0, 0, .14);
-  transition: width .30s cubic-bezier(.2,.8,.2,1), height .30s cubic-bezier(.2,.8,.2,1),
-              opacity .22s ease, transform .30s cubic-bezier(.2,.8,.2,1);
+  /* Two-layer motion: the shell morphs the CONTAINER, the app fades its content (a cross-origin iframe
+     can't be FLIP-measured). SIZE gets a smooth decel (no overshoot — it would clip content mid-bounce);
+     TRANSFORM/opacity get a subtle spring "pop". */
+  transition: width .34s cubic-bezier(.22,.9,.3,1), height .34s cubic-bezier(.22,.9,.3,1),
+              opacity .24s ease, transform .40s cubic-bezier(.34,1.32,.5,1);
 }
 /* Anchor to the configured corner (set by the shell from config.cardCorner). */
 #${SB_CARD}-wrap[data-corner="bottom-right"] { right: 20px; bottom: 20px; transform-origin: bottom right; }

@@ -745,6 +745,22 @@ html[data-surface="card"] { color-scheme: normal !important; }
 .card-error { color: var(--err); line-height: 1.45; white-space: pre-wrap; word-break: break-word;
     border-left: 3px solid var(--err); padding-left: 10px; }
 
+/* Staggered content entrance — the shell morphs the FRAME first, then the card's content slides up +
+   fades in staggered, so a pill↔approval↔answer swap never snaps (the Jarvis feel). Runs once on mount
+   per state (the elements persist across re-renders, so it doesn't replay on every event). */
+@keyframes card-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.card-body .action > *, .card-answer, .card-error, .card-foot {
+    animation: card-in .32s cubic-bezier(.2, .85, .3, 1) both; }
+.card-body .action > *:nth-child(1) { animation-delay: .09s; }
+.card-body .action > *:nth-child(2) { animation-delay: .15s; }
+.card-body .action > *:nth-child(3) { animation-delay: .21s; }
+.card-body .action > *:nth-child(n+4) { animation-delay: .27s; }
+.card-answer, .card-error { animation-delay: .10s; }
+.card-foot { animation-delay: .18s; }   /* the buttons settle in last */
+@media (prefers-reduced-motion: reduce) {
+    .card-body .action > *, .card-answer, .card-error, .card-foot { animation: none; }
+}
+
 /* "Show work" — the audit trail under a finished card (the full step trace, reusing the sidebar rows). */
 .card-work { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 8px; }
 .card-work-toggle { display: flex; align-items: center; gap: 8px; width: 100%; background: transparent;
