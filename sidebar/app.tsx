@@ -265,6 +265,14 @@ const tokenHover = (s?: string): { onPointerEnter?: () => void; onPointerLeave?:
 // spoof it. Keyed by the run hash + the step's seq.
 const sendApproval = (hash: string, seq: number, decision: boolean) =>
     window.parent.postMessage({ __mlSidebarApp: "approval", hash, seq, decision }, "*");
+// Steps you've already approved/denied this session, keyed `hash:seq`. A step's own
+// awaitingApproval flag only clears when the DONE event lands — AFTER the tool runs — so without
+// this the run footer keeps showing "waiting for your approval" during that gap. Recording the
+// decision on click lets PendingNote drop the step from "blocked" immediately. (ToolStep keeps its
+// own local `decided` for its buttons; this is the run-level mirror.) Keys are unique per run
+// (random hash) + monotonic seq, so it never collides; growth is one entry per approval.
+const decidedSteps = new Set<string>();
+const stepKey = (hash: string, seq: number) => `${hash}:${seq}`;
 // No tooltip here on purpose: `cursor: zoom-in` is the standard affordance for
 // "click to enlarge", and a pop anchored under a full-width screenshot (locate
 // renders stack several) would land far from the pointer and just add noise.
@@ -872,7 +880,12 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     const open = expanded || awaiting;
     // Keep the step expanded after you decide (setExpanded), so it doesn't collapse when `awaiting`
     // clears — you see the Out result fill in on the same open cell.
-    const decide = (ok: boolean) => { setExpanded(true); setDecided(true); sendApproval(hash!, st.seq!, ok); };
+    const decide = (ok: boolean) => {
+        setExpanded(true); setDecided(true);
+        if (hash && st.seq != null) decidedSteps.add(stepKey(hash, st.seq));
+        sendApproval(hash!, st.seq!, ok);
+        rev.value++;   // re-render the run footer so it drops "waiting for your approval" at once
+    };
     // When a step starts awaiting approval, scroll it into view so a gate mid-run isn't missed.
     const approveRef = useRef<HTMLDivElement>(null);
     // Reveal a new approval prompt ONLY when the user has scrolled up to read — if they're parked at
@@ -1081,8 +1094,25 @@ function AgentRunView({ s }: { s: Session }) {
                 ? <ReplyBubble content={s.summary} status={s.status} model={s.model}
                     profile={sessionProfile(s)} ts={s.lastTs}
                     label={s.hitCap ? "stopped (step cap)" : undefined} capped={s.hitCap} />
-                : <div class="pending-note">…running ({turnsRun(s.steps)} steps)</div>}
+                : <PendingNote s={s} />}
         </>
+    );
+}
+
+// The live footer of a running agent. Its bar is a browser-native motif — the thin indeterminate
+// "page is loading" sweep an SPA shows on navigation — so an active run reads as the browser working.
+// When the run is BLOCKED on your approval it swaps to a breathing amber bar (no forward motion) +
+// "waiting…", so paused-needs-you vs actively-running is legible at a glance from colour + motion.
+function PendingNote({ s }: { s: Session }) {
+    // Blocked = a step is still awaiting the gate AND you haven't decided it yet (decidedSteps flips
+    // the instant you click, before the tool's DONE event clears awaitingApproval).
+    const blocked = (s.steps || []).some(st => st.pending && st.awaitingApproval && !(st.seq != null && decidedSteps.has(stepKey(s.hash, st.seq))));
+    const n = turnsRun(s.steps);
+    return (
+        <div class={`pending-note${blocked ? " blocked" : ""}`}>
+            <div class="pbar" aria-hidden="true"><span /></div>
+            <span class="ptext">{blocked ? "waiting for your approval…" : `running · ${n} ${n === 1 ? "step" : "steps"}`}</span>
+        </div>
     );
 }
 
@@ -1527,25 +1557,33 @@ function App() {
     // recomputed on every manual scroll. Opening a detail jumps to the latest and re-sticks.
     const viewRef = useRef<HTMLDivElement>(null);
     const contentRef = useRef<HTMLDivElement>(null);
+    // While a SMOOTH auto-pin is animating, the scroll events it emits show scrollTop short of the
+    // bottom — onViewScroll must NOT read those as "the user scrolled up" (that flip mid-animation is
+    // what made the pin give up and pop/stick-fail). So suppress recomputation while pinning, and clear
+    // the flag once we've actually reached the bottom. A real user gesture (wheel/touch) clears it too,
+    // so they can always break away from the follow.
+    const pinning = useRef(false);
     const onViewScroll = () => {
         const el = viewRef.current;
-        if (el) atBottom.v = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+        if (!el) return;
+        const dist = el.scrollHeight - el.scrollTop - el.clientHeight;
+        if (pinning.current) { if (dist < 4) { pinning.current = false; atBottom.v = true; } return; }
+        atBottom.v = dist < 40;
     };
-    // Instant, not smooth: a smooth programmatic scroll emits intermediate scroll events where
-    // scrollTop isn't at the bottom yet, which onViewScroll would misread as "user scrolled up" and
-    // flip atBottom false mid-animation — defeating the very stick we're doing when content grows
-    // fast (approve → Out). A single jump lands one scroll event, exactly at the bottom.
-    const pinBottom = () => {
+    const endPin = () => { pinning.current = false; };   // a user scroll gesture cancels the auto-follow
+    const pinBottom = (smooth: boolean) => {
         const el = viewRef.current;
-        if (el) el.scrollTop = el.scrollHeight;
+        if (!el) return;
+        if (smooth && el.scrollTo) { pinning.current = true; atBottom.v = true; el.scrollTo({ top: el.scrollHeight, behavior: "smooth" }); }
+        else { pinning.current = false; el.scrollTop = el.scrollHeight; }   // instant (open jump / jsdom)
     };
     const detailKey = v.name === "detail" ? v.hash : "";
     // Open/switch a detail → jump straight to the latest and re-stick.
-    useEffect(() => { if (detailKey) { pinBottom(); atBottom.v = true; } }, [detailKey]);
-    // Re-pin whenever the content's HEIGHT changes while stuck — this is the key: a new event, an
-    // approval prompt or its revealed Out, a screenshot finishing loading, or streaming all grow the
-    // content AFTER the render commits, which a render-keyed effect would miss (it scrolled to the old
-    // height). A ResizeObserver catches every one. (Guarded for jsdom, which lacks it.)
+    useEffect(() => { if (detailKey) { pinBottom(false); atBottom.v = true; } }, [detailKey]);
+    // Re-pin (smoothly) whenever the content's HEIGHT changes while stuck — this is the key: a new
+    // event, an approval prompt or its revealed Out, a screenshot finishing loading, or streaming all
+    // grow the content AFTER the render commits, which a render-keyed effect would miss (it scrolled to
+    // the old height). A ResizeObserver catches every one. (Guarded for jsdom, which lacks it.)
     useEffect(() => {
         const content = contentRef.current;
         if (!detailKey || !content || typeof ResizeObserver === "undefined") return;
@@ -1574,7 +1612,7 @@ function App() {
                 {!inSettings && !inBench ? <button class="tt hbtn" aria-label="Settings" onClick={() => { fetchModels(); view.value = { name: "settings" }; }}><IconGear /><span class="tt-pop" role="tooltip">Settings</span></button> : null}
             </div>
             {vramOpen.value && !inSettings && !inBench ? <VramPanel /> : null}
-            <div class="view" data-rev={r} ref={viewRef} onScroll={onViewScroll}>
+            <div class="view" data-rev={r} ref={viewRef} onScroll={onViewScroll} onWheel={endPin} onTouchMove={endPin}>
                 <div ref={contentRef}>
                     {v.name === "settings" ? <Settings />
                         : v.name === "bench" ? <PythonBench />

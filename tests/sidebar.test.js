@@ -1878,6 +1878,28 @@ test("a running agent shows …running, then the answer arrives live", async () 
     assert.match(w.shadow.querySelector(".msg.asst").textContent, /all done/);
 });
 
+test("running footer swaps to 'waiting for your approval' when blocked, and back the instant you decide", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("agB", "do a thing"));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    let note = w.shadow.querySelector(".pending-note");
+    assert.ok(note && !note.classList.contains("blocked"), "actively running: not blocked");
+    assert.match(note.textContent, /running/);
+
+    // A step lands awaiting the gate → the footer goes amber/blocked with the approval copy.
+    await w.dispatch(agentStep("agB", 1, { seq: 1, pending: true, awaitingApproval: true, tool: "click", arguments: { selector: "#go" } }));
+    note = w.shadow.querySelector(".pending-note");
+    assert.ok(note.classList.contains("blocked"), "blocked while awaiting approval");
+    assert.match(note.textContent, /waiting for your approval/i);
+
+    // Click Approve → the footer must drop 'blocked' immediately, WITHOUT waiting for the tool's DONE.
+    w.shadow.querySelector(".astep-approve .appr-btn.yes").click();
+    await w.tick();
+    note = w.shadow.querySelector(".pending-note");
+    assert.ok(note && !note.classList.contains("blocked"), "no longer blocked the instant you approve (before DONE)");
+});
+
 test("an agent that hits the step cap is flagged as stopped/error", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("ag3", "endless task"));
