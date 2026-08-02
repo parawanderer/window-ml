@@ -836,6 +836,20 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             .catch((err) => sendResponse({ error: err?.message || String(err) }));
         return true;   // async
     }
+    if (message.type === "FETCH_SHEET_TITLE") {
+        // TITLE-ONLY, pre-approval: the sidebar's approval chip fetches just the sheet name so the USER
+        // sees WHICH sheet they're granting (informed consent) — the MODEL never gets it. A HEAD request
+        // (no body) reads Content-Disposition without downloading the sheet. Best-effort → null on any
+        // failure (the chip stays generic). Same host-locked shape as FETCH_SHEET; only the trusted
+        // sidebar app (extension origin) can send this — a page can't (not a content-relayed type).
+        const id = String(message.payload?.id || "").trim();
+        const url = `https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=0`;
+        if (!/^[A-Za-z0-9_-]+$/.test(id) || !SHEET_URL_OK.test(url)) { sendResponse({ data: null }); return true; }
+        fetch(url, { method: "HEAD", credentials: "include" })
+            .then((res) => sendResponse({ data: res.ok ? sheetNameFromDisposition(res.headers.get("content-disposition")) : null }))
+            .catch(() => sendResponse({ data: null }));
+        return true;   // async
+    }
     if (message.type === "ABORT_TASK") {
         // Cancel an in-flight task by its requestId (currently only FETCH_LLM registers a
         // controller). Fire-and-forget — no sendResponse, so don't keep the channel open.
@@ -1056,6 +1070,19 @@ chrome.runtime.onConnect.addListener((port) => {
 // docs.google.com export endpoint; Google's own redirects (login/large-file) are still followed.
 const SHEET_URL_OK = /^https:\/\/docs\.google\.com\/spreadsheets\/d\/[A-Za-z0-9_-]+\/export\?/;
 
+// The sheet's TITLE from the export's Content-Disposition ("Name - Tab.csv" → "Name"). Shared by the
+// full CSV fetch and the title-only HEAD (approval chip). A background fetch with host permission reads
+// all headers (no CORS limit). null on a missing/garbled header.
+function sheetNameFromDisposition(cd: string | null): string | null {
+    try {
+        const raw = /filename\*=(?:UTF-8'')?([^;]+)|filename="?([^";]+)"?/i.exec(cd || "");
+        const fn = raw ? decodeURIComponent((raw[1] || raw[2] || "").trim()) : "";
+        // "<Spreadsheet> - <Tab>.csv" → the SPREADSHEET name. Strip the LAST "-<tab>" segment (spaces
+        // around the dash optional — Google's filename separator varies), keeping earlier dashes.
+        return fn.replace(/\.csv$/i, "").replace(/\s*-\s*[^-]*$/, "").trim() || null;
+    } catch { return null; }
+}
+
 async function fetchSheetCsv(url: string): Promise<{ csv: string; name: string | null }> {
     if (!url) throw new Error("No sheet URL.");
     if (!SHEET_URL_OK.test(url)) throw new Error("Refused: only Google Sheets CSV-export URLs can be fetched here.");
@@ -1095,17 +1122,7 @@ async function fetchSheetCsv(url: string): Promise<{ csv: string; name: string |
             "sheet's link in this browser, sign in (or request access), then ask you to try again."
         );
     }
-    // The sheet's TITLE from the export filename — Content-Disposition: attachment; filename="Name - Tab.csv".
-    // Strip the trailing " - <tab>.csv" to get the spreadsheet name (a background fetch with host
-    // permission can read all headers — no CORS restriction). For the smart-chip label.
-    let name: string | null = null;
-    try {
-        const cd = res.headers.get("content-disposition") || "";
-        const raw = /filename\*=(?:UTF-8'')?([^;]+)|filename="?([^";]+)"?/i.exec(cd);
-        const fn = raw ? decodeURIComponent((raw[1] || raw[2] || "").trim()) : "";
-        name = fn.replace(/\.csv$/i, "").replace(/ - [^-]*$/, "").trim() || null;
-    } catch { /* no/garbled header → generic label */ }
-    return { csv: body, name };
+    return { csv: body, name: sheetNameFromDisposition(res.headers.get("content-disposition")) };
 }
 
 // ---- Offscreen Pyodide host (python_exec) ----

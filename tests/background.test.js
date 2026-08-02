@@ -1126,6 +1126,21 @@ test("FETCH_SHEET returns the CSV body, fetched with the user's Google cookies",
     assert.equal(opts.credentials, "include", "credentialed so a private sheet the user can see works");
 });
 
+test("FETCH_SHEET_TITLE: a HEAD request returns just the sheet title (spreadsheet name, tab stripped)", async () => {
+    let call = null;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (c) => { call = c; return { ok: true, headers: { get: (k) => /content-disposition/i.test(k) ? 'attachment; filename="Quarterly Sales - Sheet1.csv"' : "" }, text: async () => "" }; },
+    });
+    const res = await bg.send({ type: "FETCH_SHEET_TITLE", payload: { id: "ABC123_-x" } });
+    assert.equal(res.data, "Quarterly Sales", "the spreadsheet name (the ' - Sheet1' tab stripped)");
+    assert.equal(call.opts.method, "HEAD", "HEAD — headers only, no sheet body downloaded pre-approval");
+    assert.equal(call.opts.credentials, "include");
+    // A bad id is refused WITHOUT fetching (the host-locked guard).
+    const bad = await bg.send({ type: "FETCH_SHEET_TITLE", payload: { id: "../evil" } });
+    assert.equal(bad.data, null);
+});
+
 test("FETCH_SHEET REFUSES a non-Sheets URL without fetching (the credentialed-fetch guard)", async () => {
     // The approval gate is client-side; a hostile page can post FETCH_SHEET raw. This background
     // check is the only thing stopping a cookie-authenticated read of an arbitrary URL.

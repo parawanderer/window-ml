@@ -823,10 +823,25 @@ const ApprovalBadge = ({ approval }: { approval: "readonly" | "sandbox" | "user"
 // the raw 44-char id, hoverable for the full id, opening the sheet on click. Reused in the approval
 // note and the python-in source label. (The real sheet TITLE would need a fetch; "Google Sheet" is the
 // friendly stand-in — the loaded df already carries the model's own variable name beside it.)
+const sheetTitleCache = new Map<string, string | null>();   // id → title (fetched once per session)
 function SheetChip({ id, label }: { id: string; label?: string }) {
+    // With a label (post-run: the run already fetched the sheet), use it. Without (the pre-run approval
+    // chip), lazily HEAD-fetch just the TITLE so the USER sees which sheet — the model never gets it.
+    const [fetched, setFetched] = useState<string | null | undefined>(() => label ? undefined : sheetTitleCache.get(id));
+    useEffect(() => {
+        if (label || sheetTitleCache.has(id)) return;
+        try {
+            chrome.runtime.sendMessage({ type: "FETCH_SHEET_TITLE", payload: { id } }, (resp: any) => {
+                const name = (resp && resp.data) || null;
+                sheetTitleCache.set(id, name);
+                setFetched(name);
+            });
+        } catch { sheetTitleCache.set(id, null); }
+    }, [id, label]);
+    const name = label || fetched || "Google Sheet";
     return (
         <a class="tt sheet-chip" href={`https://docs.google.com/spreadsheets/d/${id}/edit`} target="_blank" rel="noopener" onClick={e => e.stopPropagation()}>
-            <IconSheet /><span class="sheet-chip-name">{label || "Google Sheet"}</span>
+            <IconSheet /><span class="sheet-chip-name">{name}</span>
             <span class="tt-pop wrap left" role="tooltip">Google Sheet · {id}</span>
         </a>
     );
