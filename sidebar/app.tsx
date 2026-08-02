@@ -1688,6 +1688,29 @@ function ApprovalBody({ st, hash, goal }: { st: AgentStep; hash: string; goal: s
     );
 }
 
+// The live "working" pill's per-tool icon + hover label (headless progress — see the tool running).
+const ACTIVITY: Record<string, { icon: string; label: string; short: string }> = {
+    look: { icon: "👁", label: "Viewing the screen…", short: "look" },
+    findByText: { icon: "🔎", label: "Searching the page…", short: "find" },
+    locate: { icon: "🎯", label: "Locating an element…", short: "locate" },
+    click: { icon: "👆", label: "Clicking…", short: "click" },
+    type: { icon: "⌨️", label: "Typing…", short: "type" },
+    exec: { icon: "λ", label: "Running JavaScript…", short: "exec" },
+    python_exec: { icon: "🐍", label: "Running Python…", short: "python" },
+    scroll: { icon: "🖱", label: "Scrolling…", short: "scroll" },
+    screenshot: { icon: "📷", label: "Capturing…", short: "capture" },
+};
+function activityFor(run: Session): { icon: string; label: string; short: string } {
+    const steps = run.steps || [];
+    // What's happening NOW: a still-running tool, else the most recent tool, else the model's thinking.
+    const cur = [...steps].reverse().find(s => s.pending && s.tool) || [...steps].reverse().find(s => s.tool);
+    if (!cur?.tool) return { icon: "💭", label: "Thinking…", short: "thinking" };
+    return ACTIVITY[cur.tool] || { icon: "⚙️", label: `Running ${cur.tool}…`, short: cur.tool };
+}
+// Right-click the card/pill → ask the shell to draw the "move to corner" menu (drawn shell-side so the
+// tiny pill iframe can't clip it). Coords are iframe-local; the shell offsets by the frame's position.
+const cardCtxMenu = (e: any) => { e.preventDefault(); window.parent.postMessage({ __mlSidebarCornerMenu: { x: e.clientX, y: e.clientY } }, "*"); };
+
 function CardApp() {
     const r = rev.value;   // subscribe to session changes (retained via data-rev below)
     const run = latestAgentRun();
@@ -1696,11 +1719,13 @@ function CardApp() {
     const pending = !!pendingStep;
     const done = !!run && run.summary != null;
     const dismissed = !!run && cardDismissed.value === run.hash;
-    const visible = !!run && (pending || (done && !dismissed));
-    // A pending approval shows the action DIRECTLY (urgent — you act on it); a finished run is a toast
-    // you can open to read the answer.
-    const expanded = pending || !cardCollapsed.value;   // a finished run shows its answer by default
-    const state = !visible ? "hidden" : expanded ? "expanded" : "toast";
+    // Running = a live run with steps but nothing to act on yet → the small "working" pill.
+    const running = !!run && !pending && !done && (run.steps || []).length > 0;
+    const visible = !!run && (pending || running || (done && !dismissed));
+    const state = !visible ? "hidden"
+        : pending ? "expanded"                                 // an approval: show the action directly
+            : done ? (cardCollapsed.value ? "toast" : "expanded") // finished: show the answer (collapsible)
+                : "pill";                                      // running: the compact progress pill
 
     useEffect(() => { window.parent.postMessage({ __mlSidebarCard: state }, "*"); }, [state]);
     useEffect(() => { if (run) ensureCardTitle(run); }, [hash, r]);
@@ -1755,10 +1780,22 @@ function CardApp() {
         else cardDismissed.value = run.hash;     // × on a finished card = dismiss
     };
 
+    if (state === "pill") {
+        const a = activityFor(run);
+        return (
+            <div class="card-app" data-rev={r}>
+                <div class="card-pill" title={`${a.label}  ·  right-click to move`} onContextMenu={cardCtxMenu}>
+                    <span class="pill-ic" aria-hidden="true">{a.icon}</span>
+                    <span class="pill-txt">{a.short}</span>
+                    <span class="pill-dots" aria-hidden="true"><i /><i /><i /></span>
+                </div>
+            </div>
+        );
+    }
     if (state === "toast") {
         return (
             <div class="card-app" data-rev={r}>
-                <div class="card-toast" role="button" title="Click to review" onClick={() => (cardCollapsed.value = false)}>
+                <div class="card-toast" role="button" title="Click to review · right-click to move" onClick={() => (cardCollapsed.value = false)} onContextMenu={cardCtxMenu}>
                     <span class="card-bot" aria-hidden="true">🤖</span>
                     <span class="card-toast-txt">
                         <span class="card-toast-head">{headline}</span>
@@ -1771,7 +1808,7 @@ function CardApp() {
     }
     return (
         <div class="card-app" data-rev={r}>
-            <div class="card-head">
+            <div class="card-head" onContextMenu={cardCtxMenu}>
                 <span class="card-bot" aria-hidden="true">🤖</span>
                 <span class={`card-head-txt${pending ? " pending" : ""}`}>{headline}</span>
                 <span class="sp" />

@@ -9,6 +9,8 @@
 
 export type ApiFormat = "openai" | "ollama";
 export type Theme = "auto" | "dark" | "light";
+// Which corner the off-mode approval card / working pill anchors to.
+export type CardCorner = "bottom-right" | "bottom-left" | "top-right" | "top-left";
 // Where the debug UI renders: nowhere (zero cost), the in-page overlay (content-script
 // shadow-root shell), or the DevTools "window.ml" panel only (no in-page overlay). In
 // devtools mode the shell still forwards events to the background so the panel receives them.
@@ -26,6 +28,7 @@ export interface MlConfig {
     modelFilter: string;
     debugMode: DebugMode;   // where the debug UI renders (off / in-page overlay / DevTools panel)
     theme: Theme;
+    cardCorner: CardCorner;   // which screen corner the off-mode approval card + working pill anchor to
     // Small "utility" model for cheap side tasks (e.g. session-title summaries).
     // Empty → fall back to the main `model`. numCtx/forceCpu apply only when set.
     utilityModel: string;
@@ -101,6 +104,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     modelFilter: "",
     debugMode: "off",
     theme: "auto",
+    cardCorner: "bottom-right",
     utilityModel: "",
     utilityNumCtx: 4096,
     utilityForceCpu: false,

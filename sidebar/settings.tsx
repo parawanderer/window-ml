@@ -5,7 +5,7 @@
 // signal updates on input for a responsive UI + the utility-field enable gating.
 import { signal } from "@preact/signals";
 import { useState, useEffect } from "preact/hooks";
-import type { MlConfig, ApiFormat, Theme, DebugMode, LoadedModel } from "../contract";
+import type { MlConfig, ApiFormat, Theme, DebugMode, CardCorner, LoadedModel } from "../contract";
 import { DEFAULT_CONFIG, DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX, detectGroundingModel, modelFilterAllows } from "../contract";
 import { PY_PACKAGES } from "../python-env";
 import {
@@ -533,6 +533,15 @@ export function Settings() {
                         <option value="devtools">DevTools panel</option>
                     </select>
                     <div class="set-hint">Where this debug log renders. <b>In-page</b> = a slide-out on every page. <b>DevTools</b> = the “window.ml” tab, no on-page overlay. (Same setting as the toolbar popup.)</div>
+                </label>
+                <label class="set-field"><span>Card corner</span>
+                    <select value={c.cardCorner} onChange={(e: any) => setField("cardCorner", e.target.value as CardCorner)}>
+                        <option value="bottom-right">Bottom right</option>
+                        <option value="bottom-left">Bottom left</option>
+                        <option value="top-right">Top right</option>
+                        <option value="top-left">Top left</option>
+                    </select>
+                    <div class="set-hint">Which corner the off-mode agent card / working pill anchors to. You can also <b>right-click</b> the card to move it.</div>
                 </label>
 
                 <details class="set-section" open>

@@ -2045,3 +2045,26 @@ test("card surface: the final answer shows; debug steps/thinking don't leak", as
     assert.ok(body.querySelector(".card-answer"), "answer rendered as plain markdown");
     assert.match(body.textContent, /three sections/, "the final answer shows");
 });
+
+test("card surface: a running run shows the working pill + right-click asks for the corner menu", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    await w.raw({ __mlSidebarSurface: "card" });
+
+    const hash = "cardrun3";
+    await w.dispatch(agentStart(hash, "read the page", "m"));
+    // A running tool step (pending, but NOT awaiting approval) → the compact progress pill.
+    await w.dispatch(agentStep(hash, 1, { seq: 0, pending: true, tool: "look", arguments: {} }));
+    await w.flush();
+
+    assert.ok(posted.some(m => m.__mlSidebarCard === "pill"), "reveals the working pill while running");
+    const pill = w.window.document.querySelector(".card-pill");
+    assert.ok(pill, "pill rendered");
+    assert.match(pill.textContent, /look/, "shows the current tool");
+
+    // Right-clicking the pill asks the shell to draw the corner menu (shell-side, unclipped).
+    pill.dispatchEvent(new w.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }));
+    await w.tick();
+    assert.ok(posted.some(m => m.__mlSidebarCornerMenu), "right-click requests the corner menu");
+});

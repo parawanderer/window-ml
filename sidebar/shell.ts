@@ -44,16 +44,20 @@ const HIGHLIGHT_CSS = `
 // size/reveal, transitioned for a soft expand: hidden (gone) · toast (collapsed) · expanded.
 const CARD_CSS = `
 #${SB_CARD}-wrap {
-  position: fixed; right: 20px; bottom: 20px; z-index: 2147483000;
+  position: fixed; z-index: 2147483000;
   box-sizing: border-box; overflow: hidden; border-radius: 15px;
   background: rgba(250, 250, 252, .72);
   -webkit-backdrop-filter: blur(26px) saturate(180%); backdrop-filter: blur(26px) saturate(180%);
   border: 1px solid rgba(0, 0, 0, .10);
   box-shadow: 0 14px 46px rgba(0, 0, 0, .26), 0 3px 10px rgba(0, 0, 0, .14);
-  transform-origin: bottom right;
   transition: width .30s cubic-bezier(.2,.8,.2,1), height .30s cubic-bezier(.2,.8,.2,1),
               opacity .22s ease, transform .30s cubic-bezier(.2,.8,.2,1);
 }
+/* Anchor to the configured corner (set by the shell from config.cardCorner). */
+#${SB_CARD}-wrap[data-corner="bottom-right"] { right: 20px; bottom: 20px; transform-origin: bottom right; }
+#${SB_CARD}-wrap[data-corner="bottom-left"]  { left: 20px;  bottom: 20px; transform-origin: bottom left; }
+#${SB_CARD}-wrap[data-corner="top-right"]    { right: 20px; top: 20px;    transform-origin: top right; }
+#${SB_CARD}-wrap[data-corner="top-left"]     { left: 20px;  top: 20px;    transform-origin: top left; }
 /* The acrylic tracks the APP's resolved theme (set on the wrap by the shell from config.theme), NOT
    the OS — otherwise a user who forces Light while the OS is dark gets dark text on a dark acrylic. */
 #${SB_CARD}-wrap[data-theme="dark"] { background: rgb(41 30 13 / 8%); border-color: rgba(255, 255, 255, .12);
@@ -61,16 +65,31 @@ const CARD_CSS = `
 /* The HEIGHT is set in px by the shell (sizeCard): the app reports its content height (a cross-origin
    iframe can't auto-size), capped, or the user's dragged height. An explicit px means it animates. */
 #${SB_CARD}-wrap { height: 84px; }
-#${SB_CARD}-wrap[data-state="hidden"] { width: 340px; opacity: 0; pointer-events: none; transform: translateY(14px) scale(.96); }
+#${SB_CARD}-wrap[data-state="hidden"] { width: 340px; opacity: 0; pointer-events: none; }
+#${SB_CARD}-wrap[data-corner^="bottom"][data-state="hidden"] { transform: translateY(14px) scale(.96); }
+#${SB_CARD}-wrap[data-corner^="top"][data-state="hidden"] { transform: translateY(-14px) scale(.96); }
+#${SB_CARD}-wrap[data-state="pill"] { width: 210px; opacity: 1; transform: none; }
 #${SB_CARD}-wrap[data-state="toast"] { width: 340px; opacity: 1; transform: none; }
 #${SB_CARD}-wrap[data-state="expanded"] { width: 384px; opacity: 1; transform: none; }
 #${SB_CARD}-frame { display: block; width: 100%; height: 100%; border: 0; background: transparent; color-scheme: normal; }
-/* Drag the top edge to resize the expanded card vertically (double-click → back to auto-fit). */
-#${SB_CARD}-resize { position: absolute; top: 0; left: 0; right: 0; height: 9px; cursor: ns-resize; z-index: 3; }
+/* Drag the edge (away from the anchor) to resize the expanded card vertically (double-click → auto-fit). */
+#${SB_CARD}-resize { position: absolute; left: 0; right: 0; height: 9px; cursor: ns-resize; z-index: 3; }
+#${SB_CARD}-wrap[data-corner^="bottom"] #${SB_CARD}-resize { top: 0; }
+#${SB_CARD}-wrap[data-corner^="top"] #${SB_CARD}-resize { bottom: 0; }
 #${SB_CARD}-resize::after { content: ""; position: absolute; top: 3px; left: 50%; transform: translateX(-50%);
   width: 34px; height: 3px; border-radius: 2px; background: currentColor; opacity: 0; transition: opacity .15s; color: var(--fg-faint, #888); }
 #${SB_CARD}-resize:hover::after { opacity: .5; }
-#${SB_CARD}-wrap[data-state="toast"] #${SB_CARD}-resize, #${SB_CARD}-wrap[data-state="hidden"] #${SB_CARD}-resize { display: none; }
+#${SB_CARD}-wrap:not([data-state="expanded"]) #${SB_CARD}-resize { display: none; }
+/* Right-click corner menu (drawn HERE in the shell, not the pill iframe which would clip it). */
+#${SB_CARD}-menu { position: fixed; z-index: 2147483002; min-width: 150px; padding: 4px;
+  background: rgba(38, 38, 44, .96); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,.14); border-radius: 8px; box-shadow: 0 8px 28px rgba(0,0,0,.4);
+  font: 12px system-ui, -apple-system, sans-serif; color: #e7e7ea; }
+#${SB_CARD}-menu button { display: flex; width: 100%; align-items: center; gap: 8px; background: transparent;
+  border: none; color: inherit; text-align: left; padding: 6px 9px; border-radius: 5px; cursor: pointer; font: inherit; }
+#${SB_CARD}-menu button:hover { background: rgba(255,255,255,.10); }
+#${SB_CARD}-menu button .tick { width: 12px; opacity: .9; }
+#${SB_CARD}-menu .menu-head { padding: 4px 9px 5px; color: #9a9aa2; font-size: 11px; }
 @media (prefers-reduced-motion: reduce) { #${SB_CARD}-wrap { transition: opacity .12s ease; } }
 `;
 
@@ -132,6 +151,7 @@ let cardReady = false;                       // the card iframe app has handshak
 const CARD_H_KEY = "ml_card_height";
 let cardAutoH = 200;
 let cardManualH: number | null = null;
+let cardCorner = "bottom-right";   // config.cardCorner (set from storage) → which corner the card anchors to
 // Background-run events buffered while the card iframe loads (off mode feeds the card ONLY from the
 // background stream, tagged __mlFromBg — the page's bus stays dormant — so no cross-source ordering).
 const CARD_RING_MAX = 200;
@@ -150,15 +170,18 @@ function sizeCard(): void {
     const desired = (state === "expanded" && cardManualH) ? cardManualH : cardAutoH;
     cardWrap.style.height = `${Math.max(56, Math.min(desired, cap))}px`;
 }
-// Drag the top edge (the card is bottom-anchored, so dragging up grows it upward). Double-click resets
-// to auto-fit. Persisted so the size sticks across runs.
+// Drag the edge away from the anchor to resize (bottom corner → drag the top up; top corner → drag the
+// bottom down). Double-click resets to auto-fit. Persisted so the size sticks across runs.
 function startCardResize(e: PointerEvent): void {
     if (!cardWrap) return;
     e.preventDefault();
     if (frame) frame.style.pointerEvents = "none";   // let the drag cross the iframe
-    const bottom = cardWrap.getBoundingClientRect().bottom;
+    const rect = cardWrap.getBoundingClientRect();
+    const topAnchored = (cardWrap.dataset.corner || "").startsWith("top");
+    const anchor = topAnchored ? rect.top : rect.bottom;   // the fixed edge; height grows from it
     const onMove = (ev: PointerEvent) => {
-        cardManualH = Math.max(120, Math.min(Math.round(window.innerHeight * 0.92), Math.round(bottom - ev.clientY)));
+        const raw = topAnchored ? ev.clientY - anchor : anchor - ev.clientY;
+        cardManualH = Math.max(120, Math.min(Math.round(window.innerHeight * 0.92), Math.round(raw)));
         if (cardWrap) cardWrap.style.height = `${cardManualH}px`;
     };
     const onUp = () => {
@@ -169,6 +192,42 @@ function startCardResize(e: PointerEvent): void {
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
+}
+
+// Right-click corner menu. Drawn in the CARD's shadow root (not the pill iframe, which would clip it).
+// A pick writes config.cardCorner; the storage listener repositions the card. The menu coords arrive
+// iframe-local from the app and are offset by the frame's page position.
+const CARD_CORNERS: [string, string][] = [["bottom-right", "Bottom right"], ["bottom-left", "Bottom left"], ["top-right", "Top right"], ["top-left", "Top left"]];
+let cornerMenuEl: HTMLElement | null = null;
+function hideCornerMenu(): void {
+    cornerMenuEl?.remove(); cornerMenuEl = null;
+    window.removeEventListener("pointerdown", onCornerMenuOutside, true);
+    window.removeEventListener("keydown", onCornerMenuKey, true);
+}
+function onCornerMenuOutside(e: Event): void { if (cornerMenuEl && !e.composedPath().includes(cornerMenuEl)) hideCornerMenu(); }
+function onCornerMenuKey(e: KeyboardEvent): void { if (e.key === "Escape") hideCornerMenu(); }
+function showCornerMenu(px: number, py: number): void {
+    if (!cardHost || !cardHost.shadowRoot) return;
+    hideCornerMenu();
+    const menu = document.createElement("div");
+    menu.id = `${SB_CARD}-menu`;
+    const head = document.createElement("div"); head.className = "menu-head"; head.textContent = "Move card to…"; menu.append(head);
+    for (const [val, label] of CARD_CORNERS) {
+        const b = document.createElement("button");
+        const tick = document.createElement("span"); tick.className = "tick"; tick.textContent = cardCorner === val ? "✓" : "";
+        const txt = document.createElement("span"); txt.textContent = label;
+        b.append(tick, txt);
+        b.addEventListener("click", () => { chrome.storage.sync.set({ cardCorner: val }); hideCornerMenu(); });
+        menu.append(b);
+    }
+    menu.style.left = `${Math.max(6, Math.min(px, window.innerWidth - 170))}px`;
+    menu.style.top = `${Math.max(6, Math.min(py, window.innerHeight - 160))}px`;
+    cardHost.shadowRoot.append(menu);
+    cornerMenuEl = menu;
+    setTimeout(() => {   // defer so the opening right-click doesn't immediately dismiss it
+        window.addEventListener("pointerdown", onCornerMenuOutside, true);
+        window.addEventListener("keydown", onCornerMenuKey, true);
+    }, 0);
 }
 
 /** A hover tooltip bubble for the shell's own chrome (see .ml-tt in SHELL_CSS). */
@@ -381,6 +440,13 @@ function onWindowMessage(e: MessageEvent): void {
         try { frame.focus(); } catch { /* ignore */ }
         return;
     }
+    // Right-clicked the card/pill → draw the "move to corner" menu here (the iframe would clip it). The
+    // coords are iframe-local; offset by the frame's page position.
+    if (d.__mlSidebarCornerMenu && frame && e.source === frame.contentWindow) {
+        const r = cardWrap?.getBoundingClientRect();
+        showCornerMenu((r?.left || 0) + (d.__mlSidebarCornerMenu.x || 0), (r?.top || 0) + (d.__mlSidebarCornerMenu.y || 0));
+        return;
+    }
     // The iframe app is listening. OVERLAY: handshake injected.js so it starts emitting, and tell the
     // app the current open state (it gates polling on this). OFF (the card): we do NOT handshake injected
     // (its bus stays dormant — the card is fed by the background stream); instead tell the app it's the
@@ -509,7 +575,8 @@ function mountCard(): void {
     cardWrap = document.createElement("div");
     cardWrap.id = `${SB_CARD}-wrap`;
     cardWrap.dataset.state = "hidden";
-    applyCardTheme();   // acrylic follows the app's resolved theme, not the OS
+    applyCardTheme();    // acrylic follows the app's resolved theme, not the OS
+    applyCardCorner();   // anchor to the configured corner
     frame = document.createElement("iframe");
     frame.id = `${SB_CARD}-frame`;
     frame.allow = "clipboard-write";
@@ -526,6 +593,7 @@ function mountCard(): void {
 }
 function unmountCard(): void {
     if (!cardHost) return;
+    hideCornerMenu();
     cardHost.remove();
     cardHost = cardWrap = frame = null;   // `frame` is the card iframe in off mode
     cardReady = false;
@@ -572,15 +640,18 @@ function applyCardTheme(): void {
     const resolved = (rawTheme === "light" || rawTheme === "dark") ? rawTheme : (themeMedia?.matches ? "dark" : "light");
     if (cardWrap) cardWrap.dataset.theme = resolved;
 }
+function applyCardCorner(): void { if (cardWrap) cardWrap.dataset.corner = cardCorner; }
 themeMedia?.addEventListener("change", applyCardTheme);   // "auto" follows the OS
 
-chrome.storage.sync.get({ debugMode: "off", theme: "auto" }, (cfg) => {
+chrome.storage.sync.get({ debugMode: "off", theme: "auto", cardCorner: "bottom-right" }, (cfg) => {
     rawTheme = (cfg.theme as string) || "auto";
+    cardCorner = (cfg.cardCorner as string) || "bottom-right";
     applyMode(cfg.debugMode as DebugMode);
 });
 chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "sync") return;
     if (changes.theme) { rawTheme = (changes.theme.newValue as string) || "auto"; applyCardTheme(); }
+    if (changes.cardCorner) { cardCorner = (changes.cardCorner.newValue as string) || "bottom-right"; applyCardCorner(); }
     if (changes.debugMode) applyMode((changes.debugMode.newValue || "off") as DebugMode);
 });
 
