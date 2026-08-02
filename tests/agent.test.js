@@ -1713,6 +1713,16 @@ test("python_exec tool: an ambiguous `table` selector warns it loaded the FIRST"
     assert.doesNotMatch((await ml2.pythonTool().run({ code: "return 1", tables: "#only" })).content, /matched/);
 });
 
+test("python_exec tool: prepends a synthetic 'loaded' log so models know what's pre-loaded", async () => {
+    const { ml } = loadDomWorld(`<table id="t"><tr><td>1</td></tr></table>`);
+    ml.pythonExec = async () => ({ ok: true, value: "42", stdout: "", inputImage: "data:image/png;base64,X",
+        inputTables: [{ name: "sales", source: { kind: "dom", label: "#t" }, columns: ["A", "B"], rows: [[1, 2], [3, 4]] }] });
+    const out = await ml.pythonTool().run({ code: "return 1", tables: "#t", image: "#t" });
+    assert.match(out.content, /loaded, reference directly/);
+    assert.match(out.content, /2×2 DataFrame → `sales`/, "names the df + its shape");
+    assert.match(out.content, /screenshot → `img`/, "notes the pre-loaded image");
+});
+
 test("_resolveTable: throws for a selector that matches nothing", () => {
     const { ml } = loadDomWorld(`<div></div>`);
     assert.throws(() => ml._resolveTable("#nope"), /no table element matches/);

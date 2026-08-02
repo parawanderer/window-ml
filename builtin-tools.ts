@@ -981,7 +981,14 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             // Cap stdout/value/error fed back to the model so a runaway result (e.g. a
             // string-concat blowup) can't flood the context — with a "[+N truncated]" note.
             const stdoutClipped = clipOut(r.stdout || "", PY_OUT_MAX);
-            const pre = tableNote + (stdoutClipped ? `stdout:\n${stdoutClipped}\n\n` : "");
+            // Synthetic "already loaded" log — models get confused about HOW their tables/image arrive
+            // (do they read_csv? what variable?). State it plainly at the top so they infer the setup:
+            // `img`/`df`/named DataFrames are PRE-loaded, reference them directly.
+            const loaded: string[] = [];
+            for (const t of r.inputTables || []) loaded.push(t.rows ? `a ${t.rows.length}×${(t.columns?.length || t.rows[0]?.length || 0)} DataFrame → \`${t.name}\`` : `a DataFrame → \`${t.name}\``);
+            if (r.inputImage) loaded.push("the screenshot → `img` (PIL) / `img_np` (numpy)");
+            const loadedNote = loaded.length ? `[loaded, reference directly] ${loaded.join(", ")}.\n\n` : "";
+            const pre = tableNote + loadedNote + (stdoutClipped ? `stdout:\n${stdoutClipped}\n\n` : "");
             const stringify = (x: unknown) => clipOut(typeof x === "string" ? x : JSON.stringify(x), PY_OUT_MAX);
             // The In slot: a notebook-cell header (cell mode + input image/table + source). Shared
             // by every return path. The Out slot varies (stdout + one of image/token/value/error).
