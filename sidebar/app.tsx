@@ -1513,26 +1513,37 @@ function App() {
         return () => clearInterval(id);
     }, []);
     useEffect(() => { pollPs(); }, [v.name, vramOpen.value, open]);
-    // Stick-to-bottom: while a session's detail is open and the user is parked at the
-    // bottom, a new event smooth-scrolls the log down so a live run stays in view — but
-    // if they've scrolled UP to read, we leave them there. `stuck` tracks their intent
-    // (updated on every manual scroll; a manual scroll away un-sticks). Opening a detail
+    // Stick-to-bottom: while a session's detail is open and the user is parked at the bottom,
+    // keep the log pinned to the latest as it grows — but if they've scrolled UP to read, leave
+    // them there. `stuck` tracks intent (recomputed on every manual scroll). Opening a detail
     // jumps to the latest instantly (chat convention) and re-sticks.
     const viewRef = useRef<HTMLDivElement>(null);
+    const contentRef = useRef<HTMLDivElement>(null);
     const stuck = useRef(true);
     const onViewScroll = () => {
         const el = viewRef.current;
         if (el) stuck.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
     };
+    const pinBottom = (smooth: boolean) => {
+        const el = viewRef.current;
+        if (!el) return;
+        if (el.scrollTo) el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" });
+        else el.scrollTop = el.scrollHeight;
+    };
     const detailKey = v.name === "detail" ? v.hash : "";
+    // Open/switch a detail → jump straight to the latest and re-stick.
+    useEffect(() => { if (detailKey) { pinBottom(false); stuck.current = true; } }, [detailKey]);
+    // Re-pin whenever the content's HEIGHT changes while stuck — this is the key: a new event, an
+    // approval revealing its Out, a screenshot finishing loading, or streaming all grow the content
+    // AFTER the render commits, which a render-keyed effect would miss (it scrolled to the old
+    // height). A ResizeObserver catches every one. (Guarded for jsdom, which lacks it.)
     useEffect(() => {
-        const el = viewRef.current;
-        if (detailKey && el) { el.scrollTop = el.scrollHeight; stuck.current = true; }
+        const content = contentRef.current;
+        if (!detailKey || !content || typeof ResizeObserver === "undefined") return;
+        const ro = new ResizeObserver(() => { if (stuck.current) pinBottom(true); });
+        ro.observe(content);
+        return () => ro.disconnect();
     }, [detailKey]);
-    useEffect(() => {
-        const el = viewRef.current;
-        if (detailKey && stuck.current && el && el.scrollTo) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-    }, [r]);
     return (
         <div class="app">
             <ContextMenu />
@@ -1555,10 +1566,12 @@ function App() {
             </div>
             {vramOpen.value && !inSettings && !inBench ? <VramPanel /> : null}
             <div class="view" data-rev={r} ref={viewRef} onScroll={onViewScroll}>
-                {v.name === "settings" ? <Settings />
-                    : v.name === "bench" ? <PythonBench />
-                        : v.name === "list" ? <ListView />
-                            : <DetailView hash={v.hash} />}
+                <div ref={contentRef}>
+                    {v.name === "settings" ? <Settings />
+                        : v.name === "bench" ? <PythonBench />
+                            : v.name === "list" ? <ListView />
+                                : <DetailView hash={v.hash} />}
+                </div>
             </div>
             {detailSession ? <Composer s={detailSession} /> : null}
         </div>
