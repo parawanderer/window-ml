@@ -30,7 +30,7 @@ import type {
 } from "./contract";
 import { detectGroundingModel, DEFAULT_GROUNDING_RANGE } from "./contract";
 import { evalReadonly } from "./readonly-exec";
-import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables } from "./dom";
+import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay } from "./dom";
 import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, PT_LOOK_RADIUS, BOX_RE, resolveBox } from "./util";
 import type { ShotBox } from "./contract";
@@ -923,44 +923,76 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             const total = Math.min(document.documentElement.scrollHeight, vh * 8);
             const startY = window.scrollY;
             const shots: { y: number; url: string }[] = [];
+            const paint = () => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
 
-            for (let y = 0; y < total; y += vh) {
-                window.scrollTo(0, y);
-                // Wait for the browser to actually paint the new scroll position
-                await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-                // Record where we ACTUALLY landed, not where we asked to go: scrollTo clamps at the
-                // page's max scroll, so the last step captures the bottom viewport (which overlaps the
-                // previous tile) but at a SMALLER offset than `y`. Drawing at the requested `y` painted
-                // that overlap band twice — the duplicated "Ridiculous mode"/torn-row seam. Drawing at
-                // the real scrollY makes the clamped tile overwrite the overlap with identical pixels.
-                const actualY = window.scrollY;
+            // Detect PINNED overlays (position:fixed, or a currently-STUCK sticky) so we can stop
+            // them being stamped into every tile: a fixed nav bar / footer is on screen in every
+            // viewport, so a naive scroll+stitch repeats it down the whole image. We probe each
+            // candidate's viewport rect at two scroll positions — an invariant top ⇒ pinned
+            // (classifyOverlay) — and later show it on exactly ONE tile (a top header on the first,
+            // a bottom footer on the last), hiding it on the rest so the content behind shows
+            // through. Skipped for a single-viewport page (nothing can repeat). getComputedStyle
+            // over the DOM is a one-time cost, negligible beside the paced 600ms/tile captures.
+            const overlays: { el: HTMLElement; anchor: "top" | "bottom"; vis: string }[] = [];
+            if (total > vh) {
+                const cands = ([...document.querySelectorAll("*")] as HTMLElement[])
+                    .filter(el => { const p = getComputedStyle(el).position; return p === "fixed" || p === "sticky"; });
+                window.scrollTo(0, 0); await paint();
+                const r0 = cands.map(el => el.getBoundingClientRect());
+                window.scrollTo(0, Math.min(vh, Math.max(1, total - vh))); await paint();
+                cands.forEach((el, i) => {
+                    const c = classifyOverlay(r0[i], el.getBoundingClientRect(), vh);
+                    if (c.pinned) overlays.push({ el, anchor: c.anchor, vis: el.style.visibility });
+                });
+            }
 
-                let url: string | null = null;
-                let retries = 3;
+            try {
+                for (let y = 0; y < total; y += vh) {
+                    window.scrollTo(0, y);
+                    // Wait for the browser to actually paint the new scroll position
+                    await paint();
+                    // Record where we ACTUALLY landed, not where we asked to go: scrollTo clamps at the
+                    // page's max scroll, so the last step captures the bottom viewport (which overlaps the
+                    // previous tile) but at a SMALLER offset than `y`. Drawing at the requested `y` painted
+                    // that overlap band twice — the duplicated "Ridiculous mode"/torn-row seam. Drawing at
+                    // the real scrollY makes the clamped tile overwrite the overlap with identical pixels.
+                    const actualY = window.scrollY;
+                    const isLast = actualY + vh >= total;
+                    // Show each pinned overlay on ONLY its home tile (header→first, footer→last), hidden
+                    // elsewhere. Drawn at actualY, the header lands at y≈0 and the footer at ≈page-bottom —
+                    // each appearing exactly once instead of on every tile.
+                    for (const o of overlays) o.el.style.visibility = (o.anchor === "top" ? y === 0 : isLast) ? o.vis : "hidden";
 
-                while (retries > 0 && !url) {
-                    try {
-                        // 600ms ensures we strictly stay under the 2 calls/sec limit
-                        await new Promise(r => setTimeout(r, 600));
-                        url = await capture();
-                    } catch (e) {
-                        // If we still hit the quota, back off for a full second and retry
-                        if ((e as Error).message && (e as Error).message.includes("MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND")) {
-                            console.warn(`Hit Chrome capture limit at scroll ${y}, backing off...`);
-                            await new Promise(r => setTimeout(r, 1000));
-                            retries--;
-                        } else {
-                            throw e; // Unrelated error, fail fast
+                    let url: string | null = null;
+                    let retries = 3;
+
+                    while (retries > 0 && !url) {
+                        try {
+                            // 600ms ensures we strictly stay under the 2 calls/sec limit
+                            await new Promise(r => setTimeout(r, 600));
+                            url = await capture();
+                        } catch (e) {
+                            // If we still hit the quota, back off for a full second and retry
+                            if ((e as Error).message && (e as Error).message.includes("MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND")) {
+                                console.warn(`Hit Chrome capture limit at scroll ${y}, backing off...`);
+                                await new Promise(r => setTimeout(r, 1000));
+                                retries--;
+                            } else {
+                                throw e; // Unrelated error, fail fast
+                            }
                         }
                     }
-                }
 
-                if (!url) throw new Error("Failed to capture after retries due to quota limits.");
-                shots.push({ y: actualY, url });
-                // A clamped step reached the bottom — further steps would re-capture the same tile.
-                if (actualY + vh >= total) break;
+                    if (!url) throw new Error("Failed to capture after retries due to quota limits.");
+                    shots.push({ y: actualY, url });
+                    // A clamped step reached the bottom — further steps would re-capture the same tile.
+                    if (isLast) break;
+                }
+            } finally {
+                // Restore every overlay's visibility (even on a capture throw) and the scroll position.
+                for (const o of overlays) o.el.style.visibility = o.vis;
+                window.scrollTo(0, startY);
             }
-            window.scrollTo(0, startY);
 
             return new Promise((resolve, reject) => {
                 if (!shots.length) return reject(new Error("nothing captured"));

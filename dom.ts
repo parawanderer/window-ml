@@ -330,6 +330,25 @@ export const nonEmptyTables = (root: Document | Element): HTMLTableElement[] =>
         ? [...root.querySelectorAll("table")].filter(t => t.querySelector("td")) as HTMLTableElement[]
         : [];
 
+/** Classify a candidate fixed/sticky element for the full-page stitch, from its viewport rect at
+ *  two scroll positions. PINNED = the rect's top is invariant to scroll — a `position:fixed`
+ *  element, or a `position:sticky` one that's currently STUCK — so it repeats in every captured
+ *  tile and must be shown exactly ONCE. (A sticky element still flowing with content moves between
+ *  the two probes, so it's NOT pinned and is left alone — it legitimately appears in one tile.)
+ *  ANCHOR = which end of the stitch it belongs at (a top header vs a bottom footer), by its
+ *  vertical centre. Pure (no DOM) so it's unit-testable; the rect-measuring + scroll probing +
+ *  visibility toggling stay in injected.ts's browser-only `_stitchFullPage`. */
+export function classifyOverlay(
+    r0: { top: number; height: number },
+    r1: { top: number },
+    vh: number,
+): { pinned: boolean; anchor: "top" | "bottom" } {
+    return {
+        pinned: Math.abs(r1.top - r0.top) < 2,                       // top unchanged across a scroll ⇒ pinned
+        anchor: r0.top + r0.height / 2 < vh / 2 ? "top" : "bottom",  // centre in the top half ⇒ header, else footer
+    };
+}
+
 const cellText = (c: Element): string => (c.textContent || "").replace(/\s+/g, " ").trim();
 const hasSpans = (t: Element): boolean =>
     [...t.querySelectorAll("td,th,[role='cell'],[role='gridcell'],[role='columnheader']")]
