@@ -1130,10 +1130,12 @@ test("FETCH_SHEET_TITLE: a HEAD request returns just the sheet title (spreadshee
     let call = null;
     const bg = loadBackground({
         config: baseConfig(),
-        onFetch: (c) => { call = c; return { ok: true, headers: { get: (k) => /content-disposition/i.test(k) ? 'attachment; filename="Quarterly Sales - Sheet1.csv"' : "" }, text: async () => "" }; },
+        // The REAL Google header: a space-STRIPPED ASCII filename= AND the UTF-8 filename* (with spaces).
+        // We must prefer filename* — otherwise "quarterly sales" reads as "quarterlysales".
+        onFetch: (c) => { call = c; return { ok: true, headers: { get: (k) => /content-disposition/i.test(k) ? `attachment; filename="quarterlysales-Sheet1.csv"; filename*=UTF-8''quarterly%20sales%20-%20Sheet1.csv` : "" }, text: async () => "" }; },
     });
     const res = await bg.send({ type: "FETCH_SHEET_TITLE", payload: { id: "ABC123_-x" } });
-    assert.equal(res.data, "Quarterly Sales", "the spreadsheet name (the ' - Sheet1' tab stripped)");
+    assert.equal(res.data, "quarterly sales", "filename* wins (spaces kept), ' - Sheet1' tab stripped — NOT the stripped 'quarterlysales'");
     assert.equal(call.opts.method, "HEAD", "HEAD — headers only, no sheet body downloaded pre-approval");
     assert.equal(call.opts.credentials, "include");
     // A bad id is refused WITHOUT fetching (the host-locked guard).

@@ -1084,8 +1084,14 @@ const SHEET_URL_OK = /^https:\/\/docs\.google\.com\/spreadsheets\/d\/[A-Za-z0-9_
 // all headers (no CORS limit). null on a missing/garbled header.
 function sheetNameFromDisposition(cd: string | null): string | null {
     try {
-        const raw = /filename\*=(?:UTF-8'')?([^;]+)|filename="?([^";]+)"?/i.exec(cd || "");
-        const fn = raw ? decodeURIComponent((raw[1] || raw[2] || "").trim()) : "";
+        // PREFER filename* (RFC 5987, UTF-8 %-encoded → keeps spaces) over the ASCII `filename=`
+        // fallback, which Google SPACE-STRIPS ("quarterly sales" → "quarterlysales"). Google sends both;
+        // the plain one appears first, so a naive left-to-right match picks the wrong (stripped) one.
+        const star = /filename\*=(?:[^']*'')?([^;]+)/i.exec(cd || "");
+        const plain = /filename="?([^";]+)"?/i.exec(cd || "");
+        const enc = star ? star[1].trim() : (plain ? plain[1].trim() : "");
+        if (!enc) return null;
+        const fn = star ? decodeURIComponent(enc) : enc;   // only filename* is %-encoded
         // "<Spreadsheet> - <Tab>.csv" → the SPREADSHEET name. Strip the LAST "-<tab>" segment (spaces
         // around the dash optional — Google's filename separator varies), keeping earlier dashes.
         return fn.replace(/\.csv$/i, "").replace(/\s*-\s*[^-]*$/, "").trim() || null;
