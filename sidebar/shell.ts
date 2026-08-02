@@ -465,12 +465,12 @@ function onWindowMessage(e: MessageEvent): void {
         showCornerMenu((r?.left || 0) + (d.__mlSidebarCornerMenu.x || 0), (r?.top || 0) + (d.__mlSidebarCornerMenu.y || 0));
         return;
     }
-    // The iframe app is listening. OVERLAY: handshake injected.js so it starts emitting, and tell the
-    // app the current open state (it gates polling on this). OFF (the card): we do NOT handshake injected
-    // (its bus stays dormant — the card is fed by the background stream); instead tell the app it's the
-    // card surface and flush the events buffered while its iframe loaded, in order.
+    // The iframe app is listening. When it's the CARD (off mode, OR devtools with the coexist toggle),
+    // tell it it's the card surface and flush the events buffered while its iframe loaded — do NOT
+    // re-handshake injected here (in off mode its bus is fed by the background stream; in devtools it was
+    // already handshaked by attach(true)). OVERLAY: handshake injected.js + hand it the open state.
     if (d.__mlSidebarApp === "ready" && frame && e.source === frame.contentWindow) {
-        if (mode === "off") {
+        if (hudActive()) {
             cardReady = true;
             frame.contentWindow?.postMessage({ __mlSidebarSurface: "card" }, "*");
             for (const ev of bgRing) frame.contentWindow?.postMessage(ev, "*");
