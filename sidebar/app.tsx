@@ -1513,6 +1513,26 @@ function App() {
         return () => clearInterval(id);
     }, []);
     useEffect(() => { pollPs(); }, [v.name, vramOpen.value, open]);
+    // Stick-to-bottom: while a session's detail is open and the user is parked at the
+    // bottom, a new event smooth-scrolls the log down so a live run stays in view — but
+    // if they've scrolled UP to read, we leave them there. `stuck` tracks their intent
+    // (updated on every manual scroll; a manual scroll away un-sticks). Opening a detail
+    // jumps to the latest instantly (chat convention) and re-sticks.
+    const viewRef = useRef<HTMLDivElement>(null);
+    const stuck = useRef(true);
+    const onViewScroll = () => {
+        const el = viewRef.current;
+        if (el) stuck.current = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+    };
+    const detailKey = v.name === "detail" ? v.hash : "";
+    useEffect(() => {
+        const el = viewRef.current;
+        if (detailKey && el) { el.scrollTop = el.scrollHeight; stuck.current = true; }
+    }, [detailKey]);
+    useEffect(() => {
+        const el = viewRef.current;
+        if (detailKey && stuck.current && el && el.scrollTo) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    }, [r]);
     return (
         <div class="app">
             <ContextMenu />
@@ -1534,7 +1554,7 @@ function App() {
                 {!inSettings && !inBench ? <button class="tt hbtn" aria-label="Settings" onClick={() => { fetchModels(); view.value = { name: "settings" }; }}><IconGear /><span class="tt-pop" role="tooltip">Settings</span></button> : null}
             </div>
             {vramOpen.value && !inSettings && !inBench ? <VramPanel /> : null}
-            <div class="view" data-rev={r}>
+            <div class="view" data-rev={r} ref={viewRef} onScroll={onViewScroll}>
                 {v.name === "settings" ? <Settings />
                     : v.name === "bench" ? <PythonBench />
                         : v.name === "list" ? <ListView />

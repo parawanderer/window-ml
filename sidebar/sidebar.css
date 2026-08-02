@@ -197,8 +197,11 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 
 /* ml.agent run view: a task, then one card per TURN (thought + batched tool
    calls), then the final answer. */
-.aturn { border: 1px solid var(--border); border-radius: 7px; padding: 4px 8px 6px; margin-bottom: 8px; }
-.aturn-head { display: flex; align-items: center; margin-bottom: 2px; }
+.aturn { position: relative; border: 1px solid var(--border); border-radius: 7px; padding: 5px 8px 6px; margin-bottom: 8px; }
+/* The step pill floats in the card's top-right corner (out of flow) so it costs no
+   vertical row — the thinking/prose starts at the top. Its solid pill background keeps
+   it legible when a first line runs under it. */
+.aturn-head { position: absolute; top: 4px; right: 8px; z-index: 1; }
 .step-pill { font-size: 0.72em; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; color: var(--fg-dim); background: var(--panel-2); border-radius: 999px; padding: 1px 7px; }
 .athought, .astep { padding-left: 2px; }
 /* A turn's PROSE (content) — rendered like the answer: full-brightness markdown, no box/dot/label,
@@ -444,8 +447,10 @@ details.io[open] > summary .io-preview { display: none; }
 /* Block-level trigger (a full-width row like .arg-issues) — keep the element's own
    flex layout, take only the positioning context. */
 .tt.tt-row { display: flex; }
-/* Long text: wrap instead of one very wide nowrap strip. Combines with any anchor. */
-.tt-pop.wrap { white-space: normal; width: max-content; max-width: 190px; }
+/* Long text: wrap instead of one very wide nowrap strip. Combines with any anchor.
+   overflow-wrap:anywhere lets an unbreakable token (a 44-char Google Sheet id) break
+   so it stays inside max-width instead of spilling out and clipping at the frame edge. */
+.tt-pop.wrap { white-space: normal; width: max-content; max-width: 190px; overflow-wrap: anywhere; }
 .tt-pop {
     position: absolute; top: calc(100% + 6px); right: 0; z-index: 10;
     background: var(--panel-2); color: var(--fg); border: 1px solid var(--border);
@@ -469,14 +474,14 @@ details.io[open] > summary .io-preview { display: none; }
 }
 .tt-pop.wide {
     right: auto; left: 50%; transform: translateX(-50%);
-    white-space: normal; width: max-content; max-width: 170px; text-align: center;
+    white-space: normal; width: max-content; max-width: 170px; text-align: center; overflow-wrap: anywhere;
 }
 .tt-pop.wide::after { right: auto; left: 50%; transform: translateX(-50%); }
 /* Left-anchored (extends rightward) — for triggers at the panel's left edge,
    e.g. the status dot, which would clip a right-anchored/centered pop. */
 .tt-pop.left {
     right: auto; left: 0; transform: none;
-    white-space: normal; width: max-content; max-width: 190px;
+    white-space: normal; width: max-content; max-width: 190px; overflow-wrap: anywhere;
 }
 .tt-pop.left::after { right: auto; left: 10px; transform: none; }
 /* Open ABOVE the trigger (for a trigger near the panel's bottom edge, e.g. the
