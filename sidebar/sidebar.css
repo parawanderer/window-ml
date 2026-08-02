@@ -753,9 +753,23 @@ html[data-surface="card"] { color-scheme: normal !important; }
 .card-work-ic { font-size: 13px; }
 .card-work-label { font-weight: 600; }
 .card-work-n { color: var(--fg-faint); font-variant-numeric: tabular-nums; }
-.card-work-trace { margin-top: 6px; }
-/* Give the reused sidebar rows a touch more room in the narrow card. */
+/* Enter animation: the trace slides in from the right + fades; the card itself grows downward (the
+   shell resizes to fit the new content height), so the "expand" reads fluidly without a max-height hack. */
+.card-work-trace { margin-top: 6px; animation: work-in .32s cubic-bezier(.2, .8, .2, 1); }
+@keyframes work-in { from { opacity: 0; transform: translateX(18px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .card-work-trace { animation: none; } }
 .card-work-trace .aturn { margin-bottom: 8px; }
+/* Quieter than the debug sidebar — this is a clean glass card, not a debug tool. Drop the coloured
+   rail (win back the padding), white tool names, hide the auto/skip/denied badges, and render a
+   user-approval as a small green check (explained on hover) instead of a pill. Scoped to
+   .card-work-trace, so the real DevTools/overlay panel is completely untouched. */
+.card-work-trace .astep.tool { border-left: none; padding-left: 0; margin: 5px 0; }
+.card-work-trace .astep .tool-name { color: var(--fg); }
+.card-work-trace .appr-badge { display: none; }
+.card-work-trace .appr-user { display: inline-flex; }
+.card-work-trace .appr-user .appr { width: 15px; height: 15px; padding: 0; border-radius: 50%; font-size: 0;
+    display: inline-flex; align-items: center; justify-content: center; background: var(--ok); border-color: var(--ok); }
+.card-work-trace .appr-user .appr::before { content: "✓"; font-size: 9px; font-weight: 800; color: var(--accent-fg); }
 
 /* Intent view: ONE pending approval as an action to verify (not a debug trace). Goal → the action verb
    + human target (or the code, for code tools) → Deny/Approve. The final answer renders as plain

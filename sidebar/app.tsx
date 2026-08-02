@@ -836,7 +836,7 @@ const APPROVAL = {
     skipped: { label: "skipped", tip: "No prompt needed — the target didn't resolve (no element / stale @pt / bad selector), so the action could only fail. It never ran." },
 } as const;
 const ApprovalBadge = ({ approval }: { approval: keyof typeof APPROVAL }) => (
-    <span class="tt">
+    <span class={`tt appr-badge appr-${approval}`}>
         <span class={`appr ${approval === "denied" ? "no" : approval === "skipped" ? "skip" : "yes"}`}>{APPROVAL[approval].label}</span>
         <span class="tt-pop left" role="tooltip">{APPROVAL[approval].tip}</span>
     </span>
