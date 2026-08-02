@@ -932,6 +932,11 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                     <IoBlock label="Out" tip="What the tool returned to the model."
                         preview={st.pending ? "running…" : inlineText(st.result || "")} render={outRender}
                         raw={st.result ? <Code text={st.result} lang="text" /> : <span class="dim">{st.pending ? "running…" : "(no output)"}</span>} />
+                    {/* On-demand plain-English gloss for a code step — CARD's Show-work trace only (the debug
+                        panel keeps the raw code); needs a utility model. */}
+                    {surface.value === "card" && (st.tool === "exec" || st.tool === "python_exec") && hash && st.seq != null && config.value.utilityModel.trim()
+                        ? <CodeExplain hash={hash} seq={st.seq} lang={st.tool === "python_exec" ? "python" : "javascript"} code={codeOf(st)?.text || ""} />
+                        : null}
                 </div>
                 : null}
             {/* Approval bar at the BOTTOM — after In/Out — so you review the call (its rendered In)
@@ -1578,8 +1583,10 @@ const utilitySummariesOn = () => config.value.autoTitles && !!config.value.utili
 // surface). Keyed per step; opt-in on a utility model, best-effort (the code alone suffices without).
 const codeSummaries = new Map<string, string>();
 const codeSummaryTried = new Set<string>();
-function ensureCodeSummary(hash: string, seq: number, lang: string, code: string): void {
-    if (!utilitySummariesOn() || !code.trim()) return;
+// The actual fetch — needs only a utility model (used directly by the on-demand "Explain" button in the
+// Show-work trace, which the user explicitly clicked, so it isn't gated on the auto-summarise toggle).
+function fetchCodeSummary(hash: string, seq: number, lang: string, code: string): void {
+    if (!config.value.utilityModel.trim() || !code.trim()) return;
     const key = stepKey(hash, seq);
     if (codeSummaryTried.has(key)) return;
     codeSummaryTried.add(key);
@@ -1588,6 +1595,19 @@ function ensureCodeSummary(hash: string, seq: number, lang: string, code: string
         { role: "user", content: `Explain what this ${lang} code does:\n\n${truncate(code, 1400)}` },
     ];
     fetchUtilityLine(messages, key);
+}
+// AUTO path (the approval card's gloss) — additionally gated on the auto-summarise toggle.
+function ensureCodeSummary(hash: string, seq: number, lang: string, code: string): void {
+    if (utilitySummariesOn()) fetchCodeSummary(hash, seq, lang, code);
+}
+// The on-demand "Explain this Python/JS" affordance in the Show-work trace (card surface only). Lazy —
+// ONE utility-model call, only when clicked; shows the gloss inline once it lands.
+function CodeExplain({ hash, seq, lang, code }: { hash: string; seq: number; lang: string; code: string }) {
+    const rv = rev.value;   // subscribe: the gloss lands on a rev bump (ToolStep is signal-memoized → won't); retained via data-rev
+    const summary = codeSummaries.get(stepKey(hash, seq));
+    if (summary) return <div class="step-explain" data-rev={rv}><span class="step-explain-ic" aria-hidden="true">💡</span><span>{summary}</span></div>;
+    if (!code.trim()) return null;
+    return <button class="step-explain-btn" data-rev={rv} onClick={() => fetchCodeSummary(hash, seq, lang, code)}>💡 Explain this {lang === "python" ? "Python" : "JavaScript"}</button>;
 }
 // A tool with NO deterministic intent (a custom approval-gated tool, no `action` render) still gets a
 // human description — the utility model paraphrases the call. Same cache/plumbing as the code summary.
@@ -1718,11 +1738,14 @@ const cardCtxMenu = (e: any) => { e.preventDefault(); window.parent.postMessage(
 // it just hides it; this re-renders it with the SAME components the debug sidebar uses (AgentTurn →
 // ToolStep). Collapsed by default; a finished run has no awaiting gate, so no approve buttons appear.
 function ShowWork({ run }: { run: Session }) {
+    // Reading cardShowWork auto-memoizes this component; `run` is mutated in place (same ref), so also
+    // subscribe to `rev` — else a landed Explain gloss (rev bump) wouldn't re-render. Retained via data-rev.
+    const rv = rev.value;
     const open = cardShowWork.value;
     const turns = groupTurns(run.steps || []);
     const n = (run.steps || []).filter(s => s.tool).length;
     return (
-        <div class="card-work">
+        <div class="card-work" data-rev={rv}>
             <button class={`card-work-toggle${open ? " open" : ""}`} onClick={() => (cardShowWork.value = !open)}>
                 <span class="card-work-ic" aria-hidden="true">🛠</span>
                 <span class="card-work-label">{open ? "Hide work" : "Show work"}</span>

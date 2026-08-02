@@ -2141,3 +2141,29 @@ test("card surface: a running run shows the working pill + right-click asks for 
     await w.tick();
     assert.ok(posted.some(m => m.__mlSidebarCornerMenu), "right-click requests the corner menu");
 });
+
+test("card Show-work: on-demand Explain fetches a plain-English gloss for a code step (card only)", async () => {
+    const w = await loadSidebarWorld({
+        sync: { debugMode: "off", utilityModel: "util" },
+        fetchLlm: () => ({ data: "Sums every column and returns the grand total." }),
+    });
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    await w.raw({ __mlSidebarSurface: "card" });
+
+    const hash = "workE";
+    await w.dispatch(agentStart(hash, "sum it", "m"));
+    await w.dispatch(agentStep(hash, 1, { seq: 0, tool: "python_exec", arguments: { code: "df.sum()" }, result: "42", approval: "sandbox" }));
+    await w.dispatch(agentResult(hash, "The total is 42.", 1));
+    await w.flush();
+
+    const doc = w.window.document;
+    doc.querySelector(".card-work-toggle").click(); await w.tick();          // expand Show work
+    const step = doc.querySelector(".card-work-trace .astep.tool");
+    step.querySelector(".astep-head").click(); await w.tick();               // expand the python step
+    const btn = [...step.querySelectorAll("button")].find(b => /Explain this Python/.test(b.textContent));
+    assert.ok(btn, "an Explain affordance shows for a code step in the card trace");
+
+    btn.click(); await w.flush();
+    assert.match(step.querySelector(".step-explain").textContent, /grand total/, "the gloss lands inline");
+});

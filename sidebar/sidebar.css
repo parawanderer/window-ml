@@ -781,11 +781,23 @@ html[data-surface="card"] { color-scheme: normal !important; }
    .card-work-trace, so the real DevTools/overlay panel is completely untouched. */
 .card-work-trace .astep.tool { border-left: none; padding-left: 0; margin: 5px 0; }
 .card-work-trace .astep .tool-name { color: var(--fg); }
+/* Hide the noisy auto-approved/skipped badges; keep the HUMAN decisions as a small round icon
+   (green ✓ approved / red ✕ denied), explained on hover. */
 .card-work-trace .appr-badge { display: none; }
-.card-work-trace .appr-user { display: inline-flex; }
-.card-work-trace .appr-user .appr { width: 15px; height: 15px; padding: 0; border-radius: 50%; font-size: 0;
-    display: inline-flex; align-items: center; justify-content: center; background: var(--ok); border-color: var(--ok); }
-.card-work-trace .appr-user .appr::before { content: "✓"; font-size: 9px; font-weight: 800; color: var(--accent-fg); }
+.card-work-trace .appr-user, .card-work-trace .appr-denied { display: inline-flex; }
+.card-work-trace .appr-user .appr, .card-work-trace .appr-denied .appr {
+    width: 14px; height: 14px; padding: 0; border: none; border-radius: 50%; font-size: 0; line-height: 0;
+    display: inline-flex; align-items: center; justify-content: center; }
+.card-work-trace .appr-user .appr { background: var(--ok); }
+.card-work-trace .appr-denied .appr { background: var(--err); }
+.card-work-trace .appr-user .appr::before { content: "✓"; font: 700 9px/1 system-ui, sans-serif; color: #fff; }
+.card-work-trace .appr-denied .appr::before { content: "✕"; font: 700 8px/1 system-ui, sans-serif; color: #fff; }
+/* On-demand "Explain this Python/JS" affordance in the Show-work trace. */
+.step-explain-btn { margin-top: 5px; background: transparent; border: 1px dashed var(--border); border-radius: 6px;
+    color: var(--fg-dim); font: inherit; font-size: .88em; padding: 3px 9px; cursor: pointer; }
+.step-explain-btn:hover { color: var(--fg); border-color: var(--fg-faint); }
+.step-explain { display: flex; gap: 7px; margin-top: 6px; font-size: .92em; color: var(--fg-dim); line-height: 1.4; }
+.step-explain-ic { flex: 0 0 auto; }
 
 /* Intent view: ONE pending approval as an action to verify (not a debug trace). Goal → the action verb
    + human target (or the code, for code tools) → Deny/Approve. The final answer renders as plain
