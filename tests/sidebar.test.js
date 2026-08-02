@@ -773,6 +773,29 @@ test("agent runs render as their own session with steps + a final answer", async
     assert.ok(w.shadow.querySelector(".msg.asst .raw-btn"), "answer has a raw toggle");
 });
 
+test("debug In render of a click step is a hoverable element reference, not the card's intent sentence", async () => {
+    // Regression: click/type emit an `action` intent descriptor (for the off-mode CARD). The DEBUG log
+    // (overlay/devtools) must still render it as a hoverable/selectable element reference — the selector
+    // + human label, hover-to-outline, right-click-to-copy — NOT the user-facing "Agent wants to…" sentence.
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("act1", "click the toggle", "m"));
+    await w.dispatch(agentStep("act1", 1, {
+        seq: 0, tool: "click", arguments: { selector: "#bigToggle" }, result: "Clicked #bigToggle",
+        renderIn: { type: "action", verb: "Click", kind: "button", target: "Show the giant scrolling table", selector: "#bigToggle" },
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const toolStep = w.shadow.querySelector(".astep.tool");
+    toolStep.querySelector(".astep-head").click();   // expand → In/Out
+    await w.tick();
+
+    const elRef = toolStep.querySelector(".r-el");
+    assert.ok(elRef, "In renders a hoverable element reference");
+    assert.match(elRef.querySelector(".r-el-path").textContent, /#bigToggle/, "shows the selector (copyable/hoverable)");
+    assert.match(elRef.textContent, /Show the giant scrolling table/, "shows the human label too");
+    assert.ok(!toolStep.querySelector(".action-sentence"), "the user-facing intent sentence stays OUT of the debug log");
+});
+
 test("a FINAL-answer turn with only reasoning (no thought/tool) still renders its thinking block", async () => {
     // The model thinks in reasoning_content and puts its answer in content → the content becomes the
     // summary (answer bubble), the reasoning is a reasoning-only step. It must NOT be filtered out.

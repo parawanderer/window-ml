@@ -138,7 +138,7 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .test-ic.loading { color: var(--warn); } .test-ic.unset { color: var(--fg-faint); }
 .test-err { display: flex; align-items: center; gap: 8px; color: var(--err); font-size: 0.83em; word-break: break-word; }
 .test-thumb { height: 30px; max-width: 90px; border-radius: 3px; border: 1px solid var(--border); background: #fff; cursor: zoom-in; flex: 0 0 auto; }
-.set-check { display: flex; align-items: center; gap: 7px; margin: 2px; color: var(--fg); cursor: pointer; }
+.set-check { display: flex; align-items: center; gap: 7px; margin: 2px; margin-top: 8px; color: var(--fg); cursor: pointer; }
 .set-check.off { opacity: .5; }
 .set-check input { width: auto; }
 .stepper { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; }

@@ -740,19 +740,14 @@ function RenderPanel({ d }: { d: RenderDescriptor }) {
         case "table": return <RenderTable columns={d.columns} rows={d.rows} />;
         case "keyval": return <div class="r-keyval">{d.pairs.map(([k, v], i) => <div class="r-kv" key={i}><span class="r-k">{k}</span><span class="r-v">{v}</span></div>)}</div>;
         case "elements": return <RenderElements items={d.items} />;
-        case "action": {
-            // Debug In view of a tool intent: a hoverable line (hover → outline the target on the page).
-            const tok = d.selector && /^@(?:pt|box):/.test(d.selector);
-            const hover = d.selector ? { onPointerEnter: () => (tok ? highlightToken(d.selector!) : highlightEl(d.selector!)), onPointerLeave: clearHighlight } : {};
-            return (
-                <div class="r-action">
-                    <span class="r-action-verb">{d.verb}</span>{d.kind ? ` the ${d.kind}` : ""}
-                    {d.input != null ? <> “<b>{truncate(d.input, 80)}</b>”</> : null}
-                    {d.target ? <> <b class="r-hoverable" {...hover}>“{d.target}”</b></> : d.selector ? <> <code class="r-hoverable" {...hover}>{d.selector}</code></> : null}
-                    {d.note ? <span class="dim"> · {d.note}</span> : null}
-                </div>
-            );
-        }
+        case "action":
+            // DEBUG In view (overlay/devtools): keep the hoverable/selectable ELEMENT reference (the
+            // selector + human label, hover → outline, right-click → copy a reference), exactly like the
+            // pre-intent render. The user-facing "Agent wants to …" sentence is the CARD's job (built in
+            // ApprovalBody), NOT the log — the log stays a debugging tool.
+            return d.selector
+                ? <RenderElements items={[{ path: d.selector, ...(d.target ? { text: d.target } : {}) }]} />
+                : <Code text={pretty(d)} lang="json" />;
         case "locate": return <LocateRender d={d} />;
         case "python-in": return <PythonInRender d={d} />;
         case "python-out": return <PythonOutRender d={d} />;
