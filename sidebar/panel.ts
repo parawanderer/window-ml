@@ -84,7 +84,18 @@ window.addEventListener("message", (e: MessageEvent) => {
         void chrome.runtime.sendMessage({ type: "SET_APPROVAL", payload: { runId: d.hash, seq: d.seq, decision: !!d.decision } }).catch(() => {});
         return;
     }
-    if (typeof d.__mlLightbox === "string") showLightbox(d.__mlLightbox);
+    if (typeof d.__mlLightbox === "string") { showLightbox(d.__mlLightbox); return; }
+    // Hover-highlight reverse channel: the app asks to outline a page element/point on hover. The panel
+    // can't touch the inspected page, so relay to the background → that tab's content-script shell, which
+    // draws the box. Origin-checked above (e.source === frame.contentWindow); a web page can't
+    // postMessage into a DevTools page regardless.
+    if ("__mlHighlight" in d) { void chrome.runtime.sendMessage({ type: "ML_HL_REMOTE", tabId, ref: d.__mlHighlight }).catch(() => {}); return; }
+});
+
+// If the panel goes away with a highlight still showing (it lives on the inspected page, not here),
+// clear it so no stray box is left behind.
+window.addEventListener("pagehide", () => {
+    try { void chrome.runtime.sendMessage({ type: "ML_HL_REMOTE", tabId, ref: null }).catch(() => {}); } catch { /* context gone */ }
 });
 
 // The app posts __mlLightbox on an image click; the overlay's shell shows it full-window.

@@ -716,6 +716,14 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     // forget — no response. RESET clears a tab's buffer on navigation (fresh page).
     if (message.type === "ML_DEBUG_EVENT") { if (sender.tab?.id != null) relayDebugEvent(sender.tab.id, message.event); return; }
     if (message.type === "ML_DEBUG_RESET") { if (sender.tab?.id != null) resetDebug(sender.tab.id); return; }
+    // DevTools-panel hover-highlight reverse channel: the panel (a devtools page) can't reach the
+    // inspected page, so it asks us to relay its highlight request to that tab's content-script shell,
+    // which draws the box. Only the extension can call a typed background message like this — a web page
+    // has no chrome.runtime path to it — and drawing is a read-only pointer-events:none overlay anyway.
+    if (message.type === "ML_HL_REMOTE" && typeof message.tabId === "number") {
+        try { void chrome.tabs.sendMessage(message.tabId, { type: "ML_HL_REMOTE", ref: message.ref }).catch(() => {}); } catch { /* tab gone */ }
+        return;
+    }
     if (message.type === "SET_APPROVAL") {
         // The surface's approve/deny for a pending background-run gate. Reaches here only from a TRUSTED
         // extension context: the content-script shell (overlay) or panel.ts (devtools) — each forwards it

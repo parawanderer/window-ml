@@ -1092,6 +1092,24 @@ test("devtools panel: buffers debug events per tab, replays on connect, relays l
     assert.deepEqual(panel2.messages.find(m => Array.isArray(m.replay)).replay, [], "reset → nothing to replay");
 });
 
+test("ML_HL_REMOTE: the panel's hover-highlight is relayed to the inspected tab's content script", () => {
+    // The DevTools panel can't reach the inspected page, so it sends ML_HL_REMOTE{tabId, ref} to the
+    // background, which forwards it to that tab's shell via chrome.tabs.sendMessage — the reverse channel.
+    // Fire-and-forget (no sendResponse), so DON'T await bg.send — the handler runs synchronously inside
+    // send()'s executor and the tabs.sendMessage mock records synchronously (awaiting would hang: the
+    // send() promise never resolves because the handler never calls its resolve).
+    const bg = loadBackground({ config: baseConfig() });
+    bg.send({ type: "ML_HL_REMOTE", tabId: 12, ref: { selector: "#go", index: 0 } });
+    assert.equal(bg.tabMessages.length, 1, "one relay to the tab");
+    assert.equal(bg.tabMessages[0][0], 12, "addressed to the inspected tab");
+    assert.deepEqual(bg.tabMessages[0][1], { type: "ML_HL_REMOTE", ref: { selector: "#go", index: 0 } }, "the ref is forwarded verbatim");
+    // A clear (ref:null) forwards too; a non-numeric tabId is ignored (no throw, no relay).
+    bg.send({ type: "ML_HL_REMOTE", tabId: 12, ref: null });
+    assert.deepEqual(bg.tabMessages[1][1], { type: "ML_HL_REMOTE", ref: null }, "a clear is relayed");
+    bg.send({ type: "ML_HL_REMOTE", ref: { selector: "#x" } });
+    assert.equal(bg.tabMessages.length, 2, "no tabId → not relayed");
+});
+
 test("START_RUN (surface 'devtools') fans a background run's step events to the PANEL port, not the page", async () => {
     // DevTools parity: a background-hosted run in devtools mode streams its agent-step events to the
     // panel via relayDebugEvent (the ml-devtools ports), NOT chrome.tabs.sendMessage (which the harness

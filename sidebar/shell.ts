@@ -18,6 +18,18 @@ import type { DebugMode } from "../contract";
 const WIDTH_KEY = "ml_debug_width";
 const MIN_W = 280, TAB_W = 34, DEFAULT_W = 400;
 
+// The hover-highlight box + its label. Pulled out of SHELL_CSS so the devtools-mode
+// highlight-only host (which mounts NO overlay) can reuse the exact same styling.
+const HIGHLIGHT_CSS = `
+/* DevTools-style hover highlight — a positioned box OVER a page element (never mutating it). Sits
+   below the panel (z-index) and is pointer-events:none so it can't intercept clicks. */
+#${SB_HIGHLIGHT} { position: fixed; z-index: 2147482999; pointer-events: none; box-sizing: border-box;
+  background: rgba(89,131,246,.28); outline: 1px solid rgba(89,131,246,.95); border-radius: 1px; }
+#${SB_HIGHLIGHT} .ml-hl-label { position: absolute; top: 100%; left: 0; margin-top: 2px; padding: 1px 6px;
+  background: #5983f6; color: #fff; font: 500 10px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  border-radius: 3px; white-space: nowrap; max-width: 50vw; overflow: hidden; text-overflow: ellipsis; }
+`;
+
 const SHELL_CSS = `
 #${SB_HOST} { position: fixed; top: 0; right: 0; height: 100vh; display: flex;
   z-index: 2147483000; transform: translateX(calc(100% - ${TAB_W}px)); transition: transform .22s ease; }
@@ -39,13 +51,7 @@ const SHELL_CSS = `
 #${SB_LIGHTBOX_X} { position: fixed; top: 12px; right: 16px; width: 32px; height: 32px; border-radius: 7px;
   border: 1px solid rgba(255,255,255,.35); background: rgba(0,0,0,.5); color: #fff; font: 16px system-ui; cursor: pointer; }
 #${SB_LIGHTBOX_X}:hover { background: rgba(0,0,0,.85); }
-/* DevTools-style hover highlight — a positioned box OVER a page element (never mutating it). Sits
-   below the panel (z-index) and is pointer-events:none so it can't intercept clicks. */
-#${SB_HIGHLIGHT} { position: fixed; z-index: 2147482999; pointer-events: none; box-sizing: border-box;
-  background: rgba(89,131,246,.28); outline: 1px solid rgba(89,131,246,.95); border-radius: 1px; }
-#${SB_HIGHLIGHT} .ml-hl-label { position: absolute; top: 100%; left: 0; margin-top: 2px; padding: 1px 6px;
-  background: #5983f6; color: #fff; font: 500 10px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
-  border-radius: 3px; white-space: nowrap; max-width: 50vw; overflow: hidden; text-overflow: ellipsis; }
+${HIGHLIGHT_CSS}
 /* Tooltip primitive — a copy of the app's (sidebar.css), because this shell lives in
    its own shadow root in the PAGE and shares no stylesheet with the iframe. Same rule
    applies: size and typography are pinned absolutely, never inherited — the tab is
@@ -114,9 +120,28 @@ function showLightbox(src: string): void {
 // content script), so it can resolve the selector + rect itself. Off-target / not-found → just hide.
 let highlightEl: HTMLElement | null = null;
 let hlSeq = 0;   // monotonic — a later hover/clear invalidates a still-pending async token resolve
+// The root the highlight box is drawn into. In OVERLAY mode that's the full shell's shadow root.
+// In DEVTOOLS mode no overlay is mounted, so lazily create a highlight-ONLY shadow host (same
+// isolation, just the highlight CSS) the first time a remote highlight arrives — so the panel's
+// hover can still outline the page. Torn down with everything else in teardown().
+let hlHost: HTMLElement | null = null;
+let hlRoot: ShadowRoot | null = null;
+function hlContainer(): ShadowRoot {
+    if (shadowRoot) return shadowRoot;
+    if (hlRoot) return hlRoot;
+    hlHost = document.createElement("div");
+    hlHost.id = `${SB_ROOT}-hl`;
+    hlHost.style.cssText = "all: initial;";
+    hlRoot = hlHost.attachShadow({ mode: "open" });
+    const style = document.createElement("style");
+    style.textContent = HIGHLIGHT_CSS;
+    hlRoot.append(style);
+    (document.documentElement || document.body).append(hlHost);
+    return hlRoot;
+}
 function drawHighlight(left: number, top: number, width: number, height: number, label: string): void {
-    if (!shadowRoot) return;
-    if (!highlightEl) { highlightEl = document.createElement("div"); highlightEl.id = SB_HIGHLIGHT; shadowRoot.append(highlightEl); }
+    const root = hlContainer();
+    if (!highlightEl) { highlightEl = document.createElement("div"); highlightEl.id = SB_HIGHLIGHT; root.append(highlightEl); }
     Object.assign(highlightEl.style, { left: `${left}px`, top: `${top}px`, width: `${width}px`, height: `${height}px` });
     const lab = document.createElement("div");
     lab.className = "ml-hl-label";
@@ -129,7 +154,7 @@ function hideHighlight(): void { hlSeq++; if (highlightEl) { highlightEl.remove(
 // coords, so ask injected to resolve (ML_HL_RESOLVE → ML_HL_AT) and draw on the reply.
 function showHighlight(ref: { selector?: string; index?: number; token?: string } | null): void {
     const seq = ++hlSeq;
-    if (!shadowRoot || !ref) return hideHighlight();
+    if (!ref) return hideHighlight();
     if (ref.selector) {
         let el: Element | null = null;
         try { el = document.querySelectorAll(ref.selector)[ref.index || 0] || null; } catch { el = null; }
@@ -321,6 +346,8 @@ function mountOverlay(): void {
 function teardown(): void {
     if (mode === "off") return;
     hideLightbox();
+    hideHighlight();
+    if (hlHost) { hlHost.remove(); hlHost = hlRoot = null; }   // the devtools-mode highlight-only host
     if (shellHost) { shellHost.remove(); shellHost = panel = frame = shadowRoot = null; }
     window.removeEventListener("message", onWindowMessage);
     // Posted last, after the listener is detached, so we don't handle our own message.
@@ -344,4 +371,13 @@ function applyMode(next: DebugMode): void {
 chrome.storage.sync.get({ debugMode: "off" }, (cfg) => applyMode(cfg.debugMode as DebugMode));
 chrome.storage.onChanged.addListener((changes, area) => {
     if (area === "sync" && changes.debugMode) applyMode((changes.debugMode.newValue || "off") as DebugMode);
+});
+
+// DevTools-panel hover-highlight (the reverse channel). The panel can't touch the inspected
+// page, so its app's __mlHighlight is relayed panel → background → here (ML_HL_REMOTE), and we
+// draw the box in this content script (which DOES share the page DOM). Only in devtools mode —
+// the overlay gets highlights straight from its own iframe via window-message. Read-only (a
+// pointer-events:none box, no page mutation), so even a spurious relay is harmless.
+chrome.runtime.onMessage.addListener((msg) => {
+    if (msg?.type === "ML_HL_REMOTE" && mode === "devtools") showHighlight(msg.ref || null);
 });

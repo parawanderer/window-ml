@@ -79,6 +79,7 @@ function streamResponse(lines, { status = 200 } = {}) {
 function loadBackground({ config = {}, onFetch, onCaptureTab }) {
     const calls = [];
     const captures = [];        // captureVisibleTab arg lists, for screenshot tests
+    const tabMessages = [];     // chrome.tabs.sendMessage arg lists, for reverse-channel tests
     const listeners = [];
     const connectListeners = [];
     const stored = { ...config };
@@ -125,7 +126,10 @@ function loadBackground({ config = {}, onFetch, onCaptureTab }) {
                 captureVisibleTab: async (...args) => {
                     captures.push(args);
                     return onCaptureTab ? onCaptureTab(...args) : "data:image/png;base64,SHOT";
-                }
+                },
+                // Records (tabId, message) so reverse-channel tests can assert what the background
+                // relays to a tab's content script (e.g. ML_HL_REMOTE). Resolves like the real API.
+                sendMessage: async (...args) => { tabMessages.push(args); return undefined; },
             }
         }
     };
@@ -135,6 +139,7 @@ function loadBackground({ config = {}, onFetch, onCaptureTab }) {
     return {
         calls,
         captures,
+        tabMessages,
         stored,
         // Simulates chrome.runtime.sendMessage hitting the listener.
         send: (message, sender = {}) =>
