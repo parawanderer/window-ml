@@ -195,6 +195,49 @@ async function enableSheetsAccess() {
     }
 }
 
+// --- self-approval whitelist (mirrors Settings → Permissions) --------------------
+// Sites the user trusts to supply their OWN ml.agent approval gate; every other origin routes a
+// privileged tool call through the extension's approval card. Normalise to a bare hostname.
+function normDomain(input: string): string | null {
+    let s = input.trim().toLowerCase();
+    if (!s) return null;
+    try { if (/^[a-z]+:\/\//.test(s)) s = new URL(s).hostname; } catch { /* bare host */ }
+    s = s.replace(/^\/+/, "").split("/")[0].split(/[?#:]/)[0];
+    return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(s) ? s : null;
+}
+function renderPermList(domains: string[]) {
+    const list = document.getElementById("permList")!;
+    list.replaceChildren();
+    if (!domains.length) {
+        const e = document.createElement("div"); e.className = "hint"; e.textContent = "No trusted domains — every site's privileged agent calls go through the approval card.";
+        list.append(e); return;
+    }
+    for (const d of domains) {
+        const chip = document.createElement("span"); chip.className = "perm-chip";
+        const host = document.createElement("span"); host.className = "perm-host"; host.textContent = d;
+        const x = document.createElement("button"); x.className = "perm-x"; x.textContent = "✕"; x.title = `Remove ${d}`;
+        x.addEventListener("click", () => setDomains((cur) => cur.filter(v => v !== d)));
+        chip.append(host, x); list.append(chip);
+    }
+}
+async function setDomains(fn: (cur: string[]) => string[]) {
+    const { pageApprovalDomains = [] } = await chrome.storage.sync.get({ pageApprovalDomains: [] });
+    const next = fn(pageApprovalDomains as string[]);
+    await chrome.storage.sync.set({ pageApprovalDomains: next });
+    renderPermList(next);
+}
+function addDomain() {
+    const input = $("permDomain");
+    const d = normDomain(input.value);
+    if (!d) { setStatus("Enter a valid hostname, e.g. docs.google.com", "err"); return; }
+    setDomains((cur) => cur.includes(d) ? cur : [...cur, d].sort());
+    input.value = "";
+}
+async function loadPerms() {
+    const { pageApprovalDomains = [] } = await chrome.storage.sync.get({ pageApprovalDomains: [] });
+    renderPermList(pageApprovalDomains as string[]);
+}
+
 // Renders per-model VRAM usage from Ollama's /api/ps (used only — Ollama's API
 // doesn't report total GPU capacity, so there's no denominator to show).
 function renderVram(models: LoadedModel[]) {
@@ -239,9 +282,12 @@ $("unload").addEventListener("click", freeVram);
 $("test").addEventListener("click", saveAndTest);
 $("refreshVram").addEventListener("click", refreshVram);
 $("sheetsAccess").addEventListener("click", enableSheetsAccess);
+$("permAdd").addEventListener("click", addDomain);
+$("permDomain").addEventListener("keydown", (e) => { if ((e as KeyboardEvent).key === "Enter") { e.preventDefault(); addDomain(); } });
 
 // Populate the form, then auto-fetch the model list (no Load button — the
 // datalist just fills in). refreshVram in parallel.
 loadForm().then(loadModels);
 refreshVram();
 refreshSheetsAccess();
+loadPerms();

@@ -16,21 +16,19 @@
         --radius: 13px;
         --card-bg: rgba(255, 255, 255, .045); --card-border: rgba(255, 255, 255, .10);
         --card-shadow: 0 6px 20px rgba(0, 0, 0, .32), 0 1px 3px rgba(0, 0, 0, .24);
-        --body-grad: radial-gradient(125% 90% at 100% 0%, #292a31 0%, #191a1e 62%);
     }
     :root[data-theme="light"] {
         --bg: #ffffff; --panel: #f4f4f5; --panel-2: #e4e4e7; --panel-2-hover: #d4d4d8;
         --border: #d4d4d8; --fg: #18181b; --fg-dim: #52525b; --fg-faint: #a1a1aa;
         --accent: #6366f1; --accent-strong: #4f46e5; --accent-fg: #ffffff;
         --ok: #16a34a; --err: #dc2626;
-        --card-bg: rgba(255, 255, 255, .58); --card-border: rgba(0, 0, 0, .09);
+        --card-bg: rgba(0, 0, 0, .03); --card-border: rgba(0, 0, 0, .09);
         --card-shadow: 0 6px 20px rgba(0, 0, 0, .12), 0 1px 3px rgba(0, 0, 0, .08);
-        --body-grad: radial-gradient(120% 90% at 100% 0%, #ffffff 0%, #eef0f4 70%);
     }
     body {
         font-family: system-ui, -apple-system, sans-serif;
         font-size: 13px; width: 340px; margin: 0; padding: 14px;
-        background: var(--bg); background-image: var(--body-grad); color: var(--fg);
+        background: var(--bg); color: var(--fg);   /* flat — matches the DevTools panel (a popup can't be true acrylic) */
     }
     h1 { font-size: 14px; margin: 0 0 12px; display: flex; align-items: center; gap: 7px; }
     h1::before { content: "🤖"; font-size: 16px; }
@@ -89,6 +87,15 @@
     details.conn[open] { padding-bottom: 11px; }
     .free-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
     .free-row .hint { margin: 0; flex: 1; }
+    /* Self-approval domain whitelist (mirrors Settings → Permissions). */
+    .perm-sep { border-top: 1px solid var(--border); margin: 12px 0 2px; }
+    .perm-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .perm-chip { display: inline-flex; align-items: center; gap: 4px; background: var(--panel-2);
+        border: 1px solid var(--border); border-radius: 14px; padding: 3px 4px 3px 10px; }
+    .perm-host { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; }
+    .perm-x { background: transparent; border: none; color: var(--fg-faint); cursor: pointer; width: 18px; height: 18px;
+        border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; line-height: 1; padding: 0; }
+    .perm-x:hover { background: var(--panel-2-hover); color: var(--err); }
 </style>
 </head>
 <body>
@@ -131,8 +138,20 @@
          the related origins too. Collapsible like the connection block — collapsed once granted. -->
     <details class="conn" id="perms">
         <summary><span id="permsStatus"></span></summary>
+
+        <label for="permDomain">Trusted domains (self-approval)</label>
+        <div class="hint">Sites allowed to supply their own <code>ml.agent</code> approval gate. Every other site routes a privileged tool call through the extension's approval card, so a page can't self-approve.</div>
+        <div class="row">
+            <input id="permDomain" type="text" placeholder="example.com">
+            <button id="permAdd">Add</button>
+        </div>
+        <div id="permList" class="perm-list"></div>
+
+        <div class="perm-sep"></div>
+
+        <label>Google Sheets access</label>
         <div class="free-row">
-            <div id="sheetsHint" class="hint">Lets <code>python_exec</code> load a Google Sheet (the <code>sheet</code> arg) as a pandas DataFrame — needs host access to docs.google.com.</div>
+            <div id="sheetsHint" class="hint">Lets <code>python_exec</code> load a Google Sheet (the <code>tables</code> arg) as a pandas DataFrame — needs host access to docs.google.com.</div>
             <button id="sheetsAccess" title="Grant host access to Google Sheets (docs.google.com)">Enable</button>
         </div>
     </details>
