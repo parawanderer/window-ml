@@ -741,6 +741,10 @@ html[data-surface="card"] { color-scheme: normal !important; }
 .card-body::-webkit-scrollbar-track { background: transparent; }
 .card-body::-webkit-scrollbar-thumb { background: var(--panel-2); border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
 
+/* A fatal run error, shown in the card (red, verbatim-ish message). */
+.card-error { color: var(--err); line-height: 1.45; white-space: pre-wrap; word-break: break-word;
+    border-left: 3px solid var(--err); padding-left: 10px; }
+
 /* Intent view: ONE pending approval as an action to verify (not a debug trace). Goal → the action verb
    + human target (or the code, for code tools) → Deny/Approve. The final answer renders as plain
    markdown (.card-answer). */

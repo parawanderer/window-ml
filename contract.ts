@@ -657,7 +657,7 @@ export interface DebugAgentStep extends DebugBase {
     // current context occupancy (not a sum across steps — see TokenUsage).
     usage?: TokenUsage | null;
 }
-export interface DebugAgentResult extends DebugBase { kind: "agent-result"; summary: string; steps: number; hitCap: boolean; cancelled?: boolean; }
+export interface DebugAgentResult extends DebugBase { kind: "agent-result"; summary: string; steps: number; hitCap: boolean; cancelled?: boolean; error?: string | null; }
 
 /** The event stream injected.js emits over window.postMessage for the sidebar. */
 export type MlDebugEvent = DebugChatStart | DebugChatResult | DebugChatError

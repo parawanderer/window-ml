@@ -860,7 +860,15 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 });
                 sendResponse({ data: res });
             })
-            .catch((err) => sendResponse({ error: err?.message || String(err) }));
+            .catch((err) => {
+                // A fatal loop error — surface it to the off-mode card (the page's bus is dormant there,
+                // so injected can't), then reject the round-trip (injected re-throws → ml.agent rejects).
+                emitLifecycle({
+                    kind: "agent-result", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 },
+                    summary: "", steps: 0, hitCap: false, error: err?.message || String(err),
+                });
+                sendResponse({ error: err?.message || String(err) });
+            });
         return true;   // async: sendResponse fires when the whole run finishes
     }
     if (message.type === "PYTHON_EXEC") {

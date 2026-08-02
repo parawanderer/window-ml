@@ -546,6 +546,10 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                         emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, summary: "Cancelled by the caller.", steps: 0, hitCap: false, cancelled: true });
                         return { summary: "Cancelled by the caller.", steps: 0, transcript: [], elements: run ? run.answered : [], cancelled: true };
                     }
+                    // A FATAL error (e.g. the model call failed) — surface it so the sidebar/card don't hang
+                    // as "running", then re-throw so ml.agent() still rejects. (No-op in off mode, where the
+                    // bus is dormant; the BACKGROUND emits the error result for the card there.)
+                    emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, summary: "", steps: 0, hitCap: false, error: (e as Error)?.message || String(e) });
                     throw e;
                 } finally { exitAgentRun(); }
             }
@@ -729,6 +733,12 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 }
             }
             return finish({ summary: `Stopped at the ${maxSteps}-step cap without finishing.`, steps: maxSteps, transcript, elements: answered, hitCap: true });
+            } catch (e) {
+                // A FATAL error (e.g. the model call failed) escaped the loop — surface it so the sidebar
+                // doesn't hang as "running", then re-throw so ml.agent() still rejects. (Aborts already
+                // returned a clean cancel above, so a throw here is a real error.)
+                if (!signal?.aborted) emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, summary: "", steps: 0, hitCap: false, error: (e as Error)?.message || String(e) });
+                throw e;
             } finally { exitAgentRun(); }
         },
         /**

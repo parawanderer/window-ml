@@ -40,6 +40,7 @@ export interface Session {
     task?: string;
     steps?: AgentStep[];
     summary?: string;
+    error?: string;   // a FATAL run error (model call failed / unexpected throw) — distinct from a tool's Error result
     hitCap?: boolean;
     maxSteps?: number;
     agentConfig?: DebugAgentConfig;

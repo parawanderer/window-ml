@@ -56,7 +56,8 @@ function onDebug(ev: MlDebugEvent): void {
     if (ev.kind === "agent-result") {
         const s = sessionMap.get(ev.session.hash);
         if (!s) return;
-        s.summary = ev.summary; s.hitCap = ev.hitCap; s.status = ev.hitCap ? "err" : "ok"; s.lastTs = ev.ts;
+        s.summary = ev.summary; s.hitCap = ev.hitCap; s.error = ev.error || undefined;
+        s.status = (ev.error || ev.hitCap) ? "err" : "ok"; s.lastTs = ev.ts;
         rev.value++; return;
     }
     if (ev.kind === "chat") {
@@ -1103,11 +1104,13 @@ function AgentRunView({ s }: { s: Session }) {
                 turn: the final-answer turn puts its content in the summary (below) and its thinking here,
                 so without `t.reasoning` the final think block would vanish. */}
             {turns.filter(t => t.thought || t.reasoning || t.tools.length).map(t => <AgentTurn key={t.step} turn={t} max={s.maxSteps} hash={s.hash} />)}
-            {s.summary != null
-                ? <ReplyBubble content={s.summary} status={s.status} model={s.model}
-                    profile={sessionProfile(s)} ts={s.lastTs}
-                    label={s.hitCap ? "stopped (step cap)" : undefined} capped={s.hitCap} />
-                : <PendingNote s={s} />}
+            {s.error
+                ? <ReplyBubble content="" status="err" model={s.model} profile={sessionProfile(s)} ts={s.lastTs} error={s.error} label="run failed" />
+                : s.summary != null
+                    ? <ReplyBubble content={s.summary} status={s.status} model={s.model}
+                        profile={sessionProfile(s)} ts={s.lastTs}
+                        label={s.hitCap ? "stopped (step cap)" : undefined} capped={s.hitCap} />
+                    : <PendingNote s={s} />}
         </>
     );
 }
@@ -1716,7 +1719,7 @@ function CardApp() {
     const hash = run?.hash;
     const pendingStep = run ? (run.steps || []).find(st => isPendingGate(run.hash, st)) : undefined;
     const pending = !!pendingStep;
-    const done = !!run && run.summary != null;
+    const done = !!run && (run.summary != null || !!run.error);   // a fatal error is terminal, like the answer
     const dismissed = !!run && cardDismissed.value === run.hash;
     // Running = a live run with steps but nothing to act on yet → the small "working" pill. In "quiet"
     // HUD mode the idle pill is suppressed (the card still surfaces for an approval / the final answer).
@@ -1767,7 +1770,7 @@ function CardApp() {
     if (!run) return <div class="card-app" data-rev={r} />;
 
     const title = run.title || truncate(run.task || "Agent run", 80);
-    const headline = pending ? "Approval needed" : done ? (run.hitCap ? "Stopped" : "Task complete") : "Working…";
+    const headline = pending ? "Approval needed" : run.error ? "Run failed" : done ? (run.hitCap ? "Stopped" : "Task complete") : "Working…";
     const decide = (ok: boolean) => {
         if (!pendingStep || pendingStep.seq == null) return;
         decidedSteps.add(stepKey(run.hash, pendingStep.seq));
@@ -1819,7 +1822,9 @@ function CardApp() {
             <div class="card-body">
                 {pending && pendingStep
                     ? <ApprovalBody st={pendingStep} hash={run.hash} goal={title} />
-                    : <div class="card-answer md" dangerouslySetInnerHTML={{ __html: markdown(run.summary || "", { math: true }) }} />}
+                    : run.error
+                        ? <div class="card-error">{run.error}</div>
+                        : <div class="card-answer md" dangerouslySetInnerHTML={{ __html: markdown(run.summary || "", { math: true }) }} />}
             </div>
             {/* Deny/Approve as a FIXED footer — outside the scroll area, so it's always visible (a
                 drag-collapse or the scrollbar appearing can never cut or shift the buttons). */}

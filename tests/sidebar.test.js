@@ -2089,6 +2089,36 @@ test("card surface: quiet HUD suppresses the working pill, but an approval still
     assert.ok(posted.some(m => m.__mlSidebarCard === "expanded"), "the approval still shows the card");
 });
 
+test("card surface: a fatal run error surfaces (Run failed + the message), even in quiet mode", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off", agentHud: "quiet" } });
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    await w.raw({ __mlSidebarSurface: "card" });
+
+    const hash = "cardErr";
+    await w.dispatch(agentStart(hash, "do the thing", "m"));
+    await w.dispatch(agentStep(hash, 1, { seq: 0, pending: true, tool: "look", arguments: {} }));   // running (quiet → no pill)
+    await w.dispatch({ kind: "agent-result", id: hash, ts: Date.now(), save: false, session: { hash, turn: 1 }, summary: "", steps: 1, hitCap: false, error: "model call failed: HTTP 500" });
+    await w.flush();
+
+    // A terminal error reveals the card even in quiet mode (you need to know the run died).
+    assert.ok(posted.some(m => m.__mlSidebarCard === "expanded"), "the error reveals the card");
+    assert.match(w.window.document.querySelector(".card-head-txt").textContent, /Run failed/);
+    assert.match(w.window.document.querySelector(".card-error").textContent, /HTTP 500/);
+});
+
+test("agent run: a fatal error marks the session failed and shows the message in the debug view", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("errS", "do the thing", "m"));
+    await w.dispatch(agentStep("errS", 1, { tool: "look", arguments: {}, result: "ok" }));
+    await w.dispatch({ kind: "agent-result", id: "errS", ts: Date.now(), save: false, session: { hash: "errS", turn: 1 }, summary: "", steps: 1, hitCap: false, error: "connection refused" });
+
+    const row = w.shadow.querySelector(".row");
+    assert.ok(row.querySelector(".dot.err"), "the session dot goes red");
+    row.click(); await w.tick();
+    assert.match(w.shadow.querySelector(".msg.asst.err .errtext").textContent, /connection refused/, "the run's error is shown");
+});
+
 test("card surface: a running run shows the working pill + right-click asks for the corner menu", async () => {
     const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
     const posted = [];
