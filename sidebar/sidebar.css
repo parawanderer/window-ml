@@ -89,6 +89,8 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
    rotating disclosure triangle and breathing room below each section. */
 .set-section { display: flex; flex-direction: column; gap: 6px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
 .set-section[open] { gap: 8px; }
+/* The last section in a tab has nothing after it — drop the trailing divider + extra padding. */
+.set-body > .set-section:last-child { border-bottom: none; padding-bottom: 2px; }
 .set-section > summary.set-group { display: flex; align-items: center; gap: 6px; margin: 8px 2px 2px; cursor: pointer; list-style: none; user-select: none; }
 .set-section > summary.set-group::-webkit-details-marker { display: none; }
 .set-section > summary.set-group::before { content: ""; flex: none; width: 0; height: 0;
