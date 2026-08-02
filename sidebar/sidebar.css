@@ -75,7 +75,7 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* Category tabs span the full panel width (no side padding); the content below
    the nav carries the padding instead (.set-body). */
 .set-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--border); }
-.set-body { display: flex; flex-direction: column; gap: 6px; padding: 12px; }
+.set-body { display: flex; flex-direction: column; gap: 11px; padding: 12px 12px 16px; }
 .set-tab {
     flex: 1; padding: 7px 4px; background: none; border: none;
     border-bottom: 2px solid transparent; margin-bottom: -1px;
@@ -87,8 +87,10 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .set-group:first-of-type { margin-top: 2px; }
 /* Collapsible settings section: a <details> whose <summary> is the .set-group header, with a
    rotating disclosure triangle and breathing room below each section. */
-.set-section { display: flex; flex-direction: column; gap: 6px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
-.set-section[open] { gap: 8px; }
+.set-section { display: flex; flex-direction: column; gap: 6px; padding-bottom: 16px; border-bottom: 1px solid var(--border); }
+/* Roomier gap BETWEEN fields inside an open section (the label→input gap stays tight at 3px), so each
+   labelled control reads as its own group instead of crowding the field above it. */
+.set-section[open] { gap: 13px; }
 /* The last section in a tab has nothing after it — drop the trailing divider + extra padding. */
 .set-body > .set-section:last-child { border-bottom: none; padding-bottom: 2px; }
 .set-section > summary.set-group { display: flex; align-items: center; gap: 6px; margin: 8px 2px 2px; cursor: pointer; list-style: none; user-select: none; }
