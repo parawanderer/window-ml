@@ -156,7 +156,8 @@
         </div>
     </details>
 
-    <div class="panel">
+    <details class="conn" id="appearance" open>
+        <summary><span>Appearance</span></summary>
         <label for="theme">Theme</label>
         <select id="theme">
             <option value="auto">Auto (follow system)</option>
@@ -171,7 +172,24 @@
             <option value="devtools">DevTools panel</option>
         </select>
         <div class="hint">Where the ml-call debug log renders. <b>In-page</b> = a slide-out on every page. <b>DevTools</b> = the “window.ml” tab in DevTools, no on-page overlay.</div>
-    </div>
+
+        <label for="agentHud">Agent HUD</label>
+        <select id="agentHud">
+            <option value="progress">Progress (pill while running)</option>
+            <option value="quiet">Quiet (only when it needs you)</option>
+        </select>
+        <div class="hint">The corner card/pill for off-mode agent runs. <b>Quiet</b> hides the idle pill (an approval / error / answer still shows).</div>
+
+        <label for="cardCorner">Agent card corner</label>
+        <select id="cardCorner">
+            <option value="bottom-right">Bottom right</option>
+            <option value="bottom-left">Bottom left</option>
+            <option value="top-right">Top right</option>
+            <option value="top-left">Top left</option>
+        </select>
+
+        <label class="check" for="agentHudInDevtools"><input type="checkbox" id="agentHudInDevtools"> Also show the HUD alongside DevTools</label>
+    </details>
 
     <div id="vramSection" class="panel" style="display:none">
         <label class="panel-h">VRAM</label>

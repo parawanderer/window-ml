@@ -39,6 +39,10 @@ function readForm(): Record<string, string> {
 async function loadForm() {
     const config = await chrome.storage.sync.get(DEFAULT_CONFIG) as MlConfig;
     for (const field of FIELDS) $(field).value = config[field] as string;
+    // Agent-HUD prefs (siblings of the debug panel) — mirrored from Settings → Appearance.
+    $("agentHud").value = config.agentHud;
+    $("cardCorner").value = config.cardCorner;
+    $("agentHudInDevtools").checked = !!config.agentHudInDevtools;
     applyTheme(config.theme);
     // Connection block: expanded (and flagged) when unconfigured — it's the first thing
     // to do; collapsed once a URL is set.
@@ -276,6 +280,9 @@ function refreshVram(): Promise<LoadedModel[] | null> {
 // needed). The connection fields still gather under Save / Save & Test.
 $("theme").addEventListener("change", () => { applyTheme($("theme").value as Theme); chrome.storage.sync.set({ theme: $("theme").value }); });
 $("debugMode").addEventListener("change", () => chrome.storage.sync.set({ debugMode: $("debugMode").value }));
+$("agentHud").addEventListener("change", () => chrome.storage.sync.set({ agentHud: $("agentHud").value }));
+$("cardCorner").addEventListener("change", () => chrome.storage.sync.set({ cardCorner: $("cardCorner").value }));
+$("agentHudInDevtools").addEventListener("change", () => chrome.storage.sync.set({ agentHudInDevtools: $("agentHudInDevtools").checked }));
 $("chatUrl").addEventListener("input", updateConnSummary);
 $("save").addEventListener("click", save);
 $("unload").addEventListener("click", freeVram);
