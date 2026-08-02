@@ -314,8 +314,10 @@ function drawHighlight(left: number, top: number, width: number, height: number,
 }
 function hideHighlight(): void { hlSeq++; hlKind = ""; if (highlightEl) { highlightEl.remove(); highlightEl = null; } }
 // Highlight a page target on hover. ELEMENT mode (`selector`): the shell shares the page DOM, so it
-// resolves the rect itself. POINT/BOX mode (`token`, an @pt/@box): only the main world knows the
-// coords, so ask injected to resolve (ML_HL_RESOLVE → ML_HL_AT) and draw on the reply.
+// resolves a NATIVE-CSS selector itself. But ml's custom selectors (:contains/:has-text/:eq) throw in
+// document.querySelectorAll — so when native resolution fails, fall back to asking injected (main
+// world) to resolve it via ml's queryAll, exactly like the @pt/@box token path. POINT/BOX mode
+// (`token`): only the main world knows the coords, so it's always resolved by injected.
 function showHighlight(ref: { selector?: string; index?: number; token?: string; kind?: string } | null): void {
     if (!ref) return hideHighlight();
     hlKind = ref.kind === "approve" ? "approve" : "";
@@ -323,10 +325,13 @@ function showHighlight(ref: { selector?: string; index?: number; token?: string;
     if (ref.selector) {
         let el: Element | null = null;
         try { el = document.querySelectorAll(ref.selector)[ref.index || 0] || null; } catch { el = null; }
-        if (!el) return hideHighlight();
-        const r = el.getBoundingClientRect();
-        if (!r.width && !r.height) return hideHighlight();   // hidden/collapsed — nothing to show
-        drawHighlight(r.left, r.top, r.width, r.height, `${el.tagName.toLowerCase()} · ${Math.round(r.width)}×${Math.round(r.height)}`);
+        if (el) {
+            const r = el.getBoundingClientRect();
+            if (!r.width && !r.height) return hideHighlight();   // hidden/collapsed — nothing to show
+            return drawHighlight(r.left, r.top, r.width, r.height, `${el.tagName.toLowerCase()} · ${Math.round(r.width)}×${Math.round(r.height)}`);
+        }
+        // A custom ml selector (or no native match) → let injected resolve it and reply ML_HL_AT.
+        window.postMessage({ type: "ML_HL_RESOLVE", selector: ref.selector, index: ref.index || 0, seq }, "*");
     } else if (ref.token) {
         window.postMessage({ type: "ML_HL_RESOLVE", token: ref.token, seq }, "*");   // injected replies with the coords
     } else hideHighlight();

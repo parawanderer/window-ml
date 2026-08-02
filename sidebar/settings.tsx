@@ -76,7 +76,7 @@ const TIP = {
     utilityModel: "A small, cheap model for side tasks like session-title summaries. Leave blank to reuse the main model. Suggestions: qwen3.5:0.8b for an average machine, a gemma4:e2b-class model for a beefier one.",
     utilityNumCtx: "Context window (num_ctx) for the utility model. Summarising needs little context — keep it small on modest hardware; larger just uses more KV-cache memory. Only used when a utility model is set.",
     utilityForceCpu: "Run the utility model on CPU (num_gpu: 0) so it never competes with your main model for VRAM. Only used when a utility model is set.",
-    autoTitles: "Let the utility model generate a short title for each debug session. Off = sessions just show the first prompt. Only runs when a utility model is set and the panel is open.",
+    autoTitles: "Let the utility model write short summaries for you: debug session titles, and the plain-English gloss above a code approval / the description of a custom tool call in the off-mode card. Off = titles fall back to the first prompt and the card shows no summary. Only runs when a utility model is set.",
     autoApproveReadonly: "Experimental. Run read-only exec surveys (querySelectorAll → filter → map, no mutation) without an approval prompt, via a mediated interpreter that can't reach window/fetch and never eval()s a string. Anything that mutates or isn't recognised still asks. Also lets these surveys run on Trusted-Types pages where eval is blocked.",
     autoApprovePython: "Experimental. Run readonly-mode python_exec calls without an approval prompt. A readonly run is isolated by construction — the WASM sandbox has no DOM, no filesystem, and (in this mode) no network or JS/extension scope — so it's a pure function over the injected data and can't affect the page or exfiltrate. A `mode:'full'` call (which the agent must explicitly request to get network) ALWAYS asks. Code with hidden/bidi characters also still asks.",
     groundingEnabled: "Experimental. When on, ml.agent's `locate` tool asks a grounding VLM for bounding-box coordinates. This loads an extra model into VRAM — leave off if memory is tight. Off = locate still works via the Set-of-Marks screenshot tool, which needs no extra model.",
@@ -509,7 +509,7 @@ export function Settings() {
                 <label class={`set-check${utilOn ? "" : " off"}`}>
                     <input type="checkbox" checked={c.autoTitles} disabled={!utilOn}
                         onChange={(e: any) => setField("autoTitles", e.target.checked)} />
-                    <Lbl tip={TIP.autoTitles}>Summarise chat titles with the utility model</Lbl>
+                    <Lbl tip={TIP.autoTitles}>Auto-summarise with the utility model</Lbl>
                 </label>
                 </Section>
 

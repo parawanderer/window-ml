@@ -1526,6 +1526,21 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
     // itself (in its shadow root — no page mutation). `seq` echoes back so a stale hover is ignored.
     window.addEventListener("message", (e: MessageEvent) => {
         if (e.source !== window || !e.data || e.data.type !== "ML_HL_RESOLVE") return;
+        // A CSS/custom SELECTOR the shell couldn't resolve natively (ml's :contains/:has-text/:eq that
+        // document.querySelectorAll rejects) → resolve via queryAll and return the element's viewport box.
+        if (typeof e.data.selector === "string") {
+            let box: { left: number; top: number; right: number; bottom: number } | null = null;
+            let label = "";
+            try {
+                const el = queryAll(e.data.selector)[e.data.index || 0];
+                if (el) {
+                    const r = el.getBoundingClientRect();
+                    if (r.width || r.height) { box = { left: r.left, top: r.top, right: r.right, bottom: r.bottom }; label = `${el.tagName.toLowerCase()} · ${Math.round(r.width)}×${Math.round(r.height)}`; }
+                }
+            } catch { /* still not resolvable — no box */ }
+            window.postMessage({ type: "ML_HL_AT", seq: e.data.seq, point: null, box, label }, "*");
+            return;
+        }
         const token = String(e.data.token || "");
         const point = resolvePoint(token);
         const box = point ? null : resolveBox(token);

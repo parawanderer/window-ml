@@ -1560,10 +1560,14 @@ const isPendingGate = (hash: string, st: AgentStep): boolean =>
 // Lazily summarise the run's task with the utility model (if configured) for the toast headline —
 // the sidebar's title machinery, but ungated on sidebarOpen (irrelevant to the card).
 function ensureCardTitle(s: Session): void {
-    if (s.title || cardTitleTried.has(s.hash) || !config.value.utilityModel.trim()) return;
+    if (s.title || cardTitleTried.has(s.hash) || !utilitySummariesOn()) return;
     cardTitleTried.add(s.hash);
     genTitle(s.hash, s.task || "");
 }
+
+// Utility-model auto-summaries (card title, code/action approval summaries) are gated on BOTH a
+// configured utility model AND the "summarise with the utility model" toggle (config.autoTitles).
+const utilitySummariesOn = () => config.value.autoTitles && !!config.value.utilityModel.trim();
 
 // Plain-English summary of a CODE approval's snippet, via the utility model — so the human reads "sums
 // every quarter and finds the top rep" ABOVE the actual code (which still shows, as the consent
@@ -1571,7 +1575,7 @@ function ensureCardTitle(s: Session): void {
 const codeSummaries = new Map<string, string>();
 const codeSummaryTried = new Set<string>();
 function ensureCodeSummary(hash: string, seq: number, lang: string, code: string): void {
-    if (!config.value.utilityModel.trim() || !code.trim()) return;
+    if (!utilitySummariesOn() || !code.trim()) return;
     const key = stepKey(hash, seq);
     if (codeSummaryTried.has(key)) return;
     codeSummaryTried.add(key);
@@ -1584,7 +1588,7 @@ function ensureCodeSummary(hash: string, seq: number, lang: string, code: string
 // A tool with NO deterministic intent (a custom approval-gated tool, no `action` render) still gets a
 // human description — the utility model paraphrases the call. Same cache/plumbing as the code summary.
 function ensureActionSummary(hash: string, seq: number, tool: string, args: Record<string, unknown>): void {
-    if (!config.value.utilityModel.trim() || !tool) return;
+    if (!utilitySummariesOn() || !tool) return;
     const key = stepKey(hash, seq);
     if (codeSummaryTried.has(key)) return;
     codeSummaryTried.add(key);

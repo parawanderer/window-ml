@@ -11,6 +11,10 @@ export type ApiFormat = "openai" | "ollama";
 export type Theme = "auto" | "dark" | "light";
 // Which corner the off-mode approval card / working pill anchors to.
 export type CardCorner = "bottom-right" | "bottom-left" | "top-right" | "top-left";
+// The on-page corner HUD's verbosity: "progress" shows the working pill while an agent runs (+ the
+// approval card + answer); "quiet" drops the idle pill and only surfaces the card for an approval /
+// the final answer. (An approval can never be fully suppressed — it's the trusted gate.)
+export type AgentHud = "progress" | "quiet";
 // Where the debug UI renders: nowhere (zero cost), the in-page overlay (content-script
 // shadow-root shell), or the DevTools "window.ml" panel only (no in-page overlay). In
 // devtools mode the shell still forwards events to the background so the panel receives them.
