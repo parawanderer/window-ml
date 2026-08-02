@@ -780,7 +780,7 @@ html[data-surface="card"] { color-scheme: normal !important; }
     background: rgba(0, 0, 0, .18); border: 1px solid rgba(0, 0, 0, .18); opacity: .85; }
 
 /* Permissions tab: the self-approval domain whitelist + the Sheets grant. */
-.perm-add { display: flex; gap: 6px; }
+.perm-add { display: flex; gap: 6px; margin-top: 8px; }
 .perm-input, .perm-search { box-sizing: border-box; padding: 6px 8px; border: 1px solid var(--border);
     border-radius: 6px; background: var(--bg); color: var(--fg); font-size: 0.95em; }
 .perm-input { flex: 1; }
