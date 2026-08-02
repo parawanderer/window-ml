@@ -735,6 +735,11 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
 .card-head { display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
     padding: 9px 8px 9px 13px; border-bottom: 1px solid var(--border); }
 .card-head-txt { font-weight: 650; font-size: 1.05em; }
+/* Grab-drag affordance (pill/toast/head are draggable → snap to a corner). Buttons inside keep their own
+   cursor; touch-action:none so a touch-drag moves the HUD instead of scrolling the page. */
+.card-pill, .card-toast, .card-head { cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.card-pill:active, .card-toast:active, .card-head:active { cursor: grabbing; }
+.card-head button, .card-toast button { cursor: pointer; }
 /* Fills the space between the fixed header/footer and scrolls internally when the shell caps the card
    to the viewport (a long answer/code). min-height:0 lets a flex child actually shrink+scroll.
    scrollbar-gutter: stable reserves the scrollbar's width so content doesn't SHIFT when it appears. */
@@ -765,6 +770,56 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
 .card-foot { animation-delay: .18s; }   /* the buttons settle in last */
 @media (prefers-reduced-motion: reduce) {
     .card-body .action > *, .card-answer, .card-error, .card-foot { animation: none; }
+}
+
+/* Spotlight composer — the HUD morphed into a task input (the container morph is shell-side; this is the
+   content unfurl). Namespaced `card-cmp-*` so it can't collide with the panel's own `.composer` box. */
+.card-cmp-input {
+    width: 100%; box-sizing: border-box; resize: none;
+    background: var(--panel); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 9px;
+    padding: 10px 12px; font: inherit; font-size: 1em; line-height: 1.45;
+    outline: none; transition: border-color .15s ease;
+    animation: cmp-in .3s cubic-bezier(.2, .9, .3, 1.08);
+}
+.card-cmp-input:focus { border-color: var(--accent); }
+.card-cmp-input::placeholder { color: var(--fg-faint); }
+.card-cmp-foot { align-items: center; }
+.card-cmp-hint { color: var(--fg-faint); font-size: .82em; }
+/* Step-budget segmented control — a pretty pill selector (macOS-style raised selected), NOT a bare select. */
+.card-cmp-budget { display: flex; align-items: center; gap: 8px; }
+.card-cmp-budget-label { color: var(--fg-faint); font-size: .82em; }
+.seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: 9px; background: var(--panel-2); border: 1px solid var(--border); }
+.seg .seg-opt {
+    border: none; background: transparent; color: var(--fg-dim);
+    font: inherit; font-size: .82em; font-weight: 600; font-variant-numeric: tabular-nums;
+    padding: 3px 11px; border-radius: 7px; cursor: pointer; transition: background .15s ease, color .15s ease, box-shadow .15s ease;
+}
+.seg .seg-opt:not(.on):hover { color: var(--fg); }
+.seg .seg-opt.on { color: var(--fg); background: var(--panel); box-shadow: 0 1px 3px rgba(0, 0, 0, .28); }
+@keyframes cmp-in { from { opacity: 0; transform: scale(.97); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .card-cmp-input { animation: none; } }
+
+/* HUD buttons: soft & Apple-ish, not neon. Approve/Send = a gentle green-tinted fill; Deny = a neutral
+   ghost that only reddens on hover. Scoped to the card so the debug panel's brighter buttons stay as-is. */
+html[data-surface="card"] .appr-btn {
+    font-weight: 600; border-radius: 8px; border: 1px solid transparent;
+    transition: background .15s ease, border-color .15s ease, color .15s ease;
+}
+html[data-surface="card"] .appr-btn:hover { filter: none; }
+html[data-surface="card"] .appr-btn.yes {
+    color: var(--ok); background: color-mix(in srgb, var(--ok) 16%, transparent);
+    border-color: color-mix(in srgb, var(--ok) 30%, transparent);
+}
+html[data-surface="card"] .appr-btn.yes:hover {
+    background: color-mix(in srgb, var(--ok) 26%, transparent); border-color: color-mix(in srgb, var(--ok) 45%, transparent);
+}
+html[data-surface="card"] .appr-btn.yes:disabled { opacity: .5; cursor: default; }
+html[data-surface="card"] .appr-btn.no {
+    color: var(--fg-dim); background: transparent; border-color: var(--border);
+}
+html[data-surface="card"] .appr-btn.no:hover {
+    color: var(--err); background: color-mix(in srgb, var(--err) 12%, transparent); border-color: color-mix(in srgb, var(--err) 38%, transparent);
 }
 
 /* "Show work" — the audit trail under a finished card (the full step trace, reusing the sidebar rows). */
@@ -813,7 +868,7 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
 .action { display: flex; flex-direction: column; gap: 11px; }
 .action-goal { color: var(--fg-dim); font-size: .95em; line-height: 1.4; }
 .action-card { border: 1px solid var(--border); border-radius: 10px; padding: 11px 12px;
-    display: flex; flex-direction: column; gap: 7px; }
+    display: flex; flex-direction: column; gap: 7px; min-width: 0; }
 /* The intent sentence: "Agent wants to click the button «…»". Verb + target emphasised, plain text. */
 .action-sentence { font-size: 1.04em; line-height: 1.5; word-break: break-word; }
 .action-verb { font-weight: 700; color: var(--fg); }
@@ -826,8 +881,8 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
 @keyframes loc-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, .5); } 50% { box-shadow: 0 0 0 5px rgba(34, 197, 94, 0); } }
 @media (prefers-reduced-motion: reduce) { .loc-dot { animation: none; } }
 .action-card.code { gap: 6px; }
-.action-summary { color: var(--fg); font-size: .98em; line-height: 1.4; }   /* utility-model plain-English gloss above the code */
-.action-codeblk { max-height: 42vh; overflow: auto; }
+.action-summary { color: var(--fg); font-size: .98em; line-height: 1.4; overflow-wrap: anywhere; }   /* utility-model plain-English gloss above the code (wraps, never clips) */
+.action-codeblk { max-height: 42vh; overflow: auto; min-width: 0; max-width: 100%; }
 .action-codeblk .code { margin: 0; }
 .action-sheets { display: flex; gap: 6px; align-items: flex-start; color: var(--warn); font-size: .9em; margin-top: 1px; }
 .action-sheets svg { flex: 0 0 auto; margin-top: 2px; }

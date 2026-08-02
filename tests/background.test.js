@@ -1133,6 +1133,37 @@ test("START_RUN (surface 'devtools') fans a background run's step events to the 
     assert.ok(steps.some(s => s.__mlDebug.usage && s.__mlDebug.usage.totalTokens === 12), "the usage step fanned to the panel");
 });
 
+test("CANCEL_RUN aborts a background run's in-flight model call → the run resolves cancelled", async () => {
+    // The HUD's "Cancel agent run": abort the run's controller mid-generation. The loop threads the
+    // signal into fetchLLM (kills the slow call) and converts the AbortError to a clean { cancelled }.
+    let sawSignal = false;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => new Promise((_, reject) => {
+            sawSignal = !!call.opts.signal;
+            const abort = () => { const e = new Error("aborted"); e.name = "AbortError"; reject(e); };
+            if (call.opts.signal.aborted) return abort();
+            call.opts.signal.addEventListener("abort", abort);
+        }),
+    });
+    const pending = bg.send({ type: "START_RUN", payload: {
+        runId: "runC", task: "x", systemPrompt: "sys", tools: [], model: "m", think: null,
+        maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools",
+    } }, { tab: { id: 8 } });
+    await new Promise(r => setTimeout(r, 0));   // let the run reach its in-flight model call
+    bg.send({ type: "CANCEL_RUN", payload: { runId: "runC" } });   // fire-and-forget (no response)
+    const res = await pending;
+    assert.equal(sawSignal, true, "the run's model fetch received the abort signal");
+    assert.ok(res.data && res.data.cancelled, "the aborted run resolves as cancelled (not an error)");
+});
+
+test("CANCEL_RUN for an unknown run id is a harmless no-op", async () => {
+    const bg = loadBackground({ config: baseConfig(), onFetch: () => jsonResponse({ choices: [{ message: { content: "ok" } }] }) });
+    bg.send({ type: "CANCEL_RUN", payload: { runId: "ghost" } });   // nothing registered → no throw
+    const res = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }] }, requestId: "rz" });
+    assert.equal(res.data, "ok", "a later request is unaffected");
+});
+
 // ---- FETCH_SHEET: credentialed Google Sheets CSV export ----
 
 test("FETCH_SHEET returns the CSV body, fetched with the user's Google cookies", async () => {

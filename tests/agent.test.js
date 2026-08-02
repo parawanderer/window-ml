@@ -27,6 +27,26 @@ test("_truncate tolerates null/undefined", () => {
     assert.equal(ml._truncate(undefined, 5), "");
 });
 
+test("__mlStartAgent (HUD composer relay) runs a REAL ml.agent() call in the page", () => {
+    // The Spotlight composer → shell → page: injected must dispatch an actual ml.agent(task) so it's a
+    // genuine session (hash, resumable), not a fake. Stub ml.agent to capture the call.
+    const { ml, window } = loadDomWorld();
+    let calledWith = null, calledOpts = null;
+    ml.agent = (task, opts) => { calledWith = task; calledOpts = opts; return Promise.resolve({ summary: "" }); };
+    window.dispatchEvent(new window.MessageEvent("message", { data: { __mlStartAgent: { task: "do a thing", maxSteps: 20 } }, source: window }));
+    assert.equal(calledWith, "do a thing", "the page ran ml.agent with the composer's task");
+    assert.equal(calledOpts?.maxSteps, 20, "the composer's step budget threads to ml.agent");
+    // A UI-started run gets a capable default kit (click/type/python) via extraTools — the model tried to
+    // use `click` and got "no tool named click" when it was missing.
+    const toolNames = (calledOpts?.extraTools || []).map(t => t.name);
+    assert.ok(["click", "type", "python_exec"].every(n => toolNames.includes(n)), `composer run wires click/type/python (got ${toolNames.join(",")})`);
+
+    // A blank task is ignored (no empty run).
+    calledWith = null;
+    window.dispatchEvent(new window.MessageEvent("message", { data: { __mlStartAgent: { task: "   " } }, source: window }));
+    assert.equal(calledWith, null, "a blank task starts nothing");
+});
+
 // ---- elPath ----
 
 test("_elPath builds a root→leaf path with id and classes (stops at <html>)", () => {

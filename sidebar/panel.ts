@@ -60,7 +60,11 @@ function connect(): void {
     port.onMessage.addListener((msg: any) => {
         if (msg?.__mlDebug) toApp(msg.__mlDebug);
         else if (msg?.reset) resetApp();
-        else if (Array.isArray(msg?.replay)) { resetApp(); for (const e of msg.replay) toApp(e); }   // authoritative catch-up
+        // A non-empty replay is authoritative catch-up (reset first so re-applying can't dupe). An EMPTY
+        // replay almost always means the background SW was just recycled and its in-memory buffer is gone
+        // — NOT that the history is really empty. Wiping the panel then (it outlives the SW) was the
+        // "random history vanished" bug: keep what's shown; a real page navigation clears via `reset`.
+        else if (Array.isArray(msg?.replay) && msg.replay.length) { resetApp(); for (const e of msg.replay) toApp(e); }
     });
     port.onDisconnect.addListener(() => { setTimeout(connect, 500); });   // SW cycled → re-establish
 }

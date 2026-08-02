@@ -54,6 +54,15 @@ test("tables map: each df binds under its name AND in tables[name]; numeric colu
     assert.deepEqual(r.value, [210, 210, "int64"]);
 });
 
+test("single source aliases into tables[<source>] too (a model that passed 'current' → tables['current'])", { skip }, async () => {
+    // A single source is loaded as `df`; the `alias` (the raw source string) also keys the tables dict,
+    // so tables['current'] resolves to the same df — accommodating the natural mirror of the passed arg.
+    const r = await pyRun(
+        "return [int(df['Q1'].sum()), int(tables['current']['Q1'].sum()), tables['current'] is df]",
+        { tables: [{ ...rows("df", ["Rep", "Q1"], [["Ada", 120], ["Ben", 90]]), alias: "current" }] });
+    assert.deepEqual(r.value, [210, 210, true]);
+});
+
 test("tables map: two sources join with pd.merge under their own names", { skip }, async () => {
     const r = await pyRun("return pd.merge(sales, targets, on='Rep')['Q1'].tolist()", {
         tables: [rows("sales", ["Rep", "Q1"], [["Ada", 120], ["Ben", 90]]),

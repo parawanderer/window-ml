@@ -56,8 +56,8 @@ function onDebug(ev: MlDebugEvent): void {
     if (ev.kind === "agent-result") {
         const s = sessionMap.get(ev.session.hash);
         if (!s) return;
-        s.summary = ev.summary; s.hitCap = ev.hitCap; s.error = ev.error || undefined;
-        s.status = (ev.error || ev.hitCap) ? "err" : "ok"; s.lastTs = ev.ts;
+        s.summary = ev.summary; s.hitCap = ev.hitCap; s.error = ev.error || undefined; s.cancelled = !!ev.cancelled;
+        s.status = (ev.error || ev.hitCap || ev.cancelled) ? "err" : "ok"; s.lastTs = ev.ts;
         rev.value++; return;
     }
     if (ev.kind === "chat") {
@@ -814,7 +814,9 @@ function ThoughtBlock({ thought }: { thought: string }) {
             <button class="astep-head" onClick={() => setOpen(v => !v)}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
                 <span class="who">thinking</span>
-                {!open ? <span class="astep-preview">~{tokEst} tokens</span> : null}
+                {/* The ~token estimate is a debug detail — hidden in the user-facing HUD card, kept in the
+                    DevTools panel / overlay. */}
+                {!open && surface.value !== "card" ? <span class="astep-preview">~{tokEst} tokens</span> : null}
             </button>
             {open ? <div class="md astep-body" dangerouslySetInnerHTML={{ __html: markdown(thought, { math: true }) }} /> : null}
         </div>
@@ -937,12 +939,13 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                     <IoBlock label="Out" tip="What the tool returned to the model."
                         preview={st.pending ? "running…" : inlineText(st.result || "")} render={outRender}
                         raw={st.result ? <Code text={st.result} lang="text" /> : <span class="dim">{st.pending ? "running…" : "(no output)"}</span>} />
-                    {/* On-demand plain-English gloss for a code step — CARD's Show-work trace only (the debug
-                        panel keeps the raw code); needs a utility model. */}
-                    {surface.value === "card" && (st.tool === "exec" || st.tool === "python_exec") && hash && st.seq != null && config.value.utilityModel.trim()
-                        ? <CodeExplain hash={hash} seq={st.seq} lang={st.tool === "python_exec" ? "python" : "javascript"} code={codeOf(st)?.text || ""} result={st.result} />
-                        : null}
                 </div>
+                : null}
+            {/* On-demand plain-English gloss for a code step — CARD's Show-work trace only (the debug panel
+                keeps the raw code); needs a utility model. Lives UNDER the (collapsed) step, not inside the
+                expand, so you can annotate a call without opening its whole In/Out. */}
+            {surface.value === "card" && (st.tool === "exec" || st.tool === "python_exec") && hash && st.seq != null && !st.pending && config.value.utilityModel.trim()
+                ? <CodeExplain hash={hash} seq={st.seq} lang={st.tool === "python_exec" ? "python" : "javascript"} code={codeOf(st)?.text || ""} result={st.result} />
                 : null}
             {/* Approval bar at the BOTTOM — after In/Out — so you review the call (its rendered In)
                 before the approve/deny controls, and it reads as the last thing to act on. */}
@@ -1116,10 +1119,10 @@ function AgentRunView({ s }: { s: Session }) {
             {turns.filter(t => t.thought || t.reasoning || t.tools.length).map(t => <AgentTurn key={t.step} turn={t} max={s.maxSteps} hash={s.hash} />)}
             {s.error
                 ? <ReplyBubble content="" status="err" model={s.model} profile={sessionProfile(s)} ts={s.lastTs} error={s.error} label="run failed" />
-                : s.summary != null
-                    ? <ReplyBubble content={s.summary} status={s.status} model={s.model}
+                : s.summary != null || s.cancelled
+                    ? <ReplyBubble content={s.summary || ""} status={s.status} model={s.model}
                         profile={sessionProfile(s)} ts={s.lastTs}
-                        label={s.hitCap ? "stopped (step cap)" : undefined} capped={s.hitCap} />
+                        label={s.cancelled ? "cancelled" : s.hitCap ? "stopped (step cap)" : undefined} capped={s.hitCap || s.cancelled} />
                     : <PendingNote s={s} />}
         </>
     );
@@ -1560,6 +1563,10 @@ const surface = signal<"panel" | "card">("panel");
 const cardCollapsed = signal(false);         // user collapsed a FINISHED card down to a toast (default: show it)
 const cardDismissed = signal<string>("");    // the run hash the user dismissed (closes a finished card)
 const cardShowWork = signal(false);          // "Show work" — expand the full step trace under a finished card
+const composerOpen = signal(false);          // the Spotlight composer — the HUD morphs into a task input
+const composerMaxSteps = signal(20);         // step budget for a UI-started run (persists across opens)
+const STEP_BUDGETS = [10, 20, 50];           // the segmented presets in the composer
+const composerStarting = signal(0);          // timestamp: a UI run was sent, awaiting its first event (bridge pill)
 const cardTitleTried = new Set<string>();
 
 const latestAgentRun = (): Session | null => {
@@ -1678,6 +1685,8 @@ function codeOf(st: AgentStep): { text: string; lang: string } | null {
 // FIXED footer (CardApp), so a scroll or a drag-collapse never cuts them off. While it's up, the real
 // page element is highlighted (a pulsing green spotlight), and the card names where it is on the page.
 function ApprovalBody({ st, hash, goal }: { st: AgentStep; hash: string; goal: string }) {
+    const rv = rev.value;   // subscribe: the utility-model gloss lands on a rev bump (this reads a signal →
+                            // auto-memoized, so without this it wouldn't re-render for it). Retained via data-rev.
     const code = codeOf(st);
     const intent = intentFor(st);
     const key = st.seq != null ? stepKey(hash, st.seq) : "";
@@ -1693,7 +1702,7 @@ function ApprovalBody({ st, hash, goal }: { st: AgentStep; hash: string; goal: s
     const sheets = externalSheetGrant(st.arguments);
     const isType = !!intent && intent.verb.toLowerCase() === "type";
     return (
-        <div class="action">
+        <div class="action" data-rev={rv}>
             <div class="action-goal">{goal}</div>
             {code
                 ? <div class="action-card code">
@@ -1744,7 +1753,61 @@ function activityFor(run: Session): { icon: string; label: string; short: string
 }
 // Right-click the card/pill → ask the shell to draw the "move to corner" menu (drawn shell-side so the
 // tiny pill iframe can't clip it). Coords are iframe-local; the shell offsets by the frame's position.
-const cardCtxMenu = (e: any) => { e.preventDefault(); window.parent.postMessage({ __mlSidebarCornerMenu: { x: e.clientX, y: e.clientY } }, "*"); };
+// Carry the run hash (for Copy run id / Cancel) + whether it's still live (Cancel only shows then).
+const cardCtxMenu = (e: any) => {
+    e.preventDefault();
+    const run = latestAgentRun();
+    const live = !!run && run.summary == null && !run.error;
+    window.parent.postMessage({ __mlSidebarCornerMenu: { x: e.clientX, y: e.clientY, hash: run?.hash || "", live } }, "*");
+    armMenuDismiss();
+};
+// Grab-drag the HUD: pointer-capture the grab region (pill/head/toast — works for mouse AND touch) and
+// stream movement DELTAS to the shell, which moves the container and snaps to the nearest corner on
+// release. A click (movement below a small threshold) is left alone, so buttons / toast-expand still fire.
+const startCardDrag = (e: any) => {
+    if (e.button != null && e.button !== 0) return;                                          // left / touch only
+    if ((e.target as HTMLElement).closest("button, input, textarea, a, .seg")) return;       // not on a control
+    const el = e.currentTarget as HTMLElement;
+    const startX = e.clientX, startY = e.clientY;
+    let dragging = false;
+    const move = (ev: any) => {
+        if (!dragging) {
+            if (Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) < 4) return;   // threshold → still a click
+            dragging = true;
+            try { el.setPointerCapture(e.pointerId); } catch { /* older engines */ }
+            window.parent.postMessage({ __mlSidebarCardGrab: true }, "*");
+        }
+        window.parent.postMessage({ __mlSidebarCardMove: { dx: ev.movementX, dy: ev.movementY } }, "*");
+    };
+    const up = () => {
+        el.removeEventListener("pointermove", move);
+        el.removeEventListener("pointerup", up);
+        if (!dragging) return;
+        window.parent.postMessage({ __mlSidebarCardDrop: true }, "*");
+        // A drag must CANCEL the click that fires after pointerup — otherwise dropping a dragged toast
+        // also triggers its onClick (expand). Swallow the next click in the CAPTURE phase (before the
+        // element's handler); a timeout clears it if no click follows (some engines skip it after capture).
+        const swallow = (ce: Event) => { ce.stopPropagation(); clear(); };
+        const clear = () => window.removeEventListener("click", swallow, true);
+        window.addEventListener("click", swallow, true);
+        setTimeout(clear, 350);
+    };
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
+};
+// The corner menu is drawn in the SHELL (top document), but the right-click that opened it happened
+// inside THIS iframe — so the page window was already blurred and a later in-card click fires no new
+// blur, nor does its pointerdown reach the shell's outside-click handler. So the NEXT pointerdown in the
+// card tells the shell to dismiss the menu. Single-armed so repeated right-clicks don't stack listeners.
+let menuDismissArmed = false;
+function armMenuDismiss(): void {
+    if (menuDismissArmed) return;
+    menuDismissArmed = true;
+    window.addEventListener("pointerdown", () => {
+        menuDismissArmed = false;
+        window.parent.postMessage({ __mlSidebarCornerMenuDismiss: true }, "*");
+    }, { once: true, capture: true });
+}
 
 // "Show work" — the audit trail under a finished card. The card already HAS the whole trace (run.steps),
 // it just hides it; this re-renders it with the SAME components the debug sidebar uses (AgentTurn →
@@ -1770,27 +1833,98 @@ function ShowWork({ run }: { run: Session }) {
     );
 }
 
+// The Spotlight composer — the HUD morphed into a task input. Reuses the card's head/body/foot anatomy
+// (same 🤖 in the same top-left spot as every other state) so it reads as the SAME blob reshaping, not a
+// new panel. On send it posts `startRun` to the shell → the page runs a real ml.agent() (hash, resumable).
+function ComposerCard() {
+    const [text, setText] = useState("");
+    const budget = composerMaxSteps.value;   // the step budget (persists across opens)
+    const ref = useRef<HTMLTextAreaElement>(null);
+    // Focus after a frame so the container's morph (and the shell's frame.focus) has landed.
+    useEffect(() => { const id = requestAnimationFrame(() => ref.current?.focus()); return () => cancelAnimationFrame(id); }, []);
+    const close = () => { composerOpen.value = false; };
+    const send = () => {
+        const t = text.trim();
+        if (!t) return;
+        // Bridge the round-trip: show a "Starting…" pill until the run's first event arrives (the composer
+        // flies back to the corner and is instantly working). Safety-cleared if the run never surfaces.
+        const t0 = Date.now();
+        composerStarting.value = t0;
+        setTimeout(() => { if (composerStarting.value === t0) composerStarting.value = 0; }, 10000);
+        window.parent.postMessage({ __mlSidebarApp: "startRun", task: t, maxSteps: composerMaxSteps.value }, "*");
+        close();
+    };
+    return (
+        <div class="card-app" data-rev={rev.value}>
+            <div class="card-head">
+                <span class="card-bot" aria-hidden="true">🤖</span>
+                <span class="card-head-txt">New task</span>
+                <span class="sp" />
+                <button class="card-x" aria-label="Cancel" title="Cancel" onClick={close}>✕</button>
+            </div>
+            <div class="card-body">
+                <textarea ref={ref} class="card-cmp-input" rows={3}
+                    placeholder="Ask window.ml to do something on this page…"
+                    value={text}
+                    onInput={e => setText((e.target as HTMLTextAreaElement).value)}
+                    onKeyDown={e => {
+                        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+                        else if (e.key === "Escape") { e.preventDefault(); close(); }
+                    }} />
+            </div>
+            <div class="card-foot card-cmp-foot">
+                <span class="card-cmp-hint"><kbd class="kb">↵</kbd> send · <kbd class="kb">esc</kbd> cancel</span>
+                <span class="sp" />
+                {/* Step budget — a pretty segmented control (not a bare <select>); caps the agent loop. */}
+                <div class="card-cmp-budget" title="How many tool steps the agent may take">
+                    <span class="card-cmp-budget-label">Steps</span>
+                    <div class="seg" role="group" aria-label="Step budget">
+                        {STEP_BUDGETS.map(n => (
+                            <button key={n} class={`seg-opt${budget === n ? " on" : ""}`}
+                                aria-pressed={budget === n} onClick={() => (composerMaxSteps.value = n)}>{n}</button>
+                        ))}
+                    </div>
+                </div>
+                <button class="appr-btn yes" onClick={send} disabled={!text.trim()}>Send</button>
+            </div>
+        </div>
+    );
+}
+
 function CardApp() {
     const r = rev.value;   // subscribe to session changes (retained via data-rev below)
+    const composing = composerOpen.value;   // Spotlight bar open → the HUD morphs into the task input
+    const showWork = cardShowWork.value;    // subscribe: toggling "Show work" must re-measure our height
     const run = latestAgentRun();
     const hash = run?.hash;
     const pendingStep = run ? (run.steps || []).find(st => isPendingGate(run.hash, st)) : undefined;
     const pending = !!pendingStep;
-    const done = !!run && (run.summary != null || !!run.error);   // a fatal error is terminal, like the answer
+    const done = !!run && (run.summary != null || !!run.error || !!run.cancelled);   // terminal: answer, fatal error, or cancelled
     const dismissed = !!run && cardDismissed.value === run.hash;
-    // Running = a live run with steps but nothing to act on yet → the small "working" pill. In "quiet"
-    // HUD mode the idle pill is suppressed (the card still surfaces for an approval / the final answer).
-    const running = !!run && !pending && !done && (run.steps || []).length > 0;
-    const showRunning = running && config.value.agentHud !== "quiet";
-    const visible = !!run && (pending || showRunning || (done && !dismissed));
-    const state = !visible ? "hidden"
+    // BRIDGE: the composer was just sent but the run's first event hasn't surfaced yet — show a
+    // "Starting…" pill immediately (so hitting Enter has an instant HUD response, like the DevTools
+    // panel), overriding any older run. Cleared once the new run (createdTs ≥ the send time) appears.
+    const startedAt = composerStarting.value;
+    const newRunUp = !!run && (run.createdTs || 0) >= startedAt;
+    const starting = startedAt > 0 && !newRunUp;
+    // In flight the INSTANT the run starts (thinking, before any tool step) → the pill shows right away.
+    // "quiet" HUD mode still suppresses the idle/working pill (the card only surfaces for approvals/answers).
+    const running = !!run && !pending && !done;
+    const quiet = config.value.agentHud === "quiet";
+    const showPill = (running || starting) && !quiet;
+    const state = composing ? "composer"                       // the composer takes over — centered Spotlight bar
         : pending ? "expanded"                                 // an approval: show the action directly
-            : done ? (cardCollapsed.value ? "toast" : "expanded") // finished: show the answer (collapsible)
-                : "pill";                                      // running: the compact progress pill
+            : showPill ? "pill"                               // in flight (incl. the just-sent "Starting…" bridge)
+                : (done && !dismissed) ? (cardCollapsed.value ? "toast" : "expanded")   // finished: the answer
+                    : "hidden";
 
     useEffect(() => { window.parent.postMessage({ __mlSidebarCard: state }, "*"); }, [state]);
+    useEffect(() => { if (startedAt > 0 && newRunUp) composerStarting.value = 0; }, [newRunUp]);   // run surfaced → drop the bridge
     useEffect(() => { if (run) ensureCardTitle(run); }, [hash, r]);
     useEffect(() => { cardShowWork.value = false; }, [hash]);   // collapse the trace when a new run starts
+    // "Show work" open → ask the shell to slide the card to the drag limit (room for the whole trace);
+    // closed → release it (snap back to fit). Subscribes to cardShowWork so the toggle drives it.
+    useEffect(() => { window.parent.postMessage({ __mlSidebarCardExpand: cardShowWork.value }, "*"); }, [cardShowWork.value]);
     // Report our natural CONTENT height so the shell can FIT the card (a cross-origin iframe can't
     // auto-size). We sum the card's children — head + body(scrollHeight = full content) + foot — NOT
     // documentElement.scrollHeight: the app fills the iframe (height:100%), so measuring the container
@@ -1798,8 +1932,25 @@ function CardApp() {
     // the body scrolls. Measured after two frames (fonts/highlighting settle) + on later async growth.
     useEffect(() => {
         const post = () => {
-            const app = document.querySelector(".card-app");
-            const h = app ? [...app.children].reduce((s, c) => s + (c as HTMLElement).scrollHeight, 0) : document.documentElement.scrollHeight;
+            const app = document.querySelector(".card-app") as HTMLElement | null;
+            if (!app) { window.parent.postMessage({ __mlSidebarCardH: Math.ceil(document.documentElement.scrollHeight) }, "*"); return; }
+            // Sum each child's TRUE height. `.card-body` is flex:1, so a user drag inflates its clientHeight
+            // (and thus scrollHeight) to fill the taller container — measuring that would report the dragged
+            // size as "content" and the shell would snap-back-glitch (the drag looks like a content change).
+            // So for card-body measure its own children + padding, which is the real content regardless of
+            // how tall the container was dragged.
+            let h = 0;
+            for (const c of Array.from(app.children) as HTMLElement[]) {
+                if (c.classList.contains("card-body")) {
+                    const cs = getComputedStyle(c);
+                    let inner = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + parseFloat(cs.borderTopWidth || "0") + parseFloat(cs.borderBottomWidth || "0");
+                    for (const kid of Array.from(c.children) as HTMLElement[]) {
+                        const ks = getComputedStyle(kid);
+                        inner += kid.scrollHeight + parseFloat(ks.marginTop) + parseFloat(ks.marginBottom);
+                    }
+                    h += inner;
+                } else h += c.scrollHeight;
+            }
             window.parent.postMessage({ __mlSidebarCardH: Math.ceil(h) }, "*");
         };
         post();
@@ -1808,7 +1959,9 @@ function CardApp() {
         const ro = new ResizeObserver(post);
         ro.observe(document.body);
         return () => ro.disconnect();
-    }, [state, r]);
+        // `showWork`: the ResizeObserver can't catch a Show-work toggle (the iframe body is height-pinned
+        // by the shell, so content growth doesn't resize body) — so re-measure explicitly on the toggle.
+    }, [state, r, showWork]);
     // Keyboard: Enter approves, Esc denies — but ONLY from a real keydown INSIDE this trusted iframe (a
     // page-side global hotkey routed in would reopen the forgery hole, so we deliberately don't do that).
     // We ask the shell to focus the card frame when an approval appears, so the keys work without a click.
@@ -1825,10 +1978,22 @@ function CardApp() {
         return () => window.removeEventListener("keydown", onKey);
     }, [pending, pendingStep?.seq]);
 
+    if (composing) return <ComposerCard />;   // the blob reshapes into the task input (container morphs shell-side)
+    // The just-sent "Starting…" bridge pill (before the run's first event) — the composer flew back to the
+    // corner and is already working. Ignores any older run underneath.
+    if (state === "pill" && starting) return (
+        <div class="card-app" data-rev={r}>
+            <div class="card-pill" title="Starting…" onPointerDown={startCardDrag} onContextMenu={cardCtxMenu}>
+                <span class="pill-ic" aria-hidden="true">💭</span>
+                <span class="pill-txt">starting</span>
+                <span class="pill-dots" aria-hidden="true"><i /><i /><i /></span>
+            </div>
+        </div>
+    );
     if (!run) return <div class="card-app" data-rev={r} />;
 
     const title = run.title || truncate(run.task || "Agent run", 80);
-    const headline = pending ? "Approval needed" : run.error ? "Run failed" : done ? (run.hitCap ? "Stopped" : "Task complete") : "Working…";
+    const headline = pending ? "Approval needed" : run.error ? "Run failed" : run.cancelled ? "Cancelled" : done ? (run.hitCap ? "Stopped" : "Task complete") : "Working…";
     const decide = (ok: boolean) => {
         if (!pendingStep || pendingStep.seq == null) return;
         decidedSteps.add(stepKey(run.hash, pendingStep.seq));
@@ -1846,7 +2011,7 @@ function CardApp() {
         const a = activityFor(run);
         return (
             <div class="card-app" data-rev={r}>
-                <div class="card-pill" title={`${a.label}  ·  right-click to move`} onContextMenu={cardCtxMenu}>
+                <div class="card-pill" title={`${a.label}  ·  drag or right-click to move`} onPointerDown={startCardDrag} onContextMenu={cardCtxMenu}>
                     <span class="pill-ic" aria-hidden="true">{a.icon}</span>
                     <span class="pill-txt">{a.short}</span>
                     <span class="pill-dots" aria-hidden="true"><i /><i /><i /></span>
@@ -1857,7 +2022,7 @@ function CardApp() {
     if (state === "toast") {
         return (
             <div class="card-app" data-rev={r}>
-                <div class="card-toast" role="button" title="Click to review · right-click to move" onClick={() => (cardCollapsed.value = false)} onContextMenu={cardCtxMenu}>
+                <div class="card-toast" role="button" title="Click to review · drag or right-click to move" onPointerDown={startCardDrag} onClick={() => (cardCollapsed.value = false)} onContextMenu={cardCtxMenu}>
                     <span class="card-bot" aria-hidden="true">🤖</span>
                     <span class="card-toast-txt">
                         <span class="card-toast-head">{headline}</span>
@@ -1870,7 +2035,7 @@ function CardApp() {
     }
     return (
         <div class="card-app" data-rev={r}>
-            <div class="card-head" onContextMenu={cardCtxMenu}>
+            <div class="card-head" onPointerDown={startCardDrag} onContextMenu={cardCtxMenu}>
                 <span class="card-bot" aria-hidden="true">🤖</span>
                 <span class={`card-head-txt${pending ? " pending" : ""}`}>{headline}</span>
                 <span class="sp" />
@@ -1883,8 +2048,12 @@ function CardApp() {
                     : <>
                         {run.error
                             ? <div class="card-error">{run.error}</div>
-                            : <div class="card-answer md" dangerouslySetInnerHTML={{ __html: markdown(run.summary || "", { math: true }) }} />}
-                        {(run.steps || []).some(s => s.tool || s.thought || s.reasoning) ? <ShowWork run={run} /> : null}
+                            : (run.summary || "").trim()
+                                ? <div class="card-answer md" dangerouslySetInnerHTML={{ __html: markdown(run.summary || "", { math: true }) }} />
+                                : <div class="card-answer dim card-answer-empty">{run.cancelled ? "Run cancelled — the agent returned no text." : "The run finished without a text reply."}</div>}
+                        {/* Only when there's actual WORK — at least one tool step. A pure chat answer (0 tool
+                            steps) has nothing to show, so no "Show work · 0 steps". */}
+                        {(run.steps || []).some(s => s.tool) ? <ShowWork run={run} /> : null}
                       </>}
             </div>
             {/* Deny/Approve as a FIXED footer — outside the scroll area, so it's always visible (a
@@ -2048,6 +2217,7 @@ function onMessage(e: MessageEvent): void {
         sidebarOpen.value = d.__mlSidebarOpen;
         if (d.__mlSidebarOpen && !wasOpen) titleTried.clear();   // fresh open → backfill missing titles
     }
+    else if (typeof d.__mlSidebarComposer === "string") composerOpen.value = d.__mlSidebarComposer === "open";   // Spotlight bar
 }
 
 function mount(): void {

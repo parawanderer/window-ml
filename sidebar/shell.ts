@@ -50,32 +50,29 @@ const CARD_CSS = `
   -webkit-backdrop-filter: blur(26px) saturate(180%); backdrop-filter: blur(26px) saturate(180%);
   border: 1px solid rgba(0, 0, 0, .10);
   box-shadow: 0 14px 46px rgba(0, 0, 0, .26), 0 3px 10px rgba(0, 0, 0, .14);
-  /* Two-layer motion: the shell morphs the CONTAINER, the app fades its content (a cross-origin iframe
-     can't be FLIP-measured). SIZE gets a smooth decel (no overshoot — it would clip content mid-bounce);
-     TRANSFORM/opacity get a subtle spring "pop". */
-  transition: width .34s cubic-bezier(.22,.9,.3,1), height .34s cubic-bezier(.22,.9,.3,1),
+  /* Two-layer motion: the shell morphs the CONTAINER (position + size in px — see layoutCard), the app
+     fades its content (a cross-origin iframe can't be FLIP-measured). POSITION springs (a little
+     overshoot) so it FLIES between corner ↔ centre ↔ a drag; SIZE decels smoothly (overshoot would clip
+     content mid-bounce); opacity/transform give the reveal pop. '.no-anim' = instant (during a drag). */
+  transform-origin: center;
+  transition: left .42s cubic-bezier(.34,1.28,.5,1), top .42s cubic-bezier(.34,1.28,.5,1),
+              width .34s cubic-bezier(.22,.9,.3,1), height .34s cubic-bezier(.22,.9,.3,1),
               opacity .24s ease, transform .40s cubic-bezier(.34,1.32,.5,1);
 }
-/* Anchor to the configured corner (set by the shell from config.cardCorner). */
-#${SB_CARD}-wrap[data-corner="bottom-right"] { right: 20px; bottom: 20px; transform-origin: bottom right; }
-#${SB_CARD}-wrap[data-corner="bottom-left"]  { left: 20px;  bottom: 20px; transform-origin: bottom left; }
-#${SB_CARD}-wrap[data-corner="top-right"]    { right: 20px; top: 20px;    transform-origin: top right; }
-#${SB_CARD}-wrap[data-corner="top-left"]     { left: 20px;  top: 20px;    transform-origin: top left; }
+#${SB_CARD}-wrap.no-anim { transition: none; }
 /* The acrylic tracks the APP's resolved theme (set on the wrap by the shell from config.theme), NOT
    the OS — otherwise a user who forces Light while the OS is dark gets dark text on a dark acrylic. */
 #${SB_CARD}-wrap[data-theme="dark"] { background: rgb(41 30 13 / 8%); border-color: rgba(255, 255, 255, .12);
   box-shadow: 0 14px 46px rgba(0, 0, 0, .5), 0 3px 10px rgba(0, 0, 0, .34); }
-/* The HEIGHT is set in px by the shell (sizeCard): the app reports its content height (a cross-origin
-   iframe can't auto-size), capped, or the user's dragged height. An explicit px means it animates. */
-#${SB_CARD}-wrap { height: 84px; }
-#${SB_CARD}-wrap[data-state="hidden"] { width: 340px; opacity: 0; pointer-events: none; }
-#${SB_CARD}-wrap[data-corner^="bottom"][data-state="hidden"] { transform: translateY(14px) scale(.96); }
-#${SB_CARD}-wrap[data-corner^="top"][data-state="hidden"] { transform: translateY(-14px) scale(.96); }
-#${SB_CARD}-wrap[data-state="pill"] { width: 210px; opacity: 1; transform: none; }
-#${SB_CARD}-wrap[data-state="toast"] { width: 340px; opacity: 1; transform: none; }
-#${SB_CARD}-wrap[data-state="expanded"] { width: 384px; opacity: 1; transform: none; }
+/* left/top/width/height are all set in px by the shell (layoutCard). data-state only drives reveal
+   (opacity/transform) + the composer's deeper shadow; data-corner only places the resize handle. */
+#${SB_CARD}-wrap { left: 20px; top: 20px; height: 84px; }
+#${SB_CARD}-wrap[data-state="hidden"] { opacity: 0; pointer-events: none; transform: scale(.96); }
+#${SB_CARD}-wrap[data-state="pill"], #${SB_CARD}-wrap[data-state="toast"],
+#${SB_CARD}-wrap[data-state="expanded"], #${SB_CARD}-wrap[data-state="composer"] { opacity: 1; transform: none; }
+#${SB_CARD}-wrap[data-state="composer"] { box-shadow: 0 24px 70px rgba(0, 0, 0, .34), 0 6px 18px rgba(0, 0, 0, .18); }
 #${SB_CARD}-frame { display: block; width: 100%; height: 100%; border: 0; background: transparent; color-scheme: normal; }
-/* Drag the edge (away from the anchor) to resize the expanded card vertically (double-click → auto-fit). */
+/* Resize handle on the FREE edge (bottom corner → drag the top up; top corner → drag the bottom down). */
 #${SB_CARD}-resize { position: absolute; left: 0; right: 0; height: 9px; cursor: ns-resize; z-index: 3; }
 #${SB_CARD}-wrap[data-corner^="bottom"] #${SB_CARD}-resize { top: 0; }
 #${SB_CARD}-wrap[data-corner^="top"] #${SB_CARD}-resize { bottom: 0; }
@@ -92,6 +89,9 @@ const CARD_CSS = `
   border: none; color: inherit; text-align: left; padding: 6px 9px; border-radius: 5px; cursor: pointer; font: inherit; }
 #${SB_CARD}-menu button:hover { background: rgba(255,255,255,.10); }
 #${SB_CARD}-menu button .tick { width: 12px; opacity: .9; }
+#${SB_CARD}-menu button.danger { color: #ff8a8a; }
+#${SB_CARD}-menu button.danger:hover { background: rgba(255,90,90,.16); }
+#${SB_CARD}-menu .menu-div { height: 1px; margin: 4px 6px; background: rgba(255,255,255,.12); }
 #${SB_CARD}-menu .menu-head { padding: 4px 9px 5px; color: #9a9aa2; font-size: 11px; }
 @media (prefers-reduced-motion: reduce) { #${SB_CARD}-wrap { transition: opacity .12s ease; } }
 `;
@@ -153,6 +153,7 @@ let cardReady = false;                       // the card iframe app has handshak
 // height → cardAutoH), capped at 72vh, UNLESS the user dragged the top edge (cardManualH, persisted).
 let cardAutoH = 200;
 let cardManualH: number | null = null;   // transient drag override (discarded when content changes / on unmount)
+let cardDrag: { left: number; top: number } | null = null;   // live grab-drag position (px); null when resting
 let cardCorner = "bottom-right";   // config.cardCorner (set from storage) → which corner the card anchors to
 let agentHudInDevtools = false;    // config → also show the corner card/pill alongside the DevTools panel
 // The corner HUD (card/pill) is active in OFF mode, and in DEVTOOLS when the coexist toggle is on
@@ -163,37 +164,59 @@ const hudActive = (): boolean => mode === "off" || (mode === "devtools" && agent
 const CARD_RING_MAX = 200;
 const bgRing: MessageEvent["data"][] = [];
 
-// Set the card's height in px: fixed for the toast, else the user's dragged height or the app-reported
-// content height (capped). An explicit px value is what lets the CSS height transition animate.
-function sizeCard(): void {
-    if (!cardWrap) return;
-    const state = cardWrap.dataset.state;
-    if (state === "hidden") return;   // keep the current height while it fades out
-    // NEVER exceed the space between the card's top and bottom margins — else the card runs off-screen
-    // (behind the dock / past the fold). The body scrolls when content is taller than this.
-    const cap = Math.max(120, window.innerHeight - 40);
-    // Fit the reported content height (capped); the user's dragged height applies to the EXPANDED card only.
-    const desired = (state === "expanded" && cardManualH) ? cardManualH : cardAutoH;
-    cardWrap.style.height = `${Math.max(56, Math.min(desired, cap))}px`;
+// The tallest the card may be dragged / expanded to — the "Show work" open target too.
+function maxCardH(): number { return Math.round(window.innerHeight * 0.92); }
+// Per-state target WIDTH (px). Height is content-driven (cardAutoH) or the user's drag (cardManualH).
+const CARD_MARGIN = 20;
+const CARD_W: Record<string, number> = { pill: 210, toast: 340, expanded: 384, composer: 560, hidden: 340 };
+const cardW = (state: string): number => Math.min(CARD_W[state] ?? 340, window.innerWidth - 2 * CARD_MARGIN);
+const cardH = (state: string): number => {
+    const cap = Math.max(120, window.innerHeight - 2 * CARD_MARGIN);   // never past the fold; body scrolls
+    const desired = (state === "expanded" && cardManualH) ? cardManualH : cardAutoH;   // drag only on expanded
+    return Math.max(56, Math.min(desired, cap));
+};
+// Where the card rests for a given state+size: the composer CENTRES (Spotlight); everything else sits at
+// the configured corner (top-left of the box computed from the corner + size + margin). A live drag wins.
+function cardPos(state: string, w: number, h: number): { left: number; top: number } {
+    if (cardDrag) return cardDrag;
+    if (state === "composer") return { left: Math.round((window.innerWidth - w) / 2), top: Math.max(CARD_MARGIN, Math.round(window.innerHeight * 0.4 - h / 2)) };
+    const left = cardCorner.endsWith("right") ? window.innerWidth - CARD_MARGIN - w : CARD_MARGIN;
+    const top = cardCorner.startsWith("top") ? CARD_MARGIN : window.innerHeight - CARD_MARGIN - h;
+    return { left, top };
 }
-// Drag the edge away from the anchor to resize (bottom corner → drag the top up; top corner → drag the
-// bottom down). Double-click resets to auto-fit. Persisted so the size sticks across runs.
+// Set the card's position AND size in px so the container can spring between corner/centre/drag. The
+// bottom/right corners compute `top`/`left` from the size, so a height change grows AWAY from the anchored
+// edge for free (no separate anchoring). An explicit px is what lets the CSS transitions animate.
+function layoutCard(): void {
+    if (!cardWrap) return;
+    const state = cardWrap.dataset.state || "hidden";
+    const w = cardW(state), h = cardH(state);
+    const { left, top } = cardPos(state, w, h);
+    cardWrap.style.width = `${w}px`;
+    cardWrap.style.height = `${h}px`;
+    cardWrap.style.left = `${left}px`;
+    cardWrap.style.top = `${top}px`;
+}
+// Drag the free edge to resize (bottom corner → drag the top up; top corner → drag the bottom down).
+// layoutCard recomputes the anchored edge so it grows the right way. Double-click resets to auto-fit.
 function startCardResize(e: PointerEvent): void {
     if (!cardWrap) return;
     e.preventDefault();
     if (frame) frame.style.pointerEvents = "none";   // let the drag cross the iframe
+    cardWrap.classList.add("no-anim");               // track the pointer 1:1 (no spring lag while dragging)
     const rect = cardWrap.getBoundingClientRect();
     const topAnchored = (cardWrap.dataset.corner || "").startsWith("top");
     const anchor = topAnchored ? rect.top : rect.bottom;   // the fixed edge; height grows from it
     const onMove = (ev: PointerEvent) => {
         const raw = topAnchored ? ev.clientY - anchor : anchor - ev.clientY;
-        cardManualH = Math.max(120, Math.min(Math.round(window.innerHeight * 0.92), Math.round(raw)));
-        if (cardWrap) cardWrap.style.height = `${cardManualH}px`;
+        cardManualH = Math.max(120, Math.min(maxCardH(), Math.round(raw)));
+        layoutCard();
     };
     const onUp = () => {
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
         if (frame) frame.style.pointerEvents = "";
+        cardWrap?.classList.remove("no-anim");
         // Not persisted — a drag is a momentary override that the next event snaps back to content.
     };
     window.addEventListener("pointermove", onMove);
@@ -211,24 +234,61 @@ function hideCornerMenu(): void {
     window.removeEventListener("keydown", onCornerMenuKey, true);
     window.removeEventListener("blur", hideCornerMenu);
 }
-function onCornerMenuOutside(e: Event): void { if (cornerMenuEl && !e.composedPath().includes(cornerMenuEl)) hideCornerMenu(); }
+// Any click that isn't on one of the menu's own buttons dismisses it (a click on a button runs its own
+// handler, which hides the menu anyway) — so clicking the header/padding closes it too, not just an
+// outside click.
+function onCornerMenuOutside(e: Event): void {
+    if (!cornerMenuEl) return;
+    const onButton = e.composedPath().some(n => n instanceof HTMLElement && n.tagName === "BUTTON" && cornerMenuEl!.contains(n));
+    if (!onButton) hideCornerMenu();
+}
 function onCornerMenuKey(e: KeyboardEvent): void { if (e.key === "Escape") hideCornerMenu(); }
-function showCornerMenu(px: number, py: number): void {
+
+// Copy text to the clipboard from the content-script world. Try the async Clipboard API (needs the
+// page's clipboard-write permission + this click's transient activation); fall back to a hidden
+// textarea + execCommand("copy"), which works even when the page's Permissions-Policy blocks the API.
+function copyText(text: string): void {
+    try {
+        if (navigator.clipboard?.writeText) { void navigator.clipboard.writeText(text).catch(() => execCopy(text)); return; }
+    } catch { /* fall through */ }
+    execCopy(text);
+}
+function execCopy(text: string): void {
+    try {
+        const ta = document.createElement("textarea");
+        ta.value = text; ta.style.cssText = "position:fixed;top:-1000px;left:-1000px;opacity:0;";
+        document.body.append(ta); ta.select();
+        document.execCommand("copy"); ta.remove();
+    } catch { /* best-effort */ }
+}
+
+function showCornerMenu(px: number, py: number, hash?: string, live?: boolean): void {
     if (!cardHost || !cardHost.shadowRoot) return;
     hideCornerMenu();
     const menu = document.createElement("div");
     menu.id = `${SB_CARD}-menu`;
-    const head = document.createElement("div"); head.className = "menu-head"; head.textContent = "Move card to…"; menu.append(head);
-    for (const [val, label] of CARD_CORNERS) {
+    const item = (label: string, onClick: () => void, tick?: boolean, danger?: boolean): HTMLButtonElement => {
         const b = document.createElement("button");
-        const tick = document.createElement("span"); tick.className = "tick"; tick.textContent = cardCorner === val ? "✓" : "";
+        if (danger) b.className = "danger";
+        const mark = document.createElement("span"); mark.className = "tick"; mark.textContent = tick ? "✓" : "";
         const txt = document.createElement("span"); txt.textContent = label;
-        b.append(tick, txt);
-        b.addEventListener("click", () => { chrome.storage.sync.set({ cardCorner: val }); hideCornerMenu(); });
-        menu.append(b);
+        b.append(mark, txt);
+        b.addEventListener("click", () => { onClick(); hideCornerMenu(); });
+        return b;
+    };
+    const head = document.createElement("div"); head.className = "menu-head"; head.textContent = "Move card to…"; menu.append(head);
+    for (const [val, label] of CARD_CORNERS)
+        menu.append(item(label, () => chrome.storage.sync.set({ cardCorner: val }), cardCorner === val));
+    // Run actions (need the live run's hash from the app): copy the id to resume/append later; cancel it.
+    if (hash) {
+        const div = document.createElement("div"); div.className = "menu-div"; menu.append(div);
+        menu.append(item("Copy run id", () => copyText(hash)));
+        if (live) menu.append(item("Cancel agent run", () => {
+            try { void chrome.runtime.sendMessage({ type: "CANCEL_RUN", payload: { runId: hash } }).catch(() => {}); } catch { /* context gone */ }
+        }, false, true));
     }
     menu.style.left = `${Math.max(6, Math.min(px, window.innerWidth - 170))}px`;
-    menu.style.top = `${Math.max(6, Math.min(py, window.innerHeight - 160))}px`;
+    menu.style.top = `${Math.max(6, Math.min(py, window.innerHeight - 200))}px`;
     cardHost.shadowRoot.append(menu);
     cornerMenuEl = menu;
     setTimeout(() => {   // defer so the opening right-click doesn't immediately dismiss it
@@ -414,6 +474,10 @@ function onWindowMessage(e: MessageEvent): void {
         if (hudActive()) {
             if (!cardHost && ev.kind === "agent") mountCard();
             if (cardHost) {
+                // A genuine new run event (step / result / start) is what discards a transient size
+                // override (a user drag, or a "Show work" expand) so the card SNAPS to fit the new
+                // content — NOT the noisy ResizeObserver height stream, which mustn't undo a drag.
+                if (ev.kind === "agent-step" || ev.kind === "agent-result" || ev.kind === "agent") cardManualH = null;
                 if (cardReady) frame?.contentWindow?.postMessage(d, "*");
                 else { bgRing.push(d); if (bgRing.length > CARD_RING_MAX) bgRing.shift(); }
             }
@@ -438,20 +502,64 @@ function onWindowMessage(e: MessageEvent): void {
         } catch { /* extension context gone */ }
         return;
     }
+    // The composer's "start this task": relay it to the PAGE so injected runs a REAL ml.agent() call —
+    // a genuine session (hash, resumable, appendable), routed to the background loop in off/devtools mode.
+    // Origin-checked (real iframe) for consistency, though this grants nothing the page couldn't already
+    // do itself (it has window.ml.agent) — every tool still gates through the unforgeable background gate.
+    if (d.__mlSidebarApp === "startRun" && frame && e.source === frame.contentWindow && typeof d.task === "string" && d.task.trim()) {
+        window.postMessage({ __mlStartAgent: { task: d.task, maxSteps: typeof d.maxSteps === "number" ? d.maxSteps : undefined } }, "*");
+        return;
+    }
     // The off-mode card app tells us its desired visual state (hidden / toast / expanded) — it alone
     // knows whether there's a pending approval or a final answer worth showing. We drive the container's
     // size + reveal (a CSS transition). Origin-checked: only the real card iframe.
     if (typeof d.__mlSidebarCard === "string" && frame && e.source === frame.contentWindow) {
-        if (cardWrap) { cardWrap.dataset.state = d.__mlSidebarCard; sizeCard(); }
+        if (cardWrap) { cardWrap.dataset.state = d.__mlSidebarCard; layoutCard(); }
         return;
     }
-    // The card app reports its content height (a cross-origin iframe can't auto-size) → fit the card to
-    // it, capped. A user drag is TRANSIENT: when the CONTENT height changes (a new event), discard the
-    // manual height and SNAP to the new content. A drag itself reports the SAME content height (only the
-    // frame geometry moved), so `!== cardAutoH` keeps it from undoing the drag mid-gesture.
+    // The card app reports its TRUE content height (a cross-origin iframe can't auto-size) → fit the card
+    // to it, capped. This just tracks the content size; it does NOT touch a manual override (drag /
+    // Show-work expand) — that's discarded only on a genuine NEW EVENT (see the card-feed path above) so
+    // the noisy ResizeObserver stream can't snap-back-glitch a drag.
     if (typeof d.__mlSidebarCardH === "number" && frame && e.source === frame.contentWindow) {
-        if (d.__mlSidebarCardH !== cardAutoH) cardManualH = null;
-        cardAutoH = d.__mlSidebarCardH; sizeCard();
+        cardAutoH = d.__mlSidebarCardH; layoutCard();
+        return;
+    }
+    // "Show work" toggled: release any manual drag override and re-fit to the new content (capped) — the
+    // trace appearing/disappearing changes the reported content height, so it slides to exactly fit (a
+    // short trace stops at its content, a long one caps + scrolls). No forced max → no empty space.
+    if (typeof d.__mlSidebarCardExpand === "boolean" && frame && e.source === frame.contentWindow) {
+        cardManualH = null;
+        layoutCard();
+        return;
+    }
+    // Grab-drag the HUD: the app pointer-captures the pill/head (works for mouse AND touch) and streams
+    // movement DELTAS (frame-independent — the moving iframe can't shift them under itself). We move the
+    // container 1:1 (no-anim), then on drop snap to the NEAREST corner (animated) and persist it.
+    if (d.__mlSidebarCardGrab && cardWrap && frame && e.source === frame.contentWindow) {
+        const r = cardWrap.getBoundingClientRect();
+        cardDrag = { left: r.left, top: r.top };
+        cardWrap.classList.add("no-anim");
+        return;
+    }
+    if (d.__mlSidebarCardMove && cardDrag && cardWrap && frame && e.source === frame.contentWindow) {
+        const w = cardWrap.offsetWidth, h = cardWrap.offsetHeight;
+        cardDrag.left = Math.max(6, Math.min(window.innerWidth - w - 6, cardDrag.left + (d.__mlSidebarCardMove.dx || 0)));
+        cardDrag.top = Math.max(6, Math.min(window.innerHeight - h - 6, cardDrag.top + (d.__mlSidebarCardMove.dy || 0)));
+        layoutCard();
+        return;
+    }
+    if (d.__mlSidebarCardDrop && frame && e.source === frame.contentWindow) {
+        if (cardDrag && cardWrap) {
+            const w = cardWrap.offsetWidth, h = cardWrap.offsetHeight;
+            const cx = cardDrag.left + w / 2, cy = cardDrag.top + h / 2;   // nearest corner by the card's centre
+            const corner = (cy < window.innerHeight / 2 ? "top-" : "bottom-") + (cx < window.innerWidth / 2 ? "left" : "right");
+            cardDrag = null;
+            cardWrap.classList.remove("no-anim");
+            cardCorner = corner;
+            applyCardCorner();                                  // data-corner + layoutCard → animates to the snapped corner
+            chrome.storage.sync.set({ cardCorner: corner });    // persist (the storage listener re-applies; harmless)
+        }
         return;
     }
     // The card app asks us to focus its iframe (an approval appeared) so Enter/Esc work without a click.
@@ -465,7 +573,15 @@ function onWindowMessage(e: MessageEvent): void {
     // coords are iframe-local; offset by the frame's page position.
     if (d.__mlSidebarCornerMenu && frame && e.source === frame.contentWindow) {
         const r = cardWrap?.getBoundingClientRect();
-        showCornerMenu((r?.left || 0) + (d.__mlSidebarCornerMenu.x || 0), (r?.top || 0) + (d.__mlSidebarCornerMenu.y || 0));
+        const m = d.__mlSidebarCornerMenu;
+        showCornerMenu((r?.left || 0) + (m.x || 0), (r?.top || 0) + (m.y || 0), typeof m.hash === "string" ? m.hash : "", !!m.live);
+        return;
+    }
+    // The card was clicked while the menu is open (a click INSIDE the iframe can't reach the shell's own
+    // outside-click handler, and the page window was already blurred by the opening right-click — so the
+    // card signals the dismissal itself). Origin-checked: only the real card iframe.
+    if (d.__mlSidebarCornerMenuDismiss && frame && e.source === frame.contentWindow) {
+        hideCornerMenu();
         return;
     }
     // The iframe app is listening. When it's the CARD (off mode, OR devtools with the coexist toggle),
@@ -478,6 +594,7 @@ function onWindowMessage(e: MessageEvent): void {
             frame.contentWindow?.postMessage({ __mlSidebarSurface: "card" }, "*");
             for (const ev of bgRing) frame.contentWindow?.postMessage(ev, "*");
             bgRing.length = 0;
+            if (composerPendingOpen) { composerPendingOpen = false; frame.contentWindow?.postMessage({ __mlSidebarComposer: "open" }, "*"); try { frame.focus(); } catch { /* ignore */ } }
             return;
         }
         window.postMessage({ __mlSidebar: "ready" }, "*");
@@ -606,10 +723,11 @@ function mountCard(): void {
     handle.id = `${SB_CARD}-resize`;
     handle.title = "Drag to resize · double-click to auto-fit";
     handle.addEventListener("pointerdown", startCardResize);
-    handle.addEventListener("dblclick", () => { cardManualH = null; sizeCard(); });   // back to auto-fit
+    handle.addEventListener("dblclick", () => { cardManualH = null; layoutCard(); });   // back to auto-fit
     cardWrap.append(frame, handle);
     root.append(cardWrap);
     (document.documentElement || document.body).append(cardHost);
+    layoutCard();   // position the (hidden) card at its corner up front, so the first reveal FLIES from there
 }
 function unmountCard(): void {
     if (!cardHost) return;
@@ -617,7 +735,19 @@ function unmountCard(): void {
     cardHost.remove();
     cardHost = cardWrap = frame = null;   // `frame` is the card iframe in off mode
     cardReady = false;
+    composerPendingOpen = false;
     bgRing.length = 0;
+}
+
+// The Spotlight command bar: mount the HUD card on demand (even with no run) and tell its app to open
+// the composer, so the user can START a run from the keyboard. Buffered until the iframe handshakes.
+// Only where the HUD lives (off / devtools-coexist) — overlay has its own surface (a follow-up).
+let composerPendingOpen = false;
+function openComposer(): void {
+    if (!hudActive()) return;
+    if (!cardHost) mountCard();
+    if (cardReady && frame) { frame.contentWindow?.postMessage({ __mlSidebarComposer: "open" }, "*"); try { frame.focus(); } catch { /* ignore */ } }
+    else composerPendingOpen = true;   // flushed on the app's `ready`
 }
 
 // Detach everything: remove the overlay/card DOM (if any), drop the listener, and — only if we brought
@@ -660,8 +790,10 @@ function applyCardTheme(): void {
     const resolved = (rawTheme === "light" || rawTheme === "dark") ? rawTheme : (themeMedia?.matches ? "dark" : "light");
     if (cardWrap) cardWrap.dataset.theme = resolved;
 }
-function applyCardCorner(): void { if (cardWrap) cardWrap.dataset.corner = cardCorner; }
+function applyCardCorner(): void { if (cardWrap) { cardWrap.dataset.corner = cardCorner; layoutCard(); } }   // re-anchor + animate to it
 themeMedia?.addEventListener("change", applyCardTheme);   // "auto" follows the OS
+// Keep the card pinned to its corner / centred when the viewport resizes (position is computed, not CSS-anchored).
+window.addEventListener("resize", () => { if (cardWrap) layoutCard(); });
 
 chrome.storage.sync.get({ debugMode: "off", theme: "auto", cardCorner: "bottom-right", agentHudInDevtools: false }, (cfg) => {
     rawTheme = (cfg.theme as string) || "auto";
@@ -688,4 +820,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
 // pointer-events:none box, no page mutation), so even a spurious relay is harmless.
 chrome.runtime.onMessage.addListener((msg) => {
     if (msg?.type === "ML_HL_REMOTE" && mode === "devtools") showHighlight(msg.ref || null);
+    // The Spotlight shortcut (background `commands` → this tab). Open the HUD composer; no-op unless the
+    // HUD is the active surface (off / devtools-coexist).
+    else if (msg?.type === "ML_OPEN_COMPOSER") openComposer();
 });

@@ -1144,8 +1144,11 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             const loaded: LoadedTable[] = [];
             for (const spec of specs) loaded.push(await this._loadTable(spec.name, spec.src, tableRaw));
 
+            // Alias each df in the `tables` dict by its SOURCE string too (e.g. a single source "current"
+            // → tables['current']): a model that passed `"tables": "current"` naturally reaches for
+            // tables['current'], not the internal `df` name. Accommodate it (string sources only).
             const r = await makeBackgroundTaskPromise("PYTHON_EXEC_REQUEST", "PYTHON_EXEC_RESPONSE",
-                { code, image: img, hardened: mode !== "full", tables: loaded.map(l => ({ name: l.name, data: l.data })) }) as { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] } };
+                { code, image: img, hardened: mode !== "full", tables: loaded.map((l, i) => ({ name: l.name, data: l.data, alias: typeof specs[i].src === "string" ? specs[i].src as string : null })) }) as { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] } };
             const extra: { inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; resultTable?: { columns: string[]; rows: (string | number | null)[][] } } = {};
             if (img) extra.inputImage = img;
             if (imageBox) extra.imageBox = imageBox;   // for cast:'pt'/'box' → project image px → viewport
@@ -1556,6 +1559,29 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
         const point = resolvePoint(token);
         const box = point ? null : resolveBox(token);
         window.postMessage({ type: "ML_HL_AT", seq: e.data.seq, point: point || null, box: box || null }, "*");
+    });
+
+    // The HUD composer (Spotlight bar) asks the page to START a run — relayed by the shell as
+    // __mlStartAgent. Run it as a real ml.agent() call so it's a genuine session (hash, resumable,
+    // appendable), which in off/devtools mode routes to the background-hosted loop like a console run.
+    // Grants nothing extra: the page already has window.ml.agent, and every tool gates on the background.
+    window.addEventListener("message", (e: MessageEvent) => {
+        if (e.source !== window || !e.data || !e.data.__mlStartAgent) return;
+        const task = String(e.data.__mlStartAgent.task || "").trim();
+        if (!task) return;
+        // A UI-started run is a PRODUCT surface (a user typing "click the button" expects click to work),
+        // so give it a capable default kit — click/type/python ON TOP of the default domTools + auto-wired
+        // look/locate. (The console `ml.agent` primitive stays minimal — callers compose their own.) Each
+        // added tool still requires approval, gated by the unforgeable card.
+        const maxSteps = Number(e.data.__mlStartAgent.maxSteps);
+        const ml = window.ml as unknown as {
+            agent: (t: string, o?: unknown) => Promise<unknown>;
+            clickTool: () => unknown; typeTool: () => unknown; pythonTool: () => unknown;
+        };
+        const opts: Record<string, unknown> = { extraTools: [ml.clickTool(), ml.typeTool(), ml.pythonTool()] };
+        if (Number.isFinite(maxSteps) && maxSteps > 0) opts.maxSteps = maxSteps;   // the composer's step budget
+        try { void ml.agent(task, opts); }
+        catch (err) { console.error("ml: UI-started run failed:", err); }
     });
 
     // Readiness signal for scripts (e.g. userscripts) that may run before this

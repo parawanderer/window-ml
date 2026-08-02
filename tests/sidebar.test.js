@@ -2174,10 +2174,100 @@ test("card Show-work: on-demand Explain fetches a plain-English gloss for a code
     const doc = w.window.document;
     doc.querySelector(".card-work-toggle").click(); await w.tick();          // expand Show work
     const step = doc.querySelector(".card-work-trace .astep.tool");
-    step.querySelector(".astep-head").click(); await w.tick();               // expand the python step
+    // The Explain affordance lives UNDER the collapsed step (not nested in its expand) — no head click.
+    assert.ok(!step.querySelector(".astep-body"), "the step is still collapsed");
     const btn = [...step.querySelectorAll("button")].find(b => /Explain this Python/.test(b.textContent));
-    assert.ok(btn, "an Explain affordance shows for a code step in the card trace");
+    assert.ok(btn, "an Explain affordance shows on the collapsed code step in the card trace");
 
     btn.click(); await w.flush();
     assert.match(step.querySelector(".step-explain").textContent, /grand total/, "the gloss lands inline");
+});
+
+test("card corner menu: the request carries the run hash + live flag (for Copy id / Cancel)", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    await w.raw({ __mlSidebarSurface: "card" });
+
+    const hash = "cancelme";
+    await w.dispatch(agentStart(hash, "do a thing", "m"));
+    await w.dispatch(agentStep(hash, 1, { seq: 0, pending: true, tool: "look", arguments: {} }));
+    await w.flush();
+
+    // While RUNNING → live:true (Cancel is offered), and the hash rides along for Copy run id.
+    w.window.document.querySelector(".card-pill").dispatchEvent(new w.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }));
+    await w.tick();
+    const live = posted.filter(m => m.__mlSidebarCornerMenu).pop();
+    assert.equal(live.__mlSidebarCornerMenu.hash, hash, "carries the run hash");
+    assert.equal(live.__mlSidebarCornerMenu.live, true, "a running run is cancellable");
+
+    // Once it finishes → live:false (nothing to cancel), hash still present.
+    await w.dispatch(agentResult(hash, "done", 1));
+    await w.flush();
+    w.window.document.querySelector(".card-head").dispatchEvent(new w.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }));
+    await w.tick();
+    const done = posted.filter(m => m.__mlSidebarCornerMenu).pop();
+    assert.equal(done.__mlSidebarCornerMenu.live, false, "a finished run is not cancellable");
+    assert.equal(done.__mlSidebarCornerMenu.hash, hash, "still carries the hash (Copy run id)");
+
+    // With the menu open, the NEXT pointerdown inside the card asks the shell to dismiss it — the shell's
+    // own outside-click handler can't see an in-iframe click (and the page window is already blurred).
+    posted.length = 0;
+    w.window.dispatchEvent(new w.window.MouseEvent("pointerdown", { bubbles: true }));
+    await w.tick();
+    assert.ok(posted.some(m => m.__mlSidebarCornerMenuDismiss), "an in-card click dismisses the open menu");
+});
+
+test("card composer (Spotlight): opens as a task input, Send posts a real startRun + closes", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    await w.raw({ __mlSidebarSurface: "card" });
+
+    // The shell relays the Alt+Space command as __mlSidebarComposer: "open".
+    await w.raw({ __mlSidebarComposer: "open" });
+    await w.flush();
+    const doc = w.window.document;
+    assert.ok(posted.some(m => m.__mlSidebarCard === "composer"), "the HUD morphs into the centered composer state");
+    const input = doc.querySelector(".card-cmp-input");
+    assert.ok(input, "the composer input renders");
+    assert.match(doc.querySelector(".card-head-txt").textContent, /New task/);
+
+    // Empty → Send disabled.
+    const sendBtn = [...doc.querySelectorAll(".card-foot button")].find(b => /Send/.test(b.textContent));
+    assert.ok(sendBtn.disabled, "Send is disabled with no text");
+
+    // Pretty step-budget segmented control, default preset selected.
+    const on = doc.querySelector(".seg .seg-opt.on");
+    assert.ok(on && on.textContent === "20", "the default step budget (20) is the selected preset");
+
+    // Type + Send → posts a real startRun with the task, and the composer closes.
+    input.value = "summarise this page";
+    input.dispatchEvent(new w.window.Event("input", { bubbles: true }));
+    await w.tick();
+    posted.length = 0;
+    [...doc.querySelectorAll(".card-foot button")].find(b => /Send/.test(b.textContent)).click();
+    await w.flush();
+    const start = posted.find(m => m.__mlSidebarApp === "startRun");
+    assert.ok(start, "Send posts a startRun to the shell");
+    assert.equal(start.task, "summarise this page", "carries the typed task");
+    assert.equal(start.maxSteps, 20, "carries the default step budget");
+    assert.ok(!doc.querySelector(".card-cmp-input"), "the composer closes after sending");
+    // The HUD acknowledges immediately (no dead gap before the run's first event): a "Starting…" bridge pill.
+    assert.ok(posted.some(m => m.__mlSidebarCard === "pill"), "the HUD morphs straight to a working pill on send");
+    assert.match(doc.querySelector(".card-pill")?.textContent || "", /starting/i, "shows a Starting… bridge pill");
+});
+
+test("card surface: a cancelled run reads as 'Cancelled'", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    w.window.postMessage = () => {};
+    await w.raw({ __mlSidebarSurface: "card" });
+
+    const hash = "cxld";
+    await w.dispatch(agentStart(hash, "long task", "m"));
+    await w.dispatch(agentStep(hash, 1, { seq: 0, tool: "look", arguments: {}, result: "ok" }));
+    await w.dispatch({ kind: "agent-result", id: hash, ts: Date.now(), save: false, session: { hash, turn: 1 }, summary: "", steps: 1, hitCap: false, cancelled: true });
+    await w.flush();
+
+    assert.match(w.window.document.querySelector(".card-head-txt").textContent, /Cancelled/, "the headline shows Cancelled");
 });

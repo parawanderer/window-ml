@@ -83,7 +83,11 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
 
     for (let step = 1; step <= maxSteps; step++) {
         if (signal?.aborted) return cancelled(step - 1);
-        const msg = await deps.callModel(messages, { tools, step });
+        // A CANCEL_RUN mid-generation aborts the in-flight fetch, which REJECTS here — convert that to a
+        // clean cancel (don't propagate as a run error), same as the boundary check. Re-throw a real error.
+        let msg;
+        try { msg = await deps.callModel(messages, { tools, step }); }
+        catch (e) { if (signal?.aborted) return cancelled(step - 1); throw e; }
         if (signal?.aborted) return cancelled(step - 1);
         if (!msg.tool_calls || !msg.tool_calls.length) {
             // Final-answer step: emit its usage (the run's peak context) + any reasoning so the sidebar's

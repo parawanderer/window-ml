@@ -52,6 +52,11 @@ if _tsj:
         _df = _build_df(_entry["data"])
         globals()[_entry["name"]] = _df
         tables[_entry["name"]] = _df
+        # Also key by the SOURCE string (e.g. a single source "current" → tables['current']), so a model
+        # that mirrors the arg it passed reaches its df without knowing the internal 'df' name.
+        _alias = _entry.get("alias")
+        if _alias and _alias != _entry["name"]:
+            tables[_alias] = _df
 
 # --- Loader interception (DX, not a security boundary) ---------------------------------------
 # Models have strong pre-training habits — Image.open(path), pd.read_csv(name), pd.read_html(

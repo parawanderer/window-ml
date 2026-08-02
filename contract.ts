@@ -491,6 +491,12 @@ export interface SetApprovalPayload {
     feedback?: string;
 }
 
+/** CANCEL_RUN payload — abort a background-hosted run by id (the HUD's "Cancel agent run"). Harmless
+ *  even if a page could forge it (worst case it aborts its own run) — the loop resolves { cancelled }. */
+export interface CancelRunPayload {
+    runId: string;
+}
+
 /** RUN_TOOL_IN_PAGE payload — run a named tool from an active agent run's page-side toolset. The
  *  `callId` correlating the window round-trip is minted content-side (not here); the background
  *  correlates its own request via the sendMessage callback. */

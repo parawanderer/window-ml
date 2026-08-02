@@ -17,6 +17,12 @@
       "default_popup": "popup.html",
       "default_title": "window.ml"
     },
+    "commands": {
+      "open-composer": {
+        "suggested_key": { "default": "Alt+Space", "mac": "Alt+Space" },
+        "description": "Open the window.ml command bar (start an agent task)"
+      }
+    },
     "content_scripts": [
       {
         "matches": ["<all_urls>"],

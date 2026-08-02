@@ -2,7 +2,7 @@
 // extracts replies, and makes the privileged (host-permissioned) fetches. All
 // server JSON is genuinely opaque, so it's typed `any`; our own data uses the
 // shared contract types.
-import type { MlConfig, ApiFormat, NeutralMessage, ToolCall, FetchLlmPayload, LlmResult, LoadedModel, JsonSchema, TokenUsage, StartRunPayload, SetApprovalPayload, ApprovalDecision } from "./contract";
+import type { MlConfig, ApiFormat, NeutralMessage, ToolCall, FetchLlmPayload, LlmResult, LoadedModel, JsonSchema, TokenUsage, StartRunPayload, SetApprovalPayload, CancelRunPayload, ApprovalDecision } from "./contract";
 import { DEFAULT_CONFIG, modelFilterAllows } from "./contract";   // single source of truth (see contract.ts)
 import { runBackgroundAgent } from "./agent-host";   // design A: the background-hosted agent loop
 import type { ToolMeta } from "./agent-loop";
@@ -710,6 +710,11 @@ const inflight = new Map<string, AbortController>();
 // extension iframe). The approve/deny decision is made here and never crosses the page: the point of A.
 const pendingApprovals = new Map<string, (d: ApprovalDecision) => void>();
 
+// Design A: the AbortController for each live background run, keyed by runId, so a CANCEL_RUN message
+// (the HUD's "Cancel agent run") stops the loop at the next boundary AND kills a slow in-flight model
+// call. Deleted when the run settles. Aborting resolves the loop as { cancelled: true } (partial transcript).
+const runControllers = new Map<string, AbortController>();
+
 chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     // The content-script shell forwards each __mlDebug event here so a DevTools panel
     // (which can't see page window-messages) can mirror the overlay's stream. Fire-and-
@@ -739,6 +744,15 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         }
         return;   // fire-and-forget
     }
+    if (message.type === "CANCEL_RUN") {
+        // The HUD's "Cancel agent run" (relayed by the trusted content-script shell). Abort the run's
+        // controller → the loop stops at the next boundary and resolves { cancelled: true }; the model
+        // call in flight is aborted too. A page can't forge this (no chrome.runtime path), and even a
+        // forged cancel only aborts that page's own run — harmless.
+        const ctl = runControllers.get((message.payload as CancelRunPayload)?.runId);
+        if (ctl) ctl.abort();
+        return;   // fire-and-forget
+    }
     if (message.type === "START_RUN") {
         // Design A: run an ml.agent loop HERE (extension origin), delegating each tool back to the page
         // (RUN_TOOL_IN_PAGE) and gating approval through the sidebar. The page built the toolset + system
@@ -748,6 +762,8 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         if (tabId == null) { sendResponse({ error: "START_RUN must come from a tab (content script)." }); return true; }
         const p = message.payload as StartRunPayload;
         const runId = p.runId;
+        const abortCtl = new AbortController();   // CANCEL_RUN aborts this → the loop resolves { cancelled }
+        runControllers.set(runId, abortCtl);
         const toolMetas: ToolMeta[] = p.tools.map(t => ({ name: t.name, requiresApproval: t.requiresApproval, capabilities: t.capabilities }));
         const toolDefs = p.tools.map(t => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
         const approvedSheets = new Set<string>();   // external sheets approved this run (isSheetApproved)
@@ -796,7 +812,9 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             { task: p.task, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython },
             {
                 callModel: async (messages) => {
-                    const r = await fetchLLM({ messages, tools: toolDefs, model: p.model, think: p.think, raw: true }) as { content: string | null; tool_calls: ToolCall[]; reasoning: string | null; usage: TokenUsage | null };
+                    // Thread the run's abort signal so a CANCEL_RUN kills a slow in-flight generation, not
+                    // just stops at the next step boundary.
+                    const r = await fetchLLM({ messages, tools: toolDefs, model: p.model, think: p.think, raw: true }, abortCtl.signal) as { content: string | null; tool_calls: ToolCall[]; reasoning: string | null; usage: TokenUsage | null };
                     return { content: r.content, tool_calls: r.tool_calls, reasoning: r.reasoning, usage: r.usage };
                 },
                 delegateTool: async (name, args) => {
@@ -850,7 +868,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 },
                 isSheetApproved: (id) => approvedSheets.has(id),
                 emit: (ev) => emitStep(ev as Record<string, unknown>),
-                signal: null,
+                signal: abortCtl.signal,
             },
         )
             .then((res) => {
@@ -868,7 +886,8 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     summary: "", steps: 0, hitCap: false, error: err?.message || String(err),
                 });
                 sendResponse({ error: err?.message || String(err) });
-            });
+            })
+            .finally(() => { runControllers.delete(runId); });
         return true;   // async: sendResponse fires when the whole run finishes
     }
     if (message.type === "PYTHON_EXEC") {
@@ -1129,6 +1148,14 @@ chrome.runtime.onConnect.addListener((port) => {
         const set = devtoolsPorts.get(tid);
         if (set) { set.delete(port); if (!set.size) devtoolsPorts.delete(tid); }
     });
+});
+
+// The Spotlight command bar keyboard shortcut (manifest `commands`, default Alt+Space, user-rebindable
+// at chrome://extensions/shortcuts). Tell the active tab's shell to open the HUD composer; the shell
+// no-ops unless the HUD is the active surface. `chrome.commands` may be absent in a test harness.
+chrome.commands?.onCommand.addListener((command, tab) => {
+    if (command === "open-composer" && tab?.id != null)
+        chrome.tabs.sendMessage(tab.id, { type: "ML_OPEN_COMPOSER" }).catch(() => { /* no content script on this tab */ });
 });
 
 // ---- Google Sheets CSV fetch (python_exec `sheet`) ----
