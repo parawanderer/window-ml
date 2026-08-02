@@ -396,8 +396,8 @@ function PermissionsView() {
     const shown = q ? domains.filter(d => d.includes(q)) : domains;
     return (
         <>
-            <div class="set-note">Sites here are trusted to supply their <b>own</b> <code>ml.agent</code> approval gate (the page's <code>approve()</code> / <code>confirm</code>). <b>Every other site</b> routes a privileged tool call (click, type, exec, python_exec) through the extension's own approval — the corner card — so a page can never silently approve itself. Add a domain only if you fully trust the code on it.</div>
             <Section id="whitelist" title="Self-approval whitelist">
+                <div class="set-note">Sites here are trusted to supply their <b>own</b> <code>ml.agent</code> approval gate (the page's <code>approve()</code> / <code>confirm</code>). <b>Every other site</b> routes a privileged tool call (click, type, exec, python_exec) through the extension's own approval — the corner card — so a page can never silently approve itself. Add a domain only if you fully trust the code on it.</div>
                 <div class="perm-add">
                     <input class={`perm-input${invalid ? " err" : ""}`} type="text" placeholder="example.com" value={domainInput.value}
                         onInput={(e: any) => (domainInput.value = e.target.value)}
