@@ -1552,27 +1552,103 @@ function ensureCardTitle(s: Session): void {
     genTitle(s.hash, s.task || "");
 }
 
-// The curated transcript: prose + the tool steps that mattered (drop thinking, and auto-approved /
-// skipped steps — you're acting, not debugging), then the final answer. Reuses the sidebar components.
-function CardRunView({ s }: { s: Session }) {
-    const turns = groupTurns(s.steps || []);
+// Plain-English summary of a CODE approval's snippet, via the utility model — so the human reads "sums
+// every quarter and finds the top rep" ABOVE the actual code (which still shows, as the consent
+// surface). Keyed per step; opt-in on a utility model, best-effort (the code alone suffices without).
+const codeSummaries = new Map<string, string>();
+const codeSummaryTried = new Set<string>();
+function ensureCodeSummary(hash: string, seq: number, lang: string, code: string): void {
+    if (!config.value.utilityModel.trim() || !code.trim()) return;
+    const key = stepKey(hash, seq);
+    if (codeSummaryTried.has(key)) return;
+    codeSummaryTried.add(key);
+    const messages = [
+        { role: "system", content: "You explain what a code snippet DOES in ONE plain-English sentence (≤ 22 words) for a non-programmer about to approve running it. State the effect and any data it touches. No preamble, no code, no restating the language." },
+        { role: "user", content: `Explain what this ${lang} code does:\n\n${truncate(code, 1400)}` },
+    ];
+    chrome.runtime.sendMessage(
+        { type: "FETCH_LLM", payload: { messages, extend: "utility", maxTokens: 70, think: false } },
+        (resp: any) => {
+            if (chrome.runtime.lastError || !resp || resp.error) return;
+            const line = String(resp.data || "").trim().split("\n").map(s => s.trim()).filter(Boolean)[0] || "";
+            const s = truncate(line.replace(/^["'`*]+|["'`*]+$/g, "").trim(), 160);
+            if (s) { codeSummaries.set(key, s); rev.value++; }
+        },
+    );
+}
+
+// The pending tool call's human TARGET (the element's accessible name/text from the enriched
+// targetRender, else the raw selector) and the selector to highlight on the page.
+const CODE_LANG: Record<string, string> = { exec: "javascript", python_exec: "python" };
+function targetOf(st: AgentStep): string | undefined {
+    const ri = st.renderIn;
+    if (ri && ri.type === "elements" && ri.items[0]) return ri.items[0].text || ri.items[0].path;
+    const sel = st.arguments?.selector;
+    return typeof sel === "string" ? sel : undefined;
+}
+function highlightSel(st: AgentStep): string | undefined {
+    const ri = st.renderIn;
+    const path = ri && ri.type === "elements" ? ri.items[0]?.path : undefined;
+    return path || (typeof st.arguments?.selector === "string" ? (st.arguments.selector as string) : undefined);
+}
+// For a CODE tool, the actual source — the consent surface (you can't approve code you can't see).
+function codeOf(st: AgentStep): { text: string; lang: string } | null {
+    const lang = CODE_LANG[st.tool || ""];
+    if (!lang) return null;
+    const ri = st.renderIn;
+    if (ri && ri.type === "code" && typeof ri.text === "string") return { text: ri.text, lang };
+    if (ri && ri.type === "python-in" && typeof ri.code === "string") return { text: ri.code, lang };
+    const a = st.arguments || {};
+    const src = typeof a.js === "string" ? a.js : typeof a.code === "string" ? a.code : "";
+    return { text: src, lang };
+}
+
+// ONE pending approval as an INTENT card (not a debug trace): the action verb + human target — or the
+// code itself, for code tools — the goal for context, and Deny/Approve. While it's up, the real page
+// element is highlighted (the shell's hover-highlight), so you can SEE what's about to happen.
+function ApprovalCard({ st, hash, goal }: { st: AgentStep; hash: string; goal: string }) {
+    const code = codeOf(st);
+    useEffect(() => {
+        const sel = highlightSel(st);
+        if (sel) { if (/^@(?:pt|box):[0-9a-f]+/.test(sel)) highlightToken(sel); else highlightEl(sel); }
+        if (code && st.seq != null) ensureCodeSummary(hash, st.seq, code.lang, code.text);
+        return () => clearHighlight();
+    }, [st.seq]);
+    const decide = (ok: boolean) => {
+        if (st.seq == null) return;
+        decidedSteps.add(stepKey(hash, st.seq));
+        clearHighlight();
+        sendApproval(hash, st.seq, ok);
+        rev.value++;
+    };
+    const target = targetOf(st);
+    const a = st.arguments || {};
+    const sheets = externalSheetGrant(st.arguments);
+    const codeSummary = code && st.seq != null ? codeSummaries.get(stepKey(hash, st.seq)) : undefined;
+    const verb = st.tool === "click" ? "Click" : st.tool === "type" ? "Type"
+        : code ? (st.tool === "python_exec" ? "Run Python" : "Run JavaScript") : `Run ${st.tool}`;
     return (
-        <>
-            {turns.map(t => {
-                const tools = t.tools.filter(st => !(st.approval === "readonly" || st.approval === "sandbox" || st.approval === "skipped"));
-                if (!t.thought && !tools.length) return null;
-                return (
-                    <div class="aturn" key={t.step}>
-                        {t.thought ? <TurnProse text={t.thought} /> : null}
-                        {tools.map((st, i) => <ToolStep key={`${st.tool}-${i}`} st={st} hash={s.hash} />)}
-                    </div>
-                );
-            })}
-            {s.summary != null
-                ? <ReplyBubble content={s.summary} status={s.status} model={s.model} profile={sessionProfile(s)} ts={s.lastTs}
-                    label={s.hitCap ? "stopped (step cap)" : undefined} capped={s.hitCap} />
-                : null}
-        </>
+        <div class="action">
+            <div class="action-goal">{goal}</div>
+            <div class={`action-card${code ? " code" : ""}`}>
+                <div class="action-verb">{verb}</div>
+                {st.tool === "type"
+                    ? <div class="action-body">“{truncate(String(a.text ?? ""), 120)}”{target ? <> into <b class="action-target">{target}</b></> : null}{a.submit ? <span class="action-note"> · then submit</span> : null}</div>
+                    : code
+                        ? <>
+                            {codeSummary ? <div class="action-summary">{codeSummary}</div> : null}
+                            <div class="action-codeblk"><Code text={code.text} lang={code.lang} format={code.lang === "javascript"} /></div>
+                        </>
+                        : target ? <div class="action-body"><b class="action-target">{target}</b></div> : null}
+                {sheets.length
+                    ? <div class="action-sheets"><IconWarn /><span>Grants this run access to {sheets.map((id, i) => <SheetChip key={i} id={id} />)} for the session.</span></div>
+                    : null}
+            </div>
+            <div class="action-btns">
+                <button class="appr-btn no" onClick={() => decide(false)}>Deny</button>
+                <button class="appr-btn yes" onClick={() => decide(true)}>Approve</button>
+            </div>
+        </div>
     );
 }
 
@@ -1580,29 +1656,42 @@ function CardApp() {
     const r = rev.value;   // subscribe to session changes (retained via data-rev below)
     const run = latestAgentRun();
     const hash = run?.hash;
-    const pending = !!run && (run.steps || []).some(st => isPendingGate(run.hash, st));
+    const pendingStep = run ? (run.steps || []).find(st => isPendingGate(run.hash, st)) : undefined;
+    const pending = !!pendingStep;
     const done = !!run && run.summary != null;
     const dismissed = !!run && cardDismissed.value === run.hash;
     const visible = !!run && (pending || (done && !dismissed));
-    const state = !visible ? "hidden" : (cardExpanded.value ? "expanded" : "toast");
+    // A pending approval shows the action DIRECTLY (urgent — you act on it); a finished run is a toast
+    // you can open to read the answer.
+    const expanded = pending || cardExpanded.value;
+    const state = !visible ? "hidden" : expanded ? "expanded" : "toast";
 
-    // Tell the shell our desired size/reveal (it drives the container transition).
     useEffect(() => { window.parent.postMessage({ __mlSidebarCard: state }, "*"); }, [state]);
     useEffect(() => { if (run) ensureCardTitle(run); }, [hash, r]);
+    // Report our content height so the shell can fit the card (a cross-origin iframe can't auto-size).
+    // A ResizeObserver catches async growth (code highlighting, the summary landing, an image loading).
+    useEffect(() => {
+        const post = () => window.parent.postMessage({ __mlSidebarCardH: Math.ceil(document.documentElement.scrollHeight) }, "*");
+        post();
+        if (typeof ResizeObserver === "undefined") return;
+        const ro = new ResizeObserver(post);
+        ro.observe(document.documentElement);
+        return () => ro.disconnect();
+    }, [state, r]);
 
     if (!run) return <div class="card-app" data-rev={r} />;
 
     const title = run.title || truncate(run.task || "Agent run", 80);
-    const headline = pending ? "Approval needed" : done ? (run.hitCap ? "Stopped (step cap)" : "Task complete") : "Working…";
-    const denyPending = () => {
-        for (const st of run.steps || []) if (isPendingGate(run.hash, st) && st.seq != null) {
-            decidedSteps.add(stepKey(run.hash, st.seq));
-            sendApproval(run.hash, st.seq, false);
-        }
-        rev.value++;
+    const headline = pending ? "Approval needed" : done ? (run.hitCap ? "Stopped" : "Task complete") : "Working…";
+    const onClose = (e: Event) => {
+        e.stopPropagation();
+        if (pendingStep && pendingStep.seq != null) {   // × on a pending gate = a fast Deny
+            decidedSteps.add(stepKey(run.hash, pendingStep.seq));
+            clearHighlight();
+            sendApproval(run.hash, pendingStep.seq, false);
+            rev.value++;
+        } else cardDismissed.value = run.hash;   // × on a finished card = dismiss
     };
-    // × closes: deny a pending gate (a fast reject), or dismiss a finished card.
-    const onClose = (e: Event) => { e.stopPropagation(); if (pending) denyPending(); else cardDismissed.value = run.hash; };
 
     if (state === "toast") {
         return (
@@ -1610,10 +1699,10 @@ function CardApp() {
                 <div class="card-toast" role="button" title="Click to review" onClick={() => (cardExpanded.value = true)}>
                     <span class="card-bot" aria-hidden="true">🤖</span>
                     <span class="card-toast-txt">
-                        <span class={`card-toast-head${pending ? " pending" : ""}`}>{headline}</span>
+                        <span class="card-toast-head">{headline}</span>
                         <span class="card-toast-sub">{title}</span>
                     </span>
-                    <button class="card-x" aria-label={pending ? "Deny" : "Dismiss"} onClick={onClose}>✕</button>
+                    <button class="card-x" aria-label="Dismiss" onClick={onClose}>✕</button>
                 </div>
             </div>
         );
@@ -1622,14 +1711,15 @@ function CardApp() {
         <div class="card-app" data-rev={r}>
             <div class="card-head">
                 <span class="card-bot" aria-hidden="true">🤖</span>
-                <span class="card-head-txt">{headline}</span>
+                <span class={`card-head-txt${pending ? " pending" : ""}`}>{headline}</span>
                 <span class="sp" />
-                <button class="card-icon" aria-label="Collapse" title="Collapse" onClick={() => (cardExpanded.value = false)}>▾</button>
+                {pending ? null : <button class="card-icon" aria-label="Collapse" title="Collapse" onClick={() => (cardExpanded.value = false)}>▾</button>}
                 <button class="card-x" aria-label={pending ? "Deny" : "Dismiss"} onClick={onClose}>✕</button>
             </div>
             <div class="card-body">
-                <div class="card-task">{title}</div>
-                <CardRunView s={run} />
+                {pending && pendingStep
+                    ? <ApprovalCard st={pendingStep} hash={run.hash} goal={title} />
+                    : <div class="card-answer md" dangerouslySetInnerHTML={{ __html: markdown(run.summary || "", { math: true }) }} />}
             </div>
         </div>
     );

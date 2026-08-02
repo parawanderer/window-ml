@@ -1986,7 +1986,7 @@ test("session titles: skipped entirely when no utility model is configured (opt-
 // app then renders a curated view of the one background-hosted run, drives its own reveal via
 // `__mlSidebarCard`, and gates approval through the same unforgeable `__mlSidebarApp: "approval"` path.
 
-test("card surface: a pending approval reveals the card and Approve posts the unforgeable decision", async () => {
+test("card surface: a pending approval shows the action directly + Approve posts the unforgeable decision", async () => {
     const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
     const posted = [];
     w.window.postMessage = (d) => posted.push(d);   // capture what the app posts to its parent (the shell)
@@ -1996,20 +1996,22 @@ test("card surface: a pending approval reveals the card and Approve posts the un
 
     const hash = "cardrun1";
     await w.dispatch(agentStart(hash, "delete the account", "m"));
-    await w.dispatch(agentStep(hash, 1, { seq: 0, pending: true, awaitingApproval: true, tool: "click", arguments: { selector: "#danger" } }));
-    await w.flush();   // let the visibility useEffect fire (posts the card state)
+    // renderIn carries the enriched human label (accessible name) alongside the selector.
+    await w.dispatch(agentStep(hash, 1, { seq: 0, pending: true, awaitingApproval: true, tool: "click",
+        arguments: { selector: "#danger" }, renderIn: { type: "elements", items: [{ path: "#danger", text: "Delete account" }] } }));
+    await w.flush();
 
-    // The card asked the shell to reveal it (collapsed toast by default).
-    assert.ok(posted.some(m => m.__mlSidebarCard === "toast"), "card requested reveal as a toast");
-    const toast = w.window.document.querySelector(".card-toast");
-    assert.ok(toast, "collapsed toast rendered");
-    assert.match(toast.textContent, /Approval needed/);
+    // A pending approval reveals the card EXPANDED (urgent — you act on it), showing the intent card.
+    assert.ok(posted.some(m => m.__mlSidebarCard === "expanded"), "pending approval shows expanded directly");
+    const doc = w.window.document;
+    assert.match(doc.querySelector(".card-head-txt").textContent, /Approval needed/);
+    assert.match(doc.querySelector(".action-verb").textContent, /Click/, "plain-English verb");
+    assert.match(doc.querySelector(".action-target").textContent, /Delete account/, "human target, not the selector");
+    // The card highlighted the real element on the page (reusing the shell's hover-highlight).
+    assert.ok(posted.some(m => m.__mlHighlight && m.__mlHighlight.selector === "#danger"), "highlighted the target on the page");
 
-    // Expand to reach the controls, then approve.
-    toast.click(); await w.flush();
-    assert.ok(posted.some(m => m.__mlSidebarCard === "expanded"), "expanded on click");
-    const approve = [...w.window.document.querySelectorAll("button")].find(b => b.textContent.trim() === "Approve");
-    assert.ok(approve, "Approve control rendered in the card");
+    const approve = [...doc.querySelectorAll("button")].find(b => b.textContent.trim() === "Approve");
+    assert.ok(approve, "Approve control rendered");
     approve.click(); await w.flush();
 
     const decision = posted.find(m => m.__mlSidebarApp === "approval");
@@ -2019,7 +2021,7 @@ test("card surface: a pending approval reveals the card and Approve posts the un
     assert.equal(decision.decision, true);
 });
 
-test("card surface: auto-approved and thinking steps are hidden; the final answer shows", async () => {
+test("card surface: the final answer shows; debug steps/thinking don't leak", async () => {
     const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
     const posted = [];
     w.window.postMessage = (d) => posted.push(d);
@@ -2027,17 +2029,18 @@ test("card surface: auto-approved and thinking steps are hidden; the final answe
 
     const hash = "cardrun2";
     await w.dispatch(agentStart(hash, "survey the page", "m"));
-    await w.dispatch(agentStep(hash, 1, { reasoning: "thinking about it…" }));                                  // hidden in the card
-    await w.dispatch(agentStep(hash, 1, { seq: 0, tool: "exec", arguments: { js: "x" }, result: "ok", approval: "readonly" }));   // auto-approved → hidden
+    await w.dispatch(agentStep(hash, 1, { reasoning: "thinking about it…" }));
+    await w.dispatch(agentStep(hash, 1, { seq: 0, tool: "exec", arguments: { js: "x" }, result: "ok", approval: "readonly" }));
     await w.dispatch(agentResult(hash, "The page has three sections.", 1));
     await w.flush();
 
-    // Done → the card reveals (toast), expand and check the curated body.
+    // Done → the card reveals as a toast; open it to read the answer (only the answer — no debug rows).
     assert.ok(posted.some(m => m.__mlSidebarCard === "toast"), "revealed on completion");
     w.window.document.querySelector(".card-toast").click(); await w.flush();
     const body = w.window.document.querySelector(".card-body");
     assert.ok(body, "expanded body rendered");
     assert.doesNotMatch(body.textContent, /thinking about it/, "thinking is hidden in the card");
-    assert.ok(!body.querySelector(".astep"), "the auto-approved step is hidden");
+    assert.ok(!body.querySelector(".astep"), "no debug step rows leak into the card");
+    assert.ok(body.querySelector(".card-answer"), "answer rendered as plain markdown");
     assert.match(body.textContent, /three sections/, "the final answer shows");
 });

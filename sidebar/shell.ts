@@ -52,11 +52,19 @@ const CARD_CSS = `
    the OS — otherwise a user who forces Light while the OS is dark gets dark text on a dark acrylic. */
 #${SB_CARD}-wrap[data-theme="dark"] { background: rgb(41 30 13 / 8%); border-color: rgba(255, 255, 255, .12);
   box-shadow: 0 14px 46px rgba(0, 0, 0, .5), 0 3px 10px rgba(0, 0, 0, .34); }
-#${SB_CARD}-wrap[data-state="hidden"] { width: 340px; height: 84px; opacity: 0; pointer-events: none;
-  transform: translateY(14px) scale(.96); }
-#${SB_CARD}-wrap[data-state="toast"] { width: 340px; height: 84px; opacity: 1; transform: none; }
-#${SB_CARD}-wrap[data-state="expanded"] { width: 400px; height: min(72vh, 580px); opacity: 1; transform: none; }
+/* The HEIGHT is set in px by the shell (sizeCard): the app reports its content height (a cross-origin
+   iframe can't auto-size), capped, or the user's dragged height. An explicit px means it animates. */
+#${SB_CARD}-wrap { height: 84px; }
+#${SB_CARD}-wrap[data-state="hidden"] { width: 340px; opacity: 0; pointer-events: none; transform: translateY(14px) scale(.96); }
+#${SB_CARD}-wrap[data-state="toast"] { width: 340px; opacity: 1; transform: none; }
+#${SB_CARD}-wrap[data-state="expanded"] { width: 384px; opacity: 1; transform: none; }
 #${SB_CARD}-frame { display: block; width: 100%; height: 100%; border: 0; background: transparent; color-scheme: normal; }
+/* Drag the top edge to resize the expanded card vertically (double-click → back to auto-fit). */
+#${SB_CARD}-resize { position: absolute; top: 0; left: 0; right: 0; height: 9px; cursor: ns-resize; z-index: 3; }
+#${SB_CARD}-resize::after { content: ""; position: absolute; top: 3px; left: 50%; transform: translateX(-50%);
+  width: 34px; height: 3px; border-radius: 2px; background: currentColor; opacity: 0; transition: opacity .15s; color: var(--fg-faint, #888); }
+#${SB_CARD}-resize:hover::after { opacity: .5; }
+#${SB_CARD}-wrap[data-state="toast"] #${SB_CARD}-resize, #${SB_CARD}-wrap[data-state="hidden"] #${SB_CARD}-resize { display: none; }
 @media (prefers-reduced-motion: reduce) { #${SB_CARD}-wrap { transition: opacity .12s ease; } }
 `;
 
@@ -113,10 +121,47 @@ let lightbox: HTMLElement | null = null;
 let cardHost: HTMLElement | null = null;    // separate shadow host for the corner card
 let cardWrap: HTMLElement | null = null;    // the acrylic container (its data-state drives size/reveal)
 let cardReady = false;                       // the card iframe app has handshaked (safe to post events)
+// Height: the card fits its CONTENT (a cross-origin iframe can't auto-size, so the app reports its
+// height → cardAutoH), capped at 72vh, UNLESS the user dragged the top edge (cardManualH, persisted).
+const CARD_H_KEY = "ml_card_height";
+let cardAutoH = 200;
+let cardManualH: number | null = null;
 // Background-run events buffered while the card iframe loads (off mode feeds the card ONLY from the
 // background stream, tagged __mlFromBg — the page's bus stays dormant — so no cross-source ordering).
 const CARD_RING_MAX = 200;
 const bgRing: MessageEvent["data"][] = [];
+
+// Set the card's height in px: fixed for the toast, else the user's dragged height or the app-reported
+// content height (capped). An explicit px value is what lets the CSS height transition animate.
+function sizeCard(): void {
+    if (!cardWrap) return;
+    const state = cardWrap.dataset.state;
+    if (state === "hidden") return;   // keep the current height while it fades out
+    const cap = Math.round(window.innerHeight * 0.72);
+    // Fit the reported content height (capped); the user's dragged height applies to the EXPANDED card only.
+    const h = (state === "expanded" && cardManualH) ? cardManualH : Math.min(cardAutoH, cap);
+    cardWrap.style.height = `${Math.max(56, h)}px`;
+}
+// Drag the top edge (the card is bottom-anchored, so dragging up grows it upward). Double-click resets
+// to auto-fit. Persisted so the size sticks across runs.
+function startCardResize(e: PointerEvent): void {
+    if (!cardWrap) return;
+    e.preventDefault();
+    if (frame) frame.style.pointerEvents = "none";   // let the drag cross the iframe
+    const bottom = cardWrap.getBoundingClientRect().bottom;
+    const onMove = (ev: PointerEvent) => {
+        cardManualH = Math.max(120, Math.min(Math.round(window.innerHeight * 0.92), Math.round(bottom - ev.clientY)));
+        if (cardWrap) cardWrap.style.height = `${cardManualH}px`;
+    };
+    const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        if (frame) frame.style.pointerEvents = "";
+        if (cardManualH) chrome.storage.local.set({ [CARD_H_KEY]: cardManualH });
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+}
 
 /** A hover tooltip bubble for the shell's own chrome (see .ml-tt in SHELL_CSS). */
 function tip(text: string): HTMLElement {
@@ -298,7 +343,13 @@ function onWindowMessage(e: MessageEvent): void {
     // knows whether there's a pending approval or a final answer worth showing. We drive the container's
     // size + reveal (a CSS transition). Origin-checked: only the real card iframe.
     if (typeof d.__mlSidebarCard === "string" && frame && e.source === frame.contentWindow) {
-        if (cardWrap) cardWrap.dataset.state = d.__mlSidebarCard;
+        if (cardWrap) { cardWrap.dataset.state = d.__mlSidebarCard; sizeCard(); }
+        return;
+    }
+    // The card app reports its content height (a cross-origin iframe can't auto-size) → fit the card to
+    // it, capped, unless the user dragged a manual height.
+    if (typeof d.__mlSidebarCardH === "number" && frame && e.source === frame.contentWindow) {
+        cardAutoH = d.__mlSidebarCardH; sizeCard();
         return;
     }
     // The iframe app is listening. OVERLAY: handshake injected.js so it starts emitting, and tell the
@@ -434,9 +485,15 @@ function mountCard(): void {
     frame.id = `${SB_CARD}-frame`;
     frame.allow = "clipboard-write";
     frame.src = chrome.runtime.getURL("sidebar.html");
-    cardWrap.append(frame);
+    const handle = document.createElement("div");
+    handle.id = `${SB_CARD}-resize`;
+    handle.title = "Drag to resize · double-click to auto-fit";
+    handle.addEventListener("pointerdown", startCardResize);
+    handle.addEventListener("dblclick", () => { cardManualH = null; chrome.storage.local.remove(CARD_H_KEY); sizeCard(); });
+    cardWrap.append(frame, handle);
     root.append(cardWrap);
     (document.documentElement || document.body).append(cardHost);
+    chrome.storage.local.get({ [CARD_H_KEY]: null }, (d: any) => { cardManualH = d[CARD_H_KEY] || null; sizeCard(); });
 }
 function unmountCard(): void {
     if (!cardHost) return;

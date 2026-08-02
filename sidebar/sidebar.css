@@ -687,13 +687,15 @@ details.thinking .md { color: var(--fg-dim); font-size: 0.95em; }
 /* Make the iframe DOCUMENT itself transparent so the shell's acrylic shows through: drop the opaque
    canvas background AND `color-scheme` (which otherwise paints a solid dark/light backdrop behind the
    transparent html). `!important` so it wins over the theme's `:root[data-theme=…]` color-scheme. */
-html[data-surface="card"], html[data-surface="card"] body { background: transparent !important; overflow: hidden; }
+/* Card mode: the document is CONTENT-height (the shell reads scrollHeight to size the iframe — it
+   can't auto-size a cross-origin frame), transparent, no page scroll. */
+html[data-surface="card"], html[data-surface="card"] body { background: transparent !important; overflow: hidden; height: auto; }
 html[data-surface="card"] { color-scheme: normal !important; }
-.card-app { height: 100%; display: flex; flex-direction: column; color: var(--fg);
+.card-app { display: flex; flex-direction: column; color: var(--fg);
     font: var(--fs)/1.45 system-ui, -apple-system, sans-serif; }
 
 /* Collapsed toast — a single notification row: 🤖 · headline/summary · close. */
-.card-toast { display: flex; align-items: center; gap: 11px; height: 100%; padding: 0 10px 0 14px; cursor: pointer; }
+.card-toast { display: flex; align-items: center; gap: 11px; padding: 13px 10px 13px 14px; cursor: pointer; }
 .card-bot { font-size: 22px; line-height: 1; flex: 0 0 auto; }
 .card-toast-txt { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .card-toast-head { font-weight: 650; font-size: 1.08em; letter-spacing: .01em; }
@@ -711,8 +713,31 @@ html[data-surface="card"] { color-scheme: normal !important; }
 .card-head { display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
     padding: 9px 8px 9px 13px; border-bottom: 1px solid var(--border); }
 .card-head-txt { font-weight: 650; font-size: 1.05em; }
-.card-body { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; padding: 10px 12px 14px; }
+/* Content-height, but scroll internally when a long answer/code would exceed the card's cap (the shell
+   caps the iframe at ~72vh, and this max-height keeps the scroll INSIDE the card, not the whole doc). */
+.card-body { max-height: 66vh; overflow-y: auto; overflow-x: hidden; padding: 10px 12px 14px; }
 .card-task { color: var(--fg-dim); font-size: .96em; margin-bottom: 8px; line-height: 1.4; }
 .card-body::-webkit-scrollbar { width: 10px; }
 .card-body::-webkit-scrollbar-track { background: transparent; }
 .card-body::-webkit-scrollbar-thumb { background: var(--panel-2); border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
+
+/* Intent view: ONE pending approval as an action to verify (not a debug trace). Goal → the action verb
+   + human target (or the code, for code tools) → Deny/Approve. The final answer renders as plain
+   markdown (.card-answer). */
+.card-answer { line-height: 1.5; }
+.action { display: flex; flex-direction: column; gap: 11px; }
+.action-goal { color: var(--fg-dim); font-size: .95em; line-height: 1.4; }
+.action-card { border: 1px solid var(--border); border-radius: 10px; padding: 11px 12px; background: var(--panel);
+    display: flex; flex-direction: column; gap: 7px; }
+.action-verb { font-weight: 700; font-size: 1.05em; color: var(--accent); letter-spacing: .01em; }
+.action-body { font-size: 1.02em; line-height: 1.45; word-break: break-word; }
+.action-target { font-weight: 650; }
+.action-note { color: var(--fg-dim); }
+.action-card.code { gap: 6px; }
+.action-summary { color: var(--fg); font-size: .98em; line-height: 1.4; }   /* utility-model plain-English gloss above the code */
+.action-codeblk { max-height: 42vh; overflow: auto; }
+.action-codeblk .code { margin: 0; }
+.action-sheets { display: flex; gap: 6px; align-items: flex-start; color: var(--warn); font-size: .9em; margin-top: 1px; }
+.action-sheets svg { flex: 0 0 auto; margin-top: 2px; }
+.action-btns { display: flex; gap: 8px; justify-content: flex-end; }
+.action-btns .appr-btn { padding: 6px 18px; font-size: 1em; }

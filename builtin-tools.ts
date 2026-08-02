@@ -8,6 +8,7 @@ import type { MlApi, MlTool, LocateSubstep, ToolResult, RenderDescriptor } from 
 import { DEFAULT_GROUNDING_RANGE } from "./contract";
 import { PY_PACKAGE_LABELS } from "./python-env";
 import { truncate, clipOut, errText, elLine, queryAll, selectorError, googleSheetCsvUrl, nonEmptyTables } from "./dom";
+import { accessibleName } from "./a11y";
 
 // Cap on python_exec output (stdout / value / error) fed back to the model — bigger than
 // exec's 500 (data output legitimately runs longer) but still bounds a runaway result.
@@ -66,7 +67,15 @@ export const targetRender = (args: Record<string, unknown>): RenderDescriptor | 
     const sel = typeof args.selector === "string" ? args.selector.trim() : "";
     if (!sel) return null;
     const idx = typeof args.index === "number" ? args.index : undefined;
-    return { type: "elements", items: [{ path: sel, ...(idx ? { index: idx } : {}) }] };
+    // Resolve the element's HUMAN label (accessible name → visible text) so an approval card can show
+    // "Click «Show the giant scrolling table»" instead of the raw selector. Page-side (render runs
+    // here), best-effort — a selector that doesn't resolve, or an @pt/@box token, just carries no text.
+    let text: string | undefined;
+    try {
+        const el = queryAll(sel)[idx || 0];
+        if (el) { const n = accessibleName(el) || (el.textContent || "").trim(); if (n) text = truncate(n.replace(/\s+/g, " "), 80); }
+    } catch { /* bad selector / point token — no label */ }
+    return { type: "elements", items: [{ path: sel, ...(idx ? { index: idx } : {}), ...(text ? { text } : {}) }] };
 };
 
 export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512 }: { model?: string | null; maxTokens?: number } = {}): MlTool => {
