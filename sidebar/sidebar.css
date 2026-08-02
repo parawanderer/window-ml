@@ -678,3 +678,41 @@ details.thinking { border-left: 2px solid var(--border); padding-left: 8px; marg
 details.thinking summary { cursor: pointer; color: var(--fg-faint); font-size: 0.9em; font-style: italic; }
 details.thinking[open] summary { margin-bottom: 4px; }
 details.thinking .md { color: var(--fg-dim); font-size: 0.95em; }
+
+/* --------------------------- off-mode approval card ---------------------------
+   The "card" surface (app.tsx CardApp): a curated, transparent view inside the
+   shell's acrylic corner container (shell.ts CARD_CSS). Drop the opaque canvas so
+   the blur shows through; style the collapsed toast + the expanded panel. It reuses
+   every run component (ToolStep/ReplyBubble/markdown), so only the chrome is new. */
+/* Make the iframe DOCUMENT itself transparent so the shell's acrylic shows through: drop the opaque
+   canvas background AND `color-scheme` (which otherwise paints a solid dark/light backdrop behind the
+   transparent html). `!important` so it wins over the theme's `:root[data-theme=…]` color-scheme. */
+html[data-surface="card"], html[data-surface="card"] body { background: transparent !important; overflow: hidden; }
+html[data-surface="card"] { color-scheme: normal !important; }
+.card-app { height: 100%; display: flex; flex-direction: column; color: var(--fg);
+    font: var(--fs)/1.45 system-ui, -apple-system, sans-serif; }
+
+/* Collapsed toast — a single notification row: 🤖 · headline/summary · close. */
+.card-toast { display: flex; align-items: center; gap: 11px; height: 100%; padding: 0 10px 0 14px; cursor: pointer; }
+.card-bot { font-size: 22px; line-height: 1; flex: 0 0 auto; }
+.card-toast-txt { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.card-toast-head { font-weight: 650; font-size: 1.08em; letter-spacing: .01em; }
+.card-toast-head.pending { color: var(--warn); }
+.card-toast-sub { color: var(--fg-dim); font-size: .96em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Close (×) and collapse (▾) controls, shared toast + header. */
+.card-x, .card-icon { flex: 0 0 auto; background: transparent; border: none; color: var(--fg-faint);
+    cursor: pointer; border-radius: 6px; width: 24px; height: 24px; font-size: 13px; line-height: 1;
+    display: flex; align-items: center; justify-content: center; }
+.card-x:hover { background: var(--panel-2); color: var(--err); }
+.card-icon:hover { background: var(--panel-2); color: var(--fg); }
+
+/* Expanded panel — a header over a scrolling curated body. */
+.card-head { display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
+    padding: 9px 8px 9px 13px; border-bottom: 1px solid var(--border); }
+.card-head-txt { font-weight: 650; font-size: 1.05em; }
+.card-body { flex: 1 1 auto; overflow-y: auto; overflow-x: hidden; padding: 10px 12px 14px; }
+.card-task { color: var(--fg-dim); font-size: .96em; margin-bottom: 8px; line-height: 1.4; }
+.card-body::-webkit-scrollbar { width: 10px; }
+.card-body::-webkit-scrollbar-track { background: transparent; }
+.card-body::-webkit-scrollbar-thumb { background: var(--panel-2); border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }

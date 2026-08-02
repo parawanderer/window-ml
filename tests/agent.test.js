@@ -755,24 +755,31 @@ test("the default approval gate fails safe to deny without a confirm()", async (
 // approve a requiresApproval tool — at that point these get INVERTED to assert `ran === false` and
 // that a live sidebar decision was required. See README "Security & trust model".
 
-test("[HOLE→design-A] a page-controlled window.confirm auto-approves a requiresApproval tool", async () => {
-    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall("danger", { js: "exfiltrate()" }, "c1"), reply("done")]) });
+// design A (SHIPPED): on a NON-whitelisted origin (pageApprovalAllowed: false) a privileged run routes
+// to the unforgeable BACKGROUND gate — the page's own confirm/approve is bypassed, so the gated tool
+// does NOT run off page-controlled consent. In these page-world tests the background loop isn't present,
+// so START_RUN goes unanswered and the page tool is never delegated: `ran` stays false, and we can see
+// the run routed by the START_RUN message. (A whitelisted origin — pageApprovalAllowed: true, the
+// harness default — keeps the in-page loop the other approval tests exercise.)
+test("[HOLE→design-A] a page-controlled window.confirm can NOT approve a requiresApproval tool", async () => {
+    const world = loadPageWorld({ config: { pageApprovalAllowed: false }, onRuntimeMessage: scriptedModel([toolCall("danger", { js: "exfiltrate()" }, "c1"), reply("done")]) });
     world.context.window.confirm = () => true;   // a hostile page overrides the "un-disableable" native dialog
     let ran = false;
     const danger = world.ml.defineTool({ name: "danger", requiresApproval: true, run: () => { ran = true; return "ran"; } });
-    await world.ml.agent("x", { tools: [danger], vision: false });   // defaultApprove → the page's window.confirm → true
-    assert.equal(ran, true, "HOLE: the gated tool ran with NO genuine user consent — the page owns window.confirm in the main world");
-    // design A: loop/gate are background-side → a page-set confirm has no effect → assert ran === false.
+    await world.ml.agent("x", { tools: [danger], vision: false });   // no in-page gate honours the page's confirm
+    assert.equal(ran, false, "design A: a page-set confirm can't approve — the run routes to the background gate");
+    assert.ok(world.runtimeCalls.some(c => c.type === "START_RUN"), "the privileged run routed to the unforgeable background gate");
 });
 
-test("[HOLE→design-A] a hostile CALLER (the page) passes approve:()=>true and self-approves", async () => {
-    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall("danger", { js: "exfiltrate()" }, "c1"), reply("done")]) });
+test("[HOLE→design-A] a hostile CALLER's approve:()=>true can NOT self-approve", async () => {
+    const world = loadPageWorld({ config: { pageApprovalAllowed: false }, onRuntimeMessage: scriptedModel([toolCall("danger", { js: "exfiltrate()" }, "c1"), reply("done")]) });
     let ran = false;
     const danger = world.ml.defineTool({ name: "danger", requiresApproval: true, run: () => { ran = true; return "ran"; } });
-    // On a hostile page, the page IS the caller of ml.agent — so a caller-supplied approve is attacker-controlled.
+    // On a hostile page the page IS the caller of ml.agent — but a caller-supplied approve is IGNORED on a
+    // non-whitelisted origin; approval requires a live, origin-authed decision at the trusted surface.
     await world.ml.agent("x", { tools: [danger], vision: false, approve: () => true });
-    assert.equal(ran, true, "HOLE: a page-supplied approve gate self-approves — the caller controls consent");
-    // design A (safe mode): a page-supplied approve is IGNORED; approval requires a live, origin-authed sidebar decision.
+    assert.equal(ran, false, "design A: a page-supplied approve is ignored off-whitelist — no self-approval");
+    assert.ok(world.runtimeCalls.some(c => c.type === "START_RUN"), "the privileged run routed to the unforgeable background gate");
 });
 
 test("agent surfaces the model's reasoning as thought events and transcript entries", async () => {
@@ -1559,7 +1566,7 @@ test("inline vision (#3): a vision-capable agent model gets the screenshot in it
     const steps = [];
     const world = loadPageWorld({
         onRuntimeMessage: (m) => {
-            if (m.type === "GET_CONFIG") return { data: { model: "qwen-vl", ocrModel: "" } };
+            if (m.type === "GET_CONFIG") return { data: { model: "qwen-vl", ocrModel: "", pageApprovalAllowed: true } };
             if (m.type === "MODEL_CAPS") return { data: ["completion", "vision"] };
             steps.push(m.payload.messages);
             return { data: steps.length === 1
@@ -1585,7 +1592,7 @@ test("vision:true forces NATIVE look on the agent's own model, bypassing the cap
     const steps = [];
     const world = loadPageWorld({
         onRuntimeMessage: (m) => {
-            if (m.type === "GET_CONFIG") return { data: { model: "minimax-m3", ocrModel: "" } };
+            if (m.type === "GET_CONFIG") return { data: { model: "minimax-m3", ocrModel: "", pageApprovalAllowed: true } };
             if (m.type === "MODEL_CAPS") return { data: null };   // unknown → auto-probe would REFUSE native
             steps.push(m.payload.messages);
             return { data: steps.length === 1

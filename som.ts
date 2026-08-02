@@ -9,7 +9,7 @@
 
 import { clickSelector } from "./dom";
 import { styleHidden, roleOf, accessibleName } from "./a11y";
-import { SB_ROOT } from "./ids";
+import { SB_ROOT, SB_CARD } from "./ids";
 
 export type MarkFilter = "clickables" | "inputs" | "images" | "all";
 
@@ -85,13 +85,16 @@ export function representativeFor(hit: Element, filter: MarkFilter): Element | n
 export function withHiddenSidebar<T>(fn: () => T): T {
     // The panel + lightbox live INSIDE the shell's shadow root — unreachable via
     // getElementById — so hide the light-DOM shadow HOST (#ml-sb-root); visibility
-    // inherits into the shadow subtree, exactly as the screenshot-hide does.
-    const host = (typeof document !== "undefined" && document.getElementById(SB_ROOT)) as HTMLElement | null;
-    if (!host) return fn();
-    const prev = host.style.visibility;
-    host.style.visibility = "hidden";
+    // inherits into the shadow subtree, exactly as the screenshot-hide does. The
+    // off-mode approval card is a SEPARATE host (#ml-sb-card) — hide it too, so a
+    // sweep that runs while it happens to be visible can't hit-test through it.
+    const doc = typeof document !== "undefined" ? document : null;
+    const hosts = doc ? [doc.getElementById(SB_ROOT), doc.getElementById(SB_CARD)].filter(Boolean) as HTMLElement[] : [];
+    if (!hosts.length) return fn();
+    const prev = hosts.map(h => h.style.visibility);
+    for (const h of hosts) h.style.visibility = "hidden";
     try { return fn(); }
-    finally { host.style.visibility = prev; }
+    finally { hosts.forEach((h, i) => (h.style.visibility = prev[i])); }
 }
 
 /**

@@ -510,15 +510,14 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             // `approve`/`onStep`/`logDebug` and rich tool renders don't apply on the background path.
             const surface = agentCfg?.debugMode;
             const hasApprovalTool = toolset.some(t => !!t.requiresApproval);
-            // OFF_CARD_READY gates the off-mode closure: routing a non-whitelisted privileged run to the
-            // background gate is only SAFE once the off-mode approval CARD exists to satisfy it (shell.ts
-            // card container + app card-mode). Until then, off falls through to the page loop (today's
-            // behaviour) so a run can't hang. Flip to true when the card ships. The whole security
-            // foundation (config, pageApprovalAllowed, the background SHOW_APPROVAL gate) is already wired.
-            const OFF_CARD_READY = false;
+            // Off-mode closure: with no debug surface, a privileged run on a NON-whitelisted origin still
+            // routes to the unforgeable background gate — the shell mounts an acrylic corner CARD (shell.ts
+            // + app.tsx CardApp) that renders the pending approval and returns the decision via the same
+            // origin-authed SET_APPROVAL. A WHITELISTED origin (the user trusts this domain to self-gate) or
+            // a run with no privileged tool (nothing to gate) falls through to the in-page loop below.
             const bgSurface: "overlay" | "devtools" | "off" | null =
                 (surface === "overlay" || surface === "devtools") ? surface
-                    : (OFF_CARD_READY && hasApprovalTool && !agentCfg?.pageApprovalAllowed) ? "off" : null;
+                    : (hasApprovalTool && !agentCfg?.pageApprovalAllowed) ? "off" : null;
             if (bgSurface) {
                 registerRun(runHash, toolset);
                 const descriptors = toolset.map(t => ({

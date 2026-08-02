@@ -180,7 +180,10 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps } = {}) {
     // whether to auto-wire a `look` tool. Answer those probes from `config`/`caps`
     // (defaults: no OCR model, no capabilities → no vision tool) so loop tests
     // needn't script them. `caps` may be a value or a fn(model) → capability list.
-    const agentConfig = config || { model: "", ocrModel: "" };
+    // Default the test origin to TRUSTED (pageApprovalAllowed: true) so ml.agent honours the caller's
+    // own approve()/confirm gate — the in-page loop these agent tests exercise. A test that wants the
+    // design-A background gate instead (the [HOLE→design-A] tests) passes `pageApprovalAllowed: false`.
+    const agentConfig = { pageApprovalAllowed: true, model: "", ocrModel: "", ...config };
     const probeReply = (message) => {
         if (message.type === "GET_CONFIG") return { data: agentConfig };
         if (message.type === "MODEL_CAPS") {

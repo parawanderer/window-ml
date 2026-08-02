@@ -1518,6 +1518,130 @@ function PythonBench() {
     );
 }
 
+/* ------------------------------ off-mode card ----------------------------
+ * The "card" surface. When debug is OFF but a privileged ml.agent run must be
+ * gated, the run routes through the background and streams here into a small
+ * acrylic corner CARD (mounted by the shell). It's a CURATED view of the SAME
+ * session data — the approval to act on and the final answer — hiding the debug
+ * detail (thinking, auto-approved steps, options, VRAM/polling). It reuses the
+ * exact render components (ToolStep, ReplyBubble, markdown), so a decision here is
+ * identical to the sidebar's and rides the same unforgeable SET_APPROVAL path
+ * (this IS the extension iframe). The shell tells us we're the card via
+ * `__mlSidebarSurface`; we tell the shell our size/reveal via `__mlSidebarCard`.
+ */
+// Which surface this app instance is (the shell posts it once, on our ready handshake).
+const surface = signal<"panel" | "card">("panel");
+const cardExpanded = signal(false);          // user opened the card (expanded) vs. the collapsed toast
+const cardDismissed = signal<string>("");    // the run hash the user dismissed (closes a finished card)
+const cardTitleTried = new Set<string>();
+
+const latestAgentRun = (): Session | null => {
+    let best: Session | null = null;
+    for (const s of sessionMap.values()) if (s.kind === "agent" && (!best || s.lastTs > best.lastTs)) best = s;
+    return best;
+};
+// A live, not-yet-decided approval gate (mirrors PendingNote's blocked check).
+const isPendingGate = (hash: string, st: AgentStep): boolean =>
+    !!(st.pending && st.awaitingApproval && !(st.seq != null && decidedSteps.has(stepKey(hash, st.seq))));
+
+// Lazily summarise the run's task with the utility model (if configured) for the toast headline —
+// the sidebar's title machinery, but ungated on sidebarOpen (irrelevant to the card).
+function ensureCardTitle(s: Session): void {
+    if (s.title || cardTitleTried.has(s.hash) || !config.value.utilityModel.trim()) return;
+    cardTitleTried.add(s.hash);
+    genTitle(s.hash, s.task || "");
+}
+
+// The curated transcript: prose + the tool steps that mattered (drop thinking, and auto-approved /
+// skipped steps — you're acting, not debugging), then the final answer. Reuses the sidebar components.
+function CardRunView({ s }: { s: Session }) {
+    const turns = groupTurns(s.steps || []);
+    return (
+        <>
+            {turns.map(t => {
+                const tools = t.tools.filter(st => !(st.approval === "readonly" || st.approval === "sandbox" || st.approval === "skipped"));
+                if (!t.thought && !tools.length) return null;
+                return (
+                    <div class="aturn" key={t.step}>
+                        {t.thought ? <TurnProse text={t.thought} /> : null}
+                        {tools.map((st, i) => <ToolStep key={`${st.tool}-${i}`} st={st} hash={s.hash} />)}
+                    </div>
+                );
+            })}
+            {s.summary != null
+                ? <ReplyBubble content={s.summary} status={s.status} model={s.model} profile={sessionProfile(s)} ts={s.lastTs}
+                    label={s.hitCap ? "stopped (step cap)" : undefined} capped={s.hitCap} />
+                : null}
+        </>
+    );
+}
+
+function CardApp() {
+    const r = rev.value;   // subscribe to session changes (retained via data-rev below)
+    const run = latestAgentRun();
+    const hash = run?.hash;
+    const pending = !!run && (run.steps || []).some(st => isPendingGate(run.hash, st));
+    const done = !!run && run.summary != null;
+    const dismissed = !!run && cardDismissed.value === run.hash;
+    const visible = !!run && (pending || (done && !dismissed));
+    const state = !visible ? "hidden" : (cardExpanded.value ? "expanded" : "toast");
+
+    // Tell the shell our desired size/reveal (it drives the container transition).
+    useEffect(() => { window.parent.postMessage({ __mlSidebarCard: state }, "*"); }, [state]);
+    useEffect(() => { if (run) ensureCardTitle(run); }, [hash, r]);
+
+    if (!run) return <div class="card-app" data-rev={r} />;
+
+    const title = run.title || truncate(run.task || "Agent run", 80);
+    const headline = pending ? "Approval needed" : done ? (run.hitCap ? "Stopped (step cap)" : "Task complete") : "Working…";
+    const denyPending = () => {
+        for (const st of run.steps || []) if (isPendingGate(run.hash, st) && st.seq != null) {
+            decidedSteps.add(stepKey(run.hash, st.seq));
+            sendApproval(run.hash, st.seq, false);
+        }
+        rev.value++;
+    };
+    // × closes: deny a pending gate (a fast reject), or dismiss a finished card.
+    const onClose = (e: Event) => { e.stopPropagation(); if (pending) denyPending(); else cardDismissed.value = run.hash; };
+
+    if (state === "toast") {
+        return (
+            <div class="card-app" data-rev={r}>
+                <div class="card-toast" role="button" title="Click to review" onClick={() => (cardExpanded.value = true)}>
+                    <span class="card-bot" aria-hidden="true">🤖</span>
+                    <span class="card-toast-txt">
+                        <span class={`card-toast-head${pending ? " pending" : ""}`}>{headline}</span>
+                        <span class="card-toast-sub">{title}</span>
+                    </span>
+                    <button class="card-x" aria-label={pending ? "Deny" : "Dismiss"} onClick={onClose}>✕</button>
+                </div>
+            </div>
+        );
+    }
+    return (
+        <div class="card-app" data-rev={r}>
+            <div class="card-head">
+                <span class="card-bot" aria-hidden="true">🤖</span>
+                <span class="card-head-txt">{headline}</span>
+                <span class="sp" />
+                <button class="card-icon" aria-label="Collapse" title="Collapse" onClick={() => (cardExpanded.value = false)}>▾</button>
+                <button class="card-x" aria-label={pending ? "Deny" : "Dismiss"} onClick={onClose}>✕</button>
+            </div>
+            <div class="card-body">
+                <div class="card-task">{title}</div>
+                <CardRunView s={run} />
+            </div>
+        </div>
+    );
+}
+
+// Top-level switch: the off-mode card or the full slide-out panel. Kept separate (not a branch inside
+// App) so App's hooks/effects — the ps polling, stick-to-bottom, title backfill — never run for the
+// card, which needs none of them.
+function Root() {
+    return surface.value === "card" ? <CardApp /> : <App />;
+}
+
 // Whether the detail log is scrolled to the bottom (stick-to-bottom intent). Module-level so the
 // per-step approval reveal (ToolStep) and App's scroll logic share ONE truth — a single App instance.
 const atBottom = { v: true };
@@ -1648,6 +1772,12 @@ function onMessage(e: MessageEvent): void {
     if (e.source !== window.parent || !d) return;
     if (d.__mlDebug) onDebug(d.__mlDebug as MlDebugEvent);
     else if (d.__mlDebugReset) resetSessions();
+    else if (typeof d.__mlSidebarSurface === "string") {
+        // The shell tells us which surface we are. The off-mode card renders a transparent, curated
+        // view — flag <html> so the CSS drops the opaque canvas and the acrylic shows through.
+        surface.value = d.__mlSidebarSurface === "card" ? "card" : "panel";
+        document.documentElement.dataset.surface = surface.value;
+    }
     else if (typeof d.__mlSidebarOpen === "boolean") {
         const wasOpen = sidebarOpen.value;
         sidebarOpen.value = d.__mlSidebarOpen;
@@ -1666,7 +1796,7 @@ function mount(): void {
     applyTheme();
     applyCodePrefs();
     fetchModels();
-    render(<App />, root);
+    render(<Root />, root);
 
     window.addEventListener("message", onMessage);
     // Live-sync config edits made elsewhere (e.g. the popup) into the settings form.

@@ -9,3 +9,4 @@ export const SB_FRAME = "ml-sb-frame";       // the iframe holding the Preact ap
 export const SB_LIGHTBOX = "ml-lightbox";    // full-viewport image lightbox (a sibling overlay)
 export const SB_LIGHTBOX_X = "ml-lightbox-x";
 export const SB_HIGHLIGHT = "ml-highlight";  // DevTools-style hover highlight box (positioned over a page element; never mutates it)
+export const SB_CARD = "ml-sb-card";         // off-mode acrylic approval CARD host (a separate shadow host from the overlay shell)

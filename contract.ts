@@ -451,21 +451,10 @@ export interface StartRunPayload {
     autoApprovePython: boolean;    // trusted config flag → the background may auto-approve readonly python
     autoApproveReadonly: boolean;  // trusted config flag → the background may auto-approve an in-dialect exec survey
     // Which surface hosts the run's gate/stream (all route through the background): a debug surface
-    // (overlay/devtools) streams steps + gates in the sidebar app; "off" has no debug UI — the gate is a
-    // minimal approval modal the content-script shell draws on demand (no step stream).
+    // (overlay/devtools) streams steps + gates in the sidebar app; "off" also streams the SAME steps to
+    // the page, where the content-script shell renders them in a lazily-mounted acrylic corner CARD (a
+    // curated view of the run). Every surface gates through the same origin-authed SET_APPROVAL.
     surface: "overlay" | "devtools" | "off";
-}
-
-/** SHOW_APPROVAL — the background asks the content-script shell to draw a minimal, trusted approval
- *  modal for an "off"-mode run's pending gate (no debug surface is mounted). The decision returns via
- *  SET_APPROVAL, keyed by runId:seq, exactly like the sidebar app's. `preview` is a plain string (the
- *  pretty In or the args) so the shell needs no render registry. HIDE_APPROVAL dismisses it. */
-export interface ShowApprovalPayload {
-    runId: string;
-    seq: number;
-    tool: string;
-    preview: string;
-    sheets?: string[];   // external Google Sheet ids this approval would grant for the session (disclosure)
 }
 
 /** SET_APPROVAL payload — the sidebar app's decision for a pending background-run approval, keyed by

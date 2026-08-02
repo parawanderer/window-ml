@@ -87,9 +87,12 @@ interface PageMessage { type?: string; requestId?: string; payload?: unknown; }
 // sendResponse. Returning true keeps the message channel open for that async reply.
 chrome.runtime.onMessage.addListener((message: PageMessage & { event?: unknown }, _sender, sendResponse) => {
     // A debug event from a background-hosted run → re-post it on the page window as __mlDebug, so the
-    // overlay shell (which reads page window-messages) relays it into the sidebar app. Fire-and-forget.
+    // overlay shell (which reads page window-messages) relays it into the sidebar app. Tagged
+    // `__mlFromBg` so the shell can tell background-origin events (this stream) apart from the page's
+    // OWN injected events (bus.ts ring + replay) — the off-mode card buffers only the former while its
+    // lazily-mounted iframe loads, so the two sources never double up. Fire-and-forget.
     if (message && message.type === "ML_DEBUG_TO_PAGE") {
-        window.postMessage({ __mlDebug: message.event }, "*");
+        window.postMessage({ __mlDebug: message.event, __mlFromBg: true }, "*");
         return undefined;
     }
     if (!message || message.type !== "RUN_TOOL_IN_PAGE") return undefined;

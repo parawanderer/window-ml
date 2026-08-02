@@ -760,8 +760,9 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         //    __mlDebug→ML_DEBUG_EVENT forward; this covers the background-emitted agent-STEP events.
         // Fan a run's step events to the page. overlay AND off both stream to the page window
         // (ML_DEBUG_TO_PAGE → the shell → the iframe app) — off renders them in the corner CARD, a
-        // curated view of the same data; devtools fans to the panel. The card is only made VISIBLE on a
-        // pending gate (SHOW_APPROVAL) / final answer, so a no-approval off run streams to a hidden card.
+        // curated view of the same data; devtools fans to the panel. The card mounts itself lazily on the
+        // first of these (tagged `__mlFromBg` by content.ts) and self-reveals for a pending gate / the
+        // final answer, so a no-approval off run streams to a hidden, cheap-to-mount card.
         const emitStep = (ev: Record<string, unknown>): void => {
             const event = {
                 kind: "agent-step", id: runId, ts: Date.now(), save: false,
@@ -770,6 +771,24 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             if (p.surface === "devtools") relayDebugEvent(tabId, event);
             else chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => { /* tab gone / no receiver */ });
         };
+        // OFF mode: the corner card is fed ENTIRELY by this background stream, because the page's own
+        // debug bus (bus.ts) stays dormant in off mode — no `present` handshake, so its emitDebug is a
+        // no-op and off mode keeps its zero-cost footprint until a privileged run actually starts. So for
+        // OFF we emit the run's lifecycle (start + result) here too; overlay gets them from the page's bus
+        // and devtools from the panel forward, so emitting them here as well would double up — off only.
+        const emitLifecycle = (event: Record<string, unknown>): void => {
+            if (p.surface !== "off") return;
+            chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => {});
+        };
+        emitLifecycle({
+            kind: "agent", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 },
+            task: p.task, model: p.model, maxSteps: p.maxSteps,
+            config: {
+                system: p.systemPrompt, customSystem: false,
+                tools: p.tools.map(t => ({ name: t.name, requiresApproval: t.requiresApproval, vision: t.capabilities.includes("vision"), description: t.description, parameters: t.parameters })),
+                maxSteps: p.maxSteps, think: p.think, env: true, vision: null, hints: null,
+            },
+        });
         runBackgroundAgent(
             { task: p.task, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython },
             {
@@ -816,22 +835,14 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                         pendingApprovals.set(`${runId}:${seq}`, (decision) => {
                             const ok = decision === true || (typeof decision === "object" && !!decision && decision.approved);
                             if (ok && tool === "python_exec") for (const id of externalSheetIds(args)) approvedSheets.add(id);
-                            if (p.surface === "off") chrome.tabs.sendMessage(tabId, { type: "HIDE_APPROVAL", runId, seq }).catch(() => {});
                             resolve(decision);
                         });
-                        if (p.surface === "off") {
-                            // No debug surface is mounted — ask the content-script shell to draw a minimal
-                            // TRUSTED approval modal (it posts SET_APPROVAL back, unforgeable by the page).
-                            // A plain-string preview keeps the shell render-registry-free.
-                            const preview = (renderIn && typeof renderIn === "object" && (renderIn as { type?: string }).type === "code" && typeof (renderIn as { text?: unknown }).text === "string")
-                                ? String((renderIn as { text: string }).text)
-                                : JSON.stringify(args, null, 2);
-                            const payload: import("./contract").ShowApprovalPayload = { runId, seq: seq ?? 0, tool, preview: preview.slice(0, 4000), sheets: tool === "python_exec" ? [...new Set(externalSheetIds(args))] : [] };
-                            chrome.tabs.sendMessage(tabId, { type: "SHOW_APPROVAL", payload }).catch(() => {});
-                        } else {
-                            // Patch the pending step to show approve/deny (awaitingApproval) + the In preview.
-                            emitStep({ step, seq, pending: true, awaitingApproval: true, tool, arguments: args, renderIn });
-                        }
+                        // Patch the pending step to show approve/deny (awaitingApproval) + the In preview. ALL
+                        // three surfaces render it identically from this one step: overlay/off in the page
+                        // iframe (slide-out panel vs corner card), devtools in the panel. The off-mode card
+                        // reveals ITSELF on this step — no separate modal message — and the decision returns via
+                        // the same origin-authed SET_APPROVAL, so the gate is unforgeable across every surface.
+                        emitStep({ step, seq, pending: true, awaitingApproval: true, tool, arguments: args, renderIn });
                     });
                 },
                 isSheetApproved: (id) => approvedSheets.has(id),
@@ -839,7 +850,13 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 signal: null,
             },
         )
-            .then((res) => sendResponse({ data: res }))
+            .then((res) => {
+                emitLifecycle({
+                    kind: "agent-result", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: res.steps },
+                    summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled,
+                });
+                sendResponse({ data: res });
+            })
             .catch((err) => sendResponse({ error: err?.message || String(err) }));
         return true;   // async: sendResponse fires when the whole run finishes
     }

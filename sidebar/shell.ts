@@ -12,7 +12,7 @@
 // and we re-send the handshake on it, so a page-load race (our handshake landing before
 // injected's async <script> is listening — which stranded the devtools panel on Ctrl+R)
 // can't leave it un-live.
-import { SB_ROOT, SB_HOST, SB_TAB, SB_FRAME, SB_LIGHTBOX, SB_LIGHTBOX_X, SB_HIGHLIGHT } from "../ids";
+import { SB_ROOT, SB_HOST, SB_TAB, SB_FRAME, SB_LIGHTBOX, SB_LIGHTBOX_X, SB_HIGHLIGHT, SB_CARD } from "../ids";
 import type { DebugMode } from "../contract";
 
 const WIDTH_KEY = "ml_debug_width";
@@ -28,6 +28,36 @@ const HIGHLIGHT_CSS = `
 #${SB_HIGHLIGHT} .ml-hl-label { position: absolute; top: 100%; left: 0; margin-top: 2px; padding: 1px 6px;
   background: #5983f6; color: #fff; font: 500 10px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
   border-radius: 3px; white-space: nowrap; max-width: 50vw; overflow: hidden; text-overflow: ellipsis; }
+`;
+
+// The off-mode approval CARD: a macOS-notification-style acrylic panel in the bottom-right corner,
+// hosting the SAME sidebar.html iframe (so SET_APPROVAL stays unforgeable) but in the app's curated
+// "card" surface. It's the ONLY thing off mode ever draws, and only while a background-hosted run has
+// something to show. The iframe is transparent so the acrylic (a blurred translucent surface here in
+// the shell's shadow root) shows through; the app draws its content over it. Three states drive the
+// size/reveal, transitioned for a soft expand: hidden (gone) · toast (collapsed) · expanded.
+const CARD_CSS = `
+#${SB_CARD}-wrap {
+  position: fixed; right: 20px; bottom: 20px; z-index: 2147483000;
+  box-sizing: border-box; overflow: hidden; border-radius: 15px;
+  background: rgba(250, 250, 252, .72);
+  -webkit-backdrop-filter: blur(26px) saturate(180%); backdrop-filter: blur(26px) saturate(180%);
+  border: 1px solid rgba(0, 0, 0, .10);
+  box-shadow: 0 14px 46px rgba(0, 0, 0, .26), 0 3px 10px rgba(0, 0, 0, .14);
+  transform-origin: bottom right;
+  transition: width .30s cubic-bezier(.2,.8,.2,1), height .30s cubic-bezier(.2,.8,.2,1),
+              opacity .22s ease, transform .30s cubic-bezier(.2,.8,.2,1);
+}
+/* The acrylic tracks the APP's resolved theme (set on the wrap by the shell from config.theme), NOT
+   the OS — otherwise a user who forces Light while the OS is dark gets dark text on a dark acrylic. */
+#${SB_CARD}-wrap[data-theme="dark"] { background: rgb(41 30 13 / 8%); border-color: rgba(255, 255, 255, .12);
+  box-shadow: 0 14px 46px rgba(0, 0, 0, .5), 0 3px 10px rgba(0, 0, 0, .34); }
+#${SB_CARD}-wrap[data-state="hidden"] { width: 340px; height: 84px; opacity: 0; pointer-events: none;
+  transform: translateY(14px) scale(.96); }
+#${SB_CARD}-wrap[data-state="toast"] { width: 340px; height: 84px; opacity: 1; transform: none; }
+#${SB_CARD}-wrap[data-state="expanded"] { width: 400px; height: min(72vh, 580px); opacity: 1; transform: none; }
+#${SB_CARD}-frame { display: block; width: 100%; height: 100%; border: 0; background: transparent; color-scheme: normal; }
+@media (prefers-reduced-motion: reduce) { #${SB_CARD}-wrap { transition: opacity .12s ease; } }
 `;
 
 const SHELL_CSS = `
@@ -78,6 +108,15 @@ let shadowRoot: ShadowRoot | null = null;
 let panel: HTMLElement | null = null;       // the sliding container, inside the shadow root
 let frame: HTMLIFrameElement | null = null;
 let lightbox: HTMLElement | null = null;
+
+// --- off-mode approval card (see CARD_CSS) ---
+let cardHost: HTMLElement | null = null;    // separate shadow host for the corner card
+let cardWrap: HTMLElement | null = null;    // the acrylic container (its data-state drives size/reveal)
+let cardReady = false;                       // the card iframe app has handshaked (safe to post events)
+// Background-run events buffered while the card iframe loads (off mode feeds the card ONLY from the
+// background stream, tagged __mlFromBg — the page's bus stays dormant — so no cross-source ordering).
+const CARD_RING_MAX = 200;
+const bgRing: MessageEvent["data"][] = [];
 
 /** A hover tooltip bubble for the shell's own chrome (see .ml-tt in SHELL_CSS). */
 function tip(text: string): HTMLElement {
@@ -191,6 +230,7 @@ function onWindowMessage(e: MessageEvent): void {
             scrollPin = { x, y, onScroll };
         }
         if (shellHost) shellHost.style.visibility = "hidden";
+        if (cardHost) cardHost.style.visibility = "hidden";   // the off-mode card, if it's showing
         if (lightbox) lightbox.style.visibility = "hidden";   // full-viewport overlay — MUST hide too, else the shot is all backdrop
         hideHighlight();   // a hover box would otherwise land in the capture
         requestAnimationFrame(() => requestAnimationFrame(() => window.postMessage({ __mlSidebarShot: "hidden" }, "*")));
@@ -198,6 +238,7 @@ function onWindowMessage(e: MessageEvent): void {
     }
     if (d.__mlSidebarShot === "show") {
         if (shellHost) shellHost.style.visibility = "";
+        if (cardHost) cardHost.style.visibility = "";
         if (lightbox) lightbox.style.visibility = "";
         if (scrollPin) {
             window.removeEventListener("scroll", scrollPin.onScroll);
@@ -225,6 +266,17 @@ function onWindowMessage(e: MessageEvent): void {
     // no-op); `devtools` forwards to the background so the panel receives it (a panel can't
     // read these window-messages). Fire-and-forget; harmless when no panel is open.
     if (d.__mlDebug && e.source === window) {
+        // OFF mode: the corner card is fed ONLY by the BACKGROUND stream (tagged __mlFromBg by
+        // content.ts) — the page's own bus is dormant here, so injected events never arrive live. The
+        // first such event brings up the card lazily; until its iframe app handshakes we buffer, then
+        // flush in order (see the app-ready branch below). This keeps off mode zero-cost until a run.
+        if (mode === "off") {
+            if (!d.__mlFromBg) return;
+            if (!cardHost) mountCard();
+            if (cardReady) frame?.contentWindow?.postMessage(d, "*");
+            else { bgRing.push(d); if (bgRing.length > CARD_RING_MAX) bgRing.shift(); }
+            return;
+        }
         frame?.contentWindow?.postMessage(d, "*");
         if (mode === "devtools") {
             try { void chrome.runtime.sendMessage({ type: "ML_DEBUG_EVENT", event: d.__mlDebug }).catch(() => {}); } catch { /* context gone */ }
@@ -242,9 +294,25 @@ function onWindowMessage(e: MessageEvent): void {
         } catch { /* extension context gone */ }
         return;
     }
-    // The iframe app is listening → handshake injected.js so it starts emitting,
-    // and tell the app the current open state (so it can pause polling when hidden).
+    // The off-mode card app tells us its desired visual state (hidden / toast / expanded) — it alone
+    // knows whether there's a pending approval or a final answer worth showing. We drive the container's
+    // size + reveal (a CSS transition). Origin-checked: only the real card iframe.
+    if (typeof d.__mlSidebarCard === "string" && frame && e.source === frame.contentWindow) {
+        if (cardWrap) cardWrap.dataset.state = d.__mlSidebarCard;
+        return;
+    }
+    // The iframe app is listening. OVERLAY: handshake injected.js so it starts emitting, and tell the
+    // app the current open state (it gates polling on this). OFF (the card): we do NOT handshake injected
+    // (its bus stays dormant — the card is fed by the background stream); instead tell the app it's the
+    // card surface and flush the events buffered while its iframe loaded, in order.
     if (d.__mlSidebarApp === "ready" && frame && e.source === frame.contentWindow) {
+        if (mode === "off") {
+            cardReady = true;
+            frame.contentWindow?.postMessage({ __mlSidebarSurface: "card" }, "*");
+            for (const ev of bgRing) frame.contentWindow?.postMessage(ev, "*");
+            bgRing.length = 0;
+            return;
+        }
         window.postMessage({ __mlSidebar: "ready" }, "*");
         frame.contentWindow?.postMessage({ __mlSidebarOpen: panel?.classList.contains("open") ?? false }, "*");
     }
@@ -286,12 +354,16 @@ function handshake(): void {
     if (mode === "devtools") window.postMessage({ __mlSidebar: "ready" }, "*");
 }
 
-// Start relaying the debug stream WITHOUT drawing the overlay: add the window listener,
-// clear any stale DevTools-panel buffer for this tab, and hand injected.js the handshake.
-function attach(): void {
+// Start listening on the page window. `handshakeInjected` is true for the overlay/devtools surfaces
+// (bring injected.js live + clear the stale DevTools-panel buffer); false for OFF mode, whose card is
+// fed by the background stream, not injected's bus — so injected stays dormant and off keeps its
+// near-zero footprint (just this idle listener, waiting for a background run).
+function attach(handshakeInjected: boolean): void {
     window.addEventListener("message", onWindowMessage);
-    try { void chrome.runtime.sendMessage({ type: "ML_DEBUG_RESET" }).catch(() => {}); } catch { /* context gone */ }
-    handshake();
+    if (handshakeInjected) {
+        try { void chrome.runtime.sendMessage({ type: "ML_DEBUG_RESET" }).catch(() => {}); } catch { /* context gone */ }
+        handshake();
+    }
 }
 
 function mountOverlay(): void {
@@ -341,36 +413,89 @@ function mountOverlay(): void {
     chrome.storage.local.get({ [WIDTH_KEY]: DEFAULT_W }, (d: any) => setWidth(d[WIDTH_KEY] || DEFAULT_W));
 }
 
-// Detach everything: remove the overlay DOM (if any), drop the listener, and tell
-// injected.js debug is off (stop emitting + drop its ring). A no-op when already off.
+// Lazily bring up the off-mode approval card: a separate shadow host holding the acrylic container +
+// the SAME sidebar.html iframe (so SET_APPROVAL stays unforgeable — it's the real extension origin).
+// Called on the first background-run event; starts hidden and is revealed by the app posting a state.
+function mountCard(): void {
+    if (cardHost) return;
+    cardHost = document.createElement("div");
+    cardHost.id = SB_CARD;
+    cardHost.style.cssText = "all: initial;";
+    const root = cardHost.attachShadow({ mode: "open" });
+    const style = document.createElement("style");
+    style.textContent = CARD_CSS;
+    root.append(style);
+
+    cardWrap = document.createElement("div");
+    cardWrap.id = `${SB_CARD}-wrap`;
+    cardWrap.dataset.state = "hidden";
+    applyCardTheme();   // acrylic follows the app's resolved theme, not the OS
+    frame = document.createElement("iframe");
+    frame.id = `${SB_CARD}-frame`;
+    frame.allow = "clipboard-write";
+    frame.src = chrome.runtime.getURL("sidebar.html");
+    cardWrap.append(frame);
+    root.append(cardWrap);
+    (document.documentElement || document.body).append(cardHost);
+}
+function unmountCard(): void {
+    if (!cardHost) return;
+    cardHost.remove();
+    cardHost = cardWrap = frame = null;   // `frame` is the card iframe in off mode
+    cardReady = false;
+    bgRing.length = 0;
+}
+
+// Detach everything: remove the overlay/card DOM (if any), drop the listener, and — only if we brought
+// injected.js live (overlay/devtools) — tell it debug is off (stop emitting + drop its ring).
 function teardown(): void {
-    if (mode === "off") return;
     hideLightbox();
     hideHighlight();
     if (hlHost) { hlHost.remove(); hlHost = hlRoot = null; }   // the devtools-mode highlight-only host
     if (shellHost) { shellHost.remove(); shellHost = panel = frame = shadowRoot = null; }
+    unmountCard();
     window.removeEventListener("message", onWindowMessage);
-    // Posted last, after the listener is detached, so we don't handle our own message.
-    window.postMessage({ __mlSidebar: "gone" }, "*");
+    // Only overlay/devtools handshook injected; off left its bus dormant, so there's nothing to switch
+    // off. `mode` is still the OLD surface here (applyMode tears down before advancing).
+    if (mode !== "off") window.postMessage({ __mlSidebar: "gone" }, "*");
 }
 
-// The single entry point for the three debug surfaces. `off` draws nothing and forwards
-// nothing (zero cost). `overlay` mounts the in-page shell (whose iframe app hands back the
-// `ready`). `devtools` forwards the stream to the background (for the DevTools panel) but
-// draws NO overlay — attach()/handshake() posts `ready` itself (no iframe app to wait for).
+// The single entry point for the three debug surfaces. `off` draws nothing up-front and leaves
+// injected's bus dormant — it just listens for a background-hosted run and mounts the corner card
+// lazily. `overlay` mounts the in-page shell (whose iframe app hands back the `ready`). `devtools`
+// forwards the stream to the background (for the DevTools panel) but draws NO overlay — attach()/
+// handshake() posts `ready` itself (no iframe app to wait for).
 let mode: DebugMode = "off";
+let started = false;   // force the first applyMode to run even when the stored mode equals the initial "off"
 function applyMode(next: DebugMode): void {
-    if (next === mode) return;
+    if (started && next === mode) return;
+    started = true;
     teardown();
     mode = next;
-    if (mode === "off") return;
-    attach();
+    if (mode === "off") { attach(false); return; }   // listen for a background run; the card mounts lazily
+    attach(true);
     if (mode === "overlay") mountOverlay();
 }
 
-chrome.storage.sync.get({ debugMode: "off" }, (cfg) => applyMode(cfg.debugMode as DebugMode));
+// The off-mode card's acrylic must match the APP's resolved theme (config.theme, auto → OS), so a
+// user who forces one theme doesn't get mismatched (e.g. dark text on a dark acrylic). We resolve the
+// same way prefs.ts does and stamp it on the wrap; the CARD_CSS keys the acrylic off [data-theme].
+let rawTheme = "auto";
+const themeMedia = typeof window.matchMedia === "function" ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+function applyCardTheme(): void {
+    const resolved = (rawTheme === "light" || rawTheme === "dark") ? rawTheme : (themeMedia?.matches ? "dark" : "light");
+    if (cardWrap) cardWrap.dataset.theme = resolved;
+}
+themeMedia?.addEventListener("change", applyCardTheme);   // "auto" follows the OS
+
+chrome.storage.sync.get({ debugMode: "off", theme: "auto" }, (cfg) => {
+    rawTheme = (cfg.theme as string) || "auto";
+    applyMode(cfg.debugMode as DebugMode);
+});
 chrome.storage.onChanged.addListener((changes, area) => {
-    if (area === "sync" && changes.debugMode) applyMode((changes.debugMode.newValue || "off") as DebugMode);
+    if (area !== "sync") return;
+    if (changes.theme) { rawTheme = (changes.theme.newValue as string) || "auto"; applyCardTheme(); }
+    if (changes.debugMode) applyMode((changes.debugMode.newValue || "off") as DebugMode);
 });
 
 // DevTools-panel hover-highlight (the reverse channel). The panel can't touch the inspected
