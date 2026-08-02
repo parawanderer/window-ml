@@ -100,7 +100,7 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
     transition: transform .15s ease; opacity: .7; }
 .set-section[open] > summary.set-group::before { transform: rotate(90deg); }
 .set-section > summary.set-group:hover { color: var(--fg); }
-.set-field { display: flex; flex-direction: column; gap: 3px; }
+.set-field { display: flex; flex-direction: column; gap: 3px; padding-top: 4px; }
 .set-field > span { color: var(--fg-dim); font-size: 0.92em; }
 .set-field input, .set-field select {
     background: var(--bg); color: var(--fg); border: 1px solid var(--border);
@@ -112,7 +112,7 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .set-note { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; color: var(--fg-dim); font-size: 0.92em; line-height: 1.4; }
 .set-note b { color: var(--fg); }
 .set-note code { background: var(--panel-2); border-radius: 3px; padding: 0 3px; font: 0.92em ui-monospace, SFMono-Regular, Menlo, monospace; }
-.set-hint { color: var(--fg-faint); font-size: 0.83em; line-height: 1.35; }
+.set-hint { color: var(--fg-faint); font-size: 0.83em; line-height: 1.35; margin: 4px; }
 .set-err { color: var(--err); font-size: 0.83em; }
 
 /* model liveness test */
@@ -125,7 +125,7 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .test-btn:disabled { opacity: .6; cursor: default; }
 /* Python-sandbox environment probe row: a button + the version readout beside it. */
 .py-env { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
-.py-env .test-btn { align-self: auto; }
+.py-env .test-btn { align-self: auto; margin: 8px 4px; }
 .py-env-ok { color: var(--fg-dim); font: 0.85em ui-monospace, SFMono-Regular, Menlo, monospace; }
 .py-env-err { color: var(--err); font-size: 0.85em; }
 .test-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 16px; }
