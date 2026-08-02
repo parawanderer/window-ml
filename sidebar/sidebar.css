@@ -85,6 +85,17 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .set-tab.on { color: var(--fg); border-bottom-color: var(--accent); font-weight: 600; }
 .set-group { color: var(--fg-dim); font-size: 0.92em; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; margin: 10px 2px 2px; }
 .set-group:first-of-type { margin-top: 2px; }
+/* Collapsible settings section: a <details> whose <summary> is the .set-group header, with a
+   rotating disclosure triangle and breathing room below each section. */
+.set-section { display: flex; flex-direction: column; gap: 6px; padding-bottom: 14px; border-bottom: 1px solid var(--border); }
+.set-section[open] { gap: 8px; }
+.set-section > summary.set-group { display: flex; align-items: center; gap: 6px; margin: 8px 2px 2px; cursor: pointer; list-style: none; user-select: none; }
+.set-section > summary.set-group::-webkit-details-marker { display: none; }
+.set-section > summary.set-group::before { content: ""; flex: none; width: 0; height: 0;
+    border-left: 5px solid currentColor; border-top: 4px solid transparent; border-bottom: 4px solid transparent;
+    transition: transform .15s ease; opacity: .7; }
+.set-section[open] > summary.set-group::before { transform: rotate(90deg); }
+.set-section > summary.set-group:hover { color: var(--fg); }
 .set-field { display: flex; flex-direction: column; gap: 3px; }
 .set-field > span { color: var(--fg-dim); font-size: 0.92em; }
 .set-field input, .set-field select {

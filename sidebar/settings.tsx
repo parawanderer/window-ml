@@ -359,19 +359,22 @@ export function Settings() {
             {tab === "models" ? <>
                 <div class="set-note">These are the defaults <code>ml.chat</code> / <code>ml.createChat</code> use when you don't pass a <code>model</code>. With no default <b>Model</b> set, you must specify one on every call.</div>
 
-                <div class="set-group">Model access filter</div>
+                <details class="set-section" open>
+                <summary class="set-group">Model access filter</summary>
                 <label class="set-field"><Lbl tip={TIP.modelFilter}>Allowed models (regex whitelist)</Lbl>
                     <input {...text("modelFilter", { placeholder: "blank = all models · e.g. ^(qwen|gemma)" })} class={filterValid ? "" : "err"} />
                     <div class="set-hint">Only matching model ids are callable via <code>window.ml</code> and shown to pages. Blank = no restriction. The rows below flag any configured model this excludes.</div>
                     {filterValid ? null : <div class="set-err">Invalid regex — the filter is inactive (all models allowed).</div>}
                 </label>
+                </details>
 
                 <label class="set-field"><Lbl tip={TIP.model}>Default model</Lbl>
                     <input {...modelInput("model", { list: "ml-models", placeholder: "e.g. qwen3:14b" })} /></label>
                 <label class="set-field"><Lbl tip={TIP.ocrModel}>OCR model (optional)</Lbl>
                     <input {...modelInput("ocrModel", { list: "ml-models", placeholder: "e.g. qwen2.5vl" })} /></label>
 
-                <div class="set-group">Utility model</div>
+                <details class="set-section" open>
+                <summary class="set-group">Utility model</summary>
                 <div class="set-note">A small, cheap model for side tasks. If set, use it via the shorthand: <code>ml.chat("...", &#123; extend: "utility" &#125;)</code>.</div>
                 <label class="set-field"><Lbl tip={TIP.utilityModel}>Utility model (optional)</Lbl>
                     <input {...modelInput("utilityModel", { list: "ml-models", placeholder: "blank = use main model" })} /></label>
@@ -388,8 +391,10 @@ export function Settings() {
                         onChange={(e: any) => setField("autoTitles", e.target.checked)} />
                     <Lbl tip={TIP.autoTitles}>Summarise chat titles with the utility model</Lbl>
                 </label>
+                </details>
 
-                <div class="set-group">Visual grounding (experimental)</div>
+                <details class="set-section" open>
+                <summary class="set-group">Visual grounding (experimental)</summary>
                 <div class="set-note">Optional coordinate model for the agent's <code>locate</code> tool. <b>Loads an extra model into VRAM</b> — leave off if memory is tight. Off = <code>locate</code> still works via the Set-of-Marks screenshot tool (no extra model). Recommended: <code>qwen2.5vl:7b</code> (or <code>:3b</code>); accuracy is unproven.</div>
                 <label class="set-check">
                     <input type="checkbox" checked={c.groundingEnabled}
@@ -402,6 +407,7 @@ export function Settings() {
                 <label class="set-field"><Lbl tip={TIP.groundingRange}>Coordinate range</Lbl>
                     <input type="number" min="1" step="1" value={c.groundingRange} disabled={!c.groundingEnabled}
                         onChange={(e: any) => setField("groundingRange", parseInt(e.target.value, 10) || DEFAULT_GROUNDING_RANGE)} /></label>
+                </details>
                 <ModelTests />
             </> : null}
 
@@ -429,7 +435,8 @@ export function Settings() {
                     <div class="set-hint">Where this debug log renders. <b>In-page</b> = a slide-out on every page. <b>DevTools</b> = the “window.ml” tab, no on-page overlay. (Same setting as the toolbar popup.)</div>
                 </label>
 
-                <div class="set-group">Code blocks</div>
+                <details class="set-section" open>
+                <summary class="set-group">Code blocks</summary>
                 <label class="set-field"><span>Long lines</span>
                     <select value={codeWrap.value ? "wrap" : "scroll"}
                         onChange={(e: any) => { codeWrap.value = e.target.value === "wrap"; applyCodePrefs(); chrome.storage.local.set({ [WRAP_KEY]: codeWrap.value }); }}>
@@ -441,18 +448,22 @@ export function Settings() {
                         onChange={(e: any) => { codeLineNumbers.value = e.target.checked; applyCodePrefs(); chrome.storage.local.set({ [LINES_KEY]: codeLineNumbers.value }); }} />
                     <span>Show line numbers</span>
                 </label>
+                </details>
             </> : null}
 
             {tab === "advanced" ? <>
-                <div class="set-group">JavaScript</div>
+                <details class="set-section" open>
+                <summary class="set-group">JavaScript</summary>
                 <div class="set-note">Auto-approve <b>read-only</b> <code>exec</code> surveys (querySelectorAll → filter → map, no mutation). They run through a mediated interpreter that never touches <code>window</code>/<code>fetch</code> and never <code>eval</code>s a string (so it also works on Trusted-Types pages). Anything mutating or unrecognised still asks for approval.</div>
                 <label class="set-check">
                     <input type="checkbox" checked={c.autoApproveReadonly}
                         onChange={(e: any) => setField("autoApproveReadonly", e.target.checked)} />
                     <Lbl tip={TIP.autoApproveReadonly}>Auto-approve read-only exec calls</Lbl>
                 </label>
+                </details>
 
-                <div class="set-group">Sandboxed Python</div>
+                <details class="set-section" open>
+                <summary class="set-group">Sandboxed Python</summary>
 
                 <div class="set-field"><span>Environment</span>
                     <div class="set-hint">Bundled packages: {PY_PACKAGES.map(p => p.load).join(", ")}, + the Python stdlib.</div>
@@ -474,6 +485,7 @@ export function Settings() {
                         onChange={(e: any) => setField("autoApprovePython", e.target.checked)} />
                     <Lbl tip={TIP.autoApprovePython}>Auto-approve readonly python_exec calls</Lbl>
                 </label>
+                </details>
 
             </> : null}
             </div>
