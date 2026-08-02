@@ -920,7 +920,7 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                 <Dot status={st.pending ? "pending" : toolFailed(st.result) ? "err" : "ok"} />
                 {/* Tool-authored short summary (contract MlTool.summary) → hover tooltip, both surfaces. */}
                 {toolSummary
-                    ? <span class="tt tool-name-wrap"><span class="tool-name">{st.tool}</span><span class="tt-pop wrap" role="tooltip">{toolSummary}</span></span>
+                    ? <span class="tt tool-name-wrap"><span class="tool-name">{st.tool}</span><span class="tt-pop left" role="tooltip">{toolSummary}</span></span>
                     : <span class="tool-name">{st.tool}</span>}
                 {st.approval ? <ApprovalBadge approval={st.approval} /> : null}
                 {st.elements ? <span class="tt el-count">{st.elements} el<span class="tt-pop wrap" role="tooltip">DOM nodes returned (reach them in the console via onStep).</span></span> : null}
