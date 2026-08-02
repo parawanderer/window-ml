@@ -33,6 +33,8 @@ export interface MlConfig {
     debugMode: DebugMode;   // where the debug UI renders (off / in-page overlay / DevTools panel)
     theme: Theme;
     cardCorner: CardCorner;   // which screen corner the off-mode approval card + working pill anchor to
+    agentHud: AgentHud;              // corner HUD verbosity: "progress" (pill while running) or "quiet" (approvals only)
+    agentHudInDevtools: boolean;     // also show the corner HUD alongside the DevTools panel (coexist)
     // Small "utility" model for cheap side tasks (e.g. session-title summaries).
     // Empty → fall back to the main `model`. numCtx/forceCpu apply only when set.
     utilityModel: string;
@@ -109,6 +111,8 @@ export const DEFAULT_CONFIG: MlConfig = {
     debugMode: "off",
     theme: "auto",
     cardCorner: "bottom-right",
+    agentHud: "progress",
+    agentHudInDevtools: false,
     utilityModel: "",
     utilityNumCtx: 4096,
     utilityForceCpu: false,

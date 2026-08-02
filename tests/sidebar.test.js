@@ -2069,6 +2069,26 @@ test("card surface: the final answer shows; debug steps/thinking don't leak", as
     assert.match(body.textContent, /three sections/, "the final answer shows");
 });
 
+test("card surface: quiet HUD suppresses the working pill, but an approval still surfaces the card", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off", agentHud: "quiet" } });
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    await w.raw({ __mlSidebarSurface: "card" });
+
+    const hash = "quiet1";
+    await w.dispatch(agentStart(hash, "read the page", "m"));
+    await w.dispatch(agentStep(hash, 1, { seq: 0, pending: true, tool: "look", arguments: {} }));   // running (no gate)
+    await w.flush();
+    assert.ok(!posted.some(m => m.__mlSidebarCard === "pill"), "no idle pill in quiet mode");
+    assert.ok(!w.window.document.querySelector(".card-pill"), "pill is not rendered");
+
+    // An actual approval must STILL surface the card (quiet only drops the idle pill, never the gate).
+    await w.dispatch(agentStep(hash, 2, { seq: 1, pending: true, awaitingApproval: true, tool: "click",
+        arguments: { selector: "#x" }, renderIn: { type: "action", verb: "Click", kind: "button", target: "X", selector: "#x" } }));
+    await w.flush();
+    assert.ok(posted.some(m => m.__mlSidebarCard === "expanded"), "the approval still shows the card");
+});
+
 test("card surface: a running run shows the working pill + right-click asks for the corner menu", async () => {
     const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
     const posted = [];

@@ -768,8 +768,11 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 kind: "agent-step", id: runId, ts: Date.now(), save: false,
                 session: { hash: runId, turn: (ev.step as number) || 0 }, ...ev,
             };
+            // Always fan to the PAGE (overlay / off card). For devtools ALSO fan to the panel — and the
+            // page fan lets the optional corner card coexist with the panel (agentHudInDevtools); the
+            // shell drops the page copy when no card is mounted, and never loops it back to the panel.
+            chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => { /* tab gone / no receiver */ });
             if (p.surface === "devtools") relayDebugEvent(tabId, event);
-            else chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => { /* tab gone / no receiver */ });
         };
         // OFF mode: the corner card is fed ENTIRELY by this background stream, because the page's own
         // debug bus (bus.ts) stays dormant in off mode — no `present` handshake, so its emitDebug is a

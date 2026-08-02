@@ -1718,9 +1718,11 @@ function CardApp() {
     const pending = !!pendingStep;
     const done = !!run && run.summary != null;
     const dismissed = !!run && cardDismissed.value === run.hash;
-    // Running = a live run with steps but nothing to act on yet → the small "working" pill.
+    // Running = a live run with steps but nothing to act on yet → the small "working" pill. In "quiet"
+    // HUD mode the idle pill is suppressed (the card still surfaces for an approval / the final answer).
     const running = !!run && !pending && !done && (run.steps || []).length > 0;
-    const visible = !!run && (pending || running || (done && !dismissed));
+    const showRunning = running && config.value.agentHud !== "quiet";
+    const visible = !!run && (pending || showRunning || (done && !dismissed));
     const state = !visible ? "hidden"
         : pending ? "expanded"                                 // an approval: show the action directly
             : done ? (cardCollapsed.value ? "toast" : "expanded") // finished: show the answer (collapsible)

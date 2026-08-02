@@ -6,7 +6,7 @@
 import { signal } from "@preact/signals";
 import { useState, useEffect } from "preact/hooks";
 import type { ComponentChildren } from "preact";
-import type { MlConfig, ApiFormat, Theme, DebugMode, CardCorner, LoadedModel } from "../contract";
+import type { MlConfig, ApiFormat, Theme, DebugMode, CardCorner, AgentHud, LoadedModel } from "../contract";
 import { DEFAULT_CONFIG, DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX, detectGroundingModel, modelFilterAllows } from "../contract";
 import { PY_PACKAGES } from "../python-env";
 import {
@@ -562,6 +562,18 @@ export function Settings() {
                         <option value="top-left">Top left</option>
                     </select>
                     <div class="set-hint">Which corner the off-mode agent card / working pill anchors to. You can also <b>right-click</b> the card to move it.</div>
+                </label>
+                <label class="set-field"><span>Agent HUD</span>
+                    <select value={c.agentHud} onChange={(e: any) => setField("agentHud", e.target.value as AgentHud)}>
+                        <option value="progress">Progress (pill while running)</option>
+                        <option value="quiet">Quiet (only when it needs you)</option>
+                    </select>
+                    <div class="set-hint"><b>Progress</b> shows a small pill in the corner while an agent runs (off mode). <b>Quiet</b> hides it — the card still appears for an approval or the final answer.</div>
+                </label>
+                <label class="set-check">
+                    <input type="checkbox" checked={c.agentHudInDevtools}
+                        onChange={(e: any) => setField("agentHudInDevtools", e.target.checked)} />
+                    <span>Also show the HUD alongside the DevTools panel</span>
                 </label>
                 </Section>
 

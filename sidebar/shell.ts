@@ -148,10 +148,13 @@ let cardWrap: HTMLElement | null = null;    // the acrylic container (its data-s
 let cardReady = false;                       // the card iframe app has handshaked (safe to post events)
 // Height: the card fits its CONTENT (a cross-origin iframe can't auto-size, so the app reports its
 // height → cardAutoH), capped at 72vh, UNLESS the user dragged the top edge (cardManualH, persisted).
-const CARD_H_KEY = "ml_card_height";
 let cardAutoH = 200;
-let cardManualH: number | null = null;
+let cardManualH: number | null = null;   // transient drag override (discarded when content changes / on unmount)
 let cardCorner = "bottom-right";   // config.cardCorner (set from storage) → which corner the card anchors to
+let agentHudInDevtools = false;    // config → also show the corner card/pill alongside the DevTools panel
+// The corner HUD (card/pill) is active in OFF mode, and in DEVTOOLS when the coexist toggle is on
+// (OVERLAY never uses it — the slide-out already covers the page).
+const hudActive = (): boolean => mode === "off" || (mode === "devtools" && agentHudInDevtools);
 // Background-run events buffered while the card iframe loads (off mode feeds the card ONLY from the
 // background stream, tagged __mlFromBg — the page's bus stays dormant — so no cross-source ordering).
 const CARD_RING_MAX = 200;
@@ -188,7 +191,7 @@ function startCardResize(e: PointerEvent): void {
         window.removeEventListener("pointermove", onMove);
         window.removeEventListener("pointerup", onUp);
         if (frame) frame.style.pointerEvents = "";
-        if (cardManualH) chrome.storage.local.set({ [CARD_H_KEY]: cardManualH });
+        // Not persisted — a drag is a momentary override that the next event snaps back to content.
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
@@ -203,6 +206,7 @@ function hideCornerMenu(): void {
     cornerMenuEl?.remove(); cornerMenuEl = null;
     window.removeEventListener("pointerdown", onCornerMenuOutside, true);
     window.removeEventListener("keydown", onCornerMenuKey, true);
+    window.removeEventListener("blur", hideCornerMenu);
 }
 function onCornerMenuOutside(e: Event): void { if (cornerMenuEl && !e.composedPath().includes(cornerMenuEl)) hideCornerMenu(); }
 function onCornerMenuKey(e: KeyboardEvent): void { if (e.key === "Escape") hideCornerMenu(); }
@@ -227,6 +231,7 @@ function showCornerMenu(px: number, py: number): void {
     setTimeout(() => {   // defer so the opening right-click doesn't immediately dismiss it
         window.addEventListener("pointerdown", onCornerMenuOutside, true);
         window.addEventListener("keydown", onCornerMenuKey, true);
+        window.addEventListener("blur", hideCornerMenu);   // clicking INTO the card iframe blurs the page window
     }, 0);
 }
 
@@ -397,20 +402,25 @@ function onWindowMessage(e: MessageEvent): void {
     // no-op); `devtools` forwards to the background so the panel receives it (a panel can't
     // read these window-messages). Fire-and-forget; harmless when no panel is open.
     if (d.__mlDebug && e.source === window) {
-        // OFF mode: the corner card is fed ONLY by the BACKGROUND stream (tagged __mlFromBg by
-        // content.ts) — the page's own bus is dormant here, so injected events never arrive live. The
-        // first such event brings up the card lazily; until its iframe app handshakes we buffer, then
-        // flush in order (see the app-ready branch below). This keeps off mode zero-cost until a run.
-        if (mode === "off") {
-            if (!d.__mlFromBg) return;
-            if (!cardHost) mountCard();
-            if (cardReady) frame?.contentWindow?.postMessage(d, "*");
-            else { bgRing.push(d); if (bgRing.length > CARD_RING_MAX) bgRing.shift(); }
-            return;
+        const ev = d.__mlDebug;
+        // Feed the corner HUD card, when it's active: OFF mode always, DEVTOOLS when the coexist toggle
+        // (agentHudInDevtools) is on. The card mounts lazily on a run START (`kind: "agent"`), then
+        // buffers until its iframe app handshakes — flushed in order (see the app-ready branch). In off
+        // mode the page's bus is dormant so only background-tagged events arrive; in devtools BOTH the
+        // page's own injected events (agent start/result) AND the background steps flow.
+        if (hudActive()) {
+            if (!cardHost && ev.kind === "agent") mountCard();
+            if (cardHost) {
+                if (cardReady) frame?.contentWindow?.postMessage(d, "*");
+                else { bgRing.push(d); if (bgRing.length > CARD_RING_MAX) bgRing.shift(); }
+            }
         }
-        frame?.contentWindow?.postMessage(d, "*");
-        if (mode === "devtools") {
-            try { void chrome.runtime.sendMessage({ type: "ML_DEBUG_EVENT", event: d.__mlDebug }).catch(() => {}); } catch { /* context gone */ }
+        // DEVTOOLS: forward to the panel — but NOT background-origin events (they already reached the
+        // panel via relayDebugEvent), else a duplicate. OVERLAY: relay into the in-page iframe app.
+        if (mode === "devtools" && !d.__mlFromBg) {
+            try { void chrome.runtime.sendMessage({ type: "ML_DEBUG_EVENT", event: ev }).catch(() => {}); } catch { /* context gone */ }
+        } else if (mode === "overlay") {
+            frame?.contentWindow?.postMessage(d, "*");
         }
         return;
     }
@@ -433,8 +443,11 @@ function onWindowMessage(e: MessageEvent): void {
         return;
     }
     // The card app reports its content height (a cross-origin iframe can't auto-size) → fit the card to
-    // it, capped, unless the user dragged a manual height.
+    // it, capped. A user drag is TRANSIENT: when the CONTENT height changes (a new event), discard the
+    // manual height and SNAP to the new content. A drag itself reports the SAME content height (only the
+    // frame geometry moved), so `!== cardAutoH` keeps it from undoing the drag mid-gesture.
     if (typeof d.__mlSidebarCardH === "number" && frame && e.source === frame.contentWindow) {
+        if (d.__mlSidebarCardH !== cardAutoH) cardManualH = null;
         cardAutoH = d.__mlSidebarCardH; sizeCard();
         return;
     }
@@ -590,11 +603,10 @@ function mountCard(): void {
     handle.id = `${SB_CARD}-resize`;
     handle.title = "Drag to resize · double-click to auto-fit";
     handle.addEventListener("pointerdown", startCardResize);
-    handle.addEventListener("dblclick", () => { cardManualH = null; chrome.storage.local.remove(CARD_H_KEY); sizeCard(); });
+    handle.addEventListener("dblclick", () => { cardManualH = null; sizeCard(); });   // back to auto-fit
     cardWrap.append(frame, handle);
     root.append(cardWrap);
     (document.documentElement || document.body).append(cardHost);
-    chrome.storage.local.get({ [CARD_H_KEY]: null }, (d: any) => { cardManualH = d[CARD_H_KEY] || null; sizeCard(); });
 }
 function unmountCard(): void {
     if (!cardHost) return;
@@ -648,15 +660,21 @@ function applyCardTheme(): void {
 function applyCardCorner(): void { if (cardWrap) cardWrap.dataset.corner = cardCorner; }
 themeMedia?.addEventListener("change", applyCardTheme);   // "auto" follows the OS
 
-chrome.storage.sync.get({ debugMode: "off", theme: "auto", cardCorner: "bottom-right" }, (cfg) => {
+chrome.storage.sync.get({ debugMode: "off", theme: "auto", cardCorner: "bottom-right", agentHudInDevtools: false }, (cfg) => {
     rawTheme = (cfg.theme as string) || "auto";
     cardCorner = (cfg.cardCorner as string) || "bottom-right";
+    agentHudInDevtools = !!cfg.agentHudInDevtools;
     applyMode(cfg.debugMode as DebugMode);
 });
 chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "sync") return;
     if (changes.theme) { rawTheme = (changes.theme.newValue as string) || "auto"; applyCardTheme(); }
     if (changes.cardCorner) { cardCorner = (changes.cardCorner.newValue as string) || "bottom-right"; applyCardCorner(); }
+    if (changes.agentHudInDevtools) {
+        agentHudInDevtools = !!changes.agentHudInDevtools.newValue;
+        // Turned OFF while a devtools card is up → drop it (turning ON takes effect on the next run).
+        if (!hudActive() && cardHost) unmountCard();
+    }
     if (changes.debugMode) applyMode((changes.debugMode.newValue || "off") as DebugMode);
 });
 
