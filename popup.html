@@ -10,23 +10,34 @@
         --border: #3f3f46; --fg: #e4e4e7; --fg-dim: #a1a1aa; --fg-faint: #71717a;
         --accent: #6366f1; --accent-strong: #4f46e5; --accent-fg: #ffffff;
         --ok: #4ade80; --err: #f87171;
+        /* Frosted "acrylic" panel tokens — the same visual language as the off-mode approval card
+           (sidebar shell CARD_CSS): a translucent rounded box with a soft shadow. A browser popup has
+           nothing behind it to blur, so this reads as frosted cards over a gentle gradient body. */
+        --radius: 13px;
+        --card-bg: rgba(255, 255, 255, .045); --card-border: rgba(255, 255, 255, .10);
+        --card-shadow: 0 6px 20px rgba(0, 0, 0, .32), 0 1px 3px rgba(0, 0, 0, .24);
+        --body-grad: radial-gradient(125% 90% at 100% 0%, #292a31 0%, #191a1e 62%);
     }
     :root[data-theme="light"] {
         --bg: #ffffff; --panel: #f4f4f5; --panel-2: #e4e4e7; --panel-2-hover: #d4d4d8;
         --border: #d4d4d8; --fg: #18181b; --fg-dim: #52525b; --fg-faint: #a1a1aa;
         --accent: #6366f1; --accent-strong: #4f46e5; --accent-fg: #ffffff;
         --ok: #16a34a; --err: #dc2626;
+        --card-bg: rgba(255, 255, 255, .58); --card-border: rgba(0, 0, 0, .09);
+        --card-shadow: 0 6px 20px rgba(0, 0, 0, .12), 0 1px 3px rgba(0, 0, 0, .08);
+        --body-grad: radial-gradient(120% 90% at 100% 0%, #ffffff 0%, #eef0f4 70%);
     }
     body {
         font-family: system-ui, -apple-system, sans-serif;
         font-size: 13px; width: 340px; margin: 0; padding: 14px;
-        background: var(--bg); color: var(--fg);
+        background: var(--bg); background-image: var(--body-grad); color: var(--fg);
     }
-    h1 { font-size: 14px; margin: 0 0 12px; }
+    h1 { font-size: 14px; margin: 0 0 12px; display: flex; align-items: center; gap: 7px; }
+    h1::before { content: "🤖"; font-size: 16px; }
     label { display: block; margin: 10px 0 3px; color: var(--fg-dim); }
     input, select {
         width: 100%; box-sizing: border-box; padding: 6px 8px;
-        border: 1px solid var(--border); border-radius: 5px;
+        border: 1px solid var(--border); border-radius: 6px;
         background: var(--panel); color: var(--fg); font-size: 13px;
     }
     input:focus, select:focus { outline: none; border-color: var(--accent); }
@@ -34,7 +45,7 @@
     .row input { flex: 1; }
     .hint { font-size: 11px; color: var(--fg-faint); margin-top: 2px; }
     button {
-        padding: 6px 12px; border: none; border-radius: 5px;
+        padding: 6px 12px; border: none; border-radius: 6px;
         background: var(--panel-2); color: var(--fg); font-size: 13px;
         cursor: pointer; white-space: nowrap;
     }
@@ -55,11 +66,19 @@
         margin: 14px 0 2px; color: var(--fg); cursor: pointer;
     }
     .check input { width: auto; margin: 0; }
-    /* Collapsible connection block: expanded when unconfigured (the first thing to do),
-       collapsed once a URL is set (you rarely need it again). */
-    details.conn { border: 1px solid var(--border); border-radius: 6px; padding: 0 10px; margin-bottom: 6px; }
+    /* Frosted acrylic panel — groups a settings section into a rounded translucent card, matching the
+       off-mode approval card. `.panel` wraps the loose field groups; `details.conn` is the collapsible
+       variant (Connection / Permissions), expanded when unconfigured, collapsed once set. */
+    .panel, details.conn {
+        background: var(--card-bg);
+        -webkit-backdrop-filter: blur(16px) saturate(160%); backdrop-filter: blur(16px) saturate(160%);
+        border: 1px solid var(--card-border); border-radius: var(--radius);
+        box-shadow: var(--card-shadow); padding: 11px 12px; margin-bottom: 10px;
+    }
+    .panel > label:first-child, .panel > .panel-h { margin-top: 0; }
+    details.conn { padding: 0 12px; }
     details.conn > summary {
-        list-style: none; cursor: pointer; padding: 9px 0; color: var(--fg);
+        list-style: none; cursor: pointer; padding: 10px 0; color: var(--fg);
         display: flex; align-items: center; gap: 6px; font-weight: 600;
     }
     details.conn > summary::-webkit-details-marker { display: none; }
@@ -67,7 +86,7 @@
     details.conn[open] > summary::before { content: "▾"; }
     details.conn > summary .todo { color: var(--accent); }
     details.conn > summary .ok { color: var(--ok); font-weight: 400; font-size: 12px; }
-    details.conn[open] { padding-bottom: 10px; }
+    details.conn[open] { padding-bottom: 11px; }
     .free-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
     .free-row .hint { margin: 0; flex: 1; }
 </style>
@@ -118,23 +137,25 @@
         </div>
     </details>
 
-    <label for="theme">Theme</label>
-    <select id="theme">
-        <option value="auto">Auto (follow system)</option>
-        <option value="dark">Dark</option>
-        <option value="light">Light</option>
-    </select>
+    <div class="panel">
+        <label for="theme">Theme</label>
+        <select id="theme">
+            <option value="auto">Auto (follow system)</option>
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+        </select>
 
-    <label for="debugMode">Debug panel</label>
-    <select id="debugMode">
-        <option value="off">Off</option>
-        <option value="overlay">In-page sidebar</option>
-        <option value="devtools">DevTools panel</option>
-    </select>
-    <div class="hint">Where the ml-call debug log renders. <b>In-page</b> = a slide-out on every page. <b>DevTools</b> = the “window.ml” tab in DevTools, no on-page overlay.</div>
+        <label for="debugMode">Debug panel</label>
+        <select id="debugMode">
+            <option value="off">Off</option>
+            <option value="overlay">In-page sidebar</option>
+            <option value="devtools">DevTools panel</option>
+        </select>
+        <div class="hint">Where the ml-call debug log renders. <b>In-page</b> = a slide-out on every page. <b>DevTools</b> = the “window.ml” tab in DevTools, no on-page overlay.</div>
+    </div>
 
-    <div id="vramSection" style="display:none">
-        <label>VRAM</label>
+    <div id="vramSection" class="panel" style="display:none">
+        <label class="panel-h">VRAM</label>
         <div class="free-row">
             <div id="vram" class="hint">—</div>
             <button id="unload" title="Evict all loaded models from VRAM">Free VRAM</button>
