@@ -8,6 +8,7 @@
 import * as esbuild from "esbuild";
 import { cpSync, rmSync, mkdirSync, existsSync, readdirSync } from "node:fs";
 import { generatePreview } from "./tools/preview-annotate.mjs";
+import { writeApiDocs } from "./scripts/gen-api-docs.mjs";
 
 // output name (dist/<name>.js)  ->  source entry
 const ENTRIES = {
@@ -92,6 +93,11 @@ function copyPyodide() {
 
 rmSync("dist", { recursive: true, force: true });
 mkdirSync("dist", { recursive: true });
+
+// api-docs.gen.ts — the agent_api_docs tool's payload, lifted from contract.ts. Generated
+// BEFORE bundling (tools.ts imports it) and gitignored, so the shipped reference can never
+// drift from the interface. Rewritten only when it changes, so --watch doesn't self-trigger.
+writeApiDocs();
 
 if (watch) {
     const copyPlugin = { name: "copy-assets", setup(b) { b.onEnd(() => copyAssets()); } };

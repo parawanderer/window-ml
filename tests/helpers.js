@@ -76,7 +76,10 @@ function streamResponse(lines, { status = 200 } = {}) {
 
 // Loads background.js. `onFetch` receives { url, opts, body } (body already
 // JSON-parsed for requests that have one) and returns a response stub.
-function loadBackground({ config = {}, onFetch, onCaptureTab, onPyRun, onTabMessage }) {
+// `commandShortcut` is what chrome.commands reports as CURRENTLY bound for the HUD
+// (null = the API is unavailable, "" = the user cleared the binding); `manifestPermissions`
+// lets a test declare contextMenus, which GET_INVOCATION reads as "the right-click entry exists".
+function loadBackground({ config = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"] }) {
     const calls = [];
     const captures = [];        // captureVisibleTab arg lists, for screenshot tests
     const tabMessages = [];     // chrome.tabs.sendMessage arg lists, for reverse-channel tests
@@ -118,7 +121,16 @@ function loadBackground({ config = {}, onFetch, onCaptureTab, onPyRun, onTabMess
                     set: async (obj) => { Object.assign(localStore, obj); }
                 }
             },
+            // GET_INVOCATION reads the manifest's suggested key + the contextMenus permission.
+            commands: commandShortcut === null ? undefined : {
+                onCommand: { addListener: () => {} },
+                getAll: async () => [{ name: "open-composer", shortcut: commandShortcut }],
+            },
             runtime: {
+                getManifest: () => ({
+                    permissions: manifestPermissions,
+                    commands: { "open-composer": { suggested_key: { default: "Alt+Space", mac: "Alt+Space" } } },
+                }),
                 onMessage: { addListener: (fn) => listeners.push(fn) },
                 onConnect: { addListener: (fn) => connectListeners.push(fn) },
                 // The PYTHON_EXEC handler relays PY_RUN to the offscreen doc via runtime.sendMessage —

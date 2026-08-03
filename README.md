@@ -118,7 +118,7 @@ list. See [docs/CLOUD-MODELS.md](docs/CLOUD-MODELS.md).
 
 | Call | Purpose |
 | --- | --- |
-| `ml.chat(prompt, options?)` | One-shot chat. Returns the reply text. |
+| `ml.chat(prompt, options?)` | One-shot chat. Returns the reply text. A **raw model call**: it sees only the prompt you pass (plus `images`), never the page — to ask about the page, pass the text in yourself or use `ml.agent`. |
 | `ml.chatShort(prompt, options?)` | Same, with a brevity suffix. |
 | `ml.createChat(options?)` | Multi-turn history object (below). |
 | `ml.models()` | Available model ids on the server. |

@@ -51,6 +51,22 @@ export const VISION_CLAUSE =
     "crop is sharp, decisive, and bound to that exact element (answer the same selector+index " +
     "for the ones that match). Do NOT classify items from a whole-page/grid screenshot: it is " +
     "downscaled to mush and its verdicts are unreliable and won't map to specific elements.";
+// Self-knowledge. Without this the model has no idea what it runs inside — asked "how do
+// I call you from the console?" it answers from pre-training. Identity only; the reference
+// itself is ~4k tokens, so it stays behind the tool.
+export const SELF_CLAUSE =
+    "\n\nYOU are the agent of window.ml, a Chrome extension that injects a `window.ml` " +
+    "scripting API into every page — this run is an `ml.agent(task)` call, so the user can " +
+    "indeed drive you from the devtools console. Asked about yourself or that API, call " +
+    "`agent_api_docs` rather than guessing. You can also reach `ml` yourself through `exec` " +
+    "(approval-gated like any exec) — e.g. `await ml.getModel()` for the model you're running on.";
+// Invocation provenance for a UI-started run, passed as ml.agent's `hints` (SELF_CLAUSE
+// says the user CAN drive you from the console — for a HUD run that's true but not how
+// they actually did it, and "how do I invoke you?" deserves the answer they're living in).
+export const HUD_HINT =
+    "You were started from window.ml's in-page HUD (the Spotlight composer / right-click menu), " +
+    "not the devtools console — the user is driving you through the extension's UI. The console " +
+    "API is still open to them if they ask how to script this.";
 export const ANSWER_CLAUSE =
     "\n\nIf the task asks you to FIND / LOCATE / return an element (rather than change " +
     "the page), designate it with the answer tool (by selector) so the actual element " +

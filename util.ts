@@ -5,6 +5,63 @@
 import { truncate } from "./dom";
 import type { ShotBox } from "./contract";
 
+/** A Chromium flavour: its display name, major version, and the internal URL scheme its
+ *  settings pages live under (`brave://extensions/shortcuts` etc.). */
+export interface BrowserInfo { name: string; version: string | null; scheme: string; }
+
+// Chromium forks that rebrand the internal scheme. Everything else (including plain
+// Chromium builds) answers to chrome://.
+const SCHEMES: Record<string, string> = {
+    "Microsoft Edge": "edge", "Brave": "brave", "Opera": "opera", "Vivaldi": "vivaldi",
+    "Arc": "arc", "Yandex": "yandex",
+};
+// UA-string fallbacks, most specific first — Chrome's own token appears in all of them.
+const UA_BRANDS: [RegExp, string][] = [
+    [/Edg(?:e|A|iOS)?\/([\d.]+)/, "Microsoft Edge"], [/OPR\/([\d.]+)/, "Opera"],
+    [/Vivaldi\/([\d.]+)/, "Vivaldi"], [/YaBrowser\/([\d.]+)/, "Yandex"], [/Chrome\/([\d.]+)/, "Google Chrome"],
+];
+
+/**
+ * Identify the browser, for two purposes: telling the user where their settings live
+ * (the shortcuts page is `chrome://` on Chrome but `edge://`/`brave://` on forks — the
+ * wrong scheme is a dead link), and letting the model tailor browser-specific advice.
+ *
+ * Prefers `navigator.userAgentData.brands` (Brave and Edge announce themselves there
+ * while impersonating Chrome in the UA string), falling back to UA sniffing.
+ *
+ * @param {object} [nav] Navigator-like object; defaults to the real `navigator` (injectable for tests).
+ * @returns {BrowserInfo} Name, major version (null when undeterminable), and URL scheme.
+ */
+export const browserInfo = (nav?: {
+    userAgentData?: { brands?: { brand: string; version: string }[] };
+    userAgent?: string;
+    brave?: unknown;
+}): BrowserInfo => {
+    const n = nav ?? (typeof navigator !== "undefined" ? navigator as never : undefined);
+    let name: string | null = null, version: string | null = null;
+    const brands = n?.userAgentData?.brands;
+    if (Array.isArray(brands)) {
+        // Skip Chromium itself and the deliberate "Not)A;Brand" GREASE entry — what's left
+        // is the actual product (e.g. "Brave", "Microsoft Edge", "Google Chrome").
+        const real = brands.find(b => b && b.brand && !/^Chromium$/i.test(b.brand) && !/not.*brand/i.test(b.brand));
+        if (real) { name = real.brand; version = real.version || null; }
+        else if (brands.length) { name = "Chromium"; version = brands.find(b => /^Chromium$/i.test(b.brand))?.version || null; }
+    }
+    if (!name) {
+        // Brave strips itself from the UA string entirely; `navigator.brave` is the giveaway.
+        if (n?.brave) name = "Brave";
+        for (const [re, brand] of UA_BRANDS) {
+            const m = n?.userAgent ? re.exec(n.userAgent) : null;
+            if (!m) continue;
+            if (!name) name = brand;
+            version = (m[1] || "").split(".")[0] || null;
+            break;
+        }
+    }
+    name = name || "an unknown Chromium browser";
+    return { name, version, scheme: SCHEMES[name] || "chrome" };
+};
+
 /**
  * Compact "where and when am I" snapshot: URL, title, page language, and the
  * current date/time + locale/timezone. ml.agent injects this by default (so the
@@ -26,6 +83,8 @@ export const pageContext = (): string => {
     const now = new Date();
     parts.push(`Now: ${now.toLocaleString(locale)}${tz ? ` (${tz})` : ""} — ISO ${now.toISOString()}`);
     if (locale) parts.push(`Locale: ${locale}`);
+    // The browser the user is actually in, so advice lands ("open edge://settings", not chrome://).
+    try { const b = browserInfo(); parts.push(`Browser: ${b.name}${b.version ? ` ${b.version}` : ""}`); } catch {}
     return parts.join("\n");
 };
 

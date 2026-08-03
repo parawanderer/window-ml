@@ -480,6 +480,17 @@ test("CAPTURE_TAB_REQUEST relays to a CAPTURE_TAB background message", async () 
     assert.equal(world.runtimeCalls[0].type, "CAPTURE_TAB");
 });
 
+test("INVOCATION_REQUEST relays to a GET_INVOCATION background message", async () => {
+    // agent_api_docs asks for the LIVE HUD shortcut through the normal relay rather than
+    // hardcoding one, since the user can rebind it at <scheme>://extensions/shortcuts.
+    const world = loadPageWorld({
+        onRuntimeMessage: () => ({ data: { shortcut: "Alt+Space", defaultShortcut: "Alt+Space", isDefault: true, contextMenu: false } })
+    });
+    world.context.window.postMessage({ type: "INVOCATION_REQUEST", requestId: "r1", payload: {} });
+    await new Promise(r => setTimeout(r));
+    assert.equal(world.runtimeCalls[0].type, "GET_INVOCATION");
+});
+
 test("ml.screenshot() with no target returns the whole viewport uncropped", async () => {
     const world = loadPageWorld({
         onRuntimeMessage: (msg) => {

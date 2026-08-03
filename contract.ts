@@ -436,6 +436,7 @@ export type PageRequestType =
     | "GET_MODEL_REQUEST" | "CONFIG_REQUEST" | "SET_MODEL_REQUEST" | "CAPS_REQUEST"
     | "PS_REQUEST" | "UNLOAD_REQUEST" | "CAPTURE_TAB_REQUEST"
     | "SAVE_SESSION_REQUEST" | "GET_SESSION_REQUEST" | "PYTHON_EXEC_REQUEST" | "FETCH_SHEET_REQUEST"
+    | "INVOCATION_REQUEST"   // how the user can open the HUD here (live shortcut — user-rebindable, never hardcode it)
     | "START_RUN_REQUEST"   // design A: kick off a background-hosted ml.agent loop
     | "ABORT_REQUEST";   // cancel an in-flight background task by requestId (handled specially, not via HANDLE_MAP)
 
@@ -444,6 +445,7 @@ export type BackgroundMessageType =
     | "FETCH_LLM" | "FETCH_IMAGE_B64" | "LIST_MODELS" | "GET_MODEL" | "GET_CONFIG"
     | "SET_MODEL" | "MODEL_CAPS" | "OLLAMA_PS" | "OLLAMA_UNLOAD" | "CAPTURE_TAB"
     | "SAVE_SESSION" | "GET_SESSION" | "PYTHON_EXEC" | "FETCH_SHEET" | "FETCH_SHEET_TITLE"
+    | "GET_INVOCATION"   // read chrome.commands' LIVE shortcut for the HUD (+ whether the user rebound it)
     | "ABORT_TASK"    // abort the AbortController registered for a requestId (only FETCH_LLM registers one today)
     | "START_RUN"     // design A: run an ml.agent loop in the background (unforgeable gate); tools delegate to the page
     | "SET_APPROVAL"; // design A: the sidebar's approve/deny decision for a pending background-run gate (origin-authed)
@@ -576,6 +578,17 @@ export interface FetchLlmPayload {
  *  `contextLength` is the num_ctx it was LOADED with — Ollama preallocates the
  *  KV cache for the whole window, so it's a big share of `vramGB` (null when the
  *  server is too old to report it). */
+/** How the user can invoke the HUD composer on THIS browser, read at runtime (GET_INVOCATION).
+ *  The keyboard shortcut is user-rebindable at <scheme>://extensions/shortcuts, so it must never
+ *  be hardcoded in a prompt or doc — `shortcut` is whatever is bound right now, `""` when the user
+ *  cleared it, and `isDefault` says whether it still matches the manifest's suggested key. */
+export interface InvocationInfo {
+    shortcut: string;            // e.g. "Alt+Space"; "" when the user removed the binding
+    defaultShortcut: string;     // the manifest's suggested_key for this platform
+    isDefault: boolean;          // shortcut === defaultShortcut (false also when unbound)
+    contextMenu: boolean;        // an extension context-menu entry is registered (permission declared)
+}
+
 export interface LoadedModel {
     model: string;
     vramGB: number | null;
@@ -687,13 +700,16 @@ export interface MlSidebarReady { __mlSidebar: "ready"; }
  *  they are NOT part of the stable public API and may change. */
 export interface MlApi {
     /* ---- chat ---- */
-    /** Create a stateful multi-turn chat session. */
+    /** Create a stateful multi-turn chat session. Same raw-model contract as ml.chat —
+     *  the turns accumulate, but the model still never sees the page. */
     createChat(opts?: ChatOptions & { save?: boolean }): MlHistory;
     /** Resume a chat by its session hash (shown in the debug sidebar). Returns a
      *  history you can `.chat()` on. Same-tab sessions resume from memory; across
      *  reloads/tabs only `{ save: true }` sessions survive (persisted to storage). */
     resumeChat(hash: string): Promise<MlHistory>;
-    /** One-shot chat — a throwaway single-turn history. */
+    /** One-shot chat — a throwaway single-turn history. A RAW model call: it sees ONLY the
+     *  prompt string you pass (plus any `images`), NOT the page. No DOM access, no tools —
+     *  to ask about the page, extract the text yourself and pass it in, or use ml.agent. */
     chat(prompt: string, options?: ChatOptions): Promise<string | unknown>;
     /** One-shot chat that always returns a string (never a parsed schema). */
     chatShort(prompt: string, options: ChatOptions): Promise<string>;
@@ -707,7 +723,9 @@ export interface MlApi {
     step(messages: NeutralMessage[], opts?: StepOptions): Promise<{ content: string; tool_calls: ToolCall[]; reasoning?: string | null; usage?: TokenUsage | null }>;
     /** Build one agent tool (JSON-schema signature + page-side run). */
     defineTool(tool?: Partial<MlTool>): MlTool;
-    /** Run a full agent loop over a tool registry until it stops or hits maxSteps. */
+    /** Run a full agent loop over a tool registry until it stops or hits maxSteps. THE
+     *  page-aware entry point — unlike ml.chat, the model discovers and acts on the live DOM
+     *  through tools (and vision), one step at a time. Use it for anything about "this page". */
     agent(task: string, opts?: AgentOptions): Promise<AgentResult>;
     /** An approve() gate that auto-approves the first call, then denies. */
     approveOnce(): (req: ApprovalRequest) => boolean;

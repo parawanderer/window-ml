@@ -183,6 +183,40 @@ the delegated-sub-call `num_ctx` resident-caching gotcha. All four original slic
 canvas half: grid, grid-grounding, `@pt`). Pure geometry (`som.ts`) is unit-tested standalone
 (`dist/som.js`, `tests/som.test.js`); scoping guards in `tests/agent.test.js`.
 
+**Agent self-knowledge (`agent_api_docs`).** The agent had none: asked "how do I call you
+from the console?" it answered from pre-training ("try typing `window`…"), because nothing in
+its context named `window.ml` or the extension. Two pieces fix it. `SELF_CLAUSE` (prompts.ts,
+appended like the other clauses when the tool is present) is the *identity* — one line saying
+this run is an `ml.agent(task)` call inside a Chrome extension whose API the user drives from
+the devtools console, plus "that's the user's handle on you, not one of your tools; don't call
+it from `exec`". The `agent_api_docs` tool (no args, terse description) is the *reference*, and
+it's **generated from `contract.ts`, never curated** — `scripts/gen-api-docs.mjs` lifts `MlApi`'s
+public members with their JSDoc, drops the `_` plumbing, then chases the option/result types
+they reference (transitively, minus a `SKIP_TYPES` denylist of render/debug internals — a bare
+`chat(prompt, options?)` teaches the model nothing about `schema`/`think`/`onToken`) into
+`api-docs.gen.ts` (**gitignored**, written by `build.mjs` before bundling and by
+`npm run typecheck`; `tools.ts` imports it). ~4k tokens, so it stays behind a tool call rather
+than in every system prompt. The tool's `run` **appends a RUNTIME section** the generated doc
+can't hold: the HUD keyboard shortcut is **user-rebindable**, so it's read live via
+`GET_INVOCATION` (a new background message → `chrome.commands.getAll()`) — reporting what's bound
+*now*, whether that still matches the manifest (`isDefault`) or the user changed it, and `""` when
+they cleared it (a hardcoded "Alt+Space" would eventually send someone to a dead key). The
+rebinding URL is browser-correct: `browserInfo()` (util.ts, pure/unit-tested — prefers
+`userAgentData.brands`, since Brave/Edge impersonate Chrome in the UA) maps the fork to its scheme
+(`edge://`/`brave://`/…), and also adds a `Browser:` line to `pageContext()`. The lookup is bounded
+by `INVOCATION_TIMEOUT_MS` and falls back to generic advice — a docs call must never stall a step.
+The **context-menu** line is gated on the manifest declaring `contextMenus`, so it turns itself on
+when that feature ships rather than advertising an affordance that doesn't exist yet. A
+**HUD-started** run additionally gets `HUD_HINT` via `ml.agent`'s
+`hints` (which APPENDS; `system` would replace the preamble) at the `__mlStartAgent` handler —
+SELF_CLAUSE's "the user can drive you from the console" is true but isn't how *that* user
+actually invoked it. It's a **line scanner, not a real parser**: `typescript@7` is the
+Go port and exports only `version` — no JS compiler API — so TypeDoc/ts-morph would each mean a
+second TypeScript in the tree. It leans on contract.ts's house style (top-level `export interface
+X {`, one member per line, JSDoc above) and **throws** rather than silently truncating if that
+stops holding; `tests/api-docs.test.mjs` regenerates and diffs the checked-in output, so a
+contract.ts edit can't leave the shipped doc stale.
+
 **Agent runs in the debug sidebar.** `ml.agent` emits its own debug-event kinds
 (not `chat`): `agent` (run start: task + model), `agent-step` (a thought OR a tool
 call with args/result; `elements` is a **count**, since real DOM nodes can't cross

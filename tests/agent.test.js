@@ -40,6 +40,11 @@ test("__mlStartAgent (HUD composer relay) runs a REAL ml.agent() call in the pag
     // use `click` and got "no tool named click" when it was missing.
     const toolNames = (calledOpts?.extraTools || []).map(t => t.name);
     assert.ok(["click", "type", "python_exec"].every(n => toolNames.includes(n)), `composer run wires click/type/python (got ${toolNames.join(",")})`);
+    // Invocation provenance: SELF_CLAUSE tells the model the user CAN drive it from the console, which
+    // would be the wrong answer to "how did you start?" for a HUD run. `hints` APPENDS (system would
+    // replace the whole preamble), so the method survives.
+    assert.match(calledOpts?.hints || "", /HUD/, "a UI-started run tells the model it came from the HUD");
+    assert.equal(calledOpts?.system, undefined, "the HUD must not REPLACE the built-in system prompt");
 
     // A blank task is ignored (no empty run).
     calledWith = null;
@@ -210,6 +215,22 @@ test("defineTool carries capability tags (default empty)", () => {
 
 // Run a named tool from the default registry (run may be async, e.g. exec).
 const run = (ml, name, args) => ml.domTools.find(t => t.name === name).run(args);
+
+test("agent_api_docs ships the generated window.ml reference in the default registry", async () => {
+    // The doc itself is covered by tests/api-docs.test.mjs; what matters here is that it
+    // survives the bundle into ml.domTools — the tool is the agent's only self-knowledge
+    // beyond SELF_CLAUSE, and an empty/undefined import would fail silently at runtime.
+    // No content-script relay in this world, so the live-shortcut lookup must TIME OUT and
+    // still return the reference (a docs call must never hang a step).
+    const { ml } = loadDomWorld("<p>hi</p>");
+    const docs = await run(ml, "agent_api_docs", {});
+    assert.match(docs, /Opening the HUD/, "the runtime invocation section is appended");
+    assert.match(docs, /shortcuts/, "the user is pointed at the rebinding page even without the relay");
+    assert.ok(docs.length > 2000, `expected the full reference, got ${docs.length} chars`);
+    assert.ok(docs.includes("devtools console"), "missing the console framing the tool exists for");
+    assert.ok(docs.includes("agent(task"), "missing ml.agent's signature");
+    assert.ok(!/\b_logStep\s*\(/.test(docs), "internal plumbing leaked into the shipped doc");
+});
 
 test("findByText returns the DEEPEST matches as paths + real nodes, not containers", () => {
     const { ml } = loadDomWorld(

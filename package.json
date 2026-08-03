@@ -5,7 +5,8 @@
         "build": "node build.mjs",
         "watch": "node build.mjs --watch",
         "fetch-pyodide": "node scripts/fetch-pyodide-wheels.mjs",
-        "typecheck": "tsc --noEmit",
+        "gen-api-docs": "node scripts/gen-api-docs.mjs",
+        "typecheck": "npm run gen-api-docs && tsc --noEmit",
         "pretest": "npm run build",
         "test": "node --import tsx --test --test-concurrency=1 tests/*.test.js tests/*.test.mjs"
     },

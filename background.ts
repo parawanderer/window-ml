@@ -1072,6 +1072,28 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             .catch(err => sendResponse({ error: err.message }));
         return true;
 
+    } else if (message.type === "GET_INVOCATION") {
+        // How to open the HUD on THIS install. The shortcut is user-rebindable at
+        // chrome://extensions/shortcuts, so we report what chrome.commands says is bound RIGHT NOW
+        // (and whether that still matches the manifest) rather than letting anything hardcode
+        // "Alt+Space" — a stale answer sends the user to a key that does nothing. Non-secret:
+        // it's the user's own UI affordance, so no sender gating.
+        const manifest = chrome.runtime.getManifest?.() || {} as chrome.runtime.Manifest;
+        const suggested = manifest.commands?.["open-composer"]?.suggested_key;
+        const isMac = typeof navigator !== "undefined" && /Mac/i.test(navigator.userAgent || "");
+        const defaultShortcut = (typeof suggested === "string" ? suggested
+            : (isMac ? suggested?.mac : suggested?.default) || suggested?.default) || "";
+        // contextMenus is a permission-gated API, so the manifest declaring it is a truthful proxy
+        // for "the right-click entry exists" — this line turns itself on when that feature lands.
+        const contextMenu = (manifest.permissions || []).includes("contextMenus");
+        Promise.resolve(chrome.commands?.getAll?.() ?? [])
+            .then((cmds: chrome.commands.Command[]) => {
+                const shortcut = cmds.find(c => c.name === "open-composer")?.shortcut || "";
+                sendResponse({ data: { shortcut, defaultShortcut, isDefault: !!shortcut && shortcut === defaultShortcut, contextMenu } });
+            })
+            .catch(() => sendResponse({ data: { shortcut: "", defaultShortcut, isDefault: false, contextMenu } }));
+        return true;
+
     } else if (message.type === "GET_CONFIG") {
         // Non-secret config the page may read (model/OCR model/format). The URL
         // and API key are deliberately withheld — see the security invariants.

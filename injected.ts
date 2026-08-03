@@ -31,7 +31,7 @@ import type {
 import { detectGroundingModel, DEFAULT_GROUNDING_RANGE } from "./contract";
 import { evalReadonly } from "./readonly-exec";
 import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay } from "./dom";
-import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE } from "./prompts";
+import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, SELF_CLAUSE, HUD_HINT, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, PT_LOOK_RADIUS, BOX_RE, resolveBox } from "./util";
 import type { ShotBox } from "./contract";
 import { annotate, pickAccentColorForTarget } from "./som";
@@ -466,6 +466,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 if (hasCap("vision")) systemPrompt += VISION_CLAUSE;
                 if (hasCap("answer")) systemPrompt += ANSWER_CLAUSE;
                 if (toolset.some(t => t.name === "wait")) systemPrompt += WAIT_CLAUSE;
+                if (toolset.some(t => t.name === "agent_api_docs")) systemPrompt += SELF_CLAUSE;
                 // Deterministic-compute clause. python_exec is the better calculator; when it's
                 // absent, exec (read-only JS: Array/Math/.reduce) is the fallback — either way the
                 // model must compute, never guess. Mutually exclusive so the prompt isn't doubled.
@@ -1578,7 +1579,9 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             agent: (t: string, o?: unknown) => Promise<unknown>;
             clickTool: () => unknown; typeTool: () => unknown; pythonTool: () => unknown;
         };
-        const opts: Record<string, unknown> = { extraTools: [ml.clickTool(), ml.typeTool(), ml.pythonTool()] };
+        // `hints` (appended to the system prompt) rather than `system` (which would REPLACE the
+        // preamble): the run still needs the whole method, it just isn't a console call.
+        const opts: Record<string, unknown> = { extraTools: [ml.clickTool(), ml.typeTool(), ml.pythonTool()], hints: HUD_HINT };
         if (Number.isFinite(maxSteps) && maxSteps > 0) opts.maxSteps = maxSteps;   // the composer's step budget
         try { void ml.agent(task, opts); }
         catch (err) { console.error("ml: UI-started run failed:", err); }

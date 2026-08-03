@@ -4,7 +4,49 @@
 // in the VIEWPORT.
 import { test } from "node:test";
 import assert from "node:assert";
-import { projectShotPoint, projectShotBox } from "../util.ts";
+import { projectShotPoint, projectShotBox, browserInfo } from "../util.ts";
+
+// ---- browserInfo: which Chromium are we in? ----
+// It decides the URL scheme we hand the user for their settings pages — `chrome://extensions/
+// shortcuts` is a dead link in Edge/Brave, and a dead link is worse than no advice.
+
+test("browserInfo prefers userAgentData brands over the UA string (Brave impersonates Chrome)", () => {
+    const info = browserInfo({
+        userAgentData: { brands: [{ brand: "Not)A;Brand", version: "99" }, { brand: "Chromium", version: "141" }, { brand: "Brave", version: "141" }] },
+        userAgent: "Mozilla/5.0 … Chrome/141.0.0.0 Safari/537.36",
+    });
+    assert.deepEqual(info, { name: "Brave", version: "141", scheme: "brave" });
+});
+
+test("browserInfo maps each fork to its own internal scheme", () => {
+    const scheme = brand => browserInfo({ userAgentData: { brands: [{ brand, version: "1" }] } }).scheme;
+    assert.equal(scheme("Microsoft Edge"), "edge");
+    assert.equal(scheme("Vivaldi"), "vivaldi");
+    assert.equal(scheme("Google Chrome"), "chrome");
+    assert.equal(scheme("Some New Fork"), "chrome");     // unknown → the Chromium default
+});
+
+test("browserInfo falls back to UA sniffing, most specific token first", () => {
+    // Edge's UA contains BOTH Chrome/ and Edg/ — matching Chrome first would misname it.
+    assert.deepEqual(browserInfo({ userAgent: "Mozilla/5.0 … Chrome/141.0.0.0 Safari/537.36 Edg/141.0.1" }),
+        { name: "Microsoft Edge", version: "141", scheme: "edge" });
+    assert.deepEqual(browserInfo({ userAgent: "Mozilla/5.0 … Chrome/140.0.0.0 Safari/537.36" }),
+        { name: "Google Chrome", version: "140", scheme: "chrome" });
+});
+
+test("browserInfo detects Brave by navigator.brave when the UA hides it", () => {
+    const info = browserInfo({ brave: {}, userAgent: "Mozilla/5.0 … Chrome/141.0.0.0 Safari/537.36" });
+    assert.equal(info.name, "Brave");
+    assert.equal(info.scheme, "brave");
+});
+
+test("browserInfo never throws on an empty navigator — it degrades to a named unknown", () => {
+    const info = browserInfo({});
+    assert.match(info.name, /unknown/i);
+    assert.equal(info.scheme, "chrome");        // still gives a usable settings URL
+    assert.equal(info.version, null);
+});
+
 
 test("projectShotPoint: viewport = crop-offset + image_px / dpr", () => {
     // A Retina (dpr=2) crop whose top-left sits at viewport (50, 30). Image pixel (200,100) →

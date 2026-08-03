@@ -7,10 +7,60 @@
 import type { MlTool, ToolResult } from "./contract";
 import { truncate, clipOut, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, selectorError } from "./dom";
 import { INTERACTIVE_SEL, roleOf, accessibleName, ariaState, hasLayout, styleHidden, isFaded } from "./a11y";
-import { pageContext } from "./util";
+import { pageContext, browserInfo } from "./util";
+import { makeBackgroundTaskPromise } from "./bridge";
+import type { InvocationInfo } from "./contract";
+// Generated from contract.ts at build time (scripts/gen-api-docs.mjs) — the public MlApi
+// surface, so the doc the model reads can never drift from the interface it describes.
+import { ML_API_DOCS } from "./api-docs.gen";
 
 // A single-element tool (describeElement/ancestors) uses the FIRST of N matches — say so, so
 // a loose selector's wrong pick doesn't silently mislead the run (the model can narrow it).
+// How long invocationSection waits for the background's shortcut reply before answering
+// generically. Short: it's one section of a docs lookup, never worth stalling a step for.
+const INVOCATION_TIMEOUT_MS = 1500;
+
+/**
+ * The "how the user opens the HUD here" section of agent_api_docs — resolved at RUN TIME, not
+ * baked into the generated reference, because the keyboard shortcut is user-rebindable: a
+ * hardcoded "Alt+Space" sends them to a key that may do nothing. Reports what is bound right
+ * now, whether they changed it, and the settings URL for THEIR browser (the scheme differs on
+ * Edge/Brave/…). Degrades to the generic instructions if the background can't be reached.
+ *
+ * @returns {Promise<string>} A markdown section for the tool's output.
+ */
+const invocationSection = async (): Promise<string> => {
+    const b = browserInfo();
+    const shortcutsUrl = `${b.scheme}://extensions/shortcuts`;
+    const lines = [`## Opening the HUD (this browser: ${b.name}${b.version ? ` ${b.version}` : ""})`, ""];
+    let info: InvocationInfo | null = null;
+    try {
+        // Bounded: makeBackgroundTaskPromise waits forever for its reply, and a missing/slow relay
+        // (torn-down content script, sleeping worker) must degrade to generic advice rather than
+        // stall the agent step on a docs lookup.
+        info = await Promise.race([
+            makeBackgroundTaskPromise<InvocationInfo>("INVOCATION_REQUEST", "INVOCATION_RESPONSE", {}),
+            new Promise<null>(r => setTimeout(() => r(null), INVOCATION_TIMEOUT_MS)),
+        ]);
+    } catch { /* fall through to the generic instructions */ }
+    if (info?.shortcut) {
+        lines.push(`- **Keyboard: \`${info.shortcut}\`** — the shortcut bound RIGHT NOW` +
+            (info.isDefault ? " (the extension's default)." : ` (the user CHANGED this from the default \`${info.defaultShortcut}\`).`));
+    } else if (info) {
+        lines.push(`- **Keyboard: not assigned.** The default (\`${info.defaultShortcut || "Alt+Space"}\`) is not bound — ` +
+            "either the user cleared it or it collided with another extension. They must set one to open the HUD by keyboard.");
+    } else {
+        lines.push("- **Keyboard:** a shortcut opens the HUD, but the live binding could not be read here — " +
+            "tell the user to check the shortcuts page below rather than guessing a key.");
+    }
+    lines.push(`- **Rebinding it:** the user opens \`${shortcutsUrl}\` and edits "Open the window.ml command bar". ` +
+        "Chromium reserves that page for the user — neither you nor the extension can set a shortcut for them, " +
+        "and you cannot navigate there yourself (tools don't act on browser-internal pages), so hand them the URL.");
+    if (info?.contextMenu) lines.push("- **Right-click** anywhere on the page and pick window.ml from the context menu.");
+    lines.push("- **Toolbar:** the extension's icon opens the popup (settings, model picker), not the HUD.");
+    return lines.join("\n");
+};
+
 const firstOfNote = (selector: string, count: number): string =>
     count > 1 ? `⚠ "${selector}" matched ${count} elements — using the FIRST (#0). Narrow it (an id, or :nth-of-type(N)), or countMatches to list them.\n\n` : "";
 
@@ -347,6 +397,21 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
                 "'today'?) and to confirm the site and language before matching text.",
             parameters: { type: "object", properties: {} },
             run: (): string => pageContext()
+        }),
+        T({
+            name: "agent_api_docs",
+            summary: "Looks up the window.ml extension's own API reference.",
+            // Deliberately terse: this is a "when you need it" escape hatch, not a step in the
+            // method, and it pays ~4k tokens of reference into context when called. The system
+            // prompt's SELF_CLAUSE is what tells the model the tool is worth reaching for.
+            description: "Your own implementation details: the public API of window.ml, the browser " +
+                "extension you run inside, and how a user invokes you — the devtools console, or the " +
+                "in-page HUD and the keyboard shortcut currently bound to it. Call it when asked about " +
+                "yourself, how to reach you, or the API, instead of guessing. Takes no arguments.",
+            parameters: { type: "object", properties: {} },
+            // The generated reference is build-time; the HUD shortcut is runtime state the user
+            // owns, so it's appended live rather than frozen into the doc.
+            run: async (): Promise<string> => `${ML_API_DOCS}\n\n${await invocationSection()}`
         }),
         T({
             name: "scroll",

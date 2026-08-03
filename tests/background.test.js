@@ -288,6 +288,51 @@ test("GET_CONFIG exposes the utility-model fields", async () => {
     assert.equal(resp.data.utilityForceCpu, true);
 });
 
+// ---- GET_INVOCATION (how the user opens the HUD) ----
+// The shortcut is user-rebindable, so the answer must come from chrome.commands at call
+// time. Hardcoding "Alt+Space" anywhere would eventually tell a user to press a dead key.
+
+test("GET_INVOCATION reports the LIVE shortcut and flags it as the default", async () => {
+    const bg = loadBackground({ config: baseConfig(), commandShortcut: "Alt+Space" });
+    const resp = await bg.send({ type: "GET_INVOCATION", payload: {} });
+    assert.equal(resp.data.shortcut, "Alt+Space");
+    assert.equal(resp.data.defaultShortcut, "Alt+Space");
+    assert.equal(resp.data.isDefault, true);
+    assert.equal(resp.data.contextMenu, false);      // not shipped → never claimed
+});
+
+test("GET_INVOCATION flags a user-CUSTOMISED shortcut", async () => {
+    const bg = loadBackground({ config: baseConfig(), commandShortcut: "Ctrl+Shift+K" });
+    const resp = await bg.send({ type: "GET_INVOCATION", payload: {} });
+    assert.equal(resp.data.shortcut, "Ctrl+Shift+K");
+    assert.equal(resp.data.isDefault, false, "a rebound key must not be reported as the default");
+    assert.equal(resp.data.defaultShortcut, "Alt+Space", "the original is still reported, for context");
+});
+
+test("GET_INVOCATION reports an UNBOUND shortcut rather than pretending the default works", async () => {
+    // chrome.commands returns "" when the user cleared the binding or it collided with
+    // another extension — the HUD then has no keyboard route at all.
+    const bg = loadBackground({ config: baseConfig(), commandShortcut: "" });
+    const resp = await bg.send({ type: "GET_INVOCATION", payload: {} });
+    assert.equal(resp.data.shortcut, "");
+    assert.equal(resp.data.isDefault, false);
+});
+
+test("GET_INVOCATION survives chrome.commands being unavailable", async () => {
+    const bg = loadBackground({ config: baseConfig(), commandShortcut: null });
+    const resp = await bg.send({ type: "GET_INVOCATION", payload: {} });
+    assert.equal(resp.data.shortcut, "");
+    assert.equal(resp.data.defaultShortcut, "Alt+Space", "the manifest default still answers");
+});
+
+test("GET_INVOCATION claims the context menu only once the permission is declared", async () => {
+    // The right-click entry isn't built yet; this line turns itself on when it lands, so the
+    // model never advertises an affordance the user doesn't have.
+    const bg = loadBackground({ config: baseConfig(), manifestPermissions: ["storage", "contextMenus"] });
+    const resp = await bg.send({ type: "GET_INVOCATION", payload: {} });
+    assert.equal(resp.data.contextMenu, true);
+});
+
 test("FETCH_LLM honors a per-call model override", async () => {
     const bg = loadBackground({
         config: baseConfig(),
