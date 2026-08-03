@@ -94,3 +94,24 @@ export const PYTHON_CLAUSE =
     "then report what it computed. Same for pixel/array/spatial work over a screenshot (pass " +
     "`image`). Reserve `full` mode (network) for when you genuinely need it — it always asks the " +
     "user first.";
+
+// Appended when ml.agent({ unattended: true }) — a headless/scripting run with no human to approve.
+export const UNATTENDED_CLAUSE =
+    "\n\nThis run is UNATTENDED: no human is available to approve actions. Use ONLY read-only " +
+    "operations — inspect and query the DOM, and (where available) read-only `exec` surveys / " +
+    "readonly-mode `python_exec`. Any call that needs approval — clicking, typing, mutating exec, " +
+    "network, full-mode python — will be REFUSED, so don't attempt it; find a read-only path or " +
+    "report what you could and couldn't do.";
+
+// The tool-result a refused (approval-gated) call gets in an unattended run — steers to read-only.
+export const UNATTENDED_REFUSAL =
+    "Refused: this run is UNATTENDED (no human to approve). Only read-only operations are allowed. " +
+    "Do not retry this call; use a read-only approach instead.";
+
+// Appended to exec's / python_exec's description in an unattended run (they're wired only when their
+// read-only auto-approve path is on) so the model knows the mutating/full half is off-limits here.
+export const UNATTENDED_EXEC_NOTE =
+    " NOTE: this run is UNATTENDED — only READ-ONLY surveys run (querySelectorAll → filter → map, no " +
+    "mutation). A mutating call is refused.";
+export const UNATTENDED_PY_NOTE =
+    " NOTE: this run is UNATTENDED — only readonly-mode runs here; full mode (network) is refused.";

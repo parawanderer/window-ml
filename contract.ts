@@ -384,6 +384,7 @@ export interface AgentOptions {
     signal?: AbortSignal | null;   // abort the loop between steps → resolves { cancelled: true } with the partial run
     resume?: string | null;        // continue the run with this hash: append `task` as a follow-up turn (same session)
     silent?: boolean;              // scripting mode: keep this run OUT of the in-page HUD (no working orb, no answer card). Approvals STILL surface (privileged consent can't be silenced). The debug sidebar/panel is unaffected.
+    unattended?: boolean;          // headless mode: no human to approve, so any approval-gated call is REFUSED with a steer to read-only. exec/python_exec are wired ONLY when their auto-approve config is on (read-only survey / sandbox), and told full/mutating use is disabled; otherwise dropped. Auto-approvable read-only ops still run.
 }
 
 /** A stateful ml.agent handle (what ml.createAgent returns) — the agent analogue of
@@ -489,6 +490,7 @@ export interface StartRunPayload {
     maxSteps: number;
     autoApprovePython: boolean;    // trusted config flag → the background may auto-approve readonly python
     autoApproveReadonly: boolean;  // trusted config flag → the background may auto-approve an in-dialect exec survey
+    unattended?: boolean;          // headless run: the background refuses (never prompts) any call that reaches the gate
     // Which surface hosts the run's gate/stream (all route through the background): a debug surface
     // (overlay/devtools) streams steps + gates in the sidebar app; "off" also streams the SAME steps to
     // the page, where the content-script shell renders them in a lazily-mounted acrylic corner CARD (a
@@ -668,6 +670,7 @@ export interface DebugAgentConfig {
     vision: boolean | string | null;
     hints: string | null;
     silent?: boolean;       // scripting run: kept out of the in-page HUD (the card reads this to stay hidden)
+    unattended?: boolean;   // headless run: approval-gated calls are refused (no human to approve)
 }
 export interface DebugAgentStart extends DebugBase { kind: "agent"; task: string; model: string | null; maxSteps: number; config: DebugAgentConfig; }
 export interface DebugAgentStep extends DebugBase {

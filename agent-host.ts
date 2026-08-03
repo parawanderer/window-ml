@@ -27,6 +27,7 @@ export interface RunAgentConfig {
     think?: boolean | null;
     maxSteps?: number;
     autoApprovePython?: boolean;   // the trusted config flag, read background-side
+    unattended?: boolean;          // headless run: refuse any call that reaches the human gate (see ml.agent's `unattended`)
 }
 
 export interface RunAgentHostDeps {
