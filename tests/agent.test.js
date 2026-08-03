@@ -786,6 +786,31 @@ test("createAgent: a run in flight rejects a second run(); say() mid-run STEERS 
     assert.equal(a.running, false, "running is false once the loop settles");
 });
 
+test("createAgent: cancel() mid-run, then say() + run() again works (fresh controller per run, consistent history)", async () => {
+    // The bug this guards: cancel() aborts the handle's controller. If run() reused it, the NEXT run would
+    // see an already-aborted signal and insta-cancel. A fresh controller per run() fixes it.
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall("stop", {}, "c1"), reply("second answer")]) });
+    let a;
+    const stop = world.ml.defineTool({ name: "stop", run: () => { a.cancel(); return "stopping"; } });   // cancel FROM inside the run
+    a = world.ml.createAgent({ tools: [stop], vision: false, maxSteps: 5 });
+
+    const r1 = await a.run("do X");
+    assert.equal(r1.cancelled, true, "the first run cancelled mid-loop");
+    assert.equal(a.running, false, "running clears after the cancel");
+
+    a.say("actually do Z");                         // idle → appended to the (consistent) partial history
+    const r2 = await a.run("continue");
+    assert.notEqual(r2.cancelled, true, "the SECOND run is not stuck-cancelled by the prior abort");
+    assert.equal(r2.summary, "second answer");
+    // The second run continued the partial history: the cancelled turn's tool round-trip is intact (no
+    // dangling tool_call), plus the post-cancel say() and the new task.
+    const last = world.runtimeCalls.filter(c => c.payload && c.payload.messages).at(-1).payload.messages;
+    assert.ok(last.some(m => m.role === "assistant" && m.tool_calls), "the cancelled turn's assistant tool_call survived");
+    assert.ok(last.some(m => m.role === "tool" && m.content === "stopping"), "…and its tool result (history stays consistent)");
+    assert.ok(last.some(m => m.content === "actually do Z"), "the post-cancel say() is in context");
+    assert.equal(last.at(-1).content, "continue", "the new task is the last user turn");
+});
+
 test("createAgent: fork() copies the history into a FRESH session, independent of the original", async () => {
     const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("a1")]) });
     const a = world.ml.createAgent({ vision: false });

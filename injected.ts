@@ -36,7 +36,7 @@ import { evalReadonly } from "./readonly-exec";
 import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay } from "./dom";
 import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, SELF_CLAUSE, HUD_HINT, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, PT_LOOK_RADIUS, BOX_RE, resolveBox } from "./util";
-import type { ShotBox } from "./contract";
+import type { ShotBox, ServerTool } from "./contract";
 import { annotate, pickAccentColorForTarget } from "./som";
 import { suspiciousArgsWarning, suspiciousChars } from "./security";
 import { emitDebug, debugId, shortHash, sessionRegistry, agentRegistry, enterAgentRun, exitAgentRun } from "./bus";
@@ -97,6 +97,9 @@ class AgentHandle implements MlAgentHandle, AgentControl {
      *  Rejects while a loop is in flight. No task → runs over whatever say() has queued into history. */
     async run(task?: string): Promise<AgentResult> {
         if (this.running) throw new Error("ml.createAgent: a run is already in flight — use say() to add to it, or cancel() first.");
+        // Fresh controller PER RUN: a prior cancel() aborted the previous one for good, so reusing it would
+        // insta-cancel this turn. (A caller-supplied signal still governs — cancel() then only aborts ours.)
+        this._ctrl = new AbortController();
         this.running = true;
         try { return await this._ml.agent(task ?? "", { ...this._opts, signal: this._opts.signal || this._ctrl.signal, _control: this } as AgentOptions); }
         finally { this.running = false; }
@@ -1526,6 +1529,19 @@ class AgentHandle implements MlAgentHandle, AgentControl {
          */
         models: async function(): Promise<string[]> {
             return makeBackgroundTaskPromise("LIST_MODELS_REQUEST", "LIST_MODELS_RESPONSE", {});
+        },
+        /**
+         * List the OpenWebUI server-side tools the configured API key may use — the
+         * valid ids for `ml.chat`'s `toolIds`, each with the function specs the model
+         * would be shown. Discovery, so a script doesn't have to hardcode ids copied
+         * out of the OpenWebUI URL bar.
+         *
+         * A bare-Ollama (or non-OpenWebUI) endpoint has no such concept and returns [].
+         *
+         * @returns {Promise<ServerTool[]>} The available server-side tools.
+         */
+        serverTools: async function(): Promise<ServerTool[]> {
+            return makeBackgroundTaskPromise("LIST_SERVER_TOOLS_REQUEST", "LIST_SERVER_TOOLS_RESPONSE", {});
         },
         /**
          * Get capability list for a model, read from Ollama's /api/show.
