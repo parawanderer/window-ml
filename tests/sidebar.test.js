@@ -773,20 +773,36 @@ test("agent runs render as their own session with steps + a final answer", async
     assert.ok(w.shadow.querySelector(".msg.asst .raw-btn"), "answer has a raw toggle");
 });
 
-test("agent-say renders a 'steering' bubble; agent-cap bumps the live step cap", async () => {
+test("agent session renders as a multi-turn CHAT LOG: user messages + BOTH answers, no overwrite; live cap", async () => {
     const w = await loadSidebarWorld();
-    await w.dispatch(agentStart("ag-steer", "reorganise the tabs", "qwen3:14b", 10));
-    await w.dispatch(agentStep("ag-steer", 1, { tool: "click", arguments: {}, result: "clicked" }));
-    // Mid-run: the handle steered (a.say) and raised the cap (a.maxSteps = 40).
-    await w.dispatch({ kind: "agent-say", id: "ag-steer", ts: Date.now() + 5, save: false, session: { hash: "ag-steer", turn: 0 }, text: "keep the pinned ones where they are" });
-    await w.dispatch({ kind: "agent-cap", id: "ag-steer", ts: Date.now() + 6, save: false, session: { hash: "ag-steer", turn: 0 }, maxSteps: 40 });
+    const H = "ag-multi";
+    // Turn 1: task → a tool step → answer 1.
+    await w.dispatch(agentStart(H, "Tell me about yourself?", "gemma4:31b", 10));
+    await w.dispatch(agentStep(H, 1, { tool: "exec", arguments: { js: "1" }, result: "r1" }));
+    await w.dispatch(agentResult(H, "I am an automation agent.", 1));
+    // A follow-up user message (run() again) — emitted as agent-say, like a mid-run say.
+    await w.dispatch({ kind: "agent-say", id: H, ts: Date.now() + 5, save: false, session: { hash: H, turn: 0 }, text: "Which model are you?" });
+    // Turn 2: a step with a FRESH step number (2, the page offsets it) → answer 2. Raise the cap mid-run.
+    await w.dispatch({ kind: "agent-cap", id: H, ts: Date.now() + 6, save: false, session: { hash: H, turn: 0 }, maxSteps: 40 });
+    await w.dispatch(agentStep(H, 2, { tool: "exec", arguments: { js: "ml.getModel()" }, result: "gemma4:31b" }));
+    await w.dispatch(agentResult(H, "I am running on gemma4:31b.", 2));
 
     w.shadow.querySelector(".row").click();
     await w.tick();
-    const steer = w.shadow.querySelector(".msg.user.steering");
-    assert.ok(steer, "the injected say() message renders as a steering bubble");
-    assert.match(steer.querySelector(".utext").textContent, /keep the pinned ones/);
-    assert.match(w.shadow.querySelector(".step-pill").textContent, /\/40/, "the live cap bump is reflected (step x/40)");
+    // Two turn groups — turn 2's step did NOT merge into turn 1 (the "historical steps overwritten" bug).
+    assert.equal(w.shadow.querySelectorAll(".aturn").length, 2, "each turn is its own group (no merge)");
+    // Every user message is a plain "you" bubble (task + follow-up unified — nothing distinguishes them).
+    const users = [...w.shadow.querySelectorAll(".msg.user")];
+    assert.ok(users.every(u => u.querySelector(".who").textContent.trim() === "you"), "user messages are unified as 'you'");
+    const userText = users.map(u => u.querySelector(".utext").textContent).join(" | ");
+    assert.match(userText, /Tell me about yourself\?/);
+    assert.match(userText, /Which model are you\?/, "the follow-up user message shows up");
+    // BOTH answers render (appended to the chat log, not overwritten).
+    const answers = [...w.shadow.querySelectorAll(".msg.asst")].map(a => a.textContent).join(" | ");
+    assert.match(answers, /I am an automation agent\./, "turn 1's answer is kept");
+    assert.match(answers, /I am running on gemma4:31b\./, "turn 2's answer is appended");
+    // The live cap bump is reflected.
+    assert.ok([...w.shadow.querySelectorAll(".step-pill")].some(p => /\/40/.test(p.textContent)), "the live maxSteps bump shows (step x/40)");
 });
 
 test("debug In render of a click step is a hoverable element reference, not the card's intent sentence", async () => {

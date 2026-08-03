@@ -24,6 +24,10 @@ import { applyTheme, applyFont, applyCodePrefs, initThemeStyle } from "./prefs";
 import { IconCopy, IconCheck, IconWarn, IconChevron, IconGear, IconExport, IconVram, IconSend, IconUsage, IconBench, IconSheet } from "./icons";
 import { Settings } from "./settings";
 
+// The highest (cumulative) step number seen so far — the position a say()/answer arriving NOW belongs at,
+// so the chat log interleaves user messages + answers with the turn step-groups in order.
+const maxSessionStep = (s: Session): number => Math.max(0, ...(s.steps || []).map(x => x.step || 0));
+
 function onDebug(ev: MlDebugEvent): void {
     // --- ml.agent runs (own session kind) ---
     if (ev.kind === "agent") {
@@ -56,8 +60,12 @@ function onDebug(ev: MlDebugEvent): void {
     if (ev.kind === "agent-result") {
         const s = sessionMap.get(ev.session.hash);
         if (!s) return;
+        const status: Status = (ev.error || ev.hitCap || ev.cancelled) ? "err" : "ok";
+        // Append this turn's answer (chat log) — do NOT overwrite prior turns. `summary`/`status` still
+        // track the LATEST for the title + row dot.
+        s.answers = [...(s.answers || []), { text: ev.summary, ts: ev.ts, atStep: maxSessionStep(s), status, hitCap: ev.hitCap, cancelled: !!ev.cancelled, error: ev.error || undefined }];
         s.summary = ev.summary; s.hitCap = ev.hitCap; s.error = ev.error || undefined; s.cancelled = !!ev.cancelled;
-        s.status = (ev.error || ev.hitCap || ev.cancelled) ? "err" : "ok"; s.lastTs = ev.ts;
+        s.status = status; s.lastTs = ev.ts;
         rev.value++; return;
     }
     // A handle raised the step cap mid-run (a.maxSteps = N) → the "STEP x/N" display re-renders live.
@@ -66,11 +74,13 @@ function onDebug(ev: MlDebugEvent): void {
         if (s) { s.maxSteps = ev.maxSteps; s.lastTs = ev.ts; rev.value++; }
         return;
     }
-    // A handle steered a running loop (a.say(text)) → show it immediately as a "you (steering)" bubble.
-    // The message reaches the model at the next step boundary; the run keeps streaming.
+    // A user message mid-conversation: a follow-up run()'s task OR a mid-run say(). Both render as "you"
+    // bubbles, interleaved with the turns by step position (atStep = the step count when they arrived).
     if (ev.kind === "agent-say") {
         const s = sessionMap.get(ev.session.hash);
-        if (s) { s.says = [...(s.says || []), { text: ev.text, ts: ev.ts }]; s.lastTs = ev.ts; rev.value++; }
+        // A new user message means the agent is (about to be) working → back to pending, so the live footer
+        // shows during a follow-up run (harmless for a mid-run steer, which is already pending).
+        if (s) { s.says = [...(s.says || []), { text: ev.text, ts: ev.ts, atStep: maxSessionStep(s) }]; s.status = "pending"; s.lastTs = ev.ts; rev.value++; }
         return;
     }
     if (ev.kind === "chat") {
@@ -1116,35 +1126,38 @@ function AgentOptionsBlock({ s }: { s: Session }) {
     );
 }
 
+// A user message in the conversation — the initial task, a follow-up run()'s task, or a mid-run say().
+// All identical: from the chat's point of view there's nothing to distinguish them (they're all "you").
+const UserBubble = ({ text, ts }: { text: string; ts: number }) => (
+    <div class="msg user">
+        <div class="mrow"><span class="who">you</span><span class="sp" /><Stamp ts={ts} /></div>
+        <div class="utext">{text}</div>
+    </div>
+);
+
 function AgentRunView({ s }: { s: Session }) {
-    const turns = groupTurns(s.steps || []);
+    // Skip an empty step group — one carrying only a usage sample (final-answer token counts), no
+    // thought/reasoning/tool. KEEP a reasoning-only turn (the final-answer turn shows its thinking here).
+    const groups = groupTurns(s.steps || []).filter(t => t.thought || t.reasoning || t.tools.length);
+    // The whole session is a CHAT LOG: user messages (task + follow-ups + says) and answers interleaved
+    // with the turn step-groups, ordered by step position. `atStep + fraction` slots an answer just after
+    // its turn's steps, and a following user message just after that.
+    const answer = (a: NonNullable<Session["answers"]>[number], key: string) =>
+        a.error
+            ? <ReplyBubble key={key} content="" status="err" model={s.model} profile={sessionProfile(s)} ts={a.ts} error={a.error} label="run failed" />
+            : <ReplyBubble key={key} content={a.text} status={a.status} model={s.model} profile={sessionProfile(s)} ts={a.ts}
+                label={a.cancelled ? "cancelled" : a.hitCap ? "stopped (step cap)" : undefined} capped={a.hitCap || a.cancelled} />;
+    const items: { pos: number; el: preact.JSX.Element }[] = [
+        { pos: -1, el: <UserBubble key="task" text={s.task || ""} ts={s.createdTs} /> },
+        ...groups.map(g => ({ pos: g.step, el: <AgentTurn key={`t${g.step}`} turn={g} max={s.maxSteps} hash={s.hash} /> })),
+        ...(s.answers || []).map((a, i) => ({ pos: a.atStep + 0.5, el: answer(a, `a${i}`) })),
+        ...(s.says || []).map((sy, i) => ({ pos: sy.atStep + 0.9, el: <UserBubble key={`s${i}`} text={sy.text} ts={sy.ts} /> })),
+    ].sort((a, b) => a.pos - b.pos);
     return (
         <>
             <AgentOptionsBlock s={s} />
-            <div class="msg user">
-                <div class="mrow"><span class="who">task</span><span class="sp" /><Stamp ts={s.createdTs} /></div>
-                <div class="utext">{s.task}</div>
-            </div>
-            {/* Skip an empty step group — one carrying only a usage sample (the final answer's token
-                counts), no thought/reasoning/tool, would render a bare pill. But KEEP a reasoning-only
-                turn: the final-answer turn puts its content in the summary (below) and its thinking here,
-                so without `t.reasoning` the final think block would vanish. */}
-            {turns.filter(t => t.thought || t.reasoning || t.tools.length).map(t => <AgentTurn key={t.step} turn={t} max={s.maxSteps} hash={s.hash} />)}
-            {/* Mid-run steering (a.say()): the messages you injected while the loop ran, shown here so the
-                steering is visible. The model saw each at the next step boundary. */}
-            {(s.says || []).map((sy, i) => (
-                <div class="msg user steering" key={`say-${i}`}>
-                    <div class="mrow"><span class="who">you · steering</span><span class="sp" /><Stamp ts={sy.ts} /></div>
-                    <div class="utext">{sy.text}</div>
-                </div>
-            ))}
-            {s.error
-                ? <ReplyBubble content="" status="err" model={s.model} profile={sessionProfile(s)} ts={s.lastTs} error={s.error} label="run failed" />
-                : s.summary != null || s.cancelled
-                    ? <ReplyBubble content={s.summary || ""} status={s.status} model={s.model}
-                        profile={sessionProfile(s)} ts={s.lastTs}
-                        label={s.cancelled ? "cancelled" : s.hitCap ? "stopped (step cap)" : undefined} capped={s.hitCap || s.cancelled} />
-                    : <PendingNote s={s} />}
+            {items.map(it => it.el)}
+            {s.status === "pending" ? <PendingNote s={s} /> : null}
         </>
     );
 }

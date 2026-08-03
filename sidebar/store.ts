@@ -46,9 +46,12 @@ export interface Session {
 
     maxSteps?: number;
     agentConfig?: DebugAgentConfig;
-    // Mid-run steering: messages a handle injected via a.say() while the loop was running. Shown
-    // immediately as "you (steering)" bubbles — the model sees each at the next step boundary.
-    says?: { text: string; ts: number }[];
+    // A multi-turn agent session renders as a CHAT LOG. Every user message — the initial task, a follow-up
+    // run()'s task, and a mid-run say() — is a `say` (all rendered identically as "you"); every turn's final
+    // answer is an `answer`. `atStep` is the cumulative step count when it arrived, so the render interleaves
+    // them with the turn step-groups in order. (`summary` still holds the LATEST answer for the title/status.)
+    says?: { text: string; ts: number; atStep: number }[];
+    answers?: { text: string; ts: number; atStep: number; status: Status; hitCap?: boolean; cancelled?: boolean; error?: string }[];
 }
 
 // --- state: a Map (O(1) lookup) + a version signal to notify Preact of changes ---

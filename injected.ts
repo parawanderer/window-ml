@@ -62,6 +62,7 @@ interface AgentControl {
     maxSteps: number;             // the step cap, read live so a handle can raise it mid-run
     running: boolean;             // is a loop in flight?
     seqBase: number;              // monotonic step-seq base so seqs stay session-unique across turns
+    stepBase: number;             // monotonic STEP base so turn groups stay distinct in the sidebar across turns
     bg?: boolean;                 // the CURRENT run routed to the background → a mid-run say() steers via INJECT_MESSAGE
 }
 import { installToolDelegation, registerRun, endRun } from "./run-delegation";
@@ -82,6 +83,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
     inbox: string[] = [];
     running = false;
     seqBase = 0;
+    stepBase = 0;
     bg = false;   // set by ml.agent when the current run routes to the background (say() then uses INJECT_MESSAGE)
     private _maxSteps: number;
     private _ctrl = new AbortController();
@@ -517,7 +519,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             // The session's mutable state. A handle (ml.createAgent) passes its OWN so run()/say()/maxSteps
             // span turns; a plain ml.agent() call gets a throwaway one. The page loop reads history / inbox /
             // cap / seq from it, so there's a single code path — a handle just persists it across turns.
-            const control: AgentControl = _control ?? { hash: null, messages: [], inbox: [], maxSteps, running: false, seqBase: 0 };
+            const control: AgentControl = _control ?? { hash: null, messages: [], inbox: [], maxSteps, running: false, seqBase: 0, stepBase: 0 };
             let toolset = [...(tools || this.domTools || []), ...extraTools];
             // Config, fetched once (used for vision resolution + the read-only exec
             // auto-approve fast-path below).
@@ -622,6 +624,9 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 tools: toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval, vision: !!(t.capabilities && t.capabilities.includes("vision")), description: t.description, parameters: t.parameters, summary: t.summary })),
                 maxSteps, think: (think === true || think === false) ? think : null, env, vision: vision ?? null, hints: hints || null, silent: silent || undefined, unattended: unattended || undefined,
             } });
+            // A CONTINUATION (a handle's later run() with a task) shows the follow-up as a user message in the
+            // conversation — the sidebar renders it exactly like the first task / a mid-run say (all "you").
+            else if (task) emitDebug({ kind: "agent-say", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, text: task });
 
             // ── Design A: route through the BACKGROUND loop so the approval gate lives at the extension
             // origin (unforgeable by the page — a page-set window.confirm or a hostile approve() can't
@@ -716,7 +721,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             // runAgentLoop restarts its per-step `seq` at 0 each call, but the sidebar patches steps by
             // (hash, seq) — so a later turn would collide with an earlier one. control.seqBase offsets each
             // turn's seqs past the previous turn's, keeping them unique per SESSION across run()/say().
-            let turnMaxSeq = 0;
+            let turnMaxSeq = 0, turnMaxStep = 0;
 
             // Enrich the loop's event with the page-only bits: argIssues, the element COUNT for the debug
             // event + the real nodes for onStep, and a best-effort In/Out render for a step the executor
@@ -733,11 +738,15 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 }
                 const seq = ev.seq != null ? control.seqBase + ev.seq : ev.seq;   // session-unique across turns
                 if (ev.seq != null && ev.seq > turnMaxSeq) turnMaxSeq = ev.seq;
-                const cb = { step: ev.step, thought: ev.thought, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: nodes };
+                // Cumulative step number across turns so the sidebar's turn groups (keyed by step) don't
+                // MERGE turn N's step 1 with turn 1's step 1 — the "historical steps overwritten" bug.
+                const step = control.stepBase + ev.step;
+                if (ev.step > turnMaxStep) turnMaxStep = ev.step;
+                const cb = { step, thought: ev.thought, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: nodes };
                 if (logDebug && !ev.pending) logStep(cb);
                 emitDebug({
-                    kind: "agent-step", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: ev.step },
-                    step: ev.step, seq, pending: ev.pending || undefined,
+                    kind: "agent-step", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: step },
+                    step, seq, pending: ev.pending || undefined,
                     thought: ev.thought, reasoning: (ev.reasoning as string | null) || undefined, tool: ev.tool, arguments: ev.arguments,
                     result: ev.result, elements: nodes ? nodes.length : undefined,
                     renderIn, renderOut,
@@ -820,6 +829,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 try {
                     const r = await runAgentLoop(t, { tools: toolMetas, maxSteps: () => control.maxSteps, signal, unattended }, deps);
                     control.seqBase += turnMaxSeq; turnMaxSeq = 0;   // next turn's step seqs continue past this turn's
+                    control.stepBase += turnMaxStep; turnMaxStep = 0;   // …and its step numbers, so turn groups stay distinct
                     emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: r.steps }, summary: r.summary, steps: r.steps, hitCap: !!r.hitCap, cancelled: !!r.cancelled });
                     return { ...r, elements: answered, hash: runHash };
                 } catch (e) {
