@@ -412,9 +412,22 @@ const b = a.fork();   // branch a COPY of the history into a fresh session
 when idle, appends to history for the next `run()`. `run(task?)` starts a turn
 (no task → runs over whatever `say()` queued); calling it again continues the
 same session. `res.transcript` accumulates the whole conversation's actions and
-replies. The low-level `ml.agent(task, { resume: hash })` continues a run by
-hash too. Same-tab runs resume from memory; the hash is also how the in-page HUD
-and DevTools chat drive a session.
+replies.
+
+**Resume by hash.** When you only have the hash — copied from the debug sidebar,
+or `res.hash`/`a.hash` from an earlier call — continue the run with the low-level
+`ml.agent(task, { resume })`:
+
+```js
+const { hash } = await ml.agent("Audit this page's headings.");   // note the hash
+// …later, without the original handle:
+await ml.agent("Now fix the ones you flagged.", { resume: hash });   // same conversation
+```
+
+Same-tab runs resume from memory (a background/off-mode run isn't resumable this
+way yet). The hash is also how the in-page HUD and the sidebar/DevTools composer
+drive a session — typing into "Send a message to continue this session…" routes
+`say()`/`run()` to the handle behind that hash.
 
 **Scripting modes.** Two per-run switches for headless/automation use:
 
