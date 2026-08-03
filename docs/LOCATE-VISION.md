@@ -354,3 +354,17 @@ live without one.
 `som.ts` (the hit-test engine + coordinate math, unit-tested standalone),
 `util.ts` (the `@pt` registry + `clickAt`). See `CLAUDE.md` for the terse
 version and `docs/spec/` for slice-by-slice design notes.*
+
+## Vision sub-call context (`num_ctx`)
+
+Delegated vision sub-calls (OCR, grounding, delegated `look`) cap `num_ctx` at `VISION_NUM_CTX`
+(`contract.ts`) so a vision model's huge default context doesn't pre-allocate tens of GB of KV cache and
+OOM a modest card — NOT the native look (which reuses the agent's own model). **But when the model is
+already resident with a ≥ window, send the RESIDENT value instead** (`residentContextLength` reads
+`/api/ps`, short-cached): a smaller `num_ctx` than the loaded instance forces Ollama to reload, and for
+grid/marks the reader IS the agent's own driver model — so a blind cap thrashed the driver (reload down →
+reload up every sub-call), adding latency and flapping the usage-bar denominator. Sending the resident
+value matches the running instance (no reload). **Never send `undefined`**: an omitted `num_ctx` lets a
+mistaken fresh load (stale ps cache raced an eviction) auto-size to the model's full window on a big-VRAM
+box (qwen2.5vl → 128K), so we send the believed value to keep even a wrong load bounded. The sidebar
+Test-models liveness probes cap the same way. The cap only exists to bound a *fresh* load.

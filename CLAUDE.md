@@ -163,210 +163,25 @@ degrade to "asks the human," never to "runs unsafely." Spec:
 `dist/readonly-exec.js`) against the two canonical surveys + a battery of escape
 attempts in `tests/readonly-exec.test.js`.
 
-**Visual element location (`locate` / Set-of-Marks).** For controls text/ARIA can't
-reach — unlabelled icon buttons, or pages built with no accessibility markup at all
-(a bare `<div>` with a synthetic click handler) — `ml.locateTool` finds an element by
-**describing** it. (Illustrated end-to-end, DOM + canvas, with mermaid diagrams in
-`docs/LOCATE-VISION.md`.) Engine (`som.ts`): the accessibility-agnostic primitive is
-`document.elementFromPoint` (hit-testing), NOT selector matching — `collectCandidates`
-sweeps the viewport on a grid, takes the topmost element at each point (so occluded
-ones are excluded for free), and climbs each to its representative (`representativeFor`:
-nearest semantic-interactive ancestor, else the `cursor:pointer` boundary — the one
-convention non-semantic UIs keep, since click handlers are invisible to the DOM on
-React/synthetic-event pages). Candidates get numbered badges drawn onto the screenshot
-in memory (`drawMarks`, dpr-scaled like `cropDataUrl` — zero DOM pollution). It's
-**delegated** like `buildLookTool`: a vision sub-call ("which badge is <description>?")
-sees the badged image and returns a number; only the chosen element's `clickSelector`
-(stateless currency for click/type/answer) re-enters the driver's thread, so a
-text-only driver can use it. The badged image rides `ToolResult.render` → sidebar only,
-never history. Auto-wired into `ml.agent` alongside `look` whenever `_resolveVisionModel`
-resolves a reader (agent-model-if-vision → OCR model).
+**Visual element location (`locate` / vision).** For controls text/ARIA can't reach — unlabelled
+icon buttons, or canvas-only UIs (a bare `<div>`/`<canvas>` with a synthetic click handler) —
+`ml.locateTool` finds an element by **describing its appearance** ("a red umbrella icon", never a
+name). Like `look`, it's a **delegated** vision sub-call: the model sees an annotated screenshot and
+returns a badge number / coordinate; only a stateless `clickSelector` (or a `@pt:`/`@box:` token for a
+canvas) re-enters the driver's thread, so a text-only driver can use it and the sub-call's image never
+enters the driver's context. Auto-wired into `ml.agent` beside `look` whenever a vision reader resolves.
 
-**Three mechanisms, driver picks (`strategy`).** `locate({ strategy })` — `"marks"` (above),
-`"grounding"` (a coordinate VLM points at it), `"grid"` (below), `"grid-grounding"`
-(grid narrows to a cell, then grounding pinpoints INSIDE it — the two-model combo for a
-small target on a busy page/canvas where grid's cell-centre `@pt` only grazes; the grid
-cell-pick just narrows `region` and **falls through into the grounding mechanism**, reusing
-its whole snap/`@pt`/fallback pipeline, and renders as "Grid → Grounding" with the cell-pick
-as substep 1; needs a grounding model — **or `grid-grounding({ cells })` skips the pick and
-grounds straight inside the reused cell**), or `"auto"`
-(grounding-first, marks fallback; `grid`/`grid-grounding` are explicit-only, never in `auto`).
-**Canvas auto-upgrade:** a plain `strategy:"grid"` cell that lands on a `<canvas>` with a
-grounder configured **auto-upgrades to grid-grounding** (grounding pinpoints inside the cell) —
-on a canvas the snap can't mis-snap (no element), so it's a free precision win; the result
-notes it, and a grounding whiff **falls back to the stashed cell centre** so the upgrade is
-never worse than plain grid. Without a grounder, grid returns the cell centre and steers the
-off-target case to zoom + the real neighbour cells (`adjacentCells`, named by direction, since
-the driver never sees the grid). `@pt:…` is a **universal scope** (`selector`), not just a
-grounding input: any strategy re-searches the point's box (grid-inside-a-point, etc.), `margin`
-grows that box for a cut-off target. Grounding is **opt-in** config (`groundingEnabled`/`groundingModel`, off by
-default — it loads a 3rd model into VRAM): the search region is **letterboxed** into a
-**1000×1000 square** (`letterboxToSquare` — aspect-preserving; a stretch mangles an
-arbitrary-shaped crop) so one configurable **`groundingRange`** (the coord divisor, default
-1000) covers every convention at once — 0–1000 normalized, qwen2.5vl's
-absolute-pixels-of-the-sent-image (now == 0–1000), 100 (Molmo %), 1024 (PaliGemma), 1 (0–1
-floats). The inverse is `projectFromSquare` (**one** scale = the region's longer side on
-both axes, + the region's viewport offset; padding-coords clamp to the region edge) — NOT
-`viewportBox`'s per-axis stretch inverse, which survives only to draw the model's box onto
-the square it saw. The box is snapped to the DOM by the same `elementFromPoint` sweep
-(`collectInBox`), so the model only has to be directionally right. `margin` grows the box on
-a retry, reusing a **per-run box cache** (the VLM call is the cost; re-sweeping is free) —
-and it only helps a *returned* box that missed, so a no-box retry with a margin is refused
-with that explanation. An **`auto` grounding miss** isn't discarded: the marks fallback
-render carries `fallbackNote`/`fallbackImage` (why it missed + what the model saw), and the
-model-facing result gets a short "(Grounding …)" prefix.
-
-**Grid mechanism (`strategy:"grid"`).** `drawGrid` overlays a numbered grid on the region
-and asks the reader *"which cell(s) hold the target?"* — multiple-choice classification, so
-it needs **no coordinate training** (any vision model) and **can't hallucinate an (x,y)**.
-Four pieces make it actually converge (learned from a toolbar run where a plain 4×4 put all
-five icons in one cell and snapped to the wrong one):
-- **Aspect-matched dims** (`gridDims`, from `gridSize` base ≈ cell count) — a wide toolbar
-  gets more columns than rows instead of a square grid wasting its empty rows.
-- **Multi-cell pick** — the model may answer with 1, 2 (edge-adjacent), or 4 (a 2×2 block)
-  cells so a target *straddling* a grid line is fully covered; `validateCells` rejects
-  non-adjacent / L-shape / 3-cell picks, `cellsBox` unions the selection into one Box.
-- **Marks hand-off** — after unioning + the `collectInBox` sweep, a region with **one**
-  candidate returns it directly; **several** → a **second vision sub-call** picks by badge
-  (Set-of-Marks *within the selection*) rather than snapping to the first. `badgeMarks`/
-  `askMarks` are shared with mechanism #2.
-
-**Density guard + verify.** Pure Set-of-Marks over a dense page is unreliable (badges
-overlap, the model misreads), and mechanism #2 only badges the first `SOM_BADGE_CAP` (40) of
-up to 150 scanned. So when `> SOM_DENSE` (30) candidates exist, the result appends a warning
-with the **true count**, the truncation, and a steer to strategy `grid` / a `selector` /
-`look`. The `locate` **description also tells the driver to always verify the returned
-selector with `look({ selector })` before acting** — a visual pick can be wrong, and it
-empirically does better when it confirms first. The highlight colour (grid cell / picked
-badge) is page-aware too (`pickAccentColor`, green-first) so it doesn't clash on a green
-page.
-- **Honest ambiguity** — an invalid selection, an empty region, or a marks hand-off that
-  still can't decide returns the candidates + a steer (re-pick / raise `gridSize` / switch
-  strategy), never a confident wrong pick.
-
-**Locate debug render = substeps.** Every locate render is `{ mode, model, substeps[],
-picked?, pickedBy? }` — `LocateSubstep[]` where each substep is either a **vision sub-call**
-(grid cell-pick, Set-of-Marks pick, grounding box: carries `prompt` (In), the model's raw
-`output` (Out), the exact `rawImage` sent + a human `image` overlay) or a **DOM snap** (just
-`label`+`image`, no model). The sidebar (`LocateSubstepView`) renders each with a numbered
-`[N]` head, a collapsible In(prompt), the image under a **raw⇄visualise** toggle (visualise
-= the overlay by default; raw = the exact bytes the model saw), and a raw Out line — so a
-multi-call locate (grid → hand-off; or an `auto` grounding miss → marks) reads as its
-distinct stages, each with an optional grey-italic `note`. `pickedBy` drives the footer:
-`"model"` → **"Model picked"** (chose a badge: marks / grid hand-off), `"snap"` →
-**"Snapped to"** (the model localized a region, the DOM hit-test chose the element:
-grounding, grid-single). The export mirrors it (each substep → a `step-N-subM.png` sidecar,
-plus a `-raw.png` when the sent image differs from the overlay).
-
-**Hierarchical refine**: the driver re-runs with the returned `cells` selection to zoom
-(that union becomes the next region, a fresh aspect-grid inside) — driver-decided but
-delegation-safe (the vision sub-call always picks; the driver only echoes cells the tool
-*reported*, never authoring coordinates). Available whenever a vision **reader** resolves
-(`model || groundingModel`), NOT gated on `groundingEnabled`. Grid reuses the `locate`
-render (`mode:"grid"`: the grid the model saw with the selected cells highlighted +
-`griddedImage`/`cells`/`cols`/`rows`, then the DOM-snap `resultImage`); it snaps to the DOM,
-so the footer reads **"Snapped to"** like grounding.
-
-**Overlay colour heuristic.** The grid lines and the SoM badges are **model-facing** (the
-grounding image sent to the model is the plain letterbox; the element-location/box images are
-human-only), so a fixed red vanishes on a red-themed page. `pickOverlayHex` samples the
-image into a 12-bucket hue histogram and picks the palette colour that clashes least, also
-hard-avoiding any colour **named in the description** (`colorWordHues` — so "the red
-umbrella" is never overlaid in red, which the histogram alone won't repel for a tiny
-target). Grid lines also get a dark casing so they survive a busy multi-colour page.
-`pickOverlayHex`/`colorWordHues` are pure + unit-tested; the sampling/draw is a canvas op
-(jsdom no-op).
-
-**Delegated-model note.** Every vision sub-call (grid/marks/grounding) runs *standalone* —
-its image + reply never enter the driver's context. When the sub-call's model **equals the
-agent driver's** (so the matching name could read as "the driver saw this"), the sidebar
-head and the export add a "· standalone sub-call (not in the agent's context)" note.
-
-**Canvas/WebGL — the coordinate half (slice 3, part 2).** A `<canvas>` has **no sub-node
-to snap to**, so when a pick's centre lands on one (`canvasAt` = `elementFromPoint().closest
-("canvas")`), `locate` mints an **opaque point token** `@pt:<hex>` (a per-page `pointRegistry`
-maps it to `{x,y}`) and returns *that* as the currency instead of the useless `#canvas`
-selector — the driver copies the token **verbatim**, never authoring coordinates. Grounding
-gives a **precise** point (its box centre — its whole strength on a canvas); grid gives the
-**cell centre** + a zoom hint (`cells:[…]` re-centres it); marks refuses (nothing to badge)
-and steers to those two. The **`click` tool decodes `@pt:`** → `clickAt(x,y)` synthesizes the
-full pointer/mouse sequence (`pointerdown`/`mousedown`/`pointerup`/`mouseup`/`click`) at that
-viewport coordinate — canvas games read `clientX-rect.left`, which the synthetic `clientX`
-satisfies. A stale/unknown token fails cleanly ("re-run locate"). **Re-locate-loop guard:**
-each mint is a fresh token even for the same coordinate, so a model that keeps re-locating a
-hard target can circle back to the same wrong spot without noticing (observed: qwen2.5vl
-grounding fixated on one point across 7 reworded descriptions). `nearbyPoint(x,y)` checks the
-registry on mint; if the new point ~matches (≤12px) one already located this run, `locate`
-appends a warning naming the prior token so the driver breaks the loop (change region /
-description / strategy) instead of re-verifying it. The token registry +
-`mintPoint`/`resolvePoint`/`nearbyPoint` live in **util.ts** (shared) so `ml.screenshot` resolves it too:
-**`look({ selector: "@pt:…" })` verifies a canvas target** — `screenshot` returns a cropped
-view around the point (radius `PT_LOOK_RADIUS`) with the exact click spot **marked** (a
-contrast-coloured box), so the driver can confirm what it's about to hit before clicking (the
-canvas analogue of `look({ selector })` on a DOM node; works for both the native and delegated
-look). **"Snap around point" (`locate({ selector: "@pt:…" })`)** closes the loop: it scopes the
-search to that *same* `PT_LOOK_RADIUS` box — the neighborhood the model just VISUALLY CONFIRMED
-holds the target in its verify shot — and re-grounds inside it. The finest zoom tier, and the
-only one seeded by a verified view rather than a guess: when the mark grazes a target that's
-plainly in-frame, re-locating the box snaps precisely. The look(`@pt`) result discloses it. Detection
-is robust to a pick **straddling page chrome above the canvas** (`canvasPointIn` samples the
-whole box, not just the centre) and a `<canvas>` is dropped from a grid cell's candidates so
-it never triggers a snap/hand-off — it becomes a coordinate. **Describe the target by
-APPEARANCE, not a name** (the `description` param says so): the vision model reads pixels, so
-"a red umbrella icon" works but "Morio"/"the delete handler" does not. Demo:
-`examples/find-waldo.html` — a whole-scene `<canvas>` (zero DOM children) where only
-vision + `@pt` click can win. Point decode is unit-tested (`tests/agent.test.js`); the
-dispatch is a browser op (jsdom `elementFromPoint` is a no-op).
-
-**Scope to a container (`selector`/`index`).** `locate({ selector, index })` crops the
-search to one element's region (a list row, a toolbar, a card) — far more reliable for a
-small target in a busy page. It scrolls the container into view first (like look/click),
-clips the rect to the viewport (so the crop pixels and `projectFromSquare` stay in sync),
-and rejects a not-found selector / a sub-`MIN_SHOT_PX` sliver with an actionable message
-*before* any capture. Both mechanisms honour it: grounding crops+letterboxes the region;
-marks runs `collectInBox(region)` and badges a **crop** of just that region (marks
-translated to crop-local coords).
-
-**Coarse pre-crop (`region`) — the level-0 split.** For a dense scene where a ~60-cell grid
-is too many near-identical cells to pick a number from, `locate({ region })` crops the search
-to a **named directional area** the model can produce from rough spatial "vibe" ("he's on the
-left") long before it can read a cell number. `regionBox` (som.ts, pure/unit-tested) maps the
-9 names — bands full-length (`left` = left side × full height), corners = quadrants, `center`
-= middle box — with **halves overlapping by `REGION_OVERLAP`** so a midline target lands in
-BOTH sides ("guess a side, try the opposite on a miss" always succeeds). It's just another
-crop, applied right after `selector` scoping, so **every** strategy inherits it — the same
-`region`/`scoped` narrowing selector uses. Three tiers now: **region (directional, lvl 0) →
-grid (numeric cells, lvl 1) → `cells` recursion (lvl 2+)**, each using the model's strength at
-that zoom. Dense-NONE and the too-many-cells advice steer to it first.
-
-**grid-grounding `cells` reuse.** `grid-grounding` normally does its own grid cell-pick, but
-`grid-grounding({ cells })` **skips the (nondeterministic) re-pick** and grounds directly
-inside `cellsBox(cells)` — deterministic reuse of a prior grid result (re-rolling the pick can
-return NONE on the same target). Handled by an early `ggReuse` branch that narrows `region` to
-the cell and falls through to the grounding mechanism; the grounding-model guard fires for it
-too. `cells` only map back under the **same `gridSize`**, so every emitted `cells:[…]` snippet
-carries `gridSize: N` when non-default (the compact caveat). The look(`@pt`) verify result adds
-a tip (`@pt`-only) steering a near-miss to `grid-grounding` + `cells`.
-
-Delegated vision sub-calls (OCR, grounding, delegated `look`) cap `num_ctx` at
-`VISION_NUM_CTX` (util.ts) so a vision model's huge default context doesn't pre-allocate tens
-of GB of KV cache and OOM modest cards — NOT the native look (that reuses the agent's own
-model). **But when the model is already resident with a ≥ window, the cap is replaced by the
-RESIDENT value** (`residentContextLength` reads `/api/ps`, short-cached): a smaller num_ctx than
-the loaded instance forces Ollama to reload, and for grid/marks the reader IS the agent's own
-driver model — so the cap was thrashing the driver (reload down → reload up every sub-call),
-adding latency and flapping the usage-bar denominator. Sending the resident value matches the
-running instance (no reload) — **but NOT `undefined`**: an omitted num_ctx makes a mistaken
-fresh load (stale ps cache raced an eviction) auto-size to the model's full window on a big-VRAM
-box (qwen2.5vl → 128K, tens of GB of KV cache), so we send the believed value to keep even a
-wrong load bounded. The liveness probes (sidebar Test-models grounding/OCR) cap the same way;
-`VISION_NUM_CTX` lives in `contract.ts`. The cap only exists to bound a *fresh* load. `som.ts` unit-tested standalone (`dist/som.js`, `tests/som.test.js`:
-`representativeFor` walk-up + `viewportBox`/`projectFromSquare` coord mapping +
-`gridDims`/`validateCells`/`cellsBox`; `elementFromPoint`/canvas are jsdom no-ops); scoping
-guards in `tests/agent.test.js`. The original design's slices 1–4 all shipped (incl. the
-canvas/coordinate half — grid, grid-grounding, `@pt`; and slice 4's settings capability-RED,
-`visionGate` in `sidebar/settings.tsx`), plus later additions (region tiers, snap-around-point,
-canvas auto-upgrade, `@pt` dedup). Illustrated end-to-end in `docs/LOCATE-VISION.md`.
+**Read `docs/LOCATE-VISION.md` before touching locate** — it's the whole pipeline, illustrated with
+mermaid diagrams. It covers: the hit-testing primitive (`document.elementFromPoint`, NOT selector
+matching) + the `representativeFor` walk-up; the delegation boundary; the four `strategy` dialects
+(`marks` Set-of-Marks · `grounding` a coordinate VLM · `grid` numbered-cell classification ·
+`grid-grounding`, plus `auto`); the letterbox → 1000×1000 / `groundingRange` coordinate mapping and its
+inverse; the scoping tiers (`region` → `grid` → `cells` recursion; `selector`/`index`; the `@pt:`
+snap-around-point — a fractal zoom); the canvas/`@pt` coordinate path (mint → `clickAt` → look-verify,
+with the re-locate-loop dedup); the density guard, overlay-colour heuristic, debug-render substeps, and
+the delegated-sub-call `num_ctx` resident-caching gotcha. All four original slices shipped (incl. the
+canvas half: grid, grid-grounding, `@pt`). Pure geometry (`som.ts`) is unit-tested standalone
+(`dist/som.js`, `tests/som.test.js`); scoping guards in `tests/agent.test.js`.
 
 **Agent runs in the debug sidebar.** `ml.agent` emits its own debug-event kinds
 (not `chat`): `agent` (run start: task + model), `agent-step` (a thought OR a tool
@@ -670,6 +485,9 @@ it per format: `params.think` (openai) vs a top-level `think` (ollama native).
 
 - **Plain JS in docs/examples** — `document.querySelector`, never jQuery-style
   `$`/`$$` (those are devtools-only and read as dated).
+- **Document functions with JSDoc** (`/** … */`, `@param`/`@returns` where useful),
+  not a plain `//` block — so callers get the explanation on IDE hover at the call
+  site. Inline `//` comments are for logic *inside* a body.
 - **Tests: `npm test`** (Node ≥ 20, `node:test`). `tests/helpers.js` loads the
   real extension files into `node:vm` sandboxes with mocked `chrome`/`fetch`/
   `window`, so tests exercise the shipped code with no build step. Add a
