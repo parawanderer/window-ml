@@ -544,6 +544,10 @@ export interface StartRunPayload {
     autoApproveReadonly: boolean;
     /** headless run: the background refuses (never prompts) any call that reaches the gate */
     unattended?: boolean;
+    /** scripting run: the off-mode HUD card stays hidden for it (no working orb, no answer card). The
+     *  background streams it to the card as usual; the card reads this and suppresses itself. Approvals
+     *  still surface (privileged consent can't be silenced). */
+    silent?: boolean;
     /** Which surface hosts the run's gate/stream (all route through the background): a debug surface
      *  (overlay/devtools) streams steps + gates in the sidebar app; "off" also streams the SAME steps to
      *  the page, where the content-script shell renders them in a lazily-mounted acrylic corner CARD (a

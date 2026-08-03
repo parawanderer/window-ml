@@ -99,5 +99,5 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
         pushToolImages: pushToolImages as AgentLoopDeps["pushToolImages"],
         emit: deps.emit,
     };
-    return runAgentLoop(cfg.task, { tools: cfg.tools, maxSteps: cfg.maxSteps, signal: deps.signal }, loopDeps);
+    return runAgentLoop(cfg.task, { tools: cfg.tools, maxSteps: cfg.maxSteps, signal: deps.signal, unattended: cfg.unattended }, loopDeps);
 }

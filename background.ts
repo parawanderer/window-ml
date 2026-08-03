@@ -851,11 +851,11 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             config: {
                 system: p.systemPrompt, customSystem: false,
                 tools: p.tools.map(t => ({ name: t.name, requiresApproval: t.requiresApproval, vision: t.capabilities.includes("vision"), description: t.description, parameters: t.parameters, summary: t.summary })),
-                maxSteps: p.maxSteps, think: p.think, env: true, vision: null, hints: null,
+                maxSteps: p.maxSteps, think: p.think, env: true, vision: null, hints: null, unattended: p.unattended, silent: p.silent,
             },
         });
         runBackgroundAgent(
-            { task: p.task, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython },
+            { task: p.task, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, unattended: p.unattended },
             {
                 callModel: async (messages) => {
                     // Thread the run's abort signal so a CANCEL_RUN kills a slow in-flight generation, not

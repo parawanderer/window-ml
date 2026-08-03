@@ -690,6 +690,32 @@ test("agent: { silent } rides the run's debug config so the HUD card can stay hi
     assert.ok(!events.find(e => e.kind === "agent").config.silent, "a normal run leaves silent unset");
 });
 
+test("agent: { unattended } refuses an approval-gated call (never prompts) and steers to read-only", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall("danger", {}, "c1"), reply("ok, read-only only")]) });
+    let ran = 0;
+    const danger = world.ml.defineTool({ name: "danger", requiresApproval: true, run: () => { ran++; return "did it"; } });
+    const res = await world.ml.agent("go", { tools: [danger], unattended: true, vision: false, maxSteps: 3 });
+    assert.equal(ran, 0, "the gated tool never RAN in an unattended run (refused, not executed)");
+    assert.match(res.transcript[0].result, /Refused: this run is UNATTENDED/);
+    // The refusal is fed back and the run continues to a read-only answer.
+    assert.equal(res.summary, "ok, read-only only");
+});
+
+test("agent: { unattended } drops exec/python when their auto-approve is off, keeps non-gated tools + adds the clause", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("done")]) });
+    const exec = world.ml.defineTool({ name: "exec", requiresApproval: true, run: () => "x" });
+    const py = world.ml.defineTool({ name: "python_exec", requiresApproval: true, run: () => "y" });
+    const safe = world.ml.defineTool({ name: "safe", run: () => "z" });   // non-gated read tool
+    await world.ml.agent("go", { tools: [exec, py, safe], unattended: true, vision: false });
+    const call = world.runtimeCalls.find(c => c.payload && c.payload.tools);
+    const toolsSent = call.payload.tools.map(t => t.function.name);
+    assert.ok(!toolsSent.includes("exec"), "exec is dropped when autoApproveReadonly is off (every call would need approval)");
+    assert.ok(!toolsSent.includes("python_exec"), "python_exec is dropped when autoApprovePython is off");
+    assert.ok(toolsSent.includes("safe"), "non-gated tools stay wired");
+    // The system prompt tells the model upfront it's unattended.
+    assert.match(call.payload.messages[0].content, /UNATTENDED/);
+});
+
 test("agent: resuming an unknown hash throws (never silently starts a fresh run)", async () => {
     const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("nope")]) });
     await assert.rejects(

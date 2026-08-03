@@ -34,7 +34,7 @@ import type {
 import { detectGroundingModel, DEFAULT_GROUNDING_RANGE } from "./contract";
 import { evalReadonly } from "./readonly-exec";
 import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay } from "./dom";
-import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, SELF_CLAUSE, HUD_HINT, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE } from "./prompts";
+import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, SELF_CLAUSE, HUD_HINT, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, PT_LOOK_RADIUS, BOX_RE, resolveBox } from "./util";
 import type { ShotBox } from "./contract";
 import { annotate, pickAccentColorForTarget } from "./som";
@@ -397,7 +397,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          *   `elements` is the live DOM node(s) the model designated via an
          *   `answer`-capable tool (empty for tasks that just act on the page).
          */
-        agent: async function(task: string, { tools = null, extraTools = [], system = null, hints = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null, resume = null, silent = false }: {
+        agent: async function(task: string, { tools = null, extraTools = [], system = null, hints = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null, resume = null, silent = false, unattended = false }: {
             tools?: MlTool[] | null;
             extraTools?: MlTool[];
             system?: string | null;
@@ -413,6 +413,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             signal?: AbortSignal | null;
             resume?: string | null;
             silent?: boolean;
+            unattended?: boolean;
         } = {}): Promise<AgentResult> {
             // Resume a run held in this tab: reuse its stored loop (same toolset/system/model +
             // accumulated messages), appending `task` as a follow-up user turn under the SAME hash,
@@ -426,7 +427,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 if (!handle) throw new Error(`ml.agent: no resumable run "${resume}" in this tab. (Same-tab page-hosted runs resume in-memory; a background/off-mode run isn't resumable this way yet.)`);
                 return handle.resume(task);
             }
-            const toolset = [...(tools || this.domTools || []), ...extraTools];
+            let toolset = [...(tools || this.domTools || []), ...extraTools];
             // Config, fetched once (used for vision resolution + the read-only exec
             // auto-approve fast-path below).
             const agentCfg = await this.config().catch(() => null);
@@ -471,6 +472,19 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     toolset.push(this.locateTool({ model: visionModel, groundingModel, groundingRange }));
                 }
             }
+            // Unattended run: no human to approve, so shape the toolset for read-only autonomy. exec and
+            // python_exec are kept ONLY when their read-only auto-approve path is configured on (a readonly
+            // survey / the hardened sandbox run without a prompt); otherwise every call would need approval,
+            // so they're dropped entirely. The kept ones get a note that the mutating/full half is refused.
+            // Other approval-gated tools (click/type/…) stay wired but are refused at the gate below — the
+            // model is told, not silently disarmed. Clone (don't mutate) the shared tool defs.
+            if (unattended) {
+                toolset = toolset.flatMap(t => {
+                    if (t.name === "exec") return autoRO ? [{ ...t, description: t.description + UNATTENDED_EXEC_NOTE }] : [];
+                    if (t.name === "python_exec") return autoPy ? [{ ...t, description: t.description + UNATTENDED_PY_NOTE }] : [];
+                    return [t];
+                });
+            }
             const byName = Object.fromEntries(toolset.map(t => [t.name, t]));
             const toolDefs = toolset.map(t => ({
                 type: "function",
@@ -489,6 +503,9 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 // model must compute, never guess. Mutually exclusive so the prompt isn't doubled.
                 if (toolset.some(t => t.name === "python_exec")) systemPrompt += PYTHON_CLAUSE;
                 else if (toolset.some(t => t.name === "exec")) systemPrompt += EXEC_COMPUTE_CLAUSE;
+                // Headless run: tell the model upfront it's unattended (read-only only), so it doesn't
+                // waste steps attempting clicks/typing/mutations that the gate below will just refuse.
+                if (unattended) systemPrompt += UNATTENDED_CLAUSE;
             }
             if (hints) systemPrompt += `\n\nTask-specific notes:\n${hints}`;
             if (env) {
@@ -512,7 +529,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             emitDebug({ kind: "agent", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, task, model: runModel, maxSteps, config: {
                 system: systemPrompt, customSystem: !!system,
                 tools: toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval, vision: !!(t.capabilities && t.capabilities.includes("vision")), description: t.description, parameters: t.parameters, summary: t.summary })),
-                maxSteps, think: (think === true || think === false) ? think : null, env, vision: vision ?? null, hints: hints || null, silent: silent || undefined,
+                maxSteps, think: (think === true || think === false) ? think : null, env, vision: vision ?? null, hints: hints || null, silent: silent || undefined, unattended: unattended || undefined,
             } });
 
             // ── Design A: route through the BACKGROUND loop so the approval gate lives at the extension
@@ -549,6 +566,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                         runId: runHash, task, systemPrompt, tools: descriptors,
                         model: runModel, think: (think === true || think === false) ? think : null,
                         maxSteps, autoApprovePython: autoPy, autoApproveReadonly: autoRO, surface: bgSurface,
+                        unattended: unattended || undefined, silent: silent || undefined,
                     }, undefined, signal);
                     // The real DOM nodes an answer-capable tool returned stayed page-side (they can't cross
                     // the bus) — assemble AgentResult.elements from the page-side run record here.
@@ -704,6 +722,14 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                         // approval provenance (it never ran, never gated).
                         if (!handled && typeof tool.precheck === "function") {
                             try { const pre = tool.precheck(args); if (pre) { result = pre; approval = "skipped"; handled = true; } } catch { /* precheck threw → fall through to the gate */ }
+                        }
+                        if (!handled && unattended) {
+                            // Unattended run: nothing auto-approved it and there's no human to ask, so REFUSE
+                            // (never prompt) and steer the model to a read-only path. Reached only after the
+                            // readonly/sandbox/precheck fast-paths above declined — so a genuinely gated call.
+                            approval = "denied";
+                            result = UNATTENDED_REFUSAL;
+                            handled = true;
                         }
                         if (!handled) {
                             // Approval gate. `approve` may return a boolean or the rich

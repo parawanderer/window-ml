@@ -13,6 +13,7 @@
 // model / executor / gate in tests/agent-loop.test.js.
 
 import type { AgentResult, AgentTranscriptEntry, ApprovalDecision, ToolCall, RenderDescriptor } from "./contract";
+import { UNATTENDED_REFUSAL } from "./prompts";
 
 export type Approval = "readonly" | "sandbox" | "user" | "denied" | "skipped";
 export interface ToolMeta { name: string; requiresApproval?: boolean; capabilities?: string[]; }
@@ -60,7 +61,7 @@ export interface AgentLoopDeps {
     emit?(ev: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: unknown; tool?: string; arguments?: Record<string, unknown>; result?: string; approval?: Approval; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; usage?: unknown }): void;
 }
 
-export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number; signal?: AbortSignal | null; }
+export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number; signal?: AbortSignal | null; unattended?: boolean; }
 
 // Normalize an approval gate's return (boolean OR the rich contract) into a decision. Inlined (not
 // imported from approval.ts) so this module stays DOM/chrome-free for the standalone build.
@@ -135,6 +136,11 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                     // WITHOUT gating — approving something that will just fail is pointless friction. It
                     // never ran; the "skipped" provenance tells the UI why there was no prompt. `result` set above.
                     approval = "skipped";
+                } else if (opts.unattended) {
+                    // Unattended run: nothing auto-approved it and there's no human to ask, so REFUSE (never
+                    // prompt) and steer to read-only. Mirrors the page loop; same clean message on both paths.
+                    approval = "denied";
+                    result = UNATTENDED_REFUSAL;
                 } else {
                     const d = normalize(await deps.approve({ tool: call.name, arguments: args, seq: s, step }), args);
                     if (!d.approved) {

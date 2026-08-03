@@ -128,7 +128,8 @@ list. See [docs/CLOUD-MODELS.md](docs/CLOUD-MODELS.md).
 | `ml.unload(model?)` | Evict a model from VRAM (`keep_alive: 0`); no argument = evict all. |
 | `ml.read(image, { model?, prompt? })` | OCR — transcribe baked-in text from an `<img>` or URL to a plain string, using the configured OCR (vision) model. See [OCR](#ocr). |
 | `ml.step(messages, { tools?, model?, think? })` | One model turn with client-side tools; returns the raw assistant message and hands the loop to you. See [Tools](#tools-agents). |
-| `ml.agent(task, options?)` | Plain-English page agent: runs the whole loop over built-in DOM recon tools (and auto-wired vision) until it acts or answers. See [Agent](#tools-agents). |
+| `ml.agent(task, options?)` | Plain-English page agent: runs the whole loop over built-in DOM recon tools (and auto-wired vision) until it acts or answers. Returns `{ summary, steps, transcript, elements, hash }`. See [Agent](#tools-agents). |
+| `ml.createAgent(options?)` | A resumable agent handle (`run`/`continue`/`cancel` + `hash`) — the agent analogue of `createChat`. See [Agent](#tools-agents). |
 | `ml.chat(prompt, { toolIds })` | Server-side tools: OpenWebUI runs the tools and returns the finished answer. See [Tools](#tools-agents). |
 | `ml.logChat` / `ml.logChatShort` | `console.log` variants. |
 
@@ -362,9 +363,9 @@ model, and call `ml.agent`. What's built in:
   generation), then **resolves** `{ cancelled: true }` with the partial transcript
   (it doesn't throw). Compose it with a timeout, a UI "stop" button, etc.
 
-Returns `{ summary, steps, transcript, elements }` (`elements` holds any DOM
-nodes the agent designated as its answer; a `hitCap`/`cancelled` flag marks a run
-that stopped early). Nudge it without rewriting the prompt via `hints`, cancel it
+Returns `{ summary, steps, transcript, elements, hash }` (`elements` holds any DOM
+nodes the agent designated as its answer; `hash` identifies the session for
+`{ resume }`; a `hitCap`/`cancelled` flag marks a run that stopped early). Nudge it without rewriting the prompt via `hints`, cancel it
 with `signal`, and watch every thought and tool call in the console with
 `logDebug` (or pass your own `onStep`):
 
@@ -385,6 +386,42 @@ stopButton.onclick = () => ctl.abort();
 const res = await ml.agent("Reconcile the two tables.", { signal: ctl.signal });
 // …or a timeout: ml.agent(task, { signal: AbortSignal.timeout(30_000) })
 if (res.cancelled) console.log(`stopped early after ${res.steps} steps`);
+```
+
+**Keep asking — resumable sessions.** Every run carries a session hash
+(`res.hash`, shown in the debug sidebar). Continue it with a follow-up turn —
+same tools, same accumulated history — via `ml.agent(task, { resume: hash })`,
+or use the `ml.createChat`-style handle:
+
+```js
+const a = ml.createAgent({ maxSteps: 20 });
+await a.run("Find the login form.");
+await a.continue("Now fill it with test@example.com.");   // same session, appended
+a.hash;      // the session hash (also res.hash)
+a.cancel();  // abort the in-flight turn
+```
+
+Same-tab runs resume from memory; the hash is also how the in-page HUD and
+DevTools chat continue a run.
+
+**Scripting modes.** Two per-run switches for headless/automation use:
+
+- **`silent: true`** — keeps the run out of the in-page HUD (no working orb, no
+  answer card), for a scripting utility that shouldn't flash UI. Approvals still
+  surface (privileged consent can't be silenced), and the debug sidebar/panel is
+  unaffected.
+- **`unattended: true`** — no human is present to approve, so any approval-gated
+  call is **refused** (never prompts) with a steer back to read-only. `exec` and
+  `python_exec` are wired only when their read-only auto-approve is enabled
+  (`autoApproveReadonly` / `autoApprovePython` in Settings) — a read-only survey
+  / hardened-sandbox run then works with no prompt, while a mutating/full call is
+  refused; otherwise those tools are dropped entirely. Read-only DOM recon still
+  works throughout.
+
+```js
+// A fully headless, read-only run (e.g. from a cron userscript):
+const res = await ml.agent("Summarise the unread notifications.",
+                           { silent: true, unattended: true });
 ```
 
 `ml.agent` is a *composition* of `ml.step`, not a black box — the loop, tool
