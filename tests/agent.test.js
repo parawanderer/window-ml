@@ -811,6 +811,27 @@ test("createAgent: cancel() mid-run, then say() + run() again works (fresh contr
     assert.equal(last.at(-1).content, "continue", "the new task is the last user turn");
 });
 
+test("createAgent: transcript ACCUMULATES across turns (whole-session actions, not just the last turn)", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: scriptedModel([
+            toolCall("t1", {}, "c1"), reply("a1"),
+            toolCall("t2", {}, "c2"), reply("a2"),
+        ]),
+    });
+    const t1 = world.ml.defineTool({ name: "t1", run: () => "r1" });
+    const t2 = world.ml.defineTool({ name: "t2", run: () => "r2" });
+    const a = world.ml.createAgent({ tools: [t1, t2], vision: false, maxSteps: 5 });
+
+    const r1 = await a.run("first");
+    assert.deepEqual(r1.transcript.map(e => e.tool), ["t1"], "turn 1 reports its own action");
+
+    const r2 = await a.run("second");
+    // The handle's transcript is the WHOLE conversation's actions — turn 2's result carries both.
+    assert.deepEqual(r2.transcript.map(e => e.tool), ["t1", "t2"], "the transcript accumulates across turns");
+    // Turn 1's result object is unchanged (it was per-turn at the time) — accumulation is forward-only.
+    assert.deepEqual(r1.transcript.map(e => e.tool), ["t1"], "an earlier turn's returned transcript isn't retroactively grown");
+});
+
 test("createAgent: run() flushes a leftover inbox steer into the history (never lost)", async () => {
     // A mid-run say() a BACKGROUND loop couldn't drain live sits in the inbox. The next run() must flush it
     // into the history so it's processed — otherwise the steer vanishes (the reported bug).

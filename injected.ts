@@ -85,6 +85,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
     bg = false;   // set by ml.agent when the current run routes to the background (say() then uses INJECT_MESSAGE)
     private _maxSteps: number;
     private _ctrl = new AbortController();
+    private _transcript: AgentTranscriptEntry[] = [];   // the WHOLE session's actions (accumulated across turns)
     constructor(private _ml: MlApi, private _opts: AgentOptions) { this._maxSteps = _opts.maxSteps ?? 10; }
 
     get maxSteps(): number { return this._maxSteps; }
@@ -106,8 +107,13 @@ class AgentHandle implements MlAgentHandle, AgentControl {
         // insta-cancel this turn. (A caller-supplied signal still governs — cancel() then only aborts ours.)
         this._ctrl = new AbortController();
         this.running = true;
-        try { return await this._ml.agent(task ?? "", { ...this._opts, signal: this._opts.signal || this._ctrl.signal, _control: this } as AgentOptions); }
-        finally { this.running = false; }
+        try {
+            const r = await this._ml.agent(task ?? "", { ...this._opts, signal: this._opts.signal || this._ctrl.signal, _control: this } as AgentOptions);
+            // Accumulate: a handle's transcript is the WHOLE conversation's actions, not just this turn's
+            // (mirrors messages/hash spanning turns). ml.agent()'s per-call transcript is unchanged.
+            this._transcript.push(...r.transcript);
+            return { ...r, transcript: this._transcript.slice() };
+        } finally { this.running = false; }
     }
 
     /** Put a user message into the session. Mid-run → steer (queued for the next step boundary, shown in
