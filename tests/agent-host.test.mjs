@@ -76,6 +76,20 @@ test("resumeMessages seeds the prior history + the new task (no fresh system pro
     assert.deepEqual(seen, [...prior, { role: "user", content: "second task" }]);
 });
 
+test("resumeMessages: empty task appends NO user turn; a history without a system gets one prepended", async () => {
+    // a.run() with no arg over prior say()s → no empty user turn. And an idle say() before the first run()
+    // leaves a system-less history → the system prompt is prepended so the model is still oriented.
+    let seen;
+    const prior = [{ role: "user", content: "a thought I say()'d before running" }];
+    const deps = baseDeps({ callModel: async (m) => { seen = m.map(x => ({ role: x.role, content: x.content })); return answer("done"); } });
+    await runBackgroundAgent({ task: "", systemPrompt: "SYS", tools: [{ name: "look" }], resumeMessages: prior }, deps);
+    assert.deepEqual(seen, [
+        { role: "system", content: "SYS" },   // prepended (prior history had none)
+        { role: "user", content: "a thought I say()'d before running" },
+        // …and NO trailing empty user turn for the empty task.
+    ]);
+});
+
 test("python_exec readonly + autoApprovePython → SANDBOX auto-approve, gate skipped, tool delegated", async () => {
     const deps = baseDeps({ callModel: scriptedModel([call("python_exec", { code: "return 1" }), answer("ok")]) });
     const { result: res } = await runBackgroundAgent(

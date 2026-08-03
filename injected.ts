@@ -661,7 +661,15 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                         model: runModel, think: (think === true || think === false) ? think : null,
                         maxSteps, autoApprovePython: autoPy, autoApproveReadonly: autoRO, surface: bgSurface,
                         unattended: unattended || undefined, silent: silent || undefined,
-                    }, undefined, signal);
+                        // A handle's prior history (empty on the first turn) → the background CONTINUES it,
+                        // so control.messages stays authoritative across turns even on the background path.
+                        resumeMessages: control.messages.length ? control.messages : undefined,
+                    }, (result, data) => {
+                        // Sync the run's final history back into the handle (page-authoritative). This is why
+                        // a.messages populates + a follow-up run()/say() continues, on the background path too.
+                        if (data && Array.isArray(data.messages)) control.messages = data.messages as NeutralMessage[];
+                        return result as AgentResult;
+                    }, signal);
                     // The real DOM nodes an answer-capable tool returned stayed page-side (they can't cross
                     // the bus) — assemble AgentResult.elements from the page-side run record here.
                     const run = endRun(runHash);

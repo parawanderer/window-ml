@@ -67,7 +67,14 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
     let built: NeutralMessage[] = [];
     const buildMessages = (task: string): NeutralMessage[] => {
         built = cfg.resumeMessages && cfg.resumeMessages.length
-            ? [...cfg.resumeMessages, { role: "user", content: task }]
+            // Continue the handle's prior history. Ensure a system prompt heads it (an idle say() before the
+            // first run() has none), and append `task` only when non-empty (a.run() with no arg runs over
+            // whatever say() already queued — no empty user turn).
+            ? [
+                ...(cfg.resumeMessages[0]?.role === "system" ? [] : [{ role: "system", content: cfg.systemPrompt } as NeutralMessage]),
+                ...cfg.resumeMessages,
+                ...(task ? [{ role: "user", content: task } as NeutralMessage] : []),
+            ]
             : [{ role: "system", content: cfg.systemPrompt }, { role: "user", content: task }];
         return built;
     };

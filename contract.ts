@@ -562,6 +562,11 @@ export interface StartRunPayload {
      *  background streams it to the card as usual; the card reads this and suppresses itself. Approvals
      *  still surface (privileged consent can't be silenced). */
     silent?: boolean;
+    /** A createAgent handle's prior history: when present, the background CONTINUES it (appends `task`)
+     *  instead of building a fresh system+task — so the page-side control.messages stays authoritative
+     *  across turns (the run's final history rides back in the response). Empty/absent → a fresh first turn
+     *  (and the background announces the `agent` session start; a continuation does not, avoiding a reset). */
+    resumeMessages?: NeutralMessage[];
     /** Which surface hosts the run's gate/stream (all route through the background): a debug surface
      *  (overlay/devtools) streams steps + gates in the sidebar app; "off" also streams the SAME steps to
      *  the page, where the content-script shell renders them in a lazily-mounted acrylic corner CARD (a

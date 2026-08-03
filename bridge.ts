@@ -41,7 +41,7 @@ export const makeBackgroundTaskPromise = <T = unknown>(
     requestType: string,
     responseType: string,
     payload: unknown,
-    callbackOnResponseSuccess?: (result: unknown) => T,
+    callbackOnResponseSuccess?: (result: unknown, data?: Record<string, unknown>) => T,
     signal?: AbortSignal | null
 ): Promise<T> => {
     return new Promise((resolve, reject) => {
@@ -58,7 +58,7 @@ export const makeBackgroundTaskPromise = <T = unknown>(
                     reject(event.data.error);
                 } else {
                     let result = event.data.result;
-                    if (callbackOnResponseSuccess) result = callbackOnResponseSuccess(result);
+                    if (callbackOnResponseSuccess) result = callbackOnResponseSuccess(result, event.data);
                     resolve(result);
                 }
             }

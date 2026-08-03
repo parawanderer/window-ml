@@ -35,7 +35,7 @@ const HANDLE_MAP: Partial<Record<PageRequestType, RelayEntry>> = {
     RESUME_RUN_REQUEST: { type: "RESUME_RUN", responseType: "RESUME_RUN_RESPONSE" },
 };
 
-interface BgResponse { data?: unknown; sources?: unknown; model?: unknown; reasoning?: unknown; usage?: unknown; error?: string; }
+interface BgResponse { data?: unknown; sources?: unknown; model?: unknown; reasoning?: unknown; usage?: unknown; messages?: unknown; error?: string; }
 
 const sendRuntimeMessage = (type: BackgroundMessageType, requestId: string, payload: unknown, responseType: string): void => {
     // requestId travels to the background too, so it can key an AbortController for the task
@@ -50,6 +50,7 @@ const sendRuntimeMessage = (type: BackgroundMessageType, requestId: string, payl
             model: response && response.model,   // resolved model, for the debug sidebar's provenance
             reasoning: response && response.reasoning,   // separate thinking text, for the sidebar
             usage: response && response.usage,   // token counts, for the sidebar's context gauge
+            messages: response && response.messages,   // a background run's final history, synced back to a createAgent handle
             error: response && response.error,
         }, "*");
     });

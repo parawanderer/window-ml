@@ -1286,6 +1286,29 @@ test("RESUME_RUN continues a stored background run with its accumulated history 
     assert.match(ghost.error, /No resumable run/);
 });
 
+test("START_RUN with resumeMessages continues that history, returns the final messages, and does NOT re-announce", async () => {
+    // The createAgent-handle path: the page sends its prior control.messages so the background CONTINUES it
+    // (fixing 'a.messages empty' + 'run() again resets the session'). The final history rides back so the
+    // handle stays authoritative; a continuation must NOT re-emit `agent` (that wiped the sidebar session).
+    const calls = [], tabEvents = [];
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => { calls.push(call.body.messages.map(m => ({ role: m.role, content: m.content }))); return jsonResponse({ choices: [{ message: { content: "answer" } }] }); },
+        onTabMessage: (_tabId, msg) => { if (msg?.type === "ML_DEBUG_TO_PAGE") tabEvents.push(msg.event); },
+    });
+    const prior = [{ role: "system", content: "SYS" }, { role: "user", content: "first" }, { role: "assistant", content: "ans1" }];
+    const res = await bg.send({ type: "START_RUN", payload: {
+        runId: "rc1", task: "second", systemPrompt: "SYS", tools: [], model: "m", think: null,
+        maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "off", resumeMessages: prior,
+    } }, { tab: { id: 3 } });
+
+    assert.deepEqual(calls.at(-1), [...prior, { role: "user", content: "second" }], "continued from the prior history + the new task");
+    assert.ok(Array.isArray(res.messages) && res.messages.some(m => m.content === "second"), "the response returns the final messages (for control.messages sync)");
+    assert.ok(res.messages.some(m => m.role === "assistant" && m.content === "answer"), "…including the new answer");
+    assert.ok(!tabEvents.some(e => e.kind === "agent"), "a continuation does NOT re-announce the session (no sidebar reset)");
+    assert.ok(tabEvents.some(e => e.kind === "agent-result"), "but the result IS emitted");
+});
+
 // ---- FETCH_SHEET: credentialed Google Sheets CSV export ----
 
 test("FETCH_SHEET returns the CSV body, fetched with the user's Google cookies", async () => {

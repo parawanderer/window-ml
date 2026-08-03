@@ -870,6 +870,9 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             resumeMessages = stored.messages;
         } else {
             p = message.payload as StartRunPayload;
+            // A createAgent handle sends its prior history (control.messages) so the background CONTINUES
+            // it — the page stays authoritative across turns, and the updated history rides back below.
+            resumeMessages = p.resumeMessages;
         }
         const runId = p.runId;
         const abortCtl = new AbortController();   // CANCEL_RUN aborts this → the loop resolves { cancelled }
@@ -1006,7 +1009,8 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     kind: "agent-result", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: res.steps },
                     summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled,
                 });
-                sendResponse({ data: res });
+                // Sync the run's final history back so a createAgent handle's control.messages stays live.
+                sendResponse({ data: res, messages });
             })
             .catch((err) => {
                 // A fatal loop error — surface it to the off-mode card (the page's bus is dormant there,
