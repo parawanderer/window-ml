@@ -47,29 +47,70 @@ const CARD_CSS = `
   position: fixed; z-index: 2147483000;
   box-sizing: border-box; overflow: hidden; border-radius: 15px;
   background: rgba(250, 250, 252, .72);
-  -webkit-backdrop-filter: blur(26px) saturate(180%); backdrop-filter: blur(26px) saturate(180%);
+  /* saturate() is the AMPLIFIER of page colour bleeding through — high (180%) means a yellow page tints
+     the panel light/yellow. Keeping it near 100% (a touch of desaturation) makes the bleed NEUTRAL
+     regardless of page colour, so a lower background opacity (more blur/translucency) no longer tints.
+     Tune the two independently: 'saturate' = colour-neutrality, background alpha = how much shows through. */
+  -webkit-backdrop-filter: blur(30px) saturate(102%); backdrop-filter: blur(30px) saturate(102%);
   border: 1px solid rgba(0, 0, 0, .10);
   box-shadow: 0 14px 46px rgba(0, 0, 0, .26), 0 3px 10px rgba(0, 0, 0, .14);
   /* Two-layer motion: the shell morphs the CONTAINER (position + size in px — see layoutCard), the app
      fades its content (a cross-origin iframe can't be FLIP-measured). POSITION springs (a little
      overshoot) so it FLIES between corner ↔ centre ↔ a drag; SIZE decels smoothly (overshoot would clip
-     content mid-bounce); opacity/transform give the reveal pop. '.no-anim' = instant (during a drag). */
+     content mid-bounce); BORDER-RADIUS overshoots (the liquid "squish" as it balls up into the orb);
+     opacity/transform give the reveal pop. '.no-anim' = instant (during a drag). */
   transform-origin: center;
-  transition: left .42s cubic-bezier(.34,1.28,.5,1), top .42s cubic-bezier(.34,1.28,.5,1),
-              width .34s cubic-bezier(.22,.9,.3,1), height .34s cubic-bezier(.22,.9,.3,1),
+  /* left/top AND width/height MUST share the SAME timing — otherwise 'left+width' (the corner-anchored
+     edge) only matches at the endpoints and WOBBLES across the pointer mid-transition, firing a spurious
+     pointerleave → the hover-capsule flicker. Same bezier ⇒ left(t)+width(t) is constant ⇒ the anchored
+     edge stays put the whole time. No under/overshoot on size (that dips the edge past the pointer too).
+     border-radius keeps its own bouncy curve — it doesn't affect the layout box, so it can't cross a pointer. */
+  transition: left .40s cubic-bezier(.3,.85,.3,1), top .40s cubic-bezier(.3,.85,.3,1),
+              width .40s cubic-bezier(.3,.85,.3,1), height .40s cubic-bezier(.3,.85,.3,1),
+              border-radius .44s cubic-bezier(.5,-0.3,.2,1.5),
               opacity .24s ease, transform .40s cubic-bezier(.34,1.32,.5,1);
 }
 #${SB_CARD}-wrap.no-anim { transition: none; }
 /* The acrylic tracks the APP's resolved theme (set on the wrap by the shell from config.theme), NOT
    the OS — otherwise a user who forces Light while the OS is dark gets dark text on a dark acrylic. */
-#${SB_CARD}-wrap[data-theme="dark"] { background: rgb(41 30 13 / 8%); border-color: rgba(255, 255, 255, .12);
+#${SB_CARD}-wrap[data-theme="dark"] { background: rgb(24 24 27 / 78%); border-color: rgba(255, 255, 255, .12);
   box-shadow: 0 14px 46px rgba(0, 0, 0, .5), 0 3px 10px rgba(0, 0, 0, .34); }
-/* left/top/width/height are all set in px by the shell (layoutCard). data-state only drives reveal
-   (opacity/transform) + the composer's deeper shadow; data-corner only places the resize handle. */
+/* left/top/width/height are all set in px by the shell (layoutCard). data-state drives reveal
+   (opacity/transform), the orb's roundness, and the composer's deeper shadow; data-corner only places
+   the resize handle. */
 #${SB_CARD}-wrap { left: 20px; top: 20px; height: 84px; }
 #${SB_CARD}-wrap[data-state="hidden"] { opacity: 0; pointer-events: none; transform: scale(.96); }
-#${SB_CARD}-wrap[data-state="pill"], #${SB_CARD}-wrap[data-state="toast"],
+#${SB_CARD}-wrap[data-state="orb"], #${SB_CARD}-wrap[data-state="orblabel"], #${SB_CARD}-wrap[data-state="toast"],
 #${SB_CARD}-wrap[data-state="expanded"], #${SB_CARD}-wrap[data-state="composer"] { opacity: 1; transform: none; }
+/* Hover capsule: the orb stretched into a rounded pill that spells out the current tool (no wobble — it's
+   readable now). border-radius = half the height so the ends are perfectly round. */
+#${SB_CARD}-wrap[data-state="orblabel"] { border-radius: 27px; box-shadow: 0 12px 34px rgba(0, 0, 0, .30), 0 3px 10px rgba(0, 0, 0, .18);
+  animation: ${SB_CARD}-jelly 2.6s ease-in-out infinite; }
+/* The capsule is the same computing stage, just stretched — so it stays ALIVE, wobbling its cap radii on
+   both axes (border-radius only, so it can't move the box / re-trip the hover). */
+@keyframes ${SB_CARD}-jelly {
+  0%, 100% { border-radius: 27px 27px 27px 27px / 27px 27px 27px 27px; }
+  25%      { border-radius: 33px 21px 33px 21px / 14px 27px 14px 27px; }
+  50%      { border-radius: 21px 33px 21px 33px / 27px 14px 27px 14px; }
+  75%      { border-radius: 31px 23px 31px 23px / 18px 27px 18px 27px; }
+}
+@media (prefers-reduced-motion: reduce) { #${SB_CARD}-wrap[data-state="orblabel"] { animation: none; } }
+/* The liquid ORB — the working state balled up into a circle (the emoji tool icon lives in the iframe).
+   While computing it WOBBLES like a water droplet: the border-radius morphs between organic asymmetric
+   values (a 2D metaball, done on the acrylic container itself — no SVG goo filter to muddy the backdrop
+   blur). The .3s delay lets the squish-in transition round it off first, then the wobble takes over. */
+#${SB_CARD}-wrap[data-state="orb"] { border-radius: 50%; box-shadow: 0 10px 30px rgba(0, 0, 0, .30), 0 2px 8px rgba(0, 0, 0, .18);
+  animation: ${SB_CARD}-droplet 3s ease-in-out .3s infinite; }
+/* ONLY border-radius wobbles — NOT transform. A scale/rotate would move the orb's box out from under the
+   pointer, and the hover→capsule (transform:none) snap-back would fire pointerleave → collapse → re-enter
+   → a flickering oscillation. border-radius doesn't affect layout, so the hover target stays put. */
+@keyframes ${SB_CARD}-droplet {
+  0%,  100% { border-radius: 50% 50% 50% 50% / 50% 50% 50% 50%; }
+  25%       { border-radius: 68% 32% 62% 38% / 55% 66% 34% 45%; }
+  50%       { border-radius: 34% 66% 40% 60% / 64% 38% 62% 36%; }
+  75%       { border-radius: 60% 40% 34% 66% / 40% 62% 38% 60%; }
+}
+@media (prefers-reduced-motion: reduce) { #${SB_CARD}-wrap[data-state="orb"] { animation: none; } }
 #${SB_CARD}-wrap[data-state="composer"] { box-shadow: 0 24px 70px rgba(0, 0, 0, .34), 0 6px 18px rgba(0, 0, 0, .18); }
 #${SB_CARD}-frame { display: block; width: 100%; height: 100%; border: 0; background: transparent; color-scheme: normal; }
 /* Resize handle on the FREE edge (bottom corner → drag the top up; top corner → drag the bottom down). */
@@ -166,11 +207,15 @@ const bgRing: MessageEvent["data"][] = [];
 
 // The tallest the card may be dragged / expanded to — the "Show work" open target too.
 function maxCardH(): number { return Math.round(window.innerHeight * 0.92); }
-// Per-state target WIDTH (px). Height is content-driven (cardAutoH) or the user's drag (cardManualH).
+// Per-state target WIDTH (px). Height is content-driven (cardAutoH) or the user's drag (cardManualH);
+// the ORB is a fixed circle (width === height).
 const CARD_MARGIN = 20;
-const CARD_W: Record<string, number> = { pill: 210, toast: 340, expanded: 384, composer: 560, hidden: 340 };
+const ORB_SIZE = 54;
+const CARD_W: Record<string, number> = { orb: ORB_SIZE, orblabel: 230, toast: 340, expanded: 384, composer: 560, hidden: 340 };
 const cardW = (state: string): number => Math.min(CARD_W[state] ?? 340, window.innerWidth - 2 * CARD_MARGIN);
 const cardH = (state: string): number => {
+    if (state === "orb" || state === "orblabel") return ORB_SIZE;   // circle / capsule — SAME height (a
+                                                                    // vertical shift on hover would flicker the pointerenter/leave)
     const cap = Math.max(120, window.innerHeight - 2 * CARD_MARGIN);   // never past the fold; body scrolls
     const desired = (state === "expanded" && cardManualH) ? cardManualH : cardAutoH;   // drag only on expanded
     return Math.max(56, Math.min(desired, cap));

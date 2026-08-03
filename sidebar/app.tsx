@@ -1567,6 +1567,7 @@ const composerOpen = signal(false);          // the Spotlight composer — the H
 const composerMaxSteps = signal(20);         // step budget for a UI-started run (persists across opens)
 const STEP_BUDGETS = [10, 20, 50];           // the segmented presets in the composer
 const composerStarting = signal(0);          // timestamp: a UI run was sent, awaiting its first event (bridge pill)
+const orbHover = signal(false);              // hovering the working orb → it stretches into a labelled capsule
 const cardTitleTried = new Set<string>();
 
 const latestAgentRun = (): Session | null => {
@@ -1705,7 +1706,7 @@ function ApprovalBody({ st, hash, goal }: { st: AgentStep; hash: string; goal: s
         <div class="action" data-rev={rv}>
             <div class="action-goal">{goal}</div>
             {code
-                ? <div class="action-card code">
+                ? <div class="action-card action-code">
                     <div class="action-verb">{st.tool === "python_exec" ? "Run Python" : "Run JavaScript"}</div>
                     {summary ? <div class="action-summary">{summary}</div> : null}
                     <div class="action-codeblk"><Code text={code.text} lang={code.lang} format={code.lang === "javascript"} /></div>
@@ -1761,28 +1762,48 @@ const cardCtxMenu = (e: any) => {
     window.parent.postMessage({ __mlSidebarCornerMenu: { x: e.clientX, y: e.clientY, hash: run?.hash || "", live } }, "*");
     armMenuDismiss();
 };
-// Grab-drag the HUD: pointer-capture the grab region (pill/head/toast — works for mouse AND touch) and
-// stream movement DELTAS to the shell, which moves the container and snaps to the nearest corner on
-// release. A click (movement below a small threshold) is left alone, so buttons / toast-expand still fire.
+// Grab-drag the HUD: stream movement DELTAS to the shell, which moves the container and snaps to the
+// nearest corner on release. A click (movement below a small threshold) is left alone, so buttons /
+// toast-expand still fire. CRITICAL: capture + listen on a STABLE element (documentElement), NOT the
+// grab element — the orb/pill/head re-renders on every agent event mid-drag, and a capture/listener bound
+// to it would be orphaned the instant it's swapped (the "stuck, can't grab, mouse-is-a-magnet" bug: the
+// drop never fires so it never snaps). documentElement is never re-rendered; capture keeps the moves
+// flowing even when the pointer leaves the tiny orb iframe.
+let orbDragging = false;   // true during an active drag → suppress the hover-capsule so it can't resize mid-drag
+// Hover the orb → stretch to the labelled capsule. Only collapse on a REAL leave: resizing the container
+// under a stationary pointer makes the browser fire a SPURIOUS pointerleave (the pointer is still
+// physically inside the box), which was closing the capsule the instant it opened. So on leave we check
+// the pointer's actual position against the element's box and IGNORE it when it's still inside; a small
+// hysteresis timer on genuine leaves lets a quick re-enter cancel the collapse.
+let orbLeaveTimer = 0;
+const orbEnter = () => { if (orbDragging) return; clearTimeout(orbLeaveTimer); orbHover.value = true; };
+const orbLeave = (e: any) => {
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    if (e.clientX > r.left && e.clientX < r.right && e.clientY > r.top && e.clientY < r.bottom) return;   // spurious (resize) — pointer still inside
+    clearTimeout(orbLeaveTimer);
+    orbLeaveTimer = window.setTimeout(() => { orbHover.value = false; }, 140);
+};
 const startCardDrag = (e: any) => {
     if (e.button != null && e.button !== 0) return;                                          // left / touch only
     if ((e.target as HTMLElement).closest("button, input, textarea, a, .seg")) return;       // not on a control
-    const el = e.currentTarget as HTMLElement;
-    const startX = e.clientX, startY = e.clientY;
+    const cap = document.documentElement;
+    const startX = e.clientX, startY = e.clientY, pid = e.pointerId;
     let dragging = false;
     const move = (ev: any) => {
         if (!dragging) {
             if (Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) < 4) return;   // threshold → still a click
-            dragging = true;
-            try { el.setPointerCapture(e.pointerId); } catch { /* older engines */ }
+            dragging = true; orbDragging = true; orbHover.value = false;                      // no hover-resize mid-drag
+            try { cap.setPointerCapture(pid); } catch { /* older engines */ }
             window.parent.postMessage({ __mlSidebarCardGrab: true }, "*");
         }
         window.parent.postMessage({ __mlSidebarCardMove: { dx: ev.movementX, dy: ev.movementY } }, "*");
     };
     const up = () => {
-        el.removeEventListener("pointermove", move);
-        el.removeEventListener("pointerup", up);
+        cap.removeEventListener("pointermove", move);
+        cap.removeEventListener("pointerup", up);
+        cap.removeEventListener("pointercancel", up);
         if (!dragging) return;
+        orbDragging = false;
         window.parent.postMessage({ __mlSidebarCardDrop: true }, "*");
         // A drag must CANCEL the click that fires after pointerup — otherwise dropping a dragged toast
         // also triggers its onClick (expand). Swallow the next click in the CAPTURE phase (before the
@@ -1792,8 +1813,9 @@ const startCardDrag = (e: any) => {
         window.addEventListener("click", swallow, true);
         setTimeout(clear, 350);
     };
-    el.addEventListener("pointermove", move);
-    el.addEventListener("pointerup", up);
+    cap.addEventListener("pointermove", move);
+    cap.addEventListener("pointerup", up);
+    cap.addEventListener("pointercancel", up);
 };
 // The corner menu is drawn in the SHELL (top document), but the right-click that opened it happened
 // inside THIS iframe — so the page window was already blurred and a later in-card click fires no new
@@ -1819,15 +1841,41 @@ function ShowWork({ run }: { run: Session }) {
     const open = cardShowWork.value;
     const turns = groupTurns(run.steps || []);
     const n = (run.steps || []).filter(s => s.tool).length;
+    // Right-click the toggle → export THIS run (Markdown / PDF), reusing the debug bar's export logic. The
+    // `head` wraps ONLY the toggle + menu, so a click on the TRACE (or anywhere else, or the page → iframe
+    // blur) dismisses it — the trace is a sibling, outside `head`.
+    const [expMenu, setExpMenu] = useState(false);
+    const head = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        if (!expMenu) return;
+        const close = () => setExpMenu(false);
+        const onDown = (e: Event) => { if (!head.current?.contains(e.target as Node)) close(); };
+        const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+        document.addEventListener("pointerdown", onDown);
+        document.addEventListener("keydown", onKey);
+        window.addEventListener("blur", close);   // clicking the page (outside the iframe) blurs it
+        return () => { document.removeEventListener("pointerdown", onDown); document.removeEventListener("keydown", onKey); window.removeEventListener("blur", close); };
+    }, [expMenu]);
+    const exp = (fn: (h: string) => void) => { setExpMenu(false); fn(run.hash); };
     return (
         <div class="card-work" data-rev={rv}>
-            <button class={`card-work-toggle${open ? " open" : ""}`} onClick={() => (cardShowWork.value = !open)}>
-                <span class="card-work-ic" aria-hidden="true">🛠</span>
-                <span class="card-work-label">{open ? "Hide work" : "Show work"}</span>
-                <span class="card-work-n">{n} {n === 1 ? "step" : "steps"}</span>
-                <span class="sp" />
-                <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
-            </button>
+            <div class="card-work-head" ref={head}>
+                <button class={`card-work-toggle${open ? " open" : ""}`} title="Right-click to export this run (Markdown / PDF)"
+                    onClick={() => (cardShowWork.value = !open)}
+                    onContextMenu={e => { e.preventDefault(); setExpMenu(v => !v); }}>
+                    <span class="card-work-label">{open ? "Hide work" : "Show work"}</span>
+                    <span class="card-work-n">{n} {n === 1 ? "step" : "steps"}</span>
+                    <span class="sp" />
+                    <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
+                </button>
+                {expMenu ? (
+                    <div class="card-export-menu" role="menu">
+                        <div class="menu-head">Export this run</div>
+                        <button class="menu-item" role="menuitem" onClick={() => exp(exportSession)}>Markdown<span class="menu-hint">.zip with screenshots</span></button>
+                        <button class="menu-item" role="menuitem" onClick={() => exp(printSession)}>PDF<span class="menu-hint">opens the print dialog</span></button>
+                    </div>
+                ) : null}
+            </div>
             {open ? <div class="card-work-trace">{turns.map(t => <AgentTurn key={t.step} turn={t} max={run.maxSteps} hash={run.hash} />)}</div> : null}
         </div>
     );
@@ -1891,6 +1939,23 @@ function ComposerCard() {
     );
 }
 
+// The liquid tool ORB — the working HUD balled into a circle showing the active-tool emoji. On HOVER it
+// RESHAPES: the blob stretches into a capsule that spells out what it's doing ("👁 Looking at the
+// screen…") — the shell springs the container wider, the label fades in. Draggable + right-click move
+// like every HUD state. (Emoji for now; a looping custom SVG per tool slots into `.card-orb-ic` later.)
+function Orb({ icon, label, wide }: { icon: string; label: string; wide: boolean }) {
+    return (
+        <div class="card-app" data-rev={rev.value}>
+            <div class={`card-orb${wide ? " wide" : ""}`}
+                onPointerEnter={orbEnter} onPointerLeave={orbLeave}
+                onPointerDown={startCardDrag} onContextMenu={cardCtxMenu}>
+                <span class="card-orb-ic" aria-hidden="true">{icon}</span>
+                {wide ? <span class="card-orb-label">{label}</span> : null}
+            </div>
+        </div>
+    );
+}
+
 function CardApp() {
     const r = rev.value;   // subscribe to session changes (retained via data-rev below)
     const composing = composerOpen.value;   // Spotlight bar open → the HUD morphs into the task input
@@ -1911,10 +1976,11 @@ function CardApp() {
     // "quiet" HUD mode still suppresses the idle/working pill (the card only surfaces for approvals/answers).
     const running = !!run && !pending && !done;
     const quiet = config.value.agentHud === "quiet";
-    const showPill = (running || starting) && !quiet;
+    const showOrb = (running || starting) && !quiet;
+    const hovering = orbHover.value;                           // hovering the orb → stretch to a labelled capsule
     const state = composing ? "composer"                       // the composer takes over — centered Spotlight bar
         : pending ? "expanded"                                 // an approval: show the action directly
-            : showPill ? "pill"                               // in flight (incl. the just-sent "Starting…" bridge)
+            : showOrb ? (hovering ? "orblabel" : "orb")       // in flight → the liquid tool orb (capsule on hover)
                 : (done && !dismissed) ? (cardCollapsed.value ? "toast" : "expanded")   // finished: the answer
                     : "hidden";
 
@@ -1979,17 +2045,9 @@ function CardApp() {
     }, [pending, pendingStep?.seq]);
 
     if (composing) return <ComposerCard />;   // the blob reshapes into the task input (container morphs shell-side)
-    // The just-sent "Starting…" bridge pill (before the run's first event) — the composer flew back to the
-    // corner and is already working. Ignores any older run underneath.
-    if (state === "pill" && starting) return (
-        <div class="card-app" data-rev={r}>
-            <div class="card-pill" title="Starting…" onPointerDown={startCardDrag} onContextMenu={cardCtxMenu}>
-                <span class="pill-ic" aria-hidden="true">💭</span>
-                <span class="pill-txt">starting</span>
-                <span class="pill-dots" aria-hidden="true"><i /><i /><i /></span>
-            </div>
-        </div>
-    );
+    // The just-sent "Starting…" bridge orb (before the run's first event) — the composer balled up and flew
+    // back to the corner, already working. Ignores any older run underneath.
+    if ((state === "orb" || state === "orblabel") && starting) return <Orb icon="💭" label="Starting…" wide={state === "orblabel"} />;
     if (!run) return <div class="card-app" data-rev={r} />;
 
     const title = run.title || truncate(run.task || "Agent run", 80);
@@ -2007,17 +2065,9 @@ function CardApp() {
         else cardDismissed.value = run.hash;     // × on a finished card = dismiss
     };
 
-    if (state === "pill") {
+    if (state === "orb" || state === "orblabel") {
         const a = activityFor(run);
-        return (
-            <div class="card-app" data-rev={r}>
-                <div class="card-pill" title={`${a.label}  ·  drag or right-click to move`} onPointerDown={startCardDrag} onContextMenu={cardCtxMenu}>
-                    <span class="pill-ic" aria-hidden="true">{a.icon}</span>
-                    <span class="pill-txt">{a.short}</span>
-                    <span class="pill-dots" aria-hidden="true"><i /><i /><i /></span>
-                </div>
-            </div>
-        );
+        return <Orb icon={a.icon} label={a.label} wide={state === "orblabel"} />;
     }
     if (state === "toast") {
         return (

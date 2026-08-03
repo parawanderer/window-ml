@@ -2093,8 +2093,8 @@ test("card surface: quiet HUD suppresses the working pill, but an approval still
     await w.dispatch(agentStart(hash, "read the page", "m"));
     await w.dispatch(agentStep(hash, 1, { seq: 0, pending: true, tool: "look", arguments: {} }));   // running (no gate)
     await w.flush();
-    assert.ok(!posted.some(m => m.__mlSidebarCard === "pill"), "no idle pill in quiet mode");
-    assert.ok(!w.window.document.querySelector(".card-pill"), "pill is not rendered");
+    assert.ok(!posted.some(m => m.__mlSidebarCard === "orb"), "no idle orb in quiet mode");
+    assert.ok(!w.window.document.querySelector(".card-orb"), "orb is not rendered");
 
     // An actual approval must STILL surface the card (quiet only drops the idle pill, never the gate).
     await w.dispatch(agentStep(hash, 2, { seq: 1, pending: true, awaitingApproval: true, tool: "click",
@@ -2133,7 +2133,7 @@ test("agent run: a fatal error marks the session failed and shows the message in
     assert.match(w.shadow.querySelector(".msg.asst.err .errtext").textContent, /connection refused/, "the run's error is shown");
 });
 
-test("card surface: a running run shows the working pill + right-click asks for the corner menu", async () => {
+test("card surface: a running run shows the liquid orb + right-click asks for the corner menu", async () => {
     const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
     const posted = [];
     w.window.postMessage = (d) => posted.push(d);
@@ -2141,17 +2141,22 @@ test("card surface: a running run shows the working pill + right-click asks for 
 
     const hash = "cardrun3";
     await w.dispatch(agentStart(hash, "read the page", "m"));
-    // A running tool step (pending, but NOT awaiting approval) → the compact progress pill.
+    // A running tool step (pending, but NOT awaiting approval) → the liquid tool orb.
     await w.dispatch(agentStep(hash, 1, { seq: 0, pending: true, tool: "look", arguments: {} }));
     await w.flush();
 
-    assert.ok(posted.some(m => m.__mlSidebarCard === "pill"), "reveals the working pill while running");
-    const pill = w.window.document.querySelector(".card-pill");
-    assert.ok(pill, "pill rendered");
-    assert.match(pill.textContent, /look/, "shows the current tool");
+    assert.ok(posted.some(m => m.__mlSidebarCard === "orb"), "reveals the working orb while running");
+    const orb = w.window.document.querySelector(".card-orb");
+    assert.ok(orb, "orb rendered");
+    assert.match(orb.querySelector(".card-orb-ic")?.textContent || "", /👁/, "shows the look tool emoji");
+    // Hover → the blob RESHAPES into a labelled capsule spelling out the current tool.
+    orb.dispatchEvent(new w.window.MouseEvent("pointerenter", { bubbles: true }));
+    await w.flush();
+    assert.ok(posted.some(m => m.__mlSidebarCard === "orblabel"), "hover stretches the orb into the labelled capsule");
+    assert.match(w.window.document.querySelector(".card-orb-label")?.textContent || "", /screen/i, "the capsule names the current tool (look → viewing the screen)");
 
-    // Right-clicking the pill asks the shell to draw the corner menu (shell-side, unclipped).
-    pill.dispatchEvent(new w.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }));
+    // Right-clicking the orb asks the shell to draw the corner menu (shell-side, unclipped).
+    orb.dispatchEvent(new w.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }));
     await w.tick();
     assert.ok(posted.some(m => m.__mlSidebarCornerMenu), "right-click requests the corner menu");
 });
@@ -2181,6 +2186,14 @@ test("card Show-work: on-demand Explain fetches a plain-English gloss for a code
 
     btn.click(); await w.flush();
     assert.match(step.querySelector(".step-explain").textContent, /grand total/, "the gloss lands inline");
+
+    // Right-click the toggle → an export menu (Markdown / PDF), reusing the debug-bar export logic.
+    doc.querySelector(".card-work-toggle").dispatchEvent(new w.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    await w.tick();
+    const menu = doc.querySelector(".card-export-menu");
+    assert.ok(menu, "right-click opens the export menu");
+    const labels = [...menu.querySelectorAll(".menu-item")].map(b => b.textContent);
+    assert.ok(labels.some(t => /Markdown/.test(t)) && labels.some(t => /PDF/.test(t)), "offers Markdown + PDF export");
 });
 
 test("card corner menu: the request carries the run hash + live flag (for Copy id / Cancel)", async () => {
@@ -2195,7 +2208,7 @@ test("card corner menu: the request carries the run hash + live flag (for Copy i
     await w.flush();
 
     // While RUNNING → live:true (Cancel is offered), and the hash rides along for Copy run id.
-    w.window.document.querySelector(".card-pill").dispatchEvent(new w.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }));
+    w.window.document.querySelector(".card-orb").dispatchEvent(new w.window.MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 5, clientY: 5 }));
     await w.tick();
     const live = posted.filter(m => m.__mlSidebarCornerMenu).pop();
     assert.equal(live.__mlSidebarCornerMenu.hash, hash, "carries the run hash");
@@ -2253,9 +2266,9 @@ test("card composer (Spotlight): opens as a task input, Send posts a real startR
     assert.equal(start.task, "summarise this page", "carries the typed task");
     assert.equal(start.maxSteps, 20, "carries the default step budget");
     assert.ok(!doc.querySelector(".card-cmp-input"), "the composer closes after sending");
-    // The HUD acknowledges immediately (no dead gap before the run's first event): a "Starting…" bridge pill.
-    assert.ok(posted.some(m => m.__mlSidebarCard === "pill"), "the HUD morphs straight to a working pill on send");
-    assert.match(doc.querySelector(".card-pill")?.textContent || "", /starting/i, "shows a Starting… bridge pill");
+    // The HUD acknowledges immediately (no dead gap before the run's first event): a "Starting…" bridge orb.
+    assert.ok(posted.some(m => m.__mlSidebarCard === "orb"), "the HUD balls up into a working orb on send");
+    assert.match(doc.querySelector(".card-orb-ic")?.textContent || "", /💭/, "the bridge orb shows the thinking emoji");
 });
 
 test("card surface: a cancelled run reads as 'Cancelled'", async () => {

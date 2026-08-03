@@ -716,6 +716,21 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
 @keyframes pill-dot { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .pill-ic, .pill-dots i { animation: none; } }
 
+/* The liquid ORB — the working state as a circle with the active-tool emoji. Fills the circular container
+   (the shell balls up + WOBBLES the border-radius like a water droplet); the icon breathes to show it's
+   alive. (A pulse RING can't live here — the container clips it — it belongs on the shell wrap.) Swap
+   `.card-orb-ic` for a looping custom SVG per tool later. */
+.card-orb { display: flex; align-items: center; justify-content: center; height: 100%; width: 100%; user-select: none; }
+.card-orb-ic { font-size: 24px; line-height: 1; animation: orb-breathe 1.9s ease-in-out infinite; }
+/* On hover the blob is a capsule: icon left, label fading in beside it. */
+.card-orb.wide { justify-content: flex-start; gap: 9px; padding: 0 15px; }
+.card-orb.wide .card-orb-ic { font-size: 20px; flex: 0 0 auto; animation: orb-breathe 2.6s ease-in-out infinite; }
+.card-orb-label { font-weight: 600; font-size: .95em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    animation: orb-label-in .22s ease both; }
+@keyframes orb-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.22); } }
+@keyframes orb-label-in { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .card-orb-ic, .card-orb-label { animation: none; } }
+
 /* Collapsed toast — a single notification row: 🤖 · headline/summary · close. */
 .card-toast { display: flex; align-items: center; gap: 11px; padding: 13px 10px 13px 14px; cursor: pointer; }
 .card-bot { font-size: 22px; line-height: 1; flex: 0 0 auto; }
@@ -737,8 +752,8 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
 .card-head-txt { font-weight: 650; font-size: 1.05em; }
 /* Grab-drag affordance (pill/toast/head are draggable → snap to a corner). Buttons inside keep their own
    cursor; touch-action:none so a touch-drag moves the HUD instead of scrolling the page. */
-.card-pill, .card-toast, .card-head { cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
-.card-pill:active, .card-toast:active, .card-head:active { cursor: grabbing; }
+.card-pill, .card-toast, .card-head, .card-orb { cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.card-pill:active, .card-toast:active, .card-head:active, .card-orb:active { cursor: grabbing; }
 .card-head button, .card-toast button { cursor: pointer; }
 /* Fills the space between the fixed header/footer and scrolls internally when the shell caps the card
    to the viewport (a long answer/code). min-height:0 lets a flex child actually shrink+scroll.
@@ -824,10 +839,15 @@ html[data-surface="card"] .appr-btn.no:hover {
 
 /* "Show work" — the audit trail under a finished card (the full step trace, reusing the sidebar rows). */
 .card-work { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 8px; }
+.card-work-head { position: relative; }
+/* Right-click "Show work" → export this run (reuses .menu-item/.menu-hint). Anchored under the toggle. */
+.card-export-menu { position: absolute; top: 34px; left: 2px; z-index: 6;
+    display: flex; flex-direction: column; min-width: 200px; padding: 4px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 22px rgba(0, 0, 0, .45); }
+.card-export-menu .menu-head { padding: 4px 8px 5px; color: var(--fg-faint); font-size: .8em; font-weight: 600; letter-spacing: .02em; }
 .card-work-toggle { display: flex; align-items: center; gap: 8px; width: 100%; background: transparent;
     border: none; color: var(--fg-dim); font: inherit; font-size: .95em; cursor: pointer; padding: 4px 0; }
 .card-work-toggle:hover { color: var(--fg); }
-.card-work-ic { font-size: 13px; }
 .card-work-label { font-weight: 600; }
 .card-work-n { color: var(--fg-faint); font-variant-numeric: tabular-nums; }
 /* Enter animation: the trace slides in from the right + fades; the card itself grows downward (the
@@ -880,7 +900,7 @@ html[data-surface="card"] .appr-btn.no:hover {
 .loc-dot { flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%; background: #22c55e; animation: loc-pulse 1.3s ease-in-out infinite; }
 @keyframes loc-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, .5); } 50% { box-shadow: 0 0 0 5px rgba(34, 197, 94, 0); } }
 @media (prefers-reduced-motion: reduce) { .loc-dot { animation: none; } }
-.action-card.code { gap: 6px; }
+.action-card.action-code { gap: 6px; }   /* code-mode modifier — NOT `code` (that collides with the global .code block style) */
 .action-summary { color: var(--fg); font-size: .98em; line-height: 1.4; overflow-wrap: anywhere; }   /* utility-model plain-English gloss above the code (wraps, never clips) */
 .action-codeblk { max-height: 42vh; overflow: auto; min-width: 0; max-width: 100%; }
 .action-codeblk .code { margin: 0; }
