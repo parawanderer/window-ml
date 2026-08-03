@@ -108,6 +108,51 @@ el.getAttribute; f(x)` can't smuggle a call past the allowlist.
 Result of both: the auto-approved path can **read** the DOM and compute, and can
 **call nothing that has an effect**. `Function`/`eval` are unreachable.
 
+## The read-only `ml` slice (self-introspection)
+
+The agent asked "which model am I?" writes `await ml.getModel()` in `exec` — a pure
+read that was costing a human approval. So the dialect gets an `ml`, but **not**
+`window.ml`: `mlFacade` builds a null-prototype object holding only
+`ML_READONLY_METHODS` — `getModel`, `config`, `models`, `capabilities`, `ps`,
+`serverTools` — bound to the real API. The free set is enforced by *what exists*,
+not only by a name check.
+
+- Excluded on purpose: `setModel`/`unload` **mutate** (`setModel` would re-point the
+  model the run itself is using), `chat`/`agent`/`read` spend tokens+VRAM and can
+  recurse, `pythonExec`/`screenshot` are **privileged**.
+- Those names deliberately never join `ALLOWED_METHODS` (which is keyed by *name*
+  across every object): the facade carries its own allowlist, checked by identity
+  (`obj === this.ml`) in `evalCall`.
+- No new capability. `window.ml.config()` is callable from the page's own console,
+  and `config()` is already the non-secret `MlPublicConfig` subset (no URL, no API
+  key). This lifts an approval **prompt**, not a privilege boundary.
+- Returns are structured-clone JSON off `chrome.runtime.sendMessage` — no DOM nodes,
+  no realm references — and every read on them still goes through the denylist.
+
+**Async.** Every one of those methods is a Promise, so `Evaluator.eval` is a
+**generator**: `yield` a value to have the driver await it. Two drivers —
+`runAsync` at the top level, and `runSync` for an arrow a host method invokes
+(`arr.map(fn)` calls `fn` synchronously, so there is nowhere to await). An `await`
+inside a callback therefore throws `NotInDialect` and the survey falls back to
+approval — never a silently Promise-valued answer. A facade call is auto-awaited
+even without `await`, so a forgotten one still reads the value.
+
+Models don't write one call at a time, so the async shapes they actually produce
+are supported too: `Promise.all([ml.models(), ml.getModel()])` (`Promise` is in
+scope as a **namespace only** — `all`/`allSettled` are allowlisted; it is not a
+`CALLABLE_ROOT` and `new` isn't in the dialect, so no promise can be minted around
+anything the gates didn't already allow), and `ml.getModel().then(m => …)`, where
+auto-await has already left a plain value so `then` applies the callback to it —
+`Promise.resolve(x).then(cb)` semantics, driven by our own driver so an `await`
+inside the callback still works. The callback must be **inline**: a method
+reference can't be smuggled through `then()`.
+
+**How the model learns this.** Not the system prompt — every run would pay for it.
+It's a runtime section of the `agent_api_docs` tool (`selfIntrospectionSection`),
+beside the HUD-shortcut section and for the same reason: it's true only while
+`autoApproveReadonly` is on, so it's resolved live from `GET_CONFIG` and omitted
+entirely when the flag is off (saying otherwise would be a lie the model acts on).
+
 ## Integration (fail-closed, side-effect-free)
 
 Because the interpreter can't cause side effects, wiring is trivial and safe:
@@ -117,8 +162,8 @@ config flag is on:
 
 ```
 try {
-  const { value, logs } = evalReadonly(args.js, roots);   // throws if outside dialect / denied
-  result = formatExecResult(value, logs);                 // reuse exec's own formatting
+  const { value, logs } = await evalReadonly(args.js, document, window.ml);   // rejects if outside dialect / denied
+  result = formatExecResult(value, logs);                                     // reuse exec's own formatting
   // → skip approval, skip eval; TT never touched
 } catch {
   // NotInDialect or Denied → do nothing observable happened; fall through to the
@@ -131,8 +176,12 @@ No separate static analysis: *attempting* the interpreter is free (read-only), s
 before a throw is harmless — nothing in the dialect mutates or fetches.
 
 `evalReadonly` lives in its own dep-free module `readonly-exec.ts`, bundled into
-`injected.js` and also built standalone for unit tests. It takes the root scope
-as a parameter (real globals in the page; jsdom's in tests).
+`injected.js` and unit-tested directly under the `tsx` loader. It takes the
+`document` and (optionally) `window.ml` as parameters — the real ones in the page,
+jsdom's + a stub in tests. Both call sites (`injected.ts`'s page loop and
+`run-delegation.ts`'s design-A delegate) `await` it inside their existing
+`catch → fall back` blocks, so a rejected `ml` call (server down) simply degrades to
+the approval path.
 
 ## Config + UI
 
@@ -152,6 +201,13 @@ as a parameter (real globals in the page; jsdom's in tests).
   `x = 1`, `document.body.innerHTML = 'x'`.
 - **Out-of-dialect falls back** (throws `NotInDialect`, not a crash): `for`
   loops, `function(){}`, assignment, `new`.
+- **The `ml` slice**: the six free reads resolve (with and without `await`, and
+  composed mid-expression); the gated half (`setModel`/`unload`/`chat`/`agent`/
+  `read`/`screenshot`/`pythonExec`, plus the `ml['set'+'Model']` computed dodge) is
+  rejected **at the gate** — the stubs throw a distinct `RAN:` error, so a test can
+  tell "refused" from "actually invoked". The facade is not a path back to the realm
+  (`ml.constructor`, `ml.__proto__`, method-as-value), an `await` inside a `.map`
+  callback fails closed, and no `ml` argument leaves `ml` out of scope entirely.
 - **Pure computation works**: arrows, `.map/.filter/.reduce`, ternaries,
   optional chaining, template literals, object/array literals.
 

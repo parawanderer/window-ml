@@ -1344,6 +1344,37 @@ test("INJECT_MESSAGE steers a RUNNING background run (drained at the next step b
     assert.equal(ghost.data, false, "injecting into a finished/unknown run is a harmless no-op");
 });
 
+test("START_RUN offsets emitted step/seq by stepBase/seqBase and returns the run's extents (multi-turn sidebar)", async () => {
+    // A createAgent handle's later turns send stepBase/seqBase so the background's emitted step/seq continue
+    // past prior turns — otherwise turn N's step 1 collides with turn 1's and the sidebar chat log scrambles.
+    const events = [];
+    let n = 0;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => (++n === 1
+            ? jsonResponse({ choices: [{ message: { content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "noop", arguments: "{}" } }] } }] })
+            : jsonResponse({ choices: [{ message: { content: "done" } }] })),
+        onTabMessage: (_t, msg) => {
+            if (msg?.type === "ML_DEBUG_TO_PAGE") events.push(msg.event);
+            if (msg?.type === "RUN_TOOL_IN_PAGE" && !msg.payload?.renderOnly && !msg.payload?.readonlyTry && !msg.payload?.precheck) return { result: "ok" };
+            return undefined;
+        },
+    });
+    const res = await bg.send({ type: "START_RUN", payload: {
+        runId: "off1", task: "go", systemPrompt: "S", tools: [{ name: "noop", requiresApproval: false, description: "", parameters: {}, capabilities: [] }],
+        model: "m", think: null, maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools",
+        stepBase: 10, seqBase: 5,
+    } }, { tab: { id: 3 } });
+
+    const steps = events.filter(e => e.kind === "agent-step");
+    assert.ok(steps.length && steps.every(e => e.step > 10), "every emitted step is offset past stepBase (10)");
+    assert.ok(steps.some(e => e.seq != null && e.seq > 5), "the tool step's seq is offset past seqBase (5)");
+    // The run's EMITTED extents ride back so the page advances its bases past them (the final-answer step
+    // emits no event here → max emitted step is 1, the tool step; one tool call → seq 1).
+    assert.equal(res.stepCount, 1, "returns the run's max emitted step");
+    assert.equal(res.seqCount, 1, "returns the run's max emitted seq (one tool call)");
+});
+
 // ---- FETCH_SHEET: credentialed Google Sheets CSV export ----
 
 test("FETCH_SHEET returns the CSV body, fetched with the user's Google cookies", async () => {

@@ -232,6 +232,23 @@ test("agent_api_docs ships the generated window.ml reference in the default regi
     assert.ok(!/\b_logStep\s*\(/.test(docs), "internal plumbing leaked into the shipped doc");
 });
 
+test("agent_api_docs reports the free read-only ml calls ONLY when autoApproveReadonly is on", async () => {
+    // Runtime state, like the HUD shortcut — so it lives in the docs tool (paid only when the model
+    // asks about itself), not the system prompt. With the flag off these calls DO hit the gate, and
+    // saying otherwise would be a lie the model acts on.
+    const docsWith = async (config) => {
+        // Answer only the shortcut lookup (so it doesn't wait out its timeout); GET_CONFIG must fall
+        // through to the harness's own probe reply, which is what carries `config`.
+        const world = loadPageWorld({ config, onRuntimeMessage: (m) => m.type === "GET_INVOCATION" ? { data: null } : undefined });
+        return world.ml.domTools.find(t => t.name === "agent_api_docs").run({});
+    };
+    const on = await docsWith({ model: "m", ocrModel: "", autoApproveReadonly: true });
+    assert.match(on, /no approval needed/i);
+    assert.ok(on.includes("ml.getModel()") && on.includes("ml.serverTools()"), "lists the free set");
+    const off = await docsWith({ model: "m", ocrModel: "", autoApproveReadonly: false });
+    assert.ok(!/no approval needed/i.test(off), "flag off → the section is omitted entirely");
+});
+
 test("findByText returns the DEEPEST matches as paths + real nodes, not containers", () => {
     const { ml } = loadDomWorld(
         '<div class="card"><h2 class="title">Widget A</h2></div>' +
@@ -587,7 +604,7 @@ test("agent runs a tool, feeds the result back, and stops on a plain reply", asy
 
     assert.equal(res.summary, "done: pinged once");
     assert.equal(res.steps, 1);
-    assert.deepEqual(res.transcript, [{ tool: "ping", arguments: { x: 1 }, result: "pong1" }]);
+    assert.deepEqual(res.transcript, [{ tool: "ping", arguments: { x: 1 }, result: "pong1" }, { assistant: "done: pinged once" }]);
     // Second turn carried the assistant tool_calls and the tool result back.
     const sent = world.runtimeCalls[1].payload.messages;
     assert.equal(sent.at(-2).tool_calls[0].name, "ping");
@@ -670,7 +687,7 @@ test("agent: result carries a session hash, and { resume } appends a follow-up t
     assert.equal(resumedMsgs[1].content, "do the first thing");
     assert.ok(resumedMsgs.some(m => m.role === "assistant" && m.content === "first answer"), "the prior answer is in the resumed context");
     // The resumed turn reused the ORIGINAL toolset (no tools passed on the resume call).
-    assert.deepEqual(second.transcript, [{ tool: "pong", arguments: { y: 2 }, result: "ponged" }]);
+    assert.deepEqual(second.transcript, [{ tool: "pong", arguments: { y: 2 }, result: "ponged" }, { assistant: "second answer" }]);
 });
 
 test("agent: { silent } rides the run's debug config so the HUD card can stay hidden", async () => {
@@ -822,14 +839,18 @@ test("createAgent: transcript ACCUMULATES across turns (whole-session actions, n
     const t2 = world.ml.defineTool({ name: "t2", run: () => "r2" });
     const a = world.ml.createAgent({ tools: [t1, t2], vision: false, maxSteps: 5 });
 
+    const tools = t => t.transcript.filter(e => e.tool).map(e => e.tool);
+    const answers = t => t.transcript.filter(e => e.assistant).map(e => e.assistant);
     const r1 = await a.run("first");
-    assert.deepEqual(r1.transcript.map(e => e.tool), ["t1"], "turn 1 reports its own action");
+    assert.deepEqual(tools(r1), ["t1"], "turn 1 reports its own action");
+    assert.deepEqual(answers(r1), ["a1"], "…and its assistant answer");
 
     const r2 = await a.run("second");
-    // The handle's transcript is the WHOLE conversation's actions — turn 2's result carries both.
-    assert.deepEqual(r2.transcript.map(e => e.tool), ["t1", "t2"], "the transcript accumulates across turns");
+    // The handle's transcript is the WHOLE conversation's actions AND replies — turn 2's result carries both.
+    assert.deepEqual(tools(r2), ["t1", "t2"], "the tool calls accumulate across turns");
+    assert.deepEqual(answers(r2), ["a1", "a2"], "the assistant answers accumulate across turns");
     // Turn 1's result object is unchanged (it was per-turn at the time) — accumulation is forward-only.
-    assert.deepEqual(r1.transcript.map(e => e.tool), ["t1"], "an earlier turn's returned transcript isn't retroactively grown");
+    assert.deepEqual(tools(r1), ["t1"], "an earlier turn's returned transcript isn't retroactively grown");
 });
 
 test("createAgent: run() flushes a leftover inbox steer into the history (never lost)", async () => {
@@ -1443,6 +1464,40 @@ test("autoApproveReadonly: a read-only exec survey runs with NO approval prompt"
     const step = events.find(e => e.kind === "agent-step" && e.tool === "exec" && !e.pending);
     assert.match(step.result, /\[20,30\]/, "the interpreter actually ran it");
     assert.equal(step.approval, "readonly", "step tagged as auto-approved");
+});
+
+test("autoApproveReadonly: the agent reads its OWN setup (ml.config) with NO approval prompt", async () => {
+    // "Which model am I?" is a pure read — it shouldn't cost the user an approval. The interpreter
+    // hands the dialect a facade of ML_READONLY_METHODS only (see readonly-exec.test.mjs for the gate).
+    const world = loadPageWorld({
+        config: { model: "gemma4:31b", ocrModel: "", autoApproveReadonly: true },
+        onRuntimeMessage: scriptedModel([toolCall("exec", { js: "(await ml.config()).model" }, "c1"), reply("done")]),
+    });
+    const win = world.context.window;
+    const events = [];
+    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    win.postMessage({ __mlSidebar: "ready" });
+    await new Promise(r => setTimeout(r, 0));
+    const exec = world.ml.domTools.find(t => t.name === "exec");
+    let approvals = 0;
+    await world.ml.agent("x", { tools: [exec], vision: false, approve: () => { approvals++; return true; } });
+    assert.equal(approvals, 0, "a read-only ml call was auto-approved (gate never called)");
+    const step = events.find(e => e.kind === "agent-step" && e.tool === "exec" && !e.pending);
+    assert.match(step.result, /gemma4:31b/, "the await actually resolved — not a pending Promise");
+    assert.equal(step.approval, "readonly", "step tagged as auto-approved");
+});
+
+test("autoApproveReadonly: a MUTATING ml call (setModel) still goes through the approval gate", async () => {
+    const world = loadPageWorld({
+        config: { model: "gemma4:31b", ocrModel: "", autoApproveReadonly: true },
+        onRuntimeMessage: scriptedModel([toolCall("exec", { js: "await ml.setModel('other')" }, "c1"), reply("ok, stopped")]),
+    });
+    await new Promise(r => setTimeout(r, 0));
+    const exec = world.ml.domTools.find(t => t.name === "exec");
+    let approvals = 0;
+    // Denied, so the eval path never runs it either — the point is that it REACHED the human.
+    await world.ml.agent("x", { tools: [exec], vision: false, approve: () => { approvals++; return false; } });
+    assert.equal(approvals, 1, "setModel isn't on the read-only facade → normal approval");
 });
 
 test("autoApproveReadonly: an out-of-dialect exec still goes through the approval gate", async () => {

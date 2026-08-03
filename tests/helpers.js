@@ -255,6 +255,10 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps } = {}) {
         Intl,
         structuredClone,
         AbortController,   // a standard web global injected.js uses (e.g. ml.createAgent's cancel())
+        // Real timers: injected.js uses them for waits and for bounding background lookups. Without
+        // these, that code hit a ReferenceError swallowed by its own catch — a silently degraded path
+        // that tests then "passed" against.
+        setTimeout, clearTimeout,
         Event: class Event { constructor(type) { this.type = type; } },
         window: win,
         HTMLImageElement: class HTMLImageElement {},

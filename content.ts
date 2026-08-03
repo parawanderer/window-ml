@@ -36,7 +36,7 @@ const HANDLE_MAP: Partial<Record<PageRequestType, RelayEntry>> = {
     INJECT_MESSAGE_REQUEST: { type: "INJECT_MESSAGE", responseType: "INJECT_MESSAGE_RESPONSE" },
 };
 
-interface BgResponse { data?: unknown; sources?: unknown; model?: unknown; reasoning?: unknown; usage?: unknown; messages?: unknown; error?: string; }
+interface BgResponse { data?: unknown; sources?: unknown; model?: unknown; reasoning?: unknown; usage?: unknown; messages?: unknown; stepCount?: unknown; seqCount?: unknown; error?: string; }
 
 const sendRuntimeMessage = (type: BackgroundMessageType, requestId: string, payload: unknown, responseType: string): void => {
     // requestId travels to the background too, so it can key an AbortController for the task
@@ -52,6 +52,8 @@ const sendRuntimeMessage = (type: BackgroundMessageType, requestId: string, payl
             reasoning: response && response.reasoning,   // separate thinking text, for the sidebar
             usage: response && response.usage,   // token counts, for the sidebar's context gauge
             messages: response && response.messages,   // a background run's final history, synced back to a createAgent handle
+            stepCount: response && response.stepCount,  // + its step/seq extents, so the handle offsets the next turn
+            seqCount: response && response.seqCount,
             error: response && response.error,
         }, "*");
     });

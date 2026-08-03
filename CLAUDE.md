@@ -158,10 +158,29 @@ and calls are allowlisted to read/query/pure methods only, so no effectful metho
 `evalReadonly` and, on **any** `NotInDialect`/`Denied` throw, falls through to the
 normal approval + `eval` path — safe because the interpreter is side-effect-free,
 so a failed attempt does nothing observable. Deliberately incomplete: gaps
-degrade to "asks the human," never to "runs unsafely." Spec:
-`docs/spec/READONLY_EXEC_SPEC.md`; the interpreter is unit-tested standalone (built to
-`dist/readonly-exec.js`) against the two canonical surveys + a battery of escape
-attempts in `tests/readonly-exec.test.js`.
+degrade to "asks the human," never to "runs unsafely."
+The dialect also gets a **read-only `ml`** so self-introspection ("which model am I?" →
+`await ml.getModel()`) is free rather than costing an approval. Not `window.ml`: `mlFacade`
+builds a null-prototype object holding only `ML_READONLY_METHODS` (`getModel`/`config`/
+`models`/`capabilities`/`ps`/`serverTools`), so the mutating (`setModel`/`unload`), token-
+spending (`chat`/`agent`/`read`) and privileged (`pythonExec`/`screenshot`) halves aren't
+*present* to reach; those names never join `ALLOWED_METHODS` (keyed by name across every
+object) — the facade is checked by identity in `evalCall`. It grants no new capability (the
+page can call `ml.config()` from its own console, and it's already the non-secret subset) —
+it lifts a **prompt**, not a boundary. Since every ml method is async, `Evaluator.eval` is a
+**generator**: `yield` to have the driver await. Two drivers — `runAsync` (top level) and
+`runSync` for arrows a host method invokes (`.map` calls its callback synchronously), so an
+`await` inside a callback throws `NotInDialect` → approval, never a silently Promise-valued
+answer. A facade call is auto-awaited, so a forgotten `await` still reads the value — and the
+shapes models actually write are supported: `Promise.all([…])` (`Promise` is a **namespace only**
+— `all`/`allSettled` allowlisted, never callable/constructable) and `ml.getModel().then(m => …)`
+(auto-await already left a value, so `then` applies an **inline** callback to it). The model
+learns this from a RUNTIME section of `agent_api_docs` (`selfIntrospectionSection`) — beside the
+HUD shortcut, and for the same reason: it's true only while the flag is on, and the system prompt
+shouldn't pay for it on every run. Spec:
+`docs/spec/READONLY_EXEC_SPEC.md`; the interpreter is unit-tested standalone against the two
+canonical surveys, the `ml` gate, and a battery of escape attempts in
+`tests/readonly-exec.test.mjs`.
 
 **Visual element location (`locate` / vision).** For controls text/ARIA can't reach — unlabelled
 icon buttons, or canvas-only UIs (a bare `<div>`/`<canvas>` with a synthetic click handler) —

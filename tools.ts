@@ -9,7 +9,8 @@ import { truncate, clipOut, elPath, normalizeText, clickSelector, elLine, descri
 import { INTERACTIVE_SEL, roleOf, accessibleName, ariaState, hasLayout, styleHidden, isFaded } from "./a11y";
 import { pageContext, browserInfo } from "./util";
 import { makeBackgroundTaskPromise } from "./bridge";
-import type { InvocationInfo } from "./contract";
+import type { InvocationInfo, MlPublicConfig } from "./contract";
+import { ML_READONLY_METHODS } from "./readonly-exec";
 // Generated from contract.ts at build time (scripts/gen-api-docs.mjs) — the public MlApi
 // surface, so the doc the model reads can never drift from the interface it describes.
 import { ML_API_DOCS } from "./api-docs.gen";
@@ -19,6 +20,26 @@ import { ML_API_DOCS } from "./api-docs.gen";
 // How long invocationSection waits for the background's shortcut reply before answering
 // generically. Short: it's one section of a docs lookup, never worth stalling a step for.
 const INVOCATION_TIMEOUT_MS = 1500;
+
+/**
+ * Await a background lookup, giving up with `null` after {@link INVOCATION_TIMEOUT_MS} — a docs
+ * lookup must never stall an agent step on a slow/torn-down relay, and every caller here degrades
+ * to generic advice. The timer is cleared on the fast path so a resolved lookup leaves nothing
+ * pending on the event loop.
+ *
+ * @param p The in-flight background promise.
+ * @returns Its value, or null on timeout/rejection.
+ */
+const bounded = async <T>(p: Promise<T>): Promise<T | null> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+        return await Promise.race([p, new Promise<null>(r => { timer = setTimeout(() => r(null), INVOCATION_TIMEOUT_MS); })]);
+    } catch {
+        return null;
+    } finally {
+        if (timer !== undefined) clearTimeout(timer);
+    }
+};
 
 /**
  * The "how the user opens the HUD here" section of agent_api_docs — resolved at RUN TIME, not
@@ -33,16 +54,10 @@ const invocationSection = async (): Promise<string> => {
     const b = browserInfo();
     const shortcutsUrl = `${b.scheme}://extensions/shortcuts`;
     const lines = [`## Opening the HUD (this browser: ${b.name}${b.version ? ` ${b.version}` : ""})`, ""];
-    let info: InvocationInfo | null = null;
-    try {
-        // Bounded: makeBackgroundTaskPromise waits forever for its reply, and a missing/slow relay
-        // (torn-down content script, sleeping worker) must degrade to generic advice rather than
-        // stall the agent step on a docs lookup.
-        info = await Promise.race([
-            makeBackgroundTaskPromise<InvocationInfo>("INVOCATION_REQUEST", "INVOCATION_RESPONSE", {}),
-            new Promise<null>(r => setTimeout(() => r(null), INVOCATION_TIMEOUT_MS)),
-        ]);
-    } catch { /* fall through to the generic instructions */ }
+    // Bounded: makeBackgroundTaskPromise waits forever for its reply, and a missing/slow relay
+    // (torn-down content script, sleeping worker) must degrade to generic advice rather than
+    // stall the agent step on a docs lookup.
+    const info = await bounded(makeBackgroundTaskPromise<InvocationInfo>("INVOCATION_REQUEST", "INVOCATION_RESPONSE", {}));
     if (info?.shortcut) {
         lines.push(`- **Keyboard: \`${info.shortcut}\`** — the shortcut bound RIGHT NOW` +
             (info.isDefault ? " (the extension's default)." : ` (the user CHANGED this from the default \`${info.defaultShortcut}\`).`));
@@ -59,6 +74,25 @@ const invocationSection = async (): Promise<string> => {
     if (info?.contextMenu) lines.push("- **Right-click** anywhere on the page and pick window.ml from the context menu.");
     lines.push("- **Toolbar:** the extension's icon opens the popup (settings, model picker), not the HUD.");
     return lines.join("\n");
+};
+
+/**
+ * The "you can read your own setup for free" section of agent_api_docs. Like the HUD shortcut,
+ * this is RUNTIME state the generated reference can't hold: it's true only while
+ * `autoApproveReadonly` is on, so it's resolved here rather than stated unconditionally — and it
+ * lives behind this tool call rather than in the system prompt, which every run pays for.
+ *
+ * @returns {Promise<string>} A markdown section, or "" when the flag is off (then these calls
+ *          go through the normal approval gate and there is nothing special to say).
+ */
+const selfIntrospectionSection = async (): Promise<string> => {
+    // Unreadable → say nothing: the approval gate is the safe default to describe.
+    const cfg = await bounded(makeBackgroundTaskPromise<MlPublicConfig>("CONFIG_REQUEST", "CONFIG_RESPONSE", {}));
+    if (!cfg?.autoApproveReadonly) return "";
+    return ["## Reading your own setup (no approval needed)", "",
+        `\`${ML_READONLY_METHODS.map(m => `ml.${m}()`).join("`, `")}\` are read-only, so calling them ` +
+        "from `exec` runs with NO approval prompt — that's how to answer \"which model am I?\" and the like. " +
+        "Every other `ml` method still asks the user first."].join("\n");
 };
 
 const firstOfNote = (selector: string, count: number): string =>
@@ -420,9 +454,10 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
                 "in-page HUD and the keyboard shortcut currently bound to it. Call it when asked about " +
                 "yourself, how to reach you, or the API, instead of guessing. Takes no arguments.",
             parameters: { type: "object", properties: {} },
-            // The generated reference is build-time; the HUD shortcut is runtime state the user
-            // owns, so it's appended live rather than frozen into the doc.
-            run: async (): Promise<string> => `${ML_API_DOCS}\n\n${await invocationSection()}`
+            // The generated reference is build-time; the HUD shortcut and the read-only-exec flag are
+            // runtime state the user owns, so they're appended live rather than frozen into the doc.
+            run: async (): Promise<string> => [ML_API_DOCS, await invocationSection(), await selfIntrospectionSection()]
+                .filter(Boolean).join("\n\n")
         }),
         T({
             name: "scroll",

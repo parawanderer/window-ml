@@ -15,6 +15,12 @@
 // `Denied`. Callers treat BOTH as "fall back to the normal approval + eval path"
 // — safe because the interpreter is side-effect-free, so a failed attempt does
 // nothing observable. See docs/spec/READONLY_EXEC_SPEC.md.
+//
+// The evaluator is a GENERATOR: `yield`ing a value asks the driver to await it, so
+// `await` works (the agent's own read-only `ml` introspection is async). There are two
+// drivers — `runAsync` at the top level, and `runSync` for the arrows a host method
+// invokes (`.map`/`.filter` call their callback synchronously, so an `await` in there
+// can't be honoured and throws NotInDialect → the whole survey falls back to approval).
 
 export class NotInDialect extends Error {}
 export class Denied extends Error {}
@@ -153,6 +159,9 @@ class Parser {
     }
     parseUnary(): Node {
         const t = this.peek();
+        // `await X` — the evaluator yields X to its driver. Only reachable at the top level
+        // (or inside a directly-invoked arrow); inside a host callback the sync driver rejects it.
+        if (t.t === "name" && t.v === "await") { this.i++; return { type: "Await", arg: this.parseUnary() }; }
         if (t.t === "punct" && (t.v === "!" || t.v === "-") || (t.t === "name" && t.v === "typeof")) {
             this.i++;
             return { type: "Unary", op: t.v, arg: this.parseUnary() };
@@ -332,6 +341,11 @@ const ALLOWED_METHODS = new Set([
     "repeat", "charAt", "charCodeAt", "codePointAt", "normalize", "localeCompare",
     // Object / JSON / Math / Number
     "keys", "values", "entries", "fromEntries", "stringify", "parse", "assign",
+    // Promise combinators + `then` — models batch and chain the async ml reads
+    // (`Promise.all([ml.models(), ml.getModel()])`, `ml.getModel().then(m => …)`). Only the
+    // combinators: `Promise` itself is never callable (not a CALLABLE_ROOT, and `new` isn't in the
+    // dialect), so this can't mint a promise around anything the gates didn't already allow.
+    "all", "allSettled", "then",
     "max", "min", "floor", "ceil", "round", "abs", "pow", "sqrt", "sign", "trunc",
     "toFixed", "toString",
     // console (captured)
@@ -340,15 +354,41 @@ const ALLOWED_METHODS = new Set([
 
 const CALLABLE_ROOTS = new Set(["String", "Number", "Boolean", "parseInt", "parseFloat", "isNaN", "isFinite"]);
 
+// The `window.ml` methods this dialect may call — side-effect-free reads that return plain data:
+// no privilege, no page mutation, no tokens/VRAM. Everything else is simply ABSENT from the facade
+// we build, so it can't be reached: setModel/unload MUTATE (setModel would re-point the model the
+// run itself is using), chat/agent/read spend tokens and can recurse, pythonExec/screenshot are
+// privileged. `config()` is already the non-secret MlPublicConfig subset — no URL, no API key.
+export const ML_READONLY_METHODS = ["getModel", "config", "models", "capabilities", "ps", "serverTools"] as const;
+
+/** Build the `ml` object the dialect sees: ONLY {@link ML_READONLY_METHODS}, bound to the real API.
+ *  A purpose-built facade rather than `window.ml` itself, so the free set is enforced by what exists,
+ *  not only by a name check. Returns null when there's no ml (→ `ml` isn't in scope at all). */
+function mlFacade(ml: unknown): Record<string, unknown> | null {
+    if (!ml || typeof ml !== "object") return null;
+    const out: Record<string, unknown> = Object.create(null);
+    for (const name of ML_READONLY_METHODS) {
+        const fn = (ml as Record<string, unknown>)[name];
+        if (typeof fn === "function") out[name] = (fn as (...a: unknown[]) => unknown).bind(ml);
+    }
+    return Object.keys(out).length ? out : null;
+}
+
 const RETURN = Symbol("return");   // sentinel wrapper for a `return` value
 // Inert stand-in returned when code reads a method as a value (existence guards).
 // Truthy + typeof "function", but calling it throws → the real method never leaks.
 const METHOD_REF = function (): never { throw new NotInDialect("a method reference cannot be called indirectly"); };
 
+// An evaluation in progress: `yield` a value to have the driver await it.
+type Ev<T = unknown> = Generator<unknown, T, unknown>;
+
 class Evaluator {
-    private ourFns = new WeakSet<Function>();   // arrows we created — the only functions we'll invoke directly
+    // Arrows we created — the only functions we'll invoke directly. Keyed to their node+scope so a
+    // DIRECT call (an IIFE) can be driven by the CALLER's driver (an await inside it still works),
+    // while the bare wrapper a host method receives stays synchronous.
+    private ourFns = new WeakMap<Function, { node: Node; scope: any }>();
     private depth = 0;
-    constructor(private root: Record<string, unknown>) {}
+    constructor(private ml: Record<string, unknown> | null) {}
 
     private guardKey(key: unknown): string {
         const k = String(key);
@@ -362,10 +402,10 @@ class Evaluator {
     // truthy, typeof "function"), while a method still can't be pulled off and
     // invoked past the call gate: calling the sentinel (directly or via .map)
     // throws, dropping the whole survey back to approval.
-    private readMember(node: Node, scope: any): unknown {
-        const obj = this.eval(node.obj, scope);
+    private *readMember(node: Node, scope: any): Ev {
+        const obj = yield* this.eval(node.obj, scope);
         if (node.optional && obj == null) return undefined;
-        const key = node.computed ? this.guardKey(this.eval(node.prop, scope)) : this.guardKey(node.prop);
+        const key = node.computed ? this.guardKey(yield* this.eval(node.prop, scope)) : this.guardKey(node.prop);
         const v = (obj as any)?.[key];
         if (typeof v === "function") return METHOD_REF;
         // Uniformly with querySelectorAll (evalCall), a collection PROPERTY (.children/.rows/.cells/…)
@@ -373,12 +413,12 @@ class Evaluator {
         return isDomCollection(v) ? Array.from(v as ArrayLike<unknown>) : v;
     }
 
-    eval(node: Node, scope: any): unknown {
+    *eval(node: Node, scope: any): Ev {
         switch (node.type) {
             case "Program": {
                 let last: unknown;
                 for (const s of node.body) {
-                    const v = this.eval(s, scope);
+                    const v = yield* this.eval(s, scope);
                     if (v && typeof v === "object" && RETURN in (v as object)) return (v as any)[RETURN];
                     if (s.type === "ExprStmt") last = v;
                 }
@@ -387,21 +427,24 @@ class Evaluator {
             case "Block": {
                 const child = Object.create(scope);
                 for (const s of node.body) {
-                    const v = this.eval(s, child);
+                    const v = yield* this.eval(s, child);
                     if (v && typeof v === "object" && RETURN in v) return v;   // propagate return upward
                 }
                 return undefined;
             }
-            case "ExprBody": return this.eval(node.expr, scope);
-            case "ExprStmt": return this.eval(node.expr, scope);
+            case "ExprBody": return yield* this.eval(node.expr, scope);
+            case "ExprStmt": return yield* this.eval(node.expr, scope);
             // A taken branch may `return` — pass its RETURN wrapper up to the block/program loop.
             case "If": {
-                if (this.eval(node.test, scope)) return this.eval(node.cons, scope);
-                if (node.alt) return this.eval(node.alt, scope);
+                if (yield* this.eval(node.test, scope)) return yield* this.eval(node.cons, scope);
+                if (node.alt) return yield* this.eval(node.alt, scope);
                 return undefined;
             }
-            case "VarDecl": { scope[node.name] = this.eval(node.init, scope); return undefined; }
-            case "Return": return { [RETURN]: this.eval(node.arg, scope) };
+            case "VarDecl": { scope[node.name] = yield* this.eval(node.init, scope); return undefined; }
+            case "Return": return { [RETURN]: yield* this.eval(node.arg, scope) };
+            // `await X` — hand X to the driver, which awaits it (identity on a non-promise). The sync
+            // driver has no way to, so an await inside a host callback (.map/.filter) falls out of dialect.
+            case "Await": return yield yield* this.eval(node.arg, scope);
             case "Lit": return node.value;
             case "Ident": {
                 if (node.name in scope) return scope[node.name];
@@ -410,44 +453,39 @@ class Evaluator {
             case "Array": {
                 const arr: unknown[] = [];
                 for (const e of node.elements) {
-                    if (e.type === "Spread") { for (const v of this.eval(e.arg, scope) as Iterable<unknown>) arr.push(v); }
-                    else arr.push(this.eval(e, scope));
+                    if (e.type === "Spread") { for (const v of (yield* this.eval(e.arg, scope)) as Iterable<unknown>) arr.push(v); }
+                    else arr.push(yield* this.eval(e, scope));
                 }
                 return arr;
             }
             case "Object": {
                 const o: Record<string, unknown> = {};
-                for (const p of node.props) o[p.key] = this.eval(p.value, scope);
+                for (const p of node.props) o[p.key] = yield* this.eval(p.value, scope);
                 return o;
             }
             case "Arrow": {
                 const self = this;
-                const fn = function (...args: unknown[]) {
-                    if (++self.depth > 5000) { self.depth--; throw new NotInDialect("recursion limit"); }
-                    try {
-                        const child = Object.create(scope);
-                        node.params.forEach((p: string, idx: number) => { child[p] = args[idx]; });
-                        const r = self.eval(node.body, child);
-                        return r && typeof r === "object" && RETURN in (r as object) ? (r as any)[RETURN] : r;
-                    } finally { self.depth--; }
-                };
-                this.ourFns.add(fn);
+                // The value form: a plain function, because this is what a host method gets handed
+                // (`arr.map(fn)`) and those invoke it SYNCHRONOUSLY. A direct call goes through
+                // ourFns/callArrow instead, so only the callback case is restricted.
+                const fn = function (...args: unknown[]) { return runSync(self.callArrow(node, scope, args)); };
+                this.ourFns.set(fn, { node, scope });
                 return fn;
             }
             case "Unary": {
-                const a = this.eval(node.arg, scope);
+                const a = yield* this.eval(node.arg, scope);
                 if (node.op === "!") return !a;
                 if (node.op === "-") return -(a as number);
                 return typeof a;
             }
             case "Logical": {
-                const l = this.eval(node.left, scope);
-                if (node.op === "&&") return l ? this.eval(node.right, scope) : l;
-                if (node.op === "||") return l ? l : this.eval(node.right, scope);
-                return l != null ? l : this.eval(node.right, scope);   // ??
+                const l = yield* this.eval(node.left, scope);
+                if (node.op === "&&") return l ? yield* this.eval(node.right, scope) : l;
+                if (node.op === "||") return l ? l : yield* this.eval(node.right, scope);
+                return l != null ? l : yield* this.eval(node.right, scope);   // ??
             }
             case "Binary": {
-                const l: any = this.eval(node.left, scope), r: any = this.eval(node.right, scope);
+                const l: any = yield* this.eval(node.left, scope), r: any = yield* this.eval(node.right, scope);
                 switch (node.op) {
                     case "===": return l === r; case "!==": return l !== r;
                     case "==": return l == r; case "!=": return l != r;
@@ -458,34 +496,65 @@ class Evaluator {
                 }
                 throw new NotInDialect(`operator ${node.op}`);
             }
-            case "Cond": return this.eval(node.cond, scope) ? this.eval(node.cons, scope) : this.eval(node.alt, scope);
-            case "Member": return this.readMember(node, scope);
-            case "Call": return this.evalCall(node, scope);
+            case "Cond": return (yield* this.eval(node.cond, scope)) ? yield* this.eval(node.cons, scope) : yield* this.eval(node.alt, scope);
+            case "Member": return yield* this.readMember(node, scope);
+            case "Call": return yield* this.evalCall(node, scope);
         }
         throw new NotInDialect(`node '${node.type}'`);
     }
 
     // Evaluate call arguments, expanding spread (`f(...args)`).
-    private evalArgs(args: Node[], scope: any): unknown[] {
+    private *evalArgs(args: Node[], scope: any): Ev<unknown[]> {
         const out: unknown[] = [];
         for (const a of args) {
-            if (a.type === "Spread") { for (const v of this.eval(a.arg, scope) as Iterable<unknown>) out.push(v); }
-            else out.push(this.eval(a, scope));
+            if (a.type === "Spread") { for (const v of (yield* this.eval(a.arg, scope)) as Iterable<unknown>) out.push(v); }
+            else out.push(yield* this.eval(a, scope));
         }
         return out;
     }
 
-    private evalCall(node: Node, scope: any): unknown {
+    // Invoke one of OUR arrows: bind the params in a child scope and evaluate its body. The depth
+    // guard unwinds in `finally`, which runs even when the sync driver closes the generator early.
+    private *callArrow(node: Node, scope: any, args: unknown[]): Ev {
+        if (++this.depth > 5000) { this.depth--; throw new NotInDialect("recursion limit"); }
+        try {
+            const child = Object.create(scope);
+            node.params.forEach((p: string, idx: number) => { child[p] = args[idx]; });
+            const r = yield* this.eval(node.body, child);
+            return r && typeof r === "object" && RETURN in (r as object) ? (r as any)[RETURN] : r;
+        } finally { this.depth--; }
+    }
+
+    private *evalCall(node: Node, scope: any): Ev {
         const callee = node.callee;
         // obj.method(args) — the common case. Allowlisted method names only.
         if (callee.type === "Member") {
-            const obj: any = this.eval(callee.obj, scope);
+            const obj: any = yield* this.eval(callee.obj, scope);
             if (callee.optional && obj == null) return undefined;
-            const key = callee.computed ? this.guardKey(this.eval(callee.prop, scope)) : this.guardKey(callee.prop);
-            if (!ALLOWED_METHODS.has(key)) throw new NotInDialect(`method '${key}' not allowed`);
+            const key = callee.computed ? this.guardKey(yield* this.eval(callee.prop, scope)) : this.guardKey(callee.prop);
+            // The `ml` facade carries its OWN allowlist — it holds nothing but the read-only API methods,
+            // so "is it on the facade" is the whole check. Their names deliberately never join
+            // ALLOWED_METHODS, which is keyed by NAME across every object in scope.
+            const onMl = this.ml !== null && obj === this.ml;
+            if (onMl ? !Object.prototype.hasOwnProperty.call(this.ml, key) : !ALLOWED_METHODS.has(key)) {
+                throw new NotInDialect(`method '${key}' not allowed`);
+            }
+            // `x.then(cb)` where x is NOT a thenable — the shape models write over the ml reads
+            // (`ml.getModel().then(m => …)`), which auto-await left a plain value. Apply the callback
+            // to it: Promise.resolve(x).then(cb) semantics, without minting a promise. Driven by OUR
+            // driver, so an await inside the callback still works (unlike a host-invoked one).
+            if (key === "then" && typeof obj?.then !== "function") {
+                const [cb] = yield* this.evalArgs(node.args, scope);
+                const ours = typeof cb === "function" ? this.ourFns.get(cb as Function) : undefined;
+                if (!ours) throw new NotInDialect("then() needs an inline callback");
+                return yield* this.callArrow(ours.node, ours.scope, [obj]);
+            }
             const fn = obj?.[key];
             if (typeof fn !== "function") throw new NotInDialect(`'${key}' is not callable`);
-            const out = fn.apply(obj, this.evalArgs(node.args, scope));
+            const out = fn.apply(obj, yield* this.evalArgs(node.args, scope));
+            // Every ml method is async, so await it here too: a forgotten `await` then still reads the
+            // value instead of a Promise the model can't do anything with.
+            if (onMl) return yield out;
             // Accommodate a common model mistake: querySelectorAll / getElementsBy* return a NodeList /
             // HTMLCollection, which have no .map/.filter, so `querySelectorAll('x').map(…)` throws (the
             // model forgets to spread). In this read-only dialect it's safe to just hand back a real
@@ -495,36 +564,60 @@ class Evaluator {
         // Ident(args) — only whitelisted coercion/parse builtins.
         if (callee.type === "Ident" && CALLABLE_ROOTS.has(callee.name) && callee.name in scope) {
             const fn = scope[callee.name] as Function;
-            return fn(...this.evalArgs(node.args, scope));
+            return fn(...(yield* this.evalArgs(node.args, scope)));
         }
-        // (arrow)(args) / immediately-invoked arrow (or function expression).
-        const fn = this.eval(callee, scope);
-        if (typeof fn === "function" && this.ourFns.has(fn)) {
-            return (fn as Function)(...this.evalArgs(node.args, scope));
-        }
+        // (arrow)(args) / immediately-invoked arrow (or function expression). Driven by OUR driver
+        // rather than through the sync wrapper, so an `await` inside an IIFE is honoured.
+        const fn = yield* this.eval(callee, scope);
+        const ours = typeof fn === "function" ? this.ourFns.get(fn as Function) : undefined;
+        if (ours) return yield* this.callArrow(ours.node, ours.scope, yield* this.evalArgs(node.args, scope));
         throw new NotInDialect("call target not allowed");
     }
+}
+
+// -------------------------------------------------------------------- drivers ---
+
+/** Run an evaluation to completion, AWAITING every yielded value. The top-level driver. */
+async function runAsync(gen: Ev): Promise<unknown> {
+    let sent: unknown;
+    for (;;) {
+        const r = gen.next(sent);
+        if (r.done) return r.value;
+        sent = await r.value;
+    }
+}
+
+/** Run one SYNCHRONOUSLY — for an arrow a host method invokes (`arr.map(fn)` calls fn synchronously,
+ *  so there is nowhere to await). A yield means the body tried to: close the generator (its `finally`
+ *  unwinds the depth guard) and fall out of dialect, so the survey drops to the approval path. */
+function runSync(gen: Ev): unknown {
+    const r = gen.next();
+    if (!r.done) { gen.return(undefined); throw new NotInDialect("await is not supported inside a callback"); }
+    return r.value;
 }
 
 // -------------------------------------------------------------------- entry ---
 
 /**
- * Evaluate a read-only survey. `document` is the only host object injected; all
- * other globals are this module's own (safe) intrinsics. Returns the program
- * value plus any captured console output. Throws NotInDialect / Denied on
+ * Evaluate a read-only survey. `document` and the read-only slice of `ml`
+ * ({@link ML_READONLY_METHODS}, omitted when `ml` is absent) are the only host objects
+ * injected; all other globals are this module's own (safe) intrinsics. Returns the
+ * program value plus any captured console output. Rejects with NotInDialect / Denied on
  * anything outside the dialect or blocked — callers fall back to approval+eval.
  */
-export function evalReadonly(code: string, doc: Document): { value: unknown; logs: string[] } {
+export async function evalReadonly(code: string, doc: Document, ml?: unknown): Promise<{ value: unknown; logs: string[] }> {
     const logs: string[] = [];
     const rec = (...a: unknown[]) => logs.push(a.map(x => typeof x === "string" ? x : safeStr(x)).join(" "));
+    const facade = mlFacade(ml);
     const root: Record<string, unknown> = Object.create(null);
     Object.assign(root, {
-        document: doc, Array, Object, JSON, Math, String, Number, Boolean,
+        document: doc, Array, Object, JSON, Math, String, Number, Boolean, Promise,
         parseInt, parseFloat, isNaN, isFinite, undefined, NaN, Infinity,
         console: { log: rec, info: rec, warn: rec, error: rec, debug: rec },
     });
+    if (facade) root.ml = facade;
     const ast = new Parser(tokenize(code)).parseProgram();
-    const value = new Evaluator(root).eval(ast, root);
+    const value = await runAsync(new Evaluator(facade).eval(ast, root));
     return { value, logs };
 }
 

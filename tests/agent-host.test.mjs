@@ -35,7 +35,7 @@ test("a non-approval tool is delegated straight through — the gate is never co
     assert.equal(res.summary, "saw it");
     assert.deepEqual(deps.delegated, [{ name: "look", args: {} }]);
     assert.equal(deps.approvals.length, 0, "a non-approval tool must not hit the gate");
-    assert.deepEqual(res.transcript, [{ tool: "look", arguments: {}, result: "ran look" }]);
+    assert.deepEqual(res.transcript, [{ tool: "look", arguments: {}, result: "ran look" }, { assistant: "saw it" }]);
 });
 
 test("buildMessages seeds system + user(task); the loop grows history through the injected pushers", async () => {

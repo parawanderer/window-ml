@@ -368,6 +368,9 @@ export interface AgentTranscriptEntry {
     arguments?: Record<string, unknown>;
     result?: string;
     elements?: Node[];
+    /** a turn's final assistant answer (the reply that ended the turn) — so the transcript is a complete
+     *  record of what the agent DID and SAID, not just its tool calls. */
+    assistant?: string;
 }
 
 export interface AgentResult {
@@ -569,6 +572,11 @@ export interface StartRunPayload {
      *  across turns (the run's final history rides back in the response). Empty/absent → a fresh first turn
      *  (and the background announces the `agent` session start; a continuation does not, avoiding a reset). */
     resumeMessages?: NeutralMessage[];
+    /** Offsets for this turn's step/seq numbers so the sidebar's turn groups stay distinct across a
+     *  handle's turns (the background-path twin of the page loop's control.stepBase/seqBase). The run's own
+     *  max step/seq ride back in the response so the page can advance them for the next turn. */
+    stepBase?: number;
+    seqBase?: number;
     /** Which surface hosts the run's gate/stream (all route through the background): a debug surface
      *  (overlay/devtools) streams steps + gates in the sidebar app; "off" also streams the SAME steps to
      *  the page, where the content-script shell renders them in a lazily-mounted acrylic corner CARD (a

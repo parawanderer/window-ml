@@ -684,10 +684,17 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                         // A handle's prior history (empty on the first turn) → the background CONTINUES it,
                         // so control.messages stays authoritative across turns even on the background path.
                         resumeMessages: control.messages.length ? control.messages : undefined,
+                        // Offsets so the background's emitted step/seq continue past prior turns (the sidebar's
+                        // turn groups stay distinct on the background path too — otherwise turn N's step 1
+                        // collides with turn 1's and the chat log scrambles).
+                        stepBase: control.stepBase, seqBase: control.seqBase,
                     }, (result, data) => {
                         // Sync the run's final history back into the handle (page-authoritative). This is why
                         // a.messages populates + a follow-up run()/say() continues, on the background path too.
                         if (data && Array.isArray(data.messages)) control.messages = data.messages as NeutralMessage[];
+                        // Advance the bases past THIS turn's step/seq so the next turn's offset is right.
+                        if (data && typeof data.stepCount === "number") control.stepBase += data.stepCount;
+                        if (data && typeof data.seqCount === "number") control.seqBase += data.seqCount;
                         return result as AgentResult;
                     }, signal);
                     // The real DOM nodes an answer-capable tool returned stayed page-side (they can't cross
@@ -782,10 +789,12 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     : null,
                 // Read-only exec fast-path: the mediated interpreter is side-effect-free, so trying it is safe
                 // and (in-dialect) BOTH auto-approves AND returns the result — no eval (clears Trusted Types).
+                // `this` is window.ml; the interpreter reduces it to a facade of ML_READONLY_METHODS, so the
+                // agent can read its own setup (getModel/config/…) without the gate and nothing else.
                 tryReadonly: autoRO ? async (name, args) => {
                     if (name !== "exec" || typeof (args as { js?: unknown }).js !== "string") return null;
                     try {
-                        const ro = evalReadonly((args as { js: string }).js, document);
+                        const ro = await evalReadonly((args as { js: string }).js, document, this);
                         const { result, elements } = formatReadonlyExec(ro.value, ro.logs);
                         const { in: renderIn, out: renderOut } = descriptorFor(byName[name], { result, elements }, args);
                         return { result, elements, renderIn, renderOut };

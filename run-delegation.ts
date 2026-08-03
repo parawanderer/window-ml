@@ -64,10 +64,12 @@ export async function runDelegatedTool(runId: string, name: string, args: Record
     // Read-only try (exec only): run the mediated interpreter (no eval, no mutation). If in-dialect it
     // BOTH decides auto-approve AND produces the result → the background skips the gate. Out-of-dialect
     // (any NotInDialect/Denied throw) → readonly:false, so the background falls through to the human gate.
+    // `window.ml` is passed so the dialect can call its read-only slice (ML_READONLY_METHODS) — the
+    // interpreter reduces it to a facade holding nothing else.
     if (opts.readonlyTry) {
         if (name !== "exec" || typeof (args as { js?: unknown }).js !== "string") return { result: "", readonly: false };
         try {
-            const ro = evalReadonly((args as { js: string }).js, document);
+            const ro = await evalReadonly((args as { js: string }).js, document, typeof window !== "undefined" ? window.ml : null);
             const { result, elements } = formatReadonlyExec(ro.value, ro.logs);
             const { in: renderIn, out: renderOut } = descriptorFor(tool, { result, elements }, args);
             return { result, elementCount: elements ? elements.length : undefined, renderIn, renderOut, readonly: true };

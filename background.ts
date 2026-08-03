@@ -891,6 +891,8 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             resumeMessages = p.resumeMessages;
         }
         const runId = p.runId;
+        const stepBase = p.stepBase || 0, seqBase = p.seqBase || 0;   // offsets for a handle's continued turns
+        let runMaxStep = 0, runMaxSeq = 0;   // this run's max step/seq (raw) → returned so the page advances its bases
         const abortCtl = new AbortController();   // CANCEL_RUN aborts this → the loop resolves { cancelled }
         runControllers.set(runId, abortCtl);
         runInboxes.set(runId, { tabId, queue: [] });   // a.say() steering lands here while the run is live
@@ -910,9 +912,18 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // first of these (tagged `__mlFromBg` by content.ts) and self-reveals for a pending gate / the
         // final answer, so a no-approval off run streams to a hidden, cheap-to-mount card.
         const emitStep = (ev: Record<string, unknown>): void => {
+            // Offset this turn's step/seq past the handle's prior turns so the sidebar's turn groups stay
+            // distinct (the background twin of the page loop's control.stepBase/seqBase). Track the raw max
+            // so the page can advance its bases for the next turn (returned in the response below).
+            const rawStep = (ev.step as number) || 0;
+            if (rawStep > runMaxStep) runMaxStep = rawStep;
+            const rawSeq = ev.seq as number | undefined;
+            if (rawSeq != null && rawSeq > runMaxSeq) runMaxSeq = rawSeq;
+            const step = stepBase + rawStep;
+            const seq = rawSeq != null ? seqBase + rawSeq : rawSeq;
             const event = {
                 kind: "agent-step", id: runId, ts: Date.now(), save: false,
-                session: { hash: runId, turn: (ev.step as number) || 0 }, ...ev,
+                session: { hash: runId, turn: step }, ...ev, step, seq,
             };
             // Always fan to the PAGE (overlay / off card). For devtools ALSO fan to the panel — and the
             // page fan lets the optional corner card coexist with the panel (agentHudInDevtools); the
@@ -1027,8 +1038,9 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     kind: "agent-result", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: res.steps },
                     summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled,
                 });
-                // Sync the run's final history back so a createAgent handle's control.messages stays live.
-                sendResponse({ data: res, messages });
+                // Sync the run's final history back so a createAgent handle's control.messages stays live,
+                // + this run's step/seq extents so the page advances its bases for the NEXT turn's offset.
+                sendResponse({ data: res, messages, stepCount: runMaxStep, seqCount: runMaxSeq });
             })
             .catch((err) => {
                 // A fatal loop error — surface it to the off-mode card (the page's bus is dormant there,

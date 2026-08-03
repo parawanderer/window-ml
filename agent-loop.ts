@@ -113,7 +113,11 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             // Record the answer in history so a background-hosted RESUME continues WITH it in context
             // (mirrors the page loop). Harmless for a one-shot run — the messages array is then dropped.
             deps.pushAssistant(messages, { content: msg.content || "" });
-            return { summary: (msg.content || "").trim(), steps: step - 1, transcript, elements: [] };
+            // Record the answer in the transcript too, so res.transcript is a complete turn (its actions
+            // AND its reply) — otherwise a run reads as tool calls with no conclusion. Skip an empty answer.
+            const answer = (msg.content || "").trim();
+            if (answer) transcript.push({ assistant: answer });
+            return { summary: answer, steps: step - 1, transcript, elements: [] };
         }
         // The step's prose (content), token usage, and the separate reasoning channel ride one emit
         // (or a usage/reasoning-only emit when there's no prose — a model that thinks in reasoning_content
