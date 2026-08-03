@@ -725,6 +725,30 @@ test("agent: resuming an unknown hash throws (never silently starts a fresh run)
     assert.equal(world.runtimeCalls.filter(c => c.payload && c.payload.messages).length, 0, "no model call was made for a bad resume");
 });
 
+test("agent: step seq stays session-unique across a resume (the sidebar patches by hash+seq)", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: scriptedModel([
+            toolCall("t1", {}, "c1"), reply("a1"),
+            toolCall("t2", {}, "c2"), reply("a2"),
+        ]),
+    });
+    const t1 = world.ml.defineTool({ name: "t1", run: () => "r1" });
+    const t2 = world.ml.defineTool({ name: "t2", run: () => "r2" });
+    const events = [], win = world.context.window;
+    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    win.postMessage({ __mlSidebar: "ready" });
+    await new Promise(r => setTimeout(r, 0));
+
+    const first = await world.ml.agent("go", { tools: [t1, t2], vision: false, maxSteps: 5 });
+    await world.ml.agent("again", { resume: first.hash });
+    // The unified page loop runs runAgentLoop, whose per-step seq restarts at 0 each turn — so the page
+    // must offset a resumed turn's seqs past the first turn's, or a resume would patch the wrong sidebar
+    // row (both turns' seq=1 collide under the same hash). Every DONE tool-step's seq must be unique.
+    const doneSeqs = events.filter(e => e.kind === "agent-step" && e.tool && !e.pending && e.seq != null).map(e => e.seq);
+    assert.ok(doneSeqs.length >= 2, "both turns emitted a tool step");
+    assert.equal(new Set(doneSeqs).size, doneSeqs.length, `step seqs are unique across the resume (got ${doneSeqs.join(",")})`);
+});
+
 test("createAgent: run() then continue() drive one session; continue() before run() throws", async () => {
     const world = loadPageWorld({
         onRuntimeMessage: scriptedModel([reply("hello"), reply("goodbye")]),

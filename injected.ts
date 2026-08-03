@@ -48,6 +48,8 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
 import { pyVarNameError } from "./python-env";
 import { autoApprovePython } from "./auto-approve";
 import { executeTool } from "./tool-exec";
+import { runAgentLoop } from "./agent-loop";
+import type { AgentLoopDeps } from "./agent-loop";
 import { installToolDelegation, registerRun, endRun } from "./run-delegation";
 import { descriptorFor } from "./render-descriptor";
 
@@ -512,12 +514,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 const ctx = pageContext();
                 if (ctx) systemPrompt += `\n\nCurrent page context:\n${ctx}`;
             }
-            const messages: NeutralMessage[] = [
-                { role: "system", content: systemPrompt },
-                { role: "user", content: task }
-            ];
-            const transcript: AgentTranscriptEntry[] = [];
-            const answered: Node[] = [];   // element(s) designated via an `answer`-capable tool
+            const answered: Node[] = [];   // element(s) an `answer`-capable tool designated (returned as AgentResult.elements)
             // Debug sidebar: announce the run + each step. Its own session hash
             // (an agent run isn't a createChat). elements can't cross the window
             // bus — send a count; real nodes still reach onStep/the console.
@@ -607,217 +604,128 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 } finally { exitAgentRun(); }
             }
 
-            let stepSeq = 0;   // monotonic id per tool-call step, correlating its in-flight START with its DONE
-            const emit = (event: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: string | null; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: Node[]; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; argIssues?: string[]; approval?: "readonly" | "sandbox" | "user" | "denied" | "skipped"; usage?: TokenUsage | null }) => {
-                // A `pending` START is a sidebar-render-only event: it has no result yet, so it must
-                // NOT reach onStep/logStep (those fire once per COMPLETED step, or they'd log "→ undefined").
-                if (logDebug && !event.pending) logStep(event);
+            // ── Page-hosted loop. It runs the SAME shared `runAgentLoop` (agent-loop.ts) the background
+            // path uses — the SECURITY-CRITICAL gate ordering lives in ONE tested place — wired with
+            // PAGE-SIDE deps: tools execute inline (executeTool), the caller's approve/onStep run directly,
+            // and the debug-render / argIssues enrichment happens in `emit` here. One loop body, two
+            // dep-sets (these vs the background's delegating deps in agent-host.ts): no drift.
+            const toolMetas = toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval, capabilities: t.capabilities }));
+            let priorMessages: NeutralMessage[] | null = null;   // resume continuity: the accumulated history
+            let built: NeutralMessage[] = [];                    // the array runAgentLoop mutated this turn (captured for resume)
+            // runAgentLoop restarts its per-step `seq` at 0 each call, but the sidebar patches steps by
+            // (hash, seq) — so a resumed turn would collide with the first. Offset each turn's seqs past the
+            // previous turn's so they stay unique per SESSION (the page loop's old monotonic stepSeq).
+            let seqBase = 0, turnMaxSeq = 0;
+
+            // Enrich the loop's event with the page-only bits: argIssues, the element COUNT for the debug
+            // event + the real nodes for onStep, and a best-effort In/Out render for a step the executor
+            // DIDN'T run (pending START / denied / skipped), preferring the executor's own render when present.
+            const emit = (ev: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: unknown; tool?: string; arguments?: Record<string, unknown>; result?: string; approval?: "readonly" | "sandbox" | "user" | "denied" | "skipped"; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; usage?: unknown; elements?: unknown[] }) => {
+                const tool = ev.tool ? byName[ev.tool] : undefined;
+                const nodes = ev.elements as Node[] | undefined;
+                const argIssues = ev.tool && tool ? validateArgs(tool.parameters, ev.arguments || {}) : undefined;
+                let renderIn = ev.renderIn, renderOut = ev.renderOut;
+                if (ev.tool && tool && renderIn === undefined && renderOut === undefined) {
+                    const d = descriptorFor(tool, { result: ev.result || "" }, ev.arguments || {});
+                    renderIn = d.in;
+                    renderOut = ev.pending ? undefined : d.out;
+                }
+                const seq = ev.seq != null ? seqBase + ev.seq : ev.seq;   // session-unique across resume turns
+                if (ev.seq != null && ev.seq > turnMaxSeq) turnMaxSeq = ev.seq;
+                const cb = { step: ev.step, thought: ev.thought, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: nodes };
+                if (logDebug && !ev.pending) logStep(cb);
                 emitDebug({
-                    kind: "agent-step", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: event.step },
-                    step: event.step, seq: event.seq, pending: event.pending || undefined,
-                    thought: event.thought, reasoning: event.reasoning || undefined, tool: event.tool, arguments: event.arguments,
-                    result: event.result, elements: event.elements ? event.elements.length : undefined,
-                    renderIn: event.renderIn, renderOut: event.renderOut,
-                    argIssues: event.argIssues && event.argIssues.length ? event.argIssues : undefined,
-                    approval: event.approval, usage: event.usage || undefined,
+                    kind: "agent-step", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: ev.step },
+                    step: ev.step, seq, pending: ev.pending || undefined,
+                    thought: ev.thought, reasoning: (ev.reasoning as string | null) || undefined, tool: ev.tool, arguments: ev.arguments,
+                    result: ev.result, elements: nodes ? nodes.length : undefined,
+                    renderIn, renderOut,
+                    argIssues: argIssues && argIssues.length ? argIssues : undefined,
+                    approval: ev.approval, usage: (ev.usage as TokenUsage | null) || undefined,
                 });
-                if (!onStep || event.pending) return;
-                try { onStep(event); } catch (e) { console.error("ml.agent onStep threw:", e); }
+                if (!onStep || ev.pending) return;
+                try { onStep(cb); } catch (e) { console.error("ml.agent onStep threw:", e); }
             };
-            // The two render slots for a tool step (In = the call, Out = the result) are computed by
-            // the shared `descriptorFor` (render-descriptor.ts) — the SAME function run-delegation.ts
-            // uses on the background path, so both surfaces render identically.
-            const finish = (r: Omit<AgentResult, "hash">): AgentResult => {
-                emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: r.steps }, summary: r.summary, steps: r.steps, hitCap: !!r.hitCap, cancelled: !!r.cancelled });
-                return { ...r, hash: runHash };
+
+            // Execute a tool inline, compute its In/Out render slots, and collect answer-capable nodes.
+            // The page analogue of the background's delegating runTool — but it runs in the page's world.
+            const runToolDep = async (name: string, args: Record<string, unknown>) => {
+                const tool = byName[name];
+                const env = await executeTool(tool, args);
+                const { in: renderIn, out: renderOut } = descriptorFor(tool, env, args);
+                if (tool && tool.capabilities && tool.capabilities.includes("answer") && env.elements && env.elements.length) answered.push(...env.elements as Node[]);
+                return { result: String(env.result), elements: env.elements, renderIn, renderOut, image: env.image, imageLabel: env.imageLabel };
             };
-            // Caller aborted via opts.signal → stop the loop, resolve (not reject) with the partial
-            // run marked cancelled, mirroring the hitCap convention (the transcript so far is useful).
-            const cancelled = (step: number): AgentResult =>
-                finish({ summary: "Cancelled by the caller.", steps: step, transcript, elements: answered, cancelled: true });
-            // The loop body, extracted so a resume can RE-ENTER it: `messages` (system + the whole
-            // accumulated conversation) is a closure, so pushing a follow-up user turn and calling
-            // drive() again continues the SAME run — same runHash, same toolset, growing transcript.
-            const drive = async (): Promise<AgentResult> => {
-            transcript.length = 0; answered.length = 0;   // per-turn: each run()/continue() reports ITS OWN actions (the session history lives in `messages`)
-            enterAgentRun();   // suppress orphan chat sessions from internal tool chats (see emitDebug); finally-decremented below
-            try {
-            for (let step = 1; step <= maxSteps; step++) {
-                // Cancellation is checked at each step boundary — before the model call, and again
-                // after it (the long wait) before running a tool — so an abort stops promptly at
-                // whichever boundary comes next. `step - 1` steps are complete at this point. The
-                // signal is ALSO passed into the model call, so an abort mid-request kills the fetch
-                // and rejects here — caught and turned into the same clean cancel.
-                if (signal?.aborted) return cancelled(step - 1);
-                let msg;
-                try { msg = await this.step(messages, { tools: toolDefs, model, think, signal }); }
-                catch (e) { if (signal?.aborted) return cancelled(step - 1); throw e; }
-                if (signal?.aborted) return cancelled(step - 1);
-                if (!msg.tool_calls || !msg.tool_calls.length) {
-                    // Final answer step: emit its usage (the run's peak context) + reasoning, no tool.
-                    if (msg.usage || msg.reasoning) emit({ step, usage: msg.usage, reasoning: msg.reasoning });
-                    // Record the answer in the history so a resume (ml.agent(task, { resume })) continues
-                    // WITH the prior reply in context — otherwise the follow-up turn would lose it. Harmless
-                    // for a one-shot run (the messages array is discarded when nothing resumes it).
-                    messages.push({ role: "assistant" as const, content: msg.content || "" });
-                    return finish({ summary: (msg.content || "").trim(), steps: step - 1, transcript, elements: answered });
-                }
-                // `content` is the assistant's user-facing PROSE (shown as the step's thought);
-                // `reasoning` is its separate thinking channel (rendered as a collapsible think
-                // section). A model that thinks in reasoning_content leaves content empty while
-                // tool-calling, so emit on reasoning too. Usage rides the same emit.
-                const thought = (msg.content || "").trim();
-                if (thought || msg.usage || msg.reasoning) {
-                    if (thought) transcript.push({ thought });
-                    emit({ step, thought: thought || undefined, reasoning: msg.reasoning, usage: msg.usage });
-                }
-                messages.push({ role: "assistant" as const, content: msg.content || "", tool_calls: msg.tool_calls });
 
-                // Run a tool → its { result, elements?, image?, render? } envelope. Extracted to
-                // `executeTool` (tool-exec.ts) — the SAME executor design A's RUN_TOOL_IN_PAGE handler
-                // uses, so the page loop and the background-delegated path can't drift. Real DOM nodes
-                // in `elements` reach onStep/the transcript (never the model).
-                const runTool = executeTool;
-
-                const pendingImages = [];   // #3: screenshots captured this turn, injected below
-                for (const call of msg.tool_calls) {
-                    const tool = byName[call.name];
-                    let args = (call.arguments || {}) as Record<string, unknown>;
-                    let result, elements, image, imageLabel, toolRender, toolRenderIn;
-                    let approval: "readonly" | "sandbox" | "user" | "denied" | "skipped" | undefined;
-                    // In-flight START: render the pending tool call NOW (name + args + best-effort In),
-                    // patched by the DONE emit below (same seq). Paints before an auto-approved /
-                    // non-approval tool runs; a blocking confirm() defers it until approved — the case
-                    // inline approvals will remove. Sidebar-only (onStep/logStep skip a pending event).
-                    const seq = ++stepSeq;
-                    emit({ step, seq, tool: call.name, arguments: args, pending: true,
-                        argIssues: tool ? validateArgs(tool.parameters, args) : undefined,
-                        renderIn: descriptorFor(tool, { result: "" }, args).in });
-                    if (!tool) {
-                        result = `Error: no tool named "${call.name}".`;
-                    } else if (tool.requiresApproval) {
-                        // Experimental fast-path: a read-only `exec` survey runs via the
-                        // mediated mini-interpreter with NO approval (and no eval → clears
-                        // Trusted Types). The interpreter is side-effect-free, so simply
-                        // *trying* it is safe: any NotInDialect/Denied throw means nothing
-                        // observable happened, and we fall through to the normal gate.
-                        let handled = false;
-                        if (autoRO && tool.name === "exec" && typeof (args as { js?: unknown }).js === "string") {
-                            try {
-                                const ro = evalReadonly((args as { js: string }).js, document);
-                                ({ result, elements } = formatReadonlyExec(ro.value, ro.logs));
-                                handled = true;
-                                approval = "readonly";
-                            } catch { /* outside the dialect / blocked → normal approval path */ }
-                        }
-                        // Experimental fast-path: a READONLY-mode python_exec runs with no
-                        // approval. The offscreen sandbox is hardened for readonly mode (no
-                        // network / JS scope / DOM / filesystem — a pure function over the
-                        // inputs), so it can't affect the page or exfiltrate. A `full`-mode
-                        // call (network) always falls through to the gate. Hidden/bidi chars in
-                        // the code also fall through, so the human sees the suspicious-char
-                        // banner before it runs (the same check the manual prompt applies). An
-                        // An EXTERNAL Google Sheet (a Sheets URL that isn't the current page — in the
-                        // `sheet` arg OR any `tables` value) always asks: fetching arbitrary Google
-                        // data the user didn't navigate to is privileged; `'current'` (the page they're
-                        // on) is fine. But once the user has approved a given SPREADSHEET this
-                        // page-session, don't re-escalate subsequent calls to it (they granted access to
-                        // that resource) — this only lifts the external-sheet escalation, so a non-autoPy
-                        // run is still gated on the code as usual; the cache just stops re-asking.
-                        // The trusted-world auto-approve decision is now the shared `autoApprovePython`
-                        // (auto-approve.ts) — pure, so design A's background loop makes the SAME call
-                        // where the page can't forge it. Here it runs page-side (today's loop).
-                        if (!handled && tool.name === "python_exec"
-                            && autoApprovePython(args, { autoApprovePython: autoPy }, (id: string) => approvedSheets.has(id)) === "sandbox") {
-                            approval = "sandbox";
-                            ({ result, elements, image, imageLabel, render: toolRender, renderIn: toolRenderIn } = await runTool(tool, args));
-                            handled = true;
-                        }
-                        // Doomed-action skip: a side-effect-free precheck (click/type target resolution). If
-                        // the action can't proceed (no element, stale @pt, bad selector), return that error
-                        // WITHOUT gating — approving something that will only fail is pointless friction. No
-                        // approval provenance (it never ran, never gated).
-                        if (!handled && typeof tool.precheck === "function") {
-                            try { const pre = tool.precheck(args); if (pre) { result = pre; approval = "skipped"; handled = true; } } catch { /* precheck threw → fall through to the gate */ }
-                        }
-                        if (!handled && unattended) {
-                            // Unattended run: nothing auto-approved it and there's no human to ask, so REFUSE
-                            // (never prompt) and steer the model to a read-only path. Reached only after the
-                            // readonly/sandbox/precheck fast-paths above declined — so a genuinely gated call.
-                            approval = "denied";
-                            result = UNATTENDED_REFUSAL;
-                            handled = true;
-                        }
-                        if (!handled) {
-                            // Approval gate. `approve` may return a boolean or the rich
-                            // contract { approved, feedback?, arguments? } — a rejection
-                            // can hand the model a comment, an approval can edit the args.
-                            const decision = normalizeApproval(await approve({ tool: call.name, arguments: args }), args);
-                            if (!decision.approved) {
-                                approval = "denied";
-                                result = decision.feedback
-                                    ? `Denied by the user: ${decision.feedback}\nDo not retry this exact call unchanged; address the feedback or try another approach.`
-                                    : "Denied by the user. Do not retry this exact call; try another approach.";
-                            } else {
-                                approval = "user";
-                                args = decision.arguments;   // possibly caller-edited before running
-                                // Remember every approved external sheet for the rest of this page
-                                // session, so a follow-up call to the same spreadsheet doesn't re-prompt
-                                // (keyed off the FINAL args, in case the user edited them before approving).
-                                for (const id of externalSheetIds(args)) approvedSheets.add(id);
-                                ({ result, elements, image, imageLabel, render: toolRender, renderIn: toolRenderIn } = await runTool(tool, args));
-                            }
-                        }
-                    } else {
-                        ({ result, elements, image, imageLabel, render: toolRender } = await runTool(tool, args));
-                    }
-                    result = String(result);
-                    const entry: AgentTranscriptEntry = { tool: call.name, arguments: args, result };
-                    if (elements && elements.length) entry.elements = elements;
-                    transcript.push(entry);
-                    const { in: renderIn, out: renderOut } = descriptorFor(tool, { result, elements, image, imageLabel, render: toolRender, renderIn: toolRenderIn }, args);
-                    const argIssues = tool ? validateArgs(tool.parameters, args) : undefined;
-                    emit({ step, seq, ...entry, renderIn, renderOut, argIssues, approval });   // DONE — patches the pending START (same seq)
-                    // An answer-capable tool designates the caller-facing result node(s).
-                    if (tool && tool.capabilities && tool.capabilities.includes("answer") && elements && elements.length) {
-                        answered.push(...elements);
-                    }
-                    messages.push({ role: "tool" as const, tool_call_id: call.id, content: result });
-                    if (image) pendingImages.push({ image, label: imageLabel || "screenshot" });
-                }
-
-                // #3 inline vision: hand any screenshots captured this turn to the
-                // agent's OWN (vision-capable) model as a user turn, so the next step
-                // reasons over the real pixels. v1 is the "dumb" way — the image stays
-                // in history (no purge), so context grows with each look; that's the
-                // known tradeoff (see roadmap #3). Tool RESULTS can't carry images, a
-                // user turn can — buildMessage already renders images per format.
-                if (pendingImages.length) {
-                    const labels = pendingImages.map(p => p.label).join(", ");
-                    messages.push({
-                        role: "user" as const,
-                        content: `Screenshot${pendingImages.length > 1 ? "s" : ""} you requested (${labels}). ` +
-                            "Describe what you see, then take the next action — or give your final answer if the task is done.",
-                        images: pendingImages.map(p => p.image)
-                    });
-                }
-            }
-            return finish({ summary: `Stopped at the ${maxSteps}-step cap without finishing.`, steps: maxSteps, transcript, elements: answered, hitCap: true });
-            } catch (e) {
-                // A FATAL error (e.g. the model call failed) escaped the loop — surface it so the sidebar
-                // doesn't hang as "running", then re-throw so ml.agent() still rejects. (Aborts already
-                // returned a clean cancel above, so a throw here is a real error.)
-                if (!signal?.aborted) emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, summary: "", steps: 0, hitCap: false, error: (e as Error)?.message || String(e) });
-                throw e;
-            } finally { exitAgentRun(); }
+            const deps: AgentLoopDeps = {
+                callModel: (messages) => this.step(messages as NeutralMessage[], { tools: toolDefs, model, think, signal }),
+                runTool: runToolDep,
+                approve: async ({ tool, arguments: args }) => {
+                    const d = normalizeApproval(await approve({ tool, arguments: args }), args);
+                    // Remember every approved external sheet for the rest of this page session (keyed off the
+                    // FINAL args, in case the user edited them) so a follow-up to the same sheet doesn't re-ask.
+                    if (d.approved) for (const id of externalSheetIds(d.arguments)) approvedSheets.add(id);
+                    return { approved: d.approved, feedback: d.feedback || undefined, arguments: d.arguments };
+                },
+                autoApprove: (name, args) => name === "python_exec"
+                    ? autoApprovePython(args, { autoApprovePython: autoPy }, (id: string) => approvedSheets.has(id))
+                    : null,
+                // Read-only exec fast-path: the mediated interpreter is side-effect-free, so trying it is safe
+                // and (in-dialect) BOTH auto-approves AND returns the result — no eval (clears Trusted Types).
+                tryReadonly: autoRO ? async (name, args) => {
+                    if (name !== "exec" || typeof (args as { js?: unknown }).js !== "string") return null;
+                    try {
+                        const ro = evalReadonly((args as { js: string }).js, document);
+                        const { result, elements } = formatReadonlyExec(ro.value, ro.logs);
+                        const { in: renderIn, out: renderOut } = descriptorFor(byName[name], { result, elements }, args);
+                        return { result, elements, renderIn, renderOut };
+                    } catch { return null; }
+                } : undefined,
+                precheck: async (name, args) => {
+                    const tool = byName[name];
+                    if (typeof tool?.precheck !== "function") return null;
+                    try { return tool.precheck(args) || null; } catch { return null; }
+                },
+                buildMessages: (t) => {
+                    built = priorMessages
+                        ? [...priorMessages, { role: "user", content: t }]
+                        : [{ role: "system", content: systemPrompt }, { role: "user", content: t }];
+                    return built;
+                },
+                pushAssistant: (messages, msg) => (messages as NeutralMessage[]).push({ role: "assistant", content: msg.content || "", tool_calls: msg.tool_calls }),
+                pushToolResult: (messages, call, result) => (messages as NeutralMessage[]).push({ role: "tool", tool_call_id: call.id, content: result }),
+                // #3 inline vision: a tool result can't carry an image, so hand any screenshots this step
+                // captured to the (vision-capable) driver as a user turn for its NEXT call.
+                pushToolImages: (messages, images) => (messages as NeutralMessage[]).push({
+                    role: "user",
+                    content: `Screenshot${images.length > 1 ? "s" : ""} you requested (${images.map(p => p.label).join(", ")}). ` +
+                        "Describe what you see, then take the next action — or give your final answer if the task is done.",
+                    images: images.map(p => p.image),
+                }),
+                emit,
             };
-            // Register this run so ml.agent(task, { resume: runHash }) / ml.createAgent(...).continue()
-            // can append a follow-up turn later (same tab, same page-life).
-            agentRegistry.set(runHash, {
-                hash: runHash,
-                resume: (t: string) => { messages.push({ role: "user" as const, content: t }); return drive(); },
-            });
-            return drive();
+
+            // One turn of the run. A resume re-enters with a follow-up task; buildMessages continues the
+            // stored history (priorMessages, captured back into it after the loop). answered resets per turn.
+            const drive = async (t: string): Promise<AgentResult> => {
+                answered.length = 0;
+                enterAgentRun();   // suppress orphan chat sessions from a tool's internal ml.chat; finally-decremented
+                try {
+                    const r = await runAgentLoop(t, { tools: toolMetas, maxSteps, signal, unattended }, deps);
+                    seqBase += turnMaxSeq; turnMaxSeq = 0;   // next resume turn's step seqs continue past this turn's
+                    priorMessages = built;   // keep this turn's full history for a later resume
+                    emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: r.steps }, summary: r.summary, steps: r.steps, hitCap: !!r.hitCap, cancelled: !!r.cancelled });
+                    return { ...r, elements: answered, hash: runHash };
+                } catch (e) {
+                    // A FATAL error escaped the loop — surface it so the sidebar doesn't hang as "running",
+                    // then re-throw so ml.agent() still rejects. (An abort already resolved cleanly inside.)
+                    if (!signal?.aborted) emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, summary: "", steps: 0, hitCap: false, error: (e as Error)?.message || String(e) });
+                    throw e;
+                } finally { exitAgentRun(); }
+            };
+            // Register the run so ml.agent(task, { resume }) / createAgent().continue() can append a turn.
+            agentRegistry.set(runHash, { hash: runHash, resume: (t: string) => drive(t) });
+            return drive(task);
         },
         /**
          * A resumable agent session — the agent analogue of {@link module:ml.createChat}.

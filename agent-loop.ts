@@ -58,7 +58,10 @@ export interface AgentLoopDeps {
     // → no inline vision (a text-only driver). World-specific (the neutral message shape).
     pushToolImages?(messages: unknown[], images: { image: string; label: string }[]): void;
     // Debug/telemetry hook (agent-step events: pending START then the DONE, sharing `seq`).
-    emit?(ev: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: unknown; tool?: string; arguments?: Record<string, unknown>; result?: string; approval?: Approval; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; usage?: unknown }): void;
+    // `elements` carries the tool's real result nodes on a DONE (page-side only — nodes can't cross the
+    // bus, so the background path leaves it undefined and assembles answer nodes separately). The page's
+    // emit uses them for onStep + the debug event's element COUNT.
+    emit?(ev: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: unknown; tool?: string; arguments?: Record<string, unknown>; result?: string; approval?: Approval; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; usage?: unknown; elements?: unknown[] }): void;
 }
 
 export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number; signal?: AbortSignal | null; unattended?: boolean; }
@@ -162,8 +165,12 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 tr = await deps.runTool(call.name, args); result = tr.result;   // non-approval tool
             }
             result = String(result);
-            transcript.push({ tool: call.name, arguments: args, result });
-            deps.emit?.({ step, seq: s, tool: call.name, arguments: args, result, approval, renderIn: tr?.renderIn, renderOut: tr?.renderOut });   // DONE (patches the START)
+            const entry: AgentTranscriptEntry = { tool: call.name, arguments: args, result };
+            // Real result nodes ride the transcript ENTRY too (page-side only — undefined for the delegated
+            // path). They reach the caller's res.transcript / onStep, never the model.
+            if (tr?.elements && tr.elements.length) entry.elements = tr.elements as AgentTranscriptEntry["elements"];
+            transcript.push(entry);
+            deps.emit?.({ step, seq: s, tool: call.name, arguments: args, result, approval, renderIn: tr?.renderIn, renderOut: tr?.renderOut, elements: tr?.elements });   // DONE (patches the START)
             deps.pushToolResult(messages, call, result);
             if (tr?.image) pendingImages.push({ image: tr.image, label: tr.imageLabel || "screenshot" });
         }
