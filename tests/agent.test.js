@@ -452,6 +452,11 @@ test("exec evaluates expressions, serializes objects, and catches errors", async
     // Top-level await + return (async-function fallback when eval rejects them).
     assert.equal(await run(ml, "exec", { js: "return await Promise.resolve(7)" }), "7");
     assert.equal(await run(ml, "exec", { js: "const x = await Promise.resolve(5); return x * 2" }), "10");
+    // A bare top-level-await EXPRESSION keeps the REPL trailing-value convention (no
+    // explicit `return`) — the async fallback used to drop it and answer undefined.
+    assert.equal(await run(ml, "exec", { js: "await Promise.resolve(9)" }), "9");
+    assert.equal(await run(ml, "exec", { js: "await Promise.all([Promise.resolve(1), Promise.resolve(2)]).then(([a, b]) => ({ a, b }))" }), '{"a":1,"b":2}');
+    assert.equal(await run(ml, "exec", { js: "await Promise.resolve(4);" }), "4"); // trailing ; tolerated
     assert.match(await run(ml, "exec", { js: "return (" }), /^Error:/); // genuine syntax error still reported
     // Multi-line console output keeps its newlines — separate console.log calls
     // join with \n, and the length cap must NOT collapse whitespace (regression:

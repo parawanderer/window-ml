@@ -339,7 +339,18 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
                         // A genuine syntax error re-throws from this attempt and is reported.
                         if (e instanceof SyntaxError) {
                             const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor as { new (body: string): () => Promise<unknown> };
-                            result = new AsyncFunction(js)();
+                            // eval threw away the completion value when it rejected top-level
+                            // await/return. Re-run as an async body — but first preserve the REPL
+                            // trailing-expression convention (the fast-path eval and python_exec
+                            // both honor it): if the whole source is a single expression, `return`
+                            // it so its resolved value comes back. A multi-statement body isn't a
+                            // valid parenthesized expression → SyntaxError at construction → fall
+                            // back to the plain body (there the model must `return` explicitly).
+                            const expr = js.trim().replace(/;\s*$/, "");
+                            let fn: () => Promise<unknown>;
+                            try { fn = new AsyncFunction(`return (${expr})`); }
+                            catch { fn = new AsyncFunction(js); }
+                            result = fn();
                         } else throw e;
                     }
                     if (result && typeof (result as Promise<unknown>).then === "function") result = await result;
