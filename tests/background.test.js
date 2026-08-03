@@ -1309,6 +1309,41 @@ test("START_RUN with resumeMessages continues that history, returns the final me
     assert.ok(tabEvents.some(e => e.kind === "agent-result"), "but the result IS emitted");
 });
 
+test("INJECT_MESSAGE steers a RUNNING background run (drained at the next step boundary) + ownership guard", async () => {
+    const calls = [];
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            calls.push(call.body.messages.map(m => ({ role: m.role, content: m.content })));
+            // step 1 → a tool call (a boundary to inject at); step 2 → the final answer.
+            return calls.length === 1
+                ? jsonResponse({ choices: [{ message: { content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "noop", arguments: "{}" } }] } }] })
+                : jsonResponse({ choices: [{ message: { content: "done" } }] });
+        },
+        onTabMessage: async (_tabId, msg) => {
+            if (msg?.type === "RUN_TOOL_IN_PAGE" && !msg.payload?.renderOnly && !msg.payload?.readonlyTry && !msg.payload?.precheck) {
+                // A wrong tab may NOT steer (ownership guard); the owning tab may.
+                const bad = await bg.send({ type: "INJECT_MESSAGE", payload: { runId: "inj1", text: "NOPE" } }, { tab: { id: 99 } });
+                assert.equal(bad.data, false, "another tab can't inject into the run");
+                const ok = await bg.send({ type: "INJECT_MESSAGE", payload: { runId: "inj1", text: "STEER ME" } }, { tab: { id: 5 } });
+                assert.equal(ok.data, true, "the owning tab injects");
+                return { result: "noop ok" };
+            }
+            return undefined;
+        },
+    });
+    await bg.send({ type: "START_RUN", payload: {
+        runId: "inj1", task: "go", systemPrompt: "S",
+        tools: [{ name: "noop", requiresApproval: false, description: "", parameters: {}, capabilities: [] }],
+        model: "m", think: null, maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools",
+    } }, { tab: { id: 5 } });
+
+    assert.ok(calls.at(-1).some(m => m.role === "user" && m.content === "STEER ME"), "the mid-run injected message reached the model at the next step");
+    // Unknown / finished run → no-op (the page's run()-flush picks up anything too late).
+    const ghost = await bg.send({ type: "INJECT_MESSAGE", payload: { runId: "gone", text: "x" } }, { tab: { id: 5 } });
+    assert.equal(ghost.data, false, "injecting into a finished/unknown run is a harmless no-op");
+});
+
 // ---- FETCH_SHEET: credentialed Google Sheets CSV export ----
 
 test("FETCH_SHEET returns the CSV body, fetched with the user's Google cookies", async () => {

@@ -62,6 +62,7 @@ interface AgentControl {
     maxSteps: number;             // the step cap, read live so a handle can raise it mid-run
     running: boolean;             // is a loop in flight?
     seqBase: number;              // monotonic step-seq base so seqs stay session-unique across turns
+    bg?: boolean;                 // the CURRENT run routed to the background → a mid-run say() steers via INJECT_MESSAGE
 }
 import { installToolDelegation, registerRun, endRun } from "./run-delegation";
 import { descriptorFor } from "./render-descriptor";
@@ -81,6 +82,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
     inbox: string[] = [];
     running = false;
     seqBase = 0;
+    bg = false;   // set by ml.agent when the current run routes to the background (say() then uses INJECT_MESSAGE)
     private _maxSteps: number;
     private _ctrl = new AbortController();
     constructor(private _ml: MlApi, private _opts: AgentOptions) { this._maxSteps = _opts.maxSteps ?? 10; }
@@ -97,6 +99,9 @@ class AgentHandle implements MlAgentHandle, AgentControl {
      *  Rejects while a loop is in flight. No task → runs over whatever say() has queued into history. */
     async run(task?: string): Promise<AgentResult> {
         if (this.running) throw new Error("ml.createAgent: a run is already in flight — use say() to add to it, or cancel() first.");
+        // Flush any leftover steering into the history so it's never lost: a mid-run say() that a background
+        // loop couldn't drain live (arrived after its last step) sits in the inbox — pick it up this run.
+        for (const t of this.inbox.splice(0)) this.messages.push({ role: "user", content: t });
         // Fresh controller PER RUN: a prior cancel() aborted the previous one for good, so reusing it would
         // insta-cancel this turn. (A caller-supplied signal still governs — cancel() then only aborts ours.)
         this._ctrl = new AbortController();
@@ -109,7 +114,10 @@ class AgentHandle implements MlAgentHandle, AgentControl {
      *  the UI immediately); idle → append to history for the next run(), with a console note. Never throws. */
     say(text: string): void {
         if (this.running) {
-            this.inbox.push(text);
+            // Steer the live loop. A BACKGROUND run's loop is in the service worker, so route the message
+            // there (INJECT_MESSAGE, drained at its next step); a PAGE-loop run drains the local inbox.
+            if (this.bg && this.hash) makeBackgroundTaskPromise("INJECT_MESSAGE_REQUEST", "INJECT_MESSAGE_RESPONSE", { runId: this.hash, text }).catch(() => { /* run finished first → the next run()'s flush catches it */ });
+            this.inbox.push(text);   // page loop drains this; for a bg run it's the run()-flush safety net
             if (this.hash) emitDebug({ kind: "agent-say", id: this.hash, ts: Date.now(), save: false, session: { hash: this.hash, turn: 0 }, text });
         } else {
             this.messages.push({ role: "user", content: text });
@@ -630,6 +638,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             const bgSurface: "overlay" | "devtools" | "off" | null =
                 (surface === "overlay" || surface === "devtools") ? surface
                     : (hasApprovalTool && !agentCfg?.pageApprovalAllowed) ? "off" : null;
+            control.bg = !!bgSurface;   // so a handle's mid-run say() knows to steer via INJECT_MESSAGE, not the page inbox
             if (bgSurface) {
                 registerRun(runHash, toolset);
                 // Phase 2 resume for a BACKGROUND-hosted run: the run's history lives in the service worker,

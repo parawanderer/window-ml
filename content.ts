@@ -33,6 +33,7 @@ const HANDLE_MAP: Partial<Record<PageRequestType, RelayEntry>> = {
     // AgentResult (the run's debug events stream separately via ML_DEBUG_TO_PAGE, below).
     START_RUN_REQUEST: { type: "START_RUN", responseType: "START_RUN_RESPONSE" },
     RESUME_RUN_REQUEST: { type: "RESUME_RUN", responseType: "RESUME_RUN_RESPONSE" },
+    INJECT_MESSAGE_REQUEST: { type: "INJECT_MESSAGE", responseType: "INJECT_MESSAGE_RESPONSE" },
 };
 
 interface BgResponse { data?: unknown; sources?: unknown; model?: unknown; reasoning?: unknown; usage?: unknown; messages?: unknown; error?: string; }

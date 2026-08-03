@@ -2,7 +2,7 @@
 // extracts replies, and makes the privileged (host-permissioned) fetches. All
 // server JSON is genuinely opaque, so it's typed `any`; our own data uses the
 // shared contract types.
-import type { MlConfig, ApiFormat, NeutralMessage, ToolCall, FetchLlmPayload, LlmResult, LoadedModel, ServerTool, JsonSchema, TokenUsage, StartRunPayload, SetApprovalPayload, CancelRunPayload, ResumeRunPayload, ApprovalDecision } from "./contract";
+import type { MlConfig, ApiFormat, NeutralMessage, ToolCall, FetchLlmPayload, LlmResult, LoadedModel, ServerTool, JsonSchema, TokenUsage, StartRunPayload, SetApprovalPayload, CancelRunPayload, ResumeRunPayload, InjectMessagePayload, ApprovalDecision } from "./contract";
 import { DEFAULT_CONFIG, modelFilterAllows } from "./contract";   // single source of truth (see contract.ts)
 import { runBackgroundAgent } from "./agent-host";   // design A: the background-hosted agent loop
 import type { ToolMeta } from "./agent-loop";
@@ -766,6 +766,11 @@ const runControllers = new Map<string, AbortController>();
 // finish-then-follow-up flow); an evicted run reports an actionable error and the caller starts fresh.
 const bgRuns = new Map<string, { p: StartRunPayload; tabId: number; messages: NeutralMessage[] }>();
 
+// Per-run steering inbox (a.say() mid-run): the SW-side twin of the page loop's control.inbox. INJECT_MESSAGE
+// pushes here (only the owning tab may); the run's loop drains it at each step boundary (deps.drainInbox).
+// Present only while a run is live (set at start, deleted in finally).
+const runInboxes = new Map<string, { tabId: number; queue: string[] }>();
+
 // ---- Choke-point consent (docs/spec/CHOKEPOINT_CONSENT_SPEC.md) ----
 // The boundary for the credentialed/unbounded ops lives HERE, not in the bypassable client-side approval.
 // A privileged call passes iff: a trusted surface (sender.tab == null), a whitelisted domain, or a per-call
@@ -850,6 +855,17 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         if (ctl) ctl.abort();
         return;   // fire-and-forget
     }
+    if (message.type === "INJECT_MESSAGE") {
+        // a.say() steering a RUNNING background run: push the text into that run's inbox → the loop drains it
+        // at the next step boundary. Only the OWNING tab may steer; an unknown/finished run is a no-op (the
+        // page's run()-flush safety net picks up anything that lands too late).
+        const p = message.payload as InjectMessagePayload;
+        const inbox = runInboxes.get(p.runId);
+        const injected = !!(inbox && inbox.tabId === sender.tab?.id && typeof p.text === "string");
+        if (injected) inbox!.queue.push(p.text);
+        sendResponse({ data: injected });
+        return true;
+    }
     if (message.type === "START_RUN" || message.type === "RESUME_RUN") {
         // Design A: run an ml.agent loop HERE (extension origin), delegating each tool back to the page
         // (RUN_TOOL_IN_PAGE) and gating approval through the sidebar. The page built the toolset + system
@@ -877,6 +893,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         const runId = p.runId;
         const abortCtl = new AbortController();   // CANCEL_RUN aborts this → the loop resolves { cancelled }
         runControllers.set(runId, abortCtl);
+        runInboxes.set(runId, { tabId, queue: [] });   // a.say() steering lands here while the run is live
         const toolMetas: ToolMeta[] = p.tools.map(t => ({ name: t.name, requiresApproval: t.requiresApproval, capabilities: t.capabilities }));
         const toolDefs = p.tools.map(t => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
         const approvedSheets = new Set<string>();   // external sheets approved this run (isSheetApproved)
@@ -997,6 +1014,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 },
                 isSheetApproved: (id) => approvedSheets.has(id),
                 emit: (ev) => emitStep(ev as Record<string, unknown>),
+                drainInbox: () => (runInboxes.get(runId)?.queue || []).splice(0),   // a.say() steering (INJECT_MESSAGE)
                 signal: abortCtl.signal,
             },
         )
@@ -1021,7 +1039,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 });
                 sendResponse({ error: err?.message || String(err) });
             })
-            .finally(() => { runControllers.delete(runId); });
+            .finally(() => { runControllers.delete(runId); runInboxes.delete(runId); });
         return true;   // async: sendResponse fires when the whole run finishes
     }
     if (message.type === "PYTHON_EXEC") {

@@ -811,6 +811,19 @@ test("createAgent: cancel() mid-run, then say() + run() again works (fresh contr
     assert.equal(last.at(-1).content, "continue", "the new task is the last user turn");
 });
 
+test("createAgent: run() flushes a leftover inbox steer into the history (never lost)", async () => {
+    // A mid-run say() a BACKGROUND loop couldn't drain live sits in the inbox. The next run() must flush it
+    // into the history so it's processed — otherwise the steer vanishes (the reported bug).
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("ok")]) });
+    const a = world.ml.createAgent({ vision: false });
+    a.inbox.push("a steer that got stuck");   // simulate a bg mid-run say() that arrived too late to drain
+    await a.run("proceed");
+    assert.equal(a.inbox.length, 0, "run() drained the leftover inbox");
+    const msgs = world.runtimeCalls.filter(c => c.payload && c.payload.messages).at(-1).payload.messages;
+    assert.ok(msgs.some(m => m.content === "a steer that got stuck"), "the stuck steer was flushed into the run's history");
+    assert.ok(msgs.some(m => m.content === "proceed"), "…alongside the run's task");
+});
+
 test("createAgent: fork() copies the history into a FRESH session, independent of the original", async () => {
     const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("a1")]) });
     const a = world.ml.createAgent({ vision: false });

@@ -51,6 +51,8 @@ export interface RunAgentHostDeps {
     isSheetApproved?(id: string): boolean;
     // Debug fan-out (agent-step events: the pending START then the DONE).
     emit?: AgentLoopDeps["emit"];
+    // Mid-run steering (a.say() → INJECT_MESSAGE): the run's SW-side inbox, drained at each step boundary.
+    drainInbox?: AgentLoopDeps["drainInbox"];
     signal?: AbortSignal | null;
 }
 
@@ -111,6 +113,9 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
         pushAssistant: pushAssistant as AgentLoopDeps["pushAssistant"],
         pushToolResult: pushToolResult as AgentLoopDeps["pushToolResult"],
         pushToolImages: pushToolImages as AgentLoopDeps["pushToolImages"],
+        // Mid-run steering: drain the SW-side inbox (a.say() → INJECT_MESSAGE) and inject as user turns.
+        drainInbox: deps.drainInbox,
+        pushUser: (messages, text) => (messages as NeutralMessage[]).push({ role: "user", content: text }),
         emit: deps.emit,
     };
     return runAgentLoop(cfg.task, { tools: cfg.tools, maxSteps: cfg.maxSteps, signal: deps.signal, unattended: cfg.unattended }, loopDeps)

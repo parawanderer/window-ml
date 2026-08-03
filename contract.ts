@@ -514,6 +514,7 @@ export type PageRequestType =
     | "INVOCATION_REQUEST"   // how the user can open the HUD here (live shortcut — user-rebindable, never hardcode it)
     | "START_RUN_REQUEST"   // design A: kick off a background-hosted ml.agent loop
     | "RESUME_RUN_REQUEST"   // design A: continue a background-hosted run (append a follow-up turn to its stored history)
+    | "INJECT_MESSAGE_REQUEST"   // a.say() mid-run: steer a RUNNING background loop (its inbox drains at the next step)
     | "ABORT_REQUEST";   // cancel an in-flight background task by requestId (handled specially, not via HANDLE_MAP)
 
 /** Message types the background worker's onMessage listener handles. */
@@ -526,6 +527,7 @@ export type BackgroundMessageType =
     | "ABORT_TASK"    // abort the AbortController registered for a requestId (only FETCH_LLM registers one today)
     | "START_RUN"     // design A: run an ml.agent loop in the background (unforgeable gate); tools delegate to the page
     | "RESUME_RUN"    // design A: continue a stored background run (its history lives in the SW) with a follow-up task
+    | "INJECT_MESSAGE"   // a.say() mid-run: push a user message into a RUNNING background run's inbox (steer it live)
     | "SET_APPROVAL"; // design A: the sidebar's approve/deny decision for a pending background-run gate (origin-authed)
 
 /* ------------------- design A: background → page tool delegation ------------------- */
@@ -597,6 +599,14 @@ export interface CancelRunPayload {
 export interface ResumeRunPayload {
     runId: string;
     task: string;
+}
+
+/** INJECT_MESSAGE payload — a.say() steering a RUNNING background run: the text is pushed into that
+ *  run's inbox and injected as a user turn at the next step boundary (the SW-side twin of the page
+ *  loop's control.inbox). Only affects a live run in the owning tab; unknown runId is a no-op. */
+export interface InjectMessagePayload {
+    runId: string;
+    text: string;
 }
 
 /** RUN_TOOL_IN_PAGE payload — run a named tool from an active agent run's page-side toolset. The
