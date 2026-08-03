@@ -31,6 +31,7 @@ const HANDLE_MAP: Partial<Record<PageRequestType, RelayEntry>> = {
     // Design A: kick off a background-hosted ml.agent loop. The single response carries the final
     // AgentResult (the run's debug events stream separately via ML_DEBUG_TO_PAGE, below).
     START_RUN_REQUEST: { type: "START_RUN", responseType: "START_RUN_RESPONSE" },
+    RESUME_RUN_REQUEST: { type: "RESUME_RUN", responseType: "RESUME_RUN_RESPONSE" },
 };
 
 interface BgResponse { data?: unknown; sources?: unknown; model?: unknown; reasoning?: unknown; usage?: unknown; error?: string; }

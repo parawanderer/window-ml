@@ -555,6 +555,23 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     : (hasApprovalTool && !agentCfg?.pageApprovalAllowed) ? "off" : null;
             if (bgSurface) {
                 registerRun(runHash, toolset);
+                // Phase 2 resume for a BACKGROUND-hosted run: the run's history lives in the service worker,
+                // so continuing it is a RESUME_RUN round-trip (not the page-loop's in-memory drive()). We
+                // re-register the live tools (endRun cleared them after the prior turn) so delegation works
+                // again, then the background reuses the stored payload + history and appends the follow-up.
+                agentRegistry.set(runHash, {
+                    hash: runHash,
+                    resume: async (t: string): Promise<AgentResult> => {
+                        registerRun(runHash, toolset);
+                        enterAgentRun();
+                        try {
+                            const res = await makeBackgroundTaskPromise<AgentResult>("RESUME_RUN_REQUEST", "RESUME_RUN_RESPONSE", { runId: runHash, task: t }, undefined, signal);
+                            const run = endRun(runHash);
+                            emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: res.steps }, summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled });
+                            return { ...res, elements: run ? run.answered : [], hash: runHash };
+                        } finally { exitAgentRun(); }
+                    },
+                });
                 const descriptors = toolset.map(t => ({
                     name: t.name, description: t.description, parameters: t.parameters,
                     requiresApproval: !!t.requiresApproval, capabilities: t.capabilities || [], summary: t.summary,

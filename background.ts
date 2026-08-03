@@ -2,7 +2,7 @@
 // extracts replies, and makes the privileged (host-permissioned) fetches. All
 // server JSON is genuinely opaque, so it's typed `any`; our own data uses the
 // shared contract types.
-import type { MlConfig, ApiFormat, NeutralMessage, ToolCall, FetchLlmPayload, LlmResult, LoadedModel, JsonSchema, TokenUsage, StartRunPayload, SetApprovalPayload, CancelRunPayload, ApprovalDecision } from "./contract";
+import type { MlConfig, ApiFormat, NeutralMessage, ToolCall, FetchLlmPayload, LlmResult, LoadedModel, JsonSchema, TokenUsage, StartRunPayload, SetApprovalPayload, CancelRunPayload, ResumeRunPayload, ApprovalDecision } from "./contract";
 import { DEFAULT_CONFIG, modelFilterAllows } from "./contract";   // single source of truth (see contract.ts)
 import { runBackgroundAgent } from "./agent-host";   // design A: the background-hosted agent loop
 import type { ToolMeta } from "./agent-loop";
@@ -715,6 +715,13 @@ const pendingApprovals = new Map<string, (d: ApprovalDecision) => void>();
 // call. Deleted when the run settles. Aborting resolves the loop as { cancelled: true } (partial transcript).
 const runControllers = new Map<string, AbortController>();
 
+// Design A resume (Phase 2): after a background-hosted run settles, keep enough to CONTINUE it — the
+// full message history + the original StartRunPayload (deps are rebuilt from it) + the owning tab. A
+// RESUME_RUN {runId, task} re-enters the loop from this history. In-memory only, so it's subject to
+// MV3 service-worker eviction (~30s idle) — resume works while the SW is warm (the common
+// finish-then-follow-up flow); an evicted run reports an actionable error and the caller starts fresh.
+const bgRuns = new Map<string, { p: StartRunPayload; tabId: number; messages: NeutralMessage[] }>();
+
 // ---- Choke-point consent (docs/spec/CHOKEPOINT_CONSENT_SPEC.md) ----
 // The boundary for the credentialed/unbounded ops lives HERE, not in the bypassable client-side approval.
 // A privileged call passes iff: a trusted surface (sender.tab == null), a whitelisted domain, or a per-call
@@ -799,14 +806,27 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         if (ctl) ctl.abort();
         return;   // fire-and-forget
     }
-    if (message.type === "START_RUN") {
+    if (message.type === "START_RUN" || message.type === "RESUME_RUN") {
         // Design A: run an ml.agent loop HERE (extension origin), delegating each tool back to the page
         // (RUN_TOOL_IN_PAGE) and gating approval through the sidebar. The page built the toolset + system
         // prompt (it has the DOM/config/factories) and registered the live tools under runId; we hold only
         // serializable descriptors. sender.tab.id is the delegation + debug-fanout target.
         const tabId = sender.tab?.id;
-        if (tabId == null) { sendResponse({ error: "START_RUN must come from a tab (content script)." }); return true; }
-        const p = message.payload as StartRunPayload;
+        if (tabId == null) { sendResponse({ error: `${message.type} must come from a tab (content script).` }); return true; }
+        // RESUME continues a stored run: reuse its original StartRunPayload (deps rebuild from it) + its
+        // accumulated history, overriding only the task with the follow-up. Only the owning tab may resume.
+        let p: StartRunPayload;
+        let resumeMessages: NeutralMessage[] | undefined;
+        if (message.type === "RESUME_RUN") {
+            const rp = message.payload as ResumeRunPayload;
+            const stored = bgRuns.get(rp.runId);
+            if (!stored) { sendResponse({ error: `No resumable run "${rp.runId}" in the background — it may have been evicted; start a new run.` }); return true; }
+            if (stored.tabId !== tabId) { sendResponse({ error: `Run "${rp.runId}" belongs to another tab.` }); return true; }
+            p = { ...stored.p, task: rp.task };
+            resumeMessages = stored.messages;
+        } else {
+            p = message.payload as StartRunPayload;
+        }
         const runId = p.runId;
         const abortCtl = new AbortController();   // CANCEL_RUN aborts this → the loop resolves { cancelled }
         runControllers.set(runId, abortCtl);
@@ -845,7 +865,10 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             if (p.surface !== "off") return;
             chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => {});
         };
-        emitLifecycle({
+        // Only a FRESH run announces the session start; a RESUME continues an existing sidebar/card
+        // session (re-emitting `agent` would wipe its accumulated steps), so it streams new steps + a
+        // fresh agent-result under the same hash instead.
+        if (!resumeMessages) emitLifecycle({
             kind: "agent", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 },
             task: p.task, model: p.model, maxSteps: p.maxSteps,
             config: {
@@ -855,7 +878,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             },
         });
         runBackgroundAgent(
-            { task: p.task, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, unattended: p.unattended },
+            { task: p.task, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, unattended: p.unattended, resumeMessages },
             {
                 callModel: async (messages) => {
                     // Thread the run's abort signal so a CANCEL_RUN kills a slow in-flight generation, not
@@ -930,7 +953,11 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 signal: abortCtl.signal,
             },
         )
-            .then((res) => {
+            .then(({ result: res, messages }) => {
+                // Keep the run resumable: stash its full history + payload (deps rebuild from it) so a later
+                // RESUME_RUN can continue it. Overwrites the prior turn's snapshot (same runId). SW-eviction
+                // may drop this — resume then reports an actionable error (see bgRuns).
+                bgRuns.set(runId, { p, tabId, messages });
                 emitLifecycle({
                     kind: "agent-result", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: res.steps },
                     summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled,

@@ -502,6 +502,7 @@ export type PageRequestType =
     | "SAVE_SESSION_REQUEST" | "GET_SESSION_REQUEST" | "PYTHON_EXEC_REQUEST" | "FETCH_SHEET_REQUEST"
     | "INVOCATION_REQUEST"   // how the user can open the HUD here (live shortcut — user-rebindable, never hardcode it)
     | "START_RUN_REQUEST"   // design A: kick off a background-hosted ml.agent loop
+    | "RESUME_RUN_REQUEST"   // design A: continue a background-hosted run (append a follow-up turn to its stored history)
     | "ABORT_REQUEST";   // cancel an in-flight background task by requestId (handled specially, not via HANDLE_MAP)
 
 /** Message types the background worker's onMessage listener handles. */
@@ -512,6 +513,7 @@ export type BackgroundMessageType =
     | "GET_INVOCATION"   // read chrome.commands' LIVE shortcut for the HUD (+ whether the user rebound it)
     | "ABORT_TASK"    // abort the AbortController registered for a requestId (only FETCH_LLM registers one today)
     | "START_RUN"     // design A: run an ml.agent loop in the background (unforgeable gate); tools delegate to the page
+    | "RESUME_RUN"    // design A: continue a stored background run (its history lives in the SW) with a follow-up task
     | "SET_APPROVAL"; // design A: the sidebar's approve/deny decision for a pending background-run gate (origin-authed)
 
 /* ------------------- design A: background → page tool delegation ------------------- */
@@ -569,6 +571,15 @@ export interface SetApprovalPayload {
  *  even if a page could forge it (worst case it aborts its own run) — the loop resolves { cancelled }. */
 export interface CancelRunPayload {
     runId: string;
+}
+
+/** RESUME_RUN payload — continue a stored background-hosted run with a follow-up turn. The background
+ *  holds that run's history + config (keyed by runId); the page just names it + the new task. Only the
+ *  tab that owns the run may resume it (checked background-side), and its tools must be re-registered
+ *  page-side first (endRun cleared them after the prior turn). */
+export interface ResumeRunPayload {
+    runId: string;
+    task: string;
 }
 
 /** RUN_TOOL_IN_PAGE payload — run a named tool from an active agent run's page-side toolset. The

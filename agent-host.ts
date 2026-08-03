@@ -28,6 +28,7 @@ export interface RunAgentConfig {
     maxSteps?: number;
     autoApprovePython?: boolean;   // the trusted config flag, read background-side
     unattended?: boolean;          // headless run: refuse any call that reaches the human gate (see ml.agent's `unattended`)
+    resumeMessages?: NeutralMessage[];   // RESUME: continue this prior history (+ `task` as a new user turn) instead of a fresh system+task
 }
 
 export interface RunAgentHostDeps {
@@ -57,13 +58,19 @@ export interface RunAgentHostDeps {
  *  counterpart of the page-side ml.agent loop; both share runAgentLoop's gate-before-execute invariant. */
 // Returns AgentResult WITHOUT `hash` (see runAgentLoop): the page-side ml.agent caller owns the
 // run's hash (runHash) and stamps it onto the result it hands back — the background never mints one.
-export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps): Promise<Omit<AgentResult, "hash">> {
+export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps): Promise<{ result: Omit<AgentResult, "hash">; messages: NeutralMessage[] }> {
     // Format-neutral message plumbing — the background's fetchLLM (callModel) converts to the wire form
     // per API format, so the host only deals in NeutralMessage.
-    const buildMessages = (task: string): NeutralMessage[] => [
-        { role: "system", content: cfg.systemPrompt },
-        { role: "user", content: task },
-    ];
+    // `built` retains the run's message array so the caller can persist the final history for a RESUME
+    // (the loop mutates it in place). A resume seeds it with the prior turns + the new task; a fresh run
+    // starts with system + task.
+    let built: NeutralMessage[] = [];
+    const buildMessages = (task: string): NeutralMessage[] => {
+        built = cfg.resumeMessages && cfg.resumeMessages.length
+            ? [...cfg.resumeMessages, { role: "user", content: task }]
+            : [{ role: "system", content: cfg.systemPrompt }, { role: "user", content: task }];
+        return built;
+    };
     const pushAssistant = (messages: NeutralMessage[], msg: { content?: string | null; tool_calls?: ToolCall[] }): void => {
         messages.push({ role: "assistant", content: msg.content || "", tool_calls: msg.tool_calls });
     };
@@ -99,5 +106,6 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
         pushToolImages: pushToolImages as AgentLoopDeps["pushToolImages"],
         emit: deps.emit,
     };
-    return runAgentLoop(cfg.task, { tools: cfg.tools, maxSteps: cfg.maxSteps, signal: deps.signal, unattended: cfg.unattended }, loopDeps);
+    return runAgentLoop(cfg.task, { tools: cfg.tools, maxSteps: cfg.maxSteps, signal: deps.signal, unattended: cfg.unattended }, loopDeps)
+        .then(result => ({ result, messages: built }));
 }

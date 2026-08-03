@@ -30,7 +30,7 @@ const baseDeps = (over = {}) => {
 
 test("a non-approval tool is delegated straight through — the gate is never consulted", async () => {
     const deps = baseDeps({ callModel: scriptedModel([call("look"), answer("saw it")]) });
-    const res = await runBackgroundAgent(
+    const { result: res } = await runBackgroundAgent(
         { task: "t", systemPrompt: "SYS", tools: [{ name: "look", requiresApproval: false }] }, deps);
     assert.equal(res.summary, "saw it");
     assert.deepEqual(deps.delegated, [{ name: "look", args: {} }]);
@@ -50,9 +50,35 @@ test("buildMessages seeds system + user(task); the loop grows history through th
     assert.deepEqual(first, [{ role: "system", content: "SYS" }, { role: "user", content: "hello" }]);
 });
 
+test("returns { result, messages }; the final answer is recorded in history (for a RESUME to keep context)", async () => {
+    const deps = baseDeps({ callModel: scriptedModel([call("look"), answer("the answer")]) });
+    const { result, messages } = await runBackgroundAgent(
+        { task: "first task", systemPrompt: "SYS", tools: [{ name: "look" }] }, deps);
+    assert.equal(result.summary, "the answer");
+    // The mutated history the caller persists for resume: system, task, the tool round-trip, the ANSWER.
+    assert.equal(messages[0].content, "SYS");
+    assert.equal(messages[1].content, "first task");
+    assert.ok(messages.some(m => m.role === "assistant" && m.content === "the answer"), "the final answer is in history");
+});
+
+test("resumeMessages seeds the prior history + the new task (no fresh system prompt)", async () => {
+    let seen;
+    const prior = [
+        { role: "system", content: "SYS" },
+        { role: "user", content: "first task" },
+        { role: "assistant", content: "first answer" },
+    ];
+    const deps = baseDeps({ callModel: async (messages) => { seen = messages.map(m => ({ role: m.role, content: m.content })); return answer("second answer"); } });
+    const { result } = await runBackgroundAgent(
+        { task: "second task", systemPrompt: "IGNORED-ON-RESUME", tools: [{ name: "look" }], resumeMessages: prior }, deps);
+    assert.equal(result.summary, "second answer");
+    // Continues the stored history (keeps the ORIGINAL system) + appends the follow-up as the last user turn.
+    assert.deepEqual(seen, [...prior, { role: "user", content: "second task" }]);
+});
+
 test("python_exec readonly + autoApprovePython → SANDBOX auto-approve, gate skipped, tool delegated", async () => {
     const deps = baseDeps({ callModel: scriptedModel([call("python_exec", { code: "return 1" }), answer("ok")]) });
-    const res = await runBackgroundAgent(
+    const { result: res } = await runBackgroundAgent(
         { task: "t", systemPrompt: "S", autoApprovePython: true, tools: [{ name: "python_exec", requiresApproval: true }] }, deps);
     assert.equal(deps.approvals.length, 0, "readonly python with the flag on must skip the gate");
     assert.deepEqual(deps.delegated, [{ name: "python_exec", args: { code: "return 1" } }]);
@@ -82,7 +108,7 @@ test("gate DENY → the tool is never delegated (the security invariant, through
         callModel: scriptedModel([call("danger"), answer("gave up")]),
         approve: async () => false,
     });
-    const res = await runBackgroundAgent({ task: "t", systemPrompt: "S", tools: [{ name: "danger", requiresApproval: true }] }, deps);
+    const { result: res } = await runBackgroundAgent({ task: "t", systemPrompt: "S", tools: [{ name: "danger", requiresApproval: true }] }, deps);
     assert.equal(deps.delegated.length, 0, "a denied tool must NOT be delegated to the page");
     assert.match(res.transcript[0].result, /Denied by the user/);
 });

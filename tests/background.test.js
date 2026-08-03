@@ -1209,6 +1209,42 @@ test("CANCEL_RUN for an unknown run id is a harmless no-op", async () => {
     assert.equal(res.data, "ok", "a later request is unaffected");
 });
 
+test("RESUME_RUN continues a stored background run with its accumulated history (+ tab-ownership guard)", async () => {
+    // Phase 2: after a background run settles, its history + payload are kept (bgRuns). A RESUME_RUN from
+    // the SAME tab re-enters the loop from that history with a follow-up task; another tab can't, and an
+    // unknown/evicted run reports an actionable error rather than silently starting fresh.
+    const calls = [];
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            calls.push(call.body.messages.map(m => ({ role: m.role, content: m.content })));
+            return jsonResponse({ choices: [{ message: { content: calls.length === 1 ? "first answer" : "second answer" } }] });
+        },
+    });
+    const first = await bg.send({ type: "START_RUN", payload: {
+        runId: "rr1", task: "first task", systemPrompt: "SYS", tools: [], model: "m", think: null,
+        maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "off",
+    } }, { tab: { id: 9 } });
+    assert.equal(first.data.summary, "first answer");
+
+    // Resume from the OWNING tab → continues with the prior history + the follow-up.
+    const second = await bg.send({ type: "RESUME_RUN", payload: { runId: "rr1", task: "follow up" } }, { tab: { id: 9 } });
+    assert.equal(second.data.summary, "second answer");
+    const resumed = calls.at(-1);
+    assert.equal(resumed[0].content, "SYS", "resume keeps the ORIGINAL system prompt (from stored history)");
+    assert.equal(resumed[1].content, "first task");
+    assert.ok(resumed.some(m => m.role === "assistant" && m.content === "first answer"), "the prior answer is in the resumed context");
+    assert.equal(resumed.at(-1).content, "follow up", "the follow-up is the last user turn");
+
+    // A DIFFERENT tab may NOT resume it (ownership guard).
+    const wrongTab = await bg.send({ type: "RESUME_RUN", payload: { runId: "rr1", task: "steal" } }, { tab: { id: 99 } });
+    assert.match(wrongTab.error, /another tab/);
+
+    // An unknown / evicted run → actionable error, no run started.
+    const ghost = await bg.send({ type: "RESUME_RUN", payload: { runId: "nope", task: "x" } }, { tab: { id: 9 } });
+    assert.match(ghost.error, /No resumable run/);
+});
+
 // ---- FETCH_SHEET: credentialed Google Sheets CSV export ----
 
 test("FETCH_SHEET returns the CSV body, fetched with the user's Google cookies", async () => {
