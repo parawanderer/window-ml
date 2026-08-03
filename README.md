@@ -129,7 +129,7 @@ list. See [docs/CLOUD-MODELS.md](docs/CLOUD-MODELS.md).
 | `ml.read(image, { model?, prompt? })` | OCR — transcribe baked-in text from an `<img>` or URL to a plain string, using the configured OCR (vision) model. See [OCR](#ocr). |
 | `ml.step(messages, { tools?, model?, think? })` | One model turn with client-side tools; returns the raw assistant message and hands the loop to you. See [Tools](#tools-agents). |
 | `ml.agent(task, options?)` | Plain-English page agent: runs the whole loop over built-in DOM recon tools (and auto-wired vision) until it acts or answers. Returns `{ summary, steps, transcript, elements, hash }`. See [Agent](#tools-agents). |
-| `ml.createAgent(options?)` | A resumable agent handle (`run`/`continue`/`cancel` + `hash`) — the agent analogue of `createChat`. See [Agent](#tools-agents). |
+| `ml.createAgent(options?)` | A stateful agent handle — `run`/`say`/`cancel`/`fork` + `hash`/`messages`/`maxSteps` (live). The agent analogue of `createChat`. See [Agent](#tools-agents). |
 | `ml.chat(prompt, { toolIds })` | Server-side tools: OpenWebUI runs the tools and returns the finished answer. See [Tools](#tools-agents). |
 | `ml.serverTools()` | List the server-side tools your key may use — the valid `toolIds`, each with its function specs. `[]` on a non-OpenWebUI endpoint. |
 | `ml.logChat` / `ml.logChatShort` | `console.log` variants. |
@@ -389,21 +389,32 @@ const res = await ml.agent("Reconcile the two tables.", { signal: ctl.signal });
 if (res.cancelled) console.log(`stopped early after ${res.steps} steps`);
 ```
 
-**Keep asking — resumable sessions.** Every run carries a session hash
-(`res.hash`, shown in the debug sidebar). Continue it with a follow-up turn —
-same tools, same accumulated history — via `ml.agent(task, { resume: hash })`,
-or use the `ml.createChat`-style handle:
+**Keep asking — a stateful session.** Every run carries a session hash
+(`res.hash`, shown in the debug sidebar). `ml.createAgent(options)` returns a
+handle — the agent analogue of `ml.createChat` — with two primitives: **`say`**
+writes a user message into the session, **`run`** executes the loop until the
+agent's turn is complete. Everything shares one hash = one conversation.
 
 ```js
 const a = ml.createAgent({ maxSteps: 20 });
-await a.run("Find the login form.");
-await a.continue("Now fill it with test@example.com.");   // same session, appended
-a.hash;      // the session hash (also res.hash)
-a.cancel();  // abort the in-flight turn
+const done = a.run("Reorganise these tabs by topic.");   // a full turn
+a.say("actually, keep the pinned ones where they are");  // steer MID-run (injected at the next step)
+await done;
+await a.run("Now close the empty groups.");              // another turn, same session
+
+a.messages;    // the raw, mutable history (like MlHistory.messages)
+a.maxSteps = 40;   // live — raise the cap mid-run and the loop keeps going
+a.cancel();    // abort the in-flight turn → resolves { cancelled: true }
+const b = a.fork();   // branch a COPY of the history into a fresh session
 ```
 
-Same-tab runs resume from memory; the hash is also how the in-page HUD and
-DevTools chat continue a run.
+`say()` steers a running loop (queued, injected at the next step boundary) or,
+when idle, appends to history for the next `run()`. `run(task?)` starts a turn
+(no task → runs over whatever `say()` queued); calling it again continues the
+same session. `res.transcript` accumulates the whole conversation's actions and
+replies. The low-level `ml.agent(task, { resume: hash })` continues a run by
+hash too. Same-tab runs resume from memory; the hash is also how the in-page HUD
+and DevTools chat drive a session.
 
 **Scripting modes.** Two per-run switches for headless/automation use:
 
