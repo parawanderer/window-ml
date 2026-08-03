@@ -19,6 +19,7 @@ const HANDLE_MAP: Partial<Record<PageRequestType, RelayEntry>> = {
     GET_MODEL_REQUEST: { type: "GET_MODEL", responseType: "GET_MODEL_RESPONSE" },
     SET_MODEL_REQUEST: { type: "SET_MODEL", responseType: "SET_MODEL_RESPONSE" },
     CAPS_REQUEST: { type: "MODEL_CAPS", responseType: "CAPS_RESPONSE" },
+    LIST_SERVER_TOOLS_REQUEST: { type: "LIST_SERVER_TOOLS", responseType: "LIST_SERVER_TOOLS_RESPONSE" },
     CONFIG_REQUEST: { type: "GET_CONFIG", responseType: "CONFIG_RESPONSE" },
     INVOCATION_REQUEST: { type: "GET_INVOCATION", responseType: "INVOCATION_RESPONSE" },
     PS_REQUEST: { type: "OLLAMA_PS", responseType: "PS_RESPONSE" },

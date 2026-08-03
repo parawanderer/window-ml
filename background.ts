@@ -2,7 +2,7 @@
 // extracts replies, and makes the privileged (host-permissioned) fetches. All
 // server JSON is genuinely opaque, so it's typed `any`; our own data uses the
 // shared contract types.
-import type { MlConfig, ApiFormat, NeutralMessage, ToolCall, FetchLlmPayload, LlmResult, LoadedModel, JsonSchema, TokenUsage, StartRunPayload, SetApprovalPayload, CancelRunPayload, ResumeRunPayload, ApprovalDecision } from "./contract";
+import type { MlConfig, ApiFormat, NeutralMessage, ToolCall, FetchLlmPayload, LlmResult, LoadedModel, ServerTool, JsonSchema, TokenUsage, StartRunPayload, SetApprovalPayload, CancelRunPayload, ResumeRunPayload, ApprovalDecision } from "./contract";
 import { DEFAULT_CONFIG, modelFilterAllows } from "./contract";   // single source of truth (see contract.ts)
 import { runBackgroundAgent } from "./agent-host";   // design A: the background-hosted agent loop
 import type { ToolMeta } from "./agent-loop";
@@ -624,6 +624,50 @@ async function listAvailableModels(overrides: Partial<MlConfig> = {}): Promise<{
     throw new Error(errors.join("; "));
 }
 
+/**
+ * Lists OpenWebUI's server-side tools (the valid `toolIds`) with their function specs.
+ *
+ * The route is OpenWebUI-only: a bare Ollama endpoint has no such concept, and — like
+ * every unknown GET there — an OpenWebUI 404 returns the frontend HTML, so a non-JSON
+ * body means "not an OpenWebUI server" rather than an error worth throwing. Both cases
+ * degrade to an empty list: "this server has no server-side tools" is the honest
+ * answer, not a failure.
+ *
+ * A tool server (OpenAPI/MCP) lists as ONE entry with no specs — OpenWebUI resolves its
+ * function list only at call time — so `functions` is empty there by design.
+ *
+ * @returns {Promise<ServerTool[]>} The tools this API key may use; empty on a non-OpenWebUI server.
+ */
+async function listServerTools(): Promise<ServerTool[]> {
+    const config = await getConfig();
+    const origin = new URL(config.chatUrl).origin;
+
+    let list: any;
+    try {
+        const res = await fetch(`${origin}/api/v1/tools/`, { headers: authHeaders(config) });
+        if (!res.ok) return [];
+        list = await res.json();
+    } catch {
+        return [];   // unreachable, or the SPA HTML (not OpenWebUI)
+    }
+    if (!Array.isArray(list)) return [];
+
+    return list.map((t: any): ServerTool => ({
+        id: t.id,
+        name: t.name || t.id,
+        description: t.meta?.description || "",
+        // The synthetic ids OpenWebUI mints for proxied servers: `server:<id>` (OpenAPI)
+        // and `server:mcp:<id>`. Anything else is a local Python tool.
+        kind: String(t.id).startsWith("server:mcp:") ? "mcp"
+            : String(t.id).startsWith("server:") ? "openapi" : "local",
+        functions: (Array.isArray(t.specs) ? t.specs : []).map((s: any) => ({
+            name: s.name,
+            description: s.description || "",
+            parameters: s.parameters || null,
+        })),
+    })).filter((t: ServerTool) => !!t.id);
+}
+
 // Persistently switches the default model, validating against the server's
 // model list so page scripts can't write junk into the saved config.
 async function setModel(model: unknown): Promise<string> {
@@ -1084,6 +1128,16 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 const keep = (m: string) => modelFilterAllows(m, cfg.modelFilter);
                 sendResponse({ data: ids.filter(keep), ollamaModels: ollamaModels ? ollamaModels.filter(keep) : null });
             })
+            .catch(err => sendResponse({ error: err.message }));
+        return true;
+
+    } else if (message.type === "LIST_SERVER_TOOLS") {
+        // Read-only discovery of what `toolIds` accepts. No sender gating: the tool
+        // list is scoped to the saved API key by OpenWebUI itself (its access control),
+        // and names/specs are no more secret than the model list — the URL and key stay
+        // behind the worker either way.
+        listServerTools()
+            .then(tools => sendResponse({ data: tools }))
             .catch(err => sendResponse({ error: err.message }));
         return true;
 

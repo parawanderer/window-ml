@@ -39,7 +39,7 @@ To add a new one, touch three files:
    or `sendResponse({ error })`; `return true` to keep the channel open.
 
 Existing message types: `FETCH_LLM`, `LIST_MODELS`, `GET_MODEL`, `GET_CONFIG`,
-`SET_MODEL`, `MODEL_CAPS`, `OLLAMA_PS`, `OLLAMA_UNLOAD`, `FETCH_IMAGE_B64`,
+`SET_MODEL`, `MODEL_CAPS`, `LIST_SERVER_TOOLS`, `OLLAMA_PS`, `OLLAMA_UNLOAD`, `FETCH_IMAGE_B64`,
 `CAPTURE_TAB`, `SAVE_SESSION`, `GET_SESSION`, `PYTHON_EXEC`, `FETCH_SHEET`. Plus
 **`ABORT_TASK`** (cancel an in-flight task by requestId; the page posts `ABORT_REQUEST`,
 `content.js` relays it) and the streaming `LLM_STREAM_*` port — both handled outside HANDLE_MAP.

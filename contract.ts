@@ -510,6 +510,7 @@ export type PageRequestType =
     | "GET_MODEL_REQUEST" | "CONFIG_REQUEST" | "SET_MODEL_REQUEST" | "CAPS_REQUEST"
     | "PS_REQUEST" | "UNLOAD_REQUEST" | "CAPTURE_TAB_REQUEST"
     | "SAVE_SESSION_REQUEST" | "GET_SESSION_REQUEST" | "PYTHON_EXEC_REQUEST" | "FETCH_SHEET_REQUEST"
+    | "LIST_SERVER_TOOLS_REQUEST"   // discover the OpenWebUI server-side tools this key may use (valid `toolIds`)
     | "INVOCATION_REQUEST"   // how the user can open the HUD here (live shortcut — user-rebindable, never hardcode it)
     | "START_RUN_REQUEST"   // design A: kick off a background-hosted ml.agent loop
     | "RESUME_RUN_REQUEST"   // design A: continue a background-hosted run (append a follow-up turn to its stored history)
@@ -520,6 +521,7 @@ export type BackgroundMessageType =
     | "FETCH_LLM" | "FETCH_IMAGE_B64" | "LIST_MODELS" | "GET_MODEL" | "GET_CONFIG"
     | "SET_MODEL" | "MODEL_CAPS" | "OLLAMA_PS" | "OLLAMA_UNLOAD" | "CAPTURE_TAB"
     | "SAVE_SESSION" | "GET_SESSION" | "PYTHON_EXEC" | "FETCH_SHEET" | "FETCH_SHEET_TITLE"
+    | "LIST_SERVER_TOOLS"   // GET OpenWebUI /api/v1/tools/ — the server-side tools, with their function specs
     | "GET_INVOCATION"   // read chrome.commands' LIVE shortcut for the HUD (+ whether the user rebound it)
     | "ABORT_TASK"    // abort the AbortController registered for a requestId (only FETCH_LLM registers one today)
     | "START_RUN"     // design A: run an ml.agent loop in the background (unforgeable gate); tools delegate to the page
@@ -699,6 +701,28 @@ export interface LoadedModel {
     sizeGB: number | null;
     contextLength: number | null;
     expiresAt: string | null;
+}
+
+/** One function exposed by an OpenWebUI server-side tool. A tool bundles several
+ *  (a Python tool class = one function per method), which is why `toolIds` selects
+ *  the BUNDLE while the model calls an individual `name`. */
+export interface ServerToolFunction {
+    name: string;
+    description: string;
+    /** JSON-Schema parameters, exactly as the model would be shown them. */
+    parameters: JsonSchema | null;
+}
+
+/** An OpenWebUI server-side tool, as listed by `ml.serverTools()`. `id` is what you
+ *  pass in `ml.chat`'s `toolIds`. `kind` distinguishes a local Python tool from a
+ *  proxied OpenAPI/MCP tool server — the servers list as a single entry whose
+ *  functions OpenWebUI only resolves at call time, hence the empty `functions`. */
+export interface ServerTool {
+    id: string;
+    name: string;
+    description: string;
+    kind: "local" | "openapi" | "mcp";
+    functions: ServerToolFunction[];
 }
 
 /* ------------------- debug sidebar contract (core → sidebar, window bus) ------------------- */
@@ -886,6 +910,10 @@ export interface MlApi {
     setModel(model: string): Promise<string>;
     ps(): Promise<LoadedModel[]>;
     unload(model?: string | null): Promise<string[]>;
+    /** List the OpenWebUI server-side tools available to the configured API key —
+     *  the valid ids for `ml.chat`'s `toolIds`, with each one's function specs.
+     *  Empty on a bare-Ollama endpoint (no such concept). */
+    serverTools(): Promise<ServerTool[]>;
 
     /** Resolves once window.ml is fully wired (synchronous; set right after
      *  injection). See the `ml:ready` event for the pre-resolution hook. */

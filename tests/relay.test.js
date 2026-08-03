@@ -70,6 +70,18 @@ test("ml.capabilities relays a MODEL_CAPS request and returns the capability lis
     assert.deepEqual(caps, ["completion", "tools", "thinking"]);
 });
 
+test("ml.serverTools relays a LIST_SERVER_TOOLS request and returns the tool list", async () => {
+    const tools = [{ id: "searxng_web_search", name: "SearXNG", description: "", kind: "local", functions: [] }];
+    const world = loadPageWorld({
+        onRuntimeMessage: (msg) => {
+            assert.equal(msg.type, "LIST_SERVER_TOOLS");
+            return { data: tools };
+        }
+    });
+
+    assert.deepEqual(await world.ml.serverTools(), tools);
+});
+
 test("ml.config relays a GET_CONFIG request and returns the non-secret config", async () => {
     const world = loadPageWorld({
         onRuntimeMessage: (msg) => {

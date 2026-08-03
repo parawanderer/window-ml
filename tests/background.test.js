@@ -890,6 +890,47 @@ test("LIST_MODELS reports ollamaModels: null when the source can't tell (/v1/mod
     assert.deepEqual(res, { data: ["x"], ollamaModels: null });   // unknown, not "none"
 });
 
+test("LIST_SERVER_TOOLS returns the tool ids + their function specs (valid toolIds)", async () => {
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            assert.equal(call.url, "http://host/api/v1/tools/");
+            assert.equal(call.opts.headers.Authorization, "Bearer sk-test");
+            return jsonResponse([
+                {
+                    id: "searxng_web_search",
+                    name: "SearXNG Web Search",
+                    meta: { description: "Search the web." },
+                    specs: [{ name: "search", description: "Run a query.", parameters: { type: "object", properties: { q: { type: "string" } } } }],
+                },
+                { id: "server:weather", name: "Weather API", meta: { description: "OpenAPI server." } },
+                { id: "server:mcp:files", name: "Files", meta: {} },
+            ]);
+        }
+    });
+
+    const res = await bg.send({ type: "LIST_SERVER_TOOLS" });
+    assert.deepEqual(res.data.map(t => [t.id, t.kind]), [
+        ["searxng_web_search", "local"],
+        ["server:weather", "openapi"],
+        ["server:mcp:files", "mcp"],
+    ]);
+    assert.deepEqual(res.data[0].functions, [
+        { name: "search", description: "Run a query.", parameters: { type: "object", properties: { q: { type: "string" } } } },
+    ]);
+    // A proxied server lists as one entry; OpenWebUI resolves its functions only at call time.
+    assert.deepEqual(res.data[1].functions, []);
+});
+
+test("LIST_SERVER_TOOLS returns [] on a non-OpenWebUI server (no such concept)", async () => {
+    // Bare Ollama 404s the route; OpenWebUI itself answers unknown GETs with the SPA HTML.
+    for (const response of [htmlResponse(404), htmlResponse(200)]) {
+        const bg = loadBackground({ config: baseConfig(), onFetch: () => response });
+        const res = await bg.send({ type: "LIST_SERVER_TOOLS" });
+        assert.deepEqual(res, { data: [] }, "degrades to empty, not an error");
+    }
+});
+
 test("LIST_MODELS ignores config overrides from page-originated messages", async () => {
     const bg = loadBackground({
         config: baseConfig(),

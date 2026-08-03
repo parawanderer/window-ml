@@ -131,6 +131,7 @@ list. See [docs/CLOUD-MODELS.md](docs/CLOUD-MODELS.md).
 | `ml.agent(task, options?)` | Plain-English page agent: runs the whole loop over built-in DOM recon tools (and auto-wired vision) until it acts or answers. Returns `{ summary, steps, transcript, elements, hash }`. See [Agent](#tools-agents). |
 | `ml.createAgent(options?)` | A resumable agent handle (`run`/`continue`/`cancel` + `hash`) — the agent analogue of `createChat`. See [Agent](#tools-agents). |
 | `ml.chat(prompt, { toolIds })` | Server-side tools: OpenWebUI runs the tools and returns the finished answer. See [Tools](#tools-agents). |
+| `ml.serverTools()` | List the server-side tools your key may use — the valid `toolIds`, each with its function specs. `[]` on a non-OpenWebUI endpoint. |
 | `ml.logChat` / `ml.logChatShort` | `console.log` variants. |
 
 Options (all optional, both for `chat` and `createChat`):
