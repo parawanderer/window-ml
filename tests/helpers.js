@@ -76,7 +76,7 @@ function streamResponse(lines, { status = 200 } = {}) {
 
 // Loads background.js. `onFetch` receives { url, opts, body } (body already
 // JSON-parsed for requests that have one) and returns a response stub.
-function loadBackground({ config = {}, onFetch, onCaptureTab, onPyRun }) {
+function loadBackground({ config = {}, onFetch, onCaptureTab, onPyRun, onTabMessage }) {
     const calls = [];
     const captures = [];        // captureVisibleTab arg lists, for screenshot tests
     const tabMessages = [];     // chrome.tabs.sendMessage arg lists, for reverse-channel tests
@@ -142,7 +142,9 @@ function loadBackground({ config = {}, onFetch, onCaptureTab, onPyRun }) {
                 },
                 // Records (tabId, message) so reverse-channel tests can assert what the background
                 // relays to a tab's content script (e.g. ML_HL_REMOTE). Resolves like the real API.
-                sendMessage: async (...args) => { tabMessages.push(args); return undefined; },
+                // Records (tabId, message); onTabMessage (if given) can inspect it AND drive side effects —
+                // e.g. simulate the page tool calling FETCH_SHEET back during a RUN_TOOL_IN_PAGE delegation.
+                sendMessage: async (...args) => { tabMessages.push(args); return onTabMessage ? await onTabMessage(...args) : undefined; },
             }
         }
     };

@@ -1294,6 +1294,53 @@ test("SECURITY (positive): a TRUSTED surface (sender.tab undefined) keeps full p
     assert.equal(bg.pyRuns.find(m => m.type === "PY_RUN")?.hardened, false, "trusted surface may run full mode");
 });
 
+test("SECURITY (grant): an approved agent run lets THAT sheet read (untrusted page) mid-run, then clears", async () => {
+    // End-to-end: a design-A run's python_exec (approved in the iframe) mints a per-sheet grant in
+    // delegateTool; the page's FETCH_SHEET during that delegation succeeds — but a DIFFERENT sheet is
+    // still refused, and after the run the grant is gone. Proves the fix DOESN'T break the agent flow.
+    const TAB = 7, PAGE = { tab: { id: TAB, url: "https://untrusted.example/x" } };
+    const OK_URL = "https://docs.google.com/spreadsheets/d/APPROVED_SHEET_A/export?format=csv&gid=0";
+    const OTHER_URL = "https://docs.google.com/spreadsheets/d/OTHER_SHEET_B/export?format=csv&gid=0";
+    const sheetCsv = () => ({ ok: true, status: 200, headers: { get: (k) => /content-disposition/i.test(k) ? 'attachment; filename="S - Sheet1.csv"' : "text/csv" }, text: async () => "A\n1\n" });
+    let approvedRead, otherRead;
+    let turn = 0;
+    const bg = loadBackground({
+        config: baseConfig(),   // untrusted.example NOT whitelisted
+        onFetch: (call) => {
+            if (call.url.includes("docs.google.com")) return sheetCsv();   // the FETCH_SHEET's credentialed fetch
+            // The model: turn 1 → call python_exec(full) loading the sheet; turn 2 → finish.
+            return (++turn === 1)
+                ? jsonResponse({ choices: [{ finish_reason: "tool_calls", message: { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "python_exec", arguments: JSON.stringify({ code: "df", mode: "full", tables: { df: OK_URL } }) } }] } }] })
+                : jsonResponse({ choices: [{ message: { content: "done" } }] });
+        },
+        onTabMessage: async (tabId, msg) => {
+            // Approve the pending python_exec gate the instant it surfaces (the iframe's role).
+            if (msg?.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) {
+                void bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
+                return;
+            }
+            // The APPROVED delegation (not the renderOnly preview) — grant is active now.
+            if (msg?.type === "RUN_TOOL_IN_PAGE" && msg.payload?.name === "python_exec" && !msg.payload?.renderOnly && !msg.payload?.precheck && !msg.payload?.readonlyTry) {
+                approvedRead = await bg.send({ type: "FETCH_SHEET", payload: { url: OK_URL } }, PAGE);
+                otherRead = await bg.send({ type: "FETCH_SHEET", payload: { url: OTHER_URL } }, PAGE);   // different sheet → refused
+                return { result: "ran python" };
+            }
+            return undefined;
+        },
+    });
+    await bg.send({ type: "START_RUN", payload: {
+        runId: "grun", task: "read the sheet", systemPrompt: "sys",
+        tools: [{ name: "python_exec", description: "run python", parameters: { type: "object", properties: {} }, requiresApproval: true, capabilities: [], precheck: false }],
+        model: "m", think: null, maxSteps: 4, autoApprovePython: false, autoApproveReadonly: false, surface: "off",
+    } }, PAGE);
+
+    assert.ok(approvedRead?.data?.csv, `the APPROVED sheet read during the run (got ${JSON.stringify(approvedRead)})`);
+    assert.ok(otherRead?.error, "a DIFFERENT sheet is still refused (grant is bound to the approved id)");
+    // After the delegation, the grant is cleared → a later read of even the approved sheet is refused.
+    const afterRead = await bg.send({ type: "FETCH_SHEET", payload: { url: OK_URL } }, PAGE);
+    assert.ok(afterRead?.error, "the grant is one-time: after the run, the same sheet is refused again");
+});
+
 // ---- ABORT_TASK: cancel an in-flight FETCH_LLM (ml.agent's signal → killed generation) ----
 
 test("ABORT_TASK aborts the in-flight FETCH_LLM fetch for its requestId (kills a slow generation)", async () => {
