@@ -1,10 +1,11 @@
 # Spec: enforce privileged-op consent at the BACKGROUND choke point
 
-Status: **implemented** (background.ts: `senderTrust` + `pendingGrants` +
-`isBlockedFetchTarget`; the four handler guards). The five `SECURITY (…)` tests in
-`tests/background.test.js` pass. TODO: a grant-*positive* integration test (an
-approved agent run reads THAT sheet, then the grant clears) — the design is sound
-and the refusal paths are proven, but the allow-path isn't yet asserted end-to-end.
+Status: **implemented + tested** (background.ts: `senderTrust` + `pendingGrants` +
+`isBlockedFetchTarget`; the four handler guards). `tests/background.test.js` covers
+it: four `SECURITY (…)` refusal tests, a trusted-surface positive, and a
+grant-*positive* end-to-end (`SECURITY (grant)`) — an approved design-A run reads
+THAT sheet mid-delegation, a different sheet is still refused, and the grant clears
+after the run.
 
 ## The holes (both demonstrated by the `todo` tests)
 
