@@ -3,7 +3,7 @@
 // ring, the in-agent-run depth counter (so a tool's internal ml.chat doesn't spawn
 // orphan sessions), and the same-tab session registry.
 
-import type { MlDebugEvent, MlHistory } from "./contract";
+import type { AgentResult, MlDebugEvent, MlHistory } from "./contract";
 
 // ---- Debug sidebar event stream (see sidebar app) ----
 // The opt-in sidebar lives in the isolated content-script world; it can't read
@@ -81,3 +81,14 @@ export const shortHash = (): string => {
 // one without a reload. Cross-reload/tab resume goes through storage ({ save:true }
 // only). In-memory → cleared on reload.
 export const sessionRegistry = new Map<string, MlHistory>();
+
+/** A resumable ml.agent run held in this tab. `resume(task)` appends a follow-up user
+ *  turn and re-enters the run's loop under the SAME hash — so the sidebar/HUD append to
+ *  the existing session. In-memory (this tab, this page-life) like sessionRegistry; the
+ *  page-loop path registers a live one here. (Background-hosted runs resume via a later
+ *  RESUME_RUN round-trip — the messages live in the service worker, not here.) */
+export interface AgentRunHandle {
+    hash: string;
+    resume(task: string): Promise<AgentResult>;
+}
+export const agentRegistry = new Map<string, AgentRunHandle>();

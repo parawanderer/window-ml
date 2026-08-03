@@ -639,6 +639,86 @@ test("agent: aborting DURING the model call rejects the fetch and resolves as ca
     assert.equal(abortRelayed, true, "an ABORT_TASK was relayed to the background to kill the in-flight fetch");
 });
 
+// ---- agent append/resume (createAgent / { resume }) ----
+
+test("agent: result carries a session hash, and { resume } appends a follow-up turn to the SAME run", async () => {
+    // Turn 1: ping → reply. Turn 2 (resumed): pong → reply. One scripted model serves both.
+    const world = loadPageWorld({
+        onRuntimeMessage: scriptedModel([
+            toolCall("ping", { x: 1 }, "c1"), reply("first answer"),
+            toolCall("pong", { y: 2 }, "c2"), reply("second answer"),
+        ]),
+    });
+    const ping = world.ml.defineTool({ name: "ping", run: () => "pinged" });
+    const pong = world.ml.defineTool({ name: "pong", run: () => "ponged" });
+
+    const first = await world.ml.agent("do the first thing", { tools: [ping, pong], maxSteps: 5, vision: false });
+    assert.match(first.hash, /^[0-9a-f]{8}$/, "the result carries a git-like session hash");
+    assert.equal(first.summary, "first answer");
+
+    const second = await world.ml.agent("now the second thing", { resume: first.hash });
+    assert.equal(second.hash, first.hash, "resuming keeps the SAME session hash");
+    assert.equal(second.summary, "second answer");
+
+    // The resumed turn's FIRST model call saw the FULL accumulated history: system, the first task, the
+    // first tool round-trip, the first ANSWER (pushed so context survives), then the new user turn last.
+    const modelCalls = world.runtimeCalls.filter(c => c.payload && c.payload.messages);
+    const resumedFirst = modelCalls.find(c => c.payload.messages.at(-1).content === "now the second thing");
+    assert.ok(resumedFirst, "a resumed model call has the follow-up task as its last user turn");
+    const resumedMsgs = resumedFirst.payload.messages;
+    assert.equal(resumedMsgs[0].role, "system");
+    assert.equal(resumedMsgs[1].content, "do the first thing");
+    assert.ok(resumedMsgs.some(m => m.role === "assistant" && m.content === "first answer"), "the prior answer is in the resumed context");
+    // The resumed turn reused the ORIGINAL toolset (no tools passed on the resume call).
+    assert.deepEqual(second.transcript, [{ tool: "pong", arguments: { y: 2 }, result: "ponged" }]);
+});
+
+test("agent: { silent } rides the run's debug config so the HUD card can stay hidden", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("done")]) });
+    const events = [], win = world.context.window;
+    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    win.postMessage({ __mlSidebar: "ready" });
+    await new Promise(r => setTimeout(r, 0));
+
+    await world.ml.agent("quietly", { silent: true, vision: false });
+    const start = events.find(e => e.kind === "agent");
+    assert.equal(start.config.silent, true, "a silent run flags its debug config so the card suppresses itself");
+
+    // A normal run does NOT set it (so the card behaves as usual).
+    events.length = 0;
+    await world.ml.agent("loudly", { vision: false });
+    assert.ok(!events.find(e => e.kind === "agent").config.silent, "a normal run leaves silent unset");
+});
+
+test("agent: resuming an unknown hash throws (never silently starts a fresh run)", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("nope")]) });
+    await assert.rejects(
+        () => world.ml.agent("go", { resume: "deadbeef" }),
+        /no resumable run "deadbeef"/,
+    );
+    assert.equal(world.runtimeCalls.filter(c => c.payload && c.payload.messages).length, 0, "no model call was made for a bad resume");
+});
+
+test("createAgent: run() then continue() drive one session; continue() before run() throws", async () => {
+    const world = loadPageWorld({
+        onRuntimeMessage: scriptedModel([reply("hello"), reply("goodbye")]),
+    });
+    const a = world.ml.createAgent({ maxSteps: 4, vision: false });
+    assert.equal(a.hash, null, "no hash until run() starts it");
+    await assert.rejects(() => a.continue("too early"), /run\(task\)/, "continue() before run() is an error");
+
+    const r1 = await a.run("start");
+    assert.match(a.hash, /^[0-9a-f]{8}$/, "run() populates the handle hash");
+    assert.equal(r1.hash, a.hash);
+
+    const r2 = await a.continue("more");
+    assert.equal(r2.hash, a.hash, "continue() stays in the same session");
+    assert.equal(r2.summary, "goodbye");
+    const resumedMsgs = world.runtimeCalls.filter(c => c.payload && c.payload.messages).at(-1).payload.messages;
+    assert.equal(resumedMsgs[1].content, "start");
+    assert.equal(resumedMsgs.at(-1).content, "more");
+});
+
 test("a tool call missing a required arg short-circuits with the schema error (tool NOT run)", async () => {
     let ran = 0;
     const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall("needsIt", { y: 1 }, "c1"), reply("ok")]) });

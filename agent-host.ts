@@ -54,7 +54,9 @@ export interface RunAgentHostDeps {
 
 /** Run one agent task in the background, delegating tool execution to the page. This is the design-A
  *  counterpart of the page-side ml.agent loop; both share runAgentLoop's gate-before-execute invariant. */
-export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps): Promise<AgentResult> {
+// Returns AgentResult WITHOUT `hash` (see runAgentLoop): the page-side ml.agent caller owns the
+// run's hash (runHash) and stamps it onto the result it hands back — the background never mints one.
+export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps): Promise<Omit<AgentResult, "hash">> {
     // Format-neutral message plumbing — the background's fetchLLM (callModel) converts to the wire form
     // per API format, so the host only deals in NeutralMessage.
     const buildMessages = (task: string): NeutralMessage[] => [

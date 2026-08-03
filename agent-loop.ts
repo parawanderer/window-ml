@@ -73,13 +73,15 @@ const normalize = (d: ApprovalDecision, orig: Record<string, unknown>): { approv
     return { approved: !!d, feedback: null, arguments: orig };
 };
 
-export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: AgentLoopDeps): Promise<AgentResult> {
+// Returns AgentResult WITHOUT `hash` — this loop is identity-agnostic; the page-side ml.agent
+// caller stamps the run's hash onto the result (it owns runHash). See injected.ts's background path.
+export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: AgentLoopDeps): Promise<Omit<AgentResult, "hash">> {
     const { tools, maxSteps = 10, signal } = opts;
     const byName = new Map(tools.map(t => [t.name, t]));
     const messages = deps.buildMessages(task);
     const transcript: AgentTranscriptEntry[] = [];
     let seq = 0;
-    const cancelled = (steps: number): AgentResult => ({ summary: "Cancelled by the caller.", steps, transcript, elements: [], cancelled: true });
+    const cancelled = (steps: number): Omit<AgentResult, "hash"> => ({ summary: "Cancelled by the caller.", steps, transcript, elements: [], cancelled: true });
 
     for (let step = 1; step <= maxSteps; step++) {
         if (signal?.aborted) return cancelled(step - 1);

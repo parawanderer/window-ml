@@ -8,6 +8,9 @@ import type {
     ApprovalRequest,
     ApprovalDecision,
     AgentResult,
+    AgentOptions,
+    MlAgentHandle,
+    MlApi,
     AgentTranscriptEntry,
     SessionRef,
     DebugChatStart,
@@ -36,7 +39,7 @@ import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, PT_LOOK_
 import type { ShotBox } from "./contract";
 import { annotate, pickAccentColorForTarget } from "./som";
 import { suspiciousArgsWarning, suspiciousChars } from "./security";
-import { emitDebug, debugId, shortHash, sessionRegistry, enterAgentRun, exitAgentRun } from "./bus";
+import { emitDebug, debugId, shortHash, sessionRegistry, agentRegistry, enterAgentRun, exitAgentRun } from "./bus";
 import { makeDomTools } from "./tools";
 import { hideSidebarForShot, makeBackgroundTaskPromise, makeChatRequest, makeStreamingTaskPromise } from "./bridge";
 import { validateArgs, validateExtend } from "./validate";
@@ -394,7 +397,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          *   `elements` is the live DOM node(s) the model designated via an
          *   `answer`-capable tool (empty for tasks that just act on the page).
          */
-        agent: async function(task: string, { tools = null, extraTools = [], system = null, hints = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null }: {
+        agent: async function(task: string, { tools = null, extraTools = [], system = null, hints = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null, resume = null, silent = false }: {
             tools?: MlTool[] | null;
             extraTools?: MlTool[];
             system?: string | null;
@@ -408,7 +411,21 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             vision?: boolean | string | null;
             logDebug?: boolean;
             signal?: AbortSignal | null;
+            resume?: string | null;
+            silent?: boolean;
         } = {}): Promise<AgentResult> {
+            // Resume a run held in this tab: reuse its stored loop (same toolset/system/model +
+            // accumulated messages), appending `task` as a follow-up user turn under the SAME hash,
+            // so the sidebar/HUD keep it as one conversation. Only page-hosted runs register here;
+            // a background/off-mode run's history lives in the service worker (resumes via a later
+            // RESUME_RUN round-trip), so its hash won't be found → a clear error rather than a silent
+            // fresh run. `resume` also short-circuits the (expensive) toolset/config resolution below.
+            if (resume) {
+                if (!task || typeof task !== "string") throw new Error("ml.agent(task, { resume }) needs a follow-up task string.");
+                const handle = agentRegistry.get(resume);
+                if (!handle) throw new Error(`ml.agent: no resumable run "${resume}" in this tab. (Same-tab page-hosted runs resume in-memory; a background/off-mode run isn't resumable this way yet.)`);
+                return handle.resume(task);
+            }
             const toolset = [...(tools || this.domTools || []), ...extraTools];
             // Config, fetched once (used for vision resolution + the read-only exec
             // auto-approve fast-path below).
@@ -495,7 +512,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             emitDebug({ kind: "agent", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, task, model: runModel, maxSteps, config: {
                 system: systemPrompt, customSystem: !!system,
                 tools: toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval, vision: !!(t.capabilities && t.capabilities.includes("vision")), description: t.description, parameters: t.parameters, summary: t.summary })),
-                maxSteps, think: (think === true || think === false) ? think : null, env, vision: vision ?? null, hints: hints || null,
+                maxSteps, think: (think === true || think === false) ? think : null, env, vision: vision ?? null, hints: hints || null, silent: silent || undefined,
             } });
 
             // ── Design A: route through the BACKGROUND loop so the approval gate lives at the extension
@@ -536,7 +553,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     // The real DOM nodes an answer-capable tool returned stayed page-side (they can't cross
                     // the bus) — assemble AgentResult.elements from the page-side run record here.
                     const run = endRun(runHash);
-                    const full: AgentResult = { ...res, elements: run ? run.answered : [] };
+                    const full: AgentResult = { ...res, elements: run ? run.answered : [], hash: runHash };
                     emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: res.steps }, summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled });
                     return full;
                 } catch (e) {
@@ -545,7 +562,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     // not throw) with the partial run. (The background fetch isn't killed yet — v1 caveat.)
                     if (signal?.aborted) {
                         emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, summary: "Cancelled by the caller.", steps: 0, hitCap: false, cancelled: true });
-                        return { summary: "Cancelled by the caller.", steps: 0, transcript: [], elements: run ? run.answered : [], cancelled: true };
+                        return { summary: "Cancelled by the caller.", steps: 0, transcript: [], elements: run ? run.answered : [], cancelled: true, hash: runHash };
                     }
                     // A FATAL error (e.g. the model call failed) — surface it so the sidebar/card don't hang
                     // as "running", then re-throw so ml.agent() still rejects. (No-op in off mode, where the
@@ -575,14 +592,19 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             // The two render slots for a tool step (In = the call, Out = the result) are computed by
             // the shared `descriptorFor` (render-descriptor.ts) — the SAME function run-delegation.ts
             // uses on the background path, so both surfaces render identically.
-            const finish = (r: AgentResult): AgentResult => {
+            const finish = (r: Omit<AgentResult, "hash">): AgentResult => {
                 emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: r.steps }, summary: r.summary, steps: r.steps, hitCap: !!r.hitCap, cancelled: !!r.cancelled });
-                return r;
+                return { ...r, hash: runHash };
             };
             // Caller aborted via opts.signal → stop the loop, resolve (not reject) with the partial
             // run marked cancelled, mirroring the hitCap convention (the transcript so far is useful).
             const cancelled = (step: number): AgentResult =>
                 finish({ summary: "Cancelled by the caller.", steps: step, transcript, elements: answered, cancelled: true });
+            // The loop body, extracted so a resume can RE-ENTER it: `messages` (system + the whole
+            // accumulated conversation) is a closure, so pushing a follow-up user turn and calling
+            // drive() again continues the SAME run — same runHash, same toolset, growing transcript.
+            const drive = async (): Promise<AgentResult> => {
+            transcript.length = 0; answered.length = 0;   // per-turn: each run()/continue() reports ITS OWN actions (the session history lives in `messages`)
             enterAgentRun();   // suppress orphan chat sessions from internal tool chats (see emitDebug); finally-decremented below
             try {
             for (let step = 1; step <= maxSteps; step++) {
@@ -599,6 +621,10 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 if (!msg.tool_calls || !msg.tool_calls.length) {
                     // Final answer step: emit its usage (the run's peak context) + reasoning, no tool.
                     if (msg.usage || msg.reasoning) emit({ step, usage: msg.usage, reasoning: msg.reasoning });
+                    // Record the answer in the history so a resume (ml.agent(task, { resume })) continues
+                    // WITH the prior reply in context — otherwise the follow-up turn would lose it. Harmless
+                    // for a one-shot run (the messages array is discarded when nothing resumes it).
+                    messages.push({ role: "assistant" as const, content: msg.content || "" });
                     return finish({ summary: (msg.content || "").trim(), steps: step - 1, transcript, elements: answered });
                 }
                 // `content` is the assistant's user-facing PROSE (shown as the step's thought);
@@ -741,6 +767,46 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 if (!signal?.aborted) emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, summary: "", steps: 0, hitCap: false, error: (e as Error)?.message || String(e) });
                 throw e;
             } finally { exitAgentRun(); }
+            };
+            // Register this run so ml.agent(task, { resume: runHash }) / ml.createAgent(...).continue()
+            // can append a follow-up turn later (same tab, same page-life).
+            agentRegistry.set(runHash, {
+                hash: runHash,
+                resume: (t: string) => { messages.push({ role: "user" as const, content: t }); return drive(); },
+            });
+            return drive();
+        },
+        /**
+         * A resumable agent session — the agent analogue of {@link module:ml.createChat}.
+         * `run(task)` starts the run; once it resolves, `continue(task)` appends a follow-up
+         * task to the SAME session (same hash, same toolset, accumulated history), so the
+         * sidebar/HUD keep it as one conversation. Thin sugar over ml.agent's `resume` option.
+         *   const a = ml.createAgent({ maxSteps: 20 });
+         *   await a.run("find the login form");
+         *   await a.continue("now fill it with test@example.com");
+         * @param {AgentOptions} [opts] the same options as ml.agent (tools, model, vision, …)
+         * @returns {MlAgentHandle} a handle with run/continue/cancel + the run's hash
+         */
+        createAgent: function(opts: AgentOptions = {}): MlAgentHandle {
+            const self = this as unknown as MlApi;
+            const ctrl = new AbortController();
+            // Own an AbortController so handle.cancel() works; if the caller already passed a signal,
+            // respect theirs (cancel() then only aborts via ours — a documented minor caveat).
+            const runOpts: AgentOptions = { ...opts, signal: opts.signal || ctrl.signal };
+            const handle: MlAgentHandle = {
+                hash: null,
+                async run(task: string): Promise<AgentResult> {
+                    const r = await self.agent(task, runOpts);
+                    handle.hash = r.hash;
+                    return r;
+                },
+                async continue(task: string): Promise<AgentResult> {
+                    if (!handle.hash) throw new Error("ml.createAgent: call run(task) and let it finish before continue(task).");
+                    return self.agent(task, { ...runOpts, resume: handle.hash });
+                },
+                cancel(): void { ctrl.abort(); },
+            };
+            return handle;
         },
         /**
          * A de-duplicating approval gate for {@link module:ml.agent}: prompts (via

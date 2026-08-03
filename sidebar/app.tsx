@@ -1976,12 +1976,16 @@ function CardApp() {
     // "quiet" HUD mode still suppresses the idle/working pill (the card only surfaces for approvals/answers).
     const running = !!run && !pending && !done;
     const quiet = config.value.agentHud === "quiet";
-    const showOrb = (running || starting) && !quiet;
+    // A `silent` run (ml.agent({ silent: true })) is a scripting utility: keep it OUT of the HUD — no
+    // working orb, no answer card. Approvals STILL surface (privileged consent can't be silenced), so
+    // `pending` below is unaffected; only the ambient orb + the finished-answer card are suppressed.
+    const silent = !!run?.agentConfig?.silent;
+    const showOrb = (running || starting) && !quiet && !silent;
     const hovering = orbHover.value;                           // hovering the orb → stretch to a labelled capsule
     const state = composing ? "composer"                       // the composer takes over — centered Spotlight bar
-        : pending ? "expanded"                                 // an approval: show the action directly
+        : pending ? "expanded"                                 // an approval: show the action directly (even for a silent run)
             : showOrb ? (hovering ? "orblabel" : "orb")       // in flight → the liquid tool orb (capsule on hover)
-                : (done && !dismissed) ? (cardCollapsed.value ? "toast" : "expanded")   // finished: the answer
+                : (done && !dismissed && !silent) ? (cardCollapsed.value ? "toast" : "expanded")   // finished: the answer
                     : "hidden";
 
     useEffect(() => { window.parent.postMessage({ __mlSidebarCard: state }, "*"); }, [state]);

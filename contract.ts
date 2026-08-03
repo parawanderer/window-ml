@@ -350,6 +350,7 @@ export interface AgentResult {
     elements: Node[];               // nodes designated via an answer-capable tool
     hitCap?: boolean;
     cancelled?: boolean;            // the caller aborted via opts.signal (partial transcript preserved)
+    hash: string;                   // the run's session hash — pass to ml.agent(task, { resume }) to continue it
 }
 
 /** One live tracer event from ml.agent's `onStep` (a transcript entry + the
@@ -381,6 +382,18 @@ export interface AgentOptions {
     vision?: boolean | string | null;   // auto-wire a `look` tool (null = probe)
     logDebug?: boolean;            // install the built-in console tracer
     signal?: AbortSignal | null;   // abort the loop between steps → resolves { cancelled: true } with the partial run
+    resume?: string | null;        // continue the run with this hash: append `task` as a follow-up turn (same session)
+    silent?: boolean;              // scripting mode: keep this run OUT of the in-page HUD (no working orb, no answer card). Approvals STILL surface (privileged consent can't be silenced). The debug sidebar/panel is unaffected.
+}
+
+/** A stateful ml.agent handle (what ml.createAgent returns) — the agent analogue of
+ *  ml.createChat's history. Keeps the run's hash so follow-ups continue the SAME
+ *  session: `run(task)` starts it, `continue(task)` appends another task once it's done. */
+export interface MlAgentHandle {
+    hash: string | null;                        // the run's session hash (null until run() has started it)
+    run(task: string): Promise<AgentResult>;    // start the run (first task)
+    continue(task: string): Promise<AgentResult>;   // append a follow-up task to the same session (after run() resolves)
+    cancel(): void;                             // abort the in-flight turn (resolves { cancelled: true })
 }
 
 /* ----------------------------- call options ---------------------------- */
@@ -654,6 +667,7 @@ export interface DebugAgentConfig {
     env: boolean;
     vision: boolean | string | null;
     hints: string | null;
+    silent?: boolean;       // scripting run: kept out of the in-page HUD (the card reads this to stay hidden)
 }
 export interface DebugAgentStart extends DebugBase { kind: "agent"; task: string; model: string | null; maxSteps: number; config: DebugAgentConfig; }
 export interface DebugAgentStep extends DebugBase {
@@ -727,6 +741,10 @@ export interface MlApi {
      *  page-aware entry point — unlike ml.chat, the model discovers and acts on the live DOM
      *  through tools (and vision), one step at a time. Use it for anything about "this page". */
     agent(task: string, opts?: AgentOptions): Promise<AgentResult>;
+    /** A resumable agent session (the agent analogue of ml.createChat): run(task) starts it,
+     *  continue(task) appends follow-ups to the SAME session. Sugar over ml.agent's
+     *  { resume } option, sharing one hash so the sidebar/HUD keep it as one conversation. */
+    createAgent(opts?: AgentOptions): MlAgentHandle;
     /** An approve() gate that auto-approves the first call, then denies. */
     approveOnce(): (req: ApprovalRequest) => boolean;
     /** The default DOM tool registry (added right after injection). */

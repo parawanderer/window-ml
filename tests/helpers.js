@@ -254,6 +254,7 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps } = {}) {
         Date,
         Intl,
         structuredClone,
+        AbortController,   // a standard web global injected.js uses (e.g. ml.createAgent's cancel())
         Event: class Event { constructor(type) { this.type = type; } },
         window: win,
         HTMLImageElement: class HTMLImageElement {},
@@ -277,7 +278,16 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps } = {}) {
                             const probe = probeReply(message);
                             if (probe !== undefined) return void (cb && cb(probe));
                         }
-                        runtimeCalls.push(message);
+                        // Snapshot the messages array at SEND time. The agent loop mutates one
+                        // `messages` array in place (it only ever APPENDS — assistant turns, tool
+                        // results, the final answer), so recording `message` by reference would let a
+                        // later push retroactively shift the positions an earlier call's assertions see.
+                        // A shallow copy freezes each recorded call to what was actually sent.
+                        runtimeCalls.push(
+                            message && message.payload && Array.isArray(message.payload.messages)
+                                ? { ...message, payload: { ...message.payload, messages: [...message.payload.messages] } }
+                                : message,
+                        );
                         if (cb) cb(response);
                     });
                 },
