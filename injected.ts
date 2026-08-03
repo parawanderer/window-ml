@@ -50,12 +50,79 @@ import { autoApprovePython } from "./auto-approve";
 import { executeTool } from "./tool-exec";
 import { runAgentLoop } from "./agent-loop";
 import type { AgentLoopDeps } from "./agent-loop";
+
+/** The mutable state of ONE agent session, shared between ml.agent's page loop and (for a handle) the
+ *  ml.createAgent handle that steers it. A plain ml.agent() call makes a throwaway one per call; a handle
+ *  keeps its own so run()/say()/maxSteps span turns. Page-loop only — a background-hosted run's history
+ *  lives in the service worker (see Phase 2). */
+interface AgentControl {
+    hash: string | null;          // the session hash (minted on the first turn, then stable)
+    messages: NeutralMessage[];   // the live history — the source of truth; the loop mutates it in place
+    inbox: string[];              // say()'d messages waiting to be injected at the next step boundary
+    maxSteps: number;             // the step cap, read live so a handle can raise it mid-run
+    running: boolean;             // is a loop in flight?
+    seqBase: number;              // monotonic step-seq base so seqs stay session-unique across turns
+}
 import { installToolDelegation, registerRun, endRun } from "./run-delegation";
 import { descriptorFor } from "./render-descriptor";
 
 /** One resolved `python_exec` table source: its var name, provenance, and the payload the sandbox
  *  builds a DataFrame from (rows or read_html html). Internal to injected.ts. */
 type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; columns: string[]; rows: (string | number | null)[][] } | { kind: "html"; html: string } };
+
+/** The object ml.createAgent returns. It IS the session's AgentControl — the same instance is threaded
+ *  into ml.agent as `_control`, so the loop mutates the very fields (hash/messages/inbox/seqBase) the
+ *  handle exposes. `say` writes a user message into the session (steer if a loop is running, else queue
+ *  for the next run()); `run` executes the loop; `maxSteps` is live (raise it mid-run). Page-loop only —
+ *  a background-hosted run's history lives in the service worker (see Phase 2). */
+class AgentHandle implements MlAgentHandle, AgentControl {
+    hash: string | null = null;
+    messages: NeutralMessage[] = [];
+    inbox: string[] = [];
+    running = false;
+    seqBase = 0;
+    private _maxSteps: number;
+    private _ctrl = new AbortController();
+    constructor(private _ml: MlApi, private _opts: AgentOptions) { this._maxSteps = _opts.maxSteps ?? 10; }
+
+    get maxSteps(): number { return this._maxSteps; }
+    set maxSteps(n: number) {
+        this._maxSteps = n;
+        // Reflect the new cap in the sidebar/HUD the instant it's set — the running loop reads it live for
+        // the "STEP x/N" display. Only meaningful once a run has minted the session hash.
+        if (this.hash) emitDebug({ kind: "agent-cap", id: this.hash, ts: Date.now(), save: false, session: { hash: this.hash, turn: 0 }, maxSteps: n });
+    }
+
+    /** Run a full loop until the agent completes its turn. Call again for the next turn (same session).
+     *  Rejects while a loop is in flight. No task → runs over whatever say() has queued into history. */
+    async run(task?: string): Promise<AgentResult> {
+        if (this.running) throw new Error("ml.createAgent: a run is already in flight — use say() to add to it, or cancel() first.");
+        this.running = true;
+        try { return await this._ml.agent(task ?? "", { ...this._opts, signal: this._opts.signal || this._ctrl.signal, _control: this } as AgentOptions); }
+        finally { this.running = false; }
+    }
+
+    /** Put a user message into the session. Mid-run → steer (queued for the next step boundary, shown in
+     *  the UI immediately); idle → append to history for the next run(), with a console note. Never throws. */
+    say(text: string): void {
+        if (this.running) {
+            this.inbox.push(text);
+            if (this.hash) emitDebug({ kind: "agent-say", id: this.hash, ts: Date.now(), save: false, session: { hash: this.hash, turn: 0 }, text });
+        } else {
+            this.messages.push({ role: "user", content: text });
+            console.info("ml.agent: no run in flight — say() queued the message into history; call run() to have the agent process it.");
+        }
+    }
+
+    cancel(): void { this._ctrl.abort(); }
+
+    /** A new handle (fresh hash) seeded with a COPY of this history — diverge without touching this one. */
+    fork(): MlAgentHandle {
+        const f = new AgentHandle(this._ml, this._opts);
+        f.messages = this.messages.map(m => ({ ...m }));
+        return f;
+    }
+}
 
 (function() {
 
@@ -399,7 +466,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          *   `elements` is the live DOM node(s) the model designated via an
          *   `answer`-capable tool (empty for tasks that just act on the page).
          */
-        agent: async function(task: string, { tools = null, extraTools = [], system = null, hints = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null, resume = null, silent = false, unattended = false }: {
+        agent: async function(task: string, { tools = null, extraTools = [], system = null, hints = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null, resume = null, silent = false, unattended = false, _control = null }: {
             tools?: MlTool[] | null;
             extraTools?: MlTool[];
             system?: string | null;
@@ -416,6 +483,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             resume?: string | null;
             silent?: boolean;
             unattended?: boolean;
+            _control?: AgentControl | null;   // internal: a handle's persistent session state (ml.createAgent). Absent → a throwaway per-call one.
         } = {}): Promise<AgentResult> {
             // Resume a run held in this tab: reuse its stored loop (same toolset/system/model +
             // accumulated messages), appending `task` as a follow-up user turn under the SAME hash,
@@ -429,6 +497,10 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 if (!handle) throw new Error(`ml.agent: no resumable run "${resume}" in this tab. (Same-tab page-hosted runs resume in-memory; a background/off-mode run isn't resumable this way yet.)`);
                 return handle.resume(task);
             }
+            // The session's mutable state. A handle (ml.createAgent) passes its OWN so run()/say()/maxSteps
+            // span turns; a plain ml.agent() call gets a throwaway one. The page loop reads history / inbox /
+            // cap / seq from it, so there's a single code path — a handle just persists it across turns.
+            const control: AgentControl = _control ?? { hash: null, messages: [], inbox: [], maxSteps, running: false, seqBase: 0 };
             let toolset = [...(tools || this.domTools || []), ...extraTools];
             // Config, fetched once (used for vision resolution + the read-only exec
             // auto-approve fast-path below).
@@ -518,12 +590,17 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             // Debug sidebar: announce the run + each step. Its own session hash
             // (an agent run isn't a createChat). elements can't cross the window
             // bus — send a count; real nodes still reach onStep/the console.
-            const runHash = shortHash();
+            // Mint the hash on the FIRST turn, then reuse it (a handle's later run()s continue the session).
+            const runHash = control.hash ?? shortHash();
+            control.hash = runHash;
+            // A handle's 2nd+ turn (control.messages already seeded with a system prompt) continues an
+            // existing sidebar/HUD session, so it must NOT re-announce `agent` (that would wipe its steps).
+            const firstTurn = !control.messages.some(m => m.role === "system");
             // Resolve the driver model to the config default when none was passed, so the
             // sidebar shows the REAL model (not "default") and can tell when a vision
             // sub-call reused it (its `model` matches this) vs. ran on a different one.
             const runModel = model || agentCfg?.model || null;
-            emitDebug({ kind: "agent", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, task, model: runModel, maxSteps, config: {
+            if (firstTurn) emitDebug({ kind: "agent", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, task, model: runModel, maxSteps, config: {
                 system: systemPrompt, customSystem: !!system,
                 tools: toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval, vision: !!(t.capabilities && t.capabilities.includes("vision")), description: t.description, parameters: t.parameters, summary: t.summary })),
                 maxSteps, think: (think === true || think === false) ? think : null, env, vision: vision ?? null, hints: hints || null, silent: silent || undefined, unattended: unattended || undefined,
@@ -610,12 +687,10 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             // and the debug-render / argIssues enrichment happens in `emit` here. One loop body, two
             // dep-sets (these vs the background's delegating deps in agent-host.ts): no drift.
             const toolMetas = toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval, capabilities: t.capabilities }));
-            let priorMessages: NeutralMessage[] | null = null;   // resume continuity: the accumulated history
-            let built: NeutralMessage[] = [];                    // the array runAgentLoop mutated this turn (captured for resume)
             // runAgentLoop restarts its per-step `seq` at 0 each call, but the sidebar patches steps by
-            // (hash, seq) — so a resumed turn would collide with the first. Offset each turn's seqs past the
-            // previous turn's so they stay unique per SESSION (the page loop's old monotonic stepSeq).
-            let seqBase = 0, turnMaxSeq = 0;
+            // (hash, seq) — so a later turn would collide with an earlier one. control.seqBase offsets each
+            // turn's seqs past the previous turn's, keeping them unique per SESSION across run()/say().
+            let turnMaxSeq = 0;
 
             // Enrich the loop's event with the page-only bits: argIssues, the element COUNT for the debug
             // event + the real nodes for onStep, and a best-effort In/Out render for a step the executor
@@ -630,7 +705,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     renderIn = d.in;
                     renderOut = ev.pending ? undefined : d.out;
                 }
-                const seq = ev.seq != null ? seqBase + ev.seq : ev.seq;   // session-unique across resume turns
+                const seq = ev.seq != null ? control.seqBase + ev.seq : ev.seq;   // session-unique across turns
                 if (ev.seq != null && ev.seq > turnMaxSeq) turnMaxSeq = ev.seq;
                 const cb = { step: ev.step, thought: ev.thought, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: nodes };
                 if (logDebug && !ev.pending) logStep(cb);
@@ -686,14 +761,19 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     if (typeof tool?.precheck !== "function") return null;
                     try { return tool.precheck(args) || null; } catch { return null; }
                 },
+                // control.messages IS the live session history (the loop mutates it in place, so a.messages
+                // reflects it and a handle's next turn continues it). Ensure the system prompt heads it, then
+                // append this turn's task (empty when run() was called with no arg — it runs over prior say()s).
                 buildMessages: (t) => {
-                    built = priorMessages
-                        ? [...priorMessages, { role: "user", content: t }]
-                        : [{ role: "system", content: systemPrompt }, { role: "user", content: t }];
-                    return built;
+                    if (!control.messages.some(m => m.role === "system")) control.messages.unshift({ role: "system", content: systemPrompt });
+                    if (t) control.messages.push({ role: "user", content: t });
+                    return control.messages;
                 },
                 pushAssistant: (messages, msg) => (messages as NeutralMessage[]).push({ role: "assistant", content: msg.content || "", tool_calls: msg.tool_calls }),
                 pushToolResult: (messages, call, result) => (messages as NeutralMessage[]).push({ role: "tool", tool_call_id: call.id, content: result }),
+                // Mid-run steering (a.say()): drain the inbox at each step boundary and inject as user turns.
+                drainInbox: () => control.inbox.splice(0),
+                pushUser: (messages, text) => (messages as NeutralMessage[]).push({ role: "user", content: text }),
                 // #3 inline vision: a tool result can't carry an image, so hand any screenshots this step
                 // captured to the (vision-capable) driver as a user turn for its NEXT call.
                 pushToolImages: (messages, images) => (messages as NeutralMessage[]).push({
@@ -705,15 +785,15 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 emit,
             };
 
-            // One turn of the run. A resume re-enters with a follow-up task; buildMessages continues the
-            // stored history (priorMessages, captured back into it after the loop). answered resets per turn.
+            // One turn of the run. `t` is appended to control.messages (empty → run over prior say()s);
+            // buildMessages continues the live history, and maxSteps is read fresh each step (handle can
+            // raise it mid-run). answered resets per turn; the seq base advances so steps stay session-unique.
             const drive = async (t: string): Promise<AgentResult> => {
                 answered.length = 0;
                 enterAgentRun();   // suppress orphan chat sessions from a tool's internal ml.chat; finally-decremented
                 try {
-                    const r = await runAgentLoop(t, { tools: toolMetas, maxSteps, signal, unattended }, deps);
-                    seqBase += turnMaxSeq; turnMaxSeq = 0;   // next resume turn's step seqs continue past this turn's
-                    priorMessages = built;   // keep this turn's full history for a later resume
+                    const r = await runAgentLoop(t, { tools: toolMetas, maxSteps: () => control.maxSteps, signal, unattended }, deps);
+                    control.seqBase += turnMaxSeq; turnMaxSeq = 0;   // next turn's step seqs continue past this turn's
                     emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: r.steps }, summary: r.summary, steps: r.steps, hitCap: !!r.hitCap, cancelled: !!r.cancelled });
                     return { ...r, elements: answered, hash: runHash };
                 } catch (e) {
@@ -723,41 +803,27 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     throw e;
                 } finally { exitAgentRun(); }
             };
-            // Register the run so ml.agent(task, { resume }) / createAgent().continue() can append a turn.
+            // Register the run so ml.agent(task, { resume }) can re-enter this turn's loop (createAgent uses
+            // its own control instead). A resume continues control.messages just like a handle's run().
             agentRegistry.set(runHash, { hash: runHash, resume: (t: string) => drive(t) });
             return drive(task);
         },
         /**
-         * A resumable agent session — the agent analogue of {@link module:ml.createChat}.
-         * `run(task)` starts the run; once it resolves, `continue(task)` appends a follow-up
-         * task to the SAME session (same hash, same toolset, accumulated history), so the
-         * sidebar/HUD keep it as one conversation. Thin sugar over ml.agent's `resume` option.
+         * A stateful agent session — the agent analogue of {@link module:ml.createChat}. Two primitives:
+         * `say` writes a user message into the session, `run` executes the loop until the agent's turn is
+         * complete; everything shares one hash. Call `run` again for the next turn; `say` mid-run STEERS
+         * (injected at the next step boundary), idle it queues for the next `run`. `maxSteps` is live
+         * (raise it mid-run to keep going); `messages` is the raw, mutable history; `fork()` branches it.
          *   const a = ml.createAgent({ maxSteps: 20 });
-         *   await a.run("find the login form");
-         *   await a.continue("now fill it with test@example.com");
+         *   const done = a.run("Reorganise these tabs by topic.");
+         *   a.say("actually, keep the pinned ones where they are");   // steer mid-run
+         *   await done;
+         *   await a.run("Now close the empty groups.");               // another turn, same session
          * @param {AgentOptions} [opts] the same options as ml.agent (tools, model, vision, …)
-         * @returns {MlAgentHandle} a handle with run/continue/cancel + the run's hash
+         * @returns {MlAgentHandle} a handle: run/say/cancel/fork + hash/messages/maxSteps/running
          */
         createAgent: function(opts: AgentOptions = {}): MlAgentHandle {
-            const self = this as unknown as MlApi;
-            const ctrl = new AbortController();
-            // Own an AbortController so handle.cancel() works; if the caller already passed a signal,
-            // respect theirs (cancel() then only aborts via ours — a documented minor caveat).
-            const runOpts: AgentOptions = { ...opts, signal: opts.signal || ctrl.signal };
-            const handle: MlAgentHandle = {
-                hash: null,
-                async run(task: string): Promise<AgentResult> {
-                    const r = await self.agent(task, runOpts);
-                    handle.hash = r.hash;
-                    return r;
-                },
-                async continue(task: string): Promise<AgentResult> {
-                    if (!handle.hash) throw new Error("ml.createAgent: call run(task) and let it finish before continue(task).");
-                    return self.agent(task, { ...runOpts, resume: handle.hash });
-                },
-                cancel(): void { ctrl.abort(); },
-            };
-            return handle;
+            return new AgentHandle(this as unknown as MlApi, opts);
         },
         /**
          * A de-duplicating approval gate for {@link module:ml.agent}: prompts (via

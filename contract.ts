@@ -430,18 +430,28 @@ export interface AgentOptions {
     unattended?: boolean;
 }
 
-/** A stateful ml.agent handle (what ml.createAgent returns) — the agent analogue of
- *  ml.createChat's history. Keeps the run's hash so follow-ups continue the SAME
- *  session: `run(task)` starts it, `continue(task)` appends another task once it's done. */
+/** A stateful ml.agent handle (what ml.createAgent returns) — the agent analogue of ml.createChat's
+ *  history. Two primitives: `say` writes a user message into the session, `run` executes the loop until
+ *  the agent's turn is complete. Everything shares one `hash` = one sidebar/HUD conversation. */
 export interface MlAgentHandle {
-    /** the run's session hash (null until run() has started it) */
+    /** the session hash (null until the first run() mints it) */
     hash: string | null;
-    /** start the run (first task) */
-    run(task: string): Promise<AgentResult>;
-    /** append a follow-up task to the same session (after run() resolves) */
-    continue(task: string): Promise<AgentResult>;
-    /** abort the in-flight turn (resolves { cancelled: true }) */
+    /** the live conversation history — readable AND mutable (push/splice or reassign), like MlHistory.messages */
+    messages: NeutralMessage[];
+    /** the step cap, LIVE: raising it mid-run (a.maxSteps = 40) lets the running loop keep going */
+    maxSteps: number;
+    /** is a loop in flight right now? */
+    running: boolean;
+    /** run a full end-to-end loop until the agent completes its turn. Call again for the next turn (same
+     *  session). Rejects if a loop is already in flight. With no task, runs over whatever say() has queued. */
+    run(task?: string): Promise<AgentResult>;
+    /** put a user message into the session: MID-RUN it steers (injected at the next step boundary); IDLE it
+     *  appends to history for the next run() (with a console note). Never throws. */
+    say(text: string): void;
+    /** abort the in-flight loop → it resolves { cancelled: true }. */
     cancel(): void;
+    /** a NEW handle (fresh hash) seeded with a COPY of this history — diverge without touching this one. */
+    fork(): MlAgentHandle;
 }
 
 /* ----------------------------- call options ---------------------------- */
@@ -787,9 +797,15 @@ export interface DebugAgentStep extends DebugBase {
 }
 export interface DebugAgentResult extends DebugBase { kind: "agent-result"; summary: string; steps: number; hitCap: boolean; cancelled?: boolean; error?: string | null; }
 
+/** A handle raised the step cap mid-run (a.maxSteps = N) — the sidebar/HUD updates its "STEP x/N" display. */
+export interface DebugAgentCap extends DebugBase { kind: "agent-cap"; maxSteps: number; }
+/** A handle inserted a user message into a RUNNING loop (a.say(text)) — shown immediately (pending), even
+ *  though the model only sees it at the next step boundary. */
+export interface DebugAgentSay extends DebugBase { kind: "agent-say"; text: string; }
+
 /** The event stream injected.js emits over window.postMessage for the sidebar. */
 export type MlDebugEvent = DebugChatStart | DebugChatResult | DebugChatError
-    | DebugAgentStart | DebugAgentStep | DebugAgentResult;
+    | DebugAgentStart | DebugAgentStep | DebugAgentResult | DebugAgentCap | DebugAgentSay;
 
 /** Window-bus envelopes between the core (main world) and the sidebar. */
 export interface MlDebugMessage { __mlDebug: MlDebugEvent; }

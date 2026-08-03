@@ -62,9 +62,14 @@ export interface AgentLoopDeps {
     // bus, so the background path leaves it undefined and assembles answer nodes separately). The page's
     // emit uses them for onStep + the debug event's element COUNT.
     emit?(ev: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: unknown; tool?: string; arguments?: Record<string, unknown>; result?: string; approval?: Approval; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; usage?: unknown; elements?: unknown[] }): void;
+    // Mid-run STEERING (a.say()): drained at each step boundary (before the model call) — returns any user
+    // messages queued since the last step, injected via pushUser so the model sees them on its next turn.
+    // Omit → no steering. The queue lives in the caller's world (page handle / SW inbox).
+    drainInbox?(): string[];
+    pushUser?(messages: unknown[], text: string): void;
 }
 
-export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number; signal?: AbortSignal | null; unattended?: boolean; }
+export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number | (() => number); signal?: AbortSignal | null; unattended?: boolean; }
 
 // Normalize an approval gate's return (boolean OR the rich contract) into a decision. Inlined (not
 // imported from approval.ts) so this module stays DOM/chrome-free for the standalone build.
@@ -80,15 +85,21 @@ const normalize = (d: ApprovalDecision, orig: Record<string, unknown>): { approv
 // Returns AgentResult WITHOUT `hash` — this loop is identity-agnostic; the page-side ml.agent
 // caller stamps the run's hash onto the result (it owns runHash). See injected.ts's background path.
 export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: AgentLoopDeps): Promise<Omit<AgentResult, "hash">> {
-    const { tools, maxSteps = 10, signal } = opts;
+    const { tools, signal } = opts;
+    // maxSteps is read LIVE each iteration (not destructured) so a handle can raise the cap mid-run
+    // (a.maxSteps = 40) and the loop keeps going instead of stopping at the original value.
+    const maxSteps = () => { const m = typeof opts.maxSteps === "function" ? opts.maxSteps() : opts.maxSteps; return m ?? 10; };
     const byName = new Map(tools.map(t => [t.name, t]));
     const messages = deps.buildMessages(task);
     const transcript: AgentTranscriptEntry[] = [];
     let seq = 0;
     const cancelled = (steps: number): Omit<AgentResult, "hash"> => ({ summary: "Cancelled by the caller.", steps, transcript, elements: [], cancelled: true });
 
-    for (let step = 1; step <= maxSteps; step++) {
+    for (let step = 1; step <= maxSteps(); step++) {
         if (signal?.aborted) return cancelled(step - 1);
+        // Mid-run steering: inject any user messages queued via a.say() since the last step, so the model
+        // sees them on THIS turn — landing after the previous step's tool resolved, before the next model call.
+        for (const text of deps.drainInbox?.() ?? []) deps.pushUser?.(messages, text);
         // A CANCEL_RUN mid-generation aborts the in-flight fetch, which REJECTS here — convert that to a
         // clean cancel (don't propagate as a run error), same as the boundary check. Re-throw a real error.
         let msg;
@@ -178,5 +189,5 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         // next step reasons over the real pixels (the native `look` path; a text-only driver omits the dep).
         if (pendingImages.length) deps.pushToolImages?.(messages, pendingImages);
     }
-    return { summary: `Stopped at the ${maxSteps}-step cap without finishing.`, steps: maxSteps, transcript, elements: [], hitCap: true };
+    return { summary: `Stopped at the ${maxSteps()}-step cap without finishing.`, steps: maxSteps(), transcript, elements: [], hitCap: true };
 }

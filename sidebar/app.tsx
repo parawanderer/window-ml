@@ -60,6 +60,19 @@ function onDebug(ev: MlDebugEvent): void {
         s.status = (ev.error || ev.hitCap || ev.cancelled) ? "err" : "ok"; s.lastTs = ev.ts;
         rev.value++; return;
     }
+    // A handle raised the step cap mid-run (a.maxSteps = N) → the "STEP x/N" display re-renders live.
+    if (ev.kind === "agent-cap") {
+        const s = sessionMap.get(ev.session.hash);
+        if (s) { s.maxSteps = ev.maxSteps; s.lastTs = ev.ts; rev.value++; }
+        return;
+    }
+    // A handle steered a running loop (a.say(text)). The message reaches the model at the next step
+    // boundary; the run keeps streaming. (TODO step C: render the injected user bubble immediately.)
+    if (ev.kind === "agent-say") {
+        const s = sessionMap.get(ev.session.hash);
+        if (s) { s.lastTs = ev.ts; rev.value++; }
+        return;
+    }
     if (ev.kind === "chat") {
         let s = sessionMap.get(ev.session.hash);
         if (!s) {

@@ -749,24 +749,69 @@ test("agent: step seq stays session-unique across a resume (the sidebar patches 
     assert.equal(new Set(doneSeqs).size, doneSeqs.length, `step seqs are unique across the resume (got ${doneSeqs.join(",")})`);
 });
 
-test("createAgent: run() then continue() drive one session; continue() before run() throws", async () => {
-    const world = loadPageWorld({
-        onRuntimeMessage: scriptedModel([reply("hello"), reply("goodbye")]),
-    });
+test("createAgent: run() twice = two turns in one session; say() idle appends to history", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("hello"), reply("goodbye")]) });
     const a = world.ml.createAgent({ maxSteps: 4, vision: false });
     assert.equal(a.hash, null, "no hash until run() starts it");
-    await assert.rejects(() => a.continue("too early"), /run\(task\)/, "continue() before run() is an error");
+    a.say("preamble");   // idle → appended straight to history (with a console note)
+    assert.equal(a.messages.at(-1).content, "preamble", "say() while idle appends a user message to history");
 
     const r1 = await a.run("start");
-    assert.match(a.hash, /^[0-9a-f]{8}$/, "run() populates the handle hash");
-    assert.equal(r1.hash, a.hash);
+    assert.match(a.hash, /^[0-9a-f]{8}$/, "run() mints the session hash");
+    assert.equal(r1.summary, "hello");
 
-    const r2 = await a.continue("more");
-    assert.equal(r2.hash, a.hash, "continue() stays in the same session");
+    const r2 = await a.run("more");   // ANOTHER end-to-end turn, same session
+    assert.equal(r2.hash, a.hash, "run() again stays in the same session");
     assert.equal(r2.summary, "goodbye");
-    const resumedMsgs = world.runtimeCalls.filter(c => c.payload && c.payload.messages).at(-1).payload.messages;
-    assert.equal(resumedMsgs[1].content, "start");
-    assert.equal(resumedMsgs.at(-1).content, "more");
+    const last = world.runtimeCalls.filter(c => c.payload && c.payload.messages).at(-1).payload.messages;
+    assert.equal(last[0].role, "system", "the system prompt heads the continued history");
+    assert.ok(last.some(m => m.content === "preamble"), "the idle say() message is in the continued context");
+    assert.equal(last.at(-1).content, "more", "the new turn's task is the last user message");
+});
+
+test("createAgent: a run in flight rejects a second run(); say() mid-run STEERS (injected at the next step boundary)", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall("poke", {}, "c1"), reply("done")]) });
+    let a, nestedErr;
+    const poke = world.ml.defineTool({ name: "poke", run: () => {
+        a.say("actually, also do Y");                                  // mid-run → steer (running === true)
+        nestedErr = a.run("nope").then(() => null, e => e.message);    // run() while in flight → rejects
+        return "poked";
+    } });
+    a = world.ml.createAgent({ tools: [poke], vision: false, maxSteps: 5 });
+    await a.run("do X");
+    assert.match(await nestedErr, /already in flight/, "run() while a loop is in flight rejects");
+    // The steer must appear as a user turn BEFORE the model's next (final) call — injected at the boundary.
+    const finalCall = world.runtimeCalls.filter(c => c.payload && c.payload.messages).at(-1).payload.messages;
+    assert.ok(finalCall.some(m => m.role === "user" && m.content === "actually, also do Y"), "the mid-run say() was injected before the next model call");
+    assert.equal(a.running, false, "running is false once the loop settles");
+});
+
+test("createAgent: fork() copies the history into a FRESH session, independent of the original", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("a1")]) });
+    const a = world.ml.createAgent({ vision: false });
+    await a.run("first");
+    const b = a.fork();
+    assert.equal(b.hash, null, "the fork is a NEW session (no hash until it runs)");
+    assert.notEqual(b.messages, a.messages, "the fork's history is a separate array");
+    assert.deepEqual(b.messages.map(m => m.content), a.messages.map(m => m.content), "the fork copies the history");
+    b.messages.push({ role: "user", content: "only in b" });
+    assert.ok(!a.messages.some(m => m.content === "only in b"), "mutating the fork doesn't touch the original");
+});
+
+test("createAgent: maxSteps setter updates the live cap + emits an agent-cap event for the UI", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("x")]) });
+    const events = [], win = world.context.window;
+    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    win.postMessage({ __mlSidebar: "ready" });
+    await new Promise(r => setTimeout(r, 0));
+    const a = world.ml.createAgent({ maxSteps: 10, vision: false });
+    assert.equal(a.maxSteps, 10);
+    await a.run("go");   // mints the hash so the cap event can be attributed
+    a.maxSteps = 40;
+    assert.equal(a.maxSteps, 40, "the setter updates the value");
+    await new Promise(r => setTimeout(r, 0));   // let the posted debug event flush
+    const cap = events.find(e => e.kind === "agent-cap");
+    assert.ok(cap && cap.maxSteps === 40, "an agent-cap event carries the new cap for the sidebar/HUD");
 });
 
 test("a tool call missing a required arg short-circuits with the schema error (tool NOT run)", async () => {
