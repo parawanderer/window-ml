@@ -39,7 +39,7 @@ import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, PT_LOOK_
 import type { ShotBox, ServerTool } from "./contract";
 import { annotate, pickAccentColorForTarget } from "./som";
 import { suspiciousArgsWarning, suspiciousChars } from "./security";
-import { emitDebug, debugId, shortHash, sessionRegistry, agentRegistry, enterAgentRun, exitAgentRun } from "./bus";
+import { emitDebug, debugId, shortHash, sessionRegistry, agentRegistry, handleRegistry, enterAgentRun, exitAgentRun } from "./bus";
 import { makeDomTools } from "./tools";
 import { hideSidebarForShot, makeBackgroundTaskPromise, makeChatRequest, makeStreamingTaskPromise } from "./bridge";
 import { validateArgs, validateExtend } from "./validate";
@@ -612,6 +612,10 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             // Mint the hash on the FIRST turn, then reuse it (a handle's later run()s continue the session).
             const runHash = control.hash ?? shortHash();
             control.hash = runHash;
+            // Register a createAgent HANDLE (not a throwaway ml.agent control) by its hash so a sidebar/HUD
+            // composer can drive this session — say()/run()/cancel() — knowing only the hash. `run` present
+            // ⇒ it's an AgentHandle. Registered mid-run so the composer can steer while it's still going.
+            if (_control && typeof (_control as unknown as MlAgentHandle).run === "function") handleRegistry.set(runHash, _control as unknown as MlAgentHandle);
             // A handle's 2nd+ turn (control.messages already seeded with a system prompt) continues an
             // existing sidebar/HUD session, so it must NOT re-announce `agent` (that would wipe its steps).
             const firstTurn = !control.messages.some(m => m.role === "system");
@@ -1717,15 +1721,64 @@ class AgentHandle implements MlAgentHandle, AgentControl {
         // added tool still requires approval, gated by the unforgeable card.
         const maxSteps = Number(e.data.__mlStartAgent.maxSteps);
         const ml = window.ml as unknown as {
-            agent: (t: string, o?: unknown) => Promise<unknown>;
+            createAgent: (o?: unknown) => MlAgentHandle;
             clickTool: () => unknown; typeTool: () => unknown; pythonTool: () => unknown;
         };
         // `hints` (appended to the system prompt) rather than `system` (which would REPLACE the
         // preamble): the run still needs the whole method, it just isn't a console call.
         const opts: Record<string, unknown> = { extraTools: [ml.clickTool(), ml.typeTool(), ml.pythonTool()], hints: HUD_HINT };
         if (Number.isFinite(maxSteps) && maxSteps > 0) opts.maxSteps = maxSteps;   // the composer's step budget
-        try { void ml.agent(task, opts); }
+        // createAgent (not ml.agent) so the run registers a HANDLE the sidebar/HUD composer can drive —
+        // follow-up run()s + say() steering from the "Send a message to this session…" box.
+        try { void ml.createAgent(opts).run(task); }
         catch (err) { console.error("ml: UI-started run failed:", err); }
+    });
+
+    // Sidebar/HUD composer → drive a handle-backed session by hash. The app decides which to send from the
+    // run's live state: say() to STEER a running loop or append when idle; run() a follow-up turn; cancel()
+    // the in-flight turn (the stop button). Same origin check as the others; the registry holds only this
+    // page's own createAgent sessions, so there's nothing cross-origin to reach.
+    // Composer-initiated chat turns need a cancel channel too (the stop button). A plain chat turn is a
+    // single fetch — unlike an agent loop there's no handle to hold it — so we track the in-flight
+    // AbortController per session hash and abort it on cancel. Only composer-driven turns are tracked (a
+    // console `history.chat()` isn't), which is fine: the stop button only fronts turns the composer started.
+    const chatInflight = new Map<string, AbortController>();
+    async function continueChatSession(hash: string, text: string): Promise<void> {
+        // Same-tab sessions live in the registry; a saved session from another tab/reload rehydrates.
+        const resume = (window.ml as unknown as { resumeChat: (h: string) => Promise<MlHistory> }).resumeChat;
+        let h = sessionRegistry.get(hash);
+        if (!h) { try { h = await resume(hash); } catch { return; } }   // unknown/unsaved hash → nothing to continue
+        if (!h) return;
+        const ctrl = new AbortController();
+        chatInflight.set(hash, ctrl);
+        try { await h.chat(text, { signal: ctrl.signal }); }
+        catch { /* aborted or failed — the chat-error event already surfaced it in the sidebar */ }
+        finally { if (chatInflight.get(hash) === ctrl) chatInflight.delete(hash); }
+    }
+
+    window.addEventListener("message", (e: MessageEvent) => {
+        if (e.source !== window || !e.data) return;
+        const d = e.data as { __mlSessionSend?: { hash: string; text: string }; __mlCancelSession?: { hash: string } };
+        try {
+            if (d.__mlSessionSend) {
+                const hash = String(d.__mlSessionSend.hash);
+                const text = String(d.__mlSessionSend.text || "");
+                if (!text) return;
+                const h = handleRegistry.get(hash);
+                // An AGENT handle holds live state: steer a RUNNING loop (say), else a new turn (run).
+                if (h) { if (h.running) h.say(text); else void h.run(text); return; }
+                // Otherwise it's a plain chat session — continue the conversation with another turn.
+                void continueChatSession(hash, text);
+                return;
+            }
+            if (d.__mlCancelSession) {
+                const hash = String(d.__mlCancelSession.hash);
+                const h = handleRegistry.get(hash);
+                if (h) { h.cancel(); return; }   // agent loop
+                chatInflight.get(hash)?.abort();  // chat turn started from the composer
+                return;
+            }
+        } catch (err) { console.error("ml: session composer action failed:", err); }
     });
 
     // Readiness signal for scripts (e.g. userscripts) that may run before this

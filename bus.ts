@@ -3,7 +3,7 @@
 // ring, the in-agent-run depth counter (so a tool's internal ml.chat doesn't spawn
 // orphan sessions), and the same-tab session registry.
 
-import type { AgentResult, MlDebugEvent, MlHistory } from "./contract";
+import type { AgentResult, MlDebugEvent, MlHistory, MlAgentHandle } from "./contract";
 
 // ---- Debug sidebar event stream (see sidebar app) ----
 // The opt-in sidebar lives in the isolated content-script world; it can't read
@@ -92,3 +92,9 @@ export interface AgentRunHandle {
     resume(task: string): Promise<AgentResult>;
 }
 export const agentRegistry = new Map<string, AgentRunHandle>();
+
+/** Live ml.createAgent handles by session hash, so a sidebar/HUD composer can drive a session it only
+ *  knows by hash — say() to steer/append, run() a follow-up turn, cancel(). Registered by the handle when
+ *  its run mints the hash; this tab, this page-life. Only handle-backed sessions (createAgent) appear —
+ *  a one-shot ml.agent() run has no handle to steer. */
+export const handleRegistry = new Map<string, MlAgentHandle>();

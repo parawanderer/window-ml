@@ -254,10 +254,45 @@ test("composer usage gauge: absent until the server reports token counts", async
     await w.dispatch(chatResult("non", 0, "a"));   // no usage on the result
     w.shadow.querySelector(".row").click();
     await w.tick();
-    assert.ok(w.shadow.querySelector(".composer"), "the composer placeholder still renders");
+    assert.ok(w.shadow.querySelector(".composer"), "the composer still renders");
     assert.ok(!w.shadow.querySelector(".usage-gauge"), "but no gauge without any usage data");
-    assert.ok(w.shadow.querySelector(".cinput").disabled, "the input is a disabled placeholder");
-    assert.ok(w.shadow.querySelector(".csend").disabled, "the send button is disabled");
+    assert.ok(!w.shadow.querySelector(".cinput").disabled, "the input is live (you can continue any session)");
+    assert.ok(w.shadow.querySelector(".csend").disabled, "the send button is disabled while the box is empty");
+});
+
+test("composer: typing enables Send and posts sessionSend; an empty box on a running session is the Stop button", async () => {
+    const w = await loadSidebarWorld();
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);   // capture what the app posts to its parent (shell/panel)
+
+    // A finished chat session — the common case: continue the conversation with another turn.
+    await w.dispatch(chatStart("cmp", 0, "hi"));
+    await w.dispatch(chatResult("cmp", 0, "hello"));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+
+    const input = w.shadow.querySelector(".cinput");
+    const btn = w.shadow.querySelector(".cbtn.csend, .cbtn.cstop");
+    assert.ok(btn.classList.contains("csend") && btn.disabled, "idle + empty → a disabled Send");
+
+    input.value = "and another thing";
+    input.dispatchEvent(new w.window.Event("input", { bubbles: true }));
+    await w.tick();
+    assert.ok(!w.shadow.querySelector(".csend").disabled, "typing enables Send");
+    w.shadow.querySelector(".csend").click();
+    await w.tick();
+    const sent = posted.find(m => m.__mlSidebarApp === "sessionSend");
+    assert.ok(sent && sent.hash === "cmp" && sent.text === "and another thing", "Send posts sessionSend {hash,text}");
+    assert.equal(w.shadow.querySelector(".cinput").value, "", "the box clears after sending");
+
+    // A RUNNING session with an empty box → the button becomes Stop and posts sessionCancel.
+    await w.dispatch(chatStart("cmp", 1, "next"));   // in-flight (no result yet) → status pending
+    await w.tick();
+    const stop = w.shadow.querySelector(".cbtn.cstop");
+    assert.ok(stop, "running + empty box → the Send button becomes Stop");
+    stop.click();
+    await w.tick();
+    assert.ok(posted.some(m => m.__mlSidebarApp === "sessionCancel" && m.hash === "cmp"), "Stop posts sessionCancel");
 });
 
 test("a result arriving while the detail view is OPEN re-renders it live (no stale …thinking)", async () => {

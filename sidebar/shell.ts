@@ -555,6 +555,17 @@ function onWindowMessage(e: MessageEvent): void {
         window.postMessage({ __mlStartAgent: { task: d.task, maxSteps: typeof d.maxSteps === "number" ? d.maxSteps : undefined } }, "*");
         return;
     }
+    // The session composer: drive a live createAgent session by hash. Relayed to the PAGE, which decides
+    // from the handle's live state whether to STEER (say) or start a new turn (run), or cancels the run.
+    // Origin-checked (real iframe); reaches only this page's own handle registry — nothing cross-origin.
+    if (d.__mlSidebarApp === "sessionSend" && frame && e.source === frame.contentWindow && typeof d.hash === "string" && typeof d.text === "string" && d.text.trim()) {
+        window.postMessage({ __mlSessionSend: { hash: d.hash, text: d.text } }, "*");
+        return;
+    }
+    if (d.__mlSidebarApp === "sessionCancel" && frame && e.source === frame.contentWindow && typeof d.hash === "string") {
+        window.postMessage({ __mlCancelSession: { hash: d.hash } }, "*");
+        return;
+    }
     // The off-mode card app tells us its desired visual state (hidden / toast / expanded) — it alone
     // knows whether there's a pending approval or a final answer worth showing. We drive the container's
     // size + reveal (a CSS transition). Origin-checked: only the real card iframe.
@@ -868,4 +879,10 @@ chrome.runtime.onMessage.addListener((msg) => {
     // The Spotlight shortcut (background `commands` → this tab). Open the HUD composer; no-op unless the
     // HUD is the active surface (off / devtools-coexist).
     else if (msg?.type === "ML_OPEN_COMPOSER") openComposer();
+    // DevTools session composer (panel → background → here): relay to the PAGE, which drives the handle
+    // by hash (steer/run/cancel). Any mode — the page's handle registry is what acts, not this shell.
+    else if (msg?.type === "ML_SESSION_TO_PAGE") {
+        if (msg.action === "send") window.postMessage({ __mlSessionSend: { hash: msg.hash, text: msg.text } }, "*");
+        else if (msg.action === "cancel") window.postMessage({ __mlCancelSession: { hash: msg.hash } }, "*");
+    }
 });

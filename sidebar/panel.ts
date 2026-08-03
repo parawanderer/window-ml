@@ -94,6 +94,16 @@ window.addEventListener("message", (e: MessageEvent) => {
     // draws the box. Origin-checked above (e.source === frame.contentWindow); a web page can't
     // postMessage into a DevTools page regardless.
     if ("__mlHighlight" in d) { void chrome.runtime.sendMessage({ type: "ML_HL_REMOTE", tabId, ref: d.__mlHighlight }).catch(() => {}); return; }
+    // Session composer reverse channel: the panel can't touch the inspected page, so relay to the
+    // background → that tab's shell → the page's handle registry (same route as hover-highlight).
+    if (d.__mlSidebarApp === "sessionSend" && typeof d.hash === "string" && typeof d.text === "string" && d.text.trim()) {
+        void chrome.runtime.sendMessage({ type: "ML_SESSION_REMOTE", tabId, action: "send", hash: d.hash, text: d.text }).catch(() => {});
+        return;
+    }
+    if (d.__mlSidebarApp === "sessionCancel" && typeof d.hash === "string") {
+        void chrome.runtime.sendMessage({ type: "ML_SESSION_REMOTE", tabId, action: "cancel", hash: d.hash }).catch(() => {});
+        return;
+    }
 });
 
 // If the panel goes away with a highlight still showing (it lives on the inspected page, not here),

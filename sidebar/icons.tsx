@@ -49,6 +49,13 @@ export const IconSend = () => (
         <path d="M6 12 3.27 4.36a.6.6 0 0 1 .82-.74l16.2 7.83a.6.6 0 0 1 0 1.08l-16.2 7.83a.6.6 0 0 1-.82-.74L6 12Zm0 0h6" />
     </svg>
 );
+// Stop — a filled rounded square. The composer's submit button becomes this while a run is in
+// flight and the box is empty (Claude-Code style): clicking it cancels the run.
+export const IconStop = () => (
+    <svg viewBox="0 0 24 24" width="13" height="13" fill="currentColor" stroke="none">
+        <rect x="5" y="5" width="14" height="14" rx="2.5" />
+    </svg>
+);
 // Terminal `>_` — the python debug bench (run scripts against the model's sandbox).
 export const IconBench = () => (
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">

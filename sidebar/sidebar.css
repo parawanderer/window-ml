@@ -166,6 +166,11 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
   background: transparent; color: var(--fg-dim); border: 1px solid var(--border); border-radius: 6px; font-size: 1.05em; line-height: 0; }
 .cbtn:hover:not(:disabled) { background: var(--panel); color: var(--fg); }
 .cbtn:disabled { cursor: not-allowed; opacity: 0.55; }
+/* Send: the accent affordance once the box has text. */
+.csend:not(:disabled) { color: var(--accent, var(--fg)); border-color: var(--accent, var(--border)); }
+/* Stop: the submit button while a run is in flight + the box is empty (cancels the run). Warm/danger. */
+.cstop { color: var(--err); border-color: var(--err); }
+.cstop:hover:not(:disabled) { background: color-mix(in srgb, var(--err) 15%, transparent); color: var(--err); }
 .composer-foot { display: flex; align-items: center; min-height: 14px; }
 /* Context-usage gauge (bottom-right of the composer): a small dial icon + a thin
    bar + the figure — outlined track, colour only in the fill. */

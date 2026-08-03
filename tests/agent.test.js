@@ -27,29 +27,29 @@ test("_truncate tolerates null/undefined", () => {
     assert.equal(ml._truncate(undefined, 5), "");
 });
 
-test("__mlStartAgent (HUD composer relay) runs a REAL ml.agent() call in the page", () => {
-    // The Spotlight composer → shell → page: injected must dispatch an actual ml.agent(task) so it's a
-    // genuine session (hash, resumable), not a fake. Stub ml.agent to capture the call.
+test("__mlStartAgent (HUD composer relay) runs a REAL createAgent().run() in the page", () => {
+    // The Spotlight composer → shell → page: injected must start a genuine session via createAgent().run()
+    // (so it registers a HANDLE the composer can then steer), not a bare ml.agent(). Stub createAgent.
     const { ml, window } = loadDomWorld();
-    let calledWith = null, calledOpts = null;
-    ml.agent = (task, opts) => { calledWith = task; calledOpts = opts; return Promise.resolve({ summary: "" }); };
+    let createdOpts = null, ranWith = null;
+    ml.createAgent = (opts) => { createdOpts = opts; return { run: (task) => { ranWith = task; return Promise.resolve({ summary: "" }); } }; };
     window.dispatchEvent(new window.MessageEvent("message", { data: { __mlStartAgent: { task: "do a thing", maxSteps: 20 } }, source: window }));
-    assert.equal(calledWith, "do a thing", "the page ran ml.agent with the composer's task");
-    assert.equal(calledOpts?.maxSteps, 20, "the composer's step budget threads to ml.agent");
+    assert.equal(ranWith, "do a thing", "the page ran createAgent().run() with the composer's task");
+    assert.equal(createdOpts?.maxSteps, 20, "the composer's step budget threads through");
     // A UI-started run gets a capable default kit (click/type/python) via extraTools — the model tried to
     // use `click` and got "no tool named click" when it was missing.
-    const toolNames = (calledOpts?.extraTools || []).map(t => t.name);
+    const toolNames = (createdOpts?.extraTools || []).map(t => t.name);
     assert.ok(["click", "type", "python_exec"].every(n => toolNames.includes(n)), `composer run wires click/type/python (got ${toolNames.join(",")})`);
     // Invocation provenance: SELF_CLAUSE tells the model the user CAN drive it from the console, which
     // would be the wrong answer to "how did you start?" for a HUD run. `hints` APPENDS (system would
     // replace the whole preamble), so the method survives.
-    assert.match(calledOpts?.hints || "", /HUD/, "a UI-started run tells the model it came from the HUD");
-    assert.equal(calledOpts?.system, undefined, "the HUD must not REPLACE the built-in system prompt");
+    assert.match(createdOpts?.hints || "", /HUD/, "a UI-started run tells the model it came from the HUD");
+    assert.equal(createdOpts?.system, undefined, "the HUD must not REPLACE the built-in system prompt");
 
     // A blank task is ignored (no empty run).
-    calledWith = null;
+    ranWith = null;
     window.dispatchEvent(new window.MessageEvent("message", { data: { __mlStartAgent: { task: "   " } }, source: window }));
-    assert.equal(calledWith, null, "a blank task starts nothing");
+    assert.equal(ranWith, null, "a blank task starts nothing");
 });
 
 // ---- elPath ----

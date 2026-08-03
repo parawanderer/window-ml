@@ -21,7 +21,7 @@ import { pretty, shortStamp, fullStamp, truncate, collapsedPreview, highlight, b
 import { annotatedConfig, turnProfile, shownModel, sessionProfile } from "./model";
 import { exportSession, printSession } from "./export";
 import { applyTheme, applyFont, applyCodePrefs, initThemeStyle } from "./prefs";
-import { IconCopy, IconCheck, IconWarn, IconChevron, IconGear, IconExport, IconVram, IconSend, IconUsage, IconBench, IconSheet } from "./icons";
+import { IconCopy, IconCheck, IconWarn, IconChevron, IconGear, IconExport, IconVram, IconSend, IconStop, IconUsage, IconBench, IconSheet } from "./icons";
 import { Settings } from "./settings";
 
 // The highest (cumulative) step number seen so far — the position a say()/answer arriving NOW belongs at,
@@ -1365,17 +1365,41 @@ function UsageBar({ s }: { s: Session }) {
     );
 }
 
-// A placeholder chat composer at the bottom of a session. Not wired up yet — the
-// long-term plan is to append user messages to a live session from here — so the
-// input and both buttons are disabled. It exists now to host the usage gauge and
-// stake out the layout (upload + · input · send · gauge).
+// The session composer: drive a live createAgent session from the sidebar. Sending routes to the page
+// (via the parent shell/panel) → the handle by hash: STEER a running loop (say) or start a new turn (run),
+// the page deciding from the handle's live state. Claude-Code touch: while a run is IN FLIGHT and the box
+// is EMPTY, the submit button becomes a STOP that cancels; type anything and it's a send again.
 function Composer({ s }: { s: Session }) {
+    const r = rev.value;   // subscribe: `s.status` is mutated in place (same ref), so without a signal read this
+                           // stateful child won't re-render when the run goes pending/idle → the Stop button.
+    const [text, setText] = useState("");
+    // Every session is continuable: an AGENT session has a steerable handle in the page's registry
+    // (say/run/cancel); a plain CHAT session continues via its history in the session registry (a fresh turn,
+    // or the in-flight fetch aborted). The page routes `sessionSend`/`sessionCancel` to whichever it is.
+    const agent = s.kind === "agent";
+    const running = s.status === "pending";
+    const empty = !text.trim();
+    const stop = running && empty;   // in-flight + empty box → the button cancels the run/turn (Claude-Code style)
+    const cancel = () => window.parent.postMessage({ __mlSidebarApp: "sessionCancel", hash: s.hash }, "*");
+    const send = () => {
+        const t = text.trim();
+        if (!t) return;
+        window.parent.postMessage({ __mlSidebarApp: "sessionSend", hash: s.hash, text: t }, "*");
+        setText("");
+    };
+    const act = () => (stop ? cancel() : send());
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); act(); } };
+    const placeholder = running ? (agent ? "Steer this run, or send to queue a follow-up…" : "Sending… or stop this turn")
+        : "Send a message to continue this session…";
     return (
-        <div class="composer">
+        <div class="composer" data-rev={r}>
             <div class="composer-row">
                 <button class="tt cbtn" disabled aria-label="Upload an image">＋<span class="tt-pop left above" role="tooltip">Attach an image — coming soon (you'll be able to paste screenshots here)</span></button>
-                <input class="cinput" type="text" disabled placeholder="Send a message to this session… (coming soon)" />
-                <button class="tt cbtn csend" disabled aria-label="Send"><IconSend /><span class="tt-pop above" role="tooltip">Send — coming soon</span></button>
+                <input class="cinput" type="text" value={text} onInput={e => setText((e.target as HTMLInputElement).value)} onKeyDown={onKey}
+                    placeholder={placeholder} />
+                <button class={`tt cbtn ${stop ? "cstop" : "csend"}`} onClick={act} disabled={!stop && empty} aria-label={stop ? "Stop the run" : "Send"}>
+                    {stop ? <IconStop /> : <IconSend />}<span class="tt-pop above" role="tooltip">{stop ? "Stop (cancel)" : running ? "Steer the run" : "Send"}</span>
+                </button>
             </div>
             <div class="composer-foot">
                 <span class="sp" />
