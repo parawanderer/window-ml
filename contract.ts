@@ -9,15 +9,15 @@
 
 export type ApiFormat = "openai" | "ollama";
 export type Theme = "auto" | "dark" | "light";
-// Which corner the off-mode approval card / working pill anchors to.
+/** Which corner the off-mode approval card / working pill anchors to. */
 export type CardCorner = "bottom-right" | "bottom-left" | "top-right" | "top-left";
-// The on-page corner HUD's verbosity: "progress" shows the working pill while an agent runs (+ the
-// approval card + answer); "quiet" drops the idle pill and only surfaces the card for an approval /
-// the final answer. (An approval can never be fully suppressed — it's the trusted gate.)
+/** The on-page corner HUD's verbosity: "progress" shows the working pill while an agent runs (+ the
+ *  approval card + answer); "quiet" drops the idle pill and only surfaces the card for an approval /
+ *  the final answer. (An approval can never be fully suppressed — it's the trusted gate.) */
 export type AgentHud = "progress" | "quiet";
-// Where the debug UI renders: nowhere (zero cost), the in-page overlay (content-script
-// shadow-root shell), or the DevTools "window.ml" panel only (no in-page overlay). In
-// devtools mode the shell still forwards events to the background so the panel receives them.
+/** Where the debug UI renders: nowhere (zero cost), the in-page overlay (content-script
+ *  shadow-root shell), or the DevTools "window.ml" panel only (no in-page overlay). In
+ *  devtools mode the shell still forwards events to the background so the panel receives them. */
 export type DebugMode = "off" | "overlay" | "devtools";
 
 /** Full config held in chrome.storage.sync (background + popup own it). */
@@ -27,37 +27,47 @@ export interface MlConfig {
     model: string;
     apiFormat: ApiFormat;
     ocrModel: string;
-    // Optional regex WHITELIST: when set, the wrapper only calls models whose id
-    // matches it (every resolved model — main/ocr/grounding/utility). Empty = no filter.
+    /** Optional regex WHITELIST: when set, the wrapper only calls models whose id
+     *  matches it (every resolved model — main/ocr/grounding/utility). Empty = no filter. */
     modelFilter: string;
-    debugMode: DebugMode;   // where the debug UI renders (off / in-page overlay / DevTools panel)
+    /** where the debug UI renders (off / in-page overlay / DevTools panel) */
+    debugMode: DebugMode;
     theme: Theme;
-    cardCorner: CardCorner;   // which screen corner the off-mode approval card + working pill anchor to
-    agentHud: AgentHud;              // corner HUD verbosity: "progress" (pill while running) or "quiet" (approvals only)
-    agentHudInDevtools: boolean;     // also show the corner HUD alongside the DevTools panel (coexist)
-    // Small "utility" model for cheap side tasks (e.g. session-title summaries).
-    // Empty → fall back to the main `model`. numCtx/forceCpu apply only when set.
+    /** which screen corner the off-mode approval card + working pill anchor to */
+    cardCorner: CardCorner;
+    /** corner HUD verbosity: "progress" (pill while running) or "quiet" (approvals only) */
+    agentHud: AgentHud;
+    /** also show the corner HUD alongside the DevTools panel (coexist) */
+    agentHudInDevtools: boolean;
+    /** Small "utility" model for cheap side tasks (e.g. session-title summaries).
+     *  Empty → fall back to the main `model`. numCtx/forceCpu apply only when set. */
     utilityModel: string;
-    utilityNumCtx: number;      // context window for the utility model (Ollama num_ctx)
-    utilityForceCpu: boolean;   // run it on CPU (num_gpu: 0) so it can't evict the main model
-    autoTitles: boolean;        // let the utility model summarise session titles in the debug sidebar
-    autoApproveReadonly: boolean;   // experimental: auto-approve read-only exec surveys via the mediated interpreter
-    autoApprovePython: boolean;     // experimental: auto-approve python_exec (the sandbox is isolated by construction)
-    // Hostnames the USER has trusted to supply their OWN ml.agent approval gate (a page's
-    // `approve` callback / the page-loop confirm). Empty by default: EVERY other origin's
-    // privileged tool calls route through the unforgeable background gate + trusted surface,
-    // so a hostile page can't self-approve. Managed only in the trusted Settings/popup UI; the
-    // page never sees this list — GET_CONFIG returns only a computed `pageApprovalAllowed` for
-    // the requesting tab's own origin. Exact-hostname match (e.g. "docs.google.com").
+    /** context window for the utility model (Ollama num_ctx) */
+    utilityNumCtx: number;
+    /** run it on CPU (num_gpu: 0) so it can't evict the main model */
+    utilityForceCpu: boolean;
+    /** let the utility model summarise session titles in the debug sidebar */
+    autoTitles: boolean;
+    /** experimental: auto-approve read-only exec surveys via the mediated interpreter */
+    autoApproveReadonly: boolean;
+    /** experimental: auto-approve python_exec (the sandbox is isolated by construction) */
+    autoApprovePython: boolean;
+    /** Hostnames the USER has trusted to supply their OWN ml.agent approval gate (a page's
+     *  `approve` callback / the page-loop confirm). Empty by default: EVERY other origin's
+     *  privileged tool calls route through the unforgeable background gate + trusted surface,
+     *  so a hostile page can't self-approve. Managed only in the trusted Settings/popup UI; the
+     *  page never sees this list — GET_CONFIG returns only a computed `pageApprovalAllowed` for
+     *  the requesting tab's own origin. Exact-hostname match (e.g. "docs.google.com"). */
     pageApprovalDomains: string[];
-    // Optional visual-grounding model for ml.agent's `locate` tool (coordinate
-    // output). OFF by default — enabling loads a 3rd model into VRAM, so it's opt-in.
+    /** Optional visual-grounding model for ml.agent's `locate` tool (coordinate
+     *  output). OFF by default — enabling loads a 3rd model into VRAM, so it's opt-in. */
     groundingEnabled: boolean;
-    groundingModel: string;     // e.g. qwen2.5vl:7b; empty + enabled → auto-detect a qwen2.5vl on the server
-    // Coordinate range the grounding model outputs (the divisor for its x,y). The
-    // screenshot is sent as a 1000×1000 square, so this one number covers every
-    // convention: 1000 (0–1000 normalized, or qwen2.5vl absolute-pixels-of-the-sent
-    // image), 100 (Molmo percent), 1024 (PaliGemma/Florence tokens).
+    /** e.g. qwen2.5vl:7b; empty + enabled → auto-detect a qwen2.5vl on the server */
+    groundingModel: string;
+    /** Coordinate range the grounding model outputs (the divisor for its x,y). The
+     *  screenshot is sent as a 1000×1000 square, so this one number covers every
+     *  convention: 1000 (0–1000 normalized, or qwen2.5vl absolute-pixels-of-the-sent
+     *  image), 100 (Molmo percent), 1024 (PaliGemma/Florence tokens). */
     groundingRange: number;
 }
 
@@ -145,10 +155,10 @@ export const detectGroundingModel = (models: string[]): string =>
  *  when a debug surface is enabled) or the in-page loop (off). It's UI state, not a secret. */
 export type MlPublicConfig = Pick<MlConfig,
     "model" | "ocrModel" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "autoApprovePython" | "groundingEnabled" | "groundingModel" | "groundingRange" | "debugMode"> & {
-    // COMPUTED per request (not stored): whether THIS page's origin is on the user's page-approval
-    // whitelist. When true, ml.agent honours the page's own approve()/confirm gate (the user trusts this
-    // domain); otherwise a privileged tool routes to the unforgeable background gate. The raw domain
-    // list is NEVER sent to the page — only this one boolean for the page's own origin.
+    /** COMPUTED per request (not stored): whether THIS page's origin is on the user's page-approval
+     *  whitelist. When true, ml.agent honours the page's own approve()/confirm gate (the user trusts this
+     *  domain); otherwise a privileged tool routes to the unforgeable background gate. The raw domain
+     *  list is NEVER sent to the page — only this one boolean for the page's own origin. */
     pageApprovalAllowed?: boolean;
 };
 
@@ -160,10 +170,12 @@ export type Role = "system" | "user" | "assistant" | "tool";
 export interface NeutralMessage {
     role: Role;
     content: string | null;
-    images?: string[];              // full data URLs
+    /** full data URLs */
+    images?: string[];
     tool_calls?: ToolCall[];
     tool_call_id?: string;
-    sources?: unknown[];            // OpenWebUI tool/RAG provenance
+    /** OpenWebUI tool/RAG provenance */
+    sources?: unknown[];
 }
 
 /** Normalized tool call — `{ id, name, arguments }` regardless of backend. */
@@ -189,9 +201,12 @@ export interface TokenUsage {
 export interface LlmResult {
     content: string;
     sources?: unknown[] | null;
-    model?: string | null;   // the model actually used, after server-side resolution (extend/ocr/default)
-    reasoning?: string | null;   // separate reasoning/thinking text (reasoning_content / message.thinking)
-    usage?: TokenUsage | null;   // token counts, when the server reports them
+    /** the model actually used, after server-side resolution (extend/ocr/default) */
+    model?: string | null;
+    /** separate reasoning/thinking text (reasoning_content / message.thinking) */
+    reasoning?: string | null;
+    /** token counts, when the server reports them */
+    usage?: TokenUsage | null;
 }
 
 /* ----------------------------- tools / agent --------------------------- */
@@ -214,8 +229,10 @@ export interface ToolResult {
     elements?: Node[];
     image?: string;
     imageLabel?: string;
-    render?: RenderDescriptor;     // the Out slot: a visualization of the result (e.g. locate's marks)
-    renderIn?: RenderDescriptor;   // the In slot: a visualization of the CALL (e.g. python's notebook-cell header)
+    /** the Out slot: a visualization of the result (e.g. locate's marks) */
+    render?: RenderDescriptor;
+    /** the In slot: a visualization of the CALL (e.g. python's notebook-cell header) */
+    renderIn?: RenderDescriptor;
 }
 
 /** One stage of a `locate` run: a vision sub-call (grid cell-pick, Set-of-Marks pick,
@@ -223,12 +240,18 @@ export interface ToolResult {
  *  model's raw `output` (Out), the exact `rawImage` sent, and a human `image` overlay
  *  (the raw⇄visualise toggle). A DOM snap carries just `image` + `label` (no prompt). */
 export interface LocateSubstep {
-    label: string;        // header after the [N] badge, e.g. "Cell pick · grid 5×3 · model chose cell 12"
-    note?: string;        // grey-italic explanation shown ABOVE this substep (e.g. why a hand-off happened)
-    prompt?: string;      // In: the prompt sent to the model (collapsible)
-    output?: string;      // Out: the model's raw reply (collapsible)
-    image?: string;       // the visualise (human overlay) view — shown by default
-    rawImage?: string;    // the exact image sent to the model; its presence enables the raw⇄visualise toggle
+    /** header after the [N] badge, e.g. "Cell pick · grid 5×3 · model chose cell 12" */
+    label: string;
+    /** grey-italic explanation shown ABOVE this substep (e.g. why a hand-off happened) */
+    note?: string;
+    /** In: the prompt sent to the model (collapsible) */
+    prompt?: string;
+    /** Out: the model's raw reply (collapsible) */
+    output?: string;
+    /** the visualise (human overlay) view — shown by default */
+    image?: string;
+    /** the exact image sent to the model; its presence enables the raw⇄visualise toggle */
+    rawImage?: string;
 }
 
 /** A serializable description of how to render a tool step in the debug sidebar.
@@ -293,34 +316,38 @@ export interface ToolRenderInput {
     elements?: Node[];
     image?: string;
     imageLabel?: string;
-    render?: RenderDescriptor;     // an Out render the tool's run() precomputed (wins over auto-derive)
-    renderIn?: RenderDescriptor;   // an In render the tool's run() precomputed (wins over the render() method)
+    /** an Out render the tool's run() precomputed (wins over auto-derive) */
+    render?: RenderDescriptor;
+    /** an In render the tool's run() precomputed (wins over the render() method) */
+    renderIn?: RenderDescriptor;
 }
 
 export interface MlTool {
     name: string;
-    description: string;   // the FULL description sent to the model
+    /** the FULL description sent to the model */
+    description: string;
     parameters: JsonSchema;
-    // Optional SHORT, human-friendly one-liner (≤ ~12 words) for the debug/HUD UI — shown as a tooltip
-    // when you hover the tool name in a step, in BOTH the debug sidebar and the off-mode card. e.g. look:
-    // "Screenshots the page so the agent can see it." A tool that provides none just has no tooltip.
+    /** Optional SHORT, human-friendly one-liner (≤ ~12 words) for the debug/HUD UI — shown as a tooltip
+     *  when you hover the tool name in a step, in BOTH the debug sidebar and the off-mode card. e.g. look:
+     *  "Screenshots the page so the agent can see it." A tool that provides none just has no tooltip. */
     summary?: string;
-    // Args are model-supplied JSON, so tools may destructure a specific shape
-    // (`run({ selector }: { selector: string })`); typed `any` so those narrower
-    // signatures stay assignable to this contract.
+    /** Args are model-supplied JSON, so tools may destructure a specific shape
+     *  (`run({ selector }: { selector: string })`); typed `any` so those narrower
+     *  signatures stay assignable to this contract. */
     run: (args: any) => string | ToolResult | Promise<string | ToolResult>;
     requiresApproval: boolean;
-    capabilities: ("vision"|"answer")[];         // e.g. "vision" | "answer"
-    // Optional page-side formatter → a serializable RenderDescriptor for the debug
-    // sidebar's IN slot (a visualization of the call; null/throw → the raw args). This
-    // is the method form of `ToolResult.renderIn`; `exec` uses it to show pretty JS.
-    // Never receives/returns code.
+    /** e.g. "vision" | "answer" */
+    capabilities: ("vision"|"answer")[];
+    /** Optional page-side formatter → a serializable RenderDescriptor for the debug
+     *  sidebar's IN slot (a visualization of the call; null/throw → the raw args). This
+     *  is the method form of `ToolResult.renderIn`; `exec` uses it to show pretty JS.
+     *  Never receives/returns code. */
     render?: (input: ToolRenderInput, args: Record<string, unknown>) => RenderDescriptor | null | undefined;
-    // Optional SIDE-EFFECT-FREE pre-check (page-side) for a requiresApproval tool: resolve the target
-    // and return an ERROR STRING if the action is doomed (no element matches, a stale @pt, an invalid
-    // selector), else null to proceed to the gate. The loop uses it to SKIP the approval prompt for an
-    // action that would only fail — approving something that can't do anything is pointless friction.
-    // Must not mutate the DOM or navigate. `click`/`type` implement it (their run() calls it first too).
+    /** Optional SIDE-EFFECT-FREE pre-check (page-side) for a requiresApproval tool: resolve the target
+     *  and return an ERROR STRING if the action is doomed (no element matches, a stale @pt, an invalid
+     *  selector), else null to proceed to the gate. The loop uses it to SKIP the approval prompt for an
+     *  action that would only fail — approving something that can't do anything is pointless friction.
+     *  Must not mutate the DOM or navigate. `click`/`type` implement it (their run() calls it first too). */
     precheck?: (args: any) => string | null;
 }
 
@@ -347,10 +374,13 @@ export interface AgentResult {
     summary: string;
     steps: number;
     transcript: AgentTranscriptEntry[];
-    elements: Node[];               // nodes designated via an answer-capable tool
+    /** nodes designated via an answer-capable tool */
+    elements: Node[];
     hitCap?: boolean;
-    cancelled?: boolean;            // the caller aborted via opts.signal (partial transcript preserved)
-    hash: string;                   // the run's session hash — pass to ml.agent(task, { resume }) to continue it
+    /** the caller aborted via opts.signal (partial transcript preserved) */
+    cancelled?: boolean;
+    /** the run's session hash — pass to ml.agent(task, { resume }) to continue it */
+    hash: string;
 }
 
 /** One live tracer event from ml.agent's `onStep` (a transcript entry + the
@@ -361,40 +391,57 @@ export interface AgentStepEvent extends AgentTranscriptEntry {
 
 /** Options for the low-level ml.step turn. */
 export interface StepOptions {
-    tools?: unknown[];              // client-side tool definitions
+    /** client-side tool definitions */
+    tools?: unknown[];
     model?: string | null;
     think?: boolean | null;
-    signal?: AbortSignal | null;   // abort kills the in-flight model fetch and rejects the call
+    /** abort kills the in-flight model fetch and rejects the call */
+    signal?: AbortSignal | null;
 }
 
 /** Options for ml.agent — the loop, whitelist, cap and approval gate. */
 export interface AgentOptions {
-    tools?: MlTool[] | null;        // tool registry (default ml.domTools)
-    extraTools?: MlTool[];          // appended to `tools`
-    system?: string | null;        // REPLACES the built-in preamble
-    hints?: string | null;         // APPENDED to the built-in preamble
+    /** tool registry (default ml.domTools) */
+    tools?: MlTool[] | null;
+    /** appended to `tools` */
+    extraTools?: MlTool[];
+    /** REPLACES the built-in preamble */
+    system?: string | null;
+    /** APPENDED to the built-in preamble */
+    hints?: string | null;
     maxSteps?: number;
     model?: string | null;
     think?: boolean | null;
     approve?: (req: ApprovalRequest) => boolean | ApprovalDecision | Promise<boolean | ApprovalDecision>;
     onStep?: ((ev: AgentStepEvent) => void) | null;
-    env?: boolean;                  // prepend page-context note to the system prompt
-    vision?: boolean | string | null;   // auto-wire a `look` tool (null = probe)
-    logDebug?: boolean;            // install the built-in console tracer
-    signal?: AbortSignal | null;   // abort the loop between steps → resolves { cancelled: true } with the partial run
-    resume?: string | null;        // continue the run with this hash: append `task` as a follow-up turn (same session)
-    silent?: boolean;              // scripting mode: keep this run OUT of the in-page HUD (no working orb, no answer card). Approvals STILL surface (privileged consent can't be silenced). The debug sidebar/panel is unaffected.
-    unattended?: boolean;          // headless mode: no human to approve, so any approval-gated call is REFUSED with a steer to read-only. exec/python_exec are wired ONLY when their auto-approve config is on (read-only survey / sandbox), and told full/mutating use is disabled; otherwise dropped. Auto-approvable read-only ops still run.
+    /** prepend page-context note to the system prompt */
+    env?: boolean;
+    /** auto-wire a `look` tool (null = probe) */
+    vision?: boolean | string | null;
+    /** install the built-in console tracer */
+    logDebug?: boolean;
+    /** abort the loop between steps → resolves { cancelled: true } with the partial run */
+    signal?: AbortSignal | null;
+    /** continue the run with this hash: append `task` as a follow-up turn (same session) */
+    resume?: string | null;
+    /** scripting mode: keep this run OUT of the in-page HUD (no working orb, no answer card). Approvals STILL surface (privileged consent can't be silenced). The debug sidebar/panel is unaffected. */
+    silent?: boolean;
+    /** headless mode: no human to approve, so any approval-gated call is REFUSED with a steer to read-only. exec/python_exec are wired ONLY when their auto-approve config is on (read-only survey / sandbox), and told full/mutating use is disabled; otherwise dropped. Auto-approvable read-only ops still run. */
+    unattended?: boolean;
 }
 
 /** A stateful ml.agent handle (what ml.createAgent returns) — the agent analogue of
  *  ml.createChat's history. Keeps the run's hash so follow-ups continue the SAME
  *  session: `run(task)` starts it, `continue(task)` appends another task once it's done. */
 export interface MlAgentHandle {
-    hash: string | null;                        // the run's session hash (null until run() has started it)
-    run(task: string): Promise<AgentResult>;    // start the run (first task)
-    continue(task: string): Promise<AgentResult>;   // append a follow-up task to the same session (after run() resolves)
-    cancel(): void;                             // abort the in-flight turn (resolves { cancelled: true })
+    /** the run's session hash (null until run() has started it) */
+    hash: string | null;
+    /** start the run (first task) */
+    run(task: string): Promise<AgentResult>;
+    /** append a follow-up task to the same session (after run() resolves) */
+    continue(task: string): Promise<AgentResult>;
+    /** abort the in-flight turn (resolves { cancelled: true }) */
+    cancel(): void;
 }
 
 /* ----------------------------- call options ---------------------------- */
@@ -409,8 +456,10 @@ export interface ChatOptions {
     system?: string | null;
     model?: string | null;
     extend?: ExtendProfile | null;
-    numCtx?: number | null;     // Ollama num_ctx (context window); ollama format only
-    numGpu?: number | null;     // Ollama num_gpu (0 = force CPU); ollama format only
+    /** Ollama num_ctx (context window); ollama format only */
+    numCtx?: number | null;
+    /** Ollama num_gpu (0 = force CPU); ollama format only */
+    numGpu?: number | null;
     think?: boolean | null;
     images?: (string | HTMLImageElement)[];
     schema?: JsonSchema | null;
@@ -418,7 +467,8 @@ export interface ChatOptions {
     maxTokens?: number | null;
     save?: boolean;
     onToken?: (delta: string, full: string) => void;
-    signal?: AbortSignal | null;   // abort the request (streaming disconnects the Port; both kill the fetch)
+    /** abort the request (streaming disconnects the Port; both kill the fetch) */
+    signal?: AbortSignal | null;
 }
 
 /** A stateful multi-turn chat (the object ml.createChat returns). Its methods'
@@ -488,13 +538,16 @@ export interface StartRunPayload {
     model: string | null;
     think: boolean | null;
     maxSteps: number;
-    autoApprovePython: boolean;    // trusted config flag → the background may auto-approve readonly python
-    autoApproveReadonly: boolean;  // trusted config flag → the background may auto-approve an in-dialect exec survey
-    unattended?: boolean;          // headless run: the background refuses (never prompts) any call that reaches the gate
-    // Which surface hosts the run's gate/stream (all route through the background): a debug surface
-    // (overlay/devtools) streams steps + gates in the sidebar app; "off" also streams the SAME steps to
-    // the page, where the content-script shell renders them in a lazily-mounted acrylic corner CARD (a
-    // curated view of the run). Every surface gates through the same origin-authed SET_APPROVAL.
+    /** trusted config flag → the background may auto-approve readonly python */
+    autoApprovePython: boolean;
+    /** trusted config flag → the background may auto-approve an in-dialect exec survey */
+    autoApproveReadonly: boolean;
+    /** headless run: the background refuses (never prompts) any call that reaches the gate */
+    unattended?: boolean;
+    /** Which surface hosts the run's gate/stream (all route through the background): a debug surface
+     *  (overlay/devtools) streams steps + gates in the sidebar app; "off" also streams the SAME steps to
+     *  the page, where the content-script shell renders them in a lazily-mounted acrylic corner CARD (a
+     *  curated view of the run). Every surface gates through the same origin-authed SET_APPROVAL. */
     surface: "overlay" | "devtools" | "off";
 }
 
@@ -521,18 +574,18 @@ export interface RunToolInPagePayload {
     runId: string;
     name: string;
     args: Record<string, unknown>;
-    // Render-only: DON'T run the tool — just compute its In render (descriptorFor) for the approval
-    // preview, so a blocking gate shows a pretty In (e.g. exec's beautified JS, python's code cell)
-    // instead of raw args. The tool's run() never fires, so this is side-effect-free.
+    /** Render-only: DON'T run the tool — just compute its In render (descriptorFor) for the approval
+     *  preview, so a blocking gate shows a pretty In (e.g. exec's beautified JS, python's code cell)
+     *  instead of raw args. The tool's run() never fires, so this is side-effect-free. */
     renderOnly?: boolean;
-    // Read-only try (design A, exec only): attempt the call via the mediated read-only interpreter
-    // (evalReadonly — no eval, no mutation). If it's in-dialect it BOTH decides "auto-approve" AND
-    // produces the result, so the background can skip the human gate; out-of-dialect → falls through.
-    // Side-effect-free either way (the interpreter can't mutate), which is why it needn't be gated.
+    /** Read-only try (design A, exec only): attempt the call via the mediated read-only interpreter
+     *  (evalReadonly — no eval, no mutation). If it's in-dialect it BOTH decides "auto-approve" AND
+     *  produces the result, so the background can skip the human gate; out-of-dialect → falls through.
+     *  Side-effect-free either way (the interpreter can't mutate), which is why it needn't be gated. */
     readonlyTry?: boolean;
-    // Doomed-action precheck (design A, click/type): run the tool's side-effect-free precheck (resolve
-    // the target). A non-null error means the action can only fail → the background SKIPS the human gate
-    // and returns it. The tool's run() never fires; the precheck must not mutate the DOM.
+    /** Doomed-action precheck (design A, click/type): run the tool's side-effect-free precheck (resolve
+     *  the target). A non-null error means the action can only fail → the background SKIPS the human gate
+     *  and returns it. The tool's run() never fires; the precheck must not mutate the DOM. */
     precheck?: boolean;
 }
 
@@ -543,15 +596,21 @@ export interface RunToolInPagePayload {
  *  {@link AgentResult}.elements there. */
 export interface PageToolEnvelope {
     result: string;
-    elementCount?: number;      // real nodes stay page-side; the background only learns how many
-    image?: string;             // screenshot data-URL (inline vision — reserved for the parity work)
+    /** real nodes stay page-side; the background only learns how many */
+    elementCount?: number;
+    /** screenshot data-URL (inline vision — reserved for the parity work) */
+    image?: string;
     imageLabel?: string;
-    // The debug-render slots, computed PAGE-SIDE (descriptorFor) since the tool's render() method + its
-    // live envelope live there — so a background-hosted run shows the same rendered In/Out as the page.
-    renderIn?: RenderDescriptor;   // In slot — a visualization of the call
-    renderOut?: RenderDescriptor;  // Out slot — a visualization of the result
-    readonly?: boolean;            // a readonlyTry that the mediated interpreter HANDLED (→ auto-approve)
-    precheckFailed?: boolean;      // a precheck that found the action doomed (no target) → skip the gate, use `result`
+    /** In slot — a visualization of the call. The debug-render slots are computed PAGE-SIDE
+     *  (descriptorFor) since the tool's render() method + its live envelope live there — so a
+     *  background-hosted run shows the same rendered In/Out as the page. */
+    renderIn?: RenderDescriptor;
+    /** Out slot — a visualization of the result */
+    renderOut?: RenderDescriptor;
+    /** a readonlyTry that the mediated interpreter HANDLED (→ auto-approve) */
+    readonly?: boolean;
+    /** a precheck that found the action doomed (no target) → skip the gate, use `result` */
+    precheckFailed?: boolean;
 }
 
 /** A resumable chat session persisted to chrome.storage.local for { save: true }
@@ -575,7 +634,8 @@ export interface StoredSession {
 export interface FetchLlmPayload {
     messages: NeutralMessage[];
     model?: string | null;
-    extend?: ExtendProfile | null;   // resolved server-side from the utility-model config
+    /** resolved server-side from the utility-model config */
+    extend?: ExtendProfile | null;
     numCtx?: number | null;
     numGpu?: number | null;
     think?: boolean | null;
@@ -598,10 +658,14 @@ export interface FetchLlmPayload {
  *  be hardcoded in a prompt or doc — `shortcut` is whatever is bound right now, `""` when the user
  *  cleared it, and `isDefault` says whether it still matches the manifest's suggested key. */
 export interface InvocationInfo {
-    shortcut: string;            // e.g. "Alt+Space"; "" when the user removed the binding
-    defaultShortcut: string;     // the manifest's suggested_key for this platform
-    isDefault: boolean;          // shortcut === defaultShortcut (false also when unbound)
-    contextMenu: boolean;        // an extension context-menu entry is registered (permission declared)
+    /** e.g. "Alt+Space"; "" when the user removed the binding */
+    shortcut: string;
+    /** the manifest's suggested_key for this platform */
+    defaultShortcut: string;
+    /** shortcut === defaultShortcut (false also when unbound) */
+    isDefault: boolean;
+    /** an extension context-menu entry is registered (permission declared) */
+    contextMenu: boolean;
 }
 
 export interface LoadedModel {
@@ -622,7 +686,8 @@ export interface SessionRef {
 
 export interface DebugChatRequest {
     model: string | null;
-    extend: ExtendProfile | null;   // so a pending turn can resolve its model from the config before the result lands
+    /** so a pending turn can resolve its model from the config before the result lands */
+    extend: ExtendProfile | null;
     messages: NeutralMessage[];
     images: string[] | null;
     toolIds: string[] | null;
@@ -646,7 +711,8 @@ export interface DebugSessionConfig {
 }
 
 interface DebugBase {
-    id: string;                     // correlates start ↔ result/error
+    /** correlates start ↔ result/error */
+    id: string;
     ts: number;
     save: boolean;
     session: SessionRef;
@@ -660,41 +726,48 @@ export interface DebugChatError extends DebugBase { kind: "chat-error"; error: s
  *  window bus (they reach the console via onStep instead). */
 /** The agent run's resolved setup — for the sidebar's "agent options" block. */
 export interface DebugAgentConfig {
-    system: string;         // the resolved system prompt the model actually received
-    customSystem: boolean;  // caller supplied their own `system` (vs the built-in preamble)
-    // description/parameters let the sidebar show the FULL tool definitions (a JSON tree), not just names.
+    /** the resolved system prompt the model actually received */
+    system: string;
+    /** caller supplied their own `system` (vs the built-in preamble) */
+    customSystem: boolean;
+    /** description/parameters let the sidebar show the FULL tool definitions (a JSON tree), not just names. */
     tools: { name: string; requiresApproval: boolean; vision?: boolean; description?: string; parameters?: JsonSchema; summary?: string }[];
     maxSteps: number;
     think: boolean | null;
     env: boolean;
     vision: boolean | string | null;
     hints: string | null;
-    silent?: boolean;       // scripting run: kept out of the in-page HUD (the card reads this to stay hidden)
-    unattended?: boolean;   // headless run: approval-gated calls are refused (no human to approve)
+    /** scripting run: kept out of the in-page HUD (the card reads this to stay hidden) */
+    silent?: boolean;
+    /** headless run: approval-gated calls are refused (no human to approve) */
+    unattended?: boolean;
 }
 export interface DebugAgentStart extends DebugBase { kind: "agent"; task: string; model: string | null; maxSteps: number; config: DebugAgentConfig; }
 export interface DebugAgentStep extends DebugBase {
     kind: "agent-step"; step: number;
-    // A monotonic id per TOOL-call step in a run, so the sidebar can correlate the in-flight START
-    // (pending: true, no result yet) with the completed DONE and patch the row in place. Thoughts
-    // have no seq. `pending` marks the START (render "running…" until the DONE arrives).
+    /** A monotonic id per TOOL-call step in a run, so the sidebar can correlate the in-flight START
+     *  (pending: true, no result yet) with the completed DONE and patch the row in place. Thoughts
+     *  have no seq. `pending` marks the START (render "running…" until the DONE arrives). */
     seq?: number; pending?: boolean;
-    // Design A: a pending step whose background-hosted tool is BLOCKED on the human gate. The sidebar
-    // renders approve/deny controls (instead of "running…") and posts the decision back via SET_APPROVAL.
+    /** Design A: a pending step whose background-hosted tool is BLOCKED on the human gate. The sidebar
+     *  renders approve/deny controls (instead of "running…") and posts the decision back via SET_APPROVAL. */
     awaitingApproval?: boolean;
-    // `thought` = the assistant's user-facing PROSE (content); `reasoning` = its separate thinking
-    // channel (reasoning_content / message.thinking), rendered as a collapsible "think" section.
+    /** `thought` = the assistant's user-facing PROSE (content); `reasoning` = its separate thinking
+     *  channel (reasoning_content / message.thinking), rendered as a collapsible "think" section. */
     thought?: string; reasoning?: string | null; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: number;
-    renderIn?: RenderDescriptor;    // rich render for the In slot (the call) — else the raw args
-    renderOut?: RenderDescriptor;   // rich render for the Out slot (the result) — else the raw result
-    argIssues?: string[];        // JSON-Schema mismatches between the args and the tool's parameters
-    // How an approval-gated tool call was decided (undefined for tools that don't
-    // require approval). The sidebar renders it as a green/red provenance badge —
-    // and it's the slot a future interactive-approval control resolves into.
+    /** rich render for the In slot (the call) — else the raw args */
+    renderIn?: RenderDescriptor;
+    /** rich render for the Out slot (the result) — else the raw result */
+    renderOut?: RenderDescriptor;
+    /** JSON-Schema mismatches between the args and the tool's parameters */
+    argIssues?: string[];
+    /** How an approval-gated tool call was decided (undefined for tools that don't
+     *  require approval). The sidebar renders it as a green/red provenance badge —
+     *  and it's the slot a future interactive-approval control resolves into. */
     approval?: "readonly" | "sandbox" | "user" | "denied" | "skipped";
-    // Token counts for this step's driver call, when the server reports them. Each
-    // step re-sends the full growing history, so the LATEST step's usage is the run's
-    // current context occupancy (not a sum across steps — see TokenUsage).
+    /** Token counts for this step's driver call, when the server reports them. Each
+     *  step re-sends the full growing history, so the LATEST step's usage is the run's
+     *  current context occupancy (not a sum across steps — see TokenUsage). */
     usage?: TokenUsage | null;
 }
 export interface DebugAgentResult extends DebugBase { kind: "agent-result"; summary: string; steps: number; hitCap: boolean; cancelled?: boolean; error?: string | null; }
