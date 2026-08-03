@@ -1985,6 +1985,11 @@ function CardApp() {
                     : "hidden";
 
     useEffect(() => { window.parent.postMessage({ __mlSidebarCard: state }, "*"); }, [state]);
+    // Clear a STALE hover whenever we're not showing the orb — the orb can unmount while hovered (the
+    // composer opens over it, an approval expands) and then no pointerleave fires, which would wrongly
+    // reopen the capsule (orblabel) when the orb next appears (e.g. the "Starting…" bridge). So a fresh
+    // orb always starts circular until a real pointerenter.
+    useEffect(() => { if (state !== "orb" && state !== "orblabel") orbHover.value = false; }, [state]);
     useEffect(() => { if (startedAt > 0 && newRunUp) composerStarting.value = 0; }, [newRunUp]);   // run surfaced → drop the bridge
     useEffect(() => { if (run) ensureCardTitle(run); }, [hash, r]);
     useEffect(() => { cardShowWork.value = false; }, [hash]);   // collapse the trace when a new run starts
