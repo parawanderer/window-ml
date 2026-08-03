@@ -76,14 +76,16 @@ function streamResponse(lines, { status = 200 } = {}) {
 
 // Loads background.js. `onFetch` receives { url, opts, body } (body already
 // JSON-parsed for requests that have one) and returns a response stub.
-function loadBackground({ config = {}, onFetch, onCaptureTab }) {
+function loadBackground({ config = {}, onFetch, onCaptureTab, onPyRun }) {
     const calls = [];
     const captures = [];        // captureVisibleTab arg lists, for screenshot tests
     const tabMessages = [];     // chrome.tabs.sendMessage arg lists, for reverse-channel tests
+    const pyRuns = [];          // PY_RUN payloads relayed to the offscreen doc (for python_exec tests)
     const listeners = [];
     const connectListeners = [];
     const stored = { ...config };
     const localStore = {};
+    let offscreenDoc = false;
 
     const context = {
         console,
@@ -118,7 +120,18 @@ function loadBackground({ config = {}, onFetch, onCaptureTab }) {
             },
             runtime: {
                 onMessage: { addListener: (fn) => listeners.push(fn) },
-                onConnect: { addListener: (fn) => connectListeners.push(fn) }
+                onConnect: { addListener: (fn) => connectListeners.push(fn) },
+                // The PYTHON_EXEC handler relays PY_RUN to the offscreen doc via runtime.sendMessage —
+                // capture the payload (esp. `hardened`) so tests can assert what the sandbox is told to run.
+                sendMessage: async (msg) => {
+                    if (msg?.type === "PY_RUN") { pyRuns.push(msg); return onPyRun ? onPyRun(msg) : { ok: true, value: null, stdout: "" }; }
+                    return undefined;
+                },
+            },
+            offscreen: {
+                Reason: { WORKERS: "WORKERS" },
+                hasDocument: async () => offscreenDoc,
+                createDocument: async () => { offscreenDoc = true; },
             },
             tabs: {
                 // Records args so tests can assert the windowId; onCaptureTab (if
@@ -140,6 +153,7 @@ function loadBackground({ config = {}, onFetch, onCaptureTab }) {
         calls,
         captures,
         tabMessages,
+        pyRuns,
         stored,
         // Simulates chrome.runtime.sendMessage hitting the listener.
         send: (message, sender = {}) =>

