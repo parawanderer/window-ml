@@ -46,6 +46,9 @@ export interface Session {
 
     maxSteps?: number;
     agentConfig?: DebugAgentConfig;
+    // Mid-run steering: messages a handle injected via a.say() while the loop was running. Shown
+    // immediately as "you (steering)" bubbles — the model sees each at the next step boundary.
+    says?: { text: string; ts: number }[];
 }
 
 // --- state: a Map (O(1) lookup) + a version signal to notify Preact of changes ---

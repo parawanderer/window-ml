@@ -66,11 +66,11 @@ function onDebug(ev: MlDebugEvent): void {
         if (s) { s.maxSteps = ev.maxSteps; s.lastTs = ev.ts; rev.value++; }
         return;
     }
-    // A handle steered a running loop (a.say(text)). The message reaches the model at the next step
-    // boundary; the run keeps streaming. (TODO step C: render the injected user bubble immediately.)
+    // A handle steered a running loop (a.say(text)) → show it immediately as a "you (steering)" bubble.
+    // The message reaches the model at the next step boundary; the run keeps streaming.
     if (ev.kind === "agent-say") {
         const s = sessionMap.get(ev.session.hash);
-        if (s) { s.lastTs = ev.ts; rev.value++; }
+        if (s) { s.says = [...(s.says || []), { text: ev.text, ts: ev.ts }]; s.lastTs = ev.ts; rev.value++; }
         return;
     }
     if (ev.kind === "chat") {
@@ -1130,6 +1130,14 @@ function AgentRunView({ s }: { s: Session }) {
                 turn: the final-answer turn puts its content in the summary (below) and its thinking here,
                 so without `t.reasoning` the final think block would vanish. */}
             {turns.filter(t => t.thought || t.reasoning || t.tools.length).map(t => <AgentTurn key={t.step} turn={t} max={s.maxSteps} hash={s.hash} />)}
+            {/* Mid-run steering (a.say()): the messages you injected while the loop ran, shown here so the
+                steering is visible. The model saw each at the next step boundary. */}
+            {(s.says || []).map((sy, i) => (
+                <div class="msg user steering" key={`say-${i}`}>
+                    <div class="mrow"><span class="who">you · steering</span><span class="sp" /><Stamp ts={sy.ts} /></div>
+                    <div class="utext">{sy.text}</div>
+                </div>
+            ))}
             {s.error
                 ? <ReplyBubble content="" status="err" model={s.model} profile={sessionProfile(s)} ts={s.lastTs} error={s.error} label="run failed" />
                 : s.summary != null || s.cancelled

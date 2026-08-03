@@ -588,6 +588,10 @@ details.io[open] > summary .io-preview { display: none; }
 
 .msg { border-radius: 7px; padding: 6px 9px; margin-bottom: 8px; border: 1px solid var(--border); }
 .msg.user { background: transparent; }
+/* Mid-run steering (a.say()): a dashed accent rail marks a message the user injected while the loop
+   ran — visually distinct from the opening task, since the model saw it only at the next step boundary. */
+.msg.user.steering { border-style: dashed; border-left: 2px solid var(--accent, var(--warn)); border-radius: 0 7px 7px 0; }
+.msg.user.steering .who { color: var(--accent, var(--warn)); }
 /* Assistant reply reads as flowing text, not a boxed bubble (#5). */
 .msg.asst { background: transparent; border: none; padding: 4px 8px 8px; }
 .msg.asst.err { border-left: 2px solid var(--err); border-radius: 0; padding-left: 8px; }

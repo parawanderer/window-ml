@@ -773,6 +773,22 @@ test("agent runs render as their own session with steps + a final answer", async
     assert.ok(w.shadow.querySelector(".msg.asst .raw-btn"), "answer has a raw toggle");
 });
 
+test("agent-say renders a 'steering' bubble; agent-cap bumps the live step cap", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("ag-steer", "reorganise the tabs", "qwen3:14b", 10));
+    await w.dispatch(agentStep("ag-steer", 1, { tool: "click", arguments: {}, result: "clicked" }));
+    // Mid-run: the handle steered (a.say) and raised the cap (a.maxSteps = 40).
+    await w.dispatch({ kind: "agent-say", id: "ag-steer", ts: Date.now() + 5, save: false, session: { hash: "ag-steer", turn: 0 }, text: "keep the pinned ones where they are" });
+    await w.dispatch({ kind: "agent-cap", id: "ag-steer", ts: Date.now() + 6, save: false, session: { hash: "ag-steer", turn: 0 }, maxSteps: 40 });
+
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const steer = w.shadow.querySelector(".msg.user.steering");
+    assert.ok(steer, "the injected say() message renders as a steering bubble");
+    assert.match(steer.querySelector(".utext").textContent, /keep the pinned ones/);
+    assert.match(w.shadow.querySelector(".step-pill").textContent, /\/40/, "the live cap bump is reflected (step x/40)");
+});
+
 test("debug In render of a click step is a hoverable element reference, not the card's intent sentence", async () => {
     // Regression: click/type emit an `action` intent descriptor (for the off-mode CARD). The DEBUG log
     // (overlay/devtools) must still render it as a hoverable/selectable element reference — the selector
