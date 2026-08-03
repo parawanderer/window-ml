@@ -133,7 +133,13 @@ class AgentHandle implements MlAgentHandle, AgentControl {
         }
     }
 
-    cancel(): void { this._ctrl.abort(); }
+    cancel(): void {
+        this._ctrl.abort();
+        // A background run's loop lives in the service worker. Aborting the page controller only rejects the
+        // round-trip (→ ABORT_TASK, which kills a FETCH_LLM, not the run), so the SW loop would keep stepping
+        // and emit a stale approval AFTER the "cancelled" bubble. Relay CANCEL_RUN to actually stop it.
+        if (this.bg && this.hash) window.postMessage({ type: "CANCEL_RUN_REQUEST", payload: { runId: this.hash } }, "*");
+    }
 
     /** A new handle (fresh hash) seeded with a COPY of this history — diverge without touching this one. */
     fork(): MlAgentHandle {

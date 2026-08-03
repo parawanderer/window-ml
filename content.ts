@@ -125,6 +125,15 @@ window.addEventListener("message", (event: MessageEvent) => {
         startStream(requestId, data.payload);
         return;
     }
+    if (data.type === "CANCEL_RUN_REQUEST") {
+        // A createAgent handle cancelling its OWN background-hosted run. Aborting the page-side controller
+        // only rejects the round-trip (and routes to ABORT_TASK, which kills a FETCH_LLM — not the run's
+        // loop), so the SW loop would keep stepping and emit a stale approval AFTER the "cancelled" bubble.
+        // Relay CANCEL_RUN so the background aborts the run's OWN controller. Fire-and-forget; a forged
+        // cancel only aborts that page's own run (the background comment notes this) — harmless.
+        chrome.runtime.sendMessage({ type: "CANCEL_RUN", payload: data.payload });
+        return;
+    }
     if (data.type === "ABORT_REQUEST") {
         // Cancel the in-flight task for this requestId. Streaming rides a Port → disconnecting it is
         // what aborts the fetch (the background listens on onDisconnect). Non-streaming has no port →

@@ -592,7 +592,7 @@ details.io[open] > summary .io-preview { display: none; }
 .jt-null { color: var(--fg-faint); }
 
 .msg { border-radius: 7px; padding: 6px 9px; margin-bottom: 8px; border: 1px solid var(--border); }
-.msg.user { background: transparent; }
+.msg.user { background: var(--panel); }
 /* Assistant reply reads as flowing text, not a boxed bubble (#5). */
 .msg.asst { background: transparent; border: none; padding: 4px 8px 8px; }
 .msg.asst.err { border-left: 2px solid var(--err); border-radius: 0; padding-left: 8px; }

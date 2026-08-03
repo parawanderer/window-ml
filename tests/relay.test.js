@@ -39,6 +39,18 @@ test("window.ml signals readiness via the ml:ready event and ml.ready promise", 
     assert.strictEqual(await world.ml.ready, world.ml);
 });
 
+test("CANCEL_RUN_REQUEST relays a fire-and-forget CANCEL_RUN so a handle kills its background loop", async () => {
+    // A createAgent handle's cancel() posts this for a BACKGROUND run: aborting the page controller alone
+    // only kills a FETCH_LLM (via ABORT_TASK), not the SW-side loop — which would keep stepping and emit a
+    // stale approval AFTER the "cancelled" bubble. content.js must relay it as a runtime CANCEL_RUN.
+    const world = loadPageWorld({ onRuntimeMessage: () => undefined });
+    world.context.window.postMessage({ type: "CANCEL_RUN_REQUEST", payload: { runId: "run42" } });
+    await new Promise(r => setTimeout(r, 0));   // the harness posts on a microtask
+    const cancel = world.runtimeCalls.find(m => m.type === "CANCEL_RUN");
+    assert.ok(cancel, "content.js relayed a CANCEL_RUN runtime message");
+    assert.equal(cancel.payload.runId, "run42", "carrying the run id to abort");
+});
+
 test("ml.step returns the raw assistant message with tool_calls", async () => {
     const world = loadPageWorld({
         onRuntimeMessage: (msg) => {

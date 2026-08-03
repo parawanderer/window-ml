@@ -518,6 +518,7 @@ export type PageRequestType =
     | "START_RUN_REQUEST"   // design A: kick off a background-hosted ml.agent loop
     | "RESUME_RUN_REQUEST"   // design A: continue a background-hosted run (append a follow-up turn to its stored history)
     | "INJECT_MESSAGE_REQUEST"   // a.say() mid-run: steer a RUNNING background loop (its inbox drains at the next step)
+    | "CANCEL_RUN_REQUEST"   // a handle cancel()ing its OWN background run: relay CANCEL_RUN so the SW aborts the loop (special-cased, not HANDLE_MAP)
     | "ABORT_REQUEST";   // cancel an in-flight background task by requestId (handled specially, not via HANDLE_MAP)
 
 /** Message types the background worker's onMessage listener handles. */
