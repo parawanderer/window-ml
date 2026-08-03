@@ -1,9 +1,10 @@
 # Spec: enforce privileged-op consent at the BACKGROUND choke point
 
-Status: **planned** (holes demonstrated, fix not yet landed). Two `todo` tests in
-`tests/background.test.js` (`SECURITY (FETCH_SHEET)` / `SECURITY (PYTHON_EXEC)`)
-encode the desired behavior and **fail today**; dropping their `todo` flag is the
-acceptance gate.
+Status: **implemented** (background.ts: `senderTrust` + `pendingGrants` +
+`isBlockedFetchTarget`; the four handler guards). The five `SECURITY (…)` tests in
+`tests/background.test.js` pass. TODO: a grant-*positive* integration test (an
+approved agent run reads THAT sheet, then the grant clears) — the design is sound
+and the refusal paths are proven, but the allow-path isn't yet asserted end-to-end.
 
 ## The holes (both demonstrated by the `todo` tests)
 

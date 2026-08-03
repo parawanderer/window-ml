@@ -1223,8 +1223,7 @@ test("FETCH_SHEET: an HTML login page (not signed in / no access) → an authent
 // ---- and FAIL today (demonstrating the live holes). The hardening pass in ----
 // ---- docs/spec/CHOKEPOINT_CONSENT_SPEC.md makes them pass; drop `todo` then. See background.ts. ----
 
-test("SECURITY (FETCH_SHEET): a non-whitelisted page must NOT read an arbitrary sheet, credentialed, unapproved",
-    { todo: "hardening pass: enforce per-sheet consent at the choke point (approved-sheet-id set + origin whitelist)" }, async () => {
+test("SECURITY (FETCH_SHEET): a non-whitelisted page must NOT read an arbitrary sheet, credentialed, unapproved", async () => {
     // THE HOLE (this test fails today): the SHEET_URL_OK host-lock stops general SSRF, but within the
     // Google-Sheets shape the ID is page-controlled and the fetch is credentialed — so a hostile page that
     // knows a private sheet's id exfiltrates it with the user's cookies, with NO unforgeable approval (the
@@ -1242,8 +1241,7 @@ test("SECURITY (FETCH_SHEET): a non-whitelisted page must NOT read an arbitrary 
     assert.notEqual(opts?.credentials, "include", "must not spend the user's Google cookies on an unapproved sheet");
 });
 
-test("SECURITY (PYTHON_EXEC): a non-whitelisted page must NOT get FULL (unhardened, networked) mode",
-    { todo: "hardening pass: force hardened for a page-relayed run unless the origin is whitelisted / a trusted surface" }, async () => {
+test("SECURITY (PYTHON_EXEC): a non-whitelisted page must NOT get FULL (unhardened, networked) mode", async () => {
     // THE HOLE (this test fails today): `hardened:false` from a page runs the offscreen worker UNHARDENED —
     // js + network bridge, at the EXTENSION origin (<all_urls> → CORS-bypassing, credential-capable fetch),
     // strictly more powerful than any other tool. "Full mode needs approval" is enforced only in the
@@ -1259,8 +1257,7 @@ test("SECURITY (PYTHON_EXEC): a non-whitelisted page must NOT get FULL (unharden
     assert.ok(!unhardened, "a non-whitelisted page must NOT get an unhardened run — today it does");
 });
 
-test("SECURITY (FETCH_SHEET_TITLE): internal-only — a page (sender.tab set) must be refused",
-    { todo: "hardening pass: FETCH_SHEET_TITLE is for the approval-card iframe only — refuse sender.tab != null" }, async () => {
+test("SECURITY (FETCH_SHEET_TITLE): internal-only — a page (sender.tab set) must be refused", async () => {
     // The handler even comments "a page can't send this" but never ENFORCES it. A page (bypassing the
     // relay, or via a future relay entry) currently learns a private sheet's TITLE by id, credentialed.
     let fetched = false;
@@ -1275,8 +1272,7 @@ test("SECURITY (FETCH_SHEET_TITLE): internal-only — a page (sender.tab set) mu
     assert.equal(res.data, null, "a page must not learn a sheet's title — today it leaks it");
 });
 
-test("SECURITY (FETCH_IMAGE_B64): must refuse internal/loopback/metadata targets (SSRF)",
-    { todo: "hardening pass: SSRF denylist (private/loopback/link-local/metadata) on the uncredentialed image fetch" }, async () => {
+test("SECURITY (FETCH_IMAGE_B64): must refuse internal/loopback/metadata targets (SSRF)", async () => {
     // Uncredentialed, so no auth-data leak — but it's a "read any URL's bytes" primitive at the extension
     // origin, so a page can probe/read the user's INTERNAL network. Private/metadata hosts must be refused.
     let fetched = false;

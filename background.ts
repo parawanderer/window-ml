@@ -6,7 +6,7 @@ import type { MlConfig, ApiFormat, NeutralMessage, ToolCall, FetchLlmPayload, Ll
 import { DEFAULT_CONFIG, modelFilterAllows } from "./contract";   // single source of truth (see contract.ts)
 import { runBackgroundAgent } from "./agent-host";   // design A: the background-hosted agent loop
 import type { ToolMeta } from "./agent-loop";
-import { externalSheetIds } from "./dom";   // track approved external sheets across a run
+import { externalSheetIds, googleSheetId } from "./dom";   // track approved external sheets across a run + the choke-point grants
 
 // The wire body we assemble for a chat request (grows per format/options).
 interface ChatBody {
@@ -715,6 +715,52 @@ const pendingApprovals = new Map<string, (d: ApprovalDecision) => void>();
 // call. Deleted when the run settles. Aborting resolves the loop as { cancelled: true } (partial transcript).
 const runControllers = new Map<string, AbortController>();
 
+// ---- Choke-point consent (docs/spec/CHOKEPOINT_CONSENT_SPEC.md) ----
+// The boundary for the credentialed/unbounded ops lives HERE, not in the bypassable client-side approval.
+// A privileged call passes iff: a trusted surface (sender.tab == null), a whitelisted domain, or a per-call
+// grant the design-A loop minted after an iframe approval. Grants are scoped to the approved tool's
+// delegation (minted in delegateTool, cleared when it returns), keyed by (tabId, resource).
+type TabGrants = { sheets: Set<string>; pyCode: Set<string> };
+const pendingGrants = new Map<number, TabGrants>();
+const grantsFor = (tabId: number): TabGrants => {
+    let g = pendingGrants.get(tabId);
+    if (!g) { g = { sheets: new Set(), pyCode: new Set() }; pendingGrants.set(tabId, g); }
+    return g;
+};
+
+/** Hostname of the message's real sender (the browser-stamped tab URL — a page can't forge it). */
+function senderHost(sender: chrome.runtime.MessageSender): string {
+    try { return new URL(sender.tab?.url || sender.url || "").hostname.toLowerCase(); } catch { return ""; }
+}
+
+/** Trust tier of a message's sender: `surface` = internal extension page (fully trusted); `whitelisted` =
+ *  a domain the user trusts to self-gate; `untrusted` = a page that must present a per-call grant. Uses the
+ *  same origin derivation GET_CONFIG does for `pageApprovalAllowed`. */
+async function senderTrust(sender: chrome.runtime.MessageSender): Promise<"surface" | "whitelisted" | "untrusted"> {
+    if (sender.tab == null) return "surface";
+    const host = senderHost(sender);
+    const cfg = await getConfig();
+    return host && (cfg.pageApprovalDomains || []).includes(host) ? "whitelisted" : "untrusted";
+}
+
+/** SSRF denylist for the uncredentialed image fetch: refuse loopback / private / link-local / metadata
+ *  hosts (and non-http schemes / unparseable URLs), so a page can't probe the user's internal network
+ *  through the extension's `<all_urls>` reach. */
+function isBlockedFetchTarget(rawUrl: string): boolean {
+    let u: URL;
+    try { u = new URL(rawUrl); } catch { return true; }
+    if (u.protocol !== "http:" && u.protocol !== "https:") return true;
+    const h = u.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    if (h === "localhost" || h.endsWith(".localhost") || h === "::1") return true;
+    if (h.startsWith("fe80") || h.startsWith("fc") || h.startsWith("fd") || h.startsWith("::ffff:127.")) return true;   // IPv6 link-local / ULA / mapped-loopback
+    const m = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+    if (m) {
+        const a = +m[1], b = +m[2];
+        if (a === 127 || a === 10 || a === 0 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 169 && b === 254)) return true;
+    }
+    return false;
+}
+
 chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     // The content-script shell forwards each __mlDebug event here so a DevTools panel
     // (which can't see page window-messages) can mirror the overlay's stream. Fire-and-
@@ -818,12 +864,25 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     return { content: r.content, tool_calls: r.tool_calls, reasoning: r.reasoning, usage: r.usage };
                 },
                 delegateTool: async (name, args) => {
-                    const env = await chrome.tabs.sendMessage(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name, args } })
-                        .catch((e: unknown) => ({ result: `Error: could not reach the page to run "${name}" (${(e as Error)?.message || e}).` })) as Partial<import("./contract").PageToolEnvelope>;
-                    // The page already computed the rendered In/Out slots (descriptorFor) — forward them so
-                    // the sidebar shows the rich view. `image` rides along for INLINE VISION (native look):
-                    // the loop injects it into the model's next turn (pushToolImages).
-                    return { result: env?.result || `Error: the page returned nothing for tool "${name}".`, renderIn: env?.renderIn, renderOut: env?.renderOut, image: env?.image, imageLabel: env?.imageLabel };
+                    // Reaching here means the call is AUTHORIZED (approved / auto / cached alike). Mint the
+                    // choke-point grants for the privileged sub-ops this tool will make, bound to the exact
+                    // resources in its args — an untrusted page's FETCH_SHEET / full PYTHON_EXEC checks them.
+                    // Scoped to this delegation: cleared in `finally`, so a later call needs its own approval.
+                    if (name === "python_exec") {
+                        const g = grantsFor(tabId);
+                        for (const id of externalSheetIds(args)) g.sheets.add(id);
+                        if ((args as { mode?: string }).mode === "full") g.pyCode.add(String((args as { code?: unknown }).code ?? ""));
+                    }
+                    try {
+                        const env = await chrome.tabs.sendMessage(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name, args } })
+                            .catch((e: unknown) => ({ result: `Error: could not reach the page to run "${name}" (${(e as Error)?.message || e}).` })) as Partial<import("./contract").PageToolEnvelope>;
+                        // The page already computed the rendered In/Out slots (descriptorFor) — forward them so
+                        // the sidebar shows the rich view. `image` rides along for INLINE VISION (native look):
+                        // the loop injects it into the model's next turn (pushToolImages).
+                        return { result: env?.result || `Error: the page returned nothing for tool "${name}".`, renderIn: env?.renderIn, renderOut: env?.renderOut, image: env?.image, imageLabel: env?.imageLabel };
+                    } finally {
+                        pendingGrants.delete(tabId);   // grants were for THIS approved call's sub-ops only
+                    }
                 },
                 // Read-only try (exec only, and only when the user enabled autoApproveReadonly): ask the
                 // page to run the call through the mediated interpreter — side-effect-free, so if it's
@@ -891,37 +950,63 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         return true;   // async: sendResponse fires when the whole run finishes
     }
     if (message.type === "PYTHON_EXEC") {
-        // Route the sandboxed-Python run to the offscreen Pyodide host (the service worker
-        // can't run WASM). Spin the offscreen doc up on first use, then relay PY_RUN to it.
-        const payload = { type: "PY_RUN", code: message.payload?.code, image: message.payload?.image ?? null, hardened: message.payload?.hardened !== false, tables: message.payload?.tables ?? null };
-        const attempt = () => ensureOffscreen().then(() => chrome.runtime.sendMessage(payload));
-        attempt()
-            .catch((err) => {
-                // The offscreen doc can be gone (SW slept and the doc was torn down, or a
-                // stale cached-ready) → "Receiving end does not exist." Drop the cache,
-                // recreate the doc, and retry ONCE before surfacing the error.
-                if (!/Receiving end does not exist|Could not establish connection/.test(String(err?.message || err))) throw err;
-                offscreenReady = null;
-                return attempt();
-            })
-            .then((res) => sendResponse({ data: res }))
-            .catch((err) => sendResponse({ error: err?.message || String(err) }));
+        // Route the sandboxed-Python run to the offscreen Pyodide host (the service worker can't run WASM).
+        // CHOKE-POINT: FULL (unhardened) mode is network at the extension origin — gate it. Readonly is a
+        // network-nulled sandbox (safe for any caller); full is allowed only from a trusted surface, a
+        // whitelisted domain, or with a per-call grant for THIS code. An untrusted page without one is
+        // REJECTED (a clear error, not a silent readonly downgrade).
+        (async () => {
+            const wantsFull = message.payload?.hardened === false;
+            if (wantsFull) {
+                const trust = await senderTrust(sender);
+                if (trust === "untrusted") {
+                    const code = String(message.payload?.code ?? "");
+                    if (!(sender.tab?.id != null && pendingGrants.get(sender.tab.id)?.pyCode.has(code))) {
+                        sendResponse({ error: "Refused: network-enabled (full) Python needs approval on this page — run it through an agent and approve it, or add this site to the approval whitelist." });
+                        return;
+                    }
+                }
+            }
+            const payload = { type: "PY_RUN", code: message.payload?.code, image: message.payload?.image ?? null, hardened: message.payload?.hardened !== false, tables: message.payload?.tables ?? null };
+            const attempt = () => ensureOffscreen().then(() => chrome.runtime.sendMessage(payload));
+            attempt()
+                .catch((err) => {
+                    // The offscreen doc can be gone (SW slept and the doc was torn down, or a stale cached-
+                    // ready) → "Receiving end does not exist." Drop the cache, recreate, retry ONCE.
+                    if (!/Receiving end does not exist|Could not establish connection/.test(String(err?.message || err))) throw err;
+                    offscreenReady = null;
+                    return attempt();
+                })
+                .then((res) => sendResponse({ data: res }))
+                .catch((err) => sendResponse({ error: err?.message || String(err) }));
+        })();
         return true;   // async
     }
     if (message.type === "FETCH_SHEET") {
-        // Fetch a Google Sheet's CSV export CREDENTIALED (the user's own Google session), so
-        // it works on private corporate sheets — the DOM path is useless (Sheets is canvas).
-        fetchSheetCsv(message.payload?.url)
-            .then((r) => sendResponse({ data: r }))   // { csv, name } — name from the export's Content-Disposition
-            .catch((err) => sendResponse({ error: err?.message || String(err) }));
+        // Fetch a Google Sheet's CSV export CREDENTIALED (the user's own Google session), so it works on
+        // private corporate sheets — the DOM path is useless (Sheets is canvas). CHOKE-POINT: the host-lock
+        // stops general SSRF, but the sheet id is caller-chosen and this spends the user's cookies — so an
+        // untrusted page may only read a sheet it holds a per-call grant for (minted when its agent run
+        // approved it). A trusted surface / whitelisted domain is unrestricted (host-lock still applies).
+        (async () => {
+            const url = message.payload?.url || "";
+            if (await senderTrust(sender) === "untrusted") {
+                const id = googleSheetId(url);
+                if (!(id && sender.tab?.id != null && pendingGrants.get(sender.tab.id)?.sheets.has(id))) {
+                    sendResponse({ error: "Refused: this sheet hasn't been approved for this page — run it through an agent and approve it, or add this site to the approval whitelist." });
+                    return;
+                }
+            }
+            try { sendResponse({ data: await fetchSheetCsv(url) }); }   // { csv, name } — name from Content-Disposition
+            catch (err) { sendResponse({ error: (err as Error)?.message || String(err) }); }
+        })();
         return true;   // async
     }
     if (message.type === "FETCH_SHEET_TITLE") {
-        // TITLE-ONLY, pre-approval: the sidebar's approval chip fetches just the sheet name so the USER
-        // sees WHICH sheet they're granting (informed consent) — the MODEL never gets it. A HEAD request
-        // (no body) reads Content-Disposition without downloading the sheet. Best-effort → null on any
-        // failure (the chip stays generic). Same host-locked shape as FETCH_SHEET; only the trusted
-        // sidebar app (extension origin) can send this — a page can't (not a content-relayed type).
+        // TITLE-ONLY, pre-approval: the approval card fetches just the sheet name so the USER sees WHICH
+        // sheet they're granting (the MODEL never gets it). INTERNAL-ONLY — it's not in the content relay,
+        // so only the extension-origin card iframe (sender.tab == null) may call it; refuse any page.
+        if (sender.tab != null) { sendResponse({ data: null }); return true; }
         const id = String(message.payload?.id || "").trim();
         const url = `https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=0`;
         if (!/^[A-Za-z0-9_-]+$/.test(id) || !SHEET_URL_OK.test(url)) { sendResponse({ data: null }); return true; }
@@ -1033,6 +1118,12 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         return true;
 
     } else if (message.type === "FETCH_IMAGE_B64") {
+        // Uncredentialed (no auth-data leak), but a "read any URL's bytes" primitive at the extension
+        // origin — so an SSRF denylist keeps a page from probing/reading the user's internal network.
+        if (isBlockedFetchTarget(message.payload?.url || "")) {
+            sendResponse({ error: "Refused: cannot fetch a private / loopback / link-local / metadata address." });
+            return true;
+        }
         fetch(message.payload.url)
             .then(response => {
                 if (!response.ok) throw new Error(`HTTP ${response.status}`);
