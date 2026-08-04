@@ -1625,7 +1625,11 @@ function PythonBench() {
 const surface = signal<"panel" | "card">("panel");
 const cardCollapsed = signal(false);         // user collapsed a FINISHED card down to a toast (default: show it)
 const cardDismissed = signal<string>("");    // the run hash the user dismissed (closes a finished card)
-const cardShowWork = signal(false);          // "Show work" — expand the full step trace under a finished card
+// "Show work" open-state, keyed by the run's HASH (not a global boolean). A new run's hash won't match, so
+// its trace is COLLAPSED by default with NO post-render reset — the reset-as-effect was why a fast/quiet run
+// first painted with the PREVIOUS run's trace expanded (tall) then collapsed (the "opens huge then shrinks"
+// glitch). "" = nothing open. Also naturally scopes to the active run once the card has tabs.
+const cardShowWorkHash = signal<string>("");
 const composerOpen = signal(false);          // the Spotlight composer — the HUD morphs into a task input
 const composerMaxSteps = signal(20);         // step budget for a UI-started run (persists across opens)
 const STEP_BUDGETS = [10, 20, 50];           // the segmented presets in the composer
@@ -1926,10 +1930,10 @@ function armMenuDismiss(): void {
 // it just hides it; this re-renders it with the SAME components the debug sidebar uses (AgentTurn →
 // ToolStep). Collapsed by default; a finished run has no awaiting gate, so no approve buttons appear.
 function ShowWork({ run }: { run: Session }) {
-    // Reading cardShowWork auto-memoizes this component; `run` is mutated in place (same ref), so also
+    // Reading cardShowWorkHash auto-memoizes this component; `run` is mutated in place (same ref), so also
     // subscribe to `rev` — else a landed Explain gloss (rev bump) wouldn't re-render. Retained via data-rev.
     const rv = rev.value;
-    const open = cardShowWork.value;
+    const open = cardShowWorkHash.value === run.hash;
     const turns = groupTurns(run.steps || []);
     const n = (run.steps || []).filter(s => s.tool).length;
     // Right-click the toggle → export THIS run (Markdown / PDF), reusing the debug bar's export logic. The
@@ -1952,7 +1956,7 @@ function ShowWork({ run }: { run: Session }) {
         <div class="card-work" data-rev={rv}>
             <div class="card-work-head" ref={head}>
                 <button class={`card-work-toggle${open ? " open" : ""}`} title="Right-click to export this run (Markdown / PDF)"
-                    onClick={() => (cardShowWork.value = !open)}
+                    onClick={() => (cardShowWorkHash.value = open ? "" : run.hash)}
                     onContextMenu={e => { e.preventDefault(); setExpMenu(v => !v); }}>
                     <span class="card-work-label">{open ? "Hide work" : "Show work"}</span>
                     <span class="card-work-n">{n} {n === 1 ? "step" : "steps"}</span>
@@ -2050,9 +2054,9 @@ function Orb({ icon, label, wide }: { icon: string; label: string; wide: boolean
 function CardApp() {
     const r = rev.value;   // subscribe to session changes (retained via data-rev below)
     const composing = composerOpen.value;   // Spotlight bar open → the HUD morphs into the task input
-    const showWork = cardShowWork.value;    // subscribe: toggling "Show work" must re-measure our height
     const run = latestAgentRun();
     const hash = run?.hash;
+    const showWork = !!hash && cardShowWorkHash.value === hash;   // active run's trace open? (subscribe → re-measure height on toggle)
     const pendingStep = run ? (run.steps || []).find(st => isPendingGate(run.hash, st)) : undefined;
     const pending = !!pendingStep;
     const done = !!run && (run.summary != null || !!run.error || !!run.cancelled);   // terminal: answer, fatal error, or cancelled
@@ -2086,10 +2090,10 @@ function CardApp() {
     useEffect(() => { if (state !== "orb" && state !== "orblabel") orbHover.value = false; }, [state]);
     useEffect(() => { if (startedAt > 0 && newRunUp) composerStarting.value = 0; }, [newRunUp]);   // run surfaced → drop the bridge
     useEffect(() => { if (run) ensureCardTitle(run); }, [hash, r]);
-    useEffect(() => { cardShowWork.value = false; }, [hash]);   // collapse the trace when a new run starts
-    // "Show work" open → ask the shell to slide the card to the drag limit (room for the whole trace);
-    // closed → release it (snap back to fit). Subscribes to cardShowWork so the toggle drives it.
-    useEffect(() => { window.parent.postMessage({ __mlSidebarCardExpand: cardShowWork.value }, "*"); }, [cardShowWork.value]);
+    // No reset effect needed — show-work is keyed by hash, so a new run is collapsed by default (its hash
+    // isn't the open one). "Show work" open → ask the shell to slide the card to the drag limit (room for the
+    // whole trace); closed → release it (snap back to fit). Driven by the ACTIVE run's derived open state.
+    useEffect(() => { window.parent.postMessage({ __mlSidebarCardExpand: showWork }, "*"); }, [showWork]);
     // Report our natural CONTENT height so the shell can FIT the card (a cross-origin iframe can't
     // auto-size). We sum the card's children — head + body(scrollHeight = full content) + foot — NOT
     // documentElement.scrollHeight: the app fills the iframe (height:100%), so measuring the container
