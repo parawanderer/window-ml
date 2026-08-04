@@ -930,7 +930,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             const seq = rawSeq != null ? seqBase + rawSeq : rawSeq;
             const event = {
                 kind: "agent-step", id: runId, ts: Date.now(), save: false,
-                session: { hash: runId, turn: step }, ...ev, step, seq,
+                session: { hash: runId, turn: step }, ...ev, step, localStep: rawStep, seq,
             };
             // Always fan to the PAGE (overlay / off card). For devtools ALSO fan to the panel — and the
             // page fan lets the optional corner card coexist with the panel (agentHudInDevtools); the
@@ -1016,8 +1016,13 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                         const env = await chrome.tabs.sendMessage(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name: tool, args, renderOnly: true } }) as { renderIn?: unknown };
                         renderIn = env?.renderIn;
                     } catch { /* page gone → no preview, fall back to raw args */ }
+                    // Key by the OFFSET seq — the same value the app sees on the emitted step (emitStep
+                    // offsets raw→seqBase+raw) and echoes back in SET_APPROVAL. Keying by the raw seq meant a
+                    // follow-up turn (seqBase>0) never matched → the gate hung forever ("stuck on Approve" on
+                    // turn 2+). Turn 1 worked only because seqBase==0. (Mirror emitStep's null-guard exactly.)
+                    const gateSeq = seq != null ? seqBase + seq : seq;
                     return new Promise<ApprovalDecision>((resolve) => {
-                        pendingApprovals.set(`${runId}:${seq}`, (decision) => {
+                        pendingApprovals.set(`${runId}:${gateSeq}`, (decision) => {
                             const ok = decision === true || (typeof decision === "object" && !!decision && decision.approved);
                             if (ok && tool === "python_exec") for (const id of externalSheetIds(args)) approvedSheets.add(id);
                             resolve(decision);

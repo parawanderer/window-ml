@@ -763,7 +763,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 if (logDebug && !ev.pending) logStep(cb);
                 emitDebug({
                     kind: "agent-step", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: step },
-                    step, seq, pending: ev.pending || undefined,
+                    step, localStep: ev.step, seq, pending: ev.pending || undefined,
                     thought: ev.thought, reasoning: (ev.reasoning as string | null) || undefined, tool: ev.tool, arguments: ev.arguments,
                     result: ev.result, elements: nodes ? nodes.length : undefined,
                     renderIn, renderOut,

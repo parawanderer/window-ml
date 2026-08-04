@@ -2200,6 +2200,26 @@ test("agent run: a fatal error marks the session failed and shows the message in
     assert.match(w.shadow.querySelector(".msg.asst.err .errtext").textContent, /connection refused/, "the run's error is shown");
 });
 
+test("agent step pill shows the PER-TURN step (localStep), not the cumulative one — maxSteps is a per-turn budget", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("mt", "turn one", "m", 20));
+    await w.dispatch(agentStep("mt", 1, { localStep: 1, tool: "look", arguments: {}, result: "ok" }));
+    await w.dispatch(agentStep("mt", 2, { localStep: 2, tool: "exec", arguments: { js: "x" }, result: "ok" }));
+    await w.dispatch(agentResult("mt", "done one", 2));
+    // A follow-up run() continues the SESSION: its cumulative step is offset (3, 4…) so groups don't merge,
+    // but the pill must reset to the per-turn count (1/20, 2/20) — the run got a fresh 20-step budget.
+    await w.dispatch({ kind: "agent-say", id: "mt", ts: Date.now(), save: false, session: { hash: "mt", turn: 0 }, text: "turn two" });
+    await w.dispatch(agentStep("mt", 3, { localStep: 1, tool: "look", arguments: {}, result: "ok" }));
+    await w.dispatch(agentStep("mt", 4, { localStep: 2, tool: "exec", arguments: { js: "y" }, result: "ok" }));
+
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const pills = [...w.shadow.querySelectorAll(".step-pill")].map(p => p.textContent.replace(/\s+/g, " ").trim());
+    // Two turns, each counting 1/20, 2/20 — NOT 3/20, 4/20 on the second turn.
+    assert.deepEqual(pills, ["step 1/20", "step 2/20", "step 1/20", "step 2/20"],
+        "the pill resets per turn (localStep), never showing the cumulative 3/20 · 4/20");
+});
+
 test("card surface: a running run shows the liquid orb + right-click asks for the corner menu", async () => {
     const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
     const posted = [];

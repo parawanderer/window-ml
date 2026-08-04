@@ -25,10 +25,14 @@
         --card-bg: rgba(0, 0, 0, .03); --card-border: rgba(0, 0, 0, .09);
         --card-shadow: 0 6px 20px rgba(0, 0, 0, .12), 0 1px 3px rgba(0, 0, 0, .08);
     }
+    /* html carries the same bg so if the popup is ever shown wider than 340px (e.g. opened in a tab, or
+       Chrome grows it), the surrounding area matches instead of showing a jarring void. */
+    html { background: var(--bg); }
     body {
         font-family: system-ui, -apple-system, sans-serif;
-        font-size: 13px; width: 340px; margin: 0; padding: 14px;
+        font-size: 13px; width: 340px; max-width: 100%; margin: 0 auto; padding: 14px;
         background: var(--bg); color: var(--fg);   /* flat — matches the DevTools panel (a popup can't be true acrylic) */
+        overflow-x: hidden;   /* backstop: never let a child scroll the popup sideways */
     }
     h1 { font-size: 14px; margin: 0 0 12px; display: flex; align-items: center; gap: 7px; }
     h1::before { content: "🤖"; font-size: 16px; }
@@ -58,7 +62,7 @@
     #status.ok { color: var(--ok); }
     #status.err { color: var(--err); }
     #status.busy { color: var(--fg-dim); }
-    #vram { white-space: pre-wrap; }
+    #vram { white-space: pre-wrap; overflow-wrap: anywhere; }
     .check {
         display: flex; align-items: center; gap: 8px;
         margin: 14px 0 2px; color: var(--fg); cursor: pointer;
@@ -86,7 +90,9 @@
     details.conn > summary .ok { color: var(--ok); font-weight: 400; font-size: 12px; }
     details.conn[open] { padding-bottom: 11px; }
     .free-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
-    .free-row .hint { margin: 0; flex: 1; }
+    /* min-width:0 lets the flex item shrink below its content; overflow-wrap breaks a long unbreakable
+       model id (e.g. gemma4:31b) instead of forcing the whole popup wider. */
+    .free-row .hint { margin: 0; flex: 1; min-width: 0; overflow-wrap: anywhere; }
     /* Self-approval domain whitelist (mirrors Settings → Permissions). */
     .perm-sep { border-top: 1px solid var(--border); margin: 12px 0 2px; }
     .perm-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
@@ -156,7 +162,7 @@
         </div>
     </details>
 
-    <details class="conn" id="appearance" open>
+    <details class="conn" id="appearance">
         <summary><span>Appearance</span></summary>
         <label for="theme">Theme</label>
         <select id="theme">

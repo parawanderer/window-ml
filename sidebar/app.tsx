@@ -41,7 +41,7 @@ function onDebug(ev: MlDebugEvent): void {
     if (ev.kind === "agent-step") {
         const s = sessionMap.get(ev.session.hash);
         if (!s) return;
-        const step = { step: ev.step, seq: ev.seq, pending: ev.pending, awaitingApproval: ev.awaitingApproval, thought: ev.thought, reasoning: ev.reasoning, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: ev.elements, renderIn: ev.renderIn, renderOut: ev.renderOut, argIssues: ev.argIssues, approval: ev.approval, usage: ev.usage };
+        const step = { step: ev.step, localStep: ev.localStep, seq: ev.seq, pending: ev.pending, awaitingApproval: ev.awaitingApproval, thought: ev.thought, reasoning: ev.reasoning, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: ev.elements, renderIn: ev.renderIn, renderOut: ev.renderOut, argIssues: ev.argIssues, approval: ev.approval, usage: ev.usage };
         const steps = s.steps || [];
         // In-flight: a tool step arrives twice — a pending START then the DONE, sharing a `seq`.
         // Patch the existing row in place (immutably) so it fills in; otherwise append. Thoughts
@@ -809,13 +809,16 @@ const inlineText = (s: string): string => truncate(s.replace(/\s+/g, " ").trim()
 
 // A step of one ml.agent TURN (one LLM call): the assistant's prose (thought) + its separate
 // reasoning/thinking + its batched tool calls.
-interface AgentTurnGroup { step: number; thought?: string; reasoning?: string | null; tools: AgentStep[]; }
+// `step` is the SESSION-cumulative step (the grouping key, so turn N's steps don't merge with turn 1's);
+// `localStep` is the PER-TURN step shown in the pill — maxSteps is a per-turn budget, so a follow-up run
+// counts 1/N again, not 18/20. (Falls back to `step` for a pre-localStep event.)
+interface AgentTurnGroup { step: number; localStep: number; thought?: string; reasoning?: string | null; tools: AgentStep[]; }
 function groupTurns(steps: AgentStep[]): AgentTurnGroup[] {
     const byStep = new Map<number, AgentTurnGroup>();
     const order: number[] = [];
     for (const st of steps) {
         let t = byStep.get(st.step);
-        if (!t) { t = { step: st.step, tools: [] }; byStep.set(st.step, t); order.push(st.step); }
+        if (!t) { t = { step: st.step, localStep: st.localStep ?? st.step, tools: [] }; byStep.set(st.step, t); order.push(st.step); }
         if (st.thought != null) t.thought = st.thought;
         if (st.reasoning != null) t.reasoning = st.reasoning;
         if (st.tool) t.tools.push(st);
@@ -1010,7 +1013,7 @@ function TurnProse({ text }: { text: string }) {
 function AgentTurn({ turn, max, hash }: { turn: AgentTurnGroup; max?: number; hash?: string }) {
     return (
         <div class="aturn">
-            <div class="aturn-head"><StepPill step={turn.step} max={max} /></div>
+            <div class="aturn-head"><StepPill step={turn.localStep} max={max} /></div>
             {turn.reasoning ? <ThoughtBlock thought={turn.reasoning} /> : null}
             {turn.thought ? <TurnProse text={turn.thought} /> : null}
             {turn.tools.map((st, i) => <ToolStep key={`${st.tool}-${i}`} st={st} hash={hash} />)}

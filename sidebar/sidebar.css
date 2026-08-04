@@ -4,6 +4,7 @@
     color-scheme: dark;   /* themes native UI (scrollbars) to match the panel */
     --fs: 12px;   /* base content font-size; the settings panel overrides it inline for scaling */
     --bg: #1e1f24; --panel: #27272a; --panel-2: #3f3f46; --panel-2-hover: #52525b;
+    --user-bg: #141519;   /* your messages: SUNKEN below --bg so they stand out (Claude-Code inset look) */
     --border: #3f3f46; --fg: #e4e4e7; --fg-dim: #a1a1aa; --fg-faint: #71717a;
     --accent: #6366f1; --accent-strong: #4f46e5; --accent-fg: #ffffff;
     --ok: #4ade80; --err: #f87171; --warn: #eab308; --err-border: #7f1d1d; --kind: #c7d2fe;
@@ -11,6 +12,7 @@
 :root[data-theme="light"] {
     color-scheme: light;
     --bg: #ffffff; --panel: #f4f4f5; --panel-2: #e4e4e7; --panel-2-hover: #d4d4d8;
+    --user-bg: #eceef1;   /* your messages: a touch darker than the white canvas so they stand out */
     --border: #d4d4d8; --fg: #18181b; --fg-dim: #52525b; --fg-faint: #a1a1aa;
     --accent: #6366f1; --accent-strong: #4f46e5; --accent-fg: #ffffff;
     --ok: #16a34a; --err: #dc2626; --warn: #ca8a04; --err-border: #fecaca; --kind: #4338ca;
@@ -592,7 +594,7 @@ details.io[open] > summary .io-preview { display: none; }
 .jt-null { color: var(--fg-faint); }
 
 .msg { border-radius: 7px; padding: 6px 9px; margin-bottom: 8px; border: 1px solid var(--border); }
-.msg.user { background: var(--panel); }
+.msg.user { background: var(--user-bg); }
 /* Assistant reply reads as flowing text, not a boxed bubble (#5). */
 .msg.asst { background: transparent; border: none; padding: 4px 8px 8px; }
 .msg.asst.err { border-left: 2px solid var(--err); border-radius: 0; padding-left: 8px; }
