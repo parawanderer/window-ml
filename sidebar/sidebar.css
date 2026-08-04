@@ -921,6 +921,13 @@ html[data-surface="card"] .appr-btn.no:hover {
 @media (prefers-reduced-motion: reduce) { .loc-dot { animation: none; } }
 .action-card.action-code { gap: 6px; }   /* code-mode modifier — NOT `code` (that collides with the global .code block style) */
 .action-summary { color: var(--fg); font-size: .98em; line-height: 1.4; overflow-wrap: anywhere; }   /* utility-model plain-English gloss above the code (wraps, never clips) */
+/* Shared reveal for text that arrives ASYNC (utility-model summaries, AI titles): grow height + fade in
+   instead of popping and hard-shoving the surrounding layout. `backwards` applies the from-state before the
+   first frame (no flash) and reverts to natural styles after (no lingering max-height clip on tall content).
+   Respects reduced-motion. */
+@keyframes ml-reveal { from { opacity: 0; max-height: 0; transform: translateY(-3px); } to { opacity: 1; max-height: 500px; transform: none; } }
+.ml-reveal { animation: ml-reveal .22s ease backwards; overflow: hidden; }
+@media (prefers-reduced-motion: reduce) { .ml-reveal { animation: none; } }
 .action-codeblk { max-height: 42vh; overflow: auto; min-width: 0; max-width: 100%; }
 .action-codeblk .code { margin: 0; }
 .action-sheets { display: flex; gap: 6px; align-items: flex-start; color: var(--warn); font-size: .9em; margin-top: 1px; }

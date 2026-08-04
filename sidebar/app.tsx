@@ -498,7 +498,9 @@ function SessionRow({ s, profile }: { s: Session; profile: "utility" | "default"
         <button class="row" onClick={() => (view.value = { name: "detail", hash: s.hash })}>
             <Dot status={s.status} />
             <Stamp ts={s.lastTs} snap="right" />
-            <b class="row-title">{truncate(title, 80)}</b>
+            {/* key flips fb→ai when the AI-summarised title lands, remounting the element so ml-reveal
+                plays once (a plain text swap wouldn't animate). Only the AI title animates, not the fallback. */}
+            <b class={`row-title${s.title ? " ml-reveal" : ""}`} key={s.title ? "t-ai" : "t-fb"}>{truncate(title, 80)}</b>
             <div class="row-meta">
                 {s.kind === "agent" ? <AgentBadge /> : <TagBadge tag={s.tag} />}
                 <ProfileBadge profile={profile} />
@@ -1686,7 +1688,7 @@ function ensureCodeSummary(hash: string, seq: number, lang: string, code: string
 function CodeExplain({ hash, seq, lang, code, result }: { hash: string; seq: number; lang: string; code: string; result?: string }) {
     const rv = rev.value;   // subscribe: the gloss lands on a rev bump (ToolStep is signal-memoized → won't); retained via data-rev
     const summary = codeSummaries.get(stepKey(hash, seq));
-    if (summary) return <div class="step-explain" data-rev={rv}><span class="step-explain-ic" aria-hidden="true">💡</span><span>{summary}</span></div>;
+    if (summary) return <div class="step-explain ml-reveal" data-rev={rv}><span class="step-explain-ic" aria-hidden="true">💡</span><span>{summary}</span></div>;
     if (!code.trim()) return null;
     return <button class="step-explain-btn" data-rev={rv} onClick={() => fetchCodeSummary(hash, seq, lang, code, result)}>💡 Explain this {lang === "python" ? "Python" : "JavaScript"}</button>;
 }
@@ -1769,7 +1771,7 @@ function ApprovalBody({ st, hash, goal }: { st: AgentStep; hash: string; goal: s
             {code
                 ? <div class="action-card action-code">
                     <div class="action-verb">{st.tool === "python_exec" ? "Run Python" : "Run JavaScript"}</div>
-                    {summary ? <div class="action-summary">{summary}</div> : null}
+                    {summary ? <div class="action-summary ml-reveal">{summary}</div> : null}
                     <div class="action-codeblk"><Code text={code.text} lang={code.lang} format={code.lang === "javascript"} /></div>
                   </div>
                 : intent
@@ -1784,7 +1786,7 @@ function ApprovalBody({ st, hash, goal }: { st: AgentStep; hash: string; goal: s
                         {intent.selector ? <div class="action-loc"><span class="loc-dot" aria-hidden="true" />Highlighted on the page{pos ? <> · <b>{pos}</b></> : null}</div> : null}
                       </div>
                     : <div class="action-card">
-                        {summary ? <div class="action-summary">{summary}</div>
+                        {summary ? <div class="action-summary ml-reveal">{summary}</div>
                             : <div class="action-body dim">Run <b>{st.tool}</b>{st.arguments && Object.keys(st.arguments).length ? <> with {inlineJson(st.arguments)}</> : null}</div>}
                       </div>}
             {sheets.length
