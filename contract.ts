@@ -874,6 +874,10 @@ export interface MlSidebarReady { __mlSidebar: "ready"; }
  *  Underscore-prefixed members are internal plumbing exposed for debugging;
  *  they are NOT part of the stable public API and may change. */
 export interface MlApi {
+    /** The agent's persistent JS scratchpad — a plain object, also injected into every `exec` body as the
+     *  lexical `state` variable. Stash reusable functions/results across `exec` calls (the Jupyter/kernel
+     *  paradigm). Page-lifetime, shared across runs; read-only binding (mutate its properties). */
+    readonly state: Record<string, unknown>;
     /* ---- chat ---- */
     /** Create a stateful multi-turn chat session. Same raw-model contract as ml.chat —
      *  the turns accumulate, but the model still never sees the page. */

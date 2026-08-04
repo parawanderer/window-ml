@@ -7,7 +7,7 @@
 import type { MlTool, ToolResult } from "./contract";
 import { truncate, clipOut, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, selectorError } from "./dom";
 import { INTERACTIVE_SEL, roleOf, accessibleName, ariaState, hasLayout, styleHidden, isFaded } from "./a11y";
-import { pageContext, browserInfo } from "./util";
+import { pageContext, browserInfo, agentState } from "./util";
 import { makeBackgroundTaskPromise } from "./bridge";
 import type { InvocationInfo, MlPublicConfig } from "./contract";
 import { ML_READONLY_METHODS } from "./readonly-exec";
@@ -334,7 +334,9 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
                 "The returned value AND the console output are EACH truncated to ~500 chars, so " +
                 "don't dump whole elements/pages — return a compact, filtered summary (counts, a " +
                 "handful of fields, the few items you actually need), not a full outerHTML dump. " +
-                "Use only when the other tools can't answer; prefer them.",
+                "A `state` object persists across your exec calls (it's a live page kernel, not stateless) — " +
+                "stash reusable functions/results on it (e.g. `state.rows ??= [...]; state.rows.length`) and " +
+                "reuse them next call. Use only when the other tools can't answer; prefer them.",
             requiresApproval: true,     // arbitrary eval — the agent gate confirms each call
             // Debug view: show the JS that ran as a highlighted code block (raw
             // toggle still reveals the underlying args/result).
@@ -364,7 +366,11 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
                 let failed: unknown;
                 try {
                     try {
-                        result = (0, eval)(js);   // fast path — preserves the last expression's value
+                        // Fast path — preserves the last expression's value. Runs the source with the agent's
+                        // persistent `state` scratchpad in scope (a direct eval INSIDE a fresh Function → the
+                        // source sees `state` + globals, NOT this module's internals). `new Function`/eval are
+                        // the same effectful, approval-gated capability the plain eval already needed.
+                        result = new Function("state", "src", "return eval(src);")(agentState, js);
                     } catch (e) {
                         // eval rejects top-level `await`/`return` with a SyntaxError,
                         // thrown at parse time before anything runs — so retry the
@@ -372,7 +378,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
                         // must `return` its value here (no last-expression auto-return).
                         // A genuine syntax error re-throws from this attempt and is reported.
                         if (e instanceof SyntaxError) {
-                            const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor as { new (body: string): () => Promise<unknown> };
+                            const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor as { new (arg: string, body: string): (state: unknown) => Promise<unknown> };
                             // eval threw away the completion value when it rejected top-level
                             // await/return. Re-run as an async body — but first preserve the REPL
                             // trailing-expression convention (the fast-path eval and python_exec
@@ -381,10 +387,10 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
                             // valid parenthesized expression → SyntaxError at construction → fall
                             // back to the plain body (there the model must `return` explicitly).
                             const expr = js.trim().replace(/;\s*$/, "");
-                            let fn: () => Promise<unknown>;
-                            try { fn = new AsyncFunction(`return (${expr})`); }
-                            catch { fn = new AsyncFunction(js); }
-                            result = fn();
+                            let fn: (state: unknown) => Promise<unknown>;
+                            try { fn = new AsyncFunction("state", `return (${expr})`); }
+                            catch { fn = new AsyncFunction("state", js); }
+                            result = fn(agentState);
                         } else throw e;
                     }
                     if (result && typeof (result as Promise<unknown>).then === "function") result = await result;

@@ -492,6 +492,18 @@ test("exec evaluates expressions, serializes objects, and catches errors", async
     assert.match(big, /^x{500}… \[\+100 chars truncated\]$/);
 });
 
+test("exec: `state` persists across calls (the page-kernel scratchpad) + ml.state is the same object", async () => {
+    const { ml } = loadDomWorld();
+    // Stash on the first call (fast path), read it back on the second — the Jupyter/kernel paradigm.
+    await run(ml, "exec", { js: "state.count = (state.count || 0) + 41" });
+    assert.equal(await run(ml, "exec", { js: "state.count + 1" }), "42", "state survives between exec calls");
+    // The async path (top-level await → AsyncFunction) sees the SAME state.
+    assert.equal(await run(ml, "exec", { js: "await Promise.resolve(state.count)" }), "41", "the async path shares state too");
+    // ml.state is the very same object (console/agent parity) and is a getter (can't be reassigned).
+    assert.equal(ml.state.count, 41, "ml.state exposes the same scratchpad");
+    assert.throws(() => { "use strict"; ml.state = {}; }, "ml.state is getter-only — can't be clobbered");
+});
+
 test("selector tools accept end-position :contains/:has-text and explain mid-selector", () => {
     const { ml } = loadDomWorld('<div class="card">x</div><div class="card">y</div>');
     // end-position text predicate now just works (via queryAll)

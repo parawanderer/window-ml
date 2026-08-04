@@ -5,6 +5,16 @@
 import { truncate } from "./dom";
 import type { ShotBox } from "./contract";
 
+/**
+ * The agent's persistent JS scratchpad — a plain object injected into every `exec` body as the lexical
+ * `state` variable, and exposed read-only as `ml.state`. Because the page has a live JS heap, an agent can
+ * stash reusable functions/results here and pick them up on a later `exec` call — the Jupyter/kernel
+ * paradigm, versus stateless one-shot tool calls. PAGE-LIFETIME + shared across runs (a run can be resumed
+ * by hash at any time, so there's no clean per-run clear point — this is the honest model). It's the same
+ * object everywhere; `ml.state` is a getter (unassignable) so an agent can't clobber the binding itself.
+ */
+export const agentState: Record<string, unknown> = {};
+
 /** A Chromium flavour: its display name, major version, and the internal URL scheme its
  *  settings pages live under (`brave://extensions/shortcuts` etc.). */
 export interface BrowserInfo { name: string; version: string | null; scheme: string; }
