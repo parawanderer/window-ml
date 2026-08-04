@@ -415,17 +415,23 @@ same session. `res.transcript` accumulates the whole conversation's actions and
 replies.
 
 **Resume by hash.** When you only have the hash — copied from the debug sidebar,
-or `res.hash`/`a.hash` from an earlier call — continue the run with the low-level
-`ml.agent(task, { resume })`:
+or `res.hash`/`a.hash` from an earlier call — **`ml.resumeAgent(hash)`** hands you
+the live handle back (the agent analogue of `ml.resumeChat`), so you can read its
+history or keep going without the original reference:
 
 ```js
 const { hash } = await ml.agent("Audit this page's headings.");   // note the hash
 // …later, without the original handle:
-await ml.agent("Now fix the ones you flagged.", { resume: hash });   // same conversation
+const a = ml.resumeAgent(hash);
+a.messages;                              // read (or mutate) the conversation
+await a.run("Now fix the ones you flagged.");   // continue the SAME session
 ```
 
-Same-tab runs resume from memory (a background/off-mode run isn't resumable this
-way yet). The hash is also how the in-page HUD and the sidebar/DevTools composer
+`ml.resumeAgent` covers same-tab `createAgent` / HUD-started runs (a one-shot
+`ml.agent(task)` has no handle). The low-level `ml.agent(task, { resume: hash })`
+also continues a run by hash (it runs a turn rather than returning the handle).
+Background/off-mode runs live in the service worker and aren't handle-resumable
+this way yet. The hash is also how the in-page HUD and the sidebar/DevTools composer
 drive a session — typing into "Send a message to continue this session…" routes
 `say()`/`run()` to the handle behind that hash.
 

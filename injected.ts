@@ -881,6 +881,30 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             return new AgentHandle(this as unknown as MlApi, opts);
         },
         /**
+         * Re-acquire a live agent handle by its session hash (shown/copied in the debug sidebar). The agent
+         * analogue of {@link module:ml.resumeChat}: returns the SAME handle the run is using, so you can read
+         * or mutate its `messages`, `say()`/`run()` to continue it, `fork()` it, or `cancel()` it — without
+         * having kept the original `createAgent()` reference.
+         *
+         * Same-tab `createAgent` / HUD-started runs only. A one-shot `ml.agent(task)` (no handle) and a
+         * background/off-mode run (its history lives in the service worker) aren't handle-resumable this way —
+         * the low-level `ml.agent(task, { resume: hash })` still CONTINUES those.
+         *
+         * @param {string} hash The run's session hash.
+         * @returns {MlAgentHandle} the live handle (run/say/cancel/fork + hash/messages/maxSteps).
+         * @throws {Error} If no handle-backed run exists for the hash in this tab.
+         */
+        resumeAgent: function(hash: string): MlAgentHandle {
+            if (!hash || typeof hash !== "string") throw new Error("ml.resumeAgent needs a run hash string.");
+            const handle = handleRegistry.get(hash);
+            if (!handle) throw new Error(
+                `No resumable agent handle "${hash}" in this tab. Handles come from ml.createAgent (or a ` +
+                `HUD-started run); a one-shot ml.agent(task) or a background/off-mode run isn't handle-resumable ` +
+                `— use ml.agent(task, { resume: "${hash}" }) to continue it instead.`
+            );
+            return handle;
+        },
+        /**
          * A de-duplicating approval gate for {@link module:ml.agent}: prompts (via
          * confirm) the first time it sees a given call and remembers that answer per
          * **(tool + exact arguments)**. So an identical repeat isn't re-asked, but a

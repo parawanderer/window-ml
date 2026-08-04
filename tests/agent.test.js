@@ -786,6 +786,24 @@ test("createAgent: run() twice = two turns in one session; say() idle appends to
     assert.equal(last.at(-1).content, "more", "the new turn's task is the last user message");
 });
 
+test("resumeAgent: re-acquires a run's handle by hash → read messages + continue it", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("hi"), reply("again")]) });
+    const a = world.ml.createAgent({ maxSteps: 4, vision: false });
+    await a.run("first");   // mints the hash + registers the handle
+    const hash = a.hash;
+
+    // Re-acquire WITHOUT the original reference — the SAME live handle comes back.
+    const b = world.ml.resumeAgent(hash);
+    assert.equal(b.hash, hash, "resumeAgent returns the handle for that hash");
+    assert.ok(b.messages.some(m => m.role === "assistant" && m.content === "hi"), "its message history is readable");
+
+    const r = await b.run("second");   // and it can continue the SAME session
+    assert.equal(r.hash, hash, "continuing via the resumed handle stays in the same session");
+    assert.equal(r.summary, "again");
+
+    assert.throws(() => world.ml.resumeAgent("deadbeef"), /No resumable agent handle/, "unknown hash throws a clear error");
+});
+
 test("createAgent: a run in flight rejects a second run(); say() mid-run STEERS (injected at the next step boundary)", async () => {
     const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall("poke", {}, "c1"), reply("done")]) });
     let a, nestedErr;

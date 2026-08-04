@@ -24,8 +24,10 @@ export type DebugMode = "off" | "overlay" | "devtools";
 export interface MlConfig {
     chatUrl: string;
     apiKey: string;
+    /** The default model the user has configured for tasks, used when no model is specified for ml.chat("…") or ml.agent("…"). May not always be set. */
     model: string;
     apiFormat: ApiFormat;
+    /** OCR/vision model used for vision tasks by default, e.g. in ml.read(…). May not always be set. */
     ocrModel: string;
     /** Optional regex WHITELIST: when set, the wrapper only calls models whose id
      *  matches it (every resolved model — main/ocr/grounding/utility). Empty = no filter. */
@@ -900,10 +902,15 @@ export interface MlApi {
      *  page-aware entry point — unlike ml.chat, the model discovers and acts on the live DOM
      *  through tools (and vision), one step at a time. Use it for anything about "this page". */
     agent(task: string, opts?: AgentOptions): Promise<AgentResult>;
-    /** A resumable agent session (the agent analogue of ml.createChat): run(task) starts it,
-     *  continue(task) appends follow-ups to the SAME session. Sugar over ml.agent's
-     *  { resume } option, sharing one hash so the sidebar/HUD keep it as one conversation. */
+    /** A stateful agent session (the agent analogue of ml.createChat): run(task) executes a turn,
+     *  say(text) writes a user message, run() again continues the SAME session; also cancel/fork +
+     *  hash/messages/maxSteps. Everything shares one hash so the sidebar/HUD keep it as one conversation. */
     createAgent(opts?: AgentOptions): MlAgentHandle;
+    /** Re-acquire a live agent handle by its session hash (the agent analogue of resumeChat) — read/mutate
+     *  its `messages`, say()/run() to continue, fork() or cancel(). Same-tab createAgent / HUD-started runs
+     *  only; a one-shot ml.agent(task) or a background run isn't handle-resumable (use ml.agent(task,
+     *  { resume }) to continue those). Throws if no handle-backed run exists for the hash. */
+    resumeAgent(hash: string): MlAgentHandle;
     /** An approve() gate that auto-approves the first call, then denies. */
     approveOnce(): (req: ApprovalRequest) => boolean;
     /** The default DOM tool registry (added right after injection). */
@@ -933,6 +940,7 @@ export interface MlApi {
     /* ---- server / model management ---- */
     models(): Promise<string[]>;
     capabilities(model?: string | null): Promise<string[] | null>;
+    /** Gets the `default` model the user has configured for tasks */
     getModel(): Promise<string | null>;
     config(): Promise<MlPublicConfig>;
     setModel(model: string): Promise<string>;
