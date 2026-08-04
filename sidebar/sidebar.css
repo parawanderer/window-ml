@@ -796,9 +796,8 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
    for the corner card). Continues the SAME run via the session-composer reverse channel. */
 .card-reply { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--border); }
 .card-reply-in { flex: 1; min-width: 0; background: var(--panel); color: var(--fg); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; font: inherit; font-size: 0.95em; }
-/* Smooth the focus ring so clicking in/out fades instead of snapping (the "glitchy purple flash"). */
-.card-reply-in { transition: border-color .16s ease, box-shadow .22s ease; }
-.card-reply-in:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(99, 102, 241, .18); }
+.card-reply-in { transition: border-color .16s ease; }
+.card-reply-in:focus { outline: none; border-color: rgba(139, 92, 246, .55); }   /* box-shadow ring = the swirling hue below */
 .card-reply-in::placeholder { color: var(--fg-faint); }
 .card-reply-send { flex: 0 0 auto; display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; border: none; border-radius: 8px; background: var(--accent); color: var(--accent-fg); cursor: pointer; }
 .card-reply-send:disabled { opacity: .4; cursor: default; }
@@ -812,15 +811,28 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
     font-size: 0.95em; cursor: text; text-align: left; transition: background .15s, border-color .15s, color .15s; }
 .card-reply-open:hover { background: var(--panel); border-color: var(--border); color: var(--fg-dim); }
 .card-reply-open svg { width: 15px; height: 15px; flex: 0 0 auto; opacity: .8; }
-/* Open animation: grow from the left + a brief accent glow that blooms then settles into the steady focus
-   ring — a deliberate, Apple-y "wake up" rather than a border snap. */
-.card-reply-in { animation: card-reply-grow .26s cubic-bezier(.2,.85,.3,1) both; transform-origin: left center; }
-@keyframes card-reply-grow {
-    from { opacity: 0; transform: scaleX(.94); box-shadow: 0 0 0 5px rgba(99, 102, 241, .34); }
-    55%  { box-shadow: 0 0 0 4px rgba(99, 102, 241, .26); }
-    to   { opacity: 1; transform: none; box-shadow: 0 0 0 3px rgba(99, 102, 241, .18); }
+/* Open + focus ring: the SAME multi-hue aura as the orb — four corner glows (indigo·violet·blue·magenta)
+   that swirl (card-reply-hue), bloomed in from nothing (card-reply-grow ends at the hue's 0% for a seamless
+   handoff). On collapse the ring dissolves + fades (card-reply-exit) instead of snapping the purple off. */
+.card-reply-in { transform-origin: left center;
+    animation: card-reply-grow .28s cubic-bezier(.2,.85,.3,1) both, card-reply-hue 6s ease-in-out .28s infinite; }
+.card-reply-in.exiting { animation: card-reply-exit .3s ease forwards; pointer-events: none; }
+@keyframes card-reply-hue {
+    0%,100% { box-shadow: -4px -3px 9px 0 rgba(99,102,241,.34),  4px -3px 9px 0 rgba(139,92,246,.34),  4px 3px 9px 0 rgba(56,132,255,.34), -4px 3px 9px 0 rgba(214,80,235,.30); }
+    25%     { box-shadow: -4px -3px 9px 0 rgba(214,80,235,.30),  4px -3px 9px 0 rgba(99,102,241,.34),  4px 3px 9px 0 rgba(139,92,246,.34), -4px 3px 9px 0 rgba(56,132,255,.34); }
+    50%     { box-shadow: -4px -3px 9px 0 rgba(56,132,255,.34),  4px -3px 9px 0 rgba(214,80,235,.30),  4px 3px 9px 0 rgba(99,102,241,.34), -4px 3px 9px 0 rgba(139,92,246,.34); }
+    75%     { box-shadow: -4px -3px 9px 0 rgba(139,92,246,.34),  4px -3px 9px 0 rgba(56,132,255,.34),  4px 3px 9px 0 rgba(214,80,235,.30), -4px 3px 9px 0 rgba(99,102,241,.34); }
 }
-@media (prefers-reduced-motion: reduce) { .card-reply-in { animation: none; } }
+@keyframes card-reply-grow {
+    from { opacity: 0; transform: scaleX(.94); box-shadow: 0 0 0 0 rgba(139,92,246,0); }
+    to   { opacity: 1; transform: none;        box-shadow: -4px -3px 9px 0 rgba(99,102,241,.34),  4px -3px 9px 0 rgba(139,92,246,.34),  4px 3px 9px 0 rgba(56,132,255,.34), -4px 3px 9px 0 rgba(214,80,235,.30); }
+}
+/* Collapse: hue-shift the ring one notch and dissolve it while the box fades — not a hard purple flash-off. */
+@keyframes card-reply-exit {
+    from { opacity: 1; box-shadow: -4px -3px 9px 0 rgba(99,102,241,.34),  4px -3px 9px 0 rgba(139,92,246,.34),  4px 3px 9px 0 rgba(56,132,255,.34), -4px 3px 9px 0 rgba(214,80,235,.30); }
+    to   { opacity: 0; transform: scaleX(.97); box-shadow: 0 0 10px 1px rgba(56,132,255,0), 0 0 10px 1px rgba(214,80,235,0); }
+}
+@media (prefers-reduced-motion: reduce) { .card-reply-in, .card-reply-in.exiting { animation: none; } }
 .card-task { color: var(--fg-dim); font-size: .96em; margin-bottom: 8px; line-height: 1.4; }
 .card-body::-webkit-scrollbar { width: 10px; }
 .card-body::-webkit-scrollbar-track { background: transparent; }

@@ -2298,25 +2298,30 @@ function CardReply({ hash }: { hash: string }) {
     // clean card. Click (or ⌘/Ctrl+Enter) opens it with a soft expand; Enter sends + collapses; Escape/blur
     // collapses. So the composer is present but out of the way until you actually want to reply.
     const [open, setOpen] = useState(false);
+    const [exiting, setExiting] = useState(false);   // playing the dissolve-out before unmount (blur/Escape)
     const [text, setText] = useState("");
     const inputRef = useRef<HTMLInputElement>(null);
-    const collapse = () => { setOpen(false); setText(""); };
+    const closeNow = () => { setOpen(false); setExiting(false); setText(""); };
+    // Escape / empty-blur → let the input DISSOLVE (hue-shift + fade) rather than snap the purple off, then
+    // unmount. A guard stops re-entrancy (blur can fire while already exiting).
+    const collapseWithFade = () => { if (exiting) return; setExiting(true); window.setTimeout(closeNow, 300); };
     const send = () => {
         const t = text.trim();
-        if (!t) { collapse(); return; }
+        if (!t) { collapseWithFade(); return; }
         window.parent.postMessage({ __mlSidebarApp: "sessionSend", hash, text: t }, "*");
         // Optimistic collapse: flip the session to WORKING now so the card morphs to the orb the instant you
         // hit Enter, instead of showing the stale answer until the follow-up's first event lands (in off/card
-        // mode the page's agent-say bridge is dormant, so there'd otherwise be a visible lag).
+        // mode the page's agent-say bridge is dormant, so there'd otherwise be a visible lag). No dissolve
+        // here — the orb takes over the whole card immediately.
         const s = sessionMap.get(hash);
         if (s) { s.status = "pending"; s.lastTs = Date.now(); rev.value++; }
-        collapse();
+        closeNow();
     };
     const onKey = (e: KeyboardEvent) => {
         if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
-        else if (e.key === "Escape") { e.preventDefault(); collapse(); }
+        else if (e.key === "Escape") { e.preventDefault(); collapseWithFade(); }
     };
-    useEffect(() => { if (open) inputRef.current?.focus(); }, [open]);
+    useEffect(() => { if (open && !exiting) inputRef.current?.focus(); }, [open]);
 
     if (!open) {
         return (
@@ -2329,8 +2334,8 @@ function CardReply({ hash }: { hash: string }) {
     }
     return (
         <div class="card-reply">
-            <input ref={inputRef} class="card-reply-in" type="text" value={text} placeholder="Reply to continue this run…"
-                onInput={e => setText((e.target as HTMLInputElement).value)} onKeyDown={onKey} onBlur={() => { if (!text.trim()) collapse(); }} />
+            <input ref={inputRef} class={`card-reply-in${exiting ? " exiting" : ""}`} type="text" value={text} placeholder="Reply to continue this run…"
+                onInput={e => setText((e.target as HTMLInputElement).value)} onKeyDown={onKey} onBlur={() => { if (!text.trim()) collapseWithFade(); }} />
             <button class="tt card-reply-send" aria-label="Send" onMouseDown={e => e.preventDefault()} onClick={send} disabled={!text.trim()}>
                 <IconSend /><span class="tt-pop above" role="tooltip">Send a follow-up (Enter)</span>
             </button>

@@ -145,17 +145,17 @@ const CARD_CSS = `
    gradient swirls. base black shadows first, then the 4 colour glows. */
 @keyframes ${SB_CARD}-aura {
   0%, 100% { box-shadow: 0 10px 30px rgba(0,0,0,.30), 0 2px 8px rgba(0,0,0,.18),
-    -11px -11px 20px 1px rgba(99,102,241,.30),  11px -11px 20px 1px rgba(139,92,246,.30),
-     11px  11px 20px 1px rgba(56,132,255,.30), -11px  11px 20px 1px rgba(214,80,235,.28); }
+    -9px -9px 16px 0 rgba(99,102,241,.255),  9px -9px 16px 0 rgba(139,92,246,.255),
+     9px  9px 16px 0 rgba(56,132,255,.255), -9px  9px 16px 0 rgba(214,80,235,.238); }
   25%      { box-shadow: 0 10px 30px rgba(0,0,0,.30), 0 2px 8px rgba(0,0,0,.18),
-    -11px -11px 20px 1px rgba(214,80,235,.28),  11px -11px 20px 1px rgba(99,102,241,.30),
-     11px  11px 20px 1px rgba(139,92,246,.30), -11px  11px 20px 1px rgba(56,132,255,.30); }
+    -9px -9px 16px 0 rgba(214,80,235,.238),  9px -9px 16px 0 rgba(99,102,241,.255),
+     9px  9px 16px 0 rgba(139,92,246,.255), -9px  9px 16px 0 rgba(56,132,255,.255); }
   50%      { box-shadow: 0 10px 30px rgba(0,0,0,.30), 0 2px 8px rgba(0,0,0,.18),
-    -11px -11px 20px 1px rgba(56,132,255,.30),  11px -11px 20px 1px rgba(214,80,235,.28),
-     11px  11px 20px 1px rgba(99,102,241,.30), -11px  11px 20px 1px rgba(139,92,246,.30); }
+    -9px -9px 16px 0 rgba(56,132,255,.255),  9px -9px 16px 0 rgba(214,80,235,.238),
+     9px  9px 16px 0 rgba(99,102,241,.255), -9px  9px 16px 0 rgba(139,92,246,.255); }
   75%      { box-shadow: 0 10px 30px rgba(0,0,0,.30), 0 2px 8px rgba(0,0,0,.18),
-    -11px -11px 20px 1px rgba(139,92,246,.30),  11px -11px 20px 1px rgba(56,132,255,.30),
-     11px  11px 20px 1px rgba(214,80,235,.28), -11px  11px 20px 1px rgba(99,102,241,.30); }
+    -9px -9px 16px 0 rgba(139,92,246,.255),  9px -9px 16px 0 rgba(56,132,255,.255),
+     9px  9px 16px 0 rgba(214,80,235,.238), -9px  9px 16px 0 rgba(99,102,241,.255); }
 }
 /* Bloom IN — the four glows grow from nothing (centred, 0 spread) to their diagonal positions over ~1.6s, so
    entering the orb/capsule doesn't SNAP the aura on. Runs once; its end == aura's 0% for a seamless handoff. */
@@ -163,8 +163,8 @@ const CARD_CSS = `
   from { box-shadow: 0 10px 30px rgba(0,0,0,.30), 0 2px 8px rgba(0,0,0,.18),
     0 0 0 0 rgba(99,102,241,0), 0 0 0 0 rgba(139,92,246,0), 0 0 0 0 rgba(56,132,255,0), 0 0 0 0 rgba(214,80,235,0); }
   to   { box-shadow: 0 10px 30px rgba(0,0,0,.30), 0 2px 8px rgba(0,0,0,.18),
-    -11px -11px 20px 1px rgba(99,102,241,.30),  11px -11px 20px 1px rgba(139,92,246,.30),
-     11px  11px 20px 1px rgba(56,132,255,.30), -11px  11px 20px 1px rgba(214,80,235,.28); }
+    -9px -9px 16px 0 rgba(99,102,241,.255),  9px -9px 16px 0 rgba(139,92,246,.255),
+     9px  9px 16px 0 rgba(56,132,255,.255), -9px  9px 16px 0 rgba(214,80,235,.238); }
 }
 /* ONLY border-radius wobbles — NOT transform. A scale/rotate would move the orb's box out from under the
    pointer, and the hover→capsule (transform:none) snap-back would fire pointerleave → collapse → re-enter
