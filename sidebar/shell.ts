@@ -68,7 +68,10 @@ const CARD_CSS = `
   transition: left .40s cubic-bezier(.3,.85,.3,1), top .40s cubic-bezier(.3,.85,.3,1),
               width .40s cubic-bezier(.3,.85,.3,1), height .40s cubic-bezier(.3,.85,.3,1),
               border-radius .44s cubic-bezier(.5,-0.3,.2,1.5),
-              opacity .24s ease, transform .40s cubic-bezier(.34,1.32,.5,1);
+              opacity .24s ease, transform .40s cubic-bezier(.34,1.32,.5,1),
+              /* the acrylic MATERIALIZES on reveal — blur ramps 0→full while opacity ramps in (see the
+                 hidden state) — so it condenses into existence rather than just popping. */
+              -webkit-backdrop-filter .5s ease, backdrop-filter .5s ease;
 }
 /* TEXT cards (toast/expanded) do NOT transition WIDTH — an animating width reflows the assistant text
    (tall while narrow, short when wide) and the height chases it, so the card opened 2-3× too tall then
@@ -79,7 +82,8 @@ const CARD_CSS = `
   transition: left .40s cubic-bezier(.3,.85,.3,1), top .40s cubic-bezier(.3,.85,.3,1),
               height .40s cubic-bezier(.3,.85,.3,1),
               border-radius .44s cubic-bezier(.5,-0.3,.2,1.5),
-              opacity .24s ease, transform .34s cubic-bezier(.34,1.2,.5,1);
+              opacity .24s ease, transform .34s cubic-bezier(.34,1.2,.5,1),
+              -webkit-backdrop-filter .5s ease, backdrop-filter .5s ease;
 }
 #${SB_CARD}-wrap.no-anim { transition: none; }
 /* The acrylic tracks the APP's resolved theme (set on the wrap by the shell from config.theme), NOT
@@ -92,14 +96,16 @@ const CARD_CSS = `
 #${SB_CARD}-wrap { left: 20px; top: 20px; height: 84px; }
 /* Reveal: fade + a small slide IN FROM the attached corner's side (right corners slide from the right, left
    from the left) — the slide is a transform, so it never reflows the text (unlike the old width morph). */
-#${SB_CARD}-wrap[data-state="hidden"] { opacity: 0; pointer-events: none; transform: translateX(18px) scale(.98); }
+#${SB_CARD}-wrap[data-state="hidden"] { opacity: 0; pointer-events: none; transform: translateX(18px) scale(.98);
+  -webkit-backdrop-filter: blur(0) saturate(102%); backdrop-filter: blur(0) saturate(102%); }
 #${SB_CARD}-wrap[data-corner$="left"][data-state="hidden"] { transform: translateX(-18px) scale(.98); }
 #${SB_CARD}-wrap[data-state="orb"], #${SB_CARD}-wrap[data-state="orblabel"], #${SB_CARD}-wrap[data-state="toast"],
 #${SB_CARD}-wrap[data-state="expanded"], #${SB_CARD}-wrap[data-state="composer"] { opacity: 1; transform: none; }
 /* Hover capsule: the orb stretched into a rounded pill that spells out the current tool (no wobble — it's
    readable now). border-radius = half the height so the ends are perfectly round. */
 #${SB_CARD}-wrap[data-state="orblabel"] { border-radius: 27px; box-shadow: 0 12px 34px rgba(0, 0, 0, .30), 0 3px 10px rgba(0, 0, 0, .18);
-  animation: ${SB_CARD}-jelly 2.6s ease-in-out infinite; }
+  /* keep the hue aura going when the orb expands to the capsule (else the glow vanishes on hover); blooms in. */
+  animation: ${SB_CARD}-jelly 2.6s ease-in-out infinite, ${SB_CARD}-aura-in 1.6s ease-out both, ${SB_CARD}-aura 6s ease-in-out 1.6s infinite; }
 /* The capsule is the same computing stage, just stretched — so it stays ALIVE, wobbling its cap radii on
    both axes (border-radius only, so it can't move the box / re-trip the hover). */
 @keyframes ${SB_CARD}-jelly {
@@ -113,8 +119,23 @@ const CARD_CSS = `
    While computing it WOBBLES like a water droplet: the border-radius morphs between organic asymmetric
    values (a 2D metaball, done on the acrylic container itself — no SVG goo filter to muddy the backdrop
    blur). The .3s delay lets the squish-in transition round it off first, then the wobble takes over. */
-#${SB_CARD}-wrap[data-state="orb"] { border-radius: 50%; box-shadow: 0 10px 30px rgba(0, 0, 0, .30), 0 2px 8px rgba(0, 0, 0, .18);
-  animation: ${SB_CARD}-droplet 3s ease-in-out .3s infinite; }
+#${SB_CARD}-wrap[data-state="orb"] { border-radius: 50%;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .30), 0 2px 8px rgba(0, 0, 0, .18);   /* fallback (reduced-motion) */
+  /* + a soft coloured aura that slowly cycles indigo→violet→blue while it computes — the blob "gives off a
+     hue", a restrained take on the big-model gradient glow (box-shadow isn't clipped by overflow:hidden, so
+     no pseudo-element / removing the acrylic clip). Layered with the droplet wobble (different property). */
+  animation: ${SB_CARD}-droplet 3s ease-in-out .3s infinite, ${SB_CARD}-aura-in 1.6s ease-out both, ${SB_CARD}-aura 6s ease-in-out 1.6s infinite; }
+@keyframes ${SB_CARD}-aura {
+  0%, 100% { box-shadow: 0 10px 30px rgba(0, 0, 0, .30), 0 2px 8px rgba(0, 0, 0, .18), 0 0 20px 3px rgba(99, 102, 241, .24); }
+  33%      { box-shadow: 0 10px 30px rgba(0, 0, 0, .30), 0 2px 8px rgba(0, 0, 0, .18), 0 0 22px 4px rgba(139, 92, 246, .26); }
+  66%      { box-shadow: 0 10px 30px rgba(0, 0, 0, .30), 0 2px 8px rgba(0, 0, 0, .18), 0 0 20px 3px rgba(56, 132, 255, .24); }
+}
+/* Bloom the aura IN — grow from no glow to the cycle's starting glow over ~1.6s — so entering the orb (or
+   the capsule) doesn't SNAP the aura on. Runs once, then the aura cycle (delayed to match) takes over. */
+@keyframes ${SB_CARD}-aura-in {
+  from { box-shadow: 0 10px 30px rgba(0, 0, 0, .30), 0 2px 8px rgba(0, 0, 0, .18), 0 0 0 0 rgba(99, 102, 241, 0); }
+  to   { box-shadow: 0 10px 30px rgba(0, 0, 0, .30), 0 2px 8px rgba(0, 0, 0, .18), 0 0 20px 3px rgba(99, 102, 241, .24); }
+}
 /* ONLY border-radius wobbles — NOT transform. A scale/rotate would move the orb's box out from under the
    pointer, and the hover→capsule (transform:none) snap-back would fire pointerleave → collapse → re-enter
    → a flickering oscillation. border-radius doesn't affect layout, so the hover target stays put. */
