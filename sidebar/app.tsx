@@ -942,7 +942,7 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     // human the approval is a session-scoped grant, not a one-shot.
     const sheetGrants = awaiting ? externalSheetGrant(st.arguments) : [];
     return (
-        <div class={`astep tool${st.pending ? " pending" : ""}${awaiting ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : st.approval === "skipped" ? " appr-skip" : " appr-yes") : ""}`}>
+        <div class={`astep tool${open ? " open" : ""}${st.pending ? " pending" : ""}${awaiting ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : st.approval === "skipped" ? " appr-skip" : " appr-yes") : ""}`}>
             <button class="astep-head" onClick={() => setExpanded(v => !v)}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
                 <Dot status={st.pending ? "pending" : toolFailed(st.result) ? "err" : "ok"} />
@@ -1841,10 +1841,15 @@ let endActiveCardDrag: (() => void) | null = null;
 // the pointer's actual position against the element's box and IGNORE it when it's still inside; a small
 // hysteresis timer on genuine leaves lets a quick re-enter cancel the collapse.
 let orbLeaveTimer = 0;
-const orbEnter = () => { if (orbDragging) return; clearTimeout(orbLeaveTimer); orbHover.value = true; };
+// Hover-to-capsule is DISARMED right after a drag: the orb must land as a plain CIRCLE, not snap open just
+// because the cursor happens to be sitting on it where it landed. A genuine leave+re-enter re-arms it, so a
+// deliberate hover still expands. (Set false in the drag cleanup; set true on a real pointerleave.)
+let orbHoverArmed = true;
+const orbEnter = () => { if (orbDragging || !orbHoverArmed) return; clearTimeout(orbLeaveTimer); orbHover.value = true; };
 const orbLeave = (e: any) => {
     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
     if (e.clientX > r.left && e.clientX < r.right && e.clientY > r.top && e.clientY < r.bottom) return;   // spurious (resize) — pointer still inside
+    orbHoverArmed = true;   // a real leave → the next enter is a deliberate hover, allow it to expand again
     clearTimeout(orbLeaveTimer);
     orbLeaveTimer = window.setTimeout(() => { orbHover.value = false; }, 140);
 };
@@ -1865,10 +1870,11 @@ const startCardDrag = (e: any) => {
         cap.removeEventListener("pointercancel", up);
         if (endActiveCardDrag === cleanup) endActiveCardDrag = null;
         if (dragging) { dragging = false; orbDragging = false; }
-        // Always settle the orb back to the CIRCLE after a drag. A drag that ended with the pointer NOT over
-        // the orb (moved away, or a flick that escaped) leaves no pointerleave to fire, so the hover-capsule
-        // (orblabel) would stay stuck open until you hover+leave again. Force it closed here.
+        // Settle the orb back to the CIRCLE after a drag AND disarm hover-expand: it must LAND as a circle,
+        // not immediately re-expand because the cursor is sitting on where it landed (the "lands expanded
+        // then collapses" jank). A real leave+re-enter re-arms it, so a deliberate hover still opens it.
         orbHover.value = false;
+        orbHoverArmed = false;
     };
     const move = (ev: any) => {
         if (!dragging) {

@@ -233,6 +233,7 @@ function onWinDragMove(ev: PointerEvent): void {
 }
 function onWinDragEnd(): void { finalizeCardDrag(); }
 let cardCorner = "bottom-right";   // config.cardCorner (set from storage) → which corner the card anchors to
+let agentHud = "progress";         // config.agentHud → "progress" shows the working pill, "quiet" hides it
 let agentHudInDevtools = false;    // config → also show the corner card/pill alongside the DevTools panel
 // The corner HUD (card/pill) is active in OFF mode, and in DEVTOOLS when the coexist toggle is on
 // (OVERLAY never uses it — the slide-out already covers the page).
@@ -358,6 +359,10 @@ function showCornerMenu(px: number, py: number, hash?: string, live?: boolean): 
         b.addEventListener("click", () => { onClick(); hideCornerMenu(); });
         return b;
     };
+    // Quiet toggle: flip the working-pill visibility (agentHud) from wherever you right-clicked — off from
+    // the running blob, back on from a finished report / approval. A ticked "Show working pill" = progress.
+    menu.append(item("Show working pill", () => chrome.storage.sync.set({ agentHud: agentHud === "quiet" ? "progress" : "quiet" }), agentHud !== "quiet"));
+    menu.append(Object.assign(document.createElement("div"), { className: "menu-div" }));
     const head = document.createElement("div"); head.className = "menu-head"; head.textContent = "Move card to…"; menu.append(head);
     for (const [val, label] of CARD_CORNERS)
         menu.append(item(label, () => chrome.storage.sync.set({ cardCorner: val }), cardCorner === val));
@@ -896,9 +901,10 @@ themeMedia?.addEventListener("change", applyCardTheme);   // "auto" follows the 
 // Keep the card pinned to its corner / centred when the viewport resizes (position is computed, not CSS-anchored).
 window.addEventListener("resize", () => { if (cardWrap) layoutCard(); });
 
-chrome.storage.sync.get({ debugMode: "off", theme: "auto", cardCorner: "bottom-right", agentHudInDevtools: false }, (cfg) => {
+chrome.storage.sync.get({ debugMode: "off", theme: "auto", cardCorner: "bottom-right", agentHud: "progress", agentHudInDevtools: false }, (cfg) => {
     rawTheme = (cfg.theme as string) || "auto";
     cardCorner = (cfg.cardCorner as string) || "bottom-right";
+    agentHud = (cfg.agentHud as string) || "progress";
     agentHudInDevtools = !!cfg.agentHudInDevtools;
     applyMode(cfg.debugMode as DebugMode);
 });
@@ -906,6 +912,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "sync") return;
     if (changes.theme) { rawTheme = (changes.theme.newValue as string) || "auto"; applyCardTheme(); }
     if (changes.cardCorner) { cardCorner = (changes.cardCorner.newValue as string) || "bottom-right"; applyCardCorner(); }
+    if (changes.agentHud) agentHud = (changes.agentHud.newValue as string) || "progress";
     if (changes.agentHudInDevtools) {
         agentHudInDevtools = !!changes.agentHudInDevtools.newValue;
         // Turned OFF while a devtools card is up → drop it (turning ON takes effect on the next run).
