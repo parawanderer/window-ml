@@ -228,8 +228,15 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* HUD (card) surface: the STEP pill is debug clutter in the corner card — hide it until you EXPAND a step
    in that turn (:has an open .astep). The DevTools/overlay panel keeps it always, where it's useful when
    collapsed. :has() is supported on every Chromium the extension runs on. */
-html[data-surface="card"] .aturn-head .step-pill { display: none; }
-html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill { display: inline-block; }
+/* Hidden by default, fades in from the right when the step expands (opacity can animate; display can't).
+   .aturn-head is absolutely positioned so the translate doesn't shift any layout. */
+html[data-surface="card"] .aturn-head .step-pill {
+    opacity: 0; transform: translateX(7px); pointer-events: none;
+    transition: opacity .18s ease, transform .18s ease;
+}
+html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
+    opacity: 1; transform: none; pointer-events: auto;
+}
 .athought, .astep { padding-left: 2px; }
 /* A turn's PROSE (content) — rendered like the answer: full-brightness markdown, no box/dot/label,
    expanded by default with a subtle collapse chevron on the left. */
