@@ -70,6 +70,17 @@ const CARD_CSS = `
               border-radius .44s cubic-bezier(.5,-0.3,.2,1.5),
               opacity .24s ease, transform .40s cubic-bezier(.34,1.32,.5,1);
 }
+/* TEXT cards (toast/expanded) do NOT transition WIDTH — an animating width reflows the assistant text
+   (tall while narrow, short when wide) and the height chases it, so the card opened 2-3× too tall then
+   shrank. Width snaps to final immediately → the text is laid out at its final width from frame 1 → the
+   height is stable; HEIGHT still transitions (a reflow-free grow for streaming / Show-work). The reveal is
+   an opacity + corner-aware slide (below), not a size morph. Orb/composer keep the liquid width morph. */
+#${SB_CARD}-wrap[data-state="toast"], #${SB_CARD}-wrap[data-state="expanded"] {
+  transition: left .40s cubic-bezier(.3,.85,.3,1), top .40s cubic-bezier(.3,.85,.3,1),
+              height .40s cubic-bezier(.3,.85,.3,1),
+              border-radius .44s cubic-bezier(.5,-0.3,.2,1.5),
+              opacity .24s ease, transform .34s cubic-bezier(.34,1.2,.5,1);
+}
 #${SB_CARD}-wrap.no-anim { transition: none; }
 /* The acrylic tracks the APP's resolved theme (set on the wrap by the shell from config.theme), NOT
    the OS — otherwise a user who forces Light while the OS is dark gets dark text on a dark acrylic. */
@@ -79,7 +90,10 @@ const CARD_CSS = `
    (opacity/transform), the orb's roundness, and the composer's deeper shadow; data-corner only places
    the resize handle. */
 #${SB_CARD}-wrap { left: 20px; top: 20px; height: 84px; }
-#${SB_CARD}-wrap[data-state="hidden"] { opacity: 0; pointer-events: none; transform: scale(.96); }
+/* Reveal: fade + a small slide IN FROM the attached corner's side (right corners slide from the right, left
+   from the left) — the slide is a transform, so it never reflows the text (unlike the old width morph). */
+#${SB_CARD}-wrap[data-state="hidden"] { opacity: 0; pointer-events: none; transform: translateX(18px) scale(.98); }
+#${SB_CARD}-wrap[data-corner$="left"][data-state="hidden"] { transform: translateX(-18px) scale(.98); }
 #${SB_CARD}-wrap[data-state="orb"], #${SB_CARD}-wrap[data-state="orblabel"], #${SB_CARD}-wrap[data-state="toast"],
 #${SB_CARD}-wrap[data-state="expanded"], #${SB_CARD}-wrap[data-state="composer"] { opacity: 1; transform: none; }
 /* Hover capsule: the orb stretched into a rounded pill that spells out the current tool (no wobble — it's
