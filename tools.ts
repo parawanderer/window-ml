@@ -324,7 +324,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
         }),
         T({
             name: "exec",
-            summary: "Runs read-only JavaScript to inspect the page.",
+            summary: "Runs JavaScript to inspect the page.",
             description: "Escape hatch: run JS in the page, like one cell in a console. You get back " +
                 "BOTH anything it console.log's AND the final expression's value — so either " +
                 "console.log the data you want to inspect, or make the last line evaluate to it " +
@@ -334,9 +334,13 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
                 "The returned value AND the console output are EACH truncated to ~500 chars, so " +
                 "don't dump whole elements/pages — return a compact, filtered summary (counts, a " +
                 "handful of fields, the few items you actually need), not a full outerHTML dump. " +
-                "A `state` object persists across your exec calls (it's a live page kernel, not stateless) — " +
-                "stash reusable functions/results on it (e.g. `state.rows ??= [...]; state.rows.length`) and " +
-                "reuse them next call. Use only when the other tools can't answer; prefer them.",
+                "PERSISTENT STATE: you have a `state` object (also `ml.state`) that is NOT reset between calls — " +
+                "it's a live page kernel, like cells in a Jupyter notebook. For any multi-step work, DEFINE helper " +
+                "functions and stash intermediate results on it ONCE, then REUSE them on later calls instead of " +
+                "re-deriving from scratch (e.g. call 1: `state.rows = [...document.querySelectorAll('tr')].map(...)`; " +
+                "call 2: `state.rows.filter(r => r.total > 100).length`). It's a single object shared across the whole " +
+                "page session (and every run in this tab), so it survives — but two parallel runs share it. " +
+                "Use exec only when the other tools can't answer; prefer them.",
             requiresApproval: true,     // arbitrary eval — the agent gate confirms each call
             // Debug view: show the JS that ran as a highlighted code block (raw
             // toggle still reveals the underlying args/result).

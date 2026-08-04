@@ -68,10 +68,7 @@ const CARD_CSS = `
   transition: left .40s cubic-bezier(.3,.85,.3,1), top .40s cubic-bezier(.3,.85,.3,1),
               width .40s cubic-bezier(.3,.85,.3,1), height .40s cubic-bezier(.3,.85,.3,1),
               border-radius .44s cubic-bezier(.5,-0.3,.2,1.5),
-              opacity .24s ease, transform .40s cubic-bezier(.34,1.32,.5,1),
-              /* the acrylic MATERIALIZES on reveal — blur ramps 0→full while opacity ramps in (see the
-                 hidden state) — so it condenses into existence rather than just popping. */
-              -webkit-backdrop-filter .5s ease, backdrop-filter .5s ease;
+              opacity .24s ease, transform .40s cubic-bezier(.34,1.32,.5,1);
 }
 /* TEXT cards (toast/expanded) do NOT transition WIDTH — an animating width reflows the assistant text
    (tall while narrow, short when wide) and the height chases it, so the card opened 2-3× too tall then
@@ -82,13 +79,22 @@ const CARD_CSS = `
   transition: left .40s cubic-bezier(.3,.85,.3,1), top .40s cubic-bezier(.3,.85,.3,1),
               height .40s cubic-bezier(.3,.85,.3,1),
               border-radius .44s cubic-bezier(.5,-0.3,.2,1.5),
-              opacity .24s ease, transform .34s cubic-bezier(.34,1.2,.5,1),
-              -webkit-backdrop-filter .5s ease, backdrop-filter .5s ease;
+              opacity .24s ease, transform .34s cubic-bezier(.34,1.2,.5,1);
 }
+/* MATERIALIZE: the acrylic frosts IN — backdrop blur ramps 0→full over .8s while the card fades/slides in
+   (opacity/transform, above) — so a fresh HUD condenses into existence rather than popping. Driven by a
+   one-shot class the shell adds on the hidden→visible transition (a backdrop-filter *transition* is
+   unreliable — it needs the blur(0) frame painted first, which a same-frame mount→reveal skips). */
+#${SB_CARD}-wrap.ml-materialize { animation: ${SB_CARD}-frost .8s cubic-bezier(.3,.7,.3,1) backwards; }
+@keyframes ${SB_CARD}-frost {
+  from { -webkit-backdrop-filter: blur(0) saturate(102%); backdrop-filter: blur(0) saturate(102%); }
+  to   { -webkit-backdrop-filter: blur(30px) saturate(102%); backdrop-filter: blur(30px) saturate(102%); }
+}
+@media (prefers-reduced-motion: reduce) { #${SB_CARD}-wrap.ml-materialize { animation: none; } }
 #${SB_CARD}-wrap.no-anim { transition: none; }
 /* The acrylic tracks the APP's resolved theme (set on the wrap by the shell from config.theme), NOT
    the OS — otherwise a user who forces Light while the OS is dark gets dark text on a dark acrylic. */
-#${SB_CARD}-wrap[data-theme="dark"] { background: rgb(24 24 27 / 78%); border-color: rgba(255, 255, 255, .12);
+#${SB_CARD}-wrap[data-theme="dark"] { background: rgb(24 24 27 / 71%); border-color: rgba(255, 255, 255, .12);
   box-shadow: 0 14px 46px rgba(0, 0, 0, .5), 0 3px 10px rgba(0, 0, 0, .34); }
 /* left/top/width/height are all set in px by the shell (layoutCard). data-state drives reveal
    (opacity/transform), the orb's roundness, and the composer's deeper shadow; data-corner only places
@@ -96,8 +102,7 @@ const CARD_CSS = `
 #${SB_CARD}-wrap { left: 20px; top: 20px; height: 84px; }
 /* Reveal: fade + a small slide IN FROM the attached corner's side (right corners slide from the right, left
    from the left) — the slide is a transform, so it never reflows the text (unlike the old width morph). */
-#${SB_CARD}-wrap[data-state="hidden"] { opacity: 0; pointer-events: none; transform: translateX(18px) scale(.98);
-  -webkit-backdrop-filter: blur(0) saturate(102%); backdrop-filter: blur(0) saturate(102%); }
+#${SB_CARD}-wrap[data-state="hidden"] { opacity: 0; pointer-events: none; transform: translateX(18px) scale(.98); }
 #${SB_CARD}-wrap[data-corner$="left"][data-state="hidden"] { transform: translateX(-18px) scale(.98); }
 #${SB_CARD}-wrap[data-state="orb"], #${SB_CARD}-wrap[data-state="orblabel"], #${SB_CARD}-wrap[data-state="toast"],
 #${SB_CARD}-wrap[data-state="expanded"], #${SB_CARD}-wrap[data-state="composer"] { opacity: 1; transform: none; }
@@ -267,6 +272,7 @@ function onWinDragMove(ev: PointerEvent): void {
     layoutCard();
 }
 function onWinDragEnd(): void { finalizeCardDrag(); }
+let materializeTimer = 0;          // clears the one-shot .ml-materialize (frost-in) class after the reveal
 let cardCorner = "bottom-right";   // config.cardCorner (set from storage) → which corner the card anchors to
 let agentHud = "progress";         // config.agentHud → "progress" shows the working pill, "quiet" hides it
 let agentHudInDevtools = false;    // config → also show the corner card/pill alongside the DevTools panel
@@ -409,9 +415,12 @@ function showCornerMenu(px: number, py: number, hash?: string, live?: boolean): 
             try { void chrome.runtime.sendMessage({ type: "CANCEL_RUN", payload: { runId: hash } }).catch(() => {}); } catch { /* context gone */ }
         }, false, true));
     }
-    menu.style.left = `${Math.max(6, Math.min(px, window.innerWidth - 170))}px`;
-    menu.style.top = `${Math.max(6, Math.min(py, window.innerHeight - 200))}px`;
+    // Append FIRST, then measure the REAL size and clamp so it snaps fully into the viewport — a hardcoded
+    // height guess let a tall menu (many run actions) get cut off at the bottom of the page.
     cardHost.shadowRoot.append(menu);
+    const mw = menu.offsetWidth || 170, mh = menu.offsetHeight || 200, M = 8;
+    menu.style.left = `${Math.max(M, Math.min(px, window.innerWidth - mw - M))}px`;
+    menu.style.top = `${Math.max(M, Math.min(py, window.innerHeight - mh - M))}px`;
     cornerMenuEl = menu;
     setTimeout(() => {   // defer so the opening right-click doesn't immediately dismiss it
         window.addEventListener("pointerdown", onCornerMenuOutside, true);
@@ -649,7 +658,18 @@ function onWindowMessage(e: MessageEvent): void {
     // knows whether there's a pending approval or a final answer worth showing. We drive the container's
     // size + reveal (a CSS transition). Origin-checked: only the real card iframe.
     if (typeof d.__mlSidebarCard === "string" && frame && e.source === frame.contentWindow) {
-        if (cardWrap) { cardWrap.dataset.state = d.__mlSidebarCard; layoutCard(); }
+        if (cardWrap) {
+            // Frost the acrylic IN on a hidden→visible reveal (the card popping up from nothing). Re-trigger
+            // the one-shot animation cleanly: remove the class, force a reflow, re-add it, then clear it after.
+            if (cardWrap.dataset.state === "hidden" && d.__mlSidebarCard !== "hidden") {
+                cardWrap.classList.remove("ml-materialize");
+                void cardWrap.offsetWidth;   // reflow → the animation restarts even if it just ran
+                cardWrap.classList.add("ml-materialize");
+                clearTimeout(materializeTimer);
+                materializeTimer = window.setTimeout(() => cardWrap?.classList.remove("ml-materialize"), 900);
+            }
+            cardWrap.dataset.state = d.__mlSidebarCard; layoutCard();
+        }
         return;
     }
     // The card app reports its TRUE content height (a cross-origin iframe can't auto-size) → fit the card

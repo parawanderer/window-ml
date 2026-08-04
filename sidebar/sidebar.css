@@ -255,7 +255,7 @@ html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
    disclosure shape as thinking. The card is the MINIMAL/monochrome surface (DevTools is the colourful one),
    so these read white + bold (the conversation anchors), set apart from the dim italic "thinking" by weight,
    not hue. */
-.acard-you .who, .acard-ans .who { color: var(--fg); font-weight: 700; }
+.acard-you .who, .acard-ans .who { color: var(--fg); font-weight: 700; white-space: nowrap; flex: 0 0 auto; }
 .astep.tool { border-left: 2px solid var(--accent); padding-left: 8px; margin: 4px 0; }
 .astep-head { display: flex; align-items: center; gap: 6px; width: 100%; background: none; border: none; padding: 3px 0; cursor: pointer; text-align: left; color: inherit; }
 .astep-head:hover .tri { color: var(--fg); }

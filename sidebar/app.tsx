@@ -1948,7 +1948,9 @@ function ShowWork({ run }: { run: Session }) {
     // reasoning / tool — which otherwise render as a blank block in the trace (the same filter AgentRunView
     // uses). KEEP a reasoning-only turn (the final-answer turn shows its thinking).
     const turns = groupTurns(run.steps || []).filter(t => t.thought || t.reasoning || t.tools.length);
-    const n = (run.steps || []).filter(s => s.tool).length;
+    // "N steps" = the number of loop iterations actually shown (turn-groups across ALL turns), not just the
+    // tool calls — a thinking-only step is still a step, and the old tool-only count undercounted multi-turn runs.
+    const n = turns.length;
     // Interleave the CONVERSATION into the trace — your prompts (task + follow-ups → "you asked") and PAST
     // answers, positioned with the step-groups by cumulative step (same scheme as the panel's AgentRunView:
     // task at -1, an answer just after its turn's steps, a following prompt just after that). The LATEST
