@@ -143,8 +143,8 @@ test("token usage is emitted per step (so the background run's usage gauge isn't
 test("a meta-capability tool (chat_metadata) is answered BY THE LOOP with live token stats, not runTool", async () => {
     const { deps, calls } = makeDeps({ turns: [
         // The turn that CALLS chat_metadata carries usage → the summary reflects it (prompt=context used,
-        // completion=generated).
-        { content: "", tool_calls: [{ id: "m1", name: "chat_metadata", arguments: {} }], usage: { prompt_tokens: 1200, completion_tokens: 40 } },
+        // completion=generated). REAL usage is camelCase (TokenUsage), which was the "0 tokens" regression.
+        { content: "", tool_calls: [{ id: "m1", name: "chat_metadata", arguments: {} }], usage: { promptTokens: 1200, completionTokens: 40, totalTokens: 1240 } },
         reply("here's your info"),
     ] });
     deps.chatMeta = async () => ({ model: "gemma4:31b", contextWindow: 262144, capabilities: ["tools", "vision"] });

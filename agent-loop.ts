@@ -73,14 +73,17 @@ export interface AgentLoopDeps {
     chatMeta?(): Promise<{ model: string | null; contextWindow: number | null; capabilities: string[] | null } | null>;
 }
 
-/** prompt/completion token counts from a (format-neutral) usage object, tolerant of the OpenAI and Ollama
- *  field names. Non-numbers → 0. */
+/** prompt/completion token counts from a usage object. The extension NORMALIZES usage to camelCase
+ *  (TokenUsage: promptTokens/completionTokens/totalTokens — see extractUsage), so read that FIRST; fall
+ *  back to the raw OpenAI (prompt_tokens) / Ollama (prompt_eval_count) names for any un-normalized source.
+ *  Non-numbers → 0. (Reading only snake_case was the "generated: 0 tokens" bug — the real field is
+ *  completionTokens.) */
 function usageTokens(u: unknown): { prompt: number; completion: number } {
     const o = (u || {}) as Record<string, unknown>;
     const n = (x: unknown) => (typeof x === "number" && isFinite(x) ? x : 0);
     return {
-        prompt: n(o.prompt_tokens) || n(o.input_tokens) || n(o.prompt_eval_count),
-        completion: n(o.completion_tokens) || n(o.output_tokens) || n(o.eval_count),
+        prompt: n(o.promptTokens) || n(o.prompt_tokens) || n(o.input_tokens) || n(o.prompt_eval_count),
+        completion: n(o.completionTokens) || n(o.completion_tokens) || n(o.output_tokens) || n(o.eval_count),
     };
 }
 
