@@ -195,6 +195,11 @@ let cardReady = false;                       // the card iframe app has handshak
 let cardAutoH = 200;
 let cardManualH: number | null = null;   // transient drag override (discarded when content changes / on unmount)
 let cardDrag: { left: number; top: number } | null = null;   // live grab-drag position (px); null when resting
+// The cursor's live page position + the fraction of the card it grabbed, tracked so a mid-drag SIZE change
+// (the pill collapsing to the orb) keeps that grabbed point under the cursor — instead of pinning the old
+// top-left, which flung the tiny orb to the edge with a gap. Both null when not dragging.
+let dragCursor: { x: number; y: number } | null = null;
+let dragFrac: { fx: number; fy: number } | null = null;
 let cardCorner = "bottom-right";   // config.cardCorner (set from storage) → which corner the card anchors to
 let agentHudInDevtools = false;    // config → also show the corner card/pill alongside the DevTools panel
 // The corner HUD (card/pill) is active in OFF mode, and in DEVTOOLS when the coexist toggle is on
@@ -595,13 +600,26 @@ function onWindowMessage(e: MessageEvent): void {
     if (d.__mlSidebarCardGrab && cardWrap && frame && e.source === frame.contentWindow) {
         const r = cardWrap.getBoundingClientRect();
         cardDrag = { left: r.left, top: r.top };
+        // The grab landed at (gx,gy) within the card (iframe-local ≈ card-local). Remember the cursor's
+        // page position and the fraction it grabbed, so `move` can keep that point under the cursor even
+        // when the card resizes (pill→orb) mid-drag.
+        const g = d.__mlSidebarCardGrab as { gx?: number; gy?: number };
+        const gx = g && typeof g === "object" ? (g.gx || 0) : 0;
+        const gy = g && typeof g === "object" ? (g.gy || 0) : 0;
+        dragCursor = { x: r.left + gx, y: r.top + gy };
+        dragFrac = { fx: r.width ? gx / r.width : 0.5, fy: r.height ? gy / r.height : 0.5 };
         cardWrap.classList.add("no-anim");
         return;
     }
-    if (d.__mlSidebarCardMove && cardDrag && cardWrap && frame && e.source === frame.contentWindow) {
+    if (d.__mlSidebarCardMove && cardDrag && dragCursor && dragFrac && cardWrap && frame && e.source === frame.contentWindow) {
         const w = cardWrap.offsetWidth, h = cardWrap.offsetHeight;
-        cardDrag.left = Math.max(6, Math.min(window.innerWidth - w - 6, cardDrag.left + (d.__mlSidebarCardMove.dx || 0)));
-        cardDrag.top = Math.max(6, Math.min(window.innerHeight - h - 6, cardDrag.top + (d.__mlSidebarCardMove.dy || 0)));
+        // Track the true cursor by the deltas, then place the card so the grabbed FRACTION of the CURRENT
+        // size sits under it. When the pill has collapsed to the orb, fx·(orb width) is tiny, so the orb
+        // ends up under the cursor rather than pinned to the old wide-pill top-left.
+        dragCursor.x += d.__mlSidebarCardMove.dx || 0;
+        dragCursor.y += d.__mlSidebarCardMove.dy || 0;
+        cardDrag.left = Math.max(6, Math.min(window.innerWidth - w - 6, dragCursor.x - dragFrac.fx * w));
+        cardDrag.top = Math.max(6, Math.min(window.innerHeight - h - 6, dragCursor.y - dragFrac.fy * h));
         layoutCard();
         return;
     }
@@ -610,7 +628,7 @@ function onWindowMessage(e: MessageEvent): void {
             const w = cardWrap.offsetWidth, h = cardWrap.offsetHeight;
             const cx = cardDrag.left + w / 2, cy = cardDrag.top + h / 2;   // nearest corner by the card's centre
             const corner = (cy < window.innerHeight / 2 ? "top-" : "bottom-") + (cx < window.innerWidth / 2 ? "left" : "right");
-            cardDrag = null;
+            cardDrag = null; dragCursor = null; dragFrac = null;
             cardWrap.classList.remove("no-anim");
             cardCorner = corner;
             applyCardCorner();                                  // data-corner + layoutCard → animates to the snapped corner

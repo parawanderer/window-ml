@@ -1855,7 +1855,10 @@ const startCardDrag = (e: any) => {
             if (Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) < 4) return;   // threshold → still a click
             dragging = true; orbDragging = true; orbHover.value = false;                      // no hover-resize mid-drag
             try { cap.setPointerCapture(pid); } catch { /* older engines */ }
-            window.parent.postMessage({ __mlSidebarCardGrab: true }, "*");
+            // Send WHERE in the card the grab landed (iframe-local ≈ offset from the card's top-left, since
+            // the iframe fills the wrap). The shell keeps that fractional point under the cursor across a
+            // mid-drag size change (pill→orb) so the collapsed orb lands UNDER the cursor, not at the edge.
+            window.parent.postMessage({ __mlSidebarCardGrab: { gx: ev.clientX, gy: ev.clientY } }, "*");
         }
         window.parent.postMessage({ __mlSidebarCardMove: { dx: ev.movementX, dy: ev.movementY } }, "*");
     };
@@ -2134,6 +2137,12 @@ function CardApp() {
         if (pendingStep) decide(false);          // × on a pending gate = a fast Deny
         else cardDismissed.value = run.hash;     // × on a finished card = dismiss
     };
+    // Dismiss on POINTERUP, not click: if the pointer wobbles between the × and the toast body, the browser
+    // fires `click` on their common ANCESTOR (the toast), whose handler EXPANDS — so the card would flash
+    // open then dismiss ("randomly opens then fades"). Acting on pointerup (which fires on the × itself) +
+    // swallowing the trailing click makes the × dismiss cleanly, no expand. pointerdown stops the drag grab.
+    const onCloseDown = (e: Event) => { e.stopPropagation(); };
+    const onCloseUp = (e: Event) => { e.stopPropagation(); e.preventDefault(); onClose(e); };
 
     if (state === "orb" || state === "orblabel") {
         const a = activityFor(run);
@@ -2142,13 +2151,13 @@ function CardApp() {
     if (state === "toast") {
         return (
             <div class="card-app" data-rev={r}>
-                <div class="card-toast" role="button" title="Click to review · drag or right-click to move" onPointerDown={startCardDrag} onClick={() => (cardCollapsed.value = false)} onContextMenu={cardCtxMenu}>
+                <div class="card-toast" role="button" title="Click to review · drag or right-click to move" onPointerDown={startCardDrag} onClick={e => { if (!(e.target as HTMLElement).closest(".card-x")) cardCollapsed.value = false; }} onContextMenu={cardCtxMenu}>
                     <span class="card-bot" aria-hidden="true">🤖</span>
                     <span class="card-toast-txt">
                         <span class="card-toast-head">{headline}</span>
                         <span class="card-toast-sub">{title}</span>
                     </span>
-                    <button class="card-x" aria-label="Dismiss" onClick={onClose}>✕</button>
+                    <button class="card-x" aria-label="Dismiss" onPointerDown={onCloseDown} onPointerUp={onCloseUp} onClick={e => e.stopPropagation()}>✕</button>
                 </div>
             </div>
         );
@@ -2159,8 +2168,8 @@ function CardApp() {
                 <span class="card-bot" aria-hidden="true">🤖</span>
                 <span class={`card-head-txt${pending ? " pending" : ""}`}>{headline}</span>
                 <span class="sp" />
-                {pending ? null : <button class="card-icon" aria-label="Collapse" title="Collapse" onClick={() => (cardCollapsed.value = true)}>▾</button>}
-                <button class="card-x" aria-label={pending ? "Deny" : "Dismiss"} onClick={onClose}>✕</button>
+                {pending ? null : <button class="card-icon" aria-label="Collapse" title="Collapse" onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); cardCollapsed.value = true; }}>▾</button>}
+                <button class="card-x" aria-label={pending ? "Deny" : "Dismiss"} onPointerDown={onCloseDown} onPointerUp={onCloseUp} onClick={e => e.stopPropagation()}>✕</button>
             </div>
             <div class="card-body">
                 {pending && pendingStep
