@@ -719,6 +719,12 @@ details.thinking .md { color: var(--fg-dim); font-size: 0.95em; }
    a cross-origin frame can't auto-size — and caps it to the viewport), transparent, no page scroll. */
 html[data-surface="card"], html[data-surface="card"] body { background: transparent !important; overflow: hidden; height: 100%; }
 html[data-surface="card"] { color-scheme: normal !important; }
+/* The card is TRANSLUCENT acrylic — over a dark page the fixed grays (--fg-dim/--fg-faint) blend into the
+   tinted glass and become unreadable (previews, "N steps", the reply placeholder). Use white-with-opacity
+   instead, which stays legible whatever the backdrop tints the glass to. Flip to black-opacity on a light
+   card. (Only the card surface; the opaque DevTools panel keeps the exact greys.) */
+html[data-surface="card"] { --fg: rgba(255, 255, 255, .95); --fg-dim: rgba(255, 255, 255, .68); --fg-faint: rgba(255, 255, 255, .46); }
+html[data-surface="card"][data-theme="light"] { --fg: rgba(0, 0, 0, .90); --fg-dim: rgba(0, 0, 0, .60); --fg-faint: rgba(0, 0, 0, .42); }
 /* color-scheme:normal (needed for the transparent acrylic backdrop) makes NATIVE scrollbars render
    light — ugly on the dark card (e.g. a code block's horizontal bar). Theme every card scrollbar dark. */
 html[data-surface="card"] ::-webkit-scrollbar { width: 10px; height: 10px; }

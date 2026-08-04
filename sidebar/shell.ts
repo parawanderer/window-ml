@@ -85,10 +85,19 @@ const CARD_CSS = `
    (opacity/transform, above) — so a fresh HUD condenses into existence rather than popping. Driven by a
    one-shot class the shell adds on the hidden→visible transition (a backdrop-filter *transition* is
    unreliable — it needs the blur(0) frame painted first, which a same-frame mount→reveal skips). */
-#${SB_CARD}-wrap.ml-materialize { animation: ${SB_CARD}-frost .8s cubic-bezier(.3,.7,.3,1) backwards; }
-@keyframes ${SB_CARD}-frost {
-  from { -webkit-backdrop-filter: blur(0) saturate(102%); backdrop-filter: blur(0) saturate(102%); }
-  to   { -webkit-backdrop-filter: blur(30px) saturate(102%); backdrop-filter: blur(30px) saturate(102%); }
+/* Ramp BOTH the blur AND the background alpha (transparent→opaque) over 1.1s — blur alone is barely visible
+   on a 78%-opaque card (only ~22% backdrop shows), so the acrylic looked like it popped. Theme-aware (the
+   bg colour differs) so the 'to' matches the resting acrylic exactly. Slower + the alpha ramp = you SEE it
+   condense: sharp+see-through → frosted+solid. */
+#${SB_CARD}-wrap[data-theme="dark"].ml-materialize { animation: ${SB_CARD}-frost-dark 1.1s cubic-bezier(.25,.6,.25,1) backwards; }
+#${SB_CARD}-wrap[data-theme="light"].ml-materialize, #${SB_CARD}-wrap.ml-materialize:not([data-theme="dark"]) { animation: ${SB_CARD}-frost-light 1.1s cubic-bezier(.25,.6,.25,1) backwards; }
+@keyframes ${SB_CARD}-frost-dark {
+  from { -webkit-backdrop-filter: blur(1px) saturate(102%); backdrop-filter: blur(1px) saturate(102%); background: rgb(24 24 27 / 0%); }
+  to   { -webkit-backdrop-filter: blur(30px) saturate(102%); backdrop-filter: blur(30px) saturate(102%); background: rgb(24 24 27 / 78%); }
+}
+@keyframes ${SB_CARD}-frost-light {
+  from { -webkit-backdrop-filter: blur(1px) saturate(102%); backdrop-filter: blur(1px) saturate(102%); background: rgba(250, 250, 252, 0); }
+  to   { -webkit-backdrop-filter: blur(30px) saturate(102%); backdrop-filter: blur(30px) saturate(102%); background: rgba(250, 250, 252, .72); }
 }
 @media (prefers-reduced-motion: reduce) { #${SB_CARD}-wrap.ml-materialize { animation: none; } }
 #${SB_CARD}-wrap.no-anim { transition: none; }
@@ -130,16 +139,32 @@ const CARD_CSS = `
      hue", a restrained take on the big-model gradient glow (box-shadow isn't clipped by overflow:hidden, so
      no pseudo-element / removing the acrylic clip). Layered with the droplet wobble (different property). */
   animation: ${SB_CARD}-droplet 3s ease-in-out .3s infinite, ${SB_CARD}-aura-in 1.6s ease-out both, ${SB_CARD}-aura 6s ease-in-out 1.6s infinite; }
+/* MULTI-HUE aura: FOUR coloured glows at the four diagonals (indigo · violet · blue · magenta) — each a
+   blurred offset box-shadow, so they blend into a gradient halo with DIFFERENT hues in different directions
+   (not one flat colour). The four colours rotate clockwise around the fixed positions each cycle, so the
+   gradient swirls. base black shadows first, then the 4 colour glows. */
 @keyframes ${SB_CARD}-aura {
-  0%, 100% { box-shadow: 0 10px 30px rgba(0, 0, 0, .30), 0 2px 8px rgba(0, 0, 0, .18), 0 0 20px 3px rgba(99, 102, 241, .24); }
-  33%      { box-shadow: 0 10px 30px rgba(0, 0, 0, .30), 0 2px 8px rgba(0, 0, 0, .18), 0 0 22px 4px rgba(139, 92, 246, .26); }
-  66%      { box-shadow: 0 10px 30px rgba(0, 0, 0, .30), 0 2px 8px rgba(0, 0, 0, .18), 0 0 20px 3px rgba(56, 132, 255, .24); }
+  0%, 100% { box-shadow: 0 10px 30px rgba(0,0,0,.30), 0 2px 8px rgba(0,0,0,.18),
+    -11px -11px 20px 1px rgba(99,102,241,.30),  11px -11px 20px 1px rgba(139,92,246,.30),
+     11px  11px 20px 1px rgba(56,132,255,.30), -11px  11px 20px 1px rgba(214,80,235,.28); }
+  25%      { box-shadow: 0 10px 30px rgba(0,0,0,.30), 0 2px 8px rgba(0,0,0,.18),
+    -11px -11px 20px 1px rgba(214,80,235,.28),  11px -11px 20px 1px rgba(99,102,241,.30),
+     11px  11px 20px 1px rgba(139,92,246,.30), -11px  11px 20px 1px rgba(56,132,255,.30); }
+  50%      { box-shadow: 0 10px 30px rgba(0,0,0,.30), 0 2px 8px rgba(0,0,0,.18),
+    -11px -11px 20px 1px rgba(56,132,255,.30),  11px -11px 20px 1px rgba(214,80,235,.28),
+     11px  11px 20px 1px rgba(99,102,241,.30), -11px  11px 20px 1px rgba(139,92,246,.30); }
+  75%      { box-shadow: 0 10px 30px rgba(0,0,0,.30), 0 2px 8px rgba(0,0,0,.18),
+    -11px -11px 20px 1px rgba(139,92,246,.30),  11px -11px 20px 1px rgba(56,132,255,.30),
+     11px  11px 20px 1px rgba(214,80,235,.28), -11px  11px 20px 1px rgba(99,102,241,.30); }
 }
-/* Bloom the aura IN — grow from no glow to the cycle's starting glow over ~1.6s — so entering the orb (or
-   the capsule) doesn't SNAP the aura on. Runs once, then the aura cycle (delayed to match) takes over. */
+/* Bloom IN — the four glows grow from nothing (centred, 0 spread) to their diagonal positions over ~1.6s, so
+   entering the orb/capsule doesn't SNAP the aura on. Runs once; its end == aura's 0% for a seamless handoff. */
 @keyframes ${SB_CARD}-aura-in {
-  from { box-shadow: 0 10px 30px rgba(0, 0, 0, .30), 0 2px 8px rgba(0, 0, 0, .18), 0 0 0 0 rgba(99, 102, 241, 0); }
-  to   { box-shadow: 0 10px 30px rgba(0, 0, 0, .30), 0 2px 8px rgba(0, 0, 0, .18), 0 0 20px 3px rgba(99, 102, 241, .24); }
+  from { box-shadow: 0 10px 30px rgba(0,0,0,.30), 0 2px 8px rgba(0,0,0,.18),
+    0 0 0 0 rgba(99,102,241,0), 0 0 0 0 rgba(139,92,246,0), 0 0 0 0 rgba(56,132,255,0), 0 0 0 0 rgba(214,80,235,0); }
+  to   { box-shadow: 0 10px 30px rgba(0,0,0,.30), 0 2px 8px rgba(0,0,0,.18),
+    -11px -11px 20px 1px rgba(99,102,241,.30),  11px -11px 20px 1px rgba(139,92,246,.30),
+     11px  11px 20px 1px rgba(56,132,255,.30), -11px  11px 20px 1px rgba(214,80,235,.28); }
 }
 /* ONLY border-radius wobbles — NOT transform. A scale/rotate would move the orb's box out from under the
    pointer, and the hover→capsule (transform:none) snap-back would fire pointerleave → collapse → re-enter
