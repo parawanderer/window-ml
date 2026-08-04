@@ -842,15 +842,22 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     images: images.map(p => p.image),
                 }),
                 emit,
-                // chat_metadata: resolve the run's model + its context window + capabilities (the loop supplies
-                // the live token/message counts). Each lookup degrades to null — the tool still reports the rest.
+                // chat_metadata: resolve the run's model FACTS (the loop supplies the live token/message
+                // counts). Each lookup degrades to null — the tool still reports the rest.
                 chatMeta: async () => {
-                    let capabilities: string[] | null = null, contextWindow: number | null = null;
+                    let capabilities: string[] | null = null, contextWindow: number | null = null, vramGB: number | null = null;
                     if (runModel) {
                         try { capabilities = await mlApi.capabilities(runModel); } catch { /* unknown */ }
-                        try { const loaded = await mlApi.ps(); contextWindow = loaded.find(m => m.model === runModel)?.contextLength ?? null; } catch { /* no ps */ }
+                        try { const lm = (await mlApi.ps()).find(m => m.model === runModel); contextWindow = lm?.contextLength ?? null; vramGB = lm?.vramGB ?? null; } catch { /* no ps */ }
                     }
-                    return { model: runModel, contextWindow, capabilities };
+                    // Resident in Ollama (caps came back) → local; else cloud/remote (or unknown w/o a model).
+                    const local = capabilities !== null ? true : runModel ? false : null;
+                    const fmt = (agentCfg as { apiFormat?: string } | null)?.apiFormat;
+                    const backend = fmt === "ollama" ? "Ollama (native)" : fmt === "openai" ? "OpenAI-compatible (e.g. OpenWebUI — server-side tools available)" : null;
+                    const est = (s: string) => (s ? Math.round(s.length / 4) : 0);   // ~chars/4, no real tokenizer
+                    let toolJson = "";
+                    try { toolJson = JSON.stringify(toolset.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }))); } catch { /* skip */ }
+                    return { model: runModel, contextWindow, capabilities, vramGB, local, backend, systemTokens: est(systemPrompt), toolTokens: est(toolJson) };
                 },
             };
 

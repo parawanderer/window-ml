@@ -147,16 +147,24 @@ test("a meta-capability tool (chat_metadata) is answered BY THE LOOP with live t
         { content: "", tool_calls: [{ id: "m1", name: "chat_metadata", arguments: {} }], usage: { promptTokens: 1200, completionTokens: 40, totalTokens: 1240 } },
         reply("here's your info"),
     ] });
-    deps.chatMeta = async () => ({ model: "gemma4:31b", contextWindow: 262144, capabilities: ["tools", "vision"] });
-    await runAgentLoop("what model am I?", { tools: [{ name: "chat_metadata", capabilities: ["meta"] }] }, deps);
+    deps.chatMeta = async () => ({
+        model: "gemma4:31b", contextWindow: 262144, capabilities: ["tools", "vision"],
+        vramGB: 21.4, local: true, backend: "Ollama (native)", systemTokens: 900, toolTokens: 1500,
+    });
+    // A `look` tool present → the "untracked sub-call tokens" note should appear.
+    await runAgentLoop("what model am I?", { tools: [{ name: "chat_metadata", capabilities: ["meta"] }, { name: "look", capabilities: ["vision"] }] }, deps);
 
     assert.ok(!calls.runTool.some(c => c.name === "chat_metadata"), "the loop answers it itself — runTool is never called");
     const done = calls.emits.find(e => e.tool === "chat_metadata" && !e.pending);
-    assert.match(done.result, /gemma4:31b/, "reports the model");
-    assert.match(done.result, /262144/, "reports the context window");
+    assert.match(done.result, /gemma4:31b \(local · Ollama\)/, "reports the model + local/cloud");
+    assert.match(done.result, /262144 tokens/, "reports the context window");
     assert.match(done.result, /tools, vision/, "reports capabilities");
-    assert.match(done.result, /~1200 tokens/, "context used = the last prompt-token count");
+    assert.match(done.result, /~1200 tokens/, "context in use = the last prompt-token count");
     assert.match(done.result, /40 tokens/, "generated = summed completion tokens");
+    assert.match(done.result, /fixed overhead: ~2400 tokens.*system prompt ~900.*tool list ~1500/, "system + tool overhead");
+    assert.match(done.result, /21\.4 GB/, "VRAM resident");
+    assert.match(done.result, /routed via: Ollama \(native\)/, "backend");
+    assert.match(done.result, /locate.*look.*NOT counted/, "flags untracked vision sub-call tokens");
 });
 
 test("reasoning_content is emitted per step, distinct from the content prose", async () => {

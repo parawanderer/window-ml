@@ -1039,17 +1039,29 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 emit: (ev) => emitStep(ev as Record<string, unknown>),
                 drainInbox: () => (runInboxes.get(runId)?.queue || []).splice(0),   // a.say() steering (INJECT_MESSAGE)
                 signal: abortCtl.signal,
-                // chat_metadata: the run's model + its context window + capabilities from the SW's own caches
-                // (the loop supplies the live token/message counts). Best-effort; each field degrades to null.
+                // chat_metadata: the run's model FACTS from the SW's caches (the loop supplies the live
+                // token/message counts). The SW can also read the URL → name the backend. Degrades to null.
                 chatMeta: async () => {
                     const model = p.model || null;
-                    if (!model) return { model, contextWindow: null, capabilities: null };
+                    const est = (s: unknown) => (s ? Math.round(String(s).length / 4) : 0);   // ~chars/4, no tokenizer
+                    let toolJson = ""; try { toolJson = JSON.stringify(p.tools.map(t => ({ name: t.name, description: t.description, parameters: t.parameters }))); } catch { /* skip */ }
                     const config = await getConfig();
-                    const [capabilities, contextWindow] = await Promise.all([
+                    const fmt = config.apiFormat, url = config.chatUrl || "";
+                    const backend = fmt === "ollama" ? "Ollama (native)"
+                        : /open-?webui|\/api\/chat\/completions/i.test(url) ? "OpenWebUI (server-side tools available)"
+                        : "OpenAI-compatible";
+                    const overhead = { systemTokens: est(p.systemPrompt), toolTokens: est(toolJson), backend };
+                    if (!model) return { model, contextWindow: null, capabilities: null, ...overhead };
+                    const [capabilities, resident] = await Promise.all([
                         modelCapabilities(config, model).catch(() => null),
-                        residentContextLength(config, model).catch(() => null),
+                        residentModels(config).catch(() => [] as { model?: string; name?: string; context_length?: number; size_vram?: number }[]),
                     ]);
-                    return { model, contextWindow, capabilities };
+                    const norm = (s: string) => s.replace(/:latest$/, "");
+                    const lm = resident.find(x => x.model === model || x.name === model || norm(x.model || x.name || "") === norm(model));
+                    const contextWindow = lm && typeof lm.context_length === "number" ? lm.context_length : null;
+                    const vramGB = lm && lm.size_vram ? +(lm.size_vram / 1e9).toFixed(1) : null;
+                    const local = capabilities !== null;   // caps came back from Ollama /api/show → resident/local
+                    return { model, contextWindow, capabilities, vramGB, local, ...overhead };
                 },
             },
         )

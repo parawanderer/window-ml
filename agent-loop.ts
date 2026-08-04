@@ -67,10 +67,26 @@ export interface AgentLoopDeps {
     // Omit → no steering. The queue lives in the caller's world (page handle / SW inbox).
     drainInbox?(): string[];
     pushUser?(messages: unknown[], text: string): void;
-    // Self-introspection (ml.chatMetaTool): resolve the run's model + its context window + capability list
-    // for the metadata summary. World-specific (page: ml.capabilities/ml.ps; background: the SW's caches).
-    // The token/message counts come from the loop itself (accurate on BOTH paths), so only this needs a dep.
-    chatMeta?(): Promise<{ model: string | null; contextWindow: number | null; capabilities: string[] | null } | null>;
+    // Self-introspection (ml.chatMetaTool): resolve the run's model facts for the metadata summary.
+    // World-specific (page: ml.capabilities/ml.ps/config; background: the SW's caches). The token/message
+    // counts come from the loop itself (accurate on BOTH paths), so only the MODEL facts need a dep.
+    chatMeta?(): Promise<ChatMeta | null>;
+}
+
+/** Model facts for chat_metadata, resolved per-world. `local`: true = Ollama-resident, false = cloud/remote,
+ *  null = undeterminable. `contextWindow`/`vramGB` are null when not resident or on a cloud model. */
+export interface ChatMeta {
+    model: string | null;
+    contextWindow: number | null;
+    capabilities: string[] | null;
+    vramGB?: number | null;
+    local?: boolean | null;
+    backend?: string | null;   // "OpenWebUI" / "Ollama" / "OpenAI-compatible" — how the call is routed
+    // ESTIMATED fixed-overhead tokens (~chars/4, no real tokenizer): the system prompt and the tool-schema
+    // list — the part of every request that ISN'T the conversation. The world provides these (it has the
+    // full system prompt + tool descriptions; the loop only has ToolMeta names).
+    systemTokens?: number | null;
+    toolTokens?: number | null;
 }
 
 /** prompt/completion token counts from a usage object. The extension NORMALIZES usage to camelCase
@@ -87,25 +103,43 @@ function usageTokens(u: unknown): { prompt: number; completion: number } {
     };
 }
 
-/** The `chat_metadata` tool's human-readable dump: the run's model/capabilities/context window (from the
- *  dep) + the live token/message stats the loop tracks. Deliberately plain text — the model relays it. */
+/** The `chat_metadata` tool's human-readable dump: the run's model facts (from the dep) + the live token /
+ *  conversation stats the loop tracks. Deliberately plain text — the model relays it. */
 function formatChatMeta(
-    cm: { model: string | null; contextWindow: number | null; capabilities: string[] | null } | null,
+    cm: ChatMeta | null,
     stats: { promptLast: number; genTotal: number; calls: number },
     messages: unknown[],
+    tools: ToolMeta[],
 ): string {
+    const role = (r: string) => messages.filter(m => (m as { role?: string }).role === r).length;
     const imgs = messages.filter(m => Array.isArray((m as { images?: unknown[] }).images) && (m as { images?: unknown[] }).images!.length).length;
     const L: string[] = [];
-    L.push(`model: ${cm?.model || "(default — unresolved)"}`);
+    // model + where it runs
+    const where = cm?.local === true ? " (local · Ollama)" : cm?.local === false ? " (cloud / remote)" : "";
+    L.push(`model: ${cm?.model || "(default — unresolved)"}${where}`);
+    if (cm?.backend) L.push(`routed via: ${cm.backend}`);
     if (cm?.capabilities?.length) L.push(`supports: ${cm.capabilities.join(", ")}`);
-    else if (cm && cm.capabilities === null) L.push("supports: unknown (non-Ollama / cloud model)");
+    else if (cm && cm.capabilities === null) L.push("supports: unknown (cloud / non-Ollama)");
+    // context window (unknown for a cloud model)
     if (cm?.contextWindow) {
-        const pct = stats.promptLast ? ` — ~${Math.round((stats.promptLast / cm.contextWindow) * 100)}% used` : "";
+        const pct = stats.promptLast ? ` — ~${Math.round((stats.promptLast / cm.contextWindow) * 100)}% full` : "";
         L.push(`context window: ${cm.contextWindow} tokens${pct}`);
+    } else if (cm?.local === false) L.push("context window: unknown (cloud model — the API doesn't report it)");
+    // two DIFFERENT token notions: what's PERSISTED in the conversation vs what the model has GENERATED
+    if (stats.promptLast) L.push(`context in use: ~${stats.promptLast} tokens (the whole conversation, re-sent each turn)`);
+    // Fixed per-request overhead (system prompt + tool schemas) — the part of context that ISN'T the chat.
+    if (cm?.systemTokens || cm?.toolTokens) {
+        const sys = cm.systemTokens || 0, tl = cm.toolTokens || 0;
+        const share = cm.contextWindow ? ` (~${Math.round(((sys + tl) / cm.contextWindow) * 100)}% of the window)` : "";
+        L.push(`fixed overhead: ~${sys + tl} tokens${share} — system prompt ~${sys}, tool list ~${tl} (estimated)`);
     }
-    if (stats.promptLast) L.push(`context used: ~${stats.promptLast} tokens (the current conversation)`);
-    L.push(`generated this run: ${stats.genTotal} tokens across ${stats.calls} model call${stats.calls === 1 ? "" : "s"}`);
-    L.push(`messages so far: ${messages.length}${imgs ? ` (${imgs} carrying images)` : ""}`);
+    L.push(`generated this run: ${stats.genTotal} tokens over ${stats.calls} model call${stats.calls === 1 ? "" : "s"} (all output incl. thinking — thinking isn't kept in context)`);
+    if (cm?.vramGB) L.push(`VRAM resident: ~${cm.vramGB.toFixed(1)} GB`);
+    // conversation SHAPE — "messages" was ambiguous; split turns / your messages / model replies
+    L.push(`conversation so far: ${role("user")} of your messages · ${role("assistant")} model replies${imgs ? ` · ${imgs} carried images` : ""}`);
+    // untracked sub-call tokens: locate + a delegated look make their OWN model calls the loop never sees
+    if (tools.some(t => t.name === "locate" || t.name === "look" || t.capabilities?.includes("vision")))
+        L.push("note: `locate` / `look` run their own vision sub-calls whose tokens are NOT counted above.");
     return L.join("\n");
 }
 
@@ -190,7 +224,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 // and message list, so the numbers are accurate on both the page and background paths with no
                 // extra plumbing. Never gated, never delegated to runTool (it only reads its own run's state).
                 const cm = deps.chatMeta ? await deps.chatMeta() : null;
-                result = formatChatMeta(cm, { promptLast, genTotal, calls: modelCalls }, messages);
+                result = formatChatMeta(cm, { promptLast, genTotal, calls: modelCalls }, messages, tools);
             } else if (meta.requiresApproval) {
                 // Read-only try FIRST: the mediated interpreter can't mutate, so if the call is in its
                 // dialect it's already run safely — auto-approve with its result, no gate, no runTool.
