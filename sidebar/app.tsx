@@ -1819,8 +1819,10 @@ const ACTIVITY: Record<string, { icon: string; label: string; short: string }> =
 };
 function activityFor(run: Session): { icon: string; label: string; short: string } {
     const steps = run.steps || [];
-    // What's happening NOW: a still-running tool, else the most recent tool, else the model's thinking.
-    const cur = [...steps].reverse().find(s => s.pending && s.tool) || [...steps].reverse().find(s => s.tool);
+    // Show a tool icon ONLY while that tool is actively RUNNING (a pending step). Otherwise the model is
+    // thinking — between tools, and crucially at the START of a fresh turn (a reply), where the previous
+    // turn's last tool is still in run.steps but is NOT what's happening now (the stale-icon bug).
+    const cur = [...steps].reverse().find(s => s.pending && s.tool);
     if (!cur?.tool) return { icon: "💭", label: "Thinking…", short: "thinking" };
     return ACTIVITY[cur.tool] || { icon: "⚙️", label: `Running ${cur.tool}…`, short: cur.tool };
 }
