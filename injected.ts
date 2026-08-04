@@ -34,7 +34,7 @@ import type {
 import { detectGroundingModel, DEFAULT_GROUNDING_RANGE } from "./contract";
 import { evalReadonly } from "./readonly-exec";
 import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay } from "./dom";
-import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, SELF_CLAUSE, HUD_HINT, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE } from "./prompts";
+import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, PT_LOOK_RADIUS, BOX_RE, resolveBox, agentState } from "./util";
 import type { ShotBox, ServerTool } from "./contract";
 import { annotate, pickAccentColorForTarget } from "./som";
@@ -1803,7 +1803,10 @@ class AgentHandle implements MlAgentHandle, AgentControl {
         // preamble): the run still needs the whole method, it just isn't a console call.
         // chatMetaTool: a HUD user often asks "which model am I / how much context have I used?" — give the
         // HUD agent the self-introspection tool by default (a scripted ml.agent still opts in via extraTools).
-        const opts: Record<string, unknown> = { extraTools: [ml.clickTool(), ml.typeTool(), ml.pythonTool(), ml.chatMetaTool()], hints: HUD_HINT };
+        // HUD verbosity (passed by the shell): quiet → tell the model to stay silent between steps; progress
+        // → keep between-step prose to one short live line. Defaults to progress.
+        const proseClause = e.data.__mlStartAgent.hud === "quiet" ? HUD_PROSE_QUIET : HUD_PROSE_PROGRESS;
+        const opts: Record<string, unknown> = { extraTools: [ml.clickTool(), ml.typeTool(), ml.pythonTool(), ml.chatMetaTool()], hints: HUD_HINT + proseClause };
         if (Number.isFinite(maxSteps) && maxSteps > 0) opts.maxSteps = maxSteps;   // the composer's step budget
         // createAgent (not ml.agent) so the run registers a HANDLE the sidebar/HUD composer can drive —
         // follow-up run()s + say() steering from the "Send a message to this session…" box.

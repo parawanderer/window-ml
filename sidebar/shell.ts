@@ -608,7 +608,9 @@ function onWindowMessage(e: MessageEvent): void {
     // Origin-checked (real iframe) for consistency, though this grants nothing the page couldn't already
     // do itself (it has window.ml.agent) — every tool still gates through the unforgeable background gate.
     if (d.__mlSidebarApp === "startRun" && frame && e.source === frame.contentWindow && typeof d.task === "string" && d.task.trim()) {
-        window.postMessage({ __mlStartAgent: { task: d.task, maxSteps: typeof d.maxSteps === "number" ? d.maxSteps : undefined } }, "*");
+        // Pass the HUD verbosity so the page picks the right system-prompt hint: quiet → stay silent mid-run;
+        // progress → keep between-step prose to one short HUD line (it shows live beside the orb).
+        window.postMessage({ __mlStartAgent: { task: d.task, maxSteps: typeof d.maxSteps === "number" ? d.maxSteps : undefined, hud: agentHud } }, "*");
         return;
     }
     // The session composer: drive a live createAgent session by hash. Relayed to the PAGE, which decides

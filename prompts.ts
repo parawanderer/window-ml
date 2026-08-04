@@ -66,9 +66,16 @@ export const SELF_CLAUSE =
 export const HUD_HINT =
     "You were started from window.ml's in-page HUD (the Spotlight composer / right-click menu), " +
     "not the devtools console — the user is driving you through the extension's UI. The console " +
-    "API is still open to them if they ask how to script this. " +
-    "Your between-step prose (not your hidden thinking) is shown live in a small corner card, so keep it " +
-    "SHORT — a terse note on what you're doing, not a paragraph; save the detail for your final answer.";
+    "API is still open to them if they ask how to script this.";
+// Appended to HUD_HINT per the HUD's verbosity (agentHud). PROGRESS: your between-step prose shows live in
+// the corner card, so keep it to ONE terse line. QUIET: the user won't see intermediate prose at all — stay
+// silent between steps and put everything in the final answer.
+export const HUD_PROSE_PROGRESS =
+    " Your between-step prose (not your hidden thinking) shows live in a small corner card, so keep it to ONE " +
+    "SHORT line — a terse status like \"Scanning the table…\", never a paragraph. Put all detail in your final answer.";
+export const HUD_PROSE_QUIET =
+    " The user has the HUD in QUIET mode and will NOT see anything you say between steps — so don't narrate " +
+    "your progress at all. Work silently, thinking as needed, and put your entire response in the FINAL answer.";
 export const ANSWER_CLAUSE =
     "\n\nIf the task asks you to FIND / LOCATE / return an element (rather than change " +
     "the page), designate it with the answer tool (by selector) so the actual element " +

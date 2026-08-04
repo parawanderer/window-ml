@@ -1819,12 +1819,15 @@ const ACTIVITY: Record<string, { icon: string; label: string; short: string }> =
 };
 function activityFor(run: Session): { icon: string; label: string; short: string } {
     const steps = run.steps || [];
-    // Show a tool icon ONLY while that tool is actively RUNNING (a pending step). Otherwise the model is
-    // thinking — between tools, and crucially at the START of a fresh turn (a reply), where the previous
-    // turn's last tool is still in run.steps but is NOT what's happening now (the stale-icon bug).
-    const cur = [...steps].reverse().find(s => s.pending && s.tool);
-    if (!cur?.tool) return { icon: "💭", label: "Thinking…", short: "thinking" };
-    return ACTIVITY[cur.tool] || { icon: "⚙️", label: `Running ${cur.tool}…`, short: cur.tool };
+    // Scope to the CURRENT (in-flight) turn's steps — those AFTER the last follow-up prompt's step position.
+    // Within a turn, show the running tool, else the most-recent COMPLETED tool (the model is still processing
+    // its result — don't snap to "thinking" the instant a look finishes). Bare "thinking" only at the START of
+    // a turn (no tool yet) — including a fresh reply-turn, where the PREVIOUS turn's tools must not leak in.
+    const turnStart = Math.max(0, ...(run.says || []).map(s => s.atStep || 0));
+    const cur = steps.filter(s => (s.step || 0) > turnStart);
+    const tool = [...cur].reverse().find(s => s.pending && s.tool) || [...cur].reverse().find(s => s.tool);
+    if (!tool?.tool) return { icon: "💭", label: "Thinking…", short: "thinking" };
+    return ACTIVITY[tool.tool] || { icon: "⚙️", label: `Running ${tool.tool}…`, short: tool.tool };
 }
 // Right-click the card/pill → ask the shell to draw the "move to corner" menu (drawn shell-side so the
 // tiny pill iframe can't clip it). Coords are iframe-local; the shell offsets by the frame's position.
