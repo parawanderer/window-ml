@@ -2161,9 +2161,15 @@ test("card surface: a finished run has an inline reply that continues the SAME s
     await w.dispatch(agentResult(hash, "Done.", 1));
     await w.flush();
 
+    // Collapsed by default — a slim affordance, not a filled input (less visual spam). Click to open it.
+    const opener = w.window.document.querySelector(".card-reply.collapsed .card-reply-open");
+    assert.ok(opener, "the finished card shows the collapsed reply affordance");
+    assert.ok(!w.window.document.querySelector(".card-reply-in"), "the input is hidden until opened");
+    opener.click(); await w.flush();
+
     const input = w.window.document.querySelector(".card-reply .card-reply-in");
     const send = w.window.document.querySelector(".card-reply .card-reply-send");
-    assert.ok(input && send, "the finished card shows an inline reply");
+    assert.ok(input && send, "clicking reveals the inline reply input + send");
     assert.ok(send.disabled, "send is disabled while the box is empty");
 
     input.value = "and now the next thing";

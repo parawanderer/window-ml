@@ -2258,24 +2258,44 @@ function CardApp() {
 // handle registry → the run's run()), so a follow-up turn continues the SAME session. Sending flips the card
 // back to the working orb via the normal state machine. Compact: one line + send, Enter sends.
 function CardReply({ hash }: { hash: string }) {
+    // Collapsed by default to a slim affordance — the always-open input read as visual spam against the
+    // clean card. Click (or ⌘/Ctrl+Enter) opens it with a soft expand; Enter sends + collapses; Escape/blur
+    // collapses. So the composer is present but out of the way until you actually want to reply.
+    const [open, setOpen] = useState(false);
     const [text, setText] = useState("");
+    const inputRef = useRef<HTMLInputElement>(null);
+    const collapse = () => { setOpen(false); setText(""); };
     const send = () => {
         const t = text.trim();
-        if (!t) return;
+        if (!t) { collapse(); return; }
         window.parent.postMessage({ __mlSidebarApp: "sessionSend", hash, text: t }, "*");
         // Optimistic collapse: flip the session to WORKING now so the card morphs to the orb the instant you
         // hit Enter, instead of showing the stale answer until the follow-up's first event lands (in off/card
         // mode the page's agent-say bridge is dormant, so there'd otherwise be a visible lag).
         const s = sessionMap.get(hash);
         if (s) { s.status = "pending"; s.lastTs = Date.now(); rev.value++; }
-        setText("");
+        collapse();
     };
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } };
+    const onKey = (e: KeyboardEvent) => {
+        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+        else if (e.key === "Escape") { e.preventDefault(); collapse(); }
+    };
+    useEffect(() => { if (open) inputRef.current?.focus(); }, [open]);
+
+    if (!open) {
+        return (
+            <div class="card-reply collapsed">
+                <button class="card-reply-open" onClick={() => setOpen(true)}>
+                    <IconSend /><span>Reply to continue this run…</span>
+                </button>
+            </div>
+        );
+    }
     return (
         <div class="card-reply">
-            <input class="card-reply-in" type="text" value={text} placeholder="Reply to continue this run…"
-                onInput={e => setText((e.target as HTMLInputElement).value)} onKeyDown={onKey} />
-            <button class="tt card-reply-send" aria-label="Send" onClick={send} disabled={!text.trim()}>
+            <input ref={inputRef} class="card-reply-in" type="text" value={text} placeholder="Reply to continue this run…"
+                onInput={e => setText((e.target as HTMLInputElement).value)} onKeyDown={onKey} onBlur={() => { if (!text.trim()) collapse(); }} />
+            <button class="tt card-reply-send" aria-label="Send" onMouseDown={e => e.preventDefault()} onClick={send} disabled={!text.trim()}>
                 <IconSend /><span class="tt-pop above" role="tooltip">Send a follow-up (Enter)</span>
             </button>
         </div>

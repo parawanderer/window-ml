@@ -791,6 +791,17 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
 .card-reply-send:disabled { opacity: .4; cursor: default; }
 .card-reply-send:not(:disabled):hover { background: var(--accent-strong); }
 .card-reply-send svg { width: 16px; height: 16px; }
+/* Collapsed affordance: a slim ghost button (no filled input) — quiet until you want to reply. Clicking it
+   swaps in the real input, which soft-expands (the input fades+grows from the left via card-reply-grow). */
+.card-reply.collapsed { padding: 7px 10px; }
+.card-reply-open { flex: 1; display: flex; align-items: center; gap: 8px; width: 100%; background: transparent;
+    border: 1px solid transparent; border-radius: 8px; padding: 5px 8px; color: var(--fg-faint); font: inherit;
+    font-size: 0.95em; cursor: text; text-align: left; transition: background .15s, border-color .15s, color .15s; }
+.card-reply-open:hover { background: var(--panel); border-color: var(--border); color: var(--fg-dim); }
+.card-reply-open svg { width: 15px; height: 15px; flex: 0 0 auto; opacity: .8; }
+.card-reply-in { animation: card-reply-grow .18s cubic-bezier(.2,.85,.3,1) both; transform-origin: left center; }
+@keyframes card-reply-grow { from { opacity: 0; transform: scaleX(.9); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .card-reply-in { animation: none; } }
 .card-task { color: var(--fg-dim); font-size: .96em; margin-bottom: 8px; line-height: 1.4; }
 .card-body::-webkit-scrollbar { width: 10px; }
 .card-body::-webkit-scrollbar-track { background: transparent; }
