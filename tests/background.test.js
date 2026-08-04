@@ -90,6 +90,28 @@ test("FETCH_LLM: a response with NO choices container IS a clear format-mismatch
     assert.match(res.error, /did not match the "openai" format/);
 });
 
+test("FETCH_LLM: an unreachable server → an actionable error, not a bare 'Failed to fetch'", async () => {
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => { throw new TypeError("Failed to fetch"); }   // server down / refused / DNS
+    });
+    const res = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }] } });
+    assert.match(res.error, /Couldn't reach the server/, "names the reach failure");
+    assert.match(res.error, /http:\/\/host\/api\/chat\/completions/, "includes the URL that failed");
+    assert.match(res.error, /settings/i, "points the user at settings");
+});
+
+test("FETCH_LLM: an empty Server URL is caught before any fetch, with an actionable message", async () => {
+    let fetched = false;
+    const bg = loadBackground({
+        config: baseConfig({ chatUrl: "" }),
+        onFetch: () => { fetched = true; return jsonResponse({ choices: [{ message: { content: "hi" } }] }); }
+    });
+    const res = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }] } });
+    assert.match(res.error, /No server URL configured/);
+    assert.equal(fetched, false, "no fetch is attempted with no URL");
+});
+
 test("FETCH_LLM omits the reasoning key when the model produced none", async () => {
     const bg = loadBackground({
         config: baseConfig(),
@@ -506,7 +528,7 @@ test("GET_CONFIG returns the model/ocrModel/apiFormat and withholds the URL and 
 
     const res = await bg.send({ type: "GET_CONFIG", payload: {} });
     assert.deepEqual(res.data, {
-        model: "qwen3:235b", ocrModel: "qwen2.5vl", apiFormat: "ollama",
+        model: "qwen3:235b", ocrModel: "qwen2.5vl", apiFormat: "ollama", defaultModelVision: "",
         utilityModel: "", utilityNumCtx: 4096, utilityForceCpu: false, autoApproveReadonly: false, autoApprovePython: false,
         groundingEnabled: false, groundingModel: "", groundingRange: 1000, debugMode: "off",
         // Computed per-origin: no sender.tab in this harness call → not on the whitelist → false. The raw

@@ -42,6 +42,16 @@ const sendRuntimeMessage = (type: BackgroundMessageType, requestId: string, payl
     // requestId travels to the background too, so it can key an AbortController for the task
     // (see ABORT_REQUEST below → ABORT_TASK). Only FETCH_LLM currently registers one.
     chrome.runtime.sendMessage({ type, payload, requestId }, (response: BgResponse | undefined) => {
+        // A MISSING response (undefined) means the background never called sendResponse — the channel closed
+        // under it: the MV3 service worker was evicted/reloaded mid-task (common for a long agent run — the
+        // design-A eviction case), or the listener returned before responding. Reading chrome.runtime.lastError
+        // both HANDLES it (silences the "Unchecked lastError" console noise) and gives us the reason. Synthesise
+        // an error so the page REJECTS cleanly instead of resolving `undefined` — which crashed downstream as the
+        // opaque "Cannot read properties of undefined (reading 'steps')".
+        const lastErr = chrome.runtime.lastError;
+        const error = (response && response.error)
+            || (!response ? ((lastErr && lastErr.message ? lastErr.message + " — " : "")
+                + "the extension background didn't respond (it may have been reloaded or evicted mid-run). Try again.") : undefined);
         // Send the response back to the main world.
         window.postMessage({
             type: responseType,
@@ -54,7 +64,7 @@ const sendRuntimeMessage = (type: BackgroundMessageType, requestId: string, payl
             messages: response && response.messages,   // a background run's final history, synced back to a createAgent handle
             stepCount: response && response.stepCount,  // + its step/seq extents, so the handle offsets the next turn
             seqCount: response && response.seqCount,
-            error: response && response.error,
+            error,
         }, "*");
     });
 };

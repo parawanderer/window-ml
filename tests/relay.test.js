@@ -51,6 +51,16 @@ test("CANCEL_RUN_REQUEST relays a fire-and-forget CANCEL_RUN so a handle kills i
     assert.equal(cancel.payload.runId, "run42", "carrying the run id to abort");
 });
 
+test("relay: a MISSING background response rejects with an actionable error (not a silent undefined)", async () => {
+    // The MV3 service worker was evicted/reloaded mid-task, so it never called sendResponse → the callback
+    // fires with `undefined`. content.js must synthesise an error so the page REJECTS cleanly, instead of
+    // resolving `undefined` (which crashed downstream as "Cannot read properties of undefined (reading …)").
+    // serverTools → LIST_SERVER_TOOLS (not a config/caps probe the harness auto-answers), so the undefined
+    // return reaches the relay callback as a missing response — exactly the evicted-SW case.
+    const world = loadPageWorld({ onRuntimeMessage: () => undefined });
+    await assert.rejects(world.ml.serverTools(), /didn't respond|evicted/i);
+});
+
 test("ml.step returns the raw assistant message with tool_calls", async () => {
     const world = loadPageWorld({
         onRuntimeMessage: (msg) => {

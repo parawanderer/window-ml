@@ -19,6 +19,10 @@ export type AgentHud = "progress" | "quiet";
  *  shadow-root shell), or the DevTools "window.ml" panel only (no in-page overlay). In
  *  devtools mode the shell still forwards events to the background so the panel receives them. */
 export type DebugMode = "off" | "overlay" | "devtools";
+/** A user's override for whether a model sees images natively: "" = auto-discover (probe Ollama
+ *  /api/show), "yes"/"no" = declared. Used for the default model, to enable NATIVE vision on a
+ *  cloud/non-Ollama model the probe can't describe. */
+export type VisionSupport = "" | "yes" | "no";
 
 /** Full config held in chrome.storage.sync (background + popup own it). */
 export interface MlConfig {
@@ -29,6 +33,11 @@ export interface MlConfig {
     apiFormat: ApiFormat;
     /** OCR/vision model used for vision tasks by default, e.g. in ml.read(…). May not always be set. */
     ocrModel: string;
+    /** Whether the DEFAULT `model` sees images natively — an override for the auto-probe. "" = auto-discover
+     *  (read Ollama /api/show); "yes"/"no" = declared. Only consulted when the probe is inconclusive (cloud /
+     *  non-Ollama models), so it's the one way a cloud model can use NATIVE vision (e.g. gpt-4o in the HUD).
+     *  For an Ollama model whose capability we can read, detection wins and the setting is moot (flagged in UI). */
+    defaultModelVision: VisionSupport;
     /** Optional regex WHITELIST: when set, the wrapper only calls models whose id
      *  matches it (every resolved model — main/ocr/grounding/utility). Empty = no filter. */
     modelFilter: string;
@@ -119,6 +128,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     model: "",
     apiFormat: "openai",
     ocrModel: "",
+    defaultModelVision: "",
     modelFilter: "",
     debugMode: "off",
     theme: "auto",
@@ -156,7 +166,7 @@ export const detectGroundingModel = (models: string[]): string =>
  *  ml.agent can decide whether to route a run through the unforgeable BACKGROUND loop (design A —
  *  when a debug surface is enabled) or the in-page loop (off). It's UI state, not a secret. */
 export type MlPublicConfig = Pick<MlConfig,
-    "model" | "ocrModel" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "autoApprovePython" | "groundingEnabled" | "groundingModel" | "groundingRange" | "debugMode"> & {
+    "model" | "ocrModel" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "autoApprovePython" | "groundingEnabled" | "groundingModel" | "groundingRange" | "debugMode" | "defaultModelVision"> & {
     /** COMPUTED per request (not stored): whether THIS page's origin is on the user's page-approval
      *  whitelist. When true, ml.agent honours the page's own approve()/confirm gate (the user trusts this
      *  domain); otherwise a privileged tool routes to the unforgeable background gate. The raw domain

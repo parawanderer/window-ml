@@ -329,6 +329,12 @@ async function prepareRequest(payload: FetchLlmPayload, signal?: AbortSignal) {
     if (!modelFilterAllows(model, config.modelFilter)) {
         throw new Error(`Model "${model}" is blocked by the model filter (/${config.modelFilter}/). Only matching models are callable — change or clear the filter in the extension settings.`);
     }
+    // No server to talk to at all. The URL/key never leave the background (not in the page's GET_CONFIG
+    // subset), so this is the only layer that can catch a missing/unreachable server — the composer can't
+    // pre-flight it the way it does the model.
+    if (!config.chatUrl) {
+        throw new Error("No server URL configured. Set the Server URL (e.g. http://localhost:3000) and API key in the extension settings.");
+    }
 
     const messages = payload.messages || [];
     const hasImages = messages.some(m => m.images && m.images.length);
@@ -419,12 +425,24 @@ async function prepareRequest(payload: FetchLlmPayload, signal?: AbortSignal) {
     if (payload.toolIds?.length) body.tool_ids = payload.toolIds;
 
     const send = async (requestBody: ChatBody, stream = false): Promise<any> => {
-        const res = await fetch(config.chatUrl, {
-            method: "POST",
-            headers,
-            body: JSON.stringify({ ...requestBody, stream }),
-            signal,   // ABORT_TASK → this fetch rejects with an AbortError (kills a slow generation)
-        });
+        let res: Response;
+        try {
+            res = await fetch(config.chatUrl, {
+                method: "POST",
+                headers,
+                body: JSON.stringify({ ...requestBody, stream }),
+                signal,   // ABORT_TASK → this fetch rejects with an AbortError (kills a slow generation)
+            });
+        } catch (e: any) {
+            if (e?.name === "AbortError") throw e;   // a real cancel — leave it for the loop to read as cancelled
+            // A network-level failure (server down, wrong host/port, DNS, refused connection, TLS/CORS) —
+            // fetch rejects with a bare "Failed to fetch". Translate it into an actionable message; the raw
+            // one is meaningless to a user and identical for every cause.
+            throw new Error(
+                `Couldn't reach the server at ${config.chatUrl} (${e?.message || e}). ` +
+                `Is OpenWebUI / Ollama running there? Check the Server URL, API key, and API format in the extension settings.`
+            );
+        }
         if (!res.ok) {
             const text = await res.text().catch(() => "");
             let msg = `HTTP ${res.status} from ${config.chatUrl}: ${text.slice(0, 300)}`;
@@ -1262,6 +1280,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 } catch { /* opaque/blank origin → not allowed */ }
                 sendResponse({ data: {
                     model: config.model, ocrModel: config.ocrModel, apiFormat: config.apiFormat,
+                    defaultModelVision: config.defaultModelVision,
                     utilityModel: config.utilityModel, utilityNumCtx: config.utilityNumCtx, utilityForceCpu: config.utilityForceCpu,
                     autoApproveReadonly: config.autoApproveReadonly, autoApprovePython: config.autoApprovePython,
                     groundingEnabled: config.groundingEnabled, groundingModel: config.groundingModel,

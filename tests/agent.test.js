@@ -1232,6 +1232,23 @@ test("locate is NOT wired when no vision model can be resolved", async () => {
     assert.ok(!names.includes("look"), "no look either");
 });
 
+test("vision override: a cloud default model declared 'yes' auto-wires look (probe can't, the setting can)", async () => {
+    // caps() → null everywhere (an unprobeable cloud model). Without the override, look/locate can't wire
+    // (unknown ≠ vision). The config's defaultModelVision:"yes" fills that gap for the DEFAULT model, so the
+    // agent gets NATIVE eyes — the whole point: enabling a cloud model's own vision in the HUD.
+    const withOverride = await agentToolNames({ config: { model: "gpt-4o", ocrModel: "", defaultModelVision: "yes" }, caps: () => null });
+    assert.ok(withOverride.includes("look"), "declared-yes cloud model auto-wires look");
+    const noOverride = await agentToolNames({ config: { model: "gpt-4o", ocrModel: "", defaultModelVision: "" }, caps: () => null });
+    assert.ok(!noOverride.includes("look"), "without the override an unprobeable model gets no look (unknown ≠ yes)");
+});
+
+test("vision override: detection WINS for a probeable (Ollama) model — a 'yes' override can't force a text model", async () => {
+    // The model IS probeable and reports NO vision → detection is authoritative, so a stray "yes" override is
+    // ignored (it's flagged moot in Settings). look must NOT wire onto a text-only model.
+    const names = await agentToolNames({ config: { model: "text-only", ocrModel: "", defaultModelVision: "yes" }, caps: () => ["completion"] });
+    assert.ok(!names.includes("look"), "a known text-only model stays text-only despite the override");
+});
+
 test("click: an @pt point token is decoded (not treated as a CSS selector), unknown → clear error", async () => {
     const { ml } = loadDomWorld('<button>x</button>');
     // A stale/unknown token: recognised as a point (not run through queryAll), rejected clearly.

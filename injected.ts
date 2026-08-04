@@ -681,6 +681,17 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                             const run = endRun(runHash);
                             emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: res.steps }, summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled });
                             return { ...res, elements: run ? run.answered : [], hash: runHash };
+                        } catch (e) {
+                            // Mirror the START path: an aborted resume resolves as a clean cancel; any other failure
+                            // (e.g. the background was evicted and can't rehydrate the run) surfaces to the card as a
+                            // Run-failed result rather than an unhandled rejection with no UI.
+                            const run = endRun(runHash);
+                            if (signal?.aborted) {
+                                emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, summary: "Cancelled by the caller.", steps: 0, hitCap: false, cancelled: true });
+                                return { summary: "Cancelled by the caller.", steps: 0, transcript: [], elements: run ? run.answered : [], cancelled: true, hash: runHash };
+                            }
+                            emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, summary: "", steps: 0, hitCap: false, error: (e as Error)?.message || String(e) });
+                            throw e;
                         } finally { exitAgentRun(); }
                     },
                 });
@@ -1479,8 +1490,16 @@ class AgentHandle implements MlAgentHandle, AgentControl {
         _modelSees: async function(model: string | null): Promise<boolean> {
             if (!model) return false;
             let caps: string[] | null;
-            try { caps = await this.capabilities(model); } catch (e) { return false; }
-            return Array.isArray(caps) && caps.includes("vision");
+            try { caps = await this.capabilities(model); } catch (e) { caps = null; }
+            if (Array.isArray(caps)) return caps.includes("vision");   // we KNOW (Ollama /api/show) — authoritative
+            // Undeterminable (cloud / non-Ollama / old Ollama): fall back to the user's declared capability for
+            // the DEFAULT model — the only way such a model can be marked vision-capable (e.g. HUD native vision
+            // on gpt-4o/minimax). Detection above always wins for Ollama, so this never overrides a known answer.
+            try {
+                const cfg = await this.config();
+                if (cfg && cfg.model && model === cfg.model && cfg.defaultModelVision) return cfg.defaultModelVision === "yes";
+            } catch (e) { /* no config → treat as unknown = no */ }
+            return false;
         },
         /**
          * Build a capture-only `look` tool for a vision-capable AGENT model.
