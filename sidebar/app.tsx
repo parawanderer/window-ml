@@ -55,6 +55,11 @@ function onDebug(ev: MlDebugEvent): void {
             ? { ...step, renderIn: step.renderIn ?? steps[i].renderIn, renderOut: step.renderOut ?? steps[i].renderOut }
             : step;
         s.steps = i >= 0 ? steps.map((x, k) => k === i ? merged : x) : [...steps, step];
+        // A step means the agent is actively working — flip to pending so a follow-up turn on an already-
+        // "done" session (whose prior summary still sits in s.summary) reads as WORKING, not terminal. This
+        // covers the off/card path where the page-side agent-say bridge is dormant, so a step is the first
+        // signal the run resumed. The next agent-result flips it back to ok/err.
+        s.status = "pending";
         s.lastTs = ev.ts; rev.value++; return;
     }
     if (ev.kind === "agent-result") {
@@ -2059,7 +2064,11 @@ function CardApp() {
     const showWork = !!hash && cardShowWorkHash.value === hash;   // active run's trace open? (subscribe → re-measure height on toggle)
     const pendingStep = run ? (run.steps || []).find(st => isPendingGate(run.hash, st)) : undefined;
     const pending = !!pendingStep;
-    const done = !!run && (run.summary != null || !!run.error || !!run.cancelled);   // terminal: answer, fatal error, or cancelled
+    // Terminal ONLY when the run isn't mid-turn: a follow-up run() keeps the PRIOR summary set, so without
+    // the status guard `done` would stay true and the card would show the stale answer instead of collapsing
+    // to the working orb. status flips to "pending" on a new turn (optimistically in CardReply, and on any
+    // agent-step) and back to ok/err on the next agent-result.
+    const done = !!run && run.status !== "pending" && (run.summary != null || !!run.error || !!run.cancelled);
     const dismissed = !!run && cardDismissed.value === run.hash;
     // BRIDGE: the composer was just sent but the run's first event hasn't surfaced yet — show a
     // "Starting…" pill immediately (so hitting Enter has an instant HUD response, like the DevTools
@@ -2249,6 +2258,11 @@ function CardReply({ hash }: { hash: string }) {
         const t = text.trim();
         if (!t) return;
         window.parent.postMessage({ __mlSidebarApp: "sessionSend", hash, text: t }, "*");
+        // Optimistic collapse: flip the session to WORKING now so the card morphs to the orb the instant you
+        // hit Enter, instead of showing the stale answer until the follow-up's first event lands (in off/card
+        // mode the page's agent-say bridge is dormant, so there'd otherwise be a visible lag).
+        const s = sessionMap.get(hash);
+        if (s) { s.status = "pending"; s.lastTs = Date.now(); rev.value++; }
         setText("");
     };
     const onKey = (e: KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } };
