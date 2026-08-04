@@ -39,7 +39,7 @@ test("__mlStartAgent (HUD composer relay) runs a REAL createAgent().run() in the
     // A UI-started run gets a capable default kit (click/type/python) via extraTools — the model tried to
     // use `click` and got "no tool named click" when it was missing.
     const toolNames = (createdOpts?.extraTools || []).map(t => t.name);
-    assert.ok(["click", "type", "python_exec"].every(n => toolNames.includes(n)), `composer run wires click/type/python (got ${toolNames.join(",")})`);
+    assert.ok(["click", "type", "python_exec", "chat_metadata"].every(n => toolNames.includes(n)), `composer run wires click/type/python/chat_metadata (got ${toolNames.join(",")})`);
     // Invocation provenance: SELF_CLAUSE tells the model the user CAN drive it from the console, which
     // would be the wrong answer to "how did you start?" for a HUD run. `hints` APPENDS (system would
     // replace the whole preamble), so the method survives.

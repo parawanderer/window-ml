@@ -1786,11 +1786,13 @@ class AgentHandle implements MlAgentHandle, AgentControl {
         const maxSteps = Number(e.data.__mlStartAgent.maxSteps);
         const ml = window.ml as unknown as {
             createAgent: (o?: unknown) => MlAgentHandle;
-            clickTool: () => unknown; typeTool: () => unknown; pythonTool: () => unknown;
+            clickTool: () => unknown; typeTool: () => unknown; pythonTool: () => unknown; chatMetaTool: () => unknown;
         };
         // `hints` (appended to the system prompt) rather than `system` (which would REPLACE the
         // preamble): the run still needs the whole method, it just isn't a console call.
-        const opts: Record<string, unknown> = { extraTools: [ml.clickTool(), ml.typeTool(), ml.pythonTool()], hints: HUD_HINT };
+        // chatMetaTool: a HUD user often asks "which model am I / how much context have I used?" — give the
+        // HUD agent the self-introspection tool by default (a scripted ml.agent still opts in via extraTools).
+        const opts: Record<string, unknown> = { extraTools: [ml.clickTool(), ml.typeTool(), ml.pythonTool(), ml.chatMetaTool()], hints: HUD_HINT };
         if (Number.isFinite(maxSteps) && maxSteps > 0) opts.maxSteps = maxSteps;   // the composer's step budget
         // createAgent (not ml.agent) so the run registers a HANDLE the sidebar/HUD composer can drive —
         // follow-up run()s + say() steering from the "Send a message to this session…" box.
