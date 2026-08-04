@@ -140,6 +140,25 @@ test("token usage is emitted per step (so the background run's usage gauge isn't
     assert.equal(withUsage[withUsage.length - 1].usage.totalTokens, 250);
 });
 
+test("a meta-capability tool (chat_metadata) is answered BY THE LOOP with live token stats, not runTool", async () => {
+    const { deps, calls } = makeDeps({ turns: [
+        // The turn that CALLS chat_metadata carries usage → the summary reflects it (prompt=context used,
+        // completion=generated).
+        { content: "", tool_calls: [{ id: "m1", name: "chat_metadata", arguments: {} }], usage: { prompt_tokens: 1200, completion_tokens: 40 } },
+        reply("here's your info"),
+    ] });
+    deps.chatMeta = async () => ({ model: "gemma4:31b", contextWindow: 262144, capabilities: ["tools", "vision"] });
+    await runAgentLoop("what model am I?", { tools: [{ name: "chat_metadata", capabilities: ["meta"] }] }, deps);
+
+    assert.ok(!calls.runTool.some(c => c.name === "chat_metadata"), "the loop answers it itself — runTool is never called");
+    const done = calls.emits.find(e => e.tool === "chat_metadata" && !e.pending);
+    assert.match(done.result, /gemma4:31b/, "reports the model");
+    assert.match(done.result, /262144/, "reports the context window");
+    assert.match(done.result, /tools, vision/, "reports capabilities");
+    assert.match(done.result, /~1200 tokens/, "context used = the last prompt-token count");
+    assert.match(done.result, /40 tokens/, "generated = summed completion tokens");
+});
+
 test("reasoning_content is emitted per step, distinct from the content prose", async () => {
     // The model thinks in reasoning_content and leaves content empty while tool-calling.
     const { deps, calls } = makeDeps({ turns: [

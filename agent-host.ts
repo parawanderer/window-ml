@@ -40,6 +40,9 @@ export interface RunAgentHostDeps {
     // Delegate a tool call to the page (RUN_TOOL_IN_PAGE) → its serializable result string. Reached for
     // a requiresApproval tool ONLY after the gate — the untrusted execution point.
     delegateTool(name: string, args: Record<string, unknown>): Promise<{ result: string }>;
+    // Self-introspection (chat_metadata): the run's model + its context window + capability list, from the
+    // SW's caches. The loop supplies the token/message counts; this only adds the model facts. Optional.
+    chatMeta?(): Promise<{ model: string | null; contextWindow: number | null; capabilities: string[] | null } | null>;
     // Read-only try (exec only): page-delegated attempt via the mediated interpreter. A non-null result
     // means it ran safely (no mutation) → skip the gate. Wired only when autoApproveReadonly is on.
     tryReadonly?(name: string, args: Record<string, unknown>): Promise<ToolRunResult | null>;
@@ -117,6 +120,7 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
         drainInbox: deps.drainInbox,
         pushUser: (messages, text) => (messages as NeutralMessage[]).push({ role: "user", content: text }),
         emit: deps.emit,
+        chatMeta: deps.chatMeta,   // resolve model/caps/window SW-side (background provides the caches)
     };
     return runAgentLoop(cfg.task, { tools: cfg.tools, maxSteps: cfg.maxSteps, signal: deps.signal, unattended: cfg.unattended }, loopDeps)
         .then(result => ({ result, messages: built }));

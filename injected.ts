@@ -629,6 +629,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             // sidebar shows the REAL model (not "default") and can tell when a vision
             // sub-call reused it (its `model` matches this) vs. ran on a different one.
             const runModel = model || agentCfg?.model || null;
+            const mlApi = this as unknown as MlApi;   // typed self-ref for the deps' chatMeta (capabilities/ps)
             if (firstTurn) emitDebug({ kind: "agent", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, task, model: runModel, maxSteps, config: {
                 system: systemPrompt, customSystem: !!system,
                 tools: toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval, vision: !!(t.capabilities && t.capabilities.includes("vision")), description: t.description, parameters: t.parameters, summary: t.summary })),
@@ -837,6 +838,16 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     images: images.map(p => p.image),
                 }),
                 emit,
+                // chat_metadata: resolve the run's model + its context window + capabilities (the loop supplies
+                // the live token/message counts). Each lookup degrades to null — the tool still reports the rest.
+                chatMeta: async () => {
+                    let capabilities: string[] | null = null, contextWindow: number | null = null;
+                    if (runModel) {
+                        try { capabilities = await mlApi.capabilities(runModel); } catch { /* unknown */ }
+                        try { const loaded = await mlApi.ps(); contextWindow = loaded.find(m => m.model === runModel)?.contextLength ?? null; } catch { /* no ps */ }
+                    }
+                    return { model: runModel, contextWindow, capabilities };
+                },
             };
 
             // One turn of the run. `t` is appended to control.messages (empty → run over prior say()s);
@@ -1398,6 +1409,29 @@ class AgentHandle implements MlAgentHandle, AgentControl {
          */
         pythonTool: function(): MlTool {
             return buildPythonTool(this);
+        },
+        /**
+         * A read-only self-introspection tool for `ml.agent` — pass it via `extraTools` (it is NOT a default
+         * tool). Lets the agent answer questions about ITSELF: which model it's on, its context window and
+         * how much is used, tokens generated so far this run, the message/image counts, and the model's
+         * capabilities. The agent LOOP answers it (it holds the live token/message state), so the numbers are
+         * accurate on both the page and background paths. Handy in the HUD, unneeded for most automation.
+         *
+         *   ml.agent(task, { extraTools: [ml.chatMetaTool()] })
+         *
+         * @returns {MlTool} A tool with `name: "chat_metadata"`, no args, no approval.
+         */
+        chatMetaTool: function(): MlTool {
+            return {
+                name: "chat_metadata",
+                description: "Report metadata about THIS conversation: the model you're running on, its context window and how much of it is used, how many tokens you've generated this run, the number of messages and images so far, and which features the model supports (tools/vision/thinking). Call it when the user asks about your model, context, or token usage. Read-only; costs nothing.",
+                parameters: { type: "object", properties: {}, additionalProperties: false },
+                requiresApproval: false,
+                capabilities: ["meta"],
+                summary: "Introspect this run: model, context, tokens, messages.",
+                // Answered by the agent loop (it owns the live stats); this stub never runs.
+                run: async () => "(chat_metadata is answered by the agent loop)",
+            } as MlTool;
         },
         /**
          * Pick a vision model for the auto-registered `look` tool (see ml.agent's `vision` option).

@@ -1039,6 +1039,18 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 emit: (ev) => emitStep(ev as Record<string, unknown>),
                 drainInbox: () => (runInboxes.get(runId)?.queue || []).splice(0),   // a.say() steering (INJECT_MESSAGE)
                 signal: abortCtl.signal,
+                // chat_metadata: the run's model + its context window + capabilities from the SW's own caches
+                // (the loop supplies the live token/message counts). Best-effort; each field degrades to null.
+                chatMeta: async () => {
+                    const model = p.model || null;
+                    if (!model) return { model, contextWindow: null, capabilities: null };
+                    const config = await getConfig();
+                    const [capabilities, contextWindow] = await Promise.all([
+                        modelCapabilities(config, model).catch(() => null),
+                        residentContextLength(config, model).catch(() => null),
+                    ]);
+                    return { model, contextWindow, capabilities };
+                },
             },
         )
             .then(({ result: res, messages }) => {

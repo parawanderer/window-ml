@@ -338,8 +338,8 @@ export interface MlTool {
      *  signatures stay assignable to this contract. */
     run: (args: any) => string | ToolResult | Promise<string | ToolResult>;
     requiresApproval: boolean;
-    /** e.g. "vision" | "answer" */
-    capabilities: ("vision"|"answer")[];
+    /** e.g. "vision" | "answer" | "meta" ("meta" = self-introspection, answered by the agent loop) */
+    capabilities: ("vision"|"answer"|"meta")[];
     /** Optional page-side formatter → a serializable RenderDescriptor for the debug
      *  sidebar's IN slot (a visualization of the call; null/throw → the raw args). This
      *  is the method form of `ToolResult.renderIn`; `exec` uses it to show pretty JS.
@@ -930,6 +930,10 @@ export interface MlApi {
     pythonExec(code: string, opts?: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Element | Record<string, string | Element> | null }): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; resultTable?: { columns: string[]; rows: (string | number | null)[][] } }>;
     /** Built-in sandboxed-Python tool factory (numpy/Pillow pixel/array work). */
     pythonTool(): MlTool;
+    /** Read-only self-introspection tool for ml.agent (pass via `extraTools`): reports the run's model,
+     *  context window + usage, tokens generated, message/image counts, and the model's capabilities. The
+     *  agent loop answers it, so the counts are accurate on both the page and background paths. */
+    chatMetaTool(): MlTool;
 
     /* ---- vision / OCR / capture ---- */
     /** OCR/describe an image (element, url or data URL). */

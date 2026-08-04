@@ -67,6 +67,43 @@ export interface AgentLoopDeps {
     // Omit → no steering. The queue lives in the caller's world (page handle / SW inbox).
     drainInbox?(): string[];
     pushUser?(messages: unknown[], text: string): void;
+    // Self-introspection (ml.chatMetaTool): resolve the run's model + its context window + capability list
+    // for the metadata summary. World-specific (page: ml.capabilities/ml.ps; background: the SW's caches).
+    // The token/message counts come from the loop itself (accurate on BOTH paths), so only this needs a dep.
+    chatMeta?(): Promise<{ model: string | null; contextWindow: number | null; capabilities: string[] | null } | null>;
+}
+
+/** prompt/completion token counts from a (format-neutral) usage object, tolerant of the OpenAI and Ollama
+ *  field names. Non-numbers → 0. */
+function usageTokens(u: unknown): { prompt: number; completion: number } {
+    const o = (u || {}) as Record<string, unknown>;
+    const n = (x: unknown) => (typeof x === "number" && isFinite(x) ? x : 0);
+    return {
+        prompt: n(o.prompt_tokens) || n(o.input_tokens) || n(o.prompt_eval_count),
+        completion: n(o.completion_tokens) || n(o.output_tokens) || n(o.eval_count),
+    };
+}
+
+/** The `chat_metadata` tool's human-readable dump: the run's model/capabilities/context window (from the
+ *  dep) + the live token/message stats the loop tracks. Deliberately plain text — the model relays it. */
+function formatChatMeta(
+    cm: { model: string | null; contextWindow: number | null; capabilities: string[] | null } | null,
+    stats: { promptLast: number; genTotal: number; calls: number },
+    messages: unknown[],
+): string {
+    const imgs = messages.filter(m => Array.isArray((m as { images?: unknown[] }).images) && (m as { images?: unknown[] }).images!.length).length;
+    const L: string[] = [];
+    L.push(`model: ${cm?.model || "(default — unresolved)"}`);
+    if (cm?.capabilities?.length) L.push(`supports: ${cm.capabilities.join(", ")}`);
+    else if (cm && cm.capabilities === null) L.push("supports: unknown (non-Ollama / cloud model)");
+    if (cm?.contextWindow) {
+        const pct = stats.promptLast ? ` — ~${Math.round((stats.promptLast / cm.contextWindow) * 100)}% used` : "";
+        L.push(`context window: ${cm.contextWindow} tokens${pct}`);
+    }
+    if (stats.promptLast) L.push(`context used: ~${stats.promptLast} tokens (the current conversation)`);
+    L.push(`generated this run: ${stats.genTotal} tokens across ${stats.calls} model call${stats.calls === 1 ? "" : "s"}`);
+    L.push(`messages so far: ${messages.length}${imgs ? ` (${imgs} carrying images)` : ""}`);
+    return L.join("\n");
 }
 
 export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number | (() => number); signal?: AbortSignal | null; unattended?: boolean; }
@@ -93,6 +130,10 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     const messages = deps.buildMessages(task);
     const transcript: AgentTranscriptEntry[] = [];
     let seq = 0;
+    // Live token stats for the chat_metadata tool: promptLast = the last call's prompt tokens (current
+    // context occupancy), genTotal = completion tokens summed across the run. Accurate on both worlds since
+    // the loop is shared. `calls` = model turns so far.
+    let promptLast = 0, genTotal = 0, modelCalls = 0;
     const cancelled = (steps: number): Omit<AgentResult, "hash"> => ({ summary: "Cancelled by the caller.", steps, transcript, elements: [], cancelled: true });
 
     for (let step = 1; step <= maxSteps(); step++) {
@@ -106,6 +147,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         try { msg = await deps.callModel(messages, { tools, step }); }
         catch (e) { if (signal?.aborted) return cancelled(step - 1); throw e; }
         if (signal?.aborted) return cancelled(step - 1);
+        if (msg.usage) { const u = usageTokens(msg.usage); modelCalls++; if (u.prompt) promptLast = u.prompt; genTotal += u.completion; }
         if (!msg.tool_calls || !msg.tool_calls.length) {
             // Final-answer step: emit its usage (the run's peak context) + any reasoning so the sidebar's
             // gauge/think-section match the page-side loop even on a content-less final turn.
@@ -140,6 +182,12 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             let tr: ToolRunResult | undefined;   // the full result — its render slots ride the DONE emit
             if (!meta) {
                 result = `Error: no tool named "${call.name}".`;
+            } else if (meta.capabilities?.includes("meta")) {
+                // Self-introspection (chat_metadata): the LOOP answers it — it holds the live token counts
+                // and message list, so the numbers are accurate on both the page and background paths with no
+                // extra plumbing. Never gated, never delegated to runTool (it only reads its own run's state).
+                const cm = deps.chatMeta ? await deps.chatMeta() : null;
+                result = formatChatMeta(cm, { promptLast, genTotal, calls: modelCalls }, messages);
             } else if (meta.requiresApproval) {
                 // Read-only try FIRST: the mediated interpreter can't mutate, so if the call is in its
                 // dialect it's already run safely — auto-approve with its result, no gate, no runTool.
