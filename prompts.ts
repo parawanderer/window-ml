@@ -66,7 +66,9 @@ export const SELF_CLAUSE =
 export const HUD_HINT =
     "You were started from window.ml's in-page HUD (the Spotlight composer / right-click menu), " +
     "not the devtools console — the user is driving you through the extension's UI. The console " +
-    "API is still open to them if they ask how to script this.";
+    "API is still open to them if they ask how to script this. " +
+    "Your between-step prose (not your hidden thinking) is shown live in a small corner card, so keep it " +
+    "SHORT — a terse note on what you're doing, not a paragraph; save the detail for your final answer.";
 export const ANSWER_CLAUSE =
     "\n\nIf the task asks you to FIND / LOCATE / return an element (rather than change " +
     "the page), designate it with the answer tool (by selector) so the actual element " +

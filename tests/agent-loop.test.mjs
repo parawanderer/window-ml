@@ -151,8 +151,9 @@ test("a meta-capability tool (chat_metadata) is answered BY THE LOOP with live t
         model: "gemma4:31b", contextWindow: 262144, capabilities: ["tools", "vision"],
         vramGB: 21.4, local: true, backend: "Ollama (native)", systemTokens: 900, toolTokens: 1500,
     });
-    // A `look` tool present → the "untracked sub-call tokens" note should appear.
-    await runAgentLoop("what model am I?", { tools: [{ name: "chat_metadata", capabilities: ["meta"] }, { name: "look", capabilities: ["vision"] }] }, deps);
+    // Model IS vision-capable (caps include "vision"), so `look` inlines the image into context (NOT a
+    // sub-call → not flagged). `locate` is ALWAYS a delegated sub-call → flagged.
+    await runAgentLoop("what model am I?", { tools: [{ name: "chat_metadata", capabilities: ["meta"] }, { name: "look", capabilities: ["vision"] }, { name: "locate", capabilities: ["vision"] }] }, deps);
 
     assert.ok(!calls.runTool.some(c => c.name === "chat_metadata"), "the loop answers it itself — runTool is never called");
     const done = calls.emits.find(e => e.tool === "chat_metadata" && !e.pending);
@@ -164,7 +165,8 @@ test("a meta-capability tool (chat_metadata) is answered BY THE LOOP with live t
     assert.match(done.result, /fixed overhead: ~2400 tokens.*system prompt ~900.*tool list ~1500/, "system + tool overhead");
     assert.match(done.result, /21\.4 GB/, "VRAM resident");
     assert.match(done.result, /routed via: Ollama \(native\)/, "backend");
-    assert.match(done.result, /locate.*look.*NOT counted/, "flags untracked vision sub-call tokens");
+    assert.match(done.result, /`locate`.*NOT counted/, "flags locate's untracked sub-call tokens");
+    assert.doesNotMatch(done.result, /`look`/, "a VISION model's look inlines the image into context — NOT flagged as untracked");
 });
 
 test("reasoning_content is emitted per step, distinct from the content prose", async () => {

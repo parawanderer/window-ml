@@ -137,9 +137,13 @@ function formatChatMeta(
     if (cm?.vramGB) L.push(`VRAM resident: ~${cm.vramGB.toFixed(1)} GB`);
     // conversation SHAPE — "messages" was ambiguous; split turns / your messages / model replies
     L.push(`conversation so far: ${role("user")} of your messages · ${role("assistant")} model replies${imgs ? ` · ${imgs} carried images` : ""}`);
-    // untracked sub-call tokens: locate + a delegated look make their OWN model calls the loop never sees
-    if (tools.some(t => t.name === "locate" || t.name === "look" || t.capabilities?.includes("vision")))
-        L.push("note: `locate` / `look` run their own vision sub-calls whose tokens are NOT counted above.");
+    // Untracked sub-call tokens: `locate` is ALWAYS a delegated vision sub-call; `look` is only a sub-call
+    // when the model itself can't see (delegated to a reader). A VISION model's `look` inlines the image into
+    // context (counted in "context in use"), so it's NOT untracked. Gate the look-note on the model's caps.
+    const untracked: string[] = [];
+    if (tools.some(t => t.name === "locate")) untracked.push("`locate`");
+    if (tools.some(t => t.name === "look") && !cm?.capabilities?.includes("vision")) untracked.push("`look` (delegated — this model can't see natively)");
+    if (untracked.length) L.push(`note: ${untracked.join(" and ")} run their own vision sub-call(s) whose tokens are NOT counted above.`);
     return L.join("\n");
 }
 
