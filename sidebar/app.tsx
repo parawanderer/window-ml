@@ -1831,6 +1831,10 @@ const cardCtxMenu = (e: any) => {
 // drop never fires so it never snaps). documentElement is never re-rendered; capture keeps the moves
 // flowing even when the pointer leaves the tiny orb iframe.
 let orbDragging = false;   // true during an active drag → suppress the hover-capsule so it can't resize mid-drag
+// Cleanup for the CURRENT card drag (removes its listeners + resets orbDragging/orbHover). Held at module
+// scope so a new drag can force-end a prior stuck one, and the shell's window-level safety net can end it
+// via __mlSidebarCardEndDrag when a fast flick escaped the iframe and the in-iframe pointerup never fired.
+let endActiveCardDrag: (() => void) | null = null;
 // Hover the orb → stretch to the labelled capsule. Only collapse on a REAL leave: resizing the container
 // under a stationary pointer makes the browser fire a SPURIOUS pointerleave (the pointer is still
 // physically inside the box), which was closing the capsule the instant it opened. So on leave we check
@@ -1847,9 +1851,25 @@ const orbLeave = (e: any) => {
 const startCardDrag = (e: any) => {
     if (e.button != null && e.button !== 0) return;                                          // left / touch only
     if ((e.target as HTMLElement).closest("button, input, textarea, a, .seg")) return;       // not on a control
+    // Clean up any PRIOR drag whose pointerup never reached us (a fast flick escapes the tiny iframe before
+    // it catches up → capture is lost → `up` never fires). Without this, its `move` listener stays attached
+    // and the NEXT drag posts DOUBLE moves → the orb "runs away". The shell's window-level safety net (below)
+    // also force-ends it, but starting fresh is the belt to that suspenders.
+    endActiveCardDrag?.();
     const cap = document.documentElement;
     const startX = e.clientX, startY = e.clientY, pid = e.pointerId;
     let dragging = false;
+    const cleanup = () => {
+        cap.removeEventListener("pointermove", move);
+        cap.removeEventListener("pointerup", up);
+        cap.removeEventListener("pointercancel", up);
+        if (endActiveCardDrag === cleanup) endActiveCardDrag = null;
+        if (dragging) { dragging = false; orbDragging = false; }
+        // Always settle the orb back to the CIRCLE after a drag. A drag that ended with the pointer NOT over
+        // the orb (moved away, or a flick that escaped) leaves no pointerleave to fire, so the hover-capsule
+        // (orblabel) would stay stuck open until you hover+leave again. Force it closed here.
+        orbHover.value = false;
+    };
     const move = (ev: any) => {
         if (!dragging) {
             if (Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) < 4) return;   // threshold → still a click
@@ -1863,11 +1883,9 @@ const startCardDrag = (e: any) => {
         window.parent.postMessage({ __mlSidebarCardMove: { dx: ev.movementX, dy: ev.movementY } }, "*");
     };
     const up = () => {
-        cap.removeEventListener("pointermove", move);
-        cap.removeEventListener("pointerup", up);
-        cap.removeEventListener("pointercancel", up);
-        if (!dragging) return;
-        orbDragging = false;
+        const wasDragging = dragging;
+        cleanup();
+        if (!wasDragging) return;
         window.parent.postMessage({ __mlSidebarCardDrop: true }, "*");
         // A drag must CANCEL the click that fires after pointerup — otherwise dropping a dragged toast
         // also triggers its onClick (expand). Swallow the next click in the CAPTURE phase (before the
@@ -1877,6 +1895,7 @@ const startCardDrag = (e: any) => {
         window.addEventListener("click", swallow, true);
         setTimeout(clear, 350);
     };
+    endActiveCardDrag = cleanup;
     cap.addEventListener("pointermove", move);
     cap.addEventListener("pointerup", up);
     cap.addEventListener("pointercancel", up);
@@ -2137,12 +2156,12 @@ function CardApp() {
         if (pendingStep) decide(false);          // × on a pending gate = a fast Deny
         else cardDismissed.value = run.hash;     // × on a finished card = dismiss
     };
-    // Dismiss on POINTERUP, not click: if the pointer wobbles between the × and the toast body, the browser
-    // fires `click` on their common ANCESTOR (the toast), whose handler EXPANDS — so the card would flash
-    // open then dismiss ("randomly opens then fades"). Acting on pointerup (which fires on the × itself) +
-    // swallowing the trailing click makes the × dismiss cleanly, no expand. pointerdown stops the drag grab.
-    const onCloseDown = (e: Event) => { e.stopPropagation(); };
-    const onCloseUp = (e: Event) => { e.stopPropagation(); e.preventDefault(); onClose(e); };
+    // Dismiss on POINTERDOWN (not click/pointerup): if the pointer wobbles between the × and the toast body,
+    // the browser fires `click` on their common ANCESTOR (the toast), whose handler EXPANDS — and a pointerUP
+    // that drifts off the × misses the button entirely. Dismissing on pointerDOWN sets `dismissed` before any
+    // of that: the state machine then resolves to "hidden" regardless of a stray expand click, so the card
+    // never flashes open. stopPropagation keeps the press from also starting the drag grab on the toast.
+    const onCloseDown = (e: Event) => { e.stopPropagation(); e.preventDefault(); onClose(e); };
 
     if (state === "orb" || state === "orblabel") {
         const a = activityFor(run);
@@ -2157,7 +2176,7 @@ function CardApp() {
                         <span class="card-toast-head">{headline}</span>
                         <span class="card-toast-sub">{title}</span>
                     </span>
-                    <button class="card-x" aria-label="Dismiss" onPointerDown={onCloseDown} onPointerUp={onCloseUp} onClick={e => e.stopPropagation()}>✕</button>
+                    <button class="card-x" aria-label="Dismiss" onPointerDown={onCloseDown} onClick={e => e.stopPropagation()}>✕</button>
                 </div>
             </div>
         );
@@ -2169,7 +2188,7 @@ function CardApp() {
                 <span class={`card-head-txt${pending ? " pending" : ""}`}>{headline}</span>
                 <span class="sp" />
                 {pending ? null : <button class="card-icon" aria-label="Collapse" title="Collapse" onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); cardCollapsed.value = true; }}>▾</button>}
-                <button class="card-x" aria-label={pending ? "Deny" : "Dismiss"} onPointerDown={onCloseDown} onPointerUp={onCloseUp} onClick={e => e.stopPropagation()}>✕</button>
+                <button class="card-x" aria-label={pending ? "Deny" : "Dismiss"} onPointerDown={onCloseDown} onClick={e => e.stopPropagation()}>✕</button>
             </div>
             <div class="card-body">
                 {pending && pendingStep
@@ -2347,6 +2366,7 @@ function onMessage(e: MessageEvent): void {
         if (d.__mlSidebarOpen && !wasOpen) titleTried.clear();   // fresh open → backfill missing titles
     }
     else if (typeof d.__mlSidebarComposer === "string") composerOpen.value = d.__mlSidebarComposer === "open";   // Spotlight bar
+    else if (d.__mlSidebarCardEndDrag) endActiveCardDrag?.();   // shell's safety net force-ended a stuck drag → clean up our listeners
 }
 
 function mount(): void {

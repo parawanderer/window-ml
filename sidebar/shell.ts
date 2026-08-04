@@ -200,6 +200,38 @@ let cardDrag: { left: number; top: number } | null = null;   // live grab-drag p
 // top-left, which flung the tiny orb to the edge with a gap. Both null when not dragging.
 let dragCursor: { x: number; y: number } | null = null;
 let dragFrac: { fx: number; fy: number } | null = null;
+
+// Snap the dragged card to the nearest corner and clear the drag. Called by the app's drop message AND by
+// the window-level safety net below. Idempotent (no cardDrag → just tidy up). Tells the app to drop its own
+// drag listeners too, since its in-iframe pointerup may never have fired (the escaped-flick case).
+function finalizeCardDrag(): void {
+    window.removeEventListener("pointermove", onWinDragMove, true);
+    window.removeEventListener("pointerup", onWinDragEnd, true);
+    window.removeEventListener("pointercancel", onWinDragEnd, true);
+    frame?.contentWindow?.postMessage({ __mlSidebarCardEndDrag: true }, "*");
+    if (!cardDrag || !cardWrap) { cardDrag = null; dragCursor = null; dragFrac = null; return; }
+    const w = cardWrap.offsetWidth, h = cardWrap.offsetHeight;
+    const cx = cardDrag.left + w / 2, cy = cardDrag.top + h / 2;   // nearest corner by the card's centre
+    const corner = (cy < window.innerHeight / 2 ? "top-" : "bottom-") + (cx < window.innerWidth / 2 ? "left" : "right");
+    cardDrag = null; dragCursor = null; dragFrac = null;
+    cardWrap.classList.remove("no-anim");
+    cardCorner = corner;
+    applyCardCorner();                                  // data-corner + layoutCard → animates to the snapped corner
+    chrome.storage.sync.set({ cardCorner: corner });    // persist (the storage listener re-applies; harmless)
+}
+// SAFETY NET for a fast flick: when the pointer outruns the tiny iframe, capture is lost and the iframe
+// stops getting events — the drag would stick mid-page (never snapping) and a re-grab "runs away". These
+// fire on the PAGE window, which now sees the escaped pointer: keep following it by ABSOLUTE coords and
+// finalize on release. While the pointer is over the iframe these never fire (the iframe captures those).
+function onWinDragMove(ev: PointerEvent): void {
+    if (!cardDrag || !dragFrac || !cardWrap) return;
+    const w = cardWrap.offsetWidth, h = cardWrap.offsetHeight;
+    dragCursor = { x: ev.clientX, y: ev.clientY };
+    cardDrag.left = Math.max(6, Math.min(window.innerWidth - w - 6, ev.clientX - dragFrac.fx * w));
+    cardDrag.top = Math.max(6, Math.min(window.innerHeight - h - 6, ev.clientY - dragFrac.fy * h));
+    layoutCard();
+}
+function onWinDragEnd(): void { finalizeCardDrag(); }
 let cardCorner = "bottom-right";   // config.cardCorner (set from storage) → which corner the card anchors to
 let agentHudInDevtools = false;    // config → also show the corner card/pill alongside the DevTools panel
 // The corner HUD (card/pill) is active in OFF mode, and in DEVTOOLS when the coexist toggle is on
@@ -609,6 +641,10 @@ function onWindowMessage(e: MessageEvent): void {
         dragCursor = { x: r.left + gx, y: r.top + gy };
         dragFrac = { fx: r.width ? gx / r.width : 0.5, fy: r.height ? gy / r.height : 0.5 };
         cardWrap.classList.add("no-anim");
+        // Arm the escaped-pointer safety net (see the handlers). Named fns → re-arming is idempotent.
+        window.addEventListener("pointermove", onWinDragMove, true);
+        window.addEventListener("pointerup", onWinDragEnd, true);
+        window.addEventListener("pointercancel", onWinDragEnd, true);
         return;
     }
     if (d.__mlSidebarCardMove && cardDrag && dragCursor && dragFrac && cardWrap && frame && e.source === frame.contentWindow) {
@@ -624,16 +660,7 @@ function onWindowMessage(e: MessageEvent): void {
         return;
     }
     if (d.__mlSidebarCardDrop && frame && e.source === frame.contentWindow) {
-        if (cardDrag && cardWrap) {
-            const w = cardWrap.offsetWidth, h = cardWrap.offsetHeight;
-            const cx = cardDrag.left + w / 2, cy = cardDrag.top + h / 2;   // nearest corner by the card's centre
-            const corner = (cy < window.innerHeight / 2 ? "top-" : "bottom-") + (cx < window.innerWidth / 2 ? "left" : "right");
-            cardDrag = null; dragCursor = null; dragFrac = null;
-            cardWrap.classList.remove("no-anim");
-            cardCorner = corner;
-            applyCardCorner();                                  // data-corner + layoutCard → animates to the snapped corner
-            chrome.storage.sync.set({ cardCorner: corner });    // persist (the storage listener re-applies; harmless)
-        }
+        finalizeCardDrag();   // snap to the nearest corner (shared with the window-level safety net)
         return;
     }
     // The card app asks us to focus its iframe (an approval appeared) so Enter/Esc work without a click.
