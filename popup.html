@@ -25,12 +25,13 @@
         --card-bg: rgba(0, 0, 0, .03); --card-border: rgba(0, 0, 0, .09);
         --card-shadow: 0 6px 20px rgba(0, 0, 0, .12), 0 1px 3px rgba(0, 0, 0, .08);
     }
-    /* html carries the same bg so if the popup is ever shown wider than 340px (e.g. opened in a tab, or
-       Chrome grows it), the surrounding area matches instead of showing a jarring void. */
-    html { background: var(--bg); }
+    /* HARD-pin the whole document to 340px so Chrome can't grow the popup to fit an overflowing child (a
+       long model id, a native <select> dropdown, whatever) — the "expands ridiculously" bug. Both html AND
+       body are sized + clip, so the popup window itself stays 340px and children clip instead of ballooning. */
+    html { background: var(--bg); width: 340px; overflow-x: hidden; }
     body {
         font-family: system-ui, -apple-system, sans-serif;
-        font-size: 13px; width: 340px; max-width: 100%; margin: 0 auto; padding: 14px;
+        font-size: 13px; width: 340px; margin: 0; padding: 14px;
         background: var(--bg); color: var(--fg);   /* flat — matches the DevTools panel (a popup can't be true acrylic) */
         overflow-x: hidden;   /* backstop: never let a child scroll the popup sideways */
     }
