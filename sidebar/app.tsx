@@ -2079,7 +2079,6 @@ function CardApp() {
                 : (done && !dismissed && !silent) ? (cardCollapsed.value ? "toast" : "expanded")   // finished: the answer
                     : "hidden";
 
-    useEffect(() => { window.parent.postMessage({ __mlSidebarCard: state }, "*"); }, [state]);
     // Clear a STALE hover whenever we're not showing the orb — the orb can unmount while hovered (the
     // composer opens over it, an approval expands) and then no pointerleave fires, which would wrongly
     // reopen the capsule (orblabel) when the orb next appears (e.g. the "Starting…" bridge). So a fresh
@@ -2128,6 +2127,12 @@ function CardApp() {
         // `showWork`: the ResizeObserver can't catch a Show-work toggle (the iframe body is height-pinned
         // by the shell, so content growth doesn't resize body) — so re-measure explicitly on the toggle.
     }, [state, r, showWork]);
+    // Post the STATE *after* the height effect (both fire on a state change; effects run in definition
+    // order). So on orb→expanded the shell learns the new content's height FIRST (silently — the orb uses a
+    // fixed size), then applies "expanded" with the fresh cardAutoH. Posting state first made it lay out the
+    // expanded card at the STALE height (the previous run's, or the 200px default) → it opened 2-3× too tall
+    // then snapped down — the "elastic jump". Height-then-state removes the overshoot.
+    useEffect(() => { window.parent.postMessage({ __mlSidebarCard: state }, "*"); }, [state]);
     // Keyboard: Enter approves, Esc denies — but ONLY from a real keydown INSIDE this trusted iframe (a
     // page-side global hotkey routed in would reopen the forgery hole, so we deliberately don't do that).
     // We ask the shell to focus the card frame when an approval appears, so the keys work without a click.
@@ -2225,7 +2230,31 @@ function CardApp() {
                     <button class="appr-btn no" onClick={() => decide(false)}>Deny <kbd class="kb">esc</kbd></button>
                     <button class="appr-btn yes" onClick={() => decide(true)}>Approve <kbd class="kb">⏎</kbd></button>
                   </div>
-                : null}
+                : done ? <CardReply hash={run.hash} /> : null}
+        </div>
+    );
+}
+
+// Inline reply on the finished HUD card — the lowest-friction "respond to the final response". Reuses the
+// EXACT session-composer reverse channel the panel uses (__mlSidebarApp:"sessionSend" → shell → the page's
+// handle registry → the run's run()), so a follow-up turn continues the SAME session. Sending flips the card
+// back to the working orb via the normal state machine. Compact: one line + send, Enter sends.
+function CardReply({ hash }: { hash: string }) {
+    const [text, setText] = useState("");
+    const send = () => {
+        const t = text.trim();
+        if (!t) return;
+        window.parent.postMessage({ __mlSidebarApp: "sessionSend", hash, text: t }, "*");
+        setText("");
+    };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } };
+    return (
+        <div class="card-reply">
+            <input class="card-reply-in" type="text" value={text} placeholder="Reply to continue this run…"
+                onInput={e => setText((e.target as HTMLInputElement).value)} onKeyDown={onKey} />
+            <button class="tt card-reply-send" aria-label="Send" onClick={send} disabled={!text.trim()}>
+                <IconSend /><span class="tt-pop above" role="tooltip">Send a follow-up (Enter)</span>
+            </button>
         </div>
     );
 }

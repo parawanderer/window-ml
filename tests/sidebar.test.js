@@ -2150,6 +2150,34 @@ test("card surface: the final answer shows; debug steps/thinking don't leak", as
     assert.match(body.textContent, /three sections/, "the final answer shows");
 });
 
+test("card surface: a finished run has an inline reply that continues the SAME session", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    await w.raw({ __mlSidebarSurface: "card" });
+
+    const hash = "cardreply1";
+    await w.dispatch(agentStart(hash, "do a thing", "m"));
+    await w.dispatch(agentResult(hash, "Done.", 1));
+    await w.flush();
+
+    const input = w.window.document.querySelector(".card-reply .card-reply-in");
+    const send = w.window.document.querySelector(".card-reply .card-reply-send");
+    assert.ok(input && send, "the finished card shows an inline reply");
+    assert.ok(send.disabled, "send is disabled while the box is empty");
+
+    input.value = "and now the next thing";
+    input.dispatchEvent(new w.window.Event("input", { bubbles: true }));
+    await w.flush();
+    assert.ok(!w.window.document.querySelector(".card-reply-send").disabled, "typing enables send");
+    w.window.document.querySelector(".card-reply-send").click();
+    await w.flush();
+
+    const sent = posted.find(m => m.__mlSidebarApp === "sessionSend");
+    assert.ok(sent && sent.hash === hash && sent.text === "and now the next thing",
+        "the reply posts sessionSend {hash,text} — the same channel the panel composer uses");
+});
+
 test("card surface: quiet HUD suppresses the working pill, but an approval still surfaces the card", async () => {
     const w = await loadSidebarWorld({ sync: { debugMode: "off", agentHud: "quiet" } });
     const posted = [];

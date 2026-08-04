@@ -781,6 +781,16 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
 /* Deny/Approve footer — pinned below the scroll area, always visible. */
 .card-foot { flex: 0 0 auto; display: flex; gap: 8px; justify-content: flex-end; padding: 10px 12px; border-top: 1px solid var(--border); }
 .card-foot .appr-btn { padding: 6px 18px; font-size: 1em; }
+/* Inline reply on the finished card — a compact one-line composer (the panel's full composer is too tall
+   for the corner card). Continues the SAME run via the session-composer reverse channel. */
+.card-reply { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--border); }
+.card-reply-in { flex: 1; min-width: 0; background: var(--panel); color: var(--fg); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; font: inherit; font-size: 0.95em; }
+.card-reply-in:focus { outline: none; border-color: var(--accent); }
+.card-reply-in::placeholder { color: var(--fg-faint); }
+.card-reply-send { flex: 0 0 auto; display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; border: none; border-radius: 8px; background: var(--accent); color: var(--accent-fg); cursor: pointer; }
+.card-reply-send:disabled { opacity: .4; cursor: default; }
+.card-reply-send:not(:disabled):hover { background: var(--accent-strong); }
+.card-reply-send svg { width: 16px; height: 16px; }
 .card-task { color: var(--fg-dim); font-size: .96em; margin-bottom: 8px; line-height: 1.4; }
 .card-body::-webkit-scrollbar { width: 10px; }
 .card-body::-webkit-scrollbar-track { background: transparent; }
