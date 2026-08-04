@@ -789,7 +789,9 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
    for the corner card). Continues the SAME run via the session-composer reverse channel. */
 .card-reply { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--border); }
 .card-reply-in { flex: 1; min-width: 0; background: var(--panel); color: var(--fg); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; font: inherit; font-size: 0.95em; }
-.card-reply-in:focus { outline: none; border-color: var(--accent); }
+/* Smooth the focus ring so clicking in/out fades instead of snapping (the "glitchy purple flash"). */
+.card-reply-in { transition: border-color .16s ease, box-shadow .22s ease; }
+.card-reply-in:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(99, 102, 241, .18); }
 .card-reply-in::placeholder { color: var(--fg-faint); }
 .card-reply-send { flex: 0 0 auto; display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; border: none; border-radius: 8px; background: var(--accent); color: var(--accent-fg); cursor: pointer; }
 .card-reply-send:disabled { opacity: .4; cursor: default; }
@@ -803,8 +805,14 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
     font-size: 0.95em; cursor: text; text-align: left; transition: background .15s, border-color .15s, color .15s; }
 .card-reply-open:hover { background: var(--panel); border-color: var(--border); color: var(--fg-dim); }
 .card-reply-open svg { width: 15px; height: 15px; flex: 0 0 auto; opacity: .8; }
-.card-reply-in { animation: card-reply-grow .18s cubic-bezier(.2,.85,.3,1) both; transform-origin: left center; }
-@keyframes card-reply-grow { from { opacity: 0; transform: scaleX(.9); } to { opacity: 1; transform: none; } }
+/* Open animation: grow from the left + a brief accent glow that blooms then settles into the steady focus
+   ring — a deliberate, Apple-y "wake up" rather than a border snap. */
+.card-reply-in { animation: card-reply-grow .26s cubic-bezier(.2,.85,.3,1) both; transform-origin: left center; }
+@keyframes card-reply-grow {
+    from { opacity: 0; transform: scaleX(.94); box-shadow: 0 0 0 5px rgba(99, 102, 241, .34); }
+    55%  { box-shadow: 0 0 0 4px rgba(99, 102, 241, .26); }
+    to   { opacity: 1; transform: none; box-shadow: 0 0 0 3px rgba(99, 102, 241, .18); }
+}
 @media (prefers-reduced-motion: reduce) { .card-reply-in { animation: none; } }
 .card-task { color: var(--fg-dim); font-size: .96em; margin-bottom: 8px; line-height: 1.4; }
 .card-body::-webkit-scrollbar { width: 10px; }
