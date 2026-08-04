@@ -251,6 +251,10 @@ html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
 .athinking .astep-preview { font-style: italic; }
 /* The thinking text itself reads dim/secondary — it's how the model thinks, not what it says. */
 .athinking .astep-body, .athinking .astep-body.md, .athinking .astep-body.md p, .athinking .astep-body.md li { color: var(--fg-dim); }
+/* Conversation blocks in the card trace: your prompts ("you asked") and past answers ("answered") — same
+   disclosure shape as thinking, distinguished only by the label colour so the trace reads as a shape. */
+.acard-you .who { color: var(--accent); font-weight: 700; }
+.acard-ans .who { color: var(--ok); font-weight: 600; }
 .astep.tool { border-left: 2px solid var(--accent); padding-left: 8px; margin: 4px 0; }
 .astep-head { display: flex; align-items: center; gap: 6px; width: 100%; background: none; border: none; padding: 3px 0; cursor: pointer; text-align: left; color: inherit; }
 .astep-head:hover .tri { color: var(--fg); }

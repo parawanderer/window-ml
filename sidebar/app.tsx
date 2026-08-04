@@ -1946,6 +1946,19 @@ function ShowWork({ run }: { run: Session }) {
     // uses). KEEP a reasoning-only turn (the final-answer turn shows its thinking).
     const turns = groupTurns(run.steps || []).filter(t => t.thought || t.reasoning || t.tools.length);
     const n = (run.steps || []).filter(s => s.tool).length;
+    // Interleave the CONVERSATION into the trace — your prompts (task + follow-ups → "you asked") and PAST
+    // answers, positioned with the step-groups by cumulative step (same scheme as the panel's AgentRunView:
+    // task at -1, an answer just after its turn's steps, a following prompt just after that). The LATEST
+    // answer isn't here — it's the card BODY (or, while running, the live prose) — so a done run drops it.
+    const running = run.status === "pending";
+    const answers = run.answers || [];
+    const pastAnswers = running ? answers : answers.slice(0, -1);
+    const traceItems: { pos: number; el: preact.JSX.Element }[] = [
+        ...(run.task ? [{ pos: -1, el: <CardTraceMsg key="task" label="you asked" text={run.task} cls="acard-you" /> }] : []),
+        ...(run.says || []).map((s, i) => ({ pos: s.atStep + 0.9, el: <CardTraceMsg key={`say${i}`} label="you asked" text={s.text} cls="acard-you" /> })),
+        ...pastAnswers.map((a, i) => ({ pos: a.atStep + 0.5, el: <CardTraceMsg key={`ans${i}`} label={a.cancelled ? "cancelled" : a.hitCap ? "stopped early" : "answered"} text={a.text || "(no reply)"} cls="acard-ans" /> })),
+        ...turns.map(t => ({ pos: t.step, el: <AgentTurn key={`t${t.step}`} turn={t} max={run.maxSteps} hash={run.hash} /> })),
+    ].sort((a, b) => a.pos - b.pos);
     // Right-click the toggle → export THIS run (Markdown / PDF), reusing the debug bar's export logic. The
     // `head` wraps ONLY the toggle + menu, so a click on the TRACE (or anywhere else, or the page → iframe
     // blur) dismisses it — the trace is a sibling, outside `head`.
@@ -1981,7 +1994,25 @@ function ShowWork({ run }: { run: Session }) {
                     </div>
                 ) : null}
             </div>
-            {open ? <div class="card-work-trace">{turns.map(t => <AgentTurn key={t.step} turn={t} max={run.maxSteps} hash={run.hash} />)}</div> : null}
+            {open ? <div class="card-work-trace">{traceItems.map(it => it.el)}</div> : null}
+        </div>
+    );
+}
+
+// A collapsed disclosure in the card trace for a USER PROMPT ("you asked") or a PAST ANSWER ("answered") —
+// styled like the thinking block, so Show-work reads as a scannable conversation SHAPE (ask → work → answer
+// → ask → …). Collapsed with a one-line preview; expand for the full text. This is how a multi-turn HUD run
+// stays legible: you can tell which steps belonged to which of your prompts.
+function CardTraceMsg({ label, text, cls }: { label: string; text: string; cls: string }) {
+    const [open, setOpen] = useState(false);
+    return (
+        <div class={`athought ${cls}`}>
+            <button class="astep-head" onClick={() => setOpen(v => !v)}>
+                <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
+                <span class="who">{label}</span>
+                {!open ? <span class="astep-preview">{inlineText(text || "")}</span> : null}
+            </button>
+            {open ? <div class="md astep-body" dangerouslySetInnerHTML={{ __html: markdown(text || "", { math: true }) }} /> : null}
         </div>
     );
 }
