@@ -2171,6 +2171,12 @@ function CardApp() {
     // never flashes open. stopPropagation keeps the press from also starting the drag grab on the toast.
     const onCloseDown = (e: Event) => { e.stopPropagation(); e.preventDefault(); onClose(e); };
 
+    // Hidden = render NOTHING (the shell fades the wrapper out by opacity). Without this branch the code
+    // falls through to the full expanded card, so on dismiss the content swaps small-toast→full-card and the
+    // height re-measures UP — the card visibly GREW while fading ("expands then goes opacity 0"), and closing
+    // the composer over a dismissed run faded into that stale dialog. Empty content → a clean fade to nothing.
+    if (state === "hidden") return <div class="card-app" data-rev={r} />;
+
     if (state === "orb" || state === "orblabel") {
         const a = activityFor(run);
         return <Orb icon={a.icon} label={a.label} wide={state === "orblabel"} />;
