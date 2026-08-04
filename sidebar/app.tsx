@@ -1939,7 +1939,10 @@ function ShowWork({ run }: { run: Session }) {
     // subscribe to `rev` — else a landed Explain gloss (rev bump) wouldn't re-render. Retained via data-rev.
     const rv = rev.value;
     const open = cardShowWorkHash.value === run.hash;
-    const turns = groupTurns(run.steps || []);
+    // Drop empty groups — a turn carrying only a usage sample (final-answer token counts), no thought /
+    // reasoning / tool — which otherwise render as a blank block in the trace (the same filter AgentRunView
+    // uses). KEEP a reasoning-only turn (the final-answer turn shows its thinking).
+    const turns = groupTurns(run.steps || []).filter(t => t.thought || t.reasoning || t.tools.length);
     const n = (run.steps || []).filter(s => s.tool).length;
     // Right-click the toggle → export THIS run (Markdown / PDF), reusing the debug bar's export logic. The
     // `head` wraps ONLY the toggle + menu, so a click on the TRACE (or anywhere else, or the page → iframe
