@@ -116,6 +116,11 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .set-note code { background: var(--panel-2); border-radius: 3px; padding: 0 3px; font: 0.92em ui-monospace, SFMono-Regular, Menlo, monospace; }
 .set-hint { color: var(--fg-faint); font-size: 0.83em; line-height: 1.35; margin: 4px; }
 .set-err { color: var(--err); font-size: 0.83em; }
+/* "Override ignored" badge — a small red pill flagging a moot setting (e.g. a vision override on an
+   Ollama model whose capability we auto-detect). */
+.set-moot { display: inline-block; margin: 4px; font-size: 0.78em; color: var(--err);
+    border: 1px solid color-mix(in srgb, var(--err) 55%, transparent); border-radius: 999px; padding: 2px 9px;
+    background: color-mix(in srgb, var(--err) 12%, transparent); }
 
 /* model liveness test */
 /* Model-status card: a bordered panel so the role/status grid reads as one unit. */
@@ -238,6 +243,7 @@ html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
     opacity: 1; transform: none; pointer-events: auto;
 }
 .athought, .astep { padding-left: 2px; }
+.athought.acard-you, .athought.acard-ans { margin-bottom: 4px; }
 /* A turn's PROSE (content) — rendered like the answer: full-brightness markdown, no box/dot/label,
    expanded by default with a subtle collapse chevron on the left. */
 .aturn-prose { display: flex; align-items: flex-start; gap: 4px; margin: 3px 0 7px; padding-left: 2px; }
@@ -788,51 +794,44 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
 /* Fills the space between the fixed header/footer and scrolls internally when the shell caps the card
    to the viewport (a long answer/code). min-height:0 lets a flex child actually shrink+scroll.
    scrollbar-gutter: stable reserves the scrollbar's width so content doesn't SHIFT when it appears. */
-.card-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; padding: 10px 12px 14px; }
+.card-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; padding: 10px 12px 14px; padding-bottom: 8px; }
 /* Deny/Approve footer — pinned below the scroll area, always visible. */
 .card-foot { flex: 0 0 auto; display: flex; gap: 8px; justify-content: flex-end; padding: 10px 12px; border-top: 1px solid var(--border); }
 .card-foot .appr-btn { padding: 6px 18px; font-size: 1em; }
-/* Inline reply on the finished card — a compact one-line composer (the panel's full composer is too tall
-   for the corner card). Continues the SAME run via the session-composer reverse channel. */
-.card-reply { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-top: 1px solid var(--border); }
-.card-reply-in { flex: 1; min-width: 0; background: var(--panel); color: var(--fg); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; font: inherit; font-size: 0.95em; }
-.card-reply-in { transition: border-color .16s ease; }
-.card-reply-in:focus { outline: none; border-color: rgba(139, 92, 246, .55); }   /* box-shadow ring = the swirling hue below */
-.card-reply-in::placeholder { color: var(--fg-faint); }
-.card-reply-send { flex: 0 0 auto; display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; border: none; border-radius: 8px; background: var(--accent); color: var(--accent-fg); cursor: pointer; }
-.card-reply-send:disabled { opacity: .4; cursor: default; }
-.card-reply-send:not(:disabled):hover { background: var(--accent-strong); }
-.card-reply-send svg { width: 16px; height: 16px; }
-/* Collapsed affordance: a slim ghost button (no filled input) — quiet until you want to reply. Clicking it
-   swaps in the real input, which soft-expands (the input fades+grows from the left via card-reply-grow). */
-.card-reply.collapsed { padding: 7px 10px; }
-.card-reply-open { flex: 1; display: flex; align-items: center; gap: 8px; width: 100%; background: transparent;
-    border: 1px solid transparent; border-radius: 8px; padding: 5px 8px; color: var(--fg-faint); font: inherit;
-    font-size: 0.95em; cursor: text; text-align: left; transition: background .15s, border-color .15s, color .15s; }
+/* Inline reply on the finished card. Two states: a quiet collapsed GHOST affordance (icon + "Reply…", does
+   NOT look like a chat box) that blooms in with a hue→black glow instead of flashing; and, on click, the
+   real one-line input whose send button lives INSIDE the field, appearing only once you type. Continues the
+   SAME run via the session-composer reverse channel. */
+.card-reply { flex: 0 0 auto; padding: 8px 10px; border-top: 1px solid var(--border); }
+/* Collapsed affordance: a slim ghost button — quiet until you want to reply. Click swaps in the real input.
+   Its box (padding + 1px border) is sized to EXACTLY match the open .card-reply-in — same container padding,
+   same 6px vertical padding, same border — so swapping ghost→input doesn't change the card's height (a
+   mismatch made the container grow ~4px on click). */
+.card-reply.collapsed { position: relative; }
+.card-reply-open { position: relative; z-index: 1; display: flex; align-items: center; gap: 8px; width: 100%;
+    background: transparent; border: 1px solid transparent; border-radius: 8px; padding: 6px 8px;
+    color: var(--fg-faint); font: inherit; font-size: 0.95em; cursor: text; text-align: left;
+    transition: background .15s, border-color .15s, color .15s; }
 .card-reply-open:hover { background: var(--panel); border-color: var(--border); color: var(--fg-dim); }
 .card-reply-open svg { width: 15px; height: 15px; flex: 0 0 auto; opacity: .8; }
-/* Open + focus ring: the SAME multi-hue aura as the orb — four corner glows (indigo·violet·blue·magenta)
-   that swirl (card-reply-hue), bloomed in from nothing (card-reply-grow ends at the hue's 0% for a seamless
-   handoff). On collapse the ring dissolves + fades (card-reply-exit) instead of snapping the purple off. */
-.card-reply-in { transform-origin: left center;
-    animation: card-reply-grow .28s cubic-bezier(.2,.85,.3,1) both, card-reply-hue 6s ease-in-out .28s infinite; }
-.card-reply-in.exiting { animation: card-reply-exit .3s ease forwards; pointer-events: none; }
-@keyframes card-reply-hue {
-    0%,100% { box-shadow: -4px -3px 9px 0 rgba(99,102,241,.34),  4px -3px 9px 0 rgba(139,92,246,.34),  4px 3px 9px 0 rgba(56,132,255,.34), -4px 3px 9px 0 rgba(214,80,235,.30); }
-    25%     { box-shadow: -4px -3px 9px 0 rgba(214,80,235,.30),  4px -3px 9px 0 rgba(99,102,241,.34),  4px 3px 9px 0 rgba(139,92,246,.34), -4px 3px 9px 0 rgba(56,132,255,.34); }
-    50%     { box-shadow: -4px -3px 9px 0 rgba(56,132,255,.34),  4px -3px 9px 0 rgba(214,80,235,.30),  4px 3px 9px 0 rgba(99,102,241,.34), -4px 3px 9px 0 rgba(139,92,246,.34); }
-    75%     { box-shadow: -4px -3px 9px 0 rgba(139,92,246,.34),  4px -3px 9px 0 rgba(56,132,255,.34),  4px 3px 9px 0 rgba(214,80,235,.30), -4px 3px 9px 0 rgba(99,102,241,.34); }
-}
-@keyframes card-reply-grow {
-    from { opacity: 0; transform: scaleX(.94); box-shadow: 0 0 0 0 rgba(139,92,246,0); }
-    to   { opacity: 1; transform: none;        box-shadow: -4px -3px 9px 0 rgba(99,102,241,.34),  4px -3px 9px 0 rgba(139,92,246,.34),  4px 3px 9px 0 rgba(56,132,255,.34), -4px 3px 9px 0 rgba(214,80,235,.30); }
-}
-/* Collapse: hue-shift the ring one notch and dissolve it while the box fades — not a hard purple flash-off. */
-@keyframes card-reply-exit {
-    from { opacity: 1; box-shadow: -4px -3px 9px 0 rgba(99,102,241,.34),  4px -3px 9px 0 rgba(139,92,246,.34),  4px 3px 9px 0 rgba(56,132,255,.34), -4px 3px 9px 0 rgba(214,80,235,.30); }
-    to   { opacity: 0; transform: scaleX(.97); box-shadow: 0 0 10px 1px rgba(56,132,255,0), 0 0 10px 1px rgba(214,80,235,0); }
-}
-@media (prefers-reduced-motion: reduce) { .card-reply-in, .card-reply-in.exiting { animation: none; } }
+/* Open input: a plain one-line box with the SAME purple focus outline as the commander — no glow. The send
+   button nests at the right edge, hidden until you type; padding-right reserves its slot so text never reflows. */
+.card-reply-field { position: relative; display: flex; align-items: center; }
+.card-reply-in { flex: 1; min-width: 0;
+    background: var(--panel); color: var(--fg); border: 1px solid var(--border); border-radius: 8px;
+    padding: 6px 34px 6px 10px; font: inherit; font-size: 0.95em; transition: border-color .16s ease; }
+.card-reply-in::placeholder { color: var(--fg-faint); }
+.card-reply-in:focus { outline: none; border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+/* Send: nested at the right edge, HIDDEN until there's text to send. Plain accent fill (like the rest of the UI). */
+.card-reply-send { position: absolute; right: 5px; top: 50%; z-index: 2;
+    display: flex; align-items: center; justify-content: center; width: 26px; height: 26px;
+    border: none; border-radius: 7px; color: var(--accent-fg); background: var(--accent); cursor: pointer;
+    opacity: 0; transform: translateY(-50%) scale(.6); pointer-events: none;
+    transition: opacity .17s ease, transform .17s cubic-bezier(.2, .85, .3, 1.2), background .15s ease; }
+.card-reply-send.show { opacity: 1; transform: translateY(-50%) scale(1); pointer-events: auto; }
+.card-reply-send:hover { background: var(--accent-strong); }
+.card-reply-send svg { width: 15px; height: 15px; }
+@media (prefers-reduced-motion: reduce) { .card-reply-send { transition: none; } }
 .card-task { color: var(--fg-dim); font-size: .96em; margin-bottom: 8px; line-height: 1.4; }
 .card-body::-webkit-scrollbar { width: 10px; }
 .card-body::-webkit-scrollbar-track { background: transparent; }
@@ -868,10 +867,14 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
     outline: none; transition: border-color .15s ease;
     animation: cmp-in .3s cubic-bezier(.2, .9, .3, 1.08);
 }
-.card-cmp-input:focus { border-color: var(--accent); }
+/* Plain accent focus border — same as the answer card's reply input. No glow. */
+.card-cmp-input:focus { border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
 .card-cmp-input::placeholder { color: var(--fg-faint); }
 .card-cmp-foot { align-items: center; }
 .card-cmp-hint { color: var(--fg-faint); font-size: .82em; }
+/* Pre-flight complaint (e.g. no model configured) — a small red nudge under the task input. */
+.card-cmp-err { margin-top: 8px; color: var(--err); font-size: .85em; line-height: 1.4;
+    border-left: 3px solid var(--err); padding-left: 8px; }
 /* Step-budget segmented control — a pretty pill selector (macOS-style raised selected), NOT a bare select. */
 .card-cmp-budget { display: flex; align-items: center; gap: 8px; }
 .card-cmp-budget-label { color: var(--fg-faint); font-size: .82em; }
@@ -901,6 +904,13 @@ html[data-surface="card"] .appr-btn.yes:hover {
     background: color-mix(in srgb, var(--ok) 26%, transparent); border-color: color-mix(in srgb, var(--ok) 45%, transparent);
 }
 html[data-surface="card"] .appr-btn.yes:disabled { opacity: .5; cursor: default; }
+/* The COMPOSER's Send uses the app's accent (purple) — a plain filled button, not the green Approve fill,
+   so it reads as "start a task", not "approve". Scoped to the composer foot; the real Approve stays green. */
+html[data-surface="card"] .card-cmp-foot .appr-btn.yes {
+    color: var(--accent-fg); background: var(--accent); border-color: transparent;
+}
+html[data-surface="card"] .card-cmp-foot .appr-btn.yes:not(:disabled):hover { background: var(--accent-strong); }
+html[data-surface="card"] .card-cmp-foot .appr-btn.yes:disabled { opacity: .5; }
 html[data-surface="card"] .appr-btn.no {
     color: var(--fg-dim); background: transparent; border-color: var(--border);
 }

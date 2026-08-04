@@ -133,10 +133,20 @@
         <datalist id="modelList"></datalist>
         <div class="hint">Optional but recommended — the list loads automatically; start typing to pick one.</div>
 
+        <label for="defaultModelVision">Default model sees images</label>
+        <select id="defaultModelVision">
+            <option value="">Auto-detect</option>
+            <option value="yes">Yes — native vision</option>
+            <option value="no">No</option>
+        </select>
+        <div class="hint">Only needed for cloud models the extension can't probe (e.g. GPT-4o) — declares native image support so the agent can see with its own model. Ollama models are auto-detected, so this is ignored for them.</div>
+
         <div class="actions">
             <button id="test" class="primary" title="Saves, then sends a test prompt">Save &amp; Test</button>
             <button id="save" title="Save without testing">Save</button>
         </div>
+        <!-- Save / test result — right under its buttons, not stranded at the bottom of the popup. -->
+        <div id="status"></div>
     </details>
 
     <!-- Optional host-permission grants, right under Connection. One-click for python_exec's Google
@@ -206,8 +216,6 @@
             <button id="refreshVram" title="Refresh VRAM usage">↻</button>
         </div>
     </div>
-
-    <div id="status"></div>
 
     <script src="popup.js"></script>
 </body>

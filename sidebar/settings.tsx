@@ -6,7 +6,7 @@
 import { signal } from "@preact/signals";
 import { useState, useEffect } from "preact/hooks";
 import type { ComponentChildren } from "preact";
-import type { MlConfig, ApiFormat, Theme, DebugMode, CardCorner, AgentHud, LoadedModel } from "../contract";
+import type { MlConfig, ApiFormat, Theme, DebugMode, CardCorner, AgentHud, LoadedModel, VisionSupport } from "../contract";
 import { DEFAULT_CONFIG, DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX, detectGroundingModel, modelFilterAllows } from "../contract";
 import { PY_PACKAGES } from "../python-env";
 import {
@@ -73,6 +73,7 @@ const TIP = {
     model: "The model list loads automatically — start typing to pick one.",
     modelFilter: "Optional regex WHITELIST. When set, only models whose id matches are callable via window.ml, and pages (ml.models()) never even see the others — a guard against a page invoking, e.g., an expensive cloud model. Applies to every resolved model (main/OCR/grounding/utility). Blank = no restriction. Example: ^(qwen|gemma) to allow only local families.",
     ocrModel: "Vision model ml.read() uses for OCR — kept separate from the chat model.",
+    defaultModelVision: "Whether the default model sees images natively. Auto-detect probes Ollama; set Yes/No only for a cloud model the probe can't read (e.g. GPT-4o) — declaring Yes lets the agent use its own model to see (HUD native vision) instead of delegating to the OCR model. For an Ollama model we detect the real answer, so this override is ignored (and flagged).",
     utilityModel: "A small, cheap model for side tasks like session-title summaries. Leave blank to reuse the main model. Suggestions: qwen3.5:0.8b for an average machine, a gemma4:e2b-class model for a beefier one.",
     utilityNumCtx: "Context window (num_ctx) for the utility model. Summarising needs little context — keep it small on modest hardware; larger just uses more KV-cache memory. Only used when a utility model is set.",
     utilityForceCpu: "Run the utility model on CPU (num_gpu: 0) so it never competes with your main model for VRAM. Only used when a utility model is set.",
@@ -429,6 +430,22 @@ export function Settings() {
     const c = config.value;
     const tab = settingsTab.value;
     const utilOn = !!c.utilityModel.trim();
+    // Probe the DEFAULT model's real vision capability (Ollama /api/show) so we can flag when the manual
+    // override is moot. `null` = undeterminable (cloud / non-Ollama / old Ollama / no model) — never flagged.
+    const [defModelSees, setDefModelSees] = useState<boolean | null>(null);
+    useEffect(() => {
+        let live = true;
+        setDefModelSees(null);
+        const m = c.model.trim();
+        if (!m) return;
+        chrome.runtime.sendMessage({ type: "MODEL_CAPS", payload: { model: m } }, (resp: any) => {
+            if (!live) return;
+            setDefModelSees(!chrome.runtime.lastError && resp && !resp.error && Array.isArray(resp.data) ? resp.data.includes("vision") : null);
+        });
+        return () => { live = false; };
+    }, [c.model]);
+    // The override is redundant when we KNOW the answer (Ollama): detection wins, so a manual Yes/No is ignored.
+    const visionOverrideMoot = c.defaultModelVision !== "" && defModelSees !== null;
     const filterValid = (() => { if (!c.modelFilter.trim()) return true; try { new RegExp(c.modelFilter); return true; } catch { return false; } })();
     // A configured model id the current filter excludes (non-empty + no match) → flag it.
     const excl = (v: string) => !!v.trim() && !modelFilterAllows(v, c.modelFilter);
@@ -484,6 +501,15 @@ export function Settings() {
                     <input {...modelInput("model", { list: "ml-models", placeholder: "e.g. qwen3:14b" })} /></label>
                 <label class="set-field"><Lbl tip={TIP.ocrModel}>OCR model (optional)</Lbl>
                     <input {...modelInput("ocrModel", { list: "ml-models", placeholder: "e.g. qwen2.5vl" })} /></label>
+                <label class="set-field"><Lbl tip={TIP.defaultModelVision}>Default model sees images</Lbl>
+                    <select value={c.defaultModelVision} onChange={(e: any) => setField("defaultModelVision", e.target.value as VisionSupport)}>
+                        <option value="">Auto-detect</option>
+                        <option value="yes">Yes — native vision</option>
+                        <option value="no">No</option>
+                    </select>
+                    <div class="set-hint">For a cloud model the extension can't probe (e.g. GPT-4o) — declaring <b>Yes</b> lets the agent see with its own model in the HUD instead of delegating to the OCR model. Ollama models are auto-detected.</div>
+                    {visionOverrideMoot ? <div class="set-moot">Ollama model — vision is auto-detected ({defModelSees ? "yes" : "no"}); this override is ignored.</div> : null}
+                </label>
                 </Section>
 
                 <Section id="modelFilter" title="Model access filter">

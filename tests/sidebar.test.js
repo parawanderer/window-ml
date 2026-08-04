@@ -2161,22 +2161,23 @@ test("card surface: a finished run has an inline reply that continues the SAME s
     await w.dispatch(agentResult(hash, "Done.", 1));
     await w.flush();
 
-    // Collapsed by default — a slim affordance, not a filled input (less visual spam). Click to open it.
+    // Collapsed by default — a slim ghost affordance (icon + label), NOT a filled input. Click to open it.
     const opener = w.window.document.querySelector(".card-reply.collapsed .card-reply-open");
     assert.ok(opener, "the finished card shows the collapsed reply affordance");
     assert.ok(!w.window.document.querySelector(".card-reply-in"), "the input is hidden until opened");
     opener.click(); await w.flush();
 
+    // Open state: the input + a nested send that's hidden (+ disabled) until you type.
     const input = w.window.document.querySelector(".card-reply .card-reply-in");
     const send = w.window.document.querySelector(".card-reply .card-reply-send");
-    assert.ok(input && send, "clicking reveals the inline reply input + send");
-    assert.ok(send.disabled, "send is disabled while the box is empty");
+    assert.ok(input && send, "clicking reveals the inline reply input + nested send");
+    assert.ok(send.disabled && !send.classList.contains("show"), "send is hidden + disabled while the box is empty");
 
     input.value = "and now the next thing";
     input.dispatchEvent(new w.window.Event("input", { bubbles: true }));
     await w.flush();
-    assert.ok(!w.window.document.querySelector(".card-reply-send").disabled, "typing enables send");
-    w.window.document.querySelector(".card-reply-send").click();
+    assert.ok(!send.disabled && send.classList.contains("show"), "typing reveals + enables the send button");
+    send.click();
     await w.flush();
 
     const sent = posted.find(m => m.__mlSidebarApp === "sessionSend");
@@ -2353,7 +2354,7 @@ test("card corner menu: the request carries the run hash + live flag (for Copy i
 });
 
 test("card composer (Spotlight): opens as a task input, Send posts a real startRun + closes", async () => {
-    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    const w = await loadSidebarWorld({ sync: { debugMode: "off", model: "llama3" } });
     const posted = [];
     w.window.postMessage = (d) => posted.push(d);
     await w.raw({ __mlSidebarSurface: "card" });
@@ -2390,6 +2391,28 @@ test("card composer (Spotlight): opens as a task input, Send posts a real startR
     // The HUD acknowledges immediately (no dead gap before the run's first event): a "Starting…" bridge orb.
     assert.ok(posted.some(m => m.__mlSidebarCard === "orb"), "the HUD balls up into a working orb on send");
     assert.match(doc.querySelector(".card-orb-ic")?.textContent || "", /💭/, "the bridge orb shows the thinking emoji");
+});
+
+test("card composer: no model configured → an inline nudge, NOT a run (pre-flight)", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off", model: "" } });   // fresh install, no model picked
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    await w.raw({ __mlSidebarSurface: "card" });
+    await w.raw({ __mlSidebarComposer: "open" });
+    await w.flush();
+    const doc = w.window.document;
+
+    doc.querySelector(".card-cmp-input").value = "do something";
+    doc.querySelector(".card-cmp-input").dispatchEvent(new w.window.Event("input", { bubbles: true }));
+    await w.tick();
+    posted.length = 0;
+    [...doc.querySelectorAll(".card-foot button")].find(b => /Send/.test(b.textContent)).click();
+    await w.flush();
+
+    assert.ok(!posted.some(m => m.__mlSidebarApp === "startRun"), "no run is started with no model");
+    const err = doc.querySelector(".card-cmp-err");
+    assert.ok(err && /model/i.test(err.textContent), "an inline 'set a model' nudge shows instead");
+    assert.ok(doc.querySelector(".card-cmp-input"), "the composer stays open (not closed) so you can fix it");
 });
 
 test("card surface: a cancelled run reads as 'Cancelled'", async () => {

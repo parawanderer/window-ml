@@ -8,7 +8,7 @@ import { DEFAULT_CONFIG, fmtCtx } from "./contract";   // single source of truth
 // always-handy toggles (theme, debug panel). Everything else — OCR/utility/grounding/
 // model-filter/auto-approve — lives in the workbench Settings. All fields here are
 // text/select inputs read via .value; there are no number/checkbox fields anymore.
-const FIELDS: (keyof MlConfig)[] = ["chatUrl", "apiKey", "model", "apiFormat", "theme", "debugMode"];
+const FIELDS: (keyof MlConfig)[] = ["chatUrl", "apiKey", "model", "apiFormat", "defaultModelVision", "theme", "debugMode"];
 
 // Every referenced element is an <input>/<select> (or close enough for the props
 // we touch: value/checked/textContent/className/style/replaceChildren).

@@ -118,8 +118,7 @@ const CARD_CSS = `
 /* Hover capsule: the orb stretched into a rounded pill that spells out the current tool (no wobble — it's
    readable now). border-radius = half the height so the ends are perfectly round. */
 #${SB_CARD}-wrap[data-state="orblabel"] { border-radius: 27px; box-shadow: 0 12px 34px rgba(0, 0, 0, .30), 0 3px 10px rgba(0, 0, 0, .18);
-  /* keep the hue aura going when the orb expands to the capsule (else the glow vanishes on hover); blooms in. */
-  animation: ${SB_CARD}-jelly 2.6s ease-in-out infinite, ${SB_CARD}-aura-in 1.6s ease-out both, ${SB_CARD}-aura 6s ease-in-out 1.6s infinite; }
+  animation: ${SB_CARD}-jelly 2.6s ease-in-out infinite; }
 /* The capsule is the same computing stage, just stretched — so it stays ALIVE, wobbling its cap radii on
    both axes (border-radius only, so it can't move the box / re-trip the hover). */
 @keyframes ${SB_CARD}-jelly {
@@ -134,38 +133,8 @@ const CARD_CSS = `
    values (a 2D metaball, done on the acrylic container itself — no SVG goo filter to muddy the backdrop
    blur). The .3s delay lets the squish-in transition round it off first, then the wobble takes over. */
 #${SB_CARD}-wrap[data-state="orb"] { border-radius: 50%;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, .30), 0 2px 8px rgba(0, 0, 0, .18);   /* fallback (reduced-motion) */
-  /* + a soft coloured aura that slowly cycles indigo→violet→blue while it computes — the blob "gives off a
-     hue", a restrained take on the big-model gradient glow (box-shadow isn't clipped by overflow:hidden, so
-     no pseudo-element / removing the acrylic clip). Layered with the droplet wobble (different property). */
-  animation: ${SB_CARD}-droplet 3s ease-in-out .3s infinite, ${SB_CARD}-aura-in 1.6s ease-out both, ${SB_CARD}-aura 6s ease-in-out 1.6s infinite; }
-/* MULTI-HUE aura: FOUR coloured glows at the four diagonals (indigo · violet · blue · magenta) — each a
-   blurred offset box-shadow, so they blend into a gradient halo with DIFFERENT hues in different directions
-   (not one flat colour). The four colours rotate clockwise around the fixed positions each cycle, so the
-   gradient swirls. base black shadows first, then the 4 colour glows. */
-@keyframes ${SB_CARD}-aura {
-  0%, 100% { box-shadow: 0 10px 30px rgba(0,0,0,.30), 0 2px 8px rgba(0,0,0,.18),
-    -9px -9px 16px 0 rgba(99,102,241,.255),  9px -9px 16px 0 rgba(139,92,246,.255),
-     9px  9px 16px 0 rgba(56,132,255,.255), -9px  9px 16px 0 rgba(214,80,235,.238); }
-  25%      { box-shadow: 0 10px 30px rgba(0,0,0,.30), 0 2px 8px rgba(0,0,0,.18),
-    -9px -9px 16px 0 rgba(214,80,235,.238),  9px -9px 16px 0 rgba(99,102,241,.255),
-     9px  9px 16px 0 rgba(139,92,246,.255), -9px  9px 16px 0 rgba(56,132,255,.255); }
-  50%      { box-shadow: 0 10px 30px rgba(0,0,0,.30), 0 2px 8px rgba(0,0,0,.18),
-    -9px -9px 16px 0 rgba(56,132,255,.255),  9px -9px 16px 0 rgba(214,80,235,.238),
-     9px  9px 16px 0 rgba(99,102,241,.255), -9px  9px 16px 0 rgba(139,92,246,.255); }
-  75%      { box-shadow: 0 10px 30px rgba(0,0,0,.30), 0 2px 8px rgba(0,0,0,.18),
-    -9px -9px 16px 0 rgba(139,92,246,.255),  9px -9px 16px 0 rgba(56,132,255,.255),
-     9px  9px 16px 0 rgba(214,80,235,.238), -9px  9px 16px 0 rgba(99,102,241,.255); }
-}
-/* Bloom IN — the four glows grow from nothing (centred, 0 spread) to their diagonal positions over ~1.6s, so
-   entering the orb/capsule doesn't SNAP the aura on. Runs once; its end == aura's 0% for a seamless handoff. */
-@keyframes ${SB_CARD}-aura-in {
-  from { box-shadow: 0 10px 30px rgba(0,0,0,.30), 0 2px 8px rgba(0,0,0,.18),
-    0 0 0 0 rgba(99,102,241,0), 0 0 0 0 rgba(139,92,246,0), 0 0 0 0 rgba(56,132,255,0), 0 0 0 0 rgba(214,80,235,0); }
-  to   { box-shadow: 0 10px 30px rgba(0,0,0,.30), 0 2px 8px rgba(0,0,0,.18),
-    -9px -9px 16px 0 rgba(99,102,241,.255),  9px -9px 16px 0 rgba(139,92,246,.255),
-     9px  9px 16px 0 rgba(56,132,255,.255), -9px  9px 16px 0 rgba(214,80,235,.238); }
-}
+  box-shadow: 0 10px 30px rgba(0, 0, 0, .30), 0 2px 8px rgba(0, 0, 0, .18);
+  animation: ${SB_CARD}-droplet 3s ease-in-out .3s infinite; }
 /* ONLY border-radius wobbles — NOT transform. A scale/rotate would move the orb's box out from under the
    pointer, and the hover→capsule (transform:none) snap-back would fire pointerleave → collapse → re-enter
    → a flickering oscillation. border-radius doesn't affect layout, so the hover target stays put. */
@@ -314,6 +283,7 @@ function maxCardH(): number { return Math.round(window.innerHeight * 0.92); }
 // Per-state target WIDTH (px). Height is content-driven (cardAutoH) or the user's drag (cardManualH);
 // the ORB is a fixed circle (width === height).
 const CARD_MARGIN = 20;
+const CARD_BORDER = 2;   // the wrap's 1px top+bottom border (box-sizing: border-box), added back to the content height
 const ORB_SIZE = 54;
 const CARD_W: Record<string, number> = { orb: ORB_SIZE, orblabel: 230, toast: 340, expanded: 384, composer: 560, hidden: 340 };
 const cardW = (state: string): number => Math.min(CARD_W[state] ?? 340, window.innerWidth - 2 * CARD_MARGIN);
@@ -321,7 +291,10 @@ const cardH = (state: string): number => {
     if (state === "orb" || state === "orblabel") return ORB_SIZE;   // circle / capsule — SAME height (a
                                                                     // vertical shift on hover would flicker the pointerenter/leave)
     const cap = Math.max(120, window.innerHeight - 2 * CARD_MARGIN);   // never past the fold; body scrolls
-    const desired = (state === "expanded" && cardManualH) ? cardManualH : cardAutoH;   // drag only on expanded
+    // cardAutoH is the CONTENT height the app measured. The wrap is box-sizing:border-box with a 1px border,
+    // so that 2px eats into the height — without adding it back the iframe is 2px shorter than its content and
+    // card-body shows a spurious scrollbar. A manual drag already sized the whole wrap, so it needs no add.
+    const desired = (state === "expanded" && cardManualH) ? cardManualH : (cardAutoH + CARD_BORDER);
     return Math.max(56, Math.min(desired, cap));
 };
 // Where the card rests for a given state+size: the composer CENTRES (Spotlight); everything else sits at

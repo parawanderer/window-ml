@@ -2027,6 +2027,7 @@ function CardTraceMsg({ label, text, cls }: { label: string; text: string; cls: 
 // new panel. On send it posts `startRun` to the shell → the page runs a real ml.agent() (hash, resumable).
 function ComposerCard() {
     const [text, setText] = useState("");
+    const [err, setErr] = useState("");   // pre-flight complaint (e.g. no model configured) — blocks the send
     const budget = composerMaxSteps.value;   // the step budget (persists across opens)
     const ref = useRef<HTMLTextAreaElement>(null);
     // Focus after a frame so the container's morph (and the shell's frame.focus) has landed.
@@ -2035,6 +2036,10 @@ function ComposerCard() {
     const send = () => {
         const t = text.trim();
         if (!t) return;
+        // Pre-flight: a HUD run with no default model would flash the orb, then fail at the background's
+        // prepareRequest with "No model configured". Catch it HERE instead — an inline nudge to Settings,
+        // so a fresh install that hasn't picked a model gets an actionable message, not a cryptic failure.
+        if (!config.value.model) { setErr("No model set. Open the extension settings (toolbar icon) and pick a model first."); return; }
         // Bridge the round-trip: show a "Starting…" pill until the run's first event arrives (the composer
         // flies back to the corner and is instantly working). Safety-cleared if the run never surfaces.
         const t0 = Date.now();
@@ -2055,11 +2060,12 @@ function ComposerCard() {
                 <textarea ref={ref} class="card-cmp-input" rows={3}
                     placeholder="Ask window.ml to do something on this page…"
                     value={text}
-                    onInput={e => setText((e.target as HTMLTextAreaElement).value)}
+                    onInput={e => { setText((e.target as HTMLTextAreaElement).value); if (err) setErr(""); }}
                     onKeyDown={e => {
                         if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
                         else if (e.key === "Escape") { e.preventDefault(); close(); }
                     }} />
+                {err ? <div class="card-cmp-err">{err}</div> : null}
             </div>
             <div class="card-foot card-cmp-foot">
                 <span class="card-cmp-hint"><kbd class="kb">↵</kbd> send · <kbd class="kb">esc</kbd> cancel</span>
@@ -2168,9 +2174,12 @@ function CardApp() {
                         inner += kid.scrollHeight + parseFloat(ks.marginTop) + parseFloat(ks.marginBottom);
                     }
                     h += inner;
-                } else h += c.scrollHeight;
+                } else h += c.offsetHeight;   // offsetHeight (NOT scrollHeight) so head/foot BORDERS count — else
+                                              // the posted height is ~2px short and card-body shows a spurious scrollbar
             }
-            window.parent.postMessage({ __mlSidebarCardH: Math.ceil(h) }, "*");
+            // +2px slack: sub-pixel rounding of each child's height can still leave card-body ~1px short of its
+            // content (a faint scrollbar). The pad is invisible but guarantees the content never overflows.
+            window.parent.postMessage({ __mlSidebarCardH: Math.ceil(h) + 6 }, "*");
         };
         post();
         requestAnimationFrame(() => requestAnimationFrame(post));
@@ -2294,34 +2303,28 @@ function CardApp() {
 // handle registry → the run's run()), so a follow-up turn continues the SAME session. Sending flips the card
 // back to the working orb via the normal state machine. Compact: one line + send, Enter sends.
 function CardReply({ hash }: { hash: string }) {
-    // Collapsed by default to a slim affordance — the always-open input read as visual spam against the
-    // clean card. Click (or ⌘/Ctrl+Enter) opens it with a soft expand; Enter sends + collapses; Escape/blur
-    // collapses. So the composer is present but out of the way until you actually want to reply.
+    // Collapsed by default to a slim GHOST affordance (icon + "Reply…", NOT a filled input) — quiet until you
+    // want to reply. Click opens the real input, where the send button lives INSIDE the field and only
+    // materialises once you type. Escape / empty blur collapses back to the ghost.
     const [open, setOpen] = useState(false);
-    const [exiting, setExiting] = useState(false);   // playing the dissolve-out before unmount (blur/Escape)
     const [text, setText] = useState("");
     const inputRef = useRef<HTMLInputElement>(null);
-    const closeNow = () => { setOpen(false); setExiting(false); setText(""); };
-    // Escape / empty-blur → let the input DISSOLVE (hue-shift + fade) rather than snap the purple off, then
-    // unmount. A guard stops re-entrancy (blur can fire while already exiting).
-    const collapseWithFade = () => { if (exiting) return; setExiting(true); window.setTimeout(closeNow, 300); };
     const send = () => {
         const t = text.trim();
-        if (!t) { collapseWithFade(); return; }
+        if (!t) return;
         window.parent.postMessage({ __mlSidebarApp: "sessionSend", hash, text: t }, "*");
-        // Optimistic collapse: flip the session to WORKING now so the card morphs to the orb the instant you
-        // hit Enter, instead of showing the stale answer until the follow-up's first event lands (in off/card
-        // mode the page's agent-say bridge is dormant, so there'd otherwise be a visible lag). No dissolve
-        // here — the orb takes over the whole card immediately.
+        // Optimistic: flip the session to WORKING now so the card morphs to the orb the instant you hit
+        // Enter, instead of showing the stale answer until the follow-up's first event lands (in off/card
+        // mode the page's agent-say bridge is dormant, so there'd otherwise be a visible lag).
         const s = sessionMap.get(hash);
         if (s) { s.status = "pending"; s.lastTs = Date.now(); rev.value++; }
-        closeNow();
+        setText(""); setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
         if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
-        else if (e.key === "Escape") { e.preventDefault(); collapseWithFade(); }
+        else if (e.key === "Escape") { e.preventDefault(); setText(""); setOpen(false); }
     };
-    useEffect(() => { if (open && !exiting) inputRef.current?.focus(); }, [open]);
+    useEffect(() => { if (open) inputRef.current?.focus(); }, [open]);
 
     if (!open) {
         return (
@@ -2332,13 +2335,18 @@ function CardReply({ hash }: { hash: string }) {
             </div>
         );
     }
+    const has = !!text.trim();
     return (
         <div class="card-reply">
-            <input ref={inputRef} class={`card-reply-in${exiting ? " exiting" : ""}`} type="text" value={text} placeholder="Reply to continue this run…"
-                onInput={e => setText((e.target as HTMLInputElement).value)} onKeyDown={onKey} onBlur={() => { if (!text.trim()) collapseWithFade(); }} />
-            <button class="tt card-reply-send" aria-label="Send" onMouseDown={e => e.preventDefault()} onClick={send} disabled={!text.trim()}>
-                <IconSend /><span class="tt-pop above" role="tooltip">Send a follow-up (Enter)</span>
-            </button>
+            <div class="card-reply-field">
+                <input ref={inputRef} class="card-reply-in" type="text" value={text} placeholder="Reply to continue this run…"
+                    onInput={e => setText((e.target as HTMLInputElement).value)} onKeyDown={onKey}
+                    onBlur={() => { if (!text.trim()) setOpen(false); }} />
+                <button class={`card-reply-send${has ? " show" : ""}`} aria-label="Send" tabIndex={has ? 0 : -1}
+                    onMouseDown={e => e.preventDefault()} onClick={send} disabled={!has}>
+                    <IconSend />
+                </button>
+            </div>
         </div>
     );
 }
