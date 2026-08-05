@@ -1,5 +1,5 @@
 // Shared element IDs for the debug-sidebar shell. The shell (sidebar/shell.ts) creates
-// these nodes; the page-side hit-testing (som.ts `withHiddenSidebar`) and the screenshot
+// these nodes; the page-side hit-testing (locate.ts `withHiddenSidebar`) and the screenshot
 // bridge reference the same IDs to hide/detect the overlay — so they live in one place
 // rather than as magic strings that could silently drift apart.
 export const SB_ROOT = "ml-sb-root";         // host container; its presence = the sidebar is mounted

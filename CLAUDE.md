@@ -199,8 +199,8 @@ inverse; the scoping tiers (`region` → `grid` → `cells` recursion; `selector
 snap-around-point — a fractal zoom); the canvas/`@pt` coordinate path (mint → `clickAt` → look-verify,
 with the re-locate-loop dedup); the density guard, overlay-colour heuristic, debug-render substeps, and
 the delegated-sub-call `num_ctx` resident-caching gotcha. All four original slices shipped (incl. the
-canvas half: grid, grid-grounding, `@pt`). Pure geometry (`som.ts`) is unit-tested standalone
-(`dist/som.js`, `tests/som.test.js`); scoping guards in `tests/agent.test.js`.
+canvas half: grid, grid-grounding, `@pt`). Pure geometry (`locate.ts`) is unit-tested standalone
+(`tests/locate.test.mjs`, importing the source directly via tsx); scoping guards in `tests/agent.test.js`.
 
 **Agent self-knowledge (`agent_api_docs`).** The agent had none: asked "how do I call you
 from the console?" it answered from pre-training ("try typing `window`…"), because nothing in

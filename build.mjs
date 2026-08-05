@@ -110,7 +110,7 @@ if (watch) {
 } else {
     await esbuild.build({ ...base, entryPoints: coreEntries });
     await esbuild.build({ ...base, entryPoints: { "sidebar-app": sidebarApp }, minify: true });
-    // NOTE: the pure modules (som, readonly-exec, python-runtime, agent-loop, auto-approve,
+    // NOTE: the pure modules (locate, readonly-exec, python-runtime, agent-loop, auto-approve,
     // run-delegation, agent-host) used to be bundled here as standalone CJS for the node unit
     // tests. They aren't anymore — those tests `require("../<name>.ts")` directly under the
     // `tsx` loader (`npm test`), so go-to-definition/find-usages resolves into the source.
@@ -118,7 +118,7 @@ if (watch) {
     copyAssets();
     copyPyodide();
     copyKatexFonts();
-    // Regenerate the standalone visual preview of som's canvas annotate() (gitignored —
+    // Regenerate the standalone visual preview of locate's canvas annotate() (gitignored —
     // it's a build artifact). Open tools/annotate-preview.html to eyeball label placement.
     await generatePreview();
     console.log("built dist/ (+ tools/annotate-preview.html)");

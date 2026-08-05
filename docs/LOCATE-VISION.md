@@ -351,7 +351,7 @@ live without one.
 ---
 
 *Source map: `builtin-tools.ts` (the `locate`/`look`/`click` tools),
-`som.ts` (the hit-test engine + coordinate math, unit-tested standalone),
+`locate.ts` (the hit-test engine + coordinate math, unit-tested standalone),
 `util.ts` (the `@pt` registry + `clickAt`). See `CLAUDE.md` for the terse
 version and `docs/spec/` for slice-by-slice design notes.*
 

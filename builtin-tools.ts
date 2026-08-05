@@ -14,7 +14,7 @@ import { accessibleName } from "./a11y";
 // exec's 500 (data output legitimately runs longer) but still bounds a runaway result.
 const PY_OUT_MAX = 2000;
 import { settle, VISION_NUM_CTX, cropDataUrl, MIN_SHOT_PX, POINT_RE, PT_LOOK_RADIUS, mintPoint, resolvePoint, nearbyPoint, BOX_RE, mintBox, resolveBox, projectShotPoint, projectShotBox } from "./util";
-import { collectCandidates, buildMarks, annotate, formatBox, letterboxToSquare, projectFromSquare, drawGrid, gridDims, validateCells, cellsBox, collectInBox, elementAtPoint, viewportBox, colorWordHues, pickOverlayColor, pickAccentColor, withHiddenSidebar, regionBox, REGION_NAMES, adjacentCells, type RegionName, type MarkFilter, type Box, type Mark } from "./som";
+import { collectCandidates, buildMarks, annotate, formatBox, letterboxToSquare, projectFromSquare, drawGrid, gridDims, validateCells, cellsBox, collectInBox, elementAtPoint, viewportBox, colorWordHues, pickOverlayColor, pickAccentColor, withHiddenSidebar, regionBox, REGION_NAMES, adjacentCells, type RegionName, type MarkFilter, type Box, type Mark } from "./locate";
 
 // --- Coordinate targets (canvas / WebGL) -----------------------------------
 // A <canvas> has NO sub-node to snap to, so `locate` mints an OPAQUE `@pt:` token (see
@@ -188,7 +188,7 @@ export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512 }: { mo
 // doesn't trip it.
 const COORD_IN_DESC = /\(\s*-?\d{1,4}\s*,\s*-?\d{1,4}\s*\)|\b[xy]\s*[=:]\s*-?\d{2,4}\b|\b\d{2,4}\s*,\s+\d{2,4}\b/i;
 
-// Delegated Set-of-Marks locator (see docs/spec + som.ts). Screenshots the
+// Delegated Set-of-Marks locator (see docs/spec + locate.ts). Screenshots the
 // viewport, hit-test-sweeps for candidate elements (works on non-semantic UIs),
 // draws numbered badges in memory, and asks a VISION model which badge matches the
 // caller's description. Delegated like buildLookTool: the badged image is seen only

@@ -37,7 +37,7 @@ import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, e
 import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, PT_LOOK_RADIUS, BOX_RE, resolveBox, agentState } from "./util";
 import type { ShotBox, ServerTool } from "./contract";
-import { annotate, pickAccentColorForTarget } from "./som";
+import { annotate, pickAccentColorForTarget } from "./locate";
 import { suspiciousArgsWarning, suspiciousChars } from "./security";
 import { emitDebug, debugId, shortHash, sessionRegistry, agentRegistry, handleRegistry, enterAgentRun, exitAgentRun } from "./bus";
 import { makeDomTools } from "./tools";
@@ -1252,7 +1252,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             return buildLookTool(this, opts);
         },
         /**
-         * Build a delegated Set-of-Marks `locate` tool (see builtin-tools/som): find
+         * Build a delegated Set-of-Marks `locate` tool (see builtin-tools/locate): find
          * an element by describing it, via a vision sub-call over a badged screenshot.
          * Auto-wired into ml.agent alongside `look` when a vision model resolves.
          *

@@ -1,14 +1,14 @@
 "use strict";
-// The Set-of-Marks hit-test engine (som.ts). elementFromPoint
+// The Set-of-Marks hit-test engine (locate.ts). elementFromPoint
 // is a jsdom no-op, so collectCandidates/drawGrid (which need real layout + canvas)
 // can't run here — but representativeFor is the accessibility-agnostic CORE (climb a
 // raw hit to the meaningful element) and IS testable against a real DOM.
 import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
-import * as som from "../som.ts";
+import * as locate from "../locate.js";
 
-// som.ts reads global document/window/getComputedStyle at call time; wire them.
+// locate.ts reads global document/window/getComputedStyle at call time; wire them.
 function world(html) {
     const dom = new JSDOM(`<!doctype html><body>${html}</body>`);
     global.window = dom.window;
@@ -16,7 +16,7 @@ function world(html) {
     global.getComputedStyle = dom.window.getComputedStyle.bind(dom.window);
     return dom.window.document;
 }
-const { representativeFor, isClickish, buildMarks, viewportBox, formatBox, projectFromSquare, gridDims, validateCells, cellsBox, adjacentCells, colorWordHues, pickOverlayHex, regionBox, REGION_OVERLAP } = som;
+const { representativeFor, isClickish, buildMarks, viewportBox, formatBox, projectFromSquare, gridDims, validateCells, cellsBox, adjacentCells, colorWordHues, pickOverlayHex, regionBox, REGION_OVERLAP } = locate;
 
 test("colorWordHues extracts hues from colour words in a description (for overlay avoidance)", () => {
     assert.deepEqual(colorWordHues("the bright RED umbrella"), [0]);
@@ -205,7 +205,7 @@ test("buildMarks numbers candidates 1-based and carries role/name/selector", () 
 // pickLabelSpot slides a floating label to the least-busy of a fixed candidate set so
 // it never covers the icon it marks. Geometry is pure (a variance oracle is injected);
 // the real getImageData variance is a canvas op (jsdom no-op).
-const { labelCandidates, pickLabelSpot, rectsOverlap } = som;
+const { labelCandidates, pickLabelSpot, rectsOverlap } = locate;
 
 test("labelCandidates: 12 spots, all clamped fully inside the image", () => {
     const box = { left: 90, top: 90, width: 24, height: 24 };

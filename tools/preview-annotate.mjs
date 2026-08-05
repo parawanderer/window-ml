@@ -1,27 +1,27 @@
-// A visual "notebook" for the canvas code that unit tests can't see — som.ts's
+// A visual "notebook" for the canvas code that unit tests can't see — locate.ts's
 // annotate() label placement (jsdom has no real getImageData, so tests only cover the
-// pure geometry). This bundles the REAL som.ts to a browser IIFE, inlines it into a
+// pure geometry). This bundles the REAL locate.ts to a browser IIFE, inlines it into a
 // single self-contained HTML page, and draws a gallery of synthetic scenes with a
 // "click point" marker so you can eyeball whether the label dodges the icons.
 //
-//   node tools/preview-annotate.mjs   # regenerate (always fresh against som.ts)
+//   node tools/preview-annotate.mjs   # regenerate (always fresh against locate.ts)
 //   open tools/annotate-preview.html  # look at the renders
 import * as esbuild from "esbuild";
 import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 export async function generatePreview() {
-// Real som.ts → IIFE exposing `window.som` (same code the extension + tests run).
+// Real locate.ts → IIFE exposing `window.locate` (same code the extension + tests run).
 const { outputFiles } = await esbuild.build({
-    entryPoints: ["som.ts"],
+    entryPoints: ["locate.ts"],
     bundle: true,
     write: false,
     format: "iife",
-    globalName: "som",
+    globalName: "locate",
     target: ["chrome114"],
     logLevel: "silent",
 });
-const somIife = outputFiles[0].text;
+const locateIife = outputFiles[0].text;
 
 // Each scene draws onto a canvas, then we annotate its dataURL. Scenes are authored in
 // the page (below) so tweaking them is a browser refresh, not a rebuild — the notebook
@@ -44,14 +44,14 @@ const page = /* html */ `<!doctype html>
   kbd { background: #22242c; border: 1px solid #3a3d47; border-radius: 4px; padding: 0 5px; font-size: 12px; }
 </style></head><body>
 <h1>annotate() — variance-aware label placement</h1>
-<p class="desc">Left = the raw scene. Right = after <code>som.annotate()</code> drops a
+<p class="desc">Left = the raw scene. Right = after <code>locate.annotate()</code> drops a
 marker on the target and floats the "click point" label to the least-busy spot
 <em>beside</em> the box (hug-only — it never flies to a corner, since a detached label +
 leader line misleads the VLM reading the crop). The marker colour is the real
 <code>pickAccentColor()</code> — green-first, but avoids clashing with the scene (note it
 is <em>not</em> green over the green sprites).</p>
 <div id="out"></div>
-<script>${somIife}</script>
+<script>${locateIife}</script>
 <script>
 // --- scene painters (tweak freely, refresh to see) ------------------------
 function panel(ctx, w, h) { ctx.fillStyle = "#15161a"; ctx.fillRect(0, 0, w, h); }
@@ -110,8 +110,8 @@ function renderStatic(scene) {
   const row = document.createElement("div"); row.className = "row"; out.appendChild(row);
   row.appendChild(figure(src, "scene").fig);
   const marker = markerFor(box), dataUrl = src.toDataURL();
-  som.pickAccentColorForTarget(dataUrl, marker)
-    .then(color => som.annotate(dataUrl, [{ rect: marker, color, label: "click point", float: true }], 1))
+  locate.pickAccentColorForTarget(dataUrl, marker)
+    .then(color => locate.annotate(dataUrl, [{ rect: marker, color, label: "click point", float: true }], 1))
     .then(url => { const img = new Image(); img.src = url; img.width = W; img.height = H; row.appendChild(figure(img, "annotated").fig); });
 }
 
@@ -145,8 +145,8 @@ function renderGrid() {
   function render() {
     const s = sprites[idx];
     const marker = markerFor({ left: s.x, top: s.y - 12, width: 30, height: 32 });   // head + body
-    som.pickAccentColorForTarget(dataUrl, marker)
-      .then(color => som.annotate(dataUrl, [{ rect: marker, color, label: "click point", float: true }], 1)
+    locate.pickAccentColorForTarget(dataUrl, marker)
+      .then(color => locate.annotate(dataUrl, [{ rect: marker, color, label: "click point", float: true }], 1)
         .then(url => {
           img.src = url;
           cap.innerHTML = "";
