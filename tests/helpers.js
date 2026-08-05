@@ -79,11 +79,13 @@ function streamResponse(lines, { status = 200 } = {}) {
 // `commandShortcut` is what chrome.commands reports as CURRENTLY bound for the HUD
 // (null = the API is unavailable, "" = the user cleared the binding); `manifestPermissions`
 // lets a test declare contextMenus, which GET_INVOCATION reads as "the right-click entry exists".
-function loadBackground({ config = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"] }) {
+function loadBackground({ config = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true }) {
     const calls = [];
     const captures = [];        // captureVisibleTab arg lists, for screenshot tests
     const tabMessages = [];     // chrome.tabs.sendMessage arg lists, for reverse-channel tests
     const pyRuns = [];          // PY_RUN payloads relayed to the offscreen doc (for python_exec tests)
+    const debuggerCalls = [];   // chrome.debugger attach/sendCommand/detach, for CDP_CLICK tests
+    let permsHeld = new Set(debuggerPermission ? ["debugger"] : []);
     const listeners = [];
     const connectListeners = [];
     const stored = { ...config };
@@ -145,6 +147,22 @@ function loadBackground({ config = {}, onFetch, onCaptureTab, onPyRun, onTabMess
                 hasDocument: async () => offscreenDoc,
                 createDocument: async () => { offscreenDoc = true; },
             },
+            // Optional-permission checks (debugger for CDP_CLICK, Google origins for FETCH_SHEET). request()
+            // needs a gesture in the real API, but the SW only ever contains()-checks — so the mock's request
+            // is just for completeness.
+            permissions: {
+                // Track named permissions (debugger); treat origin grants as present (FETCH_SHEET only
+                // contains()-checks Google origins, and the harness assumes those are granted).
+                contains: async ({ permissions = [] }) => permissions.every(p => permsHeld.has(p)),
+                request: async ({ permissions = [] }) => { permissions.forEach(p => permsHeld.add(p)); return true; },
+            },
+            // CDP surface for reserved-element clicks. Records attach/sendCommand/detach so tests assert the
+            // press+release sequence and that we always detach.
+            debugger: {
+                attach: async (target, version) => { debuggerCalls.push(["attach", target, version]); },
+                sendCommand: async (target, method, params) => { debuggerCalls.push(["sendCommand", target, method, params]); },
+                detach: async (target) => { debuggerCalls.push(["detach", target]); },
+            },
             tabs: {
                 // Records args so tests can assert the windowId; onCaptureTab (if
                 // given) provides the data URL or throws to simulate a failure.
@@ -168,6 +186,7 @@ function loadBackground({ config = {}, onFetch, onCaptureTab, onPyRun, onTabMess
         captures,
         tabMessages,
         pyRuns,
+        debuggerCalls,
         stored,
         // Simulates chrome.runtime.sendMessage hitting the listener.
         send: (message, sender = {}) =>

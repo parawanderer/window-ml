@@ -817,6 +817,43 @@ async function senderTrust(sender: chrome.runtime.MessageSender): Promise<"surfa
     return host && (cfg.pageApprovalDomains || []).includes(host) ? "whitelisted" : "untrusted";
 }
 
+/** Is the optional `debugger` permission held? CHECK ONLY — never request here. `permissions.request`
+ *  requires a user GESTURE in a FOREGROUND context, which the service worker doesn't have, so the actual
+ *  grant rides a user gesture in a real surface (the "Approve" click in the sidebar/DevTools extension page,
+ *  or the popup/Settings "Enable reserved-element clicking" button — the same pattern as the Google-Sheets
+ *  host grant, which this SW likewise only `contains()`-checks). Missing → cdpClick returns an actionable
+ *  error steering the user to grant it. */
+async function hasDebuggerPermission(): Promise<boolean> {
+    try { return await chrome.permissions.contains({ permissions: ["debugger"] }); } catch { return false; }
+}
+
+/** Click at a VIEWPORT coordinate via CDP — the ONLY way to reach a "reserved" surface (a cross-origin
+ *  iframe, or a declarative/native closed shadow root): the BROWSER hit-tests the point, so the click
+ *  retargets INTO the frame / closed tree and is a TRUSTED, user-activated event (a synthetic dispatch is
+ *  neither — it fires on the named element and can't cross those boundaries). Attaches the debugger (its
+ *  unsuppressible banner is the honest "input-level control" signal — and it's shown ONLY for these reserved
+ *  clicks, so the flash marks the risk), sends press+release, and ALWAYS detaches. See docs/spec/CDP_CLICK.md. */
+async function cdpClick(tabId: number, x: number, y: number): Promise<{ ok: true } | { error: string; needsPermission?: true }> {
+    if (!(await hasDebuggerPermission())) return { error: "The `debugger` permission is required to click a reserved (cross-origin / sealed) element — grant it in the window.ml popup or settings, then retry.", needsPermission: true };
+    const target: chrome.debugger.Debuggee = { tabId };
+    try {
+        await chrome.debugger.attach(target, "1.3");
+    } catch (e) {
+        return { error: `Couldn't attach the debugger to click a reserved element (${(e as Error)?.message || e}). Another debugger (DevTools?) may be attached to this tab.` };
+    }
+    const send = (type: string, buttons: number) =>
+        chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", { type, x, y, button: "left", buttons, clickCount: 1 });
+    try {
+        await send("mousePressed", 1);
+        await send("mouseReleased", 0);
+        return { ok: true };
+    } catch (e) {
+        return { error: `The CDP click failed (${(e as Error)?.message || e}).` };
+    } finally {
+        try { await chrome.debugger.detach(target); } catch { /* already detached / tab gone */ }
+    }
+}
+
 /** SSRF denylist for the uncredentialed image fetch: refuse loopback / private / link-local / metadata
  *  hosts (and non-http schemes / unparseable URLs), so a page can't probe the user's internal network
  *  through the extension's `<all_urls>` reach. */
@@ -879,6 +916,25 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         const ctl = runControllers.get((message.payload as CancelRunPayload)?.runId);
         if (ctl) ctl.abort();
         return;   // fire-and-forget
+    }
+    if (message.type === "CDP_CLICK") {
+        // Click a RESERVED surface (cross-origin iframe / declarative-or-native closed shadow) at a viewport
+        // coordinate via CDP — the only mechanism that reaches it with a trusted, hit-tested event.
+        // CHOKE-POINT: this is privileged (attaches the debugger) so it must NOT be page-forgeable. An
+        // UNTRUSTED page is refused; a `surface` (internal extension page — the approval UI) or a
+        // `whitelisted` origin (the user trusts it to self-gate) may initiate it, and the per-click approval
+        // still governs upstream. Gated behind the off-by-default `cdpClick` flag. A page targets only its
+        // OWN tab (sender.tab.id); a surface passes the inspected tabId in the payload.
+        (async () => {
+            const cfg = await getConfig();
+            if (!cfg.cdpClick) { sendResponse({ error: "Reserved-element clicking is off — enable it in window.ml Settings → Advanced." }); return; }
+            if (await senderTrust(sender) === "untrusted") { sendResponse({ error: "Refused: a reserved-element (CDP) click can't be initiated by this page." }); return; }
+            const p = (message.payload || {}) as { x?: number; y?: number; tabId?: number };
+            const tabId = sender.tab?.id ?? p.tabId;   // a page → its own tab; a trusted surface → the payload's
+            if (typeof tabId !== "number" || typeof p.x !== "number" || typeof p.y !== "number") { sendResponse({ error: "CDP_CLICK needs a tab and numeric x/y." }); return; }
+            sendResponse(await cdpClick(tabId, p.x, p.y));
+        })();
+        return true;   // async
     }
     if (message.type === "INJECT_MESSAGE") {
         // a.say() steering a RUNNING background run: push the text into that run's inbox → the loop drains it

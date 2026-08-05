@@ -540,6 +540,46 @@ test("GET_CONFIG returns the model/ocrModel/apiFormat and withholds the URL and 
     assert.ok(!("chatUrl" in res.data) && !("apiKey" in res.data) && !("pageApprovalDomains" in res.data), Object.keys(res.data).join());
 });
 
+test("CDP_CLICK dispatches a trusted press+release via the debugger and always detaches", async () => {
+    const bg = loadBackground({ config: baseConfig({ cdpClick: true }) });
+    // A trusted surface (no sender.tab — e.g. the approval UI) passes the inspected tabId in the payload.
+    const res = await bg.send({ type: "CDP_CLICK", payload: { x: 120, y: 340, tabId: 9 } }, {});
+    assert.deepEqual(res, { ok: true });
+    assert.deepEqual(bg.debuggerCalls.map(c => c[0]), ["attach", "sendCommand", "sendCommand", "detach"], "attach → press → release → detach");
+    assert.deepEqual(bg.debuggerCalls[0][1], { tabId: 9 });
+    assert.equal(bg.debuggerCalls[0][2], "1.3");
+    const [, , pressMethod, pressParams] = bg.debuggerCalls[1];
+    const releaseParams = bg.debuggerCalls[2][3];
+    assert.equal(pressMethod, "Input.dispatchMouseEvent");
+    assert.equal(pressParams.type, "mousePressed");
+    assert.equal(releaseParams.type, "mouseReleased");
+    assert.equal(pressParams.x, 120); assert.equal(pressParams.y, 340); assert.equal(pressParams.button, "left");
+    assert.deepEqual(bg.debuggerCalls[3][1], { tabId: 9 }, "detached the same target");
+});
+
+test("CDP_CLICK is refused when the cdpClick flag is off (never attaches)", async () => {
+    const bg = loadBackground({ config: baseConfig({ cdpClick: false }) });
+    const res = await bg.send({ type: "CDP_CLICK", payload: { x: 1, y: 2, tabId: 9 } }, {});
+    assert.match(res.error, /off — enable it/i);
+    assert.equal(bg.debuggerCalls.length, 0, "never attached the debugger");
+});
+
+test("CDP_CLICK from an UNTRUSTED page is refused (choke-point, no attach)", async () => {
+    const bg = loadBackground({ config: baseConfig({ cdpClick: true }) });
+    // sender.tab set + host not on pageApprovalDomains → untrusted → a page can't self-initiate a CDP click.
+    const res = await bg.send({ type: "CDP_CLICK", payload: { x: 1, y: 2 } }, { tab: { id: 4, url: "https://evil.example/" } });
+    assert.match(res.error, /can't be initiated by this page/i);
+    assert.equal(bg.debuggerCalls.length, 0);
+});
+
+test("CDP_CLICK reports the missing debugger permission (never attaches)", async () => {
+    const bg = loadBackground({ config: baseConfig({ cdpClick: true }), debuggerPermission: false });
+    const res = await bg.send({ type: "CDP_CLICK", payload: { x: 1, y: 2, tabId: 9 } }, {});
+    assert.ok(res.needsPermission, "flags that the permission is needed");
+    assert.match(res.error, /`debugger` permission is required/i);
+    assert.equal(bg.debuggerCalls.length, 0, "never attached without the permission");
+});
+
 test("FETCH_LLM openai schema becomes a json_schema response_format", async () => {
     const schema = { type: "object", properties: { hide: { type: "boolean" } } };
     const bg = loadBackground({
