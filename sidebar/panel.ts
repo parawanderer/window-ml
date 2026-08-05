@@ -49,13 +49,27 @@ function resetApp(): void {
     else queue.length = 0;   // nothing shown yet → just drop any pending burst
 }
 
+// When the EXTENSION itself reloads (dev workflow), this panel's context is invalidated and Chrome can't
+// re-attach the DevTools panel live (a devtools_page only registers on a fresh DevTools open) — so the panel
+// would just go blank. Detect the dead context and show an actionable note instead. (`chrome.runtime.id`
+// goes undefined once the context is invalidated.) The inspected-page reload path is separate (`reset`).
+function showStaleNote(): void {
+    frame.style.display = "none";
+    offnote.style.display = "block";
+    document.getElementById("ml-offnote-h")!.textContent = "Extension reloaded — reconnect this panel";
+    document.getElementById("ml-offnote-b")!.innerHTML =
+        "This panel lost its connection when the extension reloaded — Chrome can't re-attach a DevTools panel " +
+        "live. Press <b>⌘R</b> / <b>Ctrl+R</b> on this DevTools window to reload it (re-registers the panel " +
+        "without touching the inspected tab), or close &amp; reopen DevTools.";
+}
+
 // The MV3 background service worker is recycled aggressively; when it (or the port) drops,
 // the panel would silently stop receiving events (it connected once). Reconnect so new
 // calls keep flowing, and treat each (re)connect's `replay` as the source of truth.
 function connect(): void {
     let port: chrome.runtime.Port;
     try { port = chrome.runtime.connect({ name: "ml-devtools" }); }
-    catch { return; }   // extension context gone (e.g. reloaded) → this panel is stale
+    catch { showStaleNote(); return; }   // extension context gone (reloaded) → this panel is stale
     port.postMessage({ type: "ml-devtools-init", tabId });
     port.onMessage.addListener((msg: any) => {
         if (msg?.__mlDebug) toApp(msg.__mlDebug);
@@ -66,7 +80,12 @@ function connect(): void {
         // "random history vanished" bug: keep what's shown; a real page navigation clears via `reset`.
         else if (Array.isArray(msg?.replay) && msg.replay.length) { resetApp(); for (const e of msg.replay) toApp(e); }
     });
-    port.onDisconnect.addListener(() => { setTimeout(connect, 500); });   // SW cycled → re-establish
+    port.onDisconnect.addListener(() => {
+        // No runtime.id → the EXTENSION reloaded (not just the SW cycling): reconnecting is futile and would
+        // loop, so surface the reload note. A live extension (id present) is a normal SW recycle → reconnect.
+        if (!chrome.runtime?.id) { showStaleNote(); return; }
+        setTimeout(connect, 500);
+    });
 }
 connect();
 
