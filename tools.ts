@@ -6,7 +6,7 @@
 
 import type { MlTool, ToolResult } from "./contract";
 import { truncate, clipOut, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, selectorError } from "./dom";
-import { INTERACTIVE_SEL, roleOf, accessibleName, ariaState, hasLayout, styleHidden, isFaded } from "./a11y";
+import { INTERACTIVE_SEL, roleOf, accessibleName, placeholderText, ariaState, hasLayout, styleHidden, isFaded } from "./a11y";
 import { pageContext, browserInfo, agentState } from "./util";
 import { makeBackgroundTaskPromise } from "./bridge";
 import type { InvocationInfo, MlPublicConfig } from "./contract";
@@ -167,15 +167,25 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
                     return r.width > 1 && r.height > 1 && r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth;
                 };
                 const want = String(contains).toLowerCase();
-                type Item = { el: Element; role: string; name: string; state: string; al: string | null };
+                type Item = { el: Element; role: string; name: string; ph: string; state: string; al: string | null };
                 const collect = (from: Element | Document, skipNav: boolean): Item[] => {
                     const acc: Item[] = [];
                     for (const el of from.querySelectorAll(INTERACTIVE_SEL)) {
                         if (styleHidden(el) || !inView(el)) continue;
                         if (skipNav) { try { if (el.closest(NAV_SEL)) continue; } catch { /* invalid :i on old engines */ } }
                         const name = accessibleName(el);
-                        if (want && !name.toLowerCase().includes(want)) continue;
-                        acc.push({ el, role: roleOf(el), name, state: [ariaState(el), isFaded(el) ? "hidden until hover" : ""].filter(Boolean).join(", "), al: el.getAttribute("aria-label") });
+                        const ph = placeholderText(el);
+                        // Match by what the user SEES or TYPED: the accessible name, the (DOM-persistent) placeholder
+                        // — still there after the field is filled, only hidden visually — and any current value /
+                        // contenteditable text. So a filled field is findable by its placeholder OR its content, and
+                        // a labelled box (Gemini: aria-label "Enter a prompt…", placeholder "Ask Gemini") by either.
+                        if (want) {
+                            const ce = el.getAttribute("contenteditable");
+                            const editable = (el as HTMLElement).isContentEditable || ce === "" || ce === "true";   // attr check: jsdom doesn't compute isContentEditable
+                            const typed = (el as HTMLInputElement).value || (editable ? (el.textContent || "") : "");
+                            if (![name, ph, typed].some(s => s.toLowerCase().includes(want))) continue;
+                        }
+                        acc.push({ el, role: roleOf(el), name, ph, state: [ariaState(el), isFaded(el) ? "hidden until hover" : ""].filter(Boolean).join(", "), al: el.getAttribute("aria-label") });
                         if (acc.length >= 500) break;   // scan safety cap
                     }
                     return acc;
@@ -218,7 +228,10 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
                             sel = `${it.el.tagName.toLowerCase()}[aria-label="${it.al}"]`;
                             try { const m = [...document.querySelectorAll(sel)]; if (m.length > 1) sel += ` · index ${m.indexOf(it.el)} of ${m.length}`; } catch { /* ignore */ }
                         } else sel = clickSelector(it.el);
-                        out.push(`#${n++} [${it.role}] ${it.name ? `"${truncate(it.name, 60)}"` : "(no accessible name)"}${it.state ? ` — ${it.state}` : ""}  →  ${sel}`);
+                        // Show the placeholder when it's not already the name — it's what the model sees on screen
+                        // (e.g. Gemini's "Ask Gemini") and bridges the gap when the accessible name differs.
+                        const phNote = it.ph && it.ph.toLowerCase() !== it.name.toLowerCase() ? ` · placeholder "${truncate(it.ph, 40)}"` : "";
+                        out.push(`#${n++} [${it.role}] ${it.name ? `"${truncate(it.name, 60)}"` : "(no accessible name)"}${phNote}${it.state ? ` — ${it.state}` : ""}  →  ${sel}`);
                         els.push(it.el);
                     }
                 }

@@ -10,6 +10,7 @@
 // Either may be undefined → the sidebar renders that block's raw view. Page-side (touches Element/DOM).
 import type { MlTool, RenderDescriptor, ToolRenderInput } from "./contract";
 import { clickSelector, truncate } from "./dom";
+import { accessibleName, placeholderText } from "./a11y";
 
 export function descriptorFor(
     tool: MlTool | undefined,
@@ -32,10 +33,16 @@ export function descriptorFor(
         // and "copy reference" / hover-highlight resolve the same node. NOT elPath (a full path that
         // wouldn't match), and no `index`: clickSelector is unique, so the reference is a bare
         // querySelector and the display badge falls back to the array position.
-        items: input.elements.slice(0, 50).map((el: Node) => ({
-            path: (typeof Element !== "undefined" && el instanceof Element) ? clickSelector(el) : String(el.nodeName || "node"),
-            text: truncate((el as Element).textContent || "", 60),
-        })),
+        items: input.elements.slice(0, 50).map((el: Node) => {
+            const isEl = typeof Element !== "undefined" && el instanceof Element;
+            return {
+                path: isEl ? clickSelector(el as Element) : String(el.nodeName || "node"),
+                // The ACCESSIBLE NAME (aria-label → placeholder → text), the SAME label the interactives text
+                // output shows the model — so the rendered element list matches the raw output instead of going
+                // blank for aria-label-only controls (icon buttons, the Gemini textbox, …).
+                text: truncate((isEl ? (accessibleName(el as Element) || placeholderText(el as Element)) : (el as Element).textContent) || "", 60),
+            };
+        }),
     };
     return { in: inD, out: outD };
 }

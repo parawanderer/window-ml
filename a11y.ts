@@ -54,6 +54,15 @@ export const accessibleName = (el: Element): string => {
     return "";
 };
 
+// The VISIBLE placeholder a user reads in an empty field — `data-placeholder` (contenteditable widgets:
+// Gemini/Slack/Quill…), the native `placeholder`, or `aria-placeholder`. This is what appears ON SCREEN, so
+// it may DIFFER from the accessible name (e.g. Gemini's box reads "Ask Gemini" but its aria-label is "Enter
+// a prompt for Gemini"). Kept separate so a search by what the user/model SEES can still find the control.
+export const placeholderText = (el: Element): string => {
+    const norm = (s: string | null | undefined) => (s || "").replace(/\s+/g, " ").trim();
+    return norm(el.getAttribute("data-placeholder")) || norm(el.getAttribute("placeholder")) || norm(el.getAttribute("aria-placeholder"));
+};
+
 // ARIA state suffix a screen reader would announce (disabled/checked/…).
 export const ariaState = (el: Element): string => {
     const s: string[] = [];

@@ -154,7 +154,29 @@ function writeAgent(s: Session, d: Sink): void {
         d.code(lines.join("\n"));
         d.details(`System prompt${c.customSystem ? " (custom)" : ""}`, () => d.code(c.system));
     }
+    // Follow-up user prompts (says) + each turn's answer, INTERLEAVED into the step walk by position —
+    // otherwise a multi-turn session exports as one flat run with a single final answer, losing the "you
+    // asked" / "answered" back-and-forth the sidebar shows. Ordered by step then timestamp (an answer lands
+    // before the next turn's prompt at the same step). The LAST answer is the final one (Answer/Stopped).
+    const answers = s.answers || [];
+    const inter = [
+        ...(s.says || []).map(x => ({ pos: x.atStep || 0, ts: x.ts, say: x.text })),
+        ...answers.map((a, i) => ({ pos: a.atStep || 0, ts: a.ts, answer: a, last: i === answers.length - 1 })),
+    ].sort((a, b) => (a.pos - b.pos)
+        // At the SAME step, a turn's answer comes before the NEXT turn's prompt (answer < say); then by time.
+        || ((("say" in a) ? 1 : 0) - (("say" in b) ? 1 : 0)) || (a.ts - b.ts));
+    let ii = 0;
+    const emitInter = (x: typeof inter[number]) => {
+        // "User Asked" (not "you") — the export is shared with the DevTools panel; "you" is HUD-only.
+        if ("say" in x) { d.head("User Asked"); d.prose(x.say || ""); return; }
+        const a = x.answer;
+        d.head(x.last ? (a.hitCap ? "Stopped (step cap)" : a.cancelled ? "Cancelled" : a.error ? "Error" : "Answer") : "Answered");
+        d.prose(a.error || a.text || "(no answer)", !a.text && !a.error);
+    };
+    const flush = (before: number) => { while (ii < inter.length && inter[ii].pos < before) emitInter(inter[ii++]); };
+
     for (const st of s.steps || []) {
+        flush(st.step || 0);   // any prior-turn answer / follow-up prompt that landed before this step
         // Skip a truly empty step — a usage-only emit (no prose/reasoning/tool, just a token
         // sample). Matches the sidebar's filter; otherwise it serialises a bare "Step N · ?" header.
         if (st.tool == null && !st.thought && !st.reasoning) continue;
@@ -251,8 +273,12 @@ function writeAgent(s: Session, d: Sink): void {
         if (st.result != null && st.result !== "") d.block("Out", st.result);
         else if (st.elements != null) d.inline("Out", `${st.elements} element(s)`);
     }
-    d.head(s.hitCap ? "Stopped (step cap)" : "Answer");
-    d.prose(s.summary || "(no answer — run did not complete)", !s.summary);
+    flush(Infinity);   // trailing answer(s) + any follow-up prompt that landed after the last step
+    // No per-turn answers recorded (a run still in flight, or an older session) → the single-answer tail.
+    if (answers.length === 0) {
+        d.head(s.hitCap ? "Stopped (step cap)" : "Answer");
+        d.prose(s.summary || "(no answer — run did not complete)", !s.summary);
+    }
 }
 
 function writeChat(s: Session, d: Sink): void {

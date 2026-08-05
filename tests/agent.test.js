@@ -308,6 +308,22 @@ test("interactives lists controls by role + accessible name with a clickable sel
     assert.match(run(ml, "interactives", { includeNav: true }).content, /\[link\] "Home"/);
 });
 
+test("interactives: a control is findable by its PLACEHOLDER even when the accessible name differs (Gemini)", () => {
+    // Gemini's box: aria-label "Enter a prompt for Gemini" (the accessible name) but data-placeholder
+    // "Ask Gemini" (what's on screen). A search by what the model SEES must still match.
+    const { ml } = loadDomWorld('<div contenteditable="true" role="textbox" aria-label="Enter a prompt for Gemini" data-placeholder="Ask Gemini"></div>');
+    const byPlaceholder = run(ml, "interactives", { contains: "Ask Gemini" });
+    assert.match(byPlaceholder.content, /Enter a prompt for Gemini/, "found via the placeholder");
+    assert.match(byPlaceholder.content, /placeholder "Ask Gemini"/, "the placeholder is shown next to the accessible name");
+    assert.match(run(ml, "interactives", { contains: "Enter a prompt" }).content, /Enter a prompt for Gemini/, "the aria-label still matches too");
+});
+
+test("interactives: a FILLED field is findable by its current typed content", () => {
+    // Placeholder gone (there's text), aria-label present → find it by what's typed.
+    const { ml } = loadDomWorld('<div contenteditable="true" role="textbox" aria-label="Message">Hello from the automation agent</div>');
+    assert.match(run(ml, "interactives", { contains: "Hello from the automation" }).content, /\[textbox\] "Message"/, "matched by typed content despite the name being the aria-label");
+});
+
 test("interactives only notes the nav skip when the page actually HAS nav/sidebar landmarks", () => {
     // A page with a <nav> → the skip note appears.
     const { ml } = loadDomWorld('<nav><a href="/">Home</a></nav><button>Go</button>');
