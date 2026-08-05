@@ -323,14 +323,23 @@ test("shadow DOM: the DOM tools pierce OPEN shadow roots, and a shadow reference
     assert.match(inter, /#host >>> button/, "its reference crosses the boundary with `>>>`");
 
     // That `>>>` reference re-resolves back to the same shadow element (click/describeElement can use it).
-    const re = run(ml, "describeElement", { selector: "#host >>> button" });
-    assert.match(String(re.content ?? re), /button/, "a `>>>` reference resolves into the shadow root");
+    const desc = (sel) => { const r = run(ml, "describeElement", { selector: sel }); return String(r.content ?? r); };
+    assert.match(desc("#host >>> button"), /button/, "a `>>>` reference resolves into the shadow root");
 
-    // Closed roots stay unreachable by design.
-    const closedHost = document.createElement("div");
-    document.body.append(closedHost);
-    closedHost.attachShadow({ mode: "closed" }).innerHTML = '<button class="secret">x</button>';
-    assert.match(String(run(ml, "describeElement", { selector: "button.secret" })), /No element/, "a CLOSED shadow root is not pierced");
+    // describeElement on an OPEN host descends into the shadow tree (was "no child elements") and flags it.
+    const openDesc = desc("#host");
+    assert.match(openDesc, /#shadow-root \(OPEN\)/, "an open shadow host is flagged as OPEN");
+    assert.match(openDesc, /button/, "and its shadow children are shown");
+
+    // A CLOSED root (a Web Component with no light children): unreachable by selector; describeElement flags
+    // it CLOSED and steers to locate/@pt with the host selector.
+    const sealed = document.createElement("sealed-widget");
+    document.body.append(sealed);
+    sealed.attachShadow({ mode: "closed" }).innerHTML = '<button class="secret">x</button>';
+    assert.match(desc("button.secret"), /No element/, "a CLOSED shadow root is NOT pierced by selector");
+    const closedDesc = desc("sealed-widget");
+    assert.match(closedDesc, /#shadow-root \(CLOSED\)/, "a closed-root Web Component is flagged CLOSED");
+    assert.match(closedDesc, /locate\(\{.*selector: "sealed-widget"/, "steered to locate() scoped to the host selector");
 });
 
 test("interactives: a control is findable by its PLACEHOLDER even when the accessible name differs (Gemini)", () => {

@@ -214,10 +214,33 @@ export const describeSkeleton = (el: Element, depth: number, indent = ""): strin
         // Depth exhausted here — flag that children exist so the model knows to
         // describeElement deeper instead of mistaking this for a leaf.
         out += ` › ${el.children.length} child${el.children.length === 1 ? "" : "ren"}`;
-    } else if (!indent) {
-        // No child elements at all. Say so at the ROOT (not every leaf of an expanded tree) so an
-        // empty container — e.g. a collapsed/lazily-rendered table like #bigsales — reads as "empty"
-        // instead of a bare, useless single line.
+    }
+    // Shadow root handling. `el.shadowRoot` is the OPEN root, or null for BOTH "closed" and "none" (there's
+    // no non-destructive API to distinguish them). So: an OPEN root → flag it + show the tree (its contents
+    // are the element's real content, not the empty light children — reachable via `<sel> >>> <inner>`). A
+    // custom element (hyphenated tag) with NO open root and NO light children almost certainly has a CLOSED
+    // root — steer to visual navigation, since selectors can't reach in.
+    const sr = el.shadowRoot;
+    if (sr) {
+        out += "\n" + indent + "  #shadow-root (OPEN) — its contents are shown below; reference them with `>>> <inner selector>`.";
+        const shadowKids = [...sr.children];
+        if (depth > 0) {
+            for (const k of shadowKids.slice(0, 12)) out += "\n" + describeSkeleton(k, depth - 1, indent + "    ");
+            if (shadowKids.length > 12) out += "\n" + indent + `    …(${shadowKids.length - 12} more)`;
+        } else if (shadowKids.length) {
+            out += `\n${indent}  › ${shadowKids.length} element${shadowKids.length === 1 ? "" : "s"} inside the shadow root (describeElement deeper to expand)`;
+        }
+    } else if (el.tagName.includes("-") && !el.children.length) {
+        const hostSel = clickSelector(el);   // the host is a light-DOM element → a normal selector
+        out += "\n" + indent + "  #shadow-root (CLOSED) — this Web Component has no light children and no OPEN " +
+            "root, so any controls it renders are in a CLOSED shadow root that selectors CANNOT reach. IF you " +
+            "have a `locate` tool, find them visually scoped to this element — locate({ description: \"<how the " +
+            `control looks>", selector: "${hostSel}" }) — then click the @pt it returns. WITHOUT a \`locate\` ` +
+            "tool you cannot interact with a closed shadow root; say so rather than guessing a selector.";
+    } else if (!el.children.length && !indent) {
+        // No child elements and no shadow root. Say so at the ROOT (not every leaf of an expanded tree) so an
+        // empty container — e.g. a collapsed/lazily-rendered table like #bigsales — reads as "empty" instead
+        // of a bare, useless single line.
         out += " (no child elements)";
     }
     return out;
@@ -309,12 +332,16 @@ export const queryAll = (selector: string): Element[] => {
         const wanted = texts.map(normalizeText);
         return els.filter(el => { const tc = normalizeText(el.textContent); return wanted.every(w => tc.includes(w)); });
     };
-    // Run a (native) selector + any text filter. If the LIGHT DOM yields nothing, the target may live inside
-    // a web component — pierce open shadow roots (only on the empty path, so normal pages pay nothing extra).
+    // Run a selector + any text filter, ALWAYS merging light DOM + open shadow roots (deepQueryAll includes
+    // the light matches first, in document order). Merge — not a fallback-when-empty — because a text/tag can
+    // legitimately match in BOTH the page chrome AND inside a component (the task text mentions "Display name"
+    // while the real control is in a shadow root); the caller wants the shadow one too. On a shadow-free page
+    // deepQueryAll returns exactly the light matches, so behaviour there is unchanged.
     const run = (sel: string): Element[] => {
-        let els = filterText([...document.querySelectorAll(sel || "*")]);
-        if (!els.length) els = filterText(deepQueryAll(sel || "*"));
-        return els;
+        // Validate first: deepQueryAll swallows per-scope throws, but an INVALID selector must still error
+        // (tools report "Invalid selector") rather than silently return 0 — native querySelectorAll throws here.
+        document.querySelectorAll(sel || "*");
+        return filterText(deepQueryAll(sel || "*"));
     };
     let els = run(base);
     // `text=` → keep only the deepest text carriers (drop matching ancestors), so a click
