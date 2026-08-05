@@ -163,8 +163,10 @@ function writeAgent(s: Session, d: Sink): void {
         ...(s.says || []).map(x => ({ pos: x.atStep || 0, ts: x.ts, say: x.text })),
         ...answers.map((a, i) => ({ pos: a.atStep || 0, ts: a.ts, answer: a, last: i === answers.length - 1 })),
     ].sort((a, b) => (a.pos - b.pos)
-        // At the SAME step, a turn's answer comes before the NEXT turn's prompt (answer < say); then by time.
-        || ((("say" in a) ? 1 : 0) - (("say" in b) ? 1 : 0)) || (a.ts - b.ts));
+        // At the SAME step (a turn that ran no tool steps keeps the prior step count), TIME is authoritative —
+        // ordering answer-before-say by fiat mis-sorted a chat-style reply whose say arrived before it. Fall
+        // back to answer-before-say only if the timestamps are identical.
+        || (a.ts - b.ts) || ((("say" in a) ? 1 : 0) - (("say" in b) ? 1 : 0)));
     let ii = 0;
     const emitInter = (x: typeof inter[number]) => {
         // "User Asked" (not "you") — the export is shared with the DevTools panel; "you" is HUD-only.

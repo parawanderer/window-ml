@@ -63,6 +63,14 @@ export interface MlConfig {
     autoApproveReadonly: boolean;
     /** experimental: auto-approve python_exec (the sandbox is isolated by construction) */
     autoApprovePython: boolean;
+    /** also pierce CLOSED shadow roots. A document_start patch (shadow-patch.ts, main world) wraps
+     *  attachShadow to capture each closed root as it's created; when this is ON the DOM tools treat those
+     *  captured roots like open ones (same `host >>> inner` syntax). ON by default — the capture patch runs
+     *  on every page regardless of this flag (the main world can't read config at document_start), so this
+     *  only gates whether the tools USE the captured roots; on is strictly more capable at no extra cost.
+     *  Declarative (`shadowrootmode=closed`) / native roots still can't be captured, so the tools keep
+     *  steering those to visual `locate`/@pt. */
+    pierceClosedShadow: boolean;
     /** Hostnames the USER has trusted to supply their OWN ml.agent approval gate (a page's
      *  `approve` callback / the page-loop confirm). Empty by default: EVERY other origin's
      *  privileged tool calls route through the unforgeable background gate + trusted surface,
@@ -141,6 +149,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     autoTitles: true,
     autoApproveReadonly: false,
     autoApprovePython: false,
+    pierceClosedShadow: true,
     pageApprovalDomains: [],
     groundingEnabled: false,
     groundingModel: "",
@@ -166,7 +175,7 @@ export const detectGroundingModel = (models: string[]): string =>
  *  ml.agent can decide whether to route a run through the unforgeable BACKGROUND loop (design A —
  *  when a debug surface is enabled) or the in-page loop (off). It's UI state, not a secret. */
 export type MlPublicConfig = Pick<MlConfig,
-    "model" | "ocrModel" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "autoApprovePython" | "groundingEnabled" | "groundingModel" | "groundingRange" | "debugMode" | "defaultModelVision"> & {
+    "model" | "ocrModel" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "autoApprovePython" | "pierceClosedShadow" | "groundingEnabled" | "groundingModel" | "groundingRange" | "debugMode" | "defaultModelVision"> & {
     /** COMPUTED per request (not stored): whether THIS page's origin is on the user's page-approval
      *  whitelist. When true, ml.agent honours the page's own approve()/confirm gate (the user trusts this
      *  domain); otherwise a privileged tool routes to the unforgeable background gate. The raw domain

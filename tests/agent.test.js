@@ -374,6 +374,43 @@ test("shadow DOM: scanning tools + describeElement tailor the CLOSED-root steer 
     assert.match(String(tool("pageInfo").run({})), /Shadow DOM.*closed\/empty root/s, "pageInfo counts shadow roots up front");
 });
 
+test("shadow DOM: pierceClosedShadow lets the DOM tools reach a CLOSED root the document_start patch captured", () => {
+    const { ml, document, window } = loadDomWorld('<button>light-only</button>');
+    // Simulate shadow-patch.js (not loaded in the test harness): a CLOSED root, stashed as it's created.
+    const host = document.createElement("sealed-widget");
+    document.body.append(host);
+    const closed = host.attachShadow({ mode: "closed" });
+    closed.innerHTML = '<button class="secret" aria-label="Reveal code">x</button>';
+    window.__mlClosedRoots = new WeakMap([[host, closed]]);   // what the patch's WeakMap would hold
+    const desc = (sel) => { const r = run(ml, "describeElement", { selector: sel }); return String(r.content ?? r); };
+
+    // Flag OFF (default): the closed root stays unreachable — behaviour is exactly as before the feature.
+    window.__mlPierceClosed = false;
+    assert.match(desc("button.secret"), /No element/, "flag off: a CLOSED root is not pierced by selector");
+    assert.match(desc("sealed-widget"), /#shadow-root \(CLOSED\)/, "flag off: flagged CLOSED and steered to locate");
+    assert.doesNotMatch(desc("sealed-widget"), /pierced/, "flag off: not reported as pierced");
+
+    // Flag ON: the captured closed root becomes selector-reachable, like an open one.
+    window.__mlPierceClosed = true;
+    assert.match(desc("button.secret"), /button/, "flag on: a captured CLOSED root IS pierced by selector");
+    const hostDesc = desc("sealed-widget");
+    assert.match(hostDesc, /#shadow-root \(CLOSED, pierced\)/, "the host is flagged CLOSED, pierced");
+    assert.match(hostDesc, /button/, "and its captured children are shown (not the closed-root steer)");
+    assert.doesNotMatch(hostDesc, /selectors CANNOT reach/, "no unreachable steer for a pierced host");
+
+    // interactives lists the sealed control with a `>>>` reference, and does NOT nag about a closed root.
+    const inter = run(ml, "interactives", {}).content;
+    assert.match(inter, /Reveal code/, "the sealed control is now listed");
+    assert.match(inter, /sealed-widget >>> button/, "referenced with a shadow-crossing `>>>`");
+    assert.doesNotMatch(inter, /CLOSED shadow root/, "no unreachable-closed-root disclaimer for a pierced root");
+
+    // The `>>>` reference re-resolves back INTO the captured closed root (click/type/describeElement can use it).
+    assert.match(desc("sealed-widget >>> button.secret"), /button/, "a `>>>` reference resolves into the captured closed root");
+
+    // Orientation: pageInfo now counts it as reachable, not an unreachable closed/empty root.
+    assert.doesNotMatch(String(run(ml, "pageInfo", {})), /closed\/empty root/, "pageInfo no longer reports it as unreachable-closed");
+});
+
 test("interactives: a control is findable by its PLACEHOLDER even when the accessible name differs (Gemini)", () => {
     // Gemini's box: aria-label "Enter a prompt for Gemini" (the accessible name) but data-placeholder
     // "Ask Gemini" (what's on screen). A search by what the model SEES must still match.
@@ -688,6 +725,29 @@ const scriptedModel = (turns) => {
 };
 const toolCall = (name, args = {}, id = "c") => ({ content: "", tool_calls: [{ id, name, arguments: args }] });
 const reply = (content) => ({ content, tool_calls: [] });
+
+test("createAgent: a 2nd run CONTINUES the session (agent-say, not a fresh `agent`) even when messages didn't sync — cancel-then-resume wipe fix", async () => {
+    // Regression (DevTools/background path): a CANCELLED turn never syncs control.messages back, so the handle
+    // keeps its hash but an EMPTY message list. The next run must still be a CONTINUATION (`agent-say`) —
+    // keying firstTurn off control.messages re-announced `agent`, whose onDebug handler REPLACES the sidebar
+    // session, wiping the whole history. We reproduce the not-synced state by clearing a.messages between runs.
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("turn one"), reply("turn two")]) });
+    const win = world.context.window;
+    const events = [];
+    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    win.postMessage({ __mlSidebar: "ready" });
+    await new Promise(r => setTimeout(r, 0));
+
+    const a = world.ml.createAgent({ tools: [], maxSteps: 3 });
+    await a.run("first task");
+    a.messages = [];                 // the cancel-not-synced condition: hash retained, history gone
+    await a.run("second task");
+
+    const starts = events.filter(e => e.kind === "agent");
+    assert.equal(starts.length, 1, "only the FIRST run announces `agent` — a 2nd would WIPE the sidebar session");
+    assert.ok(events.some(e => e.kind === "agent-say" && e.text === "second task"), "the 2nd run is a continuation `agent-say`");
+    assert.equal(starts[0].session.hash, a.hash, "both turns share the one session hash");
+});
 
 test("agent runs a tool, feeds the result back, and stops on a plain reply", async () => {
     const world = loadPageWorld({

@@ -26,6 +26,12 @@
     "content_scripts": [
       {
         "matches": ["<all_urls>"],
+        "js": ["shadow-patch.js"],
+        "run_at": "document_start",
+        "world": "MAIN"
+      },
+      {
+        "matches": ["<all_urls>"],
         "js": ["content.js", "sidebar-shell.js"]
       }
     ],

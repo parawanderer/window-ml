@@ -33,8 +33,8 @@ import type {
 } from "./contract";
 import { detectGroundingModel, DEFAULT_GROUNDING_RANGE } from "./contract";
 import { evalReadonly } from "./readonly-exec";
-import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay } from "./dom";
-import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE } from "./prompts";
+import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow } from "./dom";
+import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_NOTE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_EXEC_NOTE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, PT_LOOK_RADIUS, BOX_RE, resolveBox, agentState } from "./util";
 import type { ShotBox, ServerTool } from "./contract";
 import { annotate, pickAccentColorForTarget } from "./locate";
@@ -536,6 +536,12 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             const agentCfg = await this.config().catch(() => null);
             const autoRO = !!(agentCfg && (agentCfg as { autoApproveReadonly?: boolean }).autoApproveReadonly);
             const autoPy = !!(agentCfg && (agentCfg as { autoApprovePython?: boolean }).autoApprovePython);
+            // Closed-shadow-root piercing (opt-in). Set the dom.ts module flag from THIS run's config before
+            // any DOM tool executes — it governs both loop paths (the page loop below AND the background's
+            // delegated page-side tool execution, since both call into the same main-world dom.ts). Off →
+            // closed roots stay unreachable, exactly as before.
+            const pierceClosed = !!(agentCfg && (agentCfg as { pierceClosedShadow?: boolean }).pierceClosedShadow);
+            setPierceClosedShadow(pierceClosed);
             // #8 + #3: give the agent eyes with no wiring, preferring NATIVE vision.
             // If the agent's OWN model is vision-capable, register a capture-only
             // `look` whose screenshot ml.agent injects straight into the model's
@@ -603,7 +609,9 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 // The DOM tools all pierce open shadow roots + resolve `>>>` — tell the model, plus (only when
                 // exec is wired) how the notation maps to JS. Gated on a representative DOM tool being present.
                 if (toolset.some(t => ["findByText", "describeElement", "interactives", "click", "type"].includes(t.name))) {
-                    systemPrompt += SHADOW_CLAUSE;
+                    // The closed-root sentence differs by whether piercing is enabled (reachable via `>>>` vs
+                    // visual-only). SHADOW_EXEC_NOTE (`>>>` → JS) is still accurate either way.
+                    systemPrompt += SHADOW_CLAUSE + (pierceClosed ? SHADOW_CLOSED_PIERCE_NOTE : SHADOW_CLOSED_NOTE);
                     if (toolset.some(t => t.name === "exec")) systemPrompt += SHADOW_EXEC_NOTE;
                 }
                 if (toolset.some(t => t.name === "agent_api_docs")) systemPrompt += SELF_CLAUSE;
@@ -626,15 +634,20 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             // (an agent run isn't a createChat). elements can't cross the window
             // bus — send a count; real nodes still reach onStep/the console.
             // Mint the hash on the FIRST turn, then reuse it (a handle's later run()s continue the session).
+            // firstTurn keys off whether this control ALREADY has a hash (a prior turn started the session),
+            // NOT control.messages — computed BEFORE the hash is assigned below.
+            const firstTurn = !control.hash;
             const runHash = control.hash ?? shortHash();
             control.hash = runHash;
             // Register a createAgent HANDLE (not a throwaway ml.agent control) by its hash so a sidebar/HUD
             // composer can drive this session — say()/run()/cancel() — knowing only the hash. `run` present
             // ⇒ it's an AgentHandle. Registered mid-run so the composer can steer while it's still going.
             if (_control && typeof (_control as unknown as MlAgentHandle).run === "function") handleRegistry.set(runHash, _control as unknown as MlAgentHandle);
-            // A handle's 2nd+ turn (control.messages already seeded with a system prompt) continues an
-            // existing sidebar/HUD session, so it must NOT re-announce `agent` (that would wipe its steps).
-            const firstTurn = !control.messages.some(m => m.role === "system");
+            // A handle's 2nd+ turn continues an existing sidebar/HUD session, so it must NOT re-announce
+            // `agent` (that would wipe its steps). This held via control.messages until a CANCELLED
+            // background/devtools turn — which never syncs messages back (the round-trip rejects), leaving
+            // control.messages empty → the next run re-announced `agent` and WIPED the history. control.hash
+            // survives a cancel, so firstTurn (above) keys off it instead.
             // Resolve the driver model to the config default when none was passed, so the
             // sidebar shows the REAL model (not "default") and can tell when a vision
             // sub-call reused it (its `model` matches this) vs. ran on a different one.

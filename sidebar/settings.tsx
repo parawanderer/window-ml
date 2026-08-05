@@ -80,6 +80,7 @@ const TIP = {
     autoTitles: "Let the utility model write short summaries for you: debug session titles, and the plain-English gloss above a code approval / the description of a custom tool call in the off-mode card. Off = titles fall back to the first prompt and the card shows no summary. Only runs when a utility model is set.",
     autoApproveReadonly: "Experimental. Run read-only exec surveys (querySelectorAll → filter → map, no mutation) without an approval prompt, via a mediated interpreter that can't reach window/fetch and never eval()s a string. Anything that mutates or isn't recognised still asks. Also lets these surveys run on Trusted-Types pages where eval is blocked. The agent can likewise read its own setup without asking — ml.getModel/config/models/capabilities/ps/serverTools, the same non-secret values any page can read; every other ml method still prompts.",
     autoApprovePython: "Experimental. Run readonly-mode python_exec calls without an approval prompt. A readonly run is isolated by construction — the WASM sandbox has no DOM, no filesystem, and (in this mode) no network or JS/extension scope — so it's a pure function over the injected data and can't affect the page or exfiltrate. A `mode:'full'` call (which the agent must explicitly request to get network) ALWAYS asks. Code with hidden/bidi characters also still asks.",
+    pierceClosedShadow: "Let the DOM tools reach inside CLOSED shadow roots too (normally selector-invisible). A tiny script captures each closed root as the page builds it — the tools then treat it like an open root (same `host >>> inner` syntax). Closed shadow DOM is encapsulation, not a security boundary, so this doesn't cross any origin. On by default: the capture script wraps attachShadow on every page regardless of this setting (capture only — page behaviour is unchanged), so this just gates whether the tools use it. Turn it off to keep the tools' selector reach limited to open roots. Declarative/native closed roots still can't be captured; the agent falls back to visual locate/@pt for those.",
     groundingEnabled: "Experimental. When on, ml.agent's `locate` tool asks a grounding VLM for bounding-box coordinates. This loads an extra model into VRAM — leave off if memory is tight. Off = locate still works via the Set-of-Marks screenshot tool, which needs no extra model.",
     groundingModel: "A vision model that outputs coordinates (recommended qwen2.5vl:7b, or :3b for lower latency). Blank auto-detects a qwen2.5vl on your server. Real-world grounding accuracy is unproven.",
     groundingRange: "The coordinate scale the model outputs (the divisor for its x,y). The screenshot is sent as a square, so one number covers every convention: 1000 (0-1000 normalized OR qwen2.5vl absolute pixels), 100 (Molmo percent), 1024 (PaliGemma tokens), 1 (0.0-1.0 fractions). Leave at 1000 unless your model uses a different range.",
@@ -725,6 +726,15 @@ export function Settings() {
                     <input type="checkbox" checked={c.autoApprovePython}
                         onChange={(e: any) => setField("autoApprovePython", e.target.checked)} />
                     <Lbl tip={TIP.autoApprovePython}>Auto-approve readonly python_exec calls</Lbl>
+                </label>
+                </Section>
+
+                <Section id="shadow" title="Shadow DOM">
+                <div class="set-note">Let the DOM tools reach inside <b>closed</b> shadow roots (normally invisible to selectors). A tiny script captures each closed root as the page builds it, so the tools treat it like an open one (same <code>host &gt;&gt;&gt; inner</code> syntax). Closed shadow DOM is encapsulation, not a security boundary — this crosses no origin. <b>On by default</b>: the capture script wraps <code>attachShadow</code> on every page regardless of this toggle (capture only; page behaviour unchanged), so this just gates whether the tools use it. Declarative/native closed roots still fall back to visual <code>locate</code>/@pt.</div>
+                <label class="set-check">
+                    <input type="checkbox" checked={c.pierceClosedShadow}
+                        onChange={(e: any) => setField("pierceClosedShadow", e.target.checked)} />
+                    <Lbl tip={TIP.pierceClosedShadow}>Pierce closed shadow roots</Lbl>
                 </label>
                 </Section>
 

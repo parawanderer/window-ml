@@ -85,8 +85,19 @@ export const SHADOW_CLAUSE =
     "sampleText / click / type / wait / answer) pierce OPEN shadow roots automatically. A control inside one " +
     "is referenced as `host >>> inner` — one `>>>` per shadow boundary, and it nests: `a >>> b >>> c`. Pass " +
     "that selector to any DOM tool and it re-resolves it; describeElement flags a `#shadow-root (OPEN)` and " +
-    "shows its contents. A CLOSED shadow root is unreachable by ANY selector — click it visually with " +
-    "`locate`/`@pt` if you have that tool, else say you can't.";
+    "shows its contents.";
+// The closed-root sentence, appended after SHADOW_CLAUSE. Which one depends on whether the user enabled
+// closed-root piercing (pierceClosedShadow) — see injected.ts. Default: closed roots are visual-only.
+export const SHADOW_CLOSED_NOTE =
+    " A CLOSED shadow root is unreachable by ANY selector — click it visually with `locate`/`@pt` if you " +
+    "have that tool, else say you can't.";
+// Piercing on: most closed roots are ALSO reachable via `>>>`; only the few the extension can't capture
+// (declarative / native) stay visual-only, and the scanning tools flag exactly those.
+export const SHADOW_CLOSED_PIERCE_NOTE =
+    " CLOSED shadow roots are ALSO pierced (captured at page load) — the same `host >>> inner` syntax reaches " +
+    "inside and describeElement flags `#shadow-root (CLOSED, pierced)`. A few can't be captured (declarative " +
+    "`shadowrootmode=\"closed\"` or native browser roots); the scanning tools flag those specifically — reach " +
+    "them visually with `locate`/`@pt`.";
 // Appended to SHADOW_CLAUSE only when `exec` is available — the JS mapping is useless without it.
 export const SHADOW_EXEC_NOTE =
     " In `exec`, a `host >>> inner` path is `document.querySelector('host').shadowRoot.querySelector('inner')` " +

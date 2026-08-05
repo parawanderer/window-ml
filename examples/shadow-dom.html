@@ -17,6 +17,7 @@
   .mode.open { background: #e6f6ec; color: #167a3b; }
   .mode.closed { background: #fdeceb; color: #b3261e; }
   #mount { max-width: 560px; margin-top: 10px; }
+  sealed-note { display: block; margin-top: 10px; }   /* undefined custom element defaults to inline */
   @media (prefers-color-scheme: dark) {
     body { background: #1b1b1f; color: #eee; } p { color: #bbb; } code { background: #2a2a30; }
     .toolbar button { background: #26262c; border-color: #3a3a44; color: #eee; } .toolbar button:hover { background: #2f2f37; }
@@ -51,14 +52,69 @@
 
   <p class="hint">Watch the "Show work" trace. OPEN: <code>interactives</code> lists the panel's controls with
   <code>#host &gt;&gt;&gt; inner</code> selectors and <code>click</code>/<code>findByText</code> re-resolve
-  them. CLOSED: the same tools return nothing for the panel — that's the correct, honest result.</p>
+  them. CLOSED: the same tools return nothing <em>unless</em> the "Pierce closed shadow roots" setting is on —
+  the panel's closed root is built with <code>attachShadow({mode:"closed"})</code> after page load, so the
+  extension's <code>document_start</code> patch captures it and the DOM tools reach in (the trace shows
+  <code>#shadow-root (CLOSED, pierced)</code>). With the setting off, the panel is honestly unreachable.</p>
+
+  <h1 style="font-size:15px; margin-top:34px">A second panel — a <em>declarative</em> closed root (never pierceable)</h1>
+  <p>This one's closed shadow root is written into the HTML itself
+  (<code>&lt;template shadowrootmode="closed"&gt;</code>), so the browser's <b>parser</b> attaches it — there is
+  no <code>attachShadow</code> call for the extension to intercept, so it <b>cannot be captured even with "Pierce
+  closed shadow roots" on</b>. And the code stays hidden until you press <b>Reveal backup code</b> — a control
+  that lives INSIDE the closed root, so no selector can click it and vision can't just read the value off the
+  page. The only way through: <code>ml.locate</code> the button by appearance, <code>@pt</code>-click it (a
+  coordinate click retargets into the closed tree), <em>then</em> read the revealed code. A correct agent does
+  that or says it can't — it must never hallucinate the value.</p>
+  <sealed-note>
+    <template shadowrootmode="closed">
+      <style>
+        /* CSS-only reveal (no JS — a declarative closed root has no script to wire): a hidden checkbox the
+           button-label toggles, and :checked swaps the button for the code. A coordinate click on the label
+           retargets into this closed tree, which is the only way an agent can trip it. */
+        .box { max-width: 560px; border: 1px solid #e2e2e6; border-radius: 10px; padding: 11px 14px;
+          font: 14px system-ui; display: flex; align-items: center; gap: 10px; }
+        #reveal { display: none; }
+        .btn { font: 600 13px system-ui; padding: 6px 14px; border: 1px solid #c9c9d2; border-radius: 7px;
+          background: #fff; cursor: pointer; }
+        .btn:hover { background: #f2f2f6; }
+        .secret { display: none; font: 12px ui-monospace, monospace; background: #f0f0f2; padding: 1px 6px; border-radius: 4px; }
+        #reveal:checked ~ .btn { display: none; }
+        #reveal:checked ~ .secret { display: inline; }
+        @media (prefers-color-scheme: dark) {
+          .box { border-color: #33333a; } .secret { background: #2a2a30; }
+          .btn { background: #26262c; border-color: #3a3a44; color: #eee; } .btn:hover { background: #2f2f37; }
+        }
+      </style>
+      <div class="box">
+        <span>Backup access code:</span>
+        <input type="checkbox" id="reveal">
+        <label for="reveal" class="btn">Reveal backup code</label>
+        <code class="secret">SEAL-9931</code>
+      </div>
+    </template>
+  </sealed-note>
+  <p><code>await ml.agent("Reveal and read the backup access code in the second panel.")</code></p>
 
   <!--
-    ANSWER KEY (comment-only; the access code isn't in the DOM at all until the button is CLICKED):
-      • OPEN mode  → Display name "Ada Lovelace"; click reveals access code "SHDW-7788".
-      • CLOSED mode → both values ("Ada Lovelace" / "SHDW-7788") are inside a CLOSED root and are
-        UNREACHABLE by selector. A correct agent reports that it can't read them (or clicks by coordinate),
-        and does NOT hallucinate the values.
+    ANSWER KEY (comment-only; the access code isn't in the DOM at all until the button is CLICKED).
+    Behaviour depends on the "Pierce closed shadow roots" setting (pierceClosedShadow, ON by default):
+
+      • OPEN mode  → Display name "Ada Lovelace"; click reveals access code "SHDW-7788". Always reachable
+        (deep-query pierces open roots), regardless of the setting.
+
+      • CLOSED mode (the toggle) → the root is built via attachShadow({mode:"closed"}) AFTER page load, so:
+          - setting OFF (default): UNREACHABLE by selector — a correct agent reports it can't read the values
+            (or clicks by coordinate via locate/@pt) and does NOT hallucinate them.
+          - setting ON: the document_start patch CAPTURED it, so the DOM tools pierce it too — the agent reads
+            "Ada Lovelace" / "SHDW-7788" by selector, exactly like OPEN mode (trace: "#shadow-root (CLOSED, pierced)").
+
+      • <sealed-note> (the DECLARATIVE closed root) → parser-attached, never via attachShadow, so it is NEVER
+        captured — UNREACHABLE by selector even with the setting ON. The code "SEAL-9931" is also click-GATED:
+        hidden until the "Reveal backup code" button (inside the closed root) is pressed, so vision can't read it
+        off the page either. The ONLY path, in BOTH settings: locate the button by appearance → @pt-click it
+        (a coordinate click retargets into the closed tree) → then read the revealed code. A correct agent does
+        that, or says it can't — it must never hallucinate the value.
   -->
 
   <script>

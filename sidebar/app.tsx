@@ -58,8 +58,12 @@ function onDebug(ev: MlDebugEvent): void {
         // A step means the agent is actively working — flip to pending so a follow-up turn on an already-
         // "done" session (whose prior summary still sits in s.summary) reads as WORKING, not terminal. This
         // covers the off/card path where the page-side agent-say bridge is dormant, so a step is the first
-        // signal the run resumed. The next agent-result flips it back to ok/err.
-        s.status = "pending";
+        // signal the run resumed. The next agent-result flips it back to ok/err. BUT skip a STRAGGLER: a
+        // background-hosted run (design A / DevTools) keeps fanning the in-flight tool's late DONE after a
+        // cancel, and it lands AFTER the page's cancelled result — which would wrongly re-show "running"
+        // with no result ever coming to clear it. A straggler's step is ≤ the sealed turn's last step; a
+        // real new/continuing turn always advances past it (and unseals).
+        if (!s.ended || (ev.step || 0) > (s.endedStep ?? -1)) { s.status = "pending"; s.ended = false; }
         s.lastTs = ev.ts; rev.value++; return;
     }
     if (ev.kind === "agent-result") {
@@ -71,6 +75,8 @@ function onDebug(ev: MlDebugEvent): void {
         s.answers = [...(s.answers || []), { text: ev.summary, ts: ev.ts, atStep: maxSessionStep(s), status, hitCap: ev.hitCap, cancelled: !!ev.cancelled, error: ev.error || undefined }];
         s.summary = ev.summary; s.hitCap = ev.hitCap; s.error = ev.error || undefined; s.cancelled = !!ev.cancelled;
         s.status = status; s.lastTs = ev.ts;
+        // Seal the turn (see agent-step): a background run's late straggler step can't re-open "running".
+        s.ended = true; s.endedStep = maxSessionStep(s);
         rev.value++; return;
     }
     // A handle raised the step cap mid-run (a.maxSteps = N) → the "STEP x/N" display re-renders live.
@@ -85,7 +91,7 @@ function onDebug(ev: MlDebugEvent): void {
         const s = sessionMap.get(ev.session.hash);
         // A new user message means the agent is (about to be) working → back to pending, so the live footer
         // shows during a follow-up run (harmless for a mid-run steer, which is already pending).
-        if (s) { s.says = [...(s.says || []), { text: ev.text, ts: ev.ts, atStep: maxSessionStep(s) }]; s.status = "pending"; s.lastTs = ev.ts; rev.value++; }
+        if (s) { s.says = [...(s.says || []), { text: ev.text, ts: ev.ts, atStep: maxSessionStep(s) }]; s.status = "pending"; s.ended = false; s.lastTs = ev.ts; rev.value++; }
         return;
     }
     if (ev.kind === "chat") {
@@ -1157,12 +1163,16 @@ function AgentRunView({ s }: { s: Session }) {
             ? <ReplyBubble key={key} content="" status="err" model={s.model} profile={sessionProfile(s)} ts={a.ts} error={a.error} label="run failed" />
             : <ReplyBubble key={key} content={a.text} status={a.status} model={s.model} profile={sessionProfile(s)} ts={a.ts}
                 label={a.cancelled ? "cancelled" : a.hitCap ? "stopped (step cap)" : undefined} capped={a.hitCap || a.cancelled} />;
-    const items: { pos: number; el: preact.JSX.Element }[] = [
-        { pos: -1, el: <UserBubble key="task" text={s.task || ""} ts={s.createdTs} /> },
-        ...groups.map(g => ({ pos: g.step, el: <AgentTurn key={`t${g.step}`} turn={g} max={s.maxSteps} hash={s.hash} /> })),
-        ...(s.answers || []).map((a, i) => ({ pos: a.atStep + 0.5, el: answer(a, `a${i}`) })),
-        ...(s.says || []).map((sy, i) => ({ pos: sy.atStep + 0.9, el: <UserBubble key={`s${i}`} text={sy.text} ts={sy.ts} /> })),
-    ].sort((a, b) => a.pos - b.pos);
+    // Answers AND says share the same positional base (atStep + 0.5 = "after this turn's steps"); the TS
+    // breaks the tie. A fixed answer-before-say fraction was wrong: when a turn runs no tool steps (a plain
+    // chat-style reply, or a cancel), every answer/say lands at the SAME atStep, so the fraction forced ALL
+    // answers ahead of ALL says regardless of when they actually happened. ts is the authoritative order.
+    const items: { pos: number; ts: number; el: preact.JSX.Element }[] = [
+        { pos: -1, ts: s.createdTs, el: <UserBubble key="task" text={s.task || ""} ts={s.createdTs} /> },
+        ...groups.map(g => ({ pos: g.step, ts: 0, el: <AgentTurn key={`t${g.step}`} turn={g} max={s.maxSteps} hash={s.hash} /> })),
+        ...(s.answers || []).map((a, i) => ({ pos: a.atStep + 0.5, ts: a.ts, el: answer(a, `a${i}`) })),
+        ...(s.says || []).map((sy, i) => ({ pos: sy.atStep + 0.5, ts: sy.ts, el: <UserBubble key={`s${i}`} text={sy.text} ts={sy.ts} /> })),
+    ].sort((a, b) => a.pos - b.pos || a.ts - b.ts);
     return (
         <>
             <AgentOptionsBlock s={s} />
@@ -1815,9 +1825,15 @@ function ApprovalBody({ st, hash, goal }: { st: AgentStep; hash: string; goal: s
 const ACTIVITY: Record<string, { icon: string; label: string; short: string }> = {
     look: { icon: "👁", label: "Viewing the screen…", short: "look" },
     findByText: { icon: "🔎", label: "Searching the page…", short: "find" },
+    interactives: { icon: "🔎", label: "Finding controls…", short: "controls" },
+    describeElement: { icon: "🔬", label: "Inspecting an element…", short: "inspect" },
+    ancestors: { icon: "🧭", label: "Tracing the DOM…", short: "ancestors" },
+    sampleText: { icon: "📄", label: "Reading text…", short: "read" },
+    countMatches: { icon: "🔢", label: "Counting matches…", short: "count" },
     locate: { icon: "🎯", label: "Locating an element…", short: "locate" },
     click: { icon: "👆", label: "Clicking…", short: "click" },
     type: { icon: "⌨️", label: "Typing…", short: "type" },
+    wait: { icon: "⏳", label: "Waiting for the page…", short: "wait" },
     exec: { icon: "λ", label: "Running JavaScript…", short: "exec" },
     python_exec: { icon: "🐍", label: "Running Python…", short: "python" },
     scroll: { icon: "🖱", label: "Scrolling…", short: "scroll" },
@@ -1840,12 +1856,15 @@ function activityFor(run: Session): { icon: string; label: string; short: string
 function liveProseFor(run: Session): string | null {
     const steps = run.steps || [];
     const turnStart = Math.max(0, ...(run.says || []).map(s => s.atStep || 0));
-    for (let i = steps.length - 1; i >= 0; i--) {
-        if ((steps[i].step || 0) <= turnStart) break;   // walked out of the current turn
-        const t = (steps[i].thought || "").trim();
-        if (t) return t;
-    }
-    return null;
+    const cur = steps.filter(s => (s.step || 0) > turnStart);
+    if (!cur.length) return null;
+    // Only the CURRENT (latest) step's narration. Walking back to an earlier step's thought left a stale
+    // caption up — e.g. "Scanning the settings panel…" stayed while the agent had moved on to click/wait
+    // several steps later. No prose on the current step → null, and the pill falls back to that step's tool
+    // activity label (activityFor), which is always accurate. (A step emits its thought and its tool as
+    // separate entries sharing one `step`, so scan every entry at the latest step number.)
+    const latest = Math.max(0, ...cur.map(s => s.step || 0));
+    return cur.filter(s => (s.step || 0) === latest).map(s => (s.thought || "").trim()).find(Boolean) || null;
 }
 // Right-click the card/pill → ask the shell to draw the "move to corner" menu (drawn shell-side so the
 // tiny pill iframe can't clip it). Coords are iframe-local; the shell offsets by the frame's position.
@@ -1976,12 +1995,14 @@ function ShowWork({ run }: { run: Session }) {
     const running = run.status === "pending";
     const answers = run.answers || [];
     const pastAnswers = running ? answers : answers.slice(0, -1);
-    const traceItems: { pos: number; el: preact.JSX.Element }[] = [
-        ...(run.task ? [{ pos: -1, el: <CardTraceMsg key="task" label="you asked" text={run.task} cls="acard-you" /> }] : []),
-        ...(run.says || []).map((s, i) => ({ pos: s.atStep + 0.9, el: <CardTraceMsg key={`say${i}`} label="you asked" text={s.text} cls="acard-you" /> })),
-        ...pastAnswers.map((a, i) => ({ pos: a.atStep + 0.5, el: <CardTraceMsg key={`ans${i}`} label={a.cancelled ? "cancelled" : a.hitCap ? "stopped early" : "answered"} text={a.text || "(no reply)"} cls="acard-ans" /> })),
-        ...turns.map(t => ({ pos: t.step, el: <AgentTurn key={`t${t.step}`} turn={t} max={run.maxSteps} hash={run.hash} /> })),
-    ].sort((a, b) => a.pos - b.pos);
+    // Answers and says share one positional base (atStep + 0.5); TS breaks the tie — see AgentRunView for
+    // why a fixed answer-before-say fraction mis-orders a chat-style turn that ran no tool steps.
+    const traceItems: { pos: number; ts: number; el: preact.JSX.Element }[] = [
+        ...(run.task ? [{ pos: -1, ts: run.createdTs || 0, el: <CardTraceMsg key="task" label="you asked" text={run.task} cls="acard-you" /> }] : []),
+        ...(run.says || []).map((s, i) => ({ pos: s.atStep + 0.5, ts: s.ts, el: <CardTraceMsg key={`say${i}`} label="you asked" text={s.text} cls="acard-you" /> })),
+        ...pastAnswers.map((a, i) => ({ pos: a.atStep + 0.5, ts: a.ts, el: <CardTraceMsg key={`ans${i}`} label={a.cancelled ? "cancelled" : a.hitCap ? "stopped early" : "answered"} text={a.text || "(no reply)"} cls="acard-ans" /> })),
+        ...turns.map(t => ({ pos: t.step, ts: 0, el: <AgentTurn key={`t${t.step}`} turn={t} max={run.maxSteps} hash={run.hash} /> })),
+    ].sort((a, b) => a.pos - b.pos || a.ts - b.ts);
     // Right-click the toggle → export THIS run (Markdown / PDF), reusing the debug bar's export logic. The
     // `head` wraps ONLY the toggle + menu, so a click on the TRACE (or anywhere else, or the page → iframe
     // blur) dismisses it — the trace is a sibling, outside `head`.
@@ -2203,6 +2224,24 @@ function CardApp() {
             // +2px slack: sub-pixel rounding of each child's height can still leave card-body ~1px short of its
             // content (a faint scrollbar). The pad is invisible but guarantees the content never overflows.
             window.parent.postMessage({ __mlSidebarCardH: Math.ceil(h) + 6 }, "*");
+            // Caption pill: report its NATURAL width so the shell fits the pill to the text (up to a max, then
+            // the label ellipsizes). Measure the label's real glyph extent with a Range — the label has
+            // overflow:hidden + a flex width, so its offsetWidth/scrollWidth is clamped to the CURRENT pill and
+            // wouldn't shrink for a short line; a Range over the text reports the true layout width regardless.
+            const orb = app.querySelector(".card-orb.prose") as HTMLElement | null;
+            const lbl = orb?.querySelector(".card-orb-label") as HTMLElement | null;
+            // Guarded: Range.getBoundingClientRect is a layout call (unavailable under jsdom, and a hostile
+            // environment could throw) — a measurement failure must never abort the effect and strand the
+            // state post below it. The shell falls back to the fixed orbprose width when no width arrives.
+            if (orb && lbl && lbl.firstChild) try {
+                const range = document.createRange();
+                range.selectNodeContents(lbl);
+                const textW = range.getBoundingClientRect().width;
+                const cs = getComputedStyle(orb);
+                const ic = orb.querySelector(".card-orb-ic") as HTMLElement | null;
+                const chrome = parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) + (parseFloat(cs.columnGap || cs.gap) || 9) + (ic?.offsetWidth || 20);
+                if (textW > 0) window.parent.postMessage({ __mlSidebarCardW: Math.ceil(chrome + textW) + 4 }, "*");
+            } catch { /* no layout available (jsdom) → shell uses the fixed orbprose width */ }
         };
         post();
         requestAnimationFrame(() => requestAnimationFrame(post));

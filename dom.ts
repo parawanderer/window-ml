@@ -171,6 +171,35 @@ const selectorWithin = (target: Element, scope: Document | ShadowRoot): string =
     return parts.join(" > ") || target.tagName.toLowerCase();
 };
 
+// --- Closed-shadow-root piercing (opt-in `pierceClosedShadow`) ---------------------------------------
+// The document_start patch (shadow-patch.ts, main world) stashes every CLOSED shadow root in
+// window.__mlClosedRoots as it's created. We CONSULT that map only when the user turned the flag on —
+// injected.ts calls setPierceClosedShadow() with the run's config before the DOM tools execute. Off (the
+// default) → capturedClosedRoot always returns null and every closed root stays unreachable, exactly as
+// before. This is the single seam; all traversal (deepQueryAll, `>>>` resolution, describeSkeleton, the
+// stats/host scans) reads closed roots through traversableRoot/capturedClosedRoot so the feature is on or
+// off uniformly.
+// The flag and the captured-roots map both live on `window` (the main world, where `window === globalThis`)
+// — the map because shadow-patch.js sets it there at document_start, the flag so the same lives beside it and
+// stays reachable from the one `window` both this module and the patch share.
+/** Enable/disable closed-shadow-root piercing for subsequent DOM-tool calls (set per agent run from config). */
+export const setPierceClosedShadow = (on: boolean): void => {
+    (window as unknown as Record<string, unknown>).__mlPierceClosed = on;
+};
+
+/** The CLOSED shadow root the document_start patch captured for `el`, IF piercing is enabled and it grabbed
+ *  it. null when the flag is off, the patch is absent (shadow-patch.js didn't run), or the root is one it
+ *  can't see (a declarative `shadowrootmode="closed"` or native root). */
+export const capturedClosedRoot = (el: Element): ShadowRoot | null => {
+    const w = window as unknown as { __mlPierceClosed?: boolean; __mlClosedRoots?: WeakMap<Element, ShadowRoot> };
+    if (!w.__mlPierceClosed) return null;
+    return w.__mlClosedRoots?.get(el) ?? null;
+};
+
+/** The shadow root the DOM tools should TRAVERSE for `el`: its OPEN root, or — when piercing is on — a
+ *  captured CLOSED root. Makes captured closed roots first-class selector targets while the flag is set. */
+export const traversableRoot = (el: Element): ShadowRoot | null => el.shadowRoot ?? capturedClosedRoot(el);
+
 /**
  * One compact line for an element: tag#id.classes [data-*] "own text" (own text
  * only — never descendants' text or innerHTML). Shared by describeSkeleton and
@@ -223,9 +252,12 @@ export const describeSkeleton = (el: Element, depth: number, indent = "", canLoc
     // are the element's real content, not the empty light children — reachable via `<sel> >>> <inner>`). A
     // custom element (hyphenated tag) with NO open root and NO light children almost certainly has a CLOSED
     // root — steer to visual navigation, since selectors can't reach in.
-    const sr = el.shadowRoot;
+    // OPEN root, or — when piercing is on — a CLOSED root the document_start patch captured. Both are
+    // traversable and referenced with `>>>`, so they render the same tree; only the label differs.
+    const sr = el.shadowRoot ?? capturedClosedRoot(el);
     if (sr) {
-        out += "\n" + indent + "  #shadow-root (OPEN) — its contents are shown below; reference them with `>>> <inner selector>`.";
+        const label = el.shadowRoot ? "(OPEN)" : "(CLOSED, pierced) — captured at page load, so it's reachable;";
+        out += "\n" + indent + `  #shadow-root ${label} its contents are shown below; reference them with \`>>> <inner selector>\`.`;
         const shadowKids = [...sr.children];
         if (depth > 0) {
             for (const k of shadowKids.slice(0, 12)) out += "\n" + describeSkeleton(k, depth - 1, indent + "    ", canLocate);
@@ -286,7 +318,7 @@ export const deepQueryAll = (selector: string, root: ParentNode = document): Ele
     const visit = (r: ParentNode): void => {
         try { for (const e of r.querySelectorAll(selector || "*")) if (!seen.has(e)) { seen.add(e); out.push(e); } } catch { /* invalid selector in this scope */ }
         for (const host of r.querySelectorAll("*")) {
-            const sr = (host as Element).shadowRoot;   // open root, or null (closed / none)
+            const sr = traversableRoot(host as Element);   // open root, or (when piercing is on) a captured closed root
             if (sr) visit(sr);
         }
     };
@@ -295,33 +327,37 @@ export const deepQueryAll = (selector: string, root: ParentNode = document): Ele
 };
 
 /** Count shadow roots for ORIENTATION — a model scanning the DOM may not realise shadow roots exist at all.
- *  `open` = reachable open roots (recursive, incl. nested); `closed` = a heuristic for Web Components whose
- *  content is a CLOSED root (hyphenated tag, no light children, no open root — unreachable by selector). */
+ *  `open` = REACHABLE roots (recursive, incl. nested) — open roots, PLUS captured closed roots when piercing
+ *  is on (the DOM tools reach both). `closed` = a heuristic for Web Components whose content is an
+ *  UNREACHABLE closed root (hyphenated tag, no light children, no open/captured root — visual-only). */
 export const shadowRootStats = (root: ParentNode = document): { open: number; closed: number } => {
     let open = 0, closed = 0;
     const visit = (r: ParentNode): void => {
         for (const el of r.querySelectorAll("*")) {
             const e = el as Element;
-            const sr = e.shadowRoot;
-            if (sr) { open++; visit(sr); }
-            else if (e.tagName.includes("-") && !e.children.length) closed++;
+            if (e.shadowRoot) { open++; visit(e.shadowRoot); continue; }
+            const captured = capturedClosedRoot(e);   // piercing on + patch grabbed it → now reachable
+            if (captured) { open++; visit(captured); continue; }
+            if (e.tagName.includes("-") && !e.children.length) closed++;   // truly unreachable
         }
     };
     visit(root);
     return { open, closed };
 };
 
-/** The HOST selectors of CLOSED (or empty) shadow-root Web Components — the ones a selector scan can't enter.
- *  A scanning tool appends these so the model knows a target it can't find may be sealed inside one (and can
- *  fall back to visual `locate`/@pt scoped to the host). Uses the same heuristic as shadowRootStats.closed. */
+/** The HOST selectors of UNREACHABLE closed-root Web Components — the ones a selector scan can't enter EVEN
+ *  with piercing on (a captured closed root is reachable, so it's excluded here). A scanning tool appends
+ *  these so the model knows a target it can't find may be sealed inside one (and can fall back to visual
+ *  `locate`/@pt scoped to the host). Uses the same heuristic as shadowRootStats.closed. */
 export const closedShadowHosts = (root: ParentNode = document, limit = 8): string[] => {
     const hosts: string[] = [];
     const visit = (r: ParentNode): void => {
         for (const el of r.querySelectorAll("*")) {
             const e = el as Element;
-            const sr = e.shadowRoot;
-            if (sr) visit(sr);
-            else if (e.tagName.includes("-") && !e.children.length && hosts.length < limit) hosts.push(clickSelector(e));
+            if (e.shadowRoot) { visit(e.shadowRoot); continue; }
+            const captured = capturedClosedRoot(e);
+            if (captured) { visit(captured); continue; }   // pierced → reachable, don't nag; recurse for nested sealed ones
+            if (e.tagName.includes("-") && !e.children.length && hosts.length < limit) hosts.push(clickSelector(e));
         }
     };
     visit(root);
@@ -338,7 +374,7 @@ const resolveShadowPath = (path: string): Element[] => {
         const matched: Element[] = [];
         for (const sc of scopes) { try { matched.push(...sc.querySelectorAll(segs[i])); } catch { /* skip a bad segment */ } }
         if (i === segs.length - 1) return matched;
-        scopes = matched.map(e => e.shadowRoot).filter((r): r is ShadowRoot => !!r);
+        scopes = matched.map(e => traversableRoot(e)).filter((r): r is ShadowRoot => !!r);
         if (!scopes.length) return [];
     }
     return [];

@@ -760,6 +760,15 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
 
             // Mechanism #2 — Set-of-Marks (default, and the 'auto' grounding fallback).
             const somReader = model || groundingModel;   // a grounding model can read badges too
+            // A MISS still deserves a debug render: when grounding was attempted (auto fallback), its
+            // substeps (the model, the prompt, the screenshot it saw, the box/answer it returned) are in
+            // priorSubsteps — surface them + a closing "what SoM found" line, so the DevTools/export Out is a
+            // legible record of what was tried, not just a bare failed-state string. No prior attempt (pure
+            // SoM that found nothing to even badge) → nothing visual to show, so leave it as the raw string.
+            const missRender = (finalLabel: string): RenderDescriptor | undefined =>
+                priorSubsteps.length
+                    ? { type: "locate", mode: "marks", model: String(somReader || "default"), substeps: [...priorSubsteps, { label: finalLabel }] }
+                    : undefined;
             // Scan wider than we'll badge, so we can report the TRUE candidate count and cap
             // the badges at a legible number (badging 100 elements overlaps into mush).
             const SOM_BADGE_CAP = 40, SOM_DENSE = 30;
@@ -780,11 +789,11 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 : "Use strategy 'grid' and zoom in";
             const onCanvas = canvasPointIn(regionAsBox);   // is the search area itself a canvas?
             if (!cands.length) {
-                if (onCanvas) return `${canvasLead}${scopeSel ? `"${scopeSel}"` : "that area"} is a <canvas> — nothing to badge (no sub-elements). ${canvasAlts} — each returns an @pt coordinate token to click.`;
-                return `${prefix}No ${filter} candidates visible${scopeNote || " in the viewport"}. Scroll the target into view, widen the filter (try 'all'), then call again.`;
+                if (onCanvas) return { content: `${canvasLead}${scopeSel ? `"${scopeSel}"` : "that area"} is a <canvas> — nothing to badge (no sub-elements). ${canvasAlts} — each returns an @pt coordinate token to click.`, render: missRender("Set-of-Marks · <canvas> region, nothing to badge") };
+                return { content: `${prefix}No ${filter} candidates visible${scopeNote || " in the viewport"}. Scroll the target into view, widen the filter (try 'all'), then call again.`, render: missRender(`Set-of-Marks · no ${filter} candidates to badge`) };
             }
             if (cands.every(c => c.tagName === "CANVAS")) {
-                return `${canvasLead}"${description}" is on a <canvas> — nothing to badge (it has no sub-elements). ${canvasAlts} — it returns an @pt coordinate token to click.`;
+                return { content: `${canvasLead}"${description}" is on a <canvas> — nothing to badge (it has no sub-elements). ${canvasAlts} — it returns an @pt coordinate token to click.`, render: missRender("Set-of-Marks · target is a <canvas>, nothing to badge") };
             }
             // Dense pages break Set-of-Marks (badges overlap, the model misreads) AND we
             // only badge the first SOM_BADGE_CAP — say both, and steer to a better tool.

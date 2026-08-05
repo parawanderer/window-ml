@@ -16,6 +16,9 @@ const ENTRIES = {
     content: "content.ts",
     background: "background.ts",
     popup: "popup.ts",
+    // Tiny MAIN-world, document_start script that captures CLOSED shadow roots (opt-in
+    // pierceClosedShadow feature) before page components attach them. See shadow-patch.ts.
+    "shadow-patch": "shadow-patch.ts",
     // Offscreen document hosting the Pyodide runtime for the python_exec tool, and the
     // dedicated worker it spawns to run Pyodide OFF the shared main thread (keeps the
     // sidebar UI responsive during a long run).

@@ -903,6 +903,53 @@ test("agent session renders as a multi-turn CHAT LOG: user messages + BOTH answe
     assert.ok([...w.shadow.querySelectorAll(".step-pill")].some(p => /\/40/.test(p.textContent)), "the live maxSteps bump shows (step x/40)");
 });
 
+test("agent chat log orders answers + follow-ups by TIME when they share a step (no-tool turns)", async () => {
+    // The DevTools/HUD ordering bug: a turn that runs NO tool steps (a plain chat-style reply, or a cancel)
+    // keeps the prior step count, so its answer AND the next follow-up prompt land at the SAME atStep. The old
+    // fixed "answer-before-say" fraction then shoved ALL answers ahead of ALL says regardless of when they
+    // happened. Real chronology (ts) must win. Timeline: answer1(+100) → say(+150) → answer2(+200), all @ step 1.
+    const w = await loadSidebarWorld();
+    const H = "chatorder";
+    await w.dispatch(agentStart(H, "read the code", "m", 20));
+    await w.dispatch(agentStep(H, 1, { tool: "sampleText", arguments: {}, result: "SHDW-7788" }));
+    await w.dispatch({ kind: "agent-result", id: H, ts: Date.now() + 100, save: false, session: { hash: H, turn: 1 }, summary: "The code is SHDW-7788.", steps: 1 });
+    await w.dispatch({ kind: "agent-say", id: H, ts: Date.now() + 150, save: false, session: { hash: H, turn: 1 }, text: "thanks, what about cats?" });
+    // Turn 2 answers with NO tool step (chat-style) → its atStep stays 1, same as answer1 + the say.
+    await w.dispatch({ kind: "agent-result", id: H, ts: Date.now() + 200, save: false, session: { hash: H, turn: 1 }, summary: "Cats are great." });
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    // The rendered order must be answer1 → say → answer2 (by ts), NOT answer1 → answer2 → say.
+    const html = [...w.shadow.querySelectorAll(".msg")].map(m => m.textContent).join(" ||| ");
+    const iA1 = html.indexOf("The code is SHDW-7788");
+    const iSay = html.indexOf("what about cats");
+    const iA2 = html.indexOf("Cats are great");
+    assert.ok(iA1 >= 0 && iSay >= 0 && iA2 >= 0, "all three messages render");
+    assert.ok(iA1 < iSay, "the first answer precedes the follow-up prompt (by time)");
+    assert.ok(iSay < iA2, "the follow-up prompt precedes the second answer (not shoved below both answers)");
+});
+
+test("a straggler step arriving AFTER a cancel does not re-show 'running' (background-run seal)", async () => {
+    // Design-A/DevTools bug: a background-hosted run keeps fanning the in-flight tool's late DONE after the
+    // user cancels; it lands AFTER the page's cancelled result and used to flip the session back to
+    // "running" (footer + composer stuck), with no further result to clear it. The terminal result SEALS
+    // the turn so a straggler (step ≤ the sealed step) can't resurrect it.
+    const w = await loadSidebarWorld();
+    const H = "cxl";
+    await w.dispatch(agentStart(H, "click the button", "m", 20));
+    await w.dispatch(agentStep(H, 6, { seq: 5, pending: true, tool: "locate", arguments: { description: "a button" } }));  // START (in-flight)
+    await w.dispatch({ kind: "agent-result", id: H, ts: Date.now() + 100, save: false, session: { hash: H, turn: 6 }, summary: "Cancelled by the caller.", steps: 0, cancelled: true });
+    // The straggler: the in-flight locate's DONE, same seq/step, arriving after the cancel.
+    await w.dispatch(agentStep(H, 6, { seq: 5, tool: "locate", arguments: { description: "a button" }, result: "(Grounding missed.) No candidates." }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    assert.ok(!w.shadow.querySelector(".pending-note"), "no live 'running' footer after cancel + straggler");
+    assert.ok(w.shadow.querySelector(".msg.asst"), "the cancelled answer still renders");
+    // A genuine NEW turn (a step PAST the sealed step) still unseals → 'running' returns.
+    await w.dispatch(agentStep(H, 7, { seq: 6, thought: "New turn." }));
+    await w.tick();
+    assert.ok(w.shadow.querySelector(".pending-note"), "a new-turn step past the sealed step re-shows running");
+});
+
 test("debug In render of a click step is a hoverable element reference, not the card's intent sentence", async () => {
     // Regression: click/type emit an `action` intent descriptor (for the off-mode CARD). The DEBUG log
     // (overlay/devtools) must still render it as a hoverable/selectable element reference — the selector
@@ -1724,8 +1771,11 @@ test("export: a multi-turn agent run interleaves the follow-up prompts + per-tur
     const H = "multi";
     await w.dispatch(agentStart(H, "type something", "m", 20));
     await w.dispatch(agentStep(H, 1, { tool: "type", arguments: { selector: "input", text: "hi" }, result: "Typed." }));
-    await w.dispatch(agentResult(H, "Typed hi into the box.", 1));                 // turn 1 answer @ step 1
-    await w.dispatch({ kind: "agent-say", id: H, ts: Date.now() + 5, save: false, session: { hash: H, turn: 1 }, text: "would you be able to submit too?" });
+    await w.dispatch(agentResult(H, "Typed hi into the box.", 1));                 // turn 1 answer @ step 1 (ts +100)
+    // The follow-up prompt lands AFTER turn 1's answer (realistic ts): ordering is by real time, not a
+    // fixed answer-before-say rule — a chat-style turn that runs no tool steps keeps the same atStep, so ts
+    // is what interleaves them (the DevTools/HUD ordering bug this guards against).
+    await w.dispatch({ kind: "agent-say", id: H, ts: Date.now() + 150, save: false, session: { hash: H, turn: 1 }, text: "would you be able to submit too?" });
     await w.dispatch(agentStep(H, 2, { thought: "They're asking about submitting." }));
     await w.dispatch(agentResult(H, "Yes, via submit:true.", 2));                  // turn 2 answer (final)
     w.shadow.querySelector(".row").click();
@@ -2296,6 +2346,28 @@ test("card surface: live prose is SUPPRESSED in Quiet mode (no caption, no orb)"
     await w.flush();
     assert.ok(!posted.some(m => m.__mlSidebarCard === "orbprose"), "no live caption in quiet mode");
     assert.ok(!w.window.document.querySelector(".card-orb"), "no orb rendered at all");
+});
+
+test("card surface: the live caption updates to the current step — it doesn't STICK to a prior step's prose", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });   // progress HUD
+    w.window.postMessage = () => {};
+    await w.raw({ __mlSidebarSurface: "card" });
+    const hash = "stick";
+    await w.dispatch(agentStart(hash, "read then click", "m"));
+    // Step 1: the model NARRATES (thought), then runs a tool.
+    await w.dispatch(agentStep(hash, 1, { thought: "Scanning the settings panel…" }));
+    await w.dispatch(agentStep(hash, 1, { seq: 0, tool: "describeElement", arguments: { selector: "pref-panel" }, result: "…" }));
+    await w.flush();
+    let label = w.window.document.querySelector(".card-orb.prose .card-orb-label");
+    assert.ok(label && /Scanning the settings panel/.test(label.textContent), "the narrated step shows its prose caption");
+    // Step 2: a NEW tool step with NO narration (empty thought, usage only). The caption must NOT stay stuck.
+    await w.dispatch(agentStep(hash, 2, { thought: "", usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 } }));
+    await w.dispatch(agentStep(hash, 2, { seq: 1, tool: "click", arguments: { selector: "@pt:ab" }, result: "Clicked." }));
+    await w.flush();
+    label = w.window.document.querySelector(".card-orb.prose .card-orb-label");
+    assert.ok(!label || !/Scanning the settings panel/.test(label.textContent), "the stale narration is gone once a new tool runs without prose");
+    // The orb still renders (working) — it just shows the current tool's activity instead of the stale text.
+    assert.ok(w.window.document.querySelector(".card-orb"), "the working orb is still shown");
 });
 
 test("card surface: a type approval calls out type-AND-SUBMIT (dotted underline), plain type doesn't", async () => {

@@ -937,6 +937,10 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // first of these (tagged `__mlFromBg` by content.ts) and self-reveals for a pending gate / the
         // final answer, so a no-approval off run streams to a hidden, cheap-to-mount card.
         const emitStep = (ev: Record<string, unknown>): void => {
+            // Once the run is aborted (CANCEL_RUN), stop fanning steps: an in-flight tool's DONE resolves
+            // AFTER the abort (the page tool round-trip isn't cancellable), and a straggler landing after the
+            // page's cancelled result would wrongly re-show "running" in the panel. Drop it at the source.
+            if (abortCtl.signal.aborted) return;
             // Offset this turn's step/seq past the handle's prior turns so the sidebar's turn groups stay
             // distinct (the background twin of the page loop's control.stepBase/seqBase). Track the raw max
             // so the page can advance its bases for the next turn (returned in the response below).
@@ -1283,6 +1287,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     defaultModelVision: config.defaultModelVision,
                     utilityModel: config.utilityModel, utilityNumCtx: config.utilityNumCtx, utilityForceCpu: config.utilityForceCpu,
                     autoApproveReadonly: config.autoApproveReadonly, autoApprovePython: config.autoApprovePython,
+                    pierceClosedShadow: config.pierceClosedShadow,
                     groundingEnabled: config.groundingEnabled, groundingModel: config.groundingModel,
                     groundingRange: config.groundingRange, debugMode: config.debugMode, pageApprovalAllowed,
                 } });

@@ -46,6 +46,12 @@ export interface Session {
 
     maxSteps?: number;
     agentConfig?: DebugAgentConfig;
+    // A turn's terminal agent-result SEALS the session so a STRAGGLER step — the in-flight tool's late DONE
+    // that a background-hosted (design A) run keeps fanning after a cancel, arriving AFTER the page-emitted
+    // cancelled result — can't resurrect it to "running". A genuine new turn (agent-say, or a step past
+    // `endedStep`) unseals it. Without this the DevTools footer + composer stay stuck "running" post-cancel.
+    ended?: boolean;
+    endedStep?: number;
     // A multi-turn agent session renders as a CHAT LOG. Every user message — the initial task, a follow-up
     // run()'s task, and a mid-run say() — is a `say` (all rendered identically as "you"); every turn's final
     // answer is an `answer`. `atStep` is the cumulative step count when it arrived, so the render interleaves

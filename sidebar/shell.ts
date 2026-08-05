@@ -115,22 +115,22 @@ const CARD_CSS = `
 #${SB_CARD}-wrap[data-corner$="left"][data-state="hidden"] { transform: translateX(-18px) scale(.98); }
 #${SB_CARD}-wrap[data-state="orb"], #${SB_CARD}-wrap[data-state="orblabel"], #${SB_CARD}-wrap[data-state="orbprose"],
 #${SB_CARD}-wrap[data-state="toast"], #${SB_CARD}-wrap[data-state="expanded"], #${SB_CARD}-wrap[data-state="composer"] { opacity: 1; transform: none; }
-/* Live-caption pill: the orb widened to show the model's between-step narration. A STATIC rounded pill
-   (no jelly wobble — the text must stay readable). */
-#${SB_CARD}-wrap[data-state="orbprose"] { border-radius: 27px; box-shadow: 0 12px 34px rgba(0, 0, 0, .30), 0 3px 10px rgba(0, 0, 0, .18); }
-/* Hover capsule: the orb stretched into a rounded pill that spells out the current tool (no wobble — it's
-   readable now). border-radius = half the height so the ends are perfectly round. */
-#${SB_CARD}-wrap[data-state="orblabel"] { border-radius: 27px; box-shadow: 0 12px 34px rgba(0, 0, 0, .30), 0 3px 10px rgba(0, 0, 0, .18);
+/* Both pill states — the hover capsule (orblabel, spelling out the current tool) and the live-caption pill
+   (orbprose, the model's between-step narration) — are the same computing stage, just stretched. Both stay
+   ALIVE, wobbling their cap radii on both axes like the orb (border-radius only, so it can't move the box /
+   re-trip the hover). border-radius ≈ half the height so the ends stay round. The width itself is set in px
+   by the shell — for orbprose it FITS the text (up to a max, then the label ellipsizes). */
+#${SB_CARD}-wrap[data-state="orblabel"], #${SB_CARD}-wrap[data-state="orbprose"] {
+  border-radius: 27px; box-shadow: 0 12px 34px rgba(0, 0, 0, .30), 0 3px 10px rgba(0, 0, 0, .18);
   animation: ${SB_CARD}-jelly 2.6s ease-in-out infinite; }
-/* The capsule is the same computing stage, just stretched — so it stays ALIVE, wobbling its cap radii on
-   both axes (border-radius only, so it can't move the box / re-trip the hover). */
 @keyframes ${SB_CARD}-jelly {
   0%, 100% { border-radius: 27px 27px 27px 27px / 27px 27px 27px 27px; }
   25%      { border-radius: 33px 21px 33px 21px / 14px 27px 14px 27px; }
   50%      { border-radius: 21px 33px 21px 33px / 27px 14px 27px 14px; }
   75%      { border-radius: 31px 23px 31px 23px / 18px 27px 18px 27px; }
 }
-@media (prefers-reduced-motion: reduce) { #${SB_CARD}-wrap[data-state="orblabel"] { animation: none; } }
+@media (prefers-reduced-motion: reduce) {
+  #${SB_CARD}-wrap[data-state="orblabel"], #${SB_CARD}-wrap[data-state="orbprose"] { animation: none; } }
 /* The liquid ORB — the working state balled up into a circle (the emoji tool icon lives in the iframe).
    While computing it WOBBLES like a water droplet: the border-radius morphs between organic asymmetric
    values (a 2D metaball, done on the acrylic container itself — no SVG goo filter to muddy the backdrop
@@ -231,6 +231,7 @@ let cardReady = false;                       // the card iframe app has handshak
 // height → cardAutoH), capped at 72vh, UNLESS the user dragged the top edge (cardManualH, persisted).
 let cardAutoH = 200;
 let cardManualH: number | null = null;   // transient drag override (discarded when content changes / on unmount)
+let cardProseW: number | null = null;    // the caption pill's measured content width (app-reported), clamped for orbprose
 let cardDrag: { left: number; top: number } | null = null;   // live grab-drag position (px); null when resting
 // The cursor's live page position + the fraction of the card it grabbed, tracked so a mid-drag SIZE change
 // (the pill collapsing to the orb) keeps that grabbed point under the cursor — instead of pinning the old
@@ -289,7 +290,16 @@ const CARD_MARGIN = 20;
 const CARD_BORDER = 2;   // the wrap's 1px top+bottom border (box-sizing: border-box), added back to the content height
 const ORB_SIZE = 54;
 const CARD_W: Record<string, number> = { orb: ORB_SIZE, orblabel: 230, orbprose: 360, toast: 340, expanded: 384, composer: 560, hidden: 340 };
-const cardW = (state: string): number => Math.min(CARD_W[state] ?? 340, window.innerWidth - 2 * CARD_MARGIN);
+const PROSE_MIN_W = 150;   // never narrower than the icon + a couple of words (a 1-word caption still reads as a pill)
+const cardW = (state: string): number => {
+    // orbprose FITS its caption: the app measures the text's natural width and posts it; we clamp to
+    // [PROSE_MIN_W, orbprose max] so a short line hugs the text and a long one caps + ellipsizes. The width
+    // change animates via the wrap's CSS transition, so the pill smoothly grows/shrinks as new prose lands.
+    if (state === "orbprose" && cardProseW != null) {
+        return Math.min(Math.max(cardProseW, PROSE_MIN_W), CARD_W.orbprose, window.innerWidth - 2 * CARD_MARGIN);
+    }
+    return Math.min(CARD_W[state] ?? 340, window.innerWidth - 2 * CARD_MARGIN);
+};
 const cardH = (state: string): number => {
     if (state === "orb" || state === "orblabel" || state === "orbprose") return ORB_SIZE;   // circle / capsule /
                                                                     // caption — SAME height (a vertical shift would flicker the pointerenter/leave)
@@ -679,6 +689,14 @@ function onWindowMessage(e: MessageEvent): void {
     // the noisy ResizeObserver stream can't snap-back-glitch a drag.
     if (typeof d.__mlSidebarCardH === "number" && frame && e.source === frame.contentWindow) {
         cardAutoH = d.__mlSidebarCardH; layoutCard();
+        return;
+    }
+    // The caption pill (orbprose) reports its natural text width so the shell can fit the pill to it (cardW
+    // clamps to the max). Only re-layout when we're actually in that state — a stale measurement from a
+    // just-finished caption must not resize the expanded/toast card.
+    if (typeof d.__mlSidebarCardW === "number" && frame && e.source === frame.contentWindow) {
+        cardProseW = d.__mlSidebarCardW;
+        if ((cardWrap?.dataset.state || "") === "orbprose") layoutCard();
         return;
     }
     // "Show work" toggled: release any manual drag override and re-fit to the new content (capped) — the

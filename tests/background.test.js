@@ -530,6 +530,7 @@ test("GET_CONFIG returns the model/ocrModel/apiFormat and withholds the URL and 
     assert.deepEqual(res.data, {
         model: "qwen3:235b", ocrModel: "qwen2.5vl", apiFormat: "ollama", defaultModelVision: "",
         utilityModel: "", utilityNumCtx: 4096, utilityForceCpu: false, autoApproveReadonly: false, autoApprovePython: false,
+        pierceClosedShadow: true,
         groundingEnabled: false, groundingModel: "", groundingRange: 1000, debugMode: "off",
         // Computed per-origin: no sender.tab in this harness call → not on the whitelist → false. The raw
         // pageApprovalDomains list is deliberately NOT exposed (only this boolean for the caller's origin).
