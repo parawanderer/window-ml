@@ -5,7 +5,7 @@
 // (detached, `this`-free) `defineTool` and returns the array.
 
 import type { MlTool, ToolResult } from "./contract";
-import { truncate, clipOut, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, selectorError } from "./dom";
+import { truncate, clipOut, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, deepQueryAll, selectorError } from "./dom";
 import { INTERACTIVE_SEL, roleOf, accessibleName, placeholderText, ariaState, hasLayout, styleHidden, isFaded } from "./a11y";
 import { pageContext, browserInfo, agentState } from "./util";
 import { makeBackgroundTaskPromise } from "./bridge";
@@ -170,7 +170,9 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
                 type Item = { el: Element; role: string; name: string; ph: string; state: string; al: string | null };
                 const collect = (from: Element | Document, skipNav: boolean): Item[] => {
                     const acc: Item[] = [];
-                    for (const el of from.querySelectorAll(INTERACTIVE_SEL)) {
+                    // deepQueryAll pierces OPEN shadow roots — web-component controls (icon buttons, custom
+                    // inputs) are otherwise invisible here. Each shadow control's clickSelector is a `>>>` path.
+                    for (const el of deepQueryAll(INTERACTIVE_SEL, from)) {
                         if (styleHidden(el) || !inView(el)) continue;
                         if (skipNav) { try { if (el.closest(NAV_SEL)) continue; } catch { /* invalid :i on old engines */ } }
                         const name = accessibleName(el);
@@ -224,7 +226,10 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
                     } else for (const it of grp) {
                         if (out.length >= limit) break;
                         let sel: string;
-                        if (it.al && !it.al.includes('"')) {
+                        // A shadow-DOM control needs its `>>>` reference (clickSelector) — a plain
+                        // `[aria-label]` selector's uniqueness/index check runs against `document` and can't
+                        // see shadow siblings, so it'd be ambiguous. Light-DOM controls keep the aria-label form.
+                        if (it.el.getRootNode() === document && it.al && !it.al.includes('"')) {
                             sel = `${it.el.tagName.toLowerCase()}[aria-label="${it.al}"]`;
                             try { const m = [...document.querySelectorAll(sel)]; if (m.length > 1) sel += ` · index ${m.indexOf(it.el)} of ${m.length}`; } catch { /* ignore */ }
                         } else sel = clickSelector(it.el);

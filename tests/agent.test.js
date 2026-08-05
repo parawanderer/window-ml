@@ -308,6 +308,31 @@ test("interactives lists controls by role + accessible name with a clickable sel
     assert.match(run(ml, "interactives", { includeNav: true }).content, /\[link\] "Home"/);
 });
 
+test("shadow DOM: the DOM tools pierce OPEN shadow roots, and a shadow reference re-resolves via `>>>`", () => {
+    const { ml, document } = loadDomWorld('<div id="host"></div><button>light-only</button>');
+    const root = document.getElementById("host").attachShadow({ mode: "open" });
+    root.innerHTML = '<button class="save" aria-label="Save doc">Save</button>';
+
+    // A plain selector with no light-DOM match falls back to piercing the shadow root.
+    const d = run(ml, "describeElement", { selector: "button.save" });
+    assert.match(String(d.content ?? d), /button/, "describeElement finds the shadow button");
+
+    // interactives lists the shadow control by its accessible name, with a shadow-crossing `>>>` selector.
+    const inter = run(ml, "interactives", {}).content;
+    assert.match(inter, /Save doc/, "interactives lists the shadow control");
+    assert.match(inter, /#host >>> button/, "its reference crosses the boundary with `>>>`");
+
+    // That `>>>` reference re-resolves back to the same shadow element (click/describeElement can use it).
+    const re = run(ml, "describeElement", { selector: "#host >>> button" });
+    assert.match(String(re.content ?? re), /button/, "a `>>>` reference resolves into the shadow root");
+
+    // Closed roots stay unreachable by design.
+    const closedHost = document.createElement("div");
+    document.body.append(closedHost);
+    closedHost.attachShadow({ mode: "closed" }).innerHTML = '<button class="secret">x</button>';
+    assert.match(String(run(ml, "describeElement", { selector: "button.secret" })), /No element/, "a CLOSED shadow root is not pierced");
+});
+
 test("interactives: a control is findable by its PLACEHOLDER even when the accessible name differs (Gemini)", () => {
     // Gemini's box: aria-label "Enter a prompt for Gemini" (the accessible name) but data-placeholder
     // "Ask Gemini" (what's on screen). A search by what the model SEES must still match.

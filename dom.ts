@@ -137,13 +137,27 @@ export const normalizeText = (s: string | null | undefined): string => (s || "")
  * @returns {string} A unique (where resolvable), valid selector.
  */
 export const clickSelector = (target: Element): string => {
+    const root = target.getRootNode() as ShadowRoot;
+    // Inside an OPEN shadow root → a shadow-CROSSING reference: `<host path> >>> <inner path>`. queryAll
+    // parses `>>>` back (stepping into each host's shadowRoot), so click/type/describeElement re-find it.
+    // Duck-type (nodeType 11 + a `host`) rather than `instanceof ShadowRoot` — the latter breaks across
+    // realms (e.g. the vm/jsdom test harness) and when ShadowRoot isn't a global.
+    if (root && root.nodeType === 11 && root.host) {
+        return `${clickSelector(root.host)} >>> ${selectorWithin(target, root)}`;
+    }
+    return selectorWithin(target, document);
+};
+// The shortest-unique-selector logic, scoped to a root (document OR a shadow root) so uniqueness is checked
+// within that tree and the walk-up stops at the root's boundary (a shadow tree's top element has no parent).
+const selectorWithin = (target: Element, scope: Document | ShadowRoot): string => {
     const esc = cssEsc;
-    const uniq = (sel: string): boolean => { try { const m = document.querySelectorAll(sel); return m.length === 1 && m[0] === target; } catch { return false; } };
-    const idUnique = (el: Element) => !!el.id && (() => { try { return document.querySelectorAll("#" + esc(el.id)).length === 1; } catch { return false; } })();
+    const uniq = (sel: string): boolean => { try { const m = scope.querySelectorAll(sel); return m.length === 1 && m[0] === target; } catch { return false; } };
+    const idUnique = (el: Element) => !!el.id && (() => { try { return scope.querySelectorAll("#" + esc(el.id)).length === 1; } catch { return false; } })();
     if (idUnique(target)) return "#" + esc(target.id);
+    const top = scope.nodeType === 9 ? (scope as Document).documentElement : null;   // stop here (or at a null parent in a shadow root)
     const parts: string[] = [];
     let el: Element | null = target, hops = 0;
-    while (el && el.nodeType === 1 && el !== document.documentElement && hops < 12) {
+    while (el && el.nodeType === 1 && el !== top && hops < 12) {
         if (idUnique(el)) parts.unshift("#" + esc(el.id));
         else {
             let seg = el.tagName.toLowerCase();
@@ -234,8 +248,43 @@ const TRAILING_NTH_NATIVE = /^([\s\S]*):nth-(?:of-type|child)\(\s*(\d+)\s*\)\s*$
  * @param {string} selector The (possibly predicate-carrying) selector.
  * @returns {Element[]} Matching elements, after peeling + applying predicates.
  */
+/** querySelectorAll that PIERCES open shadow roots. Chrome's native querySelectorAll stops at shadow
+ *  boundaries, so web-component content (Gemini's editor, many design systems) is invisible to a selector.
+ *  Collects matches at `root` + recursively inside every OPEN shadowRoot (closed roots are unreachable by
+ *  design), deduped. Reads the live DOM. */
+export const deepQueryAll = (selector: string, root: ParentNode = document): Element[] => {
+    const out: Element[] = [];
+    const seen = new Set<Element>();
+    const visit = (r: ParentNode): void => {
+        try { for (const e of r.querySelectorAll(selector || "*")) if (!seen.has(e)) { seen.add(e); out.push(e); } } catch { /* invalid selector in this scope */ }
+        for (const host of r.querySelectorAll("*")) {
+            const sr = (host as Element).shadowRoot;   // open root, or null (closed / none)
+            if (sr) visit(sr);
+        }
+    };
+    visit(root);
+    return out;
+};
+
+/** Resolve a shadow-CROSSING reference `hostSel >>> innerSel [>>> …]` (the inverse of clickSelector's `>>>`
+ *  output): each `>>>` steps into the open shadowRoot of the previous segment's matches. */
+const resolveShadowPath = (path: string): Element[] => {
+    const segs = path.split(">>>").map(s => s.trim()).filter(Boolean);
+    if (!segs.length) return [];
+    let scopes: ParentNode[] = [document];
+    for (let i = 0; i < segs.length; i++) {
+        const matched: Element[] = [];
+        for (const sc of scopes) { try { matched.push(...sc.querySelectorAll(segs[i])); } catch { /* skip a bad segment */ } }
+        if (i === segs.length - 1) return matched;
+        scopes = matched.map(e => e.shadowRoot).filter((r): r is ShadowRoot => !!r);
+        if (!scopes.length) return [];
+    }
+    return [];
+};
+
 export const queryAll = (selector: string): Element[] => {
     let base = String(selector).trim();
+    if (base.includes(">>>")) return resolveShadowPath(base);   // a shadow-crossing reference
     const texts: string[] = [];
     let eqIndex: number | null = null;   // trailing :eq(n) → jQuery-style 0-based positional pick
     // Playwright's `text=Foo` / `text="Foo"` engine (a common model reflex): match by
@@ -255,16 +304,16 @@ export const queryAll = (selector: string): Element[] => {
         m = base.match(TRAILING_TEXT_PSEUDO);
         if (m) { texts.unshift(m[3]); base = m[1].trim(); changed = true; }
     }
-    // Run a (native) selector and apply any collected text filter.
+    const filterText = (els: Element[]): Element[] => {
+        if (!texts.length) return els;
+        const wanted = texts.map(normalizeText);
+        return els.filter(el => { const tc = normalizeText(el.textContent); return wanted.every(w => tc.includes(w)); });
+    };
+    // Run a (native) selector + any text filter. If the LIGHT DOM yields nothing, the target may live inside
+    // a web component — pierce open shadow roots (only on the empty path, so normal pages pay nothing extra).
     const run = (sel: string): Element[] => {
-        let els = [...document.querySelectorAll(sel || "*")];
-        if (texts.length) {
-            const wanted = texts.map(normalizeText);
-            els = els.filter(el => {
-                const tc = normalizeText(el.textContent);
-                return wanted.every(w => tc.includes(w));
-            });
-        }
+        let els = filterText([...document.querySelectorAll(sel || "*")]);
+        if (!els.length) els = filterText(deepQueryAll(sel || "*"));
         return els;
     };
     let els = run(base);
