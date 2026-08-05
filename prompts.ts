@@ -80,6 +80,17 @@ export const ANSWER_CLAUSE =
     "\n\nIf the task asks you to FIND / LOCATE / return an element (rather than change " +
     "the page), designate it with the answer tool (by selector) so the actual element " +
     "is handed back to the caller.";
+export const SHADOW_CLAUSE =
+    "\n\nShadow DOM: the DOM tools (findByText / interactives / describeElement / ancestors / countMatches / " +
+    "sampleText / click / type / wait / answer) pierce OPEN shadow roots automatically. A control inside one " +
+    "is referenced as `host >>> inner` — one `>>>` per shadow boundary, and it nests: `a >>> b >>> c`. Pass " +
+    "that selector to any DOM tool and it re-resolves it; describeElement flags a `#shadow-root (OPEN)` and " +
+    "shows its contents. A CLOSED shadow root is unreachable by ANY selector — click it visually with " +
+    "`locate`/`@pt` if you have that tool, else say you can't.";
+// Appended to SHADOW_CLAUSE only when `exec` is available — the JS mapping is useless without it.
+export const SHADOW_EXEC_NOTE =
+    " In `exec`, a `host >>> inner` path is `document.querySelector('host').shadowRoot.querySelector('inner')` " +
+    "— chain `.shadowRoot.querySelector(...)` once per `>>>` hop (a closed root's `.shadowRoot` is null).";
 export const WAIT_CLAUSE =
     "\n\nThe page updates ASYNCHRONOUSLY — clicks, typing, navigation and lazy-loading take " +
     "effect after a delay, NOT instantly. So after any action that triggers an update, use the " +

@@ -4,8 +4,8 @@
 // `ml`/bus state), so the whole set lifts out cleanly. `makeDomTools` takes the
 // (detached, `this`-free) `defineTool` and returns the array.
 
-import type { MlTool, ToolResult } from "./contract";
-import { truncate, clipOut, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, deepQueryAll, selectorError } from "./dom";
+import type { MlTool, ToolResult, ToolContext } from "./contract";
+import { truncate, clipOut, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, deepQueryAll, closedShadowHosts, selectorError } from "./dom";
 import { INTERACTIVE_SEL, roleOf, accessibleName, placeholderText, ariaState, hasLayout, styleHidden, isFaded } from "./a11y";
 import { pageContext, browserInfo, agentState } from "./util";
 import { makeBackgroundTaskPromise } from "./bridge";
@@ -98,6 +98,18 @@ const selfIntrospectionSection = async (): Promise<string> => {
 const firstOfNote = (selector: string, count: number): string =>
     count > 1 ? `⚠ "${selector}" matched ${count} elements — using the FIRST (#0). Narrow it (an id, or :nth-of-type(N)), or countMatches to list them.\n\n` : "";
 
+// Appended to a page-SCANNING tool's output: the CLOSED shadow roots a selector scan couldn't enter, so the
+// model knows a target it can't find may be sealed inside one. The workaround is conditional on `locate`
+// being wired this run (ctx.hasTool) — without it there is no way in. "" when there are no closed roots.
+const shadowScanNote = (ctx?: ToolContext): string => {
+    const closed = closedShadowHosts();
+    if (!closed.length) return "";
+    const advice = ctx?.hasTool("locate")
+        ? " If a control you can't find is inside one, `locate({ description: \"<how it looks>\", selector: \"<that host>\" })` searches it visually — then click the @pt it returns."
+        : " Their contents can't be reached by ANY selector, and no `locate` tool is available to click them visually.";
+    return `\n\n⚠ ${closed.length} CLOSED shadow root${closed.length === 1 ? "" : "s"} were not scanned (selectors can't enter them): ${closed.join(", ")}.${advice}`;
+};
+
 // Pass this array (or a superset — `[...ml.domTools, myTool]`) to ml.agent. Each
 // tool returns a short string; observations never balloon into raw HTML.
 export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): MlTool[] => {
@@ -117,11 +129,14 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
                 },
                 required: ["text"]
             },
-            run: ({ text, limit = 10 }: { text: string; limit?: number }): string | ToolResult => {
+            run: ({ text, limit = 10 }: { text: string; limit?: number }, ctx?: ToolContext): string | ToolResult => {
                 if (!text) return "Provide `text` to search for.";
                 const wanted = normalizeText(text);
                 const out = [], els = [];
-                for (const el of (document.body || document).querySelectorAll("*")) {
+                // deepQueryAll pierces OPEN shadow roots — text inside a Web Component (e.g. Gemini's editor)
+                // is otherwise invisible to a light-only `querySelectorAll("*")`. A shadow match gets a `>>>`
+                // reference (clickSelector) since elPath can't express a path across a shadow boundary.
+                for (const el of deepQueryAll("*", document.body || document)) {
                     const tc = el.textContent;
                     if (!tc || !normalizeText(tc).includes(wanted)) continue;
                     // Deepest match only: skip if a child element also contains it.
@@ -130,11 +145,13 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
                         if (c.textContent && normalizeText(c.textContent).includes(wanted)) { childHas = true; break; }
                     }
                     if (childHas) continue;
-                    out.push(`#${els.length}: ${elPath(el)}  «${truncate(tc, 50)}»`);
+                    const path = el.getRootNode() === document ? elPath(el) : clickSelector(el);
+                    out.push(`#${els.length}: ${path}  «${truncate(tc, 50)}»`);
                     els.push(el);
                     if (els.length >= limit) break;
                 }
-                return els.length ? { content: out.join("\n"), elements: els } : `No elements contain "${text}".`;
+                const shadowNote = shadowScanNote(ctx);
+                return els.length ? { content: out.join("\n") + shadowNote, elements: els } : `No elements contain "${text}".${shadowNote}`;
             }
         }),
         T({
@@ -158,7 +175,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
                     includeNav: { type: "boolean", description: "Include navigation/sidebar controls too (default false — they're skipped so page content isn't drowned out)." }
                 }
             },
-            run: ({ scope = "viewport", contains = "", limit = 40, includeNav = false }: { scope?: string; contains?: string; limit?: number; includeNav?: boolean }): string | ToolResult => {
+            run: ({ scope = "viewport", contains = "", limit = 40, includeNav = false }: { scope?: string; contains?: string; limit?: number; includeNav?: boolean }, ctx?: ToolContext): string | ToolResult => {
                 const layout = hasLayout();
                 const NAV_SEL = 'nav, aside, [role="navigation"], [role="complementary"], [role="banner"], #sidebar, [class*="sidebar" i]';
                 const inView = (el: Element): boolean => {
@@ -240,8 +257,9 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
                         els.push(it.el);
                     }
                 }
-                if (!els.length) return contains ? `No interactive controls with a name containing "${contains}". Try again without \`contains\` to list everything.` : "No interactive controls found.";
-                return { content: note + out.join("\n"), elements: els };
+                const shadowNote = shadowScanNote(ctx);
+                if (!els.length) return (contains ? `No interactive controls with a name containing "${contains}". Try again without \`contains\` to list everything.` : "No interactive controls found.") + shadowNote;
+                return { content: note + out.join("\n") + shadowNote, elements: els };
             }
         }),
         T({
@@ -249,7 +267,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
             summary: "Describes one element's structure and attributes.",
             description: "Skeleton of an element and its descendants to a depth: tags, ids, " +
                 "classes, data-* attributes, own text. Use it to walk up/down the tree and " +
-                "spot the repeating container and stable anchors. This tool supports shadow roots. Never returns innerHTML.",
+                "spot the repeating container and stable anchors. Never returns innerHTML.",
             parameters: {
                 type: "object",
                 properties: {
@@ -258,13 +276,13 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
                 },
                 required: ["selector"]
             },
-            run: ({ selector, depth = 2 }: { selector: string; depth?: number }): string | ToolResult => {
+            run: ({ selector, depth = 2 }: { selector: string; depth?: number }, ctx?: ToolContext): string | ToolResult => {
                 let els: Element[];
                 try { els = queryAll(selector); }
                 catch (e) { return selectorError(selector, e as Error); }
                 const el = els[0];
                 if (!el) return `No element matches "${selector}".`;
-                return { content: firstOfNote(selector, els.length) + describeSkeleton(el, Math.min(Math.max(depth, 0), 4)), elements: [el] };
+                return { content: firstOfNote(selector, els.length) + describeSkeleton(el, Math.min(Math.max(depth, 0), 4), "", ctx?.hasTool("locate")), elements: [el] };
             }
         }),
         T({

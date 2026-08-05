@@ -334,6 +334,25 @@ export interface ToolRenderInput {
     renderIn?: RenderDescriptor;
 }
 
+/** The RUNTIME execution context handed to a tool's `run(args, ctx)` — things a tool can only learn at run
+ *  time, not when it was defined: which OTHER tools are wired this run (so a tool can adapt when a companion
+ *  like `locate` isn't available), and the driver model + its capabilities. Built per run at the single tool
+ *  choke point (tool-exec.ts) and passed through to `run`; optional, so a tool that ignores it still works. */
+export interface ToolContext {
+    /** Names of every tool available to the agent THIS run. */
+    tools: string[];
+    /** Whether a given tool is wired this run — e.g. `ctx.hasTool("locate")` before suggesting a visual path.
+     *  This is ALSO the right "can the agent SEE?" signal: `hasTool("look")` reflects the effective vision
+     *  (native probe, a delegated reader, OR the defaultModelVision override for a cloud model). */
+    hasTool(name: string): boolean;
+    /** The resolved driver model (or null when unset). */
+    model: string | null;
+    /** The driver model's RAW Ollama capabilities (["completion","tools","vision","thinking"]), or null when
+     *  undeterminable (cloud / non-Ollama / not probed). NOTE: for "does it see images" use `hasTool("look")`,
+     *  NOT this — a cloud model with the vision OVERRIDE has null raw caps but a wired `look` tool. */
+    capabilities: string[] | null;
+}
+
 export interface MlTool {
     name: string;
     /** the FULL description sent to the model */
@@ -346,7 +365,7 @@ export interface MlTool {
     /** Args are model-supplied JSON, so tools may destructure a specific shape
      *  (`run({ selector }: { selector: string })`); typed `any` so those narrower
      *  signatures stay assignable to this contract. */
-    run: (args: any) => string | ToolResult | Promise<string | ToolResult>;
+    run: (args: any, ctx?: ToolContext) => string | ToolResult | Promise<string | ToolResult>;
     requiresApproval: boolean;
     /** e.g. "vision" | "answer" | "meta" ("meta" = self-introspection, answered by the agent loop) */
     capabilities: ("vision"|"answer"|"meta")[];

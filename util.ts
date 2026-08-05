@@ -2,7 +2,7 @@
 // and element-rect screenshot cropping. Pure-ish (args + browser globals); bundled
 // into injected.js.
 
-import { truncate } from "./dom";
+import { truncate, shadowRootStats } from "./dom";
 import type { ShotBox } from "./contract";
 
 /**
@@ -95,6 +95,16 @@ export const pageContext = (): string => {
     if (locale) parts.push(`Locale: ${locale}`);
     // The browser the user is actually in, so advice lands ("open edge://settings", not chrome://).
     try { const b = browserInfo(); parts.push(`Browser: ${b.name}${b.version ? ` ${b.version}` : ""}`); } catch {}
+    // Shadow-DOM orientation: a model scanning the DOM may not realise shadow roots exist. Report the counts
+    // up front (open roots the DOM tools pierce with `host >>> inner`; closed ones only reachable visually).
+    try {
+        const s = shadowRootStats();
+        if (s.open || s.closed) {
+            parts.push(`Shadow DOM: ${s.open} open shadow root${s.open === 1 ? "" : "s"}` +
+                (s.open ? " (the DOM tools pierce these — references look like `host >>> inner`)" : "") +
+                (s.closed ? `${s.open ? "; " : ", "}${s.closed} Web Component${s.closed === 1 ? "" : "s"} with a closed/empty root (reachable only visually, via locate/@pt)` : "") + ".");
+        }
+    } catch {}
     return parts.join("\n");
 };
 

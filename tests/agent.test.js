@@ -347,6 +347,33 @@ test("shadow DOM: the DOM tools pierce OPEN shadow roots, and a shadow reference
     assert.match(anc, /host/, "and reaches the light-DOM host");
 });
 
+test("shadow DOM: scanning tools + describeElement tailor the CLOSED-root steer to whether `locate` is wired (ToolContext)", () => {
+    const { ml, document } = loadDomWorld('<button>light</button>');
+    const sealed = document.createElement("sealed-box");
+    document.body.append(sealed);
+    sealed.attachShadow({ mode: "closed" }).innerHTML = '<button>x</button>';
+    const tool = (name) => ml.domTools.find(t => t.name === name);
+    const withLocate = { tools: ["locate"], hasTool: (n) => n === "locate", model: null, capabilities: null };
+    const noLocate = { tools: [], hasTool: () => false, model: null, capabilities: null };
+
+    // A page-scanning tool appends a disclaimer naming the closed host — and the workaround is gated on ctx.
+    const iL = tool("interactives").run({}, withLocate).content;
+    assert.match(iL, /CLOSED shadow root.*sealed-box/s, "the disclaimer names the closed host");
+    assert.match(iL, /locate\(/, "with locate advice when it's wired");
+    assert.match(tool("interactives").run({}, noLocate).content, /no `locate` tool is available/, "without locate: says it can't reach them");
+    assert.match(tool("interactives").run({}).content, /CLOSED shadow root/, "no ctx → still notes it (with pessimistic advice)");
+
+    // findByText appends it too (a no-match is exactly when the model needs the nudge).
+    assert.match(String(tool("findByText").run({ text: "zzz" }, withLocate)), /CLOSED shadow root/, "findByText appends the disclaimer");
+
+    // describeElement on the closed host tailors the per-host steer.
+    assert.match(String(tool("describeElement").run({ selector: "sealed-box" }, withLocate).content), /locate\(\{.*selector: "sealed-box"/, "with locate → a scoped locate() example");
+    assert.match(String(tool("describeElement").run({ selector: "sealed-box" }, noLocate).content), /no `locate` tool/, "without locate → says it can't interact");
+
+    // pageInfo (orientation) reports shadow roots so a scanning model knows they exist.
+    assert.match(String(tool("pageInfo").run({})), /Shadow DOM.*closed\/empty root/s, "pageInfo counts shadow roots up front");
+});
+
 test("interactives: a control is findable by its PLACEHOLDER even when the accessible name differs (Gemini)", () => {
     // Gemini's box: aria-label "Enter a prompt for Gemini" (the accessible name) but data-placeholder
     // "Ask Gemini" (what's on screen). A search by what the model SEES must still match.

@@ -34,7 +34,7 @@ import type {
 import { detectGroundingModel, DEFAULT_GROUNDING_RANGE } from "./contract";
 import { evalReadonly } from "./readonly-exec";
 import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay } from "./dom";
-import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE } from "./prompts";
+import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_EXEC_NOTE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, PT_LOOK_RADIUS, BOX_RE, resolveBox, agentState } from "./util";
 import type { ShotBox, ServerTool } from "./contract";
 import { annotate, pickAccentColorForTarget } from "./locate";
@@ -47,7 +47,7 @@ import { renderArgs, logStep, defaultApprove, normalizeApproval, formatReadonlyE
 import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPythonTool, targetRender } from "./builtin-tools";
 import { pyVarNameError } from "./python-env";
 import { autoApprovePython } from "./auto-approve";
-import { executeTool } from "./tool-exec";
+import { executeTool, toolContext } from "./tool-exec";
 import { runAgentLoop } from "./agent-loop";
 import type { AgentLoopDeps } from "./agent-loop";
 
@@ -600,6 +600,12 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 if (hasCap("vision")) systemPrompt += VISION_CLAUSE;
                 if (hasCap("answer")) systemPrompt += ANSWER_CLAUSE;
                 if (toolset.some(t => t.name === "wait")) systemPrompt += WAIT_CLAUSE;
+                // The DOM tools all pierce open shadow roots + resolve `>>>` — tell the model, plus (only when
+                // exec is wired) how the notation maps to JS. Gated on a representative DOM tool being present.
+                if (toolset.some(t => ["findByText", "describeElement", "interactives", "click", "type"].includes(t.name))) {
+                    systemPrompt += SHADOW_CLAUSE;
+                    if (toolset.some(t => t.name === "exec")) systemPrompt += SHADOW_EXEC_NOTE;
+                }
                 if (toolset.some(t => t.name === "agent_api_docs")) systemPrompt += SELF_CLAUSE;
                 // Deterministic-compute clause. python_exec is the better calculator; when it's
                 // absent, exec (read-only JS: Array/Math/.reduce) is the fallback — either way the
@@ -666,7 +672,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     : (hasApprovalTool && !agentCfg?.pageApprovalAllowed) ? "off" : null;
             control.bg = !!bgSurface;   // so a handle's mid-run say() knows to steer via INJECT_MESSAGE, not the page inbox
             if (bgSurface) {
-                registerRun(runHash, toolset);
+                registerRun(runHash, toolset, runModel);
                 // Phase 2 resume for a BACKGROUND-hosted run: the run's history lives in the service worker,
                 // so continuing it is a RESUME_RUN round-trip (not the page-loop's in-memory drive()). We
                 // re-register the live tools (endRun cleared them after the prior turn) so delegation works
@@ -674,7 +680,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 agentRegistry.set(runHash, {
                     hash: runHash,
                     resume: async (t: string): Promise<AgentResult> => {
-                        registerRun(runHash, toolset);
+                        registerRun(runHash, toolset, runModel);
                         enterAgentRun();
                         try {
                             const res = await makeBackgroundTaskPromise<AgentResult>("RESUME_RUN_REQUEST", "RESUME_RUN_RESPONSE", { runId: runHash, task: t }, undefined, signal);
@@ -792,9 +798,12 @@ class AgentHandle implements MlAgentHandle, AgentControl {
 
             // Execute a tool inline, compute its In/Out render slots, and collect answer-capable nodes.
             // The page analogue of the background's delegating runTool — but it runs in the page's world.
+            // The runtime ToolContext for this run — built once from the finalised toolset (byName) + model,
+            // so a tool's run(args, ctx) can adapt to which companion tools are wired (e.g. `locate`).
+            const toolCtx = toolContext(byName, runModel);
             const runToolDep = async (name: string, args: Record<string, unknown>) => {
                 const tool = byName[name];
-                const env = await executeTool(tool, args);
+                const env = await executeTool(tool, args, toolCtx);
                 const { in: renderIn, out: renderOut } = descriptorFor(tool, env, args);
                 if (tool && tool.capabilities && tool.capabilities.includes("answer") && env.elements && env.elements.length) answered.push(...env.elements as Node[]);
                 return { result: String(env.result), elements: env.elements, renderIn, renderOut, image: env.image, imageLabel: env.imageLabel };

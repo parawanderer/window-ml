@@ -203,11 +203,14 @@ export const elLine = (el: Element): string => {
  * @param {string} [indent=""] Current indentation prefix (used in recursion).
  * @returns {string} A newline-joined, indented skeleton.
  */
-export const describeSkeleton = (el: Element, depth: number, indent = ""): string => {
+// `canLocate` tailors the CLOSED-shadow-root steer: true → suggest locate()/@pt; false → say it can't be
+// reached (no locate tool); undefined → a natural-language "IF you have a locate tool" (safe default when the
+// caller doesn't pass a ToolContext). Propagated through the recursion.
+export const describeSkeleton = (el: Element, depth: number, indent = "", canLocate?: boolean): string => {
     let out = indent + elLine(el);
     if (el.children.length && depth > 0) {
         for (const k of [...el.children].slice(0, 12)) {
-            out += "\n" + describeSkeleton(k, depth - 1, indent + "  ");
+            out += "\n" + describeSkeleton(k, depth - 1, indent + "  ", canLocate);
         }
         if (el.children.length > 12) out += "\n" + indent + `  …(${el.children.length - 12} more)`;
     } else if (el.children.length) {
@@ -225,18 +228,20 @@ export const describeSkeleton = (el: Element, depth: number, indent = ""): strin
         out += "\n" + indent + "  #shadow-root (OPEN) — its contents are shown below; reference them with `>>> <inner selector>`.";
         const shadowKids = [...sr.children];
         if (depth > 0) {
-            for (const k of shadowKids.slice(0, 12)) out += "\n" + describeSkeleton(k, depth - 1, indent + "    ");
+            for (const k of shadowKids.slice(0, 12)) out += "\n" + describeSkeleton(k, depth - 1, indent + "    ", canLocate);
             if (shadowKids.length > 12) out += "\n" + indent + `    …(${shadowKids.length - 12} more)`;
         } else if (shadowKids.length) {
             out += `\n${indent}  › ${shadowKids.length} element${shadowKids.length === 1 ? "" : "s"} inside the shadow root (describeElement deeper to expand)`;
         }
     } else if (el.tagName.includes("-") && !el.children.length) {
         const hostSel = clickSelector(el);   // the host is a light-DOM element → a normal selector
-        out += "\n" + indent + "  #shadow-root (CLOSED) — this Web Component has no light children and no OPEN " +
-            "root, so any controls it renders are in a CLOSED shadow root that selectors CANNOT reach. IF you " +
-            "have a `locate` tool, find them visually scoped to this element — locate({ description: \"<how the " +
-            `control looks>", selector: "${hostSel}" }) — then click the @pt it returns. WITHOUT a \`locate\` ` +
-            "tool you cannot interact with a closed shadow root; say so rather than guessing a selector.";
+        const base = `\n${indent}  #shadow-root (CLOSED) — this Web Component has no light children and no OPEN ` +
+            "root, so any controls it renders are in a CLOSED shadow root that selectors CANNOT reach. ";
+        // Tailor the workaround to whether `locate` is actually wired this run (ctx.hasTool → canLocate).
+        out += base + (canLocate === false
+            ? "You have no `locate` tool, so you can't interact with a closed shadow root — say so rather than guessing a selector."
+            : (canLocate === true ? "Find them visually scoped to this element — " : "IF you have a `locate` tool, ") +
+              `locate({ description: "<how the control looks>", selector: "${hostSel}" }) — then click the @pt it returns.`);
     } else if (!el.children.length && !indent) {
         // No child elements and no shadow root. Say so at the ROOT (not every leaf of an expanded tree) so an
         // empty container — e.g. a collapsed/lazily-rendered table like #bigsales — reads as "empty" instead
@@ -287,6 +292,40 @@ export const deepQueryAll = (selector: string, root: ParentNode = document): Ele
     };
     visit(root);
     return out;
+};
+
+/** Count shadow roots for ORIENTATION — a model scanning the DOM may not realise shadow roots exist at all.
+ *  `open` = reachable open roots (recursive, incl. nested); `closed` = a heuristic for Web Components whose
+ *  content is a CLOSED root (hyphenated tag, no light children, no open root — unreachable by selector). */
+export const shadowRootStats = (root: ParentNode = document): { open: number; closed: number } => {
+    let open = 0, closed = 0;
+    const visit = (r: ParentNode): void => {
+        for (const el of r.querySelectorAll("*")) {
+            const e = el as Element;
+            const sr = e.shadowRoot;
+            if (sr) { open++; visit(sr); }
+            else if (e.tagName.includes("-") && !e.children.length) closed++;
+        }
+    };
+    visit(root);
+    return { open, closed };
+};
+
+/** The HOST selectors of CLOSED (or empty) shadow-root Web Components — the ones a selector scan can't enter.
+ *  A scanning tool appends these so the model knows a target it can't find may be sealed inside one (and can
+ *  fall back to visual `locate`/@pt scoped to the host). Uses the same heuristic as shadowRootStats.closed. */
+export const closedShadowHosts = (root: ParentNode = document, limit = 8): string[] => {
+    const hosts: string[] = [];
+    const visit = (r: ParentNode): void => {
+        for (const el of r.querySelectorAll("*")) {
+            const e = el as Element;
+            const sr = e.shadowRoot;
+            if (sr) visit(sr);
+            else if (e.tagName.includes("-") && !e.children.length && hosts.length < limit) hosts.push(clickSelector(e));
+        }
+    };
+    visit(root);
+    return hosts;
 };
 
 /** Resolve a shadow-CROSSING reference `hostSel >>> innerSel [>>> …]` (the inverse of clickSelector's `>>>`

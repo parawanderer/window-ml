@@ -11,7 +11,7 @@
 // background reports the run finished. This is the transport half of design A; the loop that drives it
 // is `runAgentLoop` (agent-loop.ts), assembled background-side in a later slice.
 import type { MlTool, PageToolEnvelope } from "./contract";
-import { executeTool } from "./tool-exec";
+import { executeTool, toolContext } from "./tool-exec";
 import { descriptorFor } from "./render-descriptor";
 import { evalReadonly } from "./readonly-exec";
 import { formatReadonlyExec } from "./approval";
@@ -21,13 +21,15 @@ import { formatReadonlyExec } from "./approval";
 export interface PageRun {
     byName: Record<string, MlTool>;
     answered: Node[];
+    model?: string | null;   // the run's driver model, for the tools' ToolContext (background-delegated path)
 }
 
 const runs = new Map<string, PageRun>();
 
-/** Register an agent run's live toolset page-side (called by ml.agent's START_RUN shim). */
-export function registerRun(runId: string, tools: MlTool[]): PageRun {
-    const run: PageRun = { byName: Object.fromEntries(tools.map(t => [t.name, t])), answered: [] };
+/** Register an agent run's live toolset page-side (called by ml.agent's START_RUN shim). `model` feeds the
+ *  ToolContext a delegated tool's run(args, ctx) receives (the page loop builds its own ctx directly). */
+export function registerRun(runId: string, tools: MlTool[], model: string | null = null): PageRun {
+    const run: PageRun = { byName: Object.fromEntries(tools.map(t => [t.name, t])), answered: [], model };
     runs.set(runId, run);
     return run;
 }
@@ -75,7 +77,7 @@ export async function runDelegatedTool(runId: string, name: string, args: Record
             return { result, elementCount: elements ? elements.length : undefined, renderIn, renderOut, readonly: true };
         } catch { return { result: "", readonly: false }; }
     }
-    const env = await executeTool(tool, args);
+    const env = await executeTool(tool, args, toolContext(run.byName, run.model ?? null));
     // An answer-capable tool designates the caller-facing result node(s) → stash them page-side; only
     // the COUNT crosses to the background (the nodes reach the caller via AgentResult.elements).
     if (env.elements && env.elements.length && tool.capabilities && tool.capabilities.includes("answer")) {
