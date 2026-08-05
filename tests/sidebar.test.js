@@ -343,10 +343,13 @@ test("settings view: loads config, populates the model datalist, gates + persist
     await openSettings(w, "Connection");
 
     assert.equal(w.shadow.querySelector('input[type="text"]').value, "http://host/api", "chatUrl loaded from storage.sync");
-    assert.equal(w.shadow.querySelectorAll("#ml-models option").length, 2, "model datalist populated from LIST_MODELS");
 
-    [...w.shadow.querySelectorAll(".set-tab")].find(b => b.textContent.trim() === "Models").click();   // utility fields live under Models
+    [...w.shadow.querySelectorAll(".set-tab")].find(b => b.textContent.trim() === "Models").click();   // model pickers + utility live under Models
     await w.tick();
+    // The model picker drops the full server list on its caret (not a native datalist that hides non-matches).
+    w.shadow.querySelector(".model-pick .model-pick-caret").click();
+    await w.tick();
+    assert.equal(w.shadow.querySelectorAll(".model-pick-menu .model-pick-opt").length, 2, "picker menu populated from LIST_MODELS");
     assert.ok(w.shadow.querySelector('input[type="number"]').disabled, "utility context disabled until a utility model is set");
 
     const util = w.shadow.querySelector('input[placeholder="blank = use main model"]');
@@ -397,7 +400,7 @@ test("settings: a failing model test shows the error", async () => {
 test("settings: grounding checkbox + model field persist, and the field is gated on the checkbox", async () => {
     const w = await loadSidebarWorld({ models: ["qwen2.5vl:7b"] });
     await openSettings(w, "Models");
-    const field = () => w.shadow.querySelector('input[list="ml-models"][placeholder*="qwen2.5vl:7b"]');
+    const field = () => w.shadow.querySelector('.model-pick input[placeholder*="qwen2.5vl:7b"]');
     // Placeholder auto-detects the qwen on the server; field disabled until enabled.
     assert.ok(field(), "grounding field shows the auto-detected qwen as its placeholder");
     assert.ok(field().disabled, "grounding model field disabled while grounding is off");
@@ -443,6 +446,47 @@ test("settings: editing a model invalidates its stale test result", async () => 
     assert.match(defRow().textContent, /llama3:8b/, "row shows the new model");
 });
 
+test("settings: the default-model vision probe is DEBOUNCED — no per-keystroke MODEL_CAPS (keeps the datalist alive)", async () => {
+    // Regression: probing on every keystroke fired an async setState mid-typing that dismissed the native
+    // <datalist> autocomplete popup ("the dropdown broke"). The probe must debounce until typing settles.
+    const probes = [];
+    const w = await loadSidebarWorld({ sync: { model: "" }, models: ["gemma3", "gemma4:31b"], caps: (m) => { probes.push(m); return ["completion", "vision"]; } });
+    await openSettings(w, "Models");
+    const field = w.shadow.querySelector('input[placeholder="e.g. qwen3:14b"]');
+    for (const v of ["g", "ge", "gem", "gemm", "gemma3"]) {
+        field.value = v;
+        field.dispatchEvent(new w.window.Event("input", { bubbles: true }));
+        await w.tick();
+    }
+    assert.equal(probes.length, 0, "no MODEL_CAPS probe fires WHILE typing (debounced) — the datalist stays open");
+    // Once typing settles, exactly ONE probe fires — for the final value only.
+    await new Promise(r => w.window.setTimeout(r, 500));
+    await w.flush();
+    assert.deepEqual(probes, ["gemma3"], "one probe after settling, for the final model");
+});
+
+test("settings: the model picker shows the FULL list on its caret even when the typed text matches nothing", async () => {
+    // Regression: the native <datalist> hid every option when the typed text matched none, so a non-matching
+    // entry looked like a broken/empty dropdown. The picker always lets you browse the whole server list.
+    const w = await loadSidebarWorld({ sync: { model: "this matches nothing" }, models: ["gemma3", "qwen3:14b"] });
+    await openSettings(w, "Models");
+    const pick = w.shadow.querySelector(".model-pick");
+    pick.querySelector(".model-pick-caret").click();
+    await w.tick();
+    assert.ok(pick.querySelector(".model-pick-none"), "a non-matching entry shows the 'used as typed' note, not an empty popup");
+    // Clear the field → the whole server list is browsable.
+    const input = pick.querySelector("input");
+    input.value = "";
+    input.dispatchEvent(new w.window.Event("input", { bubbles: true }));
+    await w.tick();
+    assert.equal(pick.querySelectorAll(".model-pick-opt").length, 2, "cleared → the full list shows");
+    // Picking an option fills + persists the field.
+    pick.querySelectorAll(".model-pick-opt")[1].click();
+    await w.tick();
+    assert.equal(w.syncStore.model, "qwen3:14b", "picking an option persists it");
+    assert.ok(!w.shadow.querySelector(".model-pick-menu"), "the menu closes after picking");
+});
+
 test("settings: a vision-required role (OCR) fails RED when the model lacks vision capability", async () => {
     const w = await loadSidebarWorld({
         sync: { ocrModel: "text-only" },
@@ -454,6 +498,23 @@ test("settings: a vision-required role (OCR) fails RED when the model lacks visi
     await w.tick(); await w.tick();
     assert.ok(w.shadow.querySelector(".test-ic.err"), "OCR flagged failed");
     assert.match(w.shadow.querySelector(".test-err").textContent, /doesn't report vision capability/);
+});
+
+test("settings: the vision (OCR) field reds INLINE when a KNOWN local model lacks vision — and NOT for unknown caps", async () => {
+    // Known local text-only model → the field itself flags red (debounced probe, no Test click).
+    const bad = await loadSidebarWorld({ sync: { ocrModel: "text-only" }, caps: (m) => m === "text-only" ? ["completion"] : null });
+    await openSettings(bad, "Models");
+    await new Promise(r => bad.window.setTimeout(r, 500)); await bad.flush();
+    const badInput = bad.shadow.querySelector('.model-pick input[placeholder="e.g. qwen2.5vl"]');
+    assert.ok(badInput && badInput.classList.contains("err"), "a known non-vision model reds the field");
+    assert.ok([...bad.shadow.querySelectorAll(".set-err")].some(e => /doesn't report vision capability/.test(e.textContent)), "with an inline explanation");
+
+    // Cloud / undeterminable caps → NOT flagged (unknown ≠ no).
+    const cloud = await loadSidebarWorld({ sync: { ocrModel: "gpt-4o" }, caps: () => null });
+    await openSettings(cloud, "Models");
+    await new Promise(r => cloud.window.setTimeout(r, 500)); await cloud.flush();
+    const cloudInput = cloud.shadow.querySelector('.model-pick input[placeholder="e.g. qwen2.5vl"]');
+    assert.ok(cloudInput && !cloudInput.classList.contains("err"), "unknown caps are not flagged");
 });
 
 test("settings: a configured model the model-filter excludes is flagged RED up front (no test needed)", async () => {
@@ -473,17 +534,19 @@ test("settings: a configured model the model-filter excludes is flagged RED up f
     assert.ok(!defRow.querySelector(".test-ic.err"), "a matching model is not flagged");
     // The input FIELD holding the excluded model is red-bordered where you're looking,
     // not only the status row far below.
-    const ocrInput = [...w.shadow.querySelectorAll(".set-field")]
-        .find(f => /OCR model/.test(f.querySelector(".lbl, label, .set-lbl")?.textContent || f.textContent))
-        ?.querySelector("input");
-    assert.ok(ocrInput && ocrInput.classList.contains("err"), "excluded OCR input red-bordered");
+    // Match by the stable placeholder, not the label text (which the UI copy may rename).
+    const ocrInput = w.shadow.querySelector('.model-pick input[placeholder="e.g. qwen2.5vl"]');
+    assert.ok(ocrInput && ocrInput.classList.contains("err"), "excluded OCR/vision input red-bordered");
     const defInput = [...w.shadow.querySelectorAll(".set-field")]
         .find(f => /Default model/.test(f.textContent))?.querySelector("input");
     assert.ok(defInput && !defInput.classList.contains("err"), "matching Default input not flagged");
-    // The model-picker datalist hides the excluded ids so the dropdown matches ml.models().
-    const opts = [...w.shadow.querySelectorAll("#ml-models option")].map(o => o.value);
-    assert.ok(opts.includes("qwen3:14b"), "datalist keeps a matching model");
-    assert.ok(!opts.includes("gpt-4o-cloud"), "datalist hides an excluded model");
+    // The picker menu hides the excluded ids so the dropdown matches ml.models().
+    const defPick = [...w.shadow.querySelectorAll(".set-field")].find(f => /Default model/.test(f.textContent))?.querySelector(".model-pick");
+    defPick.querySelector(".model-pick-caret").click();
+    await w.tick();
+    const opts = [...defPick.querySelectorAll(".model-pick-opt")].map(o => o.textContent);
+    assert.ok(opts.includes("qwen3:14b"), "picker keeps a matching model");
+    assert.ok(!opts.includes("gpt-4o-cloud"), "picker hides an excluded model");
 });
 
 test("settings: unknown caps (cloud/non-Ollama) do NOT red a vision role — fall through to the functional test", async () => {
@@ -1656,6 +1719,27 @@ test("export: skips a usage-only step (no bare 'Step N · ?' header)", async () 
     assert.match(text, /## Answer\n\nDone\./);
 });
 
+test("export: a multi-turn agent run interleaves the follow-up prompts + per-turn answers", async () => {
+    const w = await loadSidebarWorld();
+    const H = "multi";
+    await w.dispatch(agentStart(H, "type something", "m", 20));
+    await w.dispatch(agentStep(H, 1, { tool: "type", arguments: { selector: "input", text: "hi" }, result: "Typed." }));
+    await w.dispatch(agentResult(H, "Typed hi into the box.", 1));                 // turn 1 answer @ step 1
+    await w.dispatch({ kind: "agent-say", id: H, ts: Date.now() + 5, save: false, session: { hash: H, turn: 1 }, text: "would you be able to submit too?" });
+    await w.dispatch(agentStep(H, 2, { thought: "They're asking about submitting." }));
+    await w.dispatch(agentResult(H, "Yes, via submit:true.", 2));                  // turn 2 answer (final)
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+
+    const md = await (await captureExport(w)).blob.text();
+    assert.match(md, /## User Asked[\s\S]*would you be able to submit too\?/, "the follow-up prompt is exported");
+    assert.match(md, /## Answered[\s\S]*Typed hi into the box\./, "turn 1's answer is exported as 'Answered'");
+    assert.match(md, /## Answer\b[\s\S]*Yes, via submit:true\./, "the final answer is the last one, headed 'Answer'");
+    // Order: turn-1 answer BEFORE the follow-up prompt BEFORE the final answer.
+    assert.ok(md.indexOf("Typed hi into the box") < md.indexOf("would you be able to submit"), "answer precedes the next prompt");
+    assert.ok(md.indexOf("would you be able to submit") < md.indexOf("Yes, via submit:true"), "prompt precedes the final answer");
+});
+
 test("export: a run with screenshots downloads a zip (run.md + png sidecars)", async () => {
     // A real 1×1 PNG, so the decoded sidecar is genuine image bytes.
     const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
@@ -2183,6 +2267,59 @@ test("card surface: a finished run has an inline reply that continues the SAME s
     const sent = posted.find(m => m.__mlSidebarApp === "sessionSend");
     assert.ok(sent && sent.hash === hash && sent.text === "and now the next thing",
         "the reply posts sessionSend {hash,text} — the same channel the panel composer uses");
+});
+
+test("card surface: a between-step thought expands the orb into a live prose CAPTION (Progress)", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });   // default agentHud = progress
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    await w.raw({ __mlSidebarSurface: "card" });
+
+    const hash = "prose1";
+    await w.dispatch(agentStart(hash, "sum up the table", "m"));
+    await w.dispatch(agentStep(hash, 1, { thought: "Reading the quarterly sales table…" }));
+    await w.flush();
+    assert.ok(posted.some(m => m.__mlSidebarCard === "orbprose"), "the orb widens to the caption (orbprose) state");
+    const label = w.window.document.querySelector(".card-orb.prose .card-orb-label");
+    assert.ok(label && /Reading the quarterly sales table/.test(label.textContent), "the caption shows the model's between-step prose");
+});
+
+test("card surface: live prose is SUPPRESSED in Quiet mode (no caption, no orb)", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off", agentHud: "quiet" } });
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    await w.raw({ __mlSidebarSurface: "card" });
+
+    const hash = "prose2";
+    await w.dispatch(agentStart(hash, "task", "m"));
+    await w.dispatch(agentStep(hash, 1, { thought: "Working on it…" }));
+    await w.flush();
+    assert.ok(!posted.some(m => m.__mlSidebarCard === "orbprose"), "no live caption in quiet mode");
+    assert.ok(!w.window.document.querySelector(".card-orb"), "no orb rendered at all");
+});
+
+test("card surface: a type approval calls out type-AND-SUBMIT (dotted underline), plain type doesn't", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    w.window.postMessage = () => {};
+    await w.raw({ __mlSidebarSurface: "card" });
+
+    // submit:true — the approval must emphasise that it will SEND, not just type.
+    await w.dispatch(agentStart("subT", "search cats", "m"));
+    await w.dispatch(agentStep("subT", 1, { seq: 0, pending: true, awaitingApproval: true, tool: "type", arguments: { selector: "input", text: "cats", submit: true } }));
+    await w.flush();
+    let sentence = w.window.document.querySelector(".action-sentence");
+    assert.ok(sentence && sentence.querySelector(".action-submit"), "type+submit is emphasised with .action-submit");
+    assert.match(sentence.textContent, /and submit it/i, "the sentence spells out the submit");
+
+    // A plain type (no submit) — no emphasis.
+    const w2 = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    w2.window.postMessage = () => {};
+    await w2.raw({ __mlSidebarSurface: "card" });
+    await w2.dispatch(agentStart("plainT", "type a draft", "m"));
+    await w2.dispatch(agentStep("plainT", 1, { seq: 0, pending: true, awaitingApproval: true, tool: "type", arguments: { selector: "input", text: "cats" } }));
+    await w2.flush();
+    sentence = w2.window.document.querySelector(".action-sentence");
+    assert.ok(sentence && !sentence.querySelector(".action-submit"), "a plain type has no submit emphasis");
 });
 
 test("card surface: quiet HUD suppresses the working pill, but an approval still surfaces the card", async () => {

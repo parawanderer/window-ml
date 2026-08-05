@@ -4,7 +4,7 @@
 // with the popup. Text fields persist on change (blur) to avoid chatty writes; the
 // signal updates on input for a responsive UI + the utility-field enable gating.
 import { signal } from "@preact/signals";
-import { useState, useEffect } from "preact/hooks";
+import { useState, useEffect, useRef } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import type { MlConfig, ApiFormat, Theme, DebugMode, CardCorner, AgentHud, LoadedModel, VisionSupport } from "../contract";
 import { DEFAULT_CONFIG, DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX, detectGroundingModel, modelFilterAllows } from "../contract";
@@ -72,7 +72,7 @@ const TIP = {
     apiFormat: "Request and response shape — match it to the URL above.",
     model: "The model list loads automatically — start typing to pick one.",
     modelFilter: "Optional regex WHITELIST. When set, only models whose id matches are callable via window.ml, and pages (ml.models()) never even see the others — a guard against a page invoking, e.g., an expensive cloud model. Applies to every resolved model (main/OCR/grounding/utility). Blank = no restriction. Example: ^(qwen|gemma) to allow only local families.",
-    ocrModel: "Vision model ml.read() uses for OCR — kept separate from the chat model.",
+    ocrModel: "Vision model ml.read() uses for OCR and for other vision subtasks — kept separate from the chat model.",
     defaultModelVision: "Whether the default model sees images natively. Auto-detect probes Ollama; set Yes/No only for a cloud model the probe can't read (e.g. GPT-4o) — declaring Yes lets the agent use its own model to see (HUD native vision) instead of delegating to the OCR model. For an Ollama model we detect the real answer, so this override is ignored (and flagged).",
     utilityModel: "A small, cheap model for side tasks like session-title summaries. Leave blank to reuse the main model. Suggestions: qwen3.5:0.8b for an average machine, a gemma4:e2b-class model for a beefier one.",
     utilityNumCtx: "Context window (num_ctx) for the utility model. Summarising needs little context — keep it small on modest hardware; larger just uses more KV-cache memory. Only used when a utility model is set.",
@@ -426,31 +426,93 @@ function PermissionsView() {
     );
 }
 
+// A model COMBOBOX: free-type any id (cloud models needn't be in the list) + a caret that drops the full
+// server model list, filtered by what's typed. Replaces the native <datalist>, whose popup only showed
+// options MATCHING the typed text (so a non-matching entry looked like a broken/empty dropdown) and closed
+// on any re-render. Clicking the caret always shows the whole list; picking an option fills + persists it.
+function ModelPicker({ fieldKey, options, placeholder, cls = "", disabled = false }: {
+    fieldKey: keyof MlConfig; options: string[]; placeholder?: string; cls?: string; disabled?: boolean;
+}) {
+    const val = (config.value[fieldKey] as string) || "";
+    const [open, setOpen] = useState(false);
+    const wrap = useRef<HTMLDivElement>(null);
+    // Close when the click lands outside the widget (mousedown, so it beats an option's own mousedown).
+    useEffect(() => {
+        if (!open) return;
+        const onDoc = (e: MouseEvent) => { if (wrap.current && !wrap.current.contains(e.target as Node)) setOpen(false); };
+        document.addEventListener("mousedown", onDoc);
+        return () => document.removeEventListener("mousedown", onDoc);
+    }, [open]);
+    const q = val.trim().toLowerCase();
+    const shown = (q ? options.filter(m => m.toLowerCase().includes(q)) : options).slice(0, 60);
+    const pick = (m: string) => { setField(fieldKey, m); setOpen(false); };
+    return (
+        <div class="model-pick" ref={wrap}>
+            <input type="text" class={cls} value={val} placeholder={placeholder} disabled={disabled}
+                onInput={(e: any) => { setField(fieldKey, e.target.value, false); setOpen(true); }}
+                onChange={(e: any) => setField(fieldKey, e.target.value)}
+                onFocus={() => setOpen(true)}
+                onKeyDown={(e: any) => { if (e.key === "Escape") { e.stopPropagation(); setOpen(false); } }} />
+            <button type="button" class="model-pick-caret" tabIndex={-1} disabled={disabled} aria-label="Browse models"
+                onClick={() => { if (!disabled) setOpen(o => !o); }}>▾</button>
+            {open && !disabled && options.length ? (
+                <div class="model-pick-menu" role="listbox">
+                    {shown.length
+                        ? shown.map(m => (
+                            <button type="button" key={m} role="option" aria-selected={m === val}
+                                class={`model-pick-opt${m === val ? " on" : ""}`}
+                                onClick={() => pick(m)}>{m}</button>))
+                        : <div class="model-pick-none">No model matches “{val.trim()}” — it'll be used as typed (fine for a cloud model that isn't listed).</div>}
+                </div>
+            ) : null}
+        </div>
+    );
+}
+
+// Debounced Ollama /api/show vision probe for a model id. Returns `true`/`false` when KNOWN, `null` while
+// loading or undeterminable (cloud / non-Ollama / old Ollama / empty). Debounced so a per-keystroke async
+// setState doesn't re-render mid-typing (that dismissed the picker menu). Shared by every vision role.
+function useVisionProbe(model: string): boolean | null {
+    const [sees, setSees] = useState<boolean | null>(null);
+    useEffect(() => {
+        const m = model.trim();
+        if (!m) { setSees(null); return; }
+        let live = true;
+        const id = setTimeout(() => {
+            chrome.runtime.sendMessage({ type: "MODEL_CAPS", payload: { model: m } }, (resp: any) => {
+                if (!live) return;
+                setSees(!chrome.runtime.lastError && resp && !resp.error && Array.isArray(resp.data) ? resp.data.includes("vision") : null);
+            });
+        }, 400);
+        return () => { live = false; clearTimeout(id); };
+    }, [model]);
+    return sees;
+}
+
 export function Settings() {
     const c = config.value;
     const tab = settingsTab.value;
     const utilOn = !!c.utilityModel.trim();
-    // Probe the DEFAULT model's real vision capability (Ollama /api/show) so we can flag when the manual
-    // override is moot. `null` = undeterminable (cloud / non-Ollama / old Ollama / no model) — never flagged.
-    const [defModelSees, setDefModelSees] = useState<boolean | null>(null);
-    useEffect(() => {
-        let live = true;
-        setDefModelSees(null);
-        const m = c.model.trim();
-        if (!m) return;
-        chrome.runtime.sendMessage({ type: "MODEL_CAPS", payload: { model: m } }, (resp: any) => {
-            if (!live) return;
-            setDefModelSees(!chrome.runtime.lastError && resp && !resp.error && Array.isArray(resp.data) ? resp.data.includes("vision") : null);
-        });
-        return () => { live = false; };
-    }, [c.model]);
+    // Probe each role's real vision capability (Ollama /api/show), debounced. `null` = undeterminable
+    // (cloud / non-Ollama / old Ollama / no model) → never flagged; `false` = a KNOWN local text-only model.
+    const defModelSees = useVisionProbe(c.model);       // powers the vision-override "moot" flag
+    const ocrSees = useVisionProbe(c.ocrModel);         // OCR is a vision role → flag a known non-vision pick
+    const groundingSees = useVisionProbe(c.groundingModel);   // same for the grounding model
     // The override is redundant when we KNOW the answer (Ollama): detection wins, so a manual Yes/No is ignored.
     const visionOverrideMoot = c.defaultModelVision !== "" && defModelSees !== null;
+    // Refresh the server model list whenever Settings opens — the initial fetch (App mount / gear click) may
+    // have raced or failed while the server was waking up, leaving the datalists empty with no way to retry.
+    useEffect(() => {
+        chrome.runtime.sendMessage({ type: "LIST_MODELS", payload: {} }, (resp: any) => {
+            if (!chrome.runtime.lastError && resp && !resp.error && Array.isArray(resp.data)) models.value = resp.data;
+        });
+    }, []);
+    // Datalist entries after the access filter; plus the empty/unlisted states so the UI explains itself.
+    const listed = models.value.filter(m => modelFilterAllows(m, c.modelFilter));
+    const notListed = (v: string) => !!v.trim() && models.value.length > 0 && !models.value.includes(v.trim());
     const filterValid = (() => { if (!c.modelFilter.trim()) return true; try { new RegExp(c.modelFilter); return true; } catch { return false; } })();
-    // A configured model id the current filter excludes (non-empty + no match) → flag it.
+    // A configured model id the current filter excludes (non-empty + no match) → flag it (ModelPicker cls).
     const excl = (v: string) => !!v.trim() && !modelFilterAllows(v, c.modelFilter);
-    const modelInput = (key: keyof MlConfig, extra: Record<string, unknown>) =>
-        text(key, { ...extra, class: excl(c[key] as string) ? "err" : "" });
     const pct = Math.round(fontScale.value * 100);
     const setScale = (s: number) => {
         fontScale.value = Math.min(MAX_FS, Math.max(MIN_FS, Math.round(s * 20) / 20));
@@ -472,7 +534,6 @@ export function Settings() {
                         onClick={() => { settingsTab.value = t.id; }}>{t.label}</button>
                 ))}
             </div>
-            <datalist id="ml-models">{models.value.filter(m => modelFilterAllows(m, c.modelFilter)).map(m => <option key={m} value={m} />)}</datalist>
 
             <div class="set-body">
             {tab === "connection" ? <>
@@ -498,10 +559,17 @@ export function Settings() {
 
                 <Section id="defaults" title="Defaults">
                 <label class="set-field"><Lbl tip={TIP.model}>Default model</Lbl>
-                    <input {...modelInput("model", { list: "ml-models", placeholder: "e.g. qwen3:14b" })} /></label>
-                <label class="set-field"><Lbl tip={TIP.ocrModel}>OCR model (optional)</Lbl>
-                    <input {...modelInput("ocrModel", { list: "ml-models", placeholder: "e.g. qwen2.5vl" })} /></label>
-                <label class="set-field"><Lbl tip={TIP.defaultModelVision}>Default model sees images</Lbl>
+                    <ModelPicker fieldKey="model" options={listed} placeholder="e.g. qwen3:14b" cls={excl(c.model) ? "err" : ""} />
+                    {models.value.length === 0
+                        ? <div class="set-warn">No models loaded from the server — check the Server URL / API key on the Connection tab (the list + autocomplete populate once it's reachable).</div>
+                        : notListed(c.model)
+                            ? <div class="set-warn">"{c.model.trim()}" isn't in the server's model list — fine for a cloud model that isn't listed, but check the spelling for a local one.</div>
+                            : null}
+                </label>
+                <label class="set-field"><Lbl tip={TIP.ocrModel}>Vision model (optional)</Lbl>
+                    <ModelPicker fieldKey="ocrModel" options={listed} placeholder="e.g. qwen2.5vl" cls={(excl(c.ocrModel) || ocrSees === false) ? "err" : ""} />
+                    {ocrSees === false ? <div class="set-err">"{c.ocrModel.trim()}" doesn't report vision capability — this is a vision role; pick a vision model (e.g. qwen2.5vl, gemma3, llava).</div> : null}</label>
+                <label class="set-field"><Lbl tip={TIP.defaultModelVision}>Default model is vision capable?</Lbl>
                     <select value={c.defaultModelVision} onChange={(e: any) => setField("defaultModelVision", e.target.value as VisionSupport)}>
                         <option value="">Auto-detect</option>
                         <option value="yes">Yes — native vision</option>
@@ -521,9 +589,9 @@ export function Settings() {
                 </Section>
 
                 <Section id="utility" title="Utility model">
-                <div class="set-note">A small, cheap model for side tasks. If set, use it via the shorthand: <code>ml.chat("...", &#123; extend: "utility" &#125;)</code>.</div>
+                <div class="set-note">A small, cheap model for side tasks and HUD summaries. If set, use it via the shorthand: <code>ml.chat("...", &#123; extend: "utility" &#125;)</code>.</div>
                 <label class="set-field"><Lbl tip={TIP.utilityModel}>Utility model (optional)</Lbl>
-                    <input {...modelInput("utilityModel", { list: "ml-models", placeholder: "blank = use main model" })} /></label>
+                    <ModelPicker fieldKey="utilityModel" options={listed} placeholder="blank = use main model" cls={excl(c.utilityModel) ? "err" : ""} /></label>
                 <label class="set-field"><Lbl tip={TIP.utilityNumCtx}>Utility model context size</Lbl>
                     <input type="number" min="512" step="512" value={c.utilityNumCtx} disabled={!utilOn}
                         onChange={(e: any) => setField("utilityNumCtx", parseInt(e.target.value, 10) || DEFAULT_CONFIG.utilityNumCtx)} /></label>
@@ -547,8 +615,9 @@ export function Settings() {
                     <Lbl tip={TIP.groundingEnabled}>Enable visual grounding model</Lbl>
                 </label>
                 <label class="set-field"><Lbl tip={TIP.groundingModel}>Grounding model</Lbl>
-                    <input {...modelInput("groundingModel", { list: "ml-models", disabled: !c.groundingEnabled,
-                        placeholder: detectGroundingModel(models.value) ? `${detectGroundingModel(models.value)} (auto-detected)` : "e.g. qwen2.5vl:7b — none detected" })} /></label>
+                    <ModelPicker fieldKey="groundingModel" options={listed} disabled={!c.groundingEnabled} cls={(excl(c.groundingModel) || groundingSees === false) ? "err" : ""}
+                        placeholder={detectGroundingModel(models.value) ? `${detectGroundingModel(models.value)} (auto-detected)` : "e.g. qwen2.5vl:7b — none detected"} />
+                    {groundingSees === false ? <div class="set-err">"{c.groundingModel.trim()}" doesn't report vision capability — grounding needs a coordinate-capable vision model (e.g. qwen2.5vl:7b).</div> : null}</label>
                 <label class="set-field"><Lbl tip={TIP.groundingRange}>Coordinate range</Lbl>
                     <input type="number" min="1" step="1" value={c.groundingRange} disabled={!c.groundingEnabled}
                         onChange={(e: any) => setField("groundingRange", parseInt(e.target.value, 10) || DEFAULT_GROUNDING_RANGE)} /></label>
@@ -572,6 +641,9 @@ export function Settings() {
                         <option value="dark">Dark</option>
                         <option value="light">Light</option>
                     </select></label>
+                </Section>
+
+                <Section id="devtools" title="DevTools">
                 <label class="set-field"><span>Debug panel</span>
                     <select value={c.debugMode} onChange={(e: any) => setField("debugMode", e.target.value as DebugMode)}>
                         <option value="off">Off</option>
@@ -580,6 +652,10 @@ export function Settings() {
                     </select>
                     <div class="set-hint">Where this debug log renders. <b>In-page</b> = a slide-out on every page. <b>DevTools</b> = the “window.ml” tab, no on-page overlay. (Same setting as the toolbar popup.)</div>
                 </label>
+                </Section>
+
+                <Section id="agenthud" title="Agent HUD">
+                <div class="set-note">The in-page overlay — the corner card / working pill for off-mode agent runs.</div>
                 <label class="set-field"><span>Card corner</span>
                     <select value={c.cardCorner} onChange={(e: any) => setField("cardCorner", e.target.value as CardCorner)}>
                         <option value="bottom-right">Bottom right</option>
@@ -589,7 +665,7 @@ export function Settings() {
                     </select>
                     <div class="set-hint">Which corner the off-mode agent card / working pill anchors to. You can also <b>right-click</b> the card to move it.</div>
                 </label>
-                <label class="set-field"><span>Agent HUD</span>
+                <label class="set-field"><span>Agent HUD progress indicator visibility</span>
                     <select value={c.agentHud} onChange={(e: any) => setField("agentHud", e.target.value as AgentHud)}>
                         <option value="progress">Progress (pill while running)</option>
                         <option value="quiet">Quiet (only when it needs you)</option>

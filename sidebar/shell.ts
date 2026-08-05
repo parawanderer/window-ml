@@ -113,8 +113,11 @@ const CARD_CSS = `
    from the left) — the slide is a transform, so it never reflows the text (unlike the old width morph). */
 #${SB_CARD}-wrap[data-state="hidden"] { opacity: 0; pointer-events: none; transform: translateX(18px) scale(.98); }
 #${SB_CARD}-wrap[data-corner$="left"][data-state="hidden"] { transform: translateX(-18px) scale(.98); }
-#${SB_CARD}-wrap[data-state="orb"], #${SB_CARD}-wrap[data-state="orblabel"], #${SB_CARD}-wrap[data-state="toast"],
-#${SB_CARD}-wrap[data-state="expanded"], #${SB_CARD}-wrap[data-state="composer"] { opacity: 1; transform: none; }
+#${SB_CARD}-wrap[data-state="orb"], #${SB_CARD}-wrap[data-state="orblabel"], #${SB_CARD}-wrap[data-state="orbprose"],
+#${SB_CARD}-wrap[data-state="toast"], #${SB_CARD}-wrap[data-state="expanded"], #${SB_CARD}-wrap[data-state="composer"] { opacity: 1; transform: none; }
+/* Live-caption pill: the orb widened to show the model's between-step narration. A STATIC rounded pill
+   (no jelly wobble — the text must stay readable). */
+#${SB_CARD}-wrap[data-state="orbprose"] { border-radius: 27px; box-shadow: 0 12px 34px rgba(0, 0, 0, .30), 0 3px 10px rgba(0, 0, 0, .18); }
 /* Hover capsule: the orb stretched into a rounded pill that spells out the current tool (no wobble — it's
    readable now). border-radius = half the height so the ends are perfectly round. */
 #${SB_CARD}-wrap[data-state="orblabel"] { border-radius: 27px; box-shadow: 0 12px 34px rgba(0, 0, 0, .30), 0 3px 10px rgba(0, 0, 0, .18);
@@ -285,11 +288,11 @@ function maxCardH(): number { return Math.round(window.innerHeight * 0.92); }
 const CARD_MARGIN = 20;
 const CARD_BORDER = 2;   // the wrap's 1px top+bottom border (box-sizing: border-box), added back to the content height
 const ORB_SIZE = 54;
-const CARD_W: Record<string, number> = { orb: ORB_SIZE, orblabel: 230, toast: 340, expanded: 384, composer: 560, hidden: 340 };
+const CARD_W: Record<string, number> = { orb: ORB_SIZE, orblabel: 230, orbprose: 360, toast: 340, expanded: 384, composer: 560, hidden: 340 };
 const cardW = (state: string): number => Math.min(CARD_W[state] ?? 340, window.innerWidth - 2 * CARD_MARGIN);
 const cardH = (state: string): number => {
-    if (state === "orb" || state === "orblabel") return ORB_SIZE;   // circle / capsule — SAME height (a
-                                                                    // vertical shift on hover would flicker the pointerenter/leave)
+    if (state === "orb" || state === "orblabel" || state === "orbprose") return ORB_SIZE;   // circle / capsule /
+                                                                    // caption — SAME height (a vertical shift would flicker the pointerenter/leave)
     const cap = Math.max(120, window.innerHeight - 2 * CARD_MARGIN);   // never past the fold; body scrolls
     // cardAutoH is the CONTENT height the app measured. The wrap is box-sizing:border-box with a 1px border,
     // so that 2px eats into the height — without adding it back the iframe is 2px shorter than its content and

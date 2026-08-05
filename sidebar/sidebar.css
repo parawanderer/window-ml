@@ -111,11 +111,31 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .set-field input:focus, .set-field select:focus { outline: none; border-color: var(--accent); }
 .set-field input:disabled { opacity: .5; cursor: not-allowed; }
 .set-field input.err { border-color: var(--err); }
+/* Model combobox (ModelPicker): a text input + a caret that drops the full server model list (filtered by
+   what's typed). Replaces the native <datalist>, which hid non-matching entries + closed on re-render. */
+.model-pick { position: relative; }
+.model-pick input { padding-right: 28px; }
+.model-pick-caret { position: absolute; top: 1px; right: 1px; bottom: 1px; width: 26px;
+    display: flex; align-items: center; justify-content: center; font-size: .72em;
+    background: transparent; border: none; border-radius: 0 5px 5px 0; color: var(--fg-faint); cursor: pointer; }
+.model-pick-caret:hover:not(:disabled) { color: var(--fg); }
+.model-pick-caret:disabled { cursor: not-allowed; opacity: .5; }
+.model-pick-menu { position: absolute; z-index: 20; left: 0; right: 0; top: calc(100% + 3px);
+    max-height: 220px; overflow-y: auto; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 8px; box-shadow: 0 10px 30px rgba(0, 0, 0, .4); padding: 4px; }
+.model-pick-opt { display: block; width: 100%; text-align: left; background: transparent; border: none;
+    color: var(--fg); font: inherit; font-size: .92em; padding: 6px 9px; border-radius: 6px; cursor: pointer;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.model-pick-opt:hover { background: var(--panel-2); }
+.model-pick-opt.on { color: var(--accent); font-weight: 600; }
+.model-pick-none { padding: 8px 9px; color: var(--fg-faint); font-size: .85em; line-height: 1.4; }
 .set-note { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; padding: 7px 9px; color: var(--fg-dim); font-size: 0.92em; line-height: 1.4; }
 .set-note b { color: var(--fg); }
 .set-note code { background: var(--panel-2); border-radius: 3px; padding: 0 3px; font: 0.92em ui-monospace, SFMono-Regular, Menlo, monospace; }
 .set-hint { color: var(--fg-faint); font-size: 0.83em; line-height: 1.35; margin: 4px; }
 .set-err { color: var(--err); font-size: 0.83em; }
+/* Soft (non-blocking) advisory under a field — amber, e.g. "model isn't in the server list" / "no models loaded". */
+.set-warn { color: var(--warn); font-size: 0.83em; line-height: 1.35; margin: 4px; }
 /* "Override ignored" badge — a small red pill flagging a moot setting (e.g. a vision override on an
    Ollama model whose capability we auto-detect). */
 .set-moot { display: inline-block; margin: 4px; font-size: 0.78em; color: var(--err);
@@ -763,6 +783,9 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
 .card-orb.wide .card-orb-ic { font-size: 20px; flex: 0 0 auto; animation: orb-breathe 2.6s ease-in-out infinite; }
 .card-orb-label { font-weight: 600; font-size: .95em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
     animation: orb-label-in .22s ease both; }
+/* Prose caption: the model's narration (not a tool label) — lighter weight, and flex so a long line
+   ellipsizes within the wider pill instead of overflowing. */
+.card-orb.prose .card-orb-label { flex: 1 1 auto; min-width: 0; font-weight: 500; }
 @keyframes orb-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.22); } }
 @keyframes orb-label-in { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .card-orb-ic, .card-orb-label { animation: none; } }
@@ -976,6 +999,10 @@ html[data-surface="card"] .appr-btn.no:hover {
 .action-target { font-weight: 650; color: var(--fg); }
 .action-body { font-size: 1.02em; line-height: 1.45; word-break: break-word; }
 .action-note { color: var(--fg-dim); }
+/* "…and submit it" — a type that ALSO presses Enter. Emphasised with a warm colour + a dotted underline so
+   the reviewer clearly sees the agent will SEND, not just type. */
+.action-submit { font-weight: 700; color: var(--warn);
+    text-decoration: underline dotted; text-decoration-thickness: 2px; text-underline-offset: 3px; }
 /* "Highlighted on the page · bottom-left" — a pulsing green dot matching the on-page spotlight. */
 .action-loc { display: flex; align-items: center; gap: 7px; color: var(--fg-dim); font-size: .9em; margin-top: 1px; }
 .loc-dot { flex: 0 0 auto; width: 9px; height: 9px; border-radius: 50%; background: #22c55e; animation: loc-pulse 1.3s ease-in-out infinite; }

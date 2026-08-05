@@ -1730,15 +1730,18 @@ function fetchUtilityLine(messages: { role: string; content: string }[], key: st
 // A pending call's INTENT: prefer the tool-provided `action` descriptor (deterministic; custom tools
 // too), else a name-based verb for built-ins, else nothing (→ utility-model description).
 const CODE_LANG: Record<string, string> = { exec: "javascript", python_exec: "python" };
-interface Intent { verb: string; kind?: string; target?: string; selector?: string; input?: string; note?: string; }
+interface Intent { verb: string; kind?: string; target?: string; selector?: string; input?: string; note?: string; submit?: boolean; }
 function intentFor(st: AgentStep): Intent | null {
+    // Whether a `type` will ALSO press Enter — a materially bigger action (it submits the form/search), so the
+    // approval must call it out. Read from the raw args (the ground truth), regardless of the render path.
+    const submit = st.tool === "type" ? !!st.arguments?.submit : undefined;
     const ri = st.renderIn;
-    if (ri && ri.type === "action") return { verb: ri.verb, kind: ri.kind, target: ri.target, selector: ri.selector, input: ri.input, note: ri.note };
+    if (ri && ri.type === "action") return { verb: ri.verb, kind: ri.kind, target: ri.target, selector: ri.selector, input: ri.input, note: ri.note, submit };
     if (ri && ri.type === "elements" && ri.items[0])   // an older/other target render still gives a target + selector
-        return { verb: st.tool === "click" ? "Click" : st.tool === "type" ? "Type" : `Run ${st.tool}`, target: ri.items[0].text || ri.items[0].path, selector: ri.items[0].path };
+        return { verb: st.tool === "click" ? "Click" : st.tool === "type" ? "Type" : `Run ${st.tool}`, target: ri.items[0].text || ri.items[0].path, selector: ri.items[0].path, submit };
     const sel = typeof st.arguments?.selector === "string" ? (st.arguments.selector as string) : undefined;
     if (st.tool === "click") return { verb: "Click", selector: sel };
-    if (st.tool === "type") return { verb: "Type", selector: sel, input: String(st.arguments?.text ?? "") };
+    if (st.tool === "type") return { verb: "Type", selector: sel, input: String(st.arguments?.text ?? ""), submit };
     return null;
 }
 // For a CODE tool, the actual source — the consent surface (you can't approve code you can't see).
@@ -1790,6 +1793,9 @@ function ApprovalBody({ st, hash, goal }: { st: AgentStep; hash: string; goal: s
                             {isType ? <> “<b class="action-target">{truncate(intent.input || "", 100)}</b>” into</> : null}
                             {" the "}{intent.kind || "element"}
                             {intent.target ? <> <b class="action-target">“{intent.target}”</b></> : null}
+                            {/* type + submit is a bigger action (presses Enter → sends the form). Call it out with a
+                                dotted underline so the human sees it's not just typing. */}
+                            {isType && intent.submit ? <> and <span class="action-submit">submit</span> it</> : null}
                             {intent.note ? <span class="action-note"> · {intent.note}</span> : null}.
                         </div>
                         {intent.selector ? <div class="action-loc"><span class="loc-dot" aria-hidden="true" />Highlighted on the page{pos ? <> · <b>{pos}</b></> : null}</div> : null}
@@ -1828,6 +1834,18 @@ function activityFor(run: Session): { icon: string; label: string; short: string
     const tool = [...cur].reverse().find(s => s.pending && s.tool) || [...cur].reverse().find(s => s.tool);
     if (!tool?.tool) return { icon: "💭", label: "Thinking…", short: "thinking" };
     return ACTIVITY[tool.tool] || { icon: "⚙️", label: `Running ${tool.tool}…`, short: tool.tool };
+}
+// The model's latest between-step PROSE (its `thought` — narration, not the hidden `reasoning`) within the
+// CURRENT turn. Powers the live caption pill in Progress mode. Null until the model says something this turn.
+function liveProseFor(run: Session): string | null {
+    const steps = run.steps || [];
+    const turnStart = Math.max(0, ...(run.says || []).map(s => s.atStep || 0));
+    for (let i = steps.length - 1; i >= 0; i--) {
+        if ((steps[i].step || 0) <= turnStart) break;   // walked out of the current turn
+        const t = (steps[i].thought || "").trim();
+        if (t) return t;
+    }
+    return null;
 }
 // Right-click the card/pill → ask the shell to draw the "move to corner" menu (drawn shell-side so the
 // tiny pill iframe can't clip it). Coords are iframe-local; the shell offsets by the frame's position.
@@ -2090,12 +2108,13 @@ function ComposerCard() {
 // RESHAPES: the blob stretches into a capsule that spells out what it's doing ("👁 Looking at the
 // screen…") — the shell springs the container wider, the label fades in. Draggable + right-click move
 // like every HUD state. (Emoji for now; a looping custom SVG per tool slots into `.card-orb-ic` later.)
-function Orb({ icon, label, wide }: { icon: string; label: string; wide: boolean }) {
+function Orb({ icon, label, wide, prose }: { icon: string; label: string; wide: boolean; prose?: boolean }) {
     return (
         <div class="card-app" data-rev={rev.value}>
-            <div class={`card-orb${wide ? " wide" : ""}`}
+            <div class={`card-orb${wide ? " wide" : ""}${prose ? " prose" : ""}`}
                 onPointerEnter={orbEnter} onPointerLeave={orbLeave}
-                onPointerDown={startCardDrag} onContextMenu={cardCtxMenu}>
+                onPointerDown={startCardDrag} onContextMenu={cardCtxMenu}
+                title={prose ? label : undefined}>
                 <span class="card-orb-ic" aria-hidden="true">{icon}</span>
                 {wide ? <span class="card-orb-label">{label}</span> : null}
             </div>
@@ -2133,9 +2152,13 @@ function CardApp() {
     const silent = !!run?.agentConfig?.silent;
     const showOrb = (running || starting) && !quiet && !silent;
     const hovering = orbHover.value;                           // hovering the orb → stretch to a labelled capsule
+    // Live prose: the model's between-step narration (its `thought`, NOT the hidden reasoning). In PROGRESS
+    // mode it auto-expands the orb into a caption pill so you see what it's doing without hovering; QUIET
+    // suppresses it (the run is already !showOrb there). Not for the "Starting…" bridge (no run steps yet).
+    const liveProse = (showOrb && !starting) ? liveProseFor(run!) : null;
     const state = composing ? "composer"                       // the composer takes over — centered Spotlight bar
         : pending ? "expanded"                                 // an approval: show the action directly (even for a silent run)
-            : showOrb ? (hovering ? "orblabel" : "orb")       // in flight → the liquid tool orb (capsule on hover)
+            : showOrb ? (liveProse ? "orbprose" : hovering ? "orblabel" : "orb")   // in flight → orb; caption when narrating; capsule on hover
                 : (done && !dismissed && !silent) ? (cardCollapsed.value ? "toast" : "expanded")   // finished: the answer
                     : "hidden";
 
@@ -2143,7 +2166,7 @@ function CardApp() {
     // composer opens over it, an approval expands) and then no pointerleave fires, which would wrongly
     // reopen the capsule (orblabel) when the orb next appears (e.g. the "Starting…" bridge). So a fresh
     // orb always starts circular until a real pointerenter.
-    useEffect(() => { if (state !== "orb" && state !== "orblabel") orbHover.value = false; }, [state]);
+    useEffect(() => { if (state !== "orb" && state !== "orblabel" && state !== "orbprose") orbHover.value = false; }, [state]);
     useEffect(() => { if (startedAt > 0 && newRunUp) composerStarting.value = 0; }, [newRunUp]);   // run surfaced → drop the bridge
     useEffect(() => { if (run) ensureCardTitle(run); }, [hash, r]);
     // No reset effect needed — show-work is keyed by hash, so a new run is collapsed by default (its hash
@@ -2245,6 +2268,10 @@ function CardApp() {
     // the composer over a dismissed run faded into that stale dialog. Empty content → a clean fade to nothing.
     if (state === "hidden") return <div class="card-app" data-rev={r} />;
 
+    if (state === "orbprose") {
+        // The live caption: current tool icon + the model's latest between-step narration (one ellipsized line).
+        return <Orb icon={activityFor(run).icon} label={liveProse || activityFor(run).label} wide prose />;
+    }
     if (state === "orb" || state === "orblabel") {
         const a = activityFor(run);
         return <Orb icon={a.icon} label={a.label} wide={state === "orblabel"} />;
