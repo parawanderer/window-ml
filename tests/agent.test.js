@@ -340,6 +340,11 @@ test("shadow DOM: the DOM tools pierce OPEN shadow roots, and a shadow reference
     const closedDesc = desc("sealed-widget");
     assert.match(closedDesc, /#shadow-root \(CLOSED\)/, "a closed-root Web Component is flagged CLOSED");
     assert.match(closedDesc, /locate\(\{.*selector: "sealed-widget"/, "steered to locate() scoped to the host selector");
+
+    // ancestors climbs OUT of the shadow root to the host + light DOM (parentElement is null at the top).
+    const anc = String(run(ml, "ancestors", { selector: "#host >>> button" }).content ?? "");
+    assert.match(anc, /crossed a shadow boundary/, "ancestors crosses the shadow boundary up to the host");
+    assert.match(anc, /host/, "and reaches the light-DOM host");
 });
 
 test("interactives: a control is findable by its PLACEHOLDER even when the accessible name differs (Gemini)", () => {

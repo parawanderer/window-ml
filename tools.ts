@@ -249,7 +249,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
             summary: "Describes one element's structure and attributes.",
             description: "Skeleton of an element and its descendants to a depth: tags, ids, " +
                 "classes, data-* attributes, own text. Use it to walk up/down the tree and " +
-                "spot the repeating container and stable anchors. Never returns innerHTML.",
+                "spot the repeating container and stable anchors. This tool supports shadow roots. Never returns innerHTML.",
             parameters: {
                 type: "object",
                 properties: {
@@ -286,10 +286,17 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
                 const el = els[0];
                 if (!el) return `No element matches "${selector}".`;
                 const chain: string[] = [];
-                let node: Node | null = el, i = 0;
+                let node: Element | null = el, i = 0;
                 while (node && node.nodeType === 1 && node !== document.documentElement && i < 15) {
-                    chain.push(`[${i}] ${elLine(node as Element)}`);
-                    node = node.parentElement;
+                    chain.push(`[${i}] ${elLine(node)}`);
+                    if (node.parentElement) { node = node.parentElement; }
+                    else {
+                        // parentElement is null at the TOP of a shadow tree — cross the boundary UP to the host
+                        // (getRootNode().host), noting it, so the chain reaches the real light-DOM ancestors.
+                        const root = node.getRootNode() as ShadowRoot;
+                        if (root && root.nodeType === 11 && root.host) { chain.push(`    ⇡ (crossed a shadow boundary → host)`); node = root.host; }
+                        else break;
+                    }
                     i++;
                 }
                 return { content: firstOfNote(selector, els.length) + chain.join("\n"), elements: [el] };
