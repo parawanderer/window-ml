@@ -17,7 +17,7 @@ import {
     ollamaIds, vramOpen, sidebarOpen, loadedModels, psError, turnsRun,
 } from "./store";
 import type { Status, Turn, AgentStep, Session } from "./store";
-import { pretty, shortStamp, fullStamp, truncate, collapsedPreview, highlight, beautifyJs, htmlLines, markdown, lastUser, rollupStatus } from "./format";
+import { pretty, shortStamp, fullStamp, truncate, collapsedPreview, highlight, beautifyJs, htmlLines, markdown, stripFormatting, lastUser, rollupStatus } from "./format";
 import { annotatedConfig, turnProfile, shownModel, sessionProfile } from "./model";
 import { exportSession, printSession } from "./export";
 import { applyTheme, applyFont, applyCodePrefs, initThemeStyle } from "./prefs";
@@ -1864,7 +1864,10 @@ function liveProseFor(run: Session): string | null {
     // activity label (activityFor), which is always accurate. (A step emits its thought and its tool as
     // separate entries sharing one `step`, so scan every entry at the latest step number.)
     const latest = Math.max(0, ...cur.map(s => s.step || 0));
-    return cur.filter(s => (s.step || 0) === latest).map(s => (s.thought || "").trim()).find(Boolean) || null;
+    const t = cur.filter(s => (s.step || 0) === latest).map(s => (s.thought || "").trim()).find(Boolean);
+    // Strip markdown/HTML — the pill is one plain line, so a model's `**bold**`/`<b>`/backticks would show
+    // as literal syntax. (The detail-view prose keeps rendered markdown.)
+    return t ? (stripFormatting(t) || null) : null;
 }
 // Right-click the card/pill → ask the shell to draw the "move to corner" menu (drawn shell-side so the
 // tiny pill iframe can't clip it). Coords are iframe-local; the shell offsets by the frame's position.

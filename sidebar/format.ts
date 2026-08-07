@@ -50,6 +50,27 @@ export function collapsedPreview(s: string): { text: string; more: boolean } {
 export const escapeHtml = (s: string): string =>
     s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]!));
 
+// Strip markdown / HTML to plain text — for a SINGLE-LINE UI (the HUD caption pill) where a model that
+// wraps its between-step narration in `**bold**`, `<b>`, backticks, headings, or a link would otherwise show
+// the literal syntax. Not a parser: targeted replaces, whitespace-collapsed. (The detail view keeps rendered
+// markdown; this is only for the plain pill.)
+export function stripFormatting(s: string): string {
+    return (s || "")
+        .replace(/```[\s\S]*?```/g, " ")            // fenced code blocks
+        .replace(/`([^`]+)`/g, "$1")                // inline code
+        .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")  // links / images → their text
+        .replace(/<[^>]+>/g, " ")                   // HTML tags
+        .replace(/^\s{0,3}#{1,6}\s+/gm, "")         // headings
+        .replace(/^\s{0,3}>\s?/gm, "")              // blockquotes
+        .replace(/^\s*(?:[-*+]|\d+\.)\s+/gm, "")    // list markers
+        .replace(/(\*\*|__)(.*?)\1/g, "$2")         // bold
+        .replace(/(\*|_)(.*?)\1/g, "$2")            // italic
+        .replace(/~~(.*?)~~/g, "$1")                // strikethrough
+        .replace(/&(?:amp|lt|gt|quot|#39);/g, (m) => ({ "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'" }[m] || m))
+        .replace(/\s+/g, " ")
+        .trim();
+}
+
 // Minimal, SAFE markdown → HTML (escape first, then a small subset; fenced code
 // is protected from inline formatting). Used via dangerouslySetInnerHTML.
 export function highlight(code: string, lang?: string): string {

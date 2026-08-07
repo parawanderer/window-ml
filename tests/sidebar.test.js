@@ -2334,6 +2334,20 @@ test("card surface: a between-step thought expands the orb into a live prose CAP
     assert.ok(label && /Reading the quarterly sales table/.test(label.textContent), "the caption shows the model's between-step prose");
 });
 
+test("card surface: the live caption STRIPS markdown/HTML the model emits (plain pill, no literal syntax)", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    w.window.postMessage = () => {};
+    await w.raw({ __mlSidebarSurface: "card" });
+    const hash = "mdcap";
+    await w.dispatch(agentStart(hash, "task", "m"));
+    await w.dispatch(agentStep(hash, 1, { thought: "**Scanning** the `settings` <b>panel</b> — see [docs](http://x)" }));
+    await w.flush();
+    const label = w.window.document.querySelector(".card-orb.prose .card-orb-label");
+    const text = label ? label.textContent : "";
+    assert.match(text, /Scanning the settings panel — see docs/, "formatting removed, words kept");
+    assert.ok(!/[*`<>]|\]\(/.test(text), "no literal markdown/HTML syntax leaks into the pill");
+});
+
 test("card surface: live prose is SUPPRESSED in Quiet mode (no caption, no orb)", async () => {
     const w = await loadSidebarWorld({ sync: { debugMode: "off", agentHud: "quiet" } });
     const posted = [];
