@@ -245,6 +245,12 @@ export const capturedClosedRoot = (el: Element): ShadowRoot | null => {
  *  captured CLOSED root. Makes captured closed roots first-class selector targets while the flag is set. */
 export const traversableRoot = (el: Element): ShadowRoot | null => el.shadowRoot ?? capturedClosedRoot(el);
 
+/** Cross-realm "is this an Element?" — checks `nodeType === 1`, NOT `instanceof Element`: an element resolved
+ *  across a same-origin iframe boundary (`iframe >>> inner`) belongs to the FRAME's realm, so the top window's
+ *  `Element` constructor doesn't recognise it (the same gotcha as `instanceof ShadowRoot`). A TYPE GUARD, so
+ *  callers narrow to `Element` (no `as Element` casts). */
+export const isElement = (n: unknown): n is Element => !!n && (n as Node).nodeType === 1;
+
 /** The reachable inner Document of a SAME-ORIGIN `<iframe>` (SOP lets the top page read/act in it — `exec`
  *  can already), or null for a non-iframe or a CROSS-ORIGIN frame (whose contentDocument is null / throws —
  *  those stay selector-unreachable and need locate/@pt + reserved-element (CDP) clicking). This is what lets

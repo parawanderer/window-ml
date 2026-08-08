@@ -33,7 +33,7 @@ import type {
 } from "./contract";
 import { detectGroundingModel, DEFAULT_GROUNDING_RANGE } from "./contract";
 import { evalReadonly } from "./readonly-exec";
-import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect } from "./dom";
+import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement } from "./dom";
 import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_NOTE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_EXEC_NOTE, IFRAME_CLAUSE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, PT_LOOK_RADIUS, BOX_RE, resolveBox, agentState } from "./util";
 import type { ShotBox, ServerTool } from "./contract";
@@ -1103,19 +1103,18 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 el = queryAll(target)[index];   // Nth match (queryAll adds :contains + `>>>` shadow/iframe crossing)
                 if (!el) throw new Error(`No element matches "${target}"${index ? ` at index ${index}` : ""}.`);
             }
-            // Duck-type `nodeType === 1` (ELEMENT_NODE), NOT `instanceof Element` — an element resolved across
-            // a same-origin IFRAME boundary (`iframe >>> inner`) belongs to the FRAME's realm, so the top
-            // window's `Element` constructor doesn't recognise it (same cross-realm gotcha as ShadowRoot).
-            if (!el || (el as Node).nodeType !== 1) throw new Error("ml.screenshot needs a CSS selector, an Element, or nothing.");
+            // isElement = cross-realm nodeType check (dom.ts) — a `>>>` iframe-inner element is in the frame's
+            // realm, so `instanceof Element` fails. Type guard → `el` narrows to Element below (no casts).
+            if (!isElement(el)) throw new Error("ml.screenshot needs a CSS selector, an Element, or nothing.");
             if (scroll) {
-                (el as Element).scrollIntoView({ block: "center", inline: "center" });
+                el.scrollIntoView({ block: "center", inline: "center" });
                 // Let the scroll paint before we capture.
                 await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
             }
             // viewportRect (not getBoundingClientRect) — an element inside a same-origin iframe reports a
             // FRAME-LOCAL rect, but the captured tab image is the TOP viewport, so the crop must be composed
             // across the frame offset (else it crops the wrong region — the page's top-left).
-            const rect = viewportRect(el as Element);
+            const rect = viewportRect(el);
             // A zero- or sliver-sized element (e.g. a 1px-tall spacer/rule, or a
             // collapsed container) crops to a degenerate 1px-by-N image the vision
             // model just hallucinates over. Reject it with an actionable message
@@ -1150,8 +1149,8 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 return { left: Math.max(0, bx.left), top: Math.max(0, bx.top), dpr };   // raw: pad 0
             }
             const el = typeof target === "string" ? queryAll(target)[0] : target;
-            if (!el || (el as Node).nodeType !== 1) return null;   // nodeType, not instanceof (cross-realm iframe elements)
-            const r = viewportRect(el as Element);   // top-viewport (composes iframe offsets)
+            if (!isElement(el)) return null;   // cross-realm nodeType check (iframe-inner elements)
+            const r = viewportRect(el);   // top-viewport (composes iframe offsets)
             return { left: r.left, top: r.top, dpr };
         },
         /**
@@ -1427,7 +1426,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
          */
         _resolveTable: function(target: string | Element, raw = false): { kind: "rows"; columns: string[]; rows: (string | number | null)[][] } | { kind: "html"; html: string } {
             const el = typeof target === "string" ? queryAll(target)[0] : target;
-            if (!el || (el as Node).nodeType !== 1) throw new Error(`ml.pythonExec: no table element matches "${String(target)}".`);
+            if (!isElement(el)) throw new Error(`ml.pythonExec: no table element matches "${String(target)}".`);
             const t = extractTable(el);
             if (!t) {
                 // extractTable couldn't parse it (spans/nested/non-table) → the pd.read_html fallback

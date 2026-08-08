@@ -7,7 +7,7 @@
 import type { MlApi, MlTool, LocateSubstep, ToolResult, RenderDescriptor } from "./contract";
 import { DEFAULT_GROUNDING_RANGE } from "./contract";
 import { PY_PACKAGE_LABELS } from "./python-env";
-import { truncate, clipOut, errText, elLine, queryAll, selectorError, googleSheetCsvUrl, nonEmptyTables, capturedClosedRoot } from "./dom";
+import { truncate, clipOut, errText, elLine, queryAll, selectorError, googleSheetCsvUrl, nonEmptyTables, capturedClosedRoot, isElement } from "./dom";
 import { accessibleName } from "./a11y";
 
 // Cap on python_exec output (stdout / value / error) fed back to the model — bigger than
@@ -432,7 +432,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 let matches: Element[];
                 try { matches = queryAll(selector); } catch (e) { return selectorError(selector, e as Error); }
                 const el = matches[index];
-                if (!el || (el as Node).nodeType !== 1) return `No element matches "${selector}"${index ? ` at index ${index}` : ""}${matches.length ? ` (only ${matches.length} match${matches.length === 1 ? "" : "es"})` : ""}. Scroll it into view or refine the selector, then call locate again.`;
+                if (!isElement(el)) return `No element matches "${selector}"${index ? ` at index ${index}` : ""}${matches.length ? ` (only ${matches.length} match${matches.length === 1 ? "" : "es"})` : ""}. Scroll it into view or refine the selector, then call locate again.`;
                 try { el.scrollIntoView({ block: "center", inline: "center" }); } catch { /* detached/older engine */ }
                 // Let the scroll paint before we measure/capture (guarded for non-visual envs).
                 await new Promise<void>(res => typeof requestAnimationFrame === "function"
