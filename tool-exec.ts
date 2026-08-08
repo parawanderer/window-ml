@@ -21,7 +21,7 @@ export interface ToolEnvelope {
     render?: RenderDescriptor;
     renderIn?: RenderDescriptor;
     /** reserved-surface (cross-origin iframe / sealed shadow) click signal → the executor does a CDP click */
-    cdpClick?: { x: number; y: number };
+    cdpClick?: { x: number; y: number; hint?: string };
 }
 
 export async function executeTool(tool: MlTool, args: Record<string, unknown>, ctx?: ToolContext): Promise<ToolEnvelope> {

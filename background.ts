@@ -1067,7 +1067,9 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                             if (!cfg.cdpClick) return { result: `${env.result || ""}\n\nThis needs a debugger (CDP) click, which is OFF — enable "reserved-element clicking" in window.ml Settings → Advanced (cross-origin iframes / sealed shadow roots).`, renderIn: env.renderIn, renderOut: env.renderOut };
                             const r = await cdpClick(tabId, env.cdpClick.x, env.cdpClick.y);
                             const ok = "ok" in r;
-                            return { result: ok ? `Clicked the reserved target at (${env.cdpClick.x}, ${env.cdpClick.y}) via the debugger. Re-run look to see the result.` : (r as { error: string }).error, renderIn: env.renderIn, renderOut: env.renderOut };
+                            // Append the page-side stuck-loop re-snap nudge (a repeat @pt click) to the SUCCESS
+                            // result only — a refusal already carries its own actionable message.
+                            return { result: ok ? `Clicked the reserved target at (${env.cdpClick.x}, ${env.cdpClick.y}) via the debugger. Re-run look to see the result.${env.cdpClick.hint || ""}` : (r as { error: string }).error, renderIn: env.renderIn, renderOut: env.renderOut };
                         }
                         // The page already computed the rendered In/Out slots (descriptorFor) — forward them so
                         // the sidebar shows the rich view. `image` rides along for INLINE VISION (native look):

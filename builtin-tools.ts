@@ -887,6 +887,24 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
     });
 };
 
+// STUCK-LOOP guard for @pt clicks. A model that re-clicks the SAME point token is almost always OFF-TARGET:
+// the click LANDS (dispatch/CDP succeeds) but misses the control, because locate's coordinate is
+// grounding-accuracy-bound and can sit on an edge. So on a repeat, nudge toward the SELF-CORRECTING RE-SNAP —
+// locate({ selector: <token>, strategy: "grounding", margin, description }) re-searches AROUND this point for a
+// better-centred @pt — instead of re-clicking the dead coordinate. Non-blocking (a legit repeat still clicks);
+// keyed by token, so a fresh locate (new token) resets the count.
+const ptClickCounts = new Map<string, number>();
+const repeatPointHint = (token: string): string => {
+    const n = (ptClickCounts.get(token) || 0) + 1;
+    ptClickCounts.set(token, n);
+    if (ptClickCounts.size > 300) { const k = ptClickCounts.keys().next().value; if (k) ptClickCounts.delete(k); }
+    if (n < 2) return "";
+    const resnap = `locate({ selector: "${token}", strategy: "grounding", margin: ${n === 2 ? 40 : 80}, description: "<the target>" })`;
+    return n === 2
+        ? ` ⚠ You've clicked this point before — if nothing changed it's almost certainly OFF-TARGET (the click lands but misses the control). Don't re-click it; RE-SNAP for a better-centred point: ${resnap}, then click the NEW @pt it returns.`
+        : ` ⚠ "${token}" clicked ${n}× with no effect — it's off-target; STOP re-clicking it. RE-SNAP: ${resnap} (or a fresh locate({ description: "…" })), then click the new @pt.`;
+};
+
 export const buildClickTool = (ml: MlApi): MlTool => {
     // Side-effect-free resolution → an ERROR STRING if the click is doomed (an @box region, a stale
     // @pt, an invalid selector, or no match), else null. The loop uses it to SKIP the approval prompt
@@ -926,6 +944,7 @@ export const buildClickTool = (ml: MlApi): MlTool => {
             if (doomed) return doomed;
             // A point token from locate → click that coordinate.
             if (POINT_RE.test((selector || "").trim())) {
+                const token = (selector || "").trim();
                 const pt = resolvePoint(selector)!;   // precheck confirmed it resolves
                 // A RESERVED surface (cross-origin iframe / sealed closed shadow) can't be reached by a
                 // synthetic dispatch — hand the executor a CDP-click signal at this coordinate instead. The
@@ -933,7 +952,8 @@ export const buildClickTool = (ml: MlApi): MlTool => {
                 const reserved = reservedSurfaceAt(pt.x, pt.y);
                 if (reserved) {
                     const what = reserved.kind === "iframe" ? `a${reserved.origin ? ` ${reserved.origin}` : "n embedded cross-origin"} iframe` : "a sealed closed shadow root";
-                    return { content: `The target at (${pt.x}, ${pt.y}) is inside ${what} — a normal click can't reach it, so this needs a debugger (CDP) click.`, cdpClick: { x: pt.x, y: pt.y } };
+                    const hint = repeatPointHint(token);   // the CDP result is built background-side → thread the nudge
+                    return { content: `The target at (${pt.x}, ${pt.y}) is inside ${what} — a normal click can't reach it, so this needs a debugger (CDP) click.`, cdpClick: { x: pt.x, y: pt.y, hint: hint || undefined } };
                 }
                 // A canvas point token → synthesize a click at that coordinate.
                 const before = (typeof location !== "undefined" && location.href) || "";
@@ -942,7 +962,7 @@ export const buildClickTool = (ml: MlApi): MlTool => {
                 await settle(80);
                 const after = (typeof location !== "undefined" && location.href) || "";
                 const nav = after && after !== before ? ` Navigated to ${after}.` : "";
-                return `Clicked at (${pt.x}, ${pt.y}) on ${elLine(hit)}.${nav} Page title: ${truncate(document.title || "", 80)}. Re-run look to see the result.`;
+                return `Clicked at (${pt.x}, ${pt.y}) on ${elLine(hit)}.${nav} Page title: ${truncate(document.title || "", 80)}. Re-run look to see the result.${repeatPointHint(token)}`;
             }
             const el = queryAll(selector)[index]!;   // precheck confirmed it matches
             const before = (typeof location !== "undefined" && location.href) || "";
