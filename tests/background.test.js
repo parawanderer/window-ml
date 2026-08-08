@@ -576,7 +576,7 @@ test("CDP_CLICK reports the missing debugger permission (never attaches)", async
     const bg = loadBackground({ config: baseConfig({ cdpClick: true }), debuggerPermission: false });
     const res = await bg.send({ type: "CDP_CLICK", payload: { x: 1, y: 2, tabId: 9 } }, {});
     assert.ok(res.needsPermission, "flags that the permission is needed");
-    assert.match(res.error, /`debugger` permission is required/i);
+    assert.match(res.error, /`debugger` permission is missing/i);
     assert.equal(bg.debuggerCalls.length, 0, "never attached without the permission");
 });
 

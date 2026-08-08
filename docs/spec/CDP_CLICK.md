@@ -55,9 +55,12 @@ synthetic; **reserved → CDP** (attach → dispatch → detach around that one 
 
 ## Permission
 
-`debugger` is **runtime-optional** — `chrome.permissions.request(['debugger'])` on first
-use (like the Google-Sheets host grant), NOT install-time. Popup / Settings surfaces a
-one-click grant + revoke. An off-by-default config flag gates the feature.
+`debugger` is declared at **INSTALL time** (in `permissions`, not optional). We WANTED runtime-optional
+(to avoid the scary always-on perm), but **Chrome forbids `debugger` as an optional permission** —
+`chrome.permissions.request(['debugger'])` rejects it: *"Only permissions specified in the manifest may be
+requested."* So there's no per-use grant; the extension declares `debugger` at install (Chrome re-prompts on
+update). The off-by-default **`cdpClick` flag** is the real on/off — the API stays unused until it's on AND
+the model hits a reserved surface.
 
 ## Integration
 

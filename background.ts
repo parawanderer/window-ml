@@ -817,12 +817,11 @@ async function senderTrust(sender: chrome.runtime.MessageSender): Promise<"surfa
     return host && (cfg.pageApprovalDomains || []).includes(host) ? "whitelisted" : "untrusted";
 }
 
-/** Is the optional `debugger` permission held? CHECK ONLY — never request here. `permissions.request`
- *  requires a user GESTURE in a FOREGROUND context, which the service worker doesn't have, so the actual
- *  grant rides a user gesture in a real surface (the "Approve" click in the sidebar/DevTools extension page,
- *  or the popup/Settings "Enable reserved-element clicking" button — the same pattern as the Google-Sheets
- *  host grant, which this SW likewise only `contains()`-checks). Missing → cdpClick returns an actionable
- *  error steering the user to grant it. */
+/** Is the `debugger` permission held? It's declared at INSTALL time (in `permissions`, not optional) —
+ *  Chrome forbids `debugger` as a runtime-optional grant (`permissions.request` rejects it: "Only permissions
+ *  specified in the manifest may be requested"). So this always holds once the extension is loaded + its
+ *  permissions accepted; the defensive check just degrades gracefully (actionable error) if it's somehow
+ *  absent (e.g. an update pending re-approval). The `cdpClick` config flag is the actual on/off. */
 async function hasDebuggerPermission(): Promise<boolean> {
     try { return await chrome.permissions.contains({ permissions: ["debugger"] }); } catch { return false; }
 }
@@ -834,7 +833,7 @@ async function hasDebuggerPermission(): Promise<boolean> {
  *  unsuppressible banner is the honest "input-level control" signal — and it's shown ONLY for these reserved
  *  clicks, so the flash marks the risk), sends press+release, and ALWAYS detaches. See docs/spec/CDP_CLICK.md. */
 async function cdpClick(tabId: number, x: number, y: number): Promise<{ ok: true } | { error: string; needsPermission?: true }> {
-    if (!(await hasDebuggerPermission())) return { error: "The `debugger` permission is required to click a reserved (cross-origin / sealed) element — grant it in the window.ml popup or settings, then retry.", needsPermission: true };
+    if (!(await hasDebuggerPermission())) return { error: "The `debugger` permission is missing (it's declared at install) — reload the extension and accept its permissions, then retry.", needsPermission: true };
     const target: chrome.debugger.Debuggee = { tabId };
     try {
         await chrome.debugger.attach(target, "1.3");
