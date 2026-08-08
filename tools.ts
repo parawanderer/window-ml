@@ -5,7 +5,7 @@
 // (detached, `this`-free) `defineTool` and returns the array.
 
 import type { MlTool, ToolResult, ToolContext } from "./contract";
-import { truncate, clipOut, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, deepQueryAll, closedShadowHosts, selectorError } from "./dom";
+import { truncate, clipOut, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, deepQueryAll, closedShadowHosts, frameHostOf, selectorError } from "./dom";
 import { INTERACTIVE_SEL, roleOf, accessibleName, placeholderText, ariaState, hasLayout, styleHidden, isFaded } from "./a11y";
 import { pageContext, browserInfo, agentState } from "./util";
 import { makeBackgroundTaskPromise } from "./bridge";
@@ -309,11 +309,16 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
                     chain.push(`[${i}] ${elLine(node)}`);
                     if (node.parentElement) { node = node.parentElement; }
                     else {
-                        // parentElement is null at the TOP of a shadow tree — cross the boundary UP to the host
-                        // (getRootNode().host), noting it, so the chain reaches the real light-DOM ancestors.
+                        // parentElement is null at the TOP of a shadow tree OR a same-origin iframe document —
+                        // cross the boundary UP to the host (the shadow host, or the <iframe> element), noting
+                        // it, so the chain reaches the real light-DOM ancestors in the parent document.
                         const root = node.getRootNode() as ShadowRoot;
                         if (root && root.nodeType === 11 && root.host) { chain.push(`    ⇡ (crossed a shadow boundary → host)`); node = root.host; }
-                        else break;
+                        else {
+                            const frame = frameHostOf(node);
+                            if (frame) { chain.push(`    ⇡ (crossed a same-origin iframe boundary → host)`); node = frame; }
+                            else break;
+                        }
                     }
                     i++;
                 }

@@ -156,7 +156,7 @@ export const clickSelector = (target: Element): string => {
 /** The `<iframe>` element hosting `el`'s document, or null if `el` is in the TOP document. Prefers the
  *  standard `window.frameElement` (same-origin), falling back to a frame-tree search by contentDocument
  *  identity (jsdom doesn't populate frameElement; the search also covers browsers). */
-const frameHostOf = (el: Element): Element | null => {
+export const frameHostOf = (el: Element): Element | null => {
     const owner = el.ownerDocument;
     if (!owner || owner === document) return null;   // top document → not in a frame
     try { const fe = owner.defaultView?.frameElement; if (fe) return fe as Element; } catch { /* cross-origin */ }
@@ -172,6 +172,25 @@ const frameHostOf = (el: Element): Element | null => {
         return null;
     };
     return search(document);
+};
+
+/** An element's bounding box in the TOP document's viewport, composing offsets across same-origin iframe
+ *  boundaries. An element INSIDE a frame reports getBoundingClientRect relative to the FRAME's viewport, so a
+ *  top-level overlay (the approve-highlight, drawn in the top document) would place it at the frame-local
+ *  position — wrong. Walk the frame chain, adding each host `<iframe>`'s position + its border. For a
+ *  top-document element this is just getBoundingClientRect. */
+export const viewportRect = (el: Element): { left: number; top: number; right: number; bottom: number; width: number; height: number } => {
+    const r = el.getBoundingClientRect();
+    let left = r.left, top = r.top;
+    let host = frameHostOf(el);
+    while (host) {
+        const fr = host.getBoundingClientRect();   // the <iframe>'s box in its own parent viewport
+        let bl = 0, bt = 0;
+        try { const cs = (host.ownerDocument.defaultView || window).getComputedStyle(host); bl = parseFloat(cs.borderLeftWidth) || 0; bt = parseFloat(cs.borderTopWidth) || 0; } catch { /* no view */ }
+        left += fr.left + bl; top += fr.top + bt;   // the frame's content origin = its box top-left + border
+        host = frameHostOf(host);
+    }
+    return { left, top, right: left + r.width, bottom: top + r.height, width: r.width, height: r.height };
 };
 // The shortest-unique-selector logic, scoped to a root (document OR a shadow root) so uniqueness is checked
 // within that tree and the walk-up stops at the root's boundary (a shadow tree's top element has no parent).

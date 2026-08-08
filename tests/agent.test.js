@@ -396,6 +396,11 @@ test("same-origin iframe: the DOM tools cross it via `>>>` (findByText / describ
 
     // interactives lists the in-frame control with the `>>>` reference.
     assert.match(run(ml, "interactives", {}).content, /Reveal secret/, "interactives lists the in-frame control");
+
+    // ancestors climbs OUT of the frame to the host <iframe> in the parent document.
+    const anc = String(run(ml, "ancestors", { selector: "iframe#f >>> button.reveal" }).content ?? "");
+    assert.match(anc, /crossed a same-origin iframe boundary/, "ancestors crosses the frame boundary up to the host");
+    assert.match(anc, /iframe/, "and reaches the host iframe in the parent document");
 });
 
 test("shadow DOM: pierceClosedShadow lets the DOM tools reach a CLOSED root the document_start patch captured", () => {
