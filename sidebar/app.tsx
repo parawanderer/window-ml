@@ -1740,13 +1740,13 @@ function fetchUtilityLine(messages: { role: string; content: string }[], key: st
 // A pending call's INTENT: prefer the tool-provided `action` descriptor (deterministic; custom tools
 // too), else a name-based verb for built-ins, else nothing (→ utility-model description).
 const CODE_LANG: Record<string, string> = { exec: "javascript", python_exec: "python" };
-interface Intent { verb: string; kind?: string; target?: string; selector?: string; input?: string; note?: string; submit?: boolean; }
+interface Intent { verb: string; kind?: string; target?: string; selector?: string; input?: string; note?: string; submit?: boolean; crossOrigin?: string; }
 function intentFor(st: AgentStep): Intent | null {
     // Whether a `type` will ALSO press Enter — a materially bigger action (it submits the form/search), so the
     // approval must call it out. Read from the raw args (the ground truth), regardless of the render path.
     const submit = st.tool === "type" ? !!st.arguments?.submit : undefined;
     const ri = st.renderIn;
-    if (ri && ri.type === "action") return { verb: ri.verb, kind: ri.kind, target: ri.target, selector: ri.selector, input: ri.input, note: ri.note, submit };
+    if (ri && ri.type === "action") return { verb: ri.verb, kind: ri.kind, target: ri.target, selector: ri.selector, input: ri.input, note: ri.note, submit, crossOrigin: ri.crossOrigin };
     if (ri && ri.type === "elements" && ri.items[0])   // an older/other target render still gives a target + selector
         return { verb: st.tool === "click" ? "Click" : st.tool === "type" ? "Type" : `Run ${st.tool}`, target: ri.items[0].text || ri.items[0].path, selector: ri.items[0].path, submit };
     const sel = typeof st.arguments?.selector === "string" ? (st.arguments.selector as string) : undefined;
@@ -1809,6 +1809,11 @@ function ApprovalBody({ st, hash, goal }: { st: AgentStep; hash: string; goal: s
                             {intent.note ? <span class="action-note"> · {intent.note}</span> : null}.
                         </div>
                         {intent.selector ? <div class="action-loc"><span class="loc-dot" aria-hidden="true" />Highlighted on the page{pos ? <> · <b>{pos}</b></> : null}</div> : null}
+                        {/* CROSS-ORIGIN iframe = the one privileged case: a real debugger click reaching INTO
+                            embedded third-party content that uses your session there. Chrome's debug banner only
+                            appears AFTER you approve, so warn here, visually, BEFORE. (Same-origin frames / shadow
+                            roots don't warn — not a security boundary.) */}
+                        {intent.crossOrigin ? <div class="action-xorigin"><IconWarn /><span><b>Privileged click into an embedded cross-origin frame</b> — <b class="xorigin-host">{intent.crossOrigin}</b>. It uses a real debugger click and your session on that site.</span></div> : null}
                       </div>
                     : <div class="action-card">
                         {summary ? <div class="action-summary ml-reveal">{summary}</div>

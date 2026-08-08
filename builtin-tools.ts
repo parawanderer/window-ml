@@ -34,7 +34,7 @@ const canvasAt = (x: number, y: number): Element | null => {
  *  host can't reach the sealed inner control. NOT reserved: a `<canvas>` (its listener is ON the canvas
  *  element → synthetic works) or an OPEN / pierce-CAPTURED shadow root (selector-reachable). Returns the kind
  *  (+ the iframe's origin, for the approval label), or null for a normally-clickable target. */
-const reservedSurfaceAt = (x: number, y: number): { kind: "iframe" | "shadow"; origin?: string } | null => {
+const reservedSurfaceAt = (x: number, y: number): { kind: "iframe" | "shadow"; origin?: string; crossOrigin?: boolean } | null => {
     let el: Element | null = null;
     try { el = document.elementFromPoint(x, y); } catch { return null; }
     if (!el) return null;
@@ -42,7 +42,13 @@ const reservedSurfaceAt = (x: number, y: number): { kind: "iframe" | "shadow"; o
     if (iframe) {
         let origin: string | undefined;
         try { origin = new URL(iframe.getAttribute("src") || "", location.href).origin; } catch { /* opaque/srcdoc → no origin label */ }
-        return { kind: "iframe", origin };
+        // CROSS-ORIGIN is the only real security boundary (SOP + the user's ambient session with that third
+        // party). A cross-origin frame's contentDocument is null; same-origin / srcdoc / blank is accessible.
+        // Only this warrants a privileged-click warning in the approval — same-origin iframes and shadow roots
+        // don't (a shadow root isn't even a security feature). Err toward "cross" if we can't tell.
+        let crossOrigin = false;
+        try { crossOrigin = iframe.contentDocument === null; } catch { crossOrigin = true; }
+        return { kind: "iframe", origin, crossOrigin };
     }
     // Un-pierceable closed-shadow host (same heuristic as dom.ts closedShadowHosts): a hyphenated custom
     // element with no light children, no OPEN root, and not captured by the pierce patch.
@@ -123,8 +129,15 @@ export const actionRender = (verb: string, args: Record<string, unknown>, extra?
     const sel = typeof args.selector === "string" ? args.selector.trim() : "";
     if (!sel) return null;
     const idx = typeof args.index === "number" ? args.index : 0;
-    let kind: string | undefined; let target: string | undefined;
-    if (/^@pt:/.test(sel)) kind = "point";
+    let kind: string | undefined; let target: string | undefined; let crossOrigin: string | undefined;
+    if (/^@pt:/.test(sel)) {
+        kind = "point";
+        // Flag a click landing in a CROSS-ORIGIN iframe — the one privileged case, so the approval can warn
+        // BEFORE you approve (Chrome's debug banner only shows AFTER). Same-origin frames / shadow roots don't.
+        const pt = resolvePoint(sel);
+        const r = pt ? reservedSurfaceAt(pt.x, pt.y) : null;
+        if (r && r.kind === "iframe" && r.crossOrigin) crossOrigin = r.origin || "an embedded cross-origin frame";
+    }
     else if (/^@box:/.test(sel)) kind = "region";
     else {
         try {
@@ -136,7 +149,7 @@ export const actionRender = (verb: string, args: Record<string, unknown>, extra?
             }
         } catch { /* bad selector — no label */ }
     }
-    return { type: "action", verb, kind, target, selector: sel, input: extra?.input, note: extra?.note };
+    return { type: "action", verb, kind, target, selector: sel, input: extra?.input, note: extra?.note, crossOrigin };
 };
 
 export const targetRender = (args: Record<string, unknown>): RenderDescriptor | null => {
