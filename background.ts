@@ -1059,6 +1059,17 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     try {
                         const env = await chrome.tabs.sendMessage(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name, args } })
                             .catch((e: unknown) => ({ result: `Error: could not reach the page to run "${name}" (${(e as Error)?.message || e}).` })) as Partial<import("./contract").PageToolEnvelope>;
+                        // RESERVED-surface click: the page couldn't synth-click a cross-origin iframe / sealed
+                        // shadow target and handed back a CDP-click coordinate. The click was ALREADY approved
+                        // above, and the trusted background performs the CDP click (the page can't). Gated on
+                        // the off-by-default `cdpClick` flag (cdpClick() itself checks the debugger permission).
+                        if (env?.cdpClick) {
+                            const cfg = await getConfig();
+                            if (!cfg.cdpClick) return { result: `${env.result || ""}\n\nThis needs a debugger (CDP) click, which is OFF — enable "reserved-element clicking" in window.ml Settings → Advanced (cross-origin iframes / sealed shadow roots).`, renderIn: env.renderIn, renderOut: env.renderOut };
+                            const r = await cdpClick(tabId, env.cdpClick.x, env.cdpClick.y);
+                            const ok = "ok" in r;
+                            return { result: ok ? `Clicked the reserved target at (${env.cdpClick.x}, ${env.cdpClick.y}) via the debugger. Re-run look to see the result.` : (r as { error: string }).error, renderIn: env.renderIn, renderOut: env.renderOut };
+                        }
                         // The page already computed the rendered In/Out slots (descriptorFor) — forward them so
                         // the sidebar shows the rich view. `image` rides along for INLINE VISION (native look):
                         // the loop injects it into the model's next turn (pushToolImages).

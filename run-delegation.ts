@@ -91,6 +91,7 @@ export async function runDelegatedTool(runId: string, name: string, args: Record
         elementCount: env.elements ? env.elements.length : undefined,
         image: env.image, imageLabel: env.imageLabel,
         renderIn, renderOut,
+        cdpClick: env.cdpClick,   // reserved-surface click → the BACKGROUND does the CDP click (trusted)
     };
 }
 

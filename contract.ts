@@ -261,6 +261,11 @@ export interface ToolResult {
     render?: RenderDescriptor;
     /** the In slot: a visualization of the CALL (e.g. python's notebook-cell header) */
     renderIn?: RenderDescriptor;
+    /** RESERVED-surface click signal: the target is a cross-origin iframe / sealed closed shadow root that a
+     *  synthetic click can't reach, so the tool declines to click and asks the executor to do a CDP click at
+     *  this viewport coordinate instead (page loop → CDP_CLICK message; background → cdpClick directly). See
+     *  docs/spec/CDP_CLICK.md. */
+    cdpClick?: { x: number; y: number };
 }
 
 /** One stage of a `locate` run: a vision sub-call (grid cell-pick, Set-of-Marks pick,
@@ -709,6 +714,9 @@ export interface PageToolEnvelope {
     readonly?: boolean;
     /** a precheck that found the action doomed (no target) → skip the gate, use `result` */
     precheckFailed?: boolean;
+    /** RESERVED-surface click: the page-side tool couldn't synth-click a cross-origin iframe / sealed shadow
+     *  target and needs a CDP click at this viewport coordinate — the BACKGROUND (trusted) does it. */
+    cdpClick?: { x: number; y: number };
 }
 
 /** A resumable chat session persisted to chrome.storage.local for { save: true }

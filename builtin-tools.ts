@@ -7,7 +7,7 @@
 import type { MlApi, MlTool, LocateSubstep, ToolResult, RenderDescriptor } from "./contract";
 import { DEFAULT_GROUNDING_RANGE } from "./contract";
 import { PY_PACKAGE_LABELS } from "./python-env";
-import { truncate, clipOut, errText, elLine, queryAll, selectorError, googleSheetCsvUrl, nonEmptyTables } from "./dom";
+import { truncate, clipOut, errText, elLine, queryAll, selectorError, googleSheetCsvUrl, nonEmptyTables, capturedClosedRoot } from "./dom";
 import { accessibleName } from "./a11y";
 
 // Cap on python_exec output (stdout / value / error) fed back to the model — bigger than
@@ -25,6 +25,29 @@ const canvasAt = (x: number, y: number): Element | null => {
     let el: Element | null = null;
     try { el = document.elementFromPoint(x, y); } catch { return null; }
     return el ? el.closest("canvas") : null;
+};
+/** A "RESERVED" surface at a viewport point: one a SYNTHETIC click can't activate, so it needs a real,
+ *  hit-tested CDP click (docs/spec/CDP_CLICK.md). Two cases: (1) an `<iframe>` — its content is a separate
+ *  document, and dispatching on the `<iframe>` element never reaches inside (cross-origin especially, but a
+ *  synthetic click can't reach a same-origin frame's inner control either, since we don't cross frames); and
+ *  (2) an un-pierceable CLOSED shadow host — `elementFromPoint` retargets to the host, and a dispatch on the
+ *  host can't reach the sealed inner control. NOT reserved: a `<canvas>` (its listener is ON the canvas
+ *  element → synthetic works) or an OPEN / pierce-CAPTURED shadow root (selector-reachable). Returns the kind
+ *  (+ the iframe's origin, for the approval label), or null for a normally-clickable target. */
+const reservedSurfaceAt = (x: number, y: number): { kind: "iframe" | "shadow"; origin?: string } | null => {
+    let el: Element | null = null;
+    try { el = document.elementFromPoint(x, y); } catch { return null; }
+    if (!el) return null;
+    const iframe = el.closest("iframe") as HTMLIFrameElement | null;
+    if (iframe) {
+        let origin: string | undefined;
+        try { origin = new URL(iframe.getAttribute("src") || "", location.href).origin; } catch { /* opaque/srcdoc → no origin label */ }
+        return { kind: "iframe", origin };
+    }
+    // Un-pierceable closed-shadow host (same heuristic as dom.ts closedShadowHosts): a hyphenated custom
+    // element with no light children, no OPEN root, and not captured by the pierce patch.
+    if (!el.shadowRoot && !capturedClosedRoot(el) && el.tagName.includes("-") && !el.children.length) return { kind: "shadow" };
+    return null;
 };
 /**
  * If a pick box OVERLAPS a <canvas>, the canvas-hit point nearest the box centre. Samples
@@ -861,12 +884,21 @@ export const buildClickTool = (ml: MlApi): MlTool => {
         // In: a tool-provided INTENT (verb + human target + highlight selector) — the approval card reads
         // it deterministically, and the debug In slot renders it as a hoverable ref (outlines the element).
         render: (_input, args) => actionRender("Click", args),
-        run: async ({ selector, index = 0 }: { selector: string; index?: number }): Promise<string> => {
+        run: async ({ selector, index = 0 }: { selector: string; index?: number }): Promise<string | ToolResult> => {
             const doomed = clickPrecheck({ selector, index });   // @box / stale @pt / bad selector / no match
             if (doomed) return doomed;
-            // A canvas point token from locate → synthesize a click at that coordinate.
+            // A point token from locate → click that coordinate.
             if (POINT_RE.test((selector || "").trim())) {
                 const pt = resolvePoint(selector)!;   // precheck confirmed it resolves
+                // A RESERVED surface (cross-origin iframe / sealed closed shadow) can't be reached by a
+                // synthetic dispatch — hand the executor a CDP-click signal at this coordinate instead. The
+                // executor (page loop / background) gates it on the `cdpClick` flag + permission + approval.
+                const reserved = reservedSurfaceAt(pt.x, pt.y);
+                if (reserved) {
+                    const what = reserved.kind === "iframe" ? `a${reserved.origin ? ` ${reserved.origin}` : "n embedded cross-origin"} iframe` : "a sealed closed shadow root";
+                    return { content: `The target at (${pt.x}, ${pt.y}) is inside ${what} — a normal click can't reach it, so this needs a debugger (CDP) click.`, cdpClick: { x: pt.x, y: pt.y } };
+                }
+                // A canvas point token → synthesize a click at that coordinate.
                 const before = (typeof location !== "undefined" && location.href) || "";
                 const hit = clickAt(pt.x, pt.y);
                 if (!hit) return `Nothing is at point (${pt.x}, ${pt.y}) — it may have scrolled off-screen. Re-run locate.`;

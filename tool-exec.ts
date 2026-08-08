@@ -20,6 +20,8 @@ export interface ToolEnvelope {
     imageLabel?: string;
     render?: RenderDescriptor;
     renderIn?: RenderDescriptor;
+    /** reserved-surface (cross-origin iframe / sealed shadow) click signal → the executor does a CDP click */
+    cdpClick?: { x: number; y: number };
 }
 
 export async function executeTool(tool: MlTool, args: Record<string, unknown>, ctx?: ToolContext): Promise<ToolEnvelope> {
@@ -42,7 +44,7 @@ export async function executeTool(tool: MlTool, args: Record<string, unknown>, c
         // also hand back real DOM nodes / a screenshot (routed to onStep/the transcript, never the model).
         if (raw && typeof raw === "object" && typeof (raw as ToolResult).content === "string") {
             const r = raw as ToolResult;
-            return { result: r.content + note, elements: r.elements, image: r.image, imageLabel: r.imageLabel, render: r.render, renderIn: r.renderIn };
+            return { result: r.content + note, elements: r.elements, image: r.image, imageLabel: r.imageLabel, render: r.render, renderIn: r.renderIn, cdpClick: r.cdpClick };
         }
         return { result: String(raw) + note };
     } catch (e) { return { result: `Error: ${errText(e)}` + note }; }

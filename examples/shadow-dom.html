@@ -57,21 +57,24 @@
   extension's <code>document_start</code> patch captures it and the DOM tools reach in (the trace shows
   <code>#shadow-root (CLOSED, pierced)</code>). With the setting off, the panel is honestly unreachable.</p>
 
-  <h1 style="font-size:15px; margin-top:34px">A second panel — a <em>declarative</em> closed root (never pierceable)</h1>
+  <h1 style="font-size:15px; margin-top:34px">A second panel — a <em>declarative</em> closed root (pierce can't reach it; only CDP can)</h1>
   <p>This one's closed shadow root is written into the HTML itself
   (<code>&lt;template shadowrootmode="closed"&gt;</code>), so the browser's <b>parser</b> attaches it — there is
   no <code>attachShadow</code> call for the extension to intercept, so it <b>cannot be captured even with "Pierce
   closed shadow roots" on</b>. And the code stays hidden until you press <b>Reveal backup code</b> — a control
-  that lives INSIDE the closed root, so no selector can click it and vision can't just read the value off the
-  page. The only way through: <code>ml.locate</code> the button by appearance, <code>@pt</code>-click it (a
-  coordinate click retargets into the closed tree), <em>then</em> read the revealed code. A correct agent does
-  that or says it can't — it must never hallucinate the value.</p>
+  INSIDE the closed root, so no selector can click it and vision can't read the value off the page. A
+  <b>synthetic</b> click can't reach it either: dispatching on the host doesn't hit-test into the sealed tree.
+  The <em>only</em> way in is a <b>real, hit-tested click</b> — with <b>"reserved-element clicking"</b> enabled
+  (the debugger/CDP click), the agent can <code>ml.locate</code> the button by appearance, then
+  <code>click</code> the <code>@pt</code>, which routes through the debugger; the browser hit-tests into the
+  closed tree and the code reveals. With it OFF, a correct agent reports it <em>can't</em> reach it — never
+  hallucinating the value. (This is the single surface that genuinely needs CDP.)</p>
   <sealed-note>
     <template shadowrootmode="closed">
       <style>
         /* CSS-only reveal (no JS — a declarative closed root has no script to wire): a hidden checkbox the
-           button-label toggles, and :checked swaps the button for the code. A coordinate click on the label
-           retargets into this closed tree, which is the only way an agent can trip it. */
+           button-label toggles, and :checked swaps the button for the code. A SYNTHETIC click on the host
+           can't trip it (no hit-test into the closed tree); only a REAL/CDP hit-tested click reaches the label. */
         .box { max-width: 560px; border: 1px solid #e2e2e6; border-radius: 10px; padding: 11px 14px;
           font: 14px system-ui; display: flex; align-items: center; gap: 10px; }
         #reveal { display: none; }
@@ -110,11 +113,12 @@
             "Ada Lovelace" / "SHDW-7788" by selector, exactly like OPEN mode (trace: "#shadow-root (CLOSED, pierced)").
 
       • <sealed-note> (the DECLARATIVE closed root) → parser-attached, never via attachShadow, so it is NEVER
-        captured — UNREACHABLE by selector even with the setting ON. The code "SEAL-9931" is also click-GATED:
-        hidden until the "Reveal backup code" button (inside the closed root) is pressed, so vision can't read it
-        off the page either. The ONLY path, in BOTH settings: locate the button by appearance → @pt-click it
-        (a coordinate click retargets into the closed tree) → then read the revealed code. A correct agent does
-        that, or says it can't — it must never hallucinate the value.
+        captured — UNREACHABLE by selector even with "Pierce closed shadow roots" ON. The code "SEAL-9931" is
+        also click-GATED: hidden until the "Reveal backup code" button (inside the closed root) is pressed, so
+        vision can't read it off the page either. And a SYNTHETIC click can't trip it (no hit-test into the
+        sealed tree). The ONLY way in is a REAL hit-tested click = the extension's "reserved-element clicking"
+        (CDP/debugger): with it ON, locate the button → click the @pt (routed through the debugger) → then read
+        the reveal. With it OFF, a correct agent says it can't reach it — never hallucinating the value.
   -->
 
   <script>
