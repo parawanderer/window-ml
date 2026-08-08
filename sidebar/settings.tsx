@@ -80,6 +80,7 @@ const TIP = {
     autoTitles: "Let the utility model write short summaries for you: debug session titles, and the plain-English gloss above a code approval / the description of a custom tool call in the off-mode card. Off = titles fall back to the first prompt and the card shows no summary. Only runs when a utility model is set.",
     autoApproveReadonly: "Experimental. Run read-only exec surveys (querySelectorAll → filter → map, no mutation) without an approval prompt, via a mediated interpreter that can't reach window/fetch and never eval()s a string. Anything that mutates or isn't recognised still asks. Also lets these surveys run on Trusted-Types pages where eval is blocked. The agent can likewise read its own setup without asking — ml.getModel/config/models/capabilities/ps/serverTools, the same non-secret values any page can read; every other ml method still prompts.",
     autoApprovePython: "Experimental. Run readonly-mode python_exec calls without an approval prompt. A readonly run is isolated by construction — the WASM sandbox has no DOM, no filesystem, and (in this mode) no network or JS/extension scope — so it's a pure function over the injected data and can't affect the page or exfiltrate. A `mode:'full'` call (which the agent must explicitly request to get network) ALWAYS asks. Code with hidden/bidi characters also still asks.",
+    cdpClick: "Experimental. Let the agent CLICK surfaces a normal click can't reach — cross-origin iframes and declarative/native closed shadow roots — via chrome.debugger (a real, hit-tested, TRUSTED click). It's the only way to reach those: a synthetic click doesn't cross the boundary, and pierce can't capture a declarative/native closed root. Still gated by the per-click approval. Attaching flashes Chrome's \"is debugging this browser\" banner — ONLY for these reserved clicks, so the flash marks the risk. Needs the debugger permission (grant below) and stays inert without it.",
     pierceClosedShadow: "Let the DOM tools reach inside CLOSED shadow roots too (normally selector-invisible). A tiny script captures each closed root as the page builds it — the tools then treat it like an open root (same `host >>> inner` syntax). Closed shadow DOM is encapsulation, not a security boundary, so this doesn't cross any origin. On by default: the capture script wraps attachShadow on every page regardless of this setting (capture only — page behaviour is unchanged), so this just gates whether the tools use it. Turn it off to keep the tools' selector reach limited to open roots. Declarative/native closed roots still can't be captured; the agent falls back to visual locate/@pt for those.",
     groundingEnabled: "Experimental. When on, ml.agent's `locate` tool asks a grounding VLM for bounding-box coordinates. This loads an extra model into VRAM — leave off if memory is tight. Off = locate still works via the Set-of-Marks screenshot tool, which needs no extra model.",
     groundingModel: "A vision model that outputs coordinates (recommended qwen2.5vl:7b, or :3b for lower latency). Blank auto-detects a qwen2.5vl on your server. Real-world grounding accuracy is unproven.",
@@ -380,6 +381,37 @@ function SheetsGrant() {
                 : <div class="free-row"><button class="test-btn" onClick={enable}>Enable Google Sheets access</button></div>}
             {err ? <div class="set-err">{err}</div> : null}
         </details>
+    );
+}
+
+// Runtime `debugger` permission grant/revoke for reserved-element (CDP) clicking. Mirrors SheetsGrant —
+// chrome.permissions from this extension-origin page, requested during the button's user gesture (the SW
+// can't request). Rendered inside the Advanced "reserved-element clicking" section, below its toggle.
+const DEBUGGER_PERM = { permissions: ["debugger"] } as chrome.permissions.Permissions;
+function DebuggerPermission() {
+    const [granted, setGranted] = useState<boolean | null>(null);
+    const [err, setErr] = useState("");
+    useEffect(() => {
+        try { chrome.permissions.contains(DEBUGGER_PERM, (g) => setGranted(!!g)); } catch { setGranted(false); }
+    }, []);
+    const enable = () => {
+        setErr("");
+        try {
+            chrome.permissions.request(DEBUGGER_PERM, (g) => {
+                setGranted(!!g);
+                if (!g) setErr("Not granted — reserved-element clicks will report the missing permission until you allow it.");
+            });
+        } catch (e: any) { setErr(`Couldn't request the debugger permission: ${e?.message || e}.`); }
+    };
+    const revoke = () => { try { chrome.permissions.remove(DEBUGGER_PERM, (r) => { if (r) setGranted(false); }); } catch { /* ignore */ } };
+    if (granted === null) return null;   // still probing / API unavailable
+    return (
+        <div class="perm-inline">
+            {granted
+                ? <div class="set-hint"><span class="perm-ok">Debugger access granted.</span> Reserved-element clicks will attach the debugger (banner) only for that one click. <button class="test-btn" onClick={revoke}>Revoke</button></div>
+                : <div class="free-row"><button class="test-btn" onClick={enable}>Grant debugger access</button></div>}
+            {err ? <div class="set-err">{err}</div> : null}
+        </div>
     );
 }
 
@@ -736,6 +768,16 @@ export function Settings() {
                         onChange={(e: any) => setField("pierceClosedShadow", e.target.checked)} />
                     <Lbl tip={TIP.pierceClosedShadow}>Pierce closed shadow roots</Lbl>
                 </label>
+                </Section>
+
+                <Section id="reserved-click" title="Reserved-element clicking (experimental)">
+                <div class="set-note">Let the agent CLICK surfaces a normal click can't reach — <b>cross-origin iframes</b> and <b>declarative/native closed shadow roots</b> — via <code>chrome.debugger</code> (a real, hit-tested, trusted click). It's the only way in: a synthetic click doesn't cross the boundary, and pierce can't capture a declarative/native closed root. Still gated by the per-click approval. Attaching flashes Chrome's <b>“is debugging this browser” banner</b> — only for these reserved clicks, so the flash marks the risk. Needs the <code>debugger</code> permission below; stays inert without it.</div>
+                <label class="set-check">
+                    <input type="checkbox" checked={c.cdpClick}
+                        onChange={(e: any) => setField("cdpClick", e.target.checked)} />
+                    <Lbl tip={TIP.cdpClick}>Allow reserved-element clicks (CDP)</Lbl>
+                </label>
+                {c.cdpClick ? <DebuggerPermission /> : null}
                 </Section>
 
             </> : null}
