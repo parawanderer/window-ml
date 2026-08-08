@@ -374,6 +374,30 @@ test("shadow DOM: scanning tools + describeElement tailor the CLOSED-root steer 
     assert.match(String(tool("pageInfo").run({})), /Shadow DOM.*closed\/empty root/s, "pageInfo counts shadow roots up front");
 });
 
+test("same-origin iframe: the DOM tools cross it via `>>>` (findByText / describeElement / interactives)", () => {
+    const { ml, document } = loadDomWorld('<iframe id="f"></iframe><button>outside</button>');
+    const frame = document.getElementById("f");
+    if (!frame.contentDocument) { console.log("(skipped: jsdom has no iframe contentDocument)"); return; }
+    frame.contentDocument.body.innerHTML = '<button class="reveal" aria-label="Reveal secret">Reveal secret</button>';
+
+    // findByText crosses into the same-origin frame and returns a frame-crossing `>>>` reference.
+    const found = run(ml, "findByText", { text: "Reveal secret" }).content;
+    assert.match(found, /Reveal secret/, "findByText finds the button inside the same-origin iframe");
+    assert.match(found, /#f >>> button/, "referenced with a frame-crossing `>>>`");
+
+    // The `>>>` reference re-resolves back INTO the frame (describeElement/click/type can use it).
+    const desc = (sel) => String(run(ml, "describeElement", { selector: sel }).content ?? "");
+    assert.match(desc("iframe#f >>> button.reveal"), /button/, "a `>>>` reference resolves into the frame");
+
+    // describeElement on the iframe descends + flags it SAME-ORIGIN.
+    const iframeDesc = desc("iframe#f");
+    assert.match(iframeDesc, /#document \(SAME-ORIGIN iframe\)/, "the iframe is flagged same-origin");
+    assert.match(iframeDesc, /button/, "and its contents are shown");
+
+    // interactives lists the in-frame control with the `>>>` reference.
+    assert.match(run(ml, "interactives", {}).content, /Reveal secret/, "interactives lists the in-frame control");
+});
+
 test("shadow DOM: pierceClosedShadow lets the DOM tools reach a CLOSED root the document_start patch captured", () => {
     const { ml, document, window } = loadDomWorld('<button>light-only</button>');
     // Simulate shadow-patch.js (not loaded in the test harness): a CLOSED root, stashed as it's created.

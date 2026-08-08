@@ -98,10 +98,18 @@ export const SHADOW_CLOSED_PIERCE_NOTE =
     "inside and describeElement flags `#shadow-root (CLOSED, pierced)`. A few can't be captured (declarative " +
     "`shadowrootmode=\"closed\"` or native browser roots); the scanning tools flag those specifically — reach " +
     "them visually with `locate`/`@pt`.";
+// Same-origin iframes ALSO use `>>>`. Appended after the shadow clause whenever the DOM tools are present.
+export const IFRAME_CLAUSE =
+    " Iframes use the SAME `>>>` notation: a SAME-ORIGIN `<iframe>` is crossed like a shadow boundary — " +
+    "`iframe#id >>> button` (any iframe selector) reaches a control inside it, and describeElement flags " +
+    "`#document (SAME-ORIGIN iframe)`. A CROSS-ORIGIN iframe is walled off by the Same-Origin Policy: NO " +
+    "selector reaches inside — reach a control visually with `locate`/`@pt` (that click needs the extension's " +
+    "\"reserved-element clicking\" enabled, a debugger/CDP click).";
 // Appended to SHADOW_CLAUSE only when `exec` is available — the JS mapping is useless without it.
 export const SHADOW_EXEC_NOTE =
     " In `exec`, a `host >>> inner` path is `document.querySelector('host').shadowRoot.querySelector('inner')` " +
-    "— chain `.shadowRoot.querySelector(...)` once per `>>>` hop (a closed root's `.shadowRoot` is null).";
+    "— chain `.shadowRoot.querySelector(...)` once per `>>>` hop (a closed root's `.shadowRoot` is null); for a " +
+    "same-origin iframe hop it's `.contentDocument.querySelector(...)` instead.";
 export const WAIT_CLAUSE =
     "\n\nThe page updates ASYNCHRONOUSLY — clicks, typing, navigation and lazy-loading take " +
     "effect after a delay, NOT instantly. So after any action that triggers an update, use the " +

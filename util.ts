@@ -2,7 +2,7 @@
 // and element-rect screenshot cropping. Pure-ish (args + browser globals); bundled
 // into injected.js.
 
-import { truncate, shadowRootStats } from "./dom";
+import { truncate, shadowRootStats, iframeStats } from "./dom";
 import type { ShotBox } from "./contract";
 
 /**
@@ -103,6 +103,15 @@ export const pageContext = (): string => {
             parts.push(`Shadow DOM: ${s.open} open shadow root${s.open === 1 ? "" : "s"}` +
                 (s.open ? " (the DOM tools pierce these — references look like `host >>> inner`)" : "") +
                 (s.closed ? `${s.open ? "; " : ", "}${s.closed} Web Component${s.closed === 1 ? "" : "s"} with a closed/empty root (reachable only visually, via locate/@pt)` : "") + ".");
+        }
+    } catch {}
+    // Iframe orientation: same-origin frames the DOM tools cross (`>>>`); cross-origin ones are SOP-walled.
+    try {
+        const f = iframeStats();
+        if (f.same || f.cross) {
+            parts.push(`Iframes: ${f.same ? `${f.same} same-origin (the DOM tools cross these — references look like \`iframe >>> inner\`)` : ""}` +
+                (f.same && f.cross ? "; " : "") +
+                (f.cross ? `${f.cross} cross-origin (walled off by SOP — reach a control visually via locate/@pt + reserved-element clicking)` : "") + ".");
         }
     } catch {}
     return parts.join("\n");

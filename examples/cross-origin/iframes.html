@@ -24,12 +24,13 @@
 </head>
 <body>
   <h1>Iframes — same-origin vs cross-origin</h1>
-  <p>An <code>&lt;iframe&gt;</code> is a <b>separate document</b>. The agent's DOM tools don't cross frames, and
-  a synthetic click on the <code>&lt;iframe&gt;</code> element doesn't hit-test inside — so a control in a
-  frame is a <b>"reserved" surface</b>: the only way to click it is a real, hit-tested <b>debugger (CDP)
-  click</b> (turn on <b>"reserved-element clicking"</b> in window.ml Settings → Advanced). The two panels below
-  differ in <b>one</b> thing — whether the frame is same- or cross-origin — which changes only whether the
-  approval shows the <b>privileged-click warning</b>.</p>
+  <p>An <code>&lt;iframe&gt;</code> is a <b>separate document</b>. What the agent can do about a control inside
+  one depends entirely on <b>origin</b>. A <b>same-origin</b> frame is reachable by JS (the Same-Origin Policy
+  doesn't apply), so the DOM tools <b>cross it with the <code>&gt;&gt;&gt;</code> notation</b> — exactly like a
+  shadow boundary — and a normal selector click works. A <b>cross-origin</b> frame is walled off by SOP: no
+  selector reaches inside and a synthetic click can't cross, so the only way in is a real, hit-tested
+  <b>debugger (CDP) click</b> (<b>"reserved-element clicking"</b> in window.ml Settings → Advanced), which also
+  raises a <b>privileged-click warning</b>. The two panels below isolate exactly that difference.</p>
 
   <h1 style="font-size:15px; margin-top:26px">How to run it (needs a local server)</h1>
   <p>A genuinely cross-origin iframe needs two real HTTP origins — <code>file://</code> won't do. A tiny
@@ -40,11 +41,12 @@
   <p class="warn">If the panels below are blank, you opened this as a <code>file://</code> path — start the
   server and open <code>http://localhost:8080</code> instead.</p>
 
-  <h2>Challenge 1 — a <em>same-origin</em> iframe <span class="pill no">no warning</span></h2>
-  <p>Served from the <b>same</b> origin as this page. Its <code>contentDocument</code> is reachable by page JS,
-  but the agent's DOM tools still don't cross frames and a synthetic click can't reach in — so the click routes
-  through <b>CDP</b> all the same. Because it's <b>same-origin</b>, the approval shows <b>no</b> privileged-click
-  warning (no security boundary is being crossed).</p>
+  <h2>Challenge 1 — a <em>same-origin</em> iframe <span class="pill ok">reached by <code>&gt;&gt;&gt;</code></span></h2>
+  <p>Served from the <b>same</b> origin as this page, so the DOM tools <b>cross it</b>: <code>findByText</code> /
+  <code>interactives</code> see the button and reference it as <code>iframe#… &gt;&gt;&gt; button</code>, and
+  <code>click</code> on that selector clicks the <em>real inner element</em> directly — a normal click, <b>no
+  CDP, no warning</b>. (<code>describeElement</code> on the frame flags <code>#document (SAME-ORIGIN
+  iframe)</code> and shows its contents.)</p>
   <iframe src="/same" title="Same-origin panel"></iframe>
   <p><code>await ml.agent("Reveal and read the secret in the FIRST (same-origin) panel.")</code></p>
 
@@ -59,14 +61,17 @@
   <p><code>await ml.agent("Reveal and read the secret in the SECOND (cross-origin) panel.")</code></p>
 
   <!--
-    ANSWER KEY (comment-only). Both need "reserved-element clicking" ON; with it OFF a correct agent reports it
-    can't reach either panel (and never hallucinates a value).
-      • Challenge 1 — SAME-origin, secret "SAME-1234". Selector-unreachable (DOM tools don't cross frames);
-        synthetic click can't reach in; value hidden until clicked. locate → @pt → click routes to CDP
-        (reserved). The approval shows NO privileged-click warning (same origin — no boundary crossed).
-      • Challenge 2 — CROSS-origin, secret "XORG-4242" (http://localhost:8081). SOP-walled, reachable ONLY by a
-        CDP click. The approval shows the RED cross-origin privileged-click warning naming the origin. On
-        approve, the debugger clicks the button → XORG-4242 appears → the agent reads it.
+    ANSWER KEY (comment-only). A correct agent never hallucinates a value.
+      • Challenge 1 — SAME-origin, secret "SAME-1234". The DOM tools CROSS it (same origin, no SOP): findByText/
+        interactives reference the button as `iframe#… >>> button`, and click on that selector clicks the real
+        inner element — a NORMAL click, no CDP, NO warning. Then read the revealed "SAME-1234". (No reserved-
+        element clicking needed here.)
+      • Challenge 2 — CROSS-origin, secret "XORG-4242" (http://localhost:8081). SOP-walled — selector-
+        unreachable and a synthetic click can't cross; value hidden until clicked, so vision can't read it.
+        Reachable ONLY by a CDP click (needs "reserved-element clicking" ON): locate → @pt → click routes to
+        CDP; the approval shows the RED cross-origin privileged-click warning naming the origin; on approve the
+        debugger clicks the button → XORG-4242 appears → the agent reads it. With it OFF, a correct agent says
+        it can't reach this one.
   -->
 </body>
 </html>

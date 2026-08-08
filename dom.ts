@@ -145,7 +145,33 @@ export const clickSelector = (target: Element): string => {
     if (root && root.nodeType === 11 && root.host) {
         return `${clickSelector(root.host)} >>> ${selectorWithin(target, root)}`;
     }
+    // Inside a SAME-ORIGIN <iframe> → cross the frame boundary with the SAME `>>>` notation. Recurses for
+    // nested frames / shadow-in-frame.
+    const frame = frameHostOf(target);
+    if (frame && frame !== target) {
+        return `${clickSelector(frame)} >>> ${selectorWithin(target, target.ownerDocument!)}`;
+    }
     return selectorWithin(target, document);
+};
+/** The `<iframe>` element hosting `el`'s document, or null if `el` is in the TOP document. Prefers the
+ *  standard `window.frameElement` (same-origin), falling back to a frame-tree search by contentDocument
+ *  identity (jsdom doesn't populate frameElement; the search also covers browsers). */
+const frameHostOf = (el: Element): Element | null => {
+    const owner = el.ownerDocument;
+    if (!owner || owner === document) return null;   // top document → not in a frame
+    try { const fe = owner.defaultView?.frameElement; if (fe) return fe as Element; } catch { /* cross-origin */ }
+    // Fallback: find which iframe's document === owner. Recurse frame docs so a nested frame's host is found.
+    const search = (root: ParentNode): Element | null => {
+        for (const f of root.querySelectorAll("iframe")) {
+            const doc = sameOriginFrameDoc(f as Element);
+            if (!doc) continue;
+            if (doc === owner) return f as Element;   // f directly hosts owner
+            const deeper = search(doc);
+            if (deeper) return deeper;   // owner is hosted by a frame nested inside f → that direct host
+        }
+        return null;
+    };
+    return search(document);
 };
 // The shortest-unique-selector logic, scoped to a root (document OR a shadow root) so uniqueness is checked
 // within that tree and the walk-up stops at the root's boundary (a shadow tree's top element has no parent).
@@ -199,6 +225,15 @@ export const capturedClosedRoot = (el: Element): ShadowRoot | null => {
 /** The shadow root the DOM tools should TRAVERSE for `el`: its OPEN root, or — when piercing is on — a
  *  captured CLOSED root. Makes captured closed roots first-class selector targets while the flag is set. */
 export const traversableRoot = (el: Element): ShadowRoot | null => el.shadowRoot ?? capturedClosedRoot(el);
+
+/** The reachable inner Document of a SAME-ORIGIN `<iframe>` (SOP lets the top page read/act in it — `exec`
+ *  can already), or null for a non-iframe or a CROSS-ORIGIN frame (whose contentDocument is null / throws —
+ *  those stay selector-unreachable and need locate/@pt + reserved-element (CDP) clicking). This is what lets
+ *  the `>>>` dialect cross a same-origin frame boundary, exactly like a shadow boundary. */
+export const sameOriginFrameDoc = (el: Element): Document | null => {
+    if (el.tagName !== "IFRAME") return null;
+    try { return (el as HTMLIFrameElement).contentDocument; } catch { return null; }
+};
 
 /**
  * One compact line for an element: tag#id.classes [data-*] "own text" (own text
@@ -274,6 +309,26 @@ export const describeSkeleton = (el: Element, depth: number, indent = "", canLoc
             ? "You have no `locate` tool, so you can't interact with a closed shadow root — say so rather than guessing a selector."
             : (canLocate === true ? "Find them visually scoped to this element — " : "IF you have a `locate` tool, ") +
               `locate({ description: "<how the control looks>", selector: "${hostSel}" }) — then click the @pt it returns.`);
+    } else if (el.tagName === "IFRAME") {
+        // An <iframe> is a separate document. SAME-ORIGIN → the DOM tools cross it (like a shadow root):
+        // descend + reference with `>>>`. CROSS-ORIGIN → SOP walls it off from selectors; reach it visually.
+        const doc = sameOriginFrameDoc(el);
+        if (doc) {
+            out += "\n" + indent + "  #document (SAME-ORIGIN iframe) — its contents are shown below; reference them with `>>> <inner selector>`.";
+            const kids = [...((doc.body || doc.documentElement)?.children || [])];
+            if (depth > 0) {
+                for (const k of kids.slice(0, 12)) out += "\n" + describeSkeleton(k, depth - 1, indent + "    ", canLocate);
+                if (kids.length > 12) out += "\n" + indent + `    …(${kids.length - 12} more)`;
+            } else if (kids.length) {
+                out += `\n${indent}  › ${kids.length} element${kids.length === 1 ? "" : "s"} inside the iframe (describeElement deeper to expand)`;
+            }
+        } else {
+            const sel = clickSelector(el);
+            out += "\n" + indent + "  #document (CROSS-ORIGIN iframe) — a different origin, so selectors CANNOT reach inside (SOP). " +
+                (canLocate === false
+                    ? "You have no `locate` tool — say you can't interact with it rather than guessing a selector."
+                    : `Reach a control visually: locate({ description: "<how it looks>", selector: "${sel}" }) → click the @pt (needs "reserved-element clicking" enabled for the debugger/CDP click).`);
+        }
     } else if (!el.children.length && !indent) {
         // No child elements and no shadow root. Say so at the ROOT (not every leaf of an expanded tree) so an
         // empty container — e.g. a collapsed/lazily-rendered table like #bigsales — reads as "empty" instead
@@ -319,7 +374,9 @@ export const deepQueryAll = (selector: string, root: ParentNode = document): Ele
         try { for (const e of r.querySelectorAll(selector || "*")) if (!seen.has(e)) { seen.add(e); out.push(e); } } catch { /* invalid selector in this scope */ }
         for (const host of r.querySelectorAll("*")) {
             const sr = traversableRoot(host as Element);   // open root, or (when piercing is on) a captured closed root
-            if (sr) visit(sr);
+            if (sr) { visit(sr); continue; }
+            const doc = sameOriginFrameDoc(host as Element);   // a SAME-ORIGIN <iframe> → cross into its document
+            if (doc) visit(doc);
         }
     };
     visit(root);
@@ -345,6 +402,20 @@ export const shadowRootStats = (root: ParentNode = document): { open: number; cl
     return { open, closed };
 };
 
+/** Count iframes for ORIENTATION: `same` = SAME-ORIGIN frames the DOM tools CROSS (via `>>>`, recursive);
+ *  `cross` = CROSS-ORIGIN frames the SOP walls off (selector-unreachable → locate/@pt + reserved-element/CDP). */
+export const iframeStats = (root: ParentNode = document): { same: number; cross: number } => {
+    let same = 0, cross = 0;
+    const visit = (r: ParentNode): void => {
+        for (const el of r.querySelectorAll("iframe")) {
+            const doc = sameOriginFrameDoc(el as Element);
+            if (doc) { same++; visit(doc); } else cross++;
+        }
+    };
+    visit(root);
+    return { same, cross };
+};
+
 /** The HOST selectors of UNREACHABLE closed-root Web Components — the ones a selector scan can't enter EVEN
  *  with piercing on (a captured closed root is reachable, so it's excluded here). A scanning tool appends
  *  these so the model knows a target it can't find may be sealed inside one (and can fall back to visual
@@ -364,8 +435,9 @@ export const closedShadowHosts = (root: ParentNode = document, limit = 8): strin
     return hosts;
 };
 
-/** Resolve a shadow-CROSSING reference `hostSel >>> innerSel [>>> …]` (the inverse of clickSelector's `>>>`
- *  output): each `>>>` steps into the open shadowRoot of the previous segment's matches. */
+/** Resolve a BOUNDARY-crossing reference `outerSel >>> innerSel [>>> …]` (the inverse of clickSelector's
+ *  `>>>` output): each `>>>` steps into the previous segment's shadow root OR — for a same-origin `<iframe>`
+ *  — its inner document. One notation for both boundaries. */
 const resolveShadowPath = (path: string): Element[] => {
     const segs = path.split(">>>").map(s => s.trim()).filter(Boolean);
     if (!segs.length) return [];
@@ -374,7 +446,7 @@ const resolveShadowPath = (path: string): Element[] => {
         const matched: Element[] = [];
         for (const sc of scopes) { try { matched.push(...sc.querySelectorAll(segs[i])); } catch { /* skip a bad segment */ } }
         if (i === segs.length - 1) return matched;
-        scopes = matched.map(e => traversableRoot(e)).filter((r): r is ShadowRoot => !!r);
+        scopes = matched.map(e => traversableRoot(e) ?? sameOriginFrameDoc(e)).filter((r): r is Document | ShadowRoot => !!r);
         if (!scopes.length) return [];
     }
     return [];

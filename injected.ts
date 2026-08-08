@@ -34,7 +34,7 @@ import type {
 import { detectGroundingModel, DEFAULT_GROUNDING_RANGE } from "./contract";
 import { evalReadonly } from "./readonly-exec";
 import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow } from "./dom";
-import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_NOTE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_EXEC_NOTE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE } from "./prompts";
+import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_NOTE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_EXEC_NOTE, IFRAME_CLAUSE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, PT_LOOK_RADIUS, BOX_RE, resolveBox, agentState } from "./util";
 import type { ShotBox, ServerTool } from "./contract";
 import { annotate, pickAccentColorForTarget } from "./locate";
@@ -611,7 +611,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 if (toolset.some(t => ["findByText", "describeElement", "interactives", "click", "type"].includes(t.name))) {
                     // The closed-root sentence differs by whether piercing is enabled (reachable via `>>>` vs
                     // visual-only). SHADOW_EXEC_NOTE (`>>>` → JS) is still accurate either way.
-                    systemPrompt += SHADOW_CLAUSE + (pierceClosed ? SHADOW_CLOSED_PIERCE_NOTE : SHADOW_CLOSED_NOTE);
+                    systemPrompt += SHADOW_CLAUSE + (pierceClosed ? SHADOW_CLOSED_PIERCE_NOTE : SHADOW_CLOSED_NOTE) + IFRAME_CLAUSE;
                     if (toolset.some(t => t.name === "exec")) systemPrompt += SHADOW_EXEC_NOTE;
                 }
                 if (toolset.some(t => t.name === "agent_api_docs")) systemPrompt += SELF_CLAUSE;
