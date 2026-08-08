@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Iframes — same-origin vs cross-origin, for the agent's reserved-element (CDP) click</title>
+<style>
+  body { font: 15px system-ui, sans-serif; margin: 28px 32px; color: #111; }
+  h1 { font-size: 18px; margin-bottom: 6px; }
+  h2 { font-size: 15px; margin: 30px 0 4px; }
+  p { max-width: 82ch; color: #444; }
+  code { font: 12px ui-monospace, monospace; background: #f0f0f2; padding: 1px 5px; border-radius: 4px; }
+  pre { font: 12px ui-monospace, monospace; background: #f0f0f2; padding: 10px 12px; border-radius: 6px; max-width: 82ch; overflow-x: auto; }
+  iframe { width: 360px; height: 62px; border: 1px solid #c9c9d2; border-radius: 10px; margin-top: 8px; }
+  .warn { color: #b3261e; }
+  .pill { font: 600 12px ui-monospace, monospace; padding: 2px 8px; border-radius: 999px; }
+  .pill.ok { background: #e6f6ec; color: #167a3b; }
+  .pill.no { background: #fdeceb; color: #b3261e; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #1b1b1f; color: #eee; } p { color: #bbb; } code, pre { background: #2a2a30; }
+    iframe { border-color: #3a3a44; } .warn { color: #ff9a90; }
+    .pill.ok { background: #14351f; color: #6ee7a0; } .pill.no { background: #3a1714; color: #ff9a90; }
+  }
+</style>
+</head>
+<body>
+  <h1>Iframes — same-origin vs cross-origin</h1>
+  <p>An <code>&lt;iframe&gt;</code> is a <b>separate document</b>. The agent's DOM tools don't cross frames, and
+  a synthetic click on the <code>&lt;iframe&gt;</code> element doesn't hit-test inside — so a control in a
+  frame is a <b>"reserved" surface</b>: the only way to click it is a real, hit-tested <b>debugger (CDP)
+  click</b> (turn on <b>"reserved-element clicking"</b> in window.ml Settings → Advanced). The two panels below
+  differ in <b>one</b> thing — whether the frame is same- or cross-origin — which changes only whether the
+  approval shows the <b>privileged-click warning</b>.</p>
+
+  <h1 style="font-size:15px; margin-top:26px">How to run it (needs a local server)</h1>
+  <p>A genuinely cross-origin iframe needs two real HTTP origins — <code>file://</code> won't do. A tiny
+  dependency-free server serves this page + the same-origin frame on one port, and the cross-origin frame on
+  another (different ports = different origins under the Same-Origin Policy):</p>
+  <pre>node examples/cross-origin/serve.mjs
+# → open  http://localhost:8080  in a tab where window.ml is active  (NOT file://)</pre>
+  <p class="warn">If the panels below are blank, you opened this as a <code>file://</code> path — start the
+  server and open <code>http://localhost:8080</code> instead.</p>
+
+  <h2>Challenge 1 — a <em>same-origin</em> iframe <span class="pill no">no warning</span></h2>
+  <p>Served from the <b>same</b> origin as this page. Its <code>contentDocument</code> is reachable by page JS,
+  but the agent's DOM tools still don't cross frames and a synthetic click can't reach in — so the click routes
+  through <b>CDP</b> all the same. Because it's <b>same-origin</b>, the approval shows <b>no</b> privileged-click
+  warning (no security boundary is being crossed).</p>
+  <iframe src="/same" title="Same-origin panel"></iframe>
+  <p><code>await ml.agent("Reveal and read the secret in the FIRST (same-origin) panel.")</code></p>
+
+  <h2>Challenge 2 — a <em>cross-origin</em> iframe <span class="pill no">⚠ warning</span></h2>
+  <p>Served from a <b>different</b> origin (a different port). The Same-Origin Policy walls it off from this page
+  <em>and</em> the agent's DOM tools; a synthetic click can't cross it; and the secret is hidden until the
+  button inside is clicked, so vision can't read it. Only a <b>CDP click</b> reaches it — and because it's
+  <b>cross-origin</b>, the approval shows a red <b>privileged-click warning</b> naming the frame's origin. This
+  is the exact case that warning exists for (it reaches into embedded third-party content using your session
+  there).</p>
+  <iframe src="__CROSS_ORIGIN__/" title="Cross-origin panel"></iframe>
+  <p><code>await ml.agent("Reveal and read the secret in the SECOND (cross-origin) panel.")</code></p>
+
+  <!--
+    ANSWER KEY (comment-only). Both need "reserved-element clicking" ON; with it OFF a correct agent reports it
+    can't reach either panel (and never hallucinates a value).
+      • Challenge 1 — SAME-origin, secret "SAME-1234". Selector-unreachable (DOM tools don't cross frames);
+        synthetic click can't reach in; value hidden until clicked. locate → @pt → click routes to CDP
+        (reserved). The approval shows NO privileged-click warning (same origin — no boundary crossed).
+      • Challenge 2 — CROSS-origin, secret "XORG-4242" (http://localhost:8081). SOP-walled, reachable ONLY by a
+        CDP click. The approval shows the RED cross-origin privileged-click warning naming the origin. On
+        approve, the debugger clicks the button → XORG-4242 appears → the agent reads it.
+  -->
+</body>
+</html>
