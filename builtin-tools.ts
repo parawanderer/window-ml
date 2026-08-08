@@ -49,23 +49,44 @@ const reservedSurfaceAt = (x: number, y: number): { kind: "iframe" | "shadow"; o
     if (!el.shadowRoot && !capturedClosedRoot(el) && el.tagName.includes("-") && !el.children.length) return { kind: "shadow" };
     return null;
 };
-/**
- * If a pick box OVERLAPS a <canvas>, the canvas-hit point nearest the box centre. Samples
- * a grid across the box (not just the centre) so a box/cell straddling page chrome and the
- * canvas — e.g. a target near the canvas's top edge — still yields a clickable coordinate
- * instead of a spurious "no element". Returns null when no sampled point hits a canvas.
- */
-const canvasPointIn = (box: Box): { x: number; y: number } | null => withHiddenSidebar(() => {
+type OpaqueKind = "canvas" | "iframe" | "shadow";
+/** Any OPAQUE surface at a point: a `<canvas>` (synthetic-clickable — its listener is on the canvas element)
+ *  or a "reserved" surface (cross-origin iframe / sealed closed shadow — CDP-clickable). NONE has an inner
+ *  DOM node to snap a selector onto, so `locate` mints an `@pt` and the `click` tool routes it by kind
+ *  (canvas → synthetic dispatch; reserved → CDP). This is why a GROUNDING box over a sealed shadow / iframe
+ *  must NOT fall through to Set-of-Marks (which can't badge inside it) — it should mint the coordinate. */
+const opaqueSurfaceAt = (x: number, y: number): OpaqueKind | null => {
+    if (canvasAt(x, y)) return "canvas";
+    const r = reservedSurfaceAt(x, y);
+    return r ? r.kind : null;
+};
+/** Is this ELEMENT an opaque surface (no inner DOM node to snap to)? A `<canvas>`, an `<iframe>`, or an
+ *  un-pierceable closed-shadow host. Used to DROP such elements from SoM candidate sets so a cell/box over
+ *  one falls to a coordinate `@pt` rather than a useless SoM pick of the container itself. */
+const isOpaqueEl = (el: Element): boolean =>
+    el.tagName === "CANVAS" || el.tagName === "IFRAME" ||
+    (!el.shadowRoot && !capturedClosedRoot(el) && el.tagName.includes("-") && !el.children.length);
+/** The opaque-surface point nearest the box centre (samples a grid like canvasPointIn), + which KIND.
+ *  Generalises canvasPointIn from `<canvas>` to any opaque surface, so grounding/grid can mint an `@pt`
+ *  for an iframe / sealed shadow target the DOM can't snap to. */
+const opaquePointIn = (box: Box): { x: number; y: number; kind: OpaqueKind } | null => withHiddenSidebar(() => {
     const cx = (box.left + box.right) / 2, cy = (box.top + box.bottom) / 2;
     const w = box.right - box.left, h = box.bottom - box.top;
     const F = [0.15, 0.35, 0.5, 0.65, 0.85];
-    let best: { x: number; y: number; d: number } | null = null;
+    let best: { x: number; y: number; d: number; kind: OpaqueKind } | null = null;
     for (const gy of F) for (const gx of F) {
         const x = box.left + gx * w, y = box.top + gy * h;
-        if (canvasAt(x, y)) { const d = Math.hypot(x - cx, y - cy); if (!best || d < best.d) best = { x, y, d }; }
+        const k = opaqueSurfaceAt(x, y);
+        if (k) { const d = Math.hypot(x - cx, y - cy); if (!best || d < best.d) best = { x, y, d, kind: k }; }
     }
-    return best ? { x: best.x, y: best.y } : null;
+    return best ? { x: best.x, y: best.y, kind: best.kind } : null;
 });
+/** Human noun for an opaque-surface kind (messaging). */
+const surfaceNoun = (kind: OpaqueKind): string =>
+    kind === "iframe" ? "a cross-origin <iframe>" : kind === "shadow" ? "a sealed (declarative/native) closed shadow root" : "a <canvas>";
+/** For a RESERVED kind, a one-line note that the click needs CDP (canvas clicks plainly). */
+const reservedClickNote = (kind: OpaqueKind): string =>
+    kind === "canvas" ? "" : ` This needs a debugger (CDP) click — turn on "reserved-element clicking" in window.ml Settings → Advanced (a normal click can't reach ${kind === "iframe" ? "into a cross-origin frame" : "a sealed shadow root"}).`;
 /** Synthesize a real click at a viewport coordinate (for canvas surfaces): the full
  *  pointer/mouse sequence at (x,y) on the topmost element there. */
 const clickAt = (x: number, y: number): Element | null => {
@@ -566,8 +587,8 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 const cellBox = cellsBox(sel, cols, rows, gRegion);
                 // Snap the unioned selection to the DOM. A <canvas> is NOT a real target (no
                 // sub-node) — drop it so a canvas cell falls to a coordinate, never a SoM pick.
-                const found = collectInBox(cellBox, filter, { max: 20 }).filter(el => el.tagName !== "CANVAS");
-                const cpt = found.length ? null : canvasPointIn(cellBox);
+                const found = collectInBox(cellBox, filter, { max: 20 }).filter(el => !isOpaqueEl(el));
+                const cpt = found.length ? null : opaquePointIn(cellBox);
                 // AUTO-UPGRADE: a plain-grid canvas cell with a grounder available → treat it
                 // like grid-grounding (grounding pinpoints inside the cell) rather than returning
                 // the imprecise cell centre. On a canvas the snap can't hurt (no element to
@@ -595,8 +616,8 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                         const { token, dupWarn } = mintPointWarned(cpt.x, cpt.y);
                         const ptImg = await annotate(shot, [{ rect: rectOf(cellBox), color: YELLOW, label: cellNote }, { rect: { left: cpt.x - 11, top: cpt.y - 11, width: 22, height: 22 }, color: RED, label: "point" }], dpr);
                         return {
-                            content: `Grid ${cellNote}${scopeNote} is on a <canvas> — no DOM element, so this is a COORDINATE: ${token} at (${Math.round(cpt.x)}, ${Math.round(cpt.y)}). First verify, then click: look({ selector: "${token}" }) → click({ selector: "${token}" }).${dupWarn} If it lands OFF the target, ${refineHint}${canvasScopeTip}`,
-                            render: gridResult([cellStep, { label: "Canvas point · in the cell", image: ptImg }], { picked: `${token} @ (${Math.round(cpt.x)}, ${Math.round(cpt.y)})`, pickedBy: "snap" }),
+                            content: `Grid ${cellNote}${scopeNote} is on ${surfaceNoun(cpt.kind)} — no DOM element, so this is a COORDINATE: ${token} at (${Math.round(cpt.x)}, ${Math.round(cpt.y)}). First verify, then click: look({ selector: "${token}" }) → click({ selector: "${token}" }).${reservedClickNote(cpt.kind)}${dupWarn} If it lands OFF the target, ${refineHint}${canvasScopeTip}`,
+                            render: gridResult([cellStep, { label: `${cpt.kind === "canvas" ? "Canvas" : cpt.kind === "iframe" ? "Iframe" : "Sealed-shadow"} point · in the cell`, image: ptImg }], { picked: `${token} @ (${Math.round(cpt.x)}, ${Math.round(cpt.y)})`, pickedBy: "snap" }),
                         };
                     }
                     const snapImg = await annotate(shot, [{ rect: rectOf(cellBox), color: YELLOW, label: cellNote }], dpr);
@@ -717,22 +738,24 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                             };
                         }
                         const cx = (b.left + b.right) / 2, cy = (b.top + b.bottom) / 2;
-                        // Canvas/WebGL surface → no DOM node to snap to. Return a point token at
-                        // the canvas-hit nearest the box centre (robust to a box straddling the
-                        // page chrome above the canvas). Grounding gives a PRECISE box, its strength.
-                        const cpt = canvasPointIn(b);
+                        // OPAQUE surface (canvas / cross-origin iframe / sealed closed shadow) → no DOM node to
+                        // snap to, so return a point token at the surface-hit nearest the box centre (robust to a
+                        // box straddling page chrome above it). Grounding gives a PRECISE box — its strength — so
+                        // a sealed-shadow / iframe target still yields a clickable @pt instead of failing to SoM.
+                        const cpt = opaquePointIn(b);
                         if (cpt) {
                             if (!shot) shot = await ml.screenshot(null, {});
                             const { token, dupWarn } = mintPointWarned(cpt.x, cpt.y);
                             const dot = { left: cpt.x - 11, top: cpt.y - 11, width: 22, height: 22 };
                             const ptImg = await annotate(shot, [{ rect: rectOf(b), color: YELLOW, label: "grounded region" }, { rect: dot, color: RED, label: "click point" }], dpr);
-                            const upNote = autoUpgraded ? ` (on a <canvas>, so 'grid' was auto-upgraded to 'grid-grounding' in this call — grounding pinpointed inside the cell)` : "";
+                            const upNote = autoUpgraded ? ` ('grid' was auto-upgraded to 'grid-grounding' in this call — grounding pinpointed inside the cell)` : "";
+                            const noun = surfaceNoun(cpt.kind);
                             // Off-target: snap around THIS point (re-ground its neighborhood); a
                             // `margin` grows that search box if the target is cut off at its edge.
                             const snapHint = ` If it lands OFF the target but you can see it nearby, snap onto it: locate({ selector: "${token}", strategy: "grounding", description: "${truncate(description, 50)}" }) — re-searches just around this point (add margin: 40–120 if it's partly cut off at the edge).`;
                             return {
-                                content: `Grounded "${description}"${scopeNote} on a <canvas> — no DOM element, so this is a COORDINATE: ${token} at (${Math.round(cpt.x)}, ${Math.round(cpt.y)}).${upNote} First verify, then click: look({ selector: "${token}" }) → click({ selector: "${token}" }).${dupWarn}${snapHint}${canvasScopeTip}`,
-                                render: groundResult([boxStep, { label: "Canvas point (no DOM element)", image: ptImg }], { picked: `${token} @ (${Math.round(cpt.x)}, ${Math.round(cpt.y)})`, pickedBy: "snap" }),
+                                content: `Grounded "${description}"${scopeNote} on ${noun} — no DOM element, so this is a COORDINATE: ${token} at (${Math.round(cpt.x)}, ${Math.round(cpt.y)}).${upNote} First verify, then click: look({ selector: "${token}" }) → click({ selector: "${token}" }).${reservedClickNote(cpt.kind)}${dupWarn}${snapHint}${canvasScopeTip}`,
+                                render: groundResult([boxStep, { label: `${cpt.kind === "canvas" ? "Canvas" : cpt.kind === "iframe" ? "Iframe" : "Sealed-shadow"} point (no DOM element)`, image: ptImg }], { picked: `${token} @ (${Math.round(cpt.x)}, ${Math.round(cpt.y)})`, pickedBy: "snap" }),
                             };
                         }
                         const primary = elementAtPoint(cx, cy, filter);
@@ -810,13 +833,14 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
             const canvasAlts = groundingModel
                 ? "Use strategy 'grid-grounding' (grid narrows the region, then a grounding model pinpoints an exact spot inside it — best for a small target), or 'grounding', or 'grid' and zoom in"
                 : "Use strategy 'grid' and zoom in";
-            const onCanvas = canvasPointIn(regionAsBox);   // is the search area itself a canvas?
+            const onOpaque = opaquePointIn(regionAsBox);   // is the search area itself an opaque surface?
             if (!cands.length) {
-                if (onCanvas) return { content: `${canvasLead}${scopeSel ? `"${scopeSel}"` : "that area"} is a <canvas> — nothing to badge (no sub-elements). ${canvasAlts} — each returns an @pt coordinate token to click.`, render: missRender("Set-of-Marks · <canvas> region, nothing to badge") };
+                if (onOpaque) return { content: `${canvasLead}${scopeSel ? `"${scopeSel}"` : "that area"} is ${surfaceNoun(onOpaque.kind)} — nothing to badge (no sub-elements). ${canvasAlts} — each returns an @pt coordinate token to click.${reservedClickNote(onOpaque.kind)}`, render: missRender(`Set-of-Marks · ${onOpaque.kind} region, nothing to badge`) };
                 return { content: `${prefix}No ${filter} candidates visible${scopeNote || " in the viewport"}. Scroll the target into view, widen the filter (try 'all'), then call again.`, render: missRender(`Set-of-Marks · no ${filter} candidates to badge`) };
             }
-            if (cands.every(c => c.tagName === "CANVAS")) {
-                return { content: `${canvasLead}"${description}" is on a <canvas> — nothing to badge (it has no sub-elements). ${canvasAlts} — it returns an @pt coordinate token to click.`, render: missRender("Set-of-Marks · target is a <canvas>, nothing to badge") };
+            if (cands.every(c => opaqueSurfaceAt((c.getBoundingClientRect().left + c.getBoundingClientRect().right) / 2, (c.getBoundingClientRect().top + c.getBoundingClientRect().bottom) / 2))) {
+                const k = opaquePointIn(regionAsBox)?.kind ?? "canvas";
+                return { content: `${canvasLead}"${description}" is on ${surfaceNoun(k)} — nothing to badge (it has no sub-elements). ${canvasAlts} — it returns an @pt coordinate token to click.${reservedClickNote(k)}`, render: missRender(`Set-of-Marks · target is ${k}, nothing to badge`) };
             }
             // Dense pages break Set-of-Marks (badges overlap, the model misreads) AND we
             // only badge the first SOM_BADGE_CAP — say both, and steer to a better tool.
