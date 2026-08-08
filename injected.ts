@@ -1100,16 +1100,22 @@ class AgentHandle implements MlAgentHandle, AgentControl {
 
             let el = target;
             if (typeof target === "string") {
-                el = queryAll(target)[index];   // Nth match (queryAll adds :contains support)
+                el = queryAll(target)[index];   // Nth match (queryAll adds :contains + `>>>` shadow/iframe crossing)
                 if (!el) throw new Error(`No element matches "${target}"${index ? ` at index ${index}` : ""}.`);
             }
-            if (!(el instanceof Element)) throw new Error("ml.screenshot needs a CSS selector, an Element, or nothing.");
+            // Duck-type `nodeType === 1` (ELEMENT_NODE), NOT `instanceof Element` — an element resolved across
+            // a same-origin IFRAME boundary (`iframe >>> inner`) belongs to the FRAME's realm, so the top
+            // window's `Element` constructor doesn't recognise it (same cross-realm gotcha as ShadowRoot).
+            if (!el || (el as Node).nodeType !== 1) throw new Error("ml.screenshot needs a CSS selector, an Element, or nothing.");
             if (scroll) {
-                el.scrollIntoView({ block: "center", inline: "center" });
+                (el as Element).scrollIntoView({ block: "center", inline: "center" });
                 // Let the scroll paint before we capture.
                 await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
             }
-            const rect = el.getBoundingClientRect();
+            // viewportRect (not getBoundingClientRect) — an element inside a same-origin iframe reports a
+            // FRAME-LOCAL rect, but the captured tab image is the TOP viewport, so the crop must be composed
+            // across the frame offset (else it crops the wrong region — the page's top-left).
+            const rect = viewportRect(el as Element);
             // A zero- or sliver-sized element (e.g. a 1px-tall spacer/rule, or a
             // collapsed container) crops to a degenerate 1px-by-N image the vision
             // model just hallucinates over. Reject it with an actionable message
@@ -1144,8 +1150,8 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 return { left: Math.max(0, bx.left), top: Math.max(0, bx.top), dpr };   // raw: pad 0
             }
             const el = typeof target === "string" ? queryAll(target)[0] : target;
-            if (!(el instanceof Element)) return null;
-            const r = el.getBoundingClientRect();
+            if (!el || (el as Node).nodeType !== 1) return null;   // nodeType, not instanceof (cross-realm iframe elements)
+            const r = viewportRect(el as Element);   // top-viewport (composes iframe offsets)
             return { left: r.left, top: r.top, dpr };
         },
         /**
@@ -1421,7 +1427,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
          */
         _resolveTable: function(target: string | Element, raw = false): { kind: "rows"; columns: string[]; rows: (string | number | null)[][] } | { kind: "html"; html: string } {
             const el = typeof target === "string" ? queryAll(target)[0] : target;
-            if (!(el instanceof Element)) throw new Error(`ml.pythonExec: no table element matches "${String(target)}".`);
+            if (!el || (el as Node).nodeType !== 1) throw new Error(`ml.pythonExec: no table element matches "${String(target)}".`);
             const t = extractTable(el);
             if (!t) {
                 // extractTable couldn't parse it (spans/nested/non-table) → the pd.read_html fallback
