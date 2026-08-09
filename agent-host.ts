@@ -43,6 +43,9 @@ export interface RunAgentHostDeps {
     // Self-introspection (chat_metadata): the run's model + its context window + capability list, from the
     // SW's caches. The loop supplies the token/message counts; this only adds the model facts. Optional.
     chatMeta?(): Promise<{ model: string | null; contextWindow: number | null; capabilities: string[] | null } | null>;
+    // This turn's delegated vision sub-call tally (look/locate/verify's own calls) — accumulated background-
+    // side from each delegated tool's envelope delta, so chat_metadata reports the real number here too.
+    subcallTokens?: AgentLoopDeps["subcallTokens"];
     // Read-only try (exec only): page-delegated attempt via the mediated interpreter. A non-null result
     // means it ran safely (no mutation) → skip the gate. Wired only when autoApproveReadonly is on.
     tryReadonly?(name: string, args: Record<string, unknown>): Promise<ToolRunResult | null>;
@@ -121,6 +124,7 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
         pushUser: (messages, text) => (messages as NeutralMessage[]).push({ role: "user", content: text }),
         emit: deps.emit,
         chatMeta: deps.chatMeta,   // resolve model/caps/window SW-side (background provides the caches)
+        subcallTokens: deps.subcallTokens,   // this turn's delegated vision sub-call tally (background-accumulated)
     };
     return runAgentLoop(cfg.task, { tools: cfg.tools, maxSteps: cfg.maxSteps, signal: deps.signal, unattended: cfg.unattended }, loopDeps)
         .then(result => ({ result, messages: built }));

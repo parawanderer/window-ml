@@ -983,6 +983,14 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         const runId = p.runId;
         const stepBase = p.stepBase || 0, seqBase = p.seqBase || 0;   // offsets for a handle's continued turns
         let runMaxStep = 0, runMaxSeq = 0;   // this run's max step/seq (raw) → returned so the page advances its bases
+        // This turn's DELEGATED vision sub-call spend, summed from each delegated tool's envelope delta (the
+        // page meters it in bus.ts; the SW can't read that, so each call reports its own). Feeds chat_metadata
+        // + the UI "+N sub" chip on the background path, matching the page loop. Per handleRun = per turn.
+        const subTally = { prompt: 0, completion: 0, calls: 0 };
+        const addSub = (s: import("./contract").SubcallUsage | undefined): void => {
+            if (!s || !s.calls) return;
+            subTally.prompt += s.prompt; subTally.completion += s.completion; subTally.calls += s.calls;
+        };
         const abortCtl = new AbortController();   // CANCEL_RUN aborts this → the loop resolves { cancelled }
         runControllers.set(runId, abortCtl);
         runInboxes.set(runId, { tabId, queue: [] });   // a.say() steering lands here while the run is live
@@ -1018,6 +1026,9 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             const event = {
                 kind: "agent-step", id: runId, ts: Date.now(), save: false,
                 session: { hash: runId, turn: step }, ...ev, step, localStep: rawStep, seq,
+                // Running per-turn delegated-sub-call tally so the UI "+N sub" chip works on the background
+                // path too (the page path attaches subcallUsage() the same way). Omit when nothing delegated.
+                ...(subTally.calls ? { subUsage: { ...subTally } } : {}),
             };
             // Always fan to the PAGE (overlay / off card). For devtools ALSO fan to the panel — and the
             // page fan lets the optional corner card coexist with the panel (agentHudInDevtools); the
@@ -1068,6 +1079,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     try {
                         const env = await chrome.tabs.sendMessage(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name, args } })
                             .catch((e: unknown) => ({ result: `Error: could not reach the page to run "${name}" (${(e as Error)?.message || e}).` })) as Partial<import("./contract").PageToolEnvelope>;
+                        addSub(env?.subUsage);   // this tool's own delegated vision sub-call spend (look/locate)
                         // RESERVED-surface click: the page couldn't synth-click a cross-origin iframe / sealed
                         // shadow target and handed back a CDP-click coordinate. The click was ALREADY approved
                         // above, and the trusted background performs the CDP click (the page can't). Gated on
@@ -1085,7 +1097,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                             if (env.cdpClick.verify) {
                                 const venv = await chrome.tabs.sendMessage(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, verifyAt: { x: env.cdpClick.x, y: env.cdpClick.y } } })
                                     .catch(() => null) as Partial<import("./contract").PageToolEnvelope> | null;
-                                if (venv) { vres = venv.result || ""; vimg = venv.image; vimgLabel = venv.imageLabel; vfeedback = venv.feedback; }
+                                if (venv) { vres = venv.result || ""; vimg = venv.image; vimgLabel = venv.imageLabel; vfeedback = venv.feedback; addSub(venv.subUsage); }
                             }
                             // Append the page-side stuck-loop re-snap nudge (a repeat @pt click) to the SUCCESS result.
                             const tail = env.cdpClick.verify ? "" : " Re-run look to see the result.";
@@ -1146,6 +1158,9 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     });
                 },
                 isSheetApproved: (id) => approvedSheets.has(id),
+                // This turn's delegated vision sub-call tally (accumulated from each delegated tool's envelope
+                // delta in delegateTool) — so chat_metadata reports the real number on the background path too.
+                subcallTokens: () => ({ ...subTally }),
                 emit: (ev) => emitStep(ev as Record<string, unknown>),
                 drainInbox: () => (runInboxes.get(runId)?.queue || []).splice(0),   // a.say() steering (INJECT_MESSAGE)
                 signal: abortCtl.signal,

@@ -756,6 +756,10 @@ export interface PageToolEnvelope {
      *  target and needs a CDP click at this viewport coordinate — the BACKGROUND (trusted) does it. `hint` is
      *  an optional stuck-loop re-snap nudge the background appends to the click result. */
     cdpClick?: { x: number; y: number; hint?: string; verify?: boolean };
+    /** DELEGATED vision sub-call tokens spent BY THIS tool call (look/locate/verify's own ml.chat) — a DELTA
+     *  measured around the page-side run, so the background loop can accumulate the per-turn tally its meta
+     *  tool + UI report (the page meter, bus.ts, lives page-side and the SW loop can't read it directly). */
+    subUsage?: SubcallUsage;
 }
 
 /** A resumable chat session persisted to chrome.storage.local for { save: true }

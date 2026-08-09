@@ -10,12 +10,25 @@
 // stay page-side, accumulated in the run record so ml.agent can assemble AgentResult.elements once the
 // background reports the run finished. This is the transport half of design A; the loop that drives it
 // is `runAgentLoop` (agent-loop.ts), assembled background-side in a later slice.
-import type { MlTool, PageToolEnvelope } from "./contract";
+import type { MlTool, PageToolEnvelope, SubcallUsage } from "./contract";
 import { executeTool, toolContext } from "./tool-exec";
 import { captureVerify } from "./builtin-tools";
 import { descriptorFor } from "./render-descriptor";
 import { evalReadonly } from "./readonly-exec";
 import { formatReadonlyExec } from "./approval";
+import { subcallUsage } from "./bus";
+
+/** The delegated vision-sub-call tokens `fn` spent, as a DELTA around the page-side meter (bus.ts). The
+ *  background loop can't read the page's accumulator, so each delegated tool call reports its own spend and
+ *  the SW sums them per turn. Undefined when nothing was delegated (keeps the envelope clean). */
+async function withSubUsage<T extends PageToolEnvelope>(fn: () => Promise<T>): Promise<T> {
+    const before = subcallUsage();
+    const env = await fn();
+    const after = subcallUsage();
+    const sub: SubcallUsage = { prompt: after.prompt - before.prompt, completion: after.completion - before.completion, calls: after.calls - before.calls };
+    if (sub.calls > 0) env.subUsage = sub;
+    return env;
+}
 
 /** One active agent run's page-side state: its toolset by name, and the DOM nodes designated by
  *  answer-capable tools (assembled into AgentResult.elements — nodes can't cross the bus). */
@@ -60,8 +73,11 @@ export async function runDelegatedTool(runId: string, name: string, args: Record
         const ctx = toolContext(run.byName, run.model ?? null, null, run.driverSees ?? false, run.visionModel ?? null);
         const ml = (typeof window !== "undefined" ? window.ml : null) as unknown as import("./contract").MlApi;
         if (!ml) return { result: "" };
-        const v = await captureVerify(ml, ctx, { x: opts.verifyAt.x, y: opts.verifyAt.y }, "clicked");
-        return { result: v.content || "", image: v.image, imageLabel: v.imageLabel, feedback: v.feedback };
+        // captureVerify makes a delegated describe sub-call for a text-only driver → meter its spend.
+        return withSubUsage(async () => {
+            const v = await captureVerify(ml, ctx, { x: opts.verifyAt!.x, y: opts.verifyAt!.y }, "clicked");
+            return { result: v.content || "", image: v.image, imageLabel: v.imageLabel, feedback: v.feedback };
+        });
     }
     const tool = run.byName[name];
     if (!tool) return { result: `Error: no tool named "${name}".` };
@@ -91,23 +107,27 @@ export async function runDelegatedTool(runId: string, name: string, args: Record
             return { result, elementCount: elements ? elements.length : undefined, renderIn, renderOut, readonly: true };
         } catch { return { result: "", readonly: false }; }
     }
-    const env = await executeTool(tool, args, toolContext(run.byName, run.model ?? null, null, run.driverSees ?? false, run.visionModel ?? null));
-    // An answer-capable tool designates the caller-facing result node(s) → stash them page-side; only
-    // the COUNT crosses to the background (the nodes reach the caller via AgentResult.elements).
-    if (env.elements && env.elements.length && tool.capabilities && tool.capabilities.includes("answer")) {
-        run.answered.push(...env.elements);
-    }
-    // Compute the debug-render slots HERE (page-side) — the tool's render() method + its live nodes
-    // live here, so the background emits the same rendered In/Out the page loop would.
-    const { in: renderIn, out: renderOut } = descriptorFor(tool, env, args);
-    return {
-        result: env.result,
-        elementCount: env.elements ? env.elements.length : undefined,
-        image: env.image, imageLabel: env.imageLabel,
-        renderIn, renderOut,
-        feedback: env.feedback,   // what locate fed into the model's context → surfaced in the debug render + export
-        cdpClick: env.cdpClick,   // reserved-surface click → the BACKGROUND does the CDP click (trusted)
-    };
+    // A tool (look/locate, or click/type/wait with verify) may make its own delegated vision sub-calls —
+    // meter their spend as a delta so the background loop can tally it (the page meter it can't read).
+    return withSubUsage(async () => {
+        const env = await executeTool(tool, args, toolContext(run.byName, run.model ?? null, null, run.driverSees ?? false, run.visionModel ?? null));
+        // An answer-capable tool designates the caller-facing result node(s) → stash them page-side; only
+        // the COUNT crosses to the background (the nodes reach the caller via AgentResult.elements).
+        if (env.elements && env.elements.length && tool.capabilities && tool.capabilities.includes("answer")) {
+            run.answered.push(...env.elements);
+        }
+        // Compute the debug-render slots HERE (page-side) — the tool's render() method + its live nodes
+        // live here, so the background emits the same rendered In/Out the page loop would.
+        const { in: renderIn, out: renderOut } = descriptorFor(tool, env, args);
+        return {
+            result: env.result,
+            elementCount: env.elements ? env.elements.length : undefined,
+            image: env.image, imageLabel: env.imageLabel,
+            renderIn, renderOut,
+            feedback: env.feedback,   // what locate fed into the model's context → surfaced in the debug render + export
+            cdpClick: env.cdpClick,   // reserved-surface click → the BACKGROUND does the CDP click (trusted)
+        };
+    });
 }
 
 /** Install the window-message bridge (once, at injection): content.ts relays the background's

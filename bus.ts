@@ -19,7 +19,9 @@ let sidebarPresent = false;  // a sidebar shell exists at all
 let replayed = false;        // the ring was replayed this present-session (guards a double handshake)
 const DEBUG_RING_MAX = 200;
 const debugRing: MlDebugEvent[] = [];
-window.addEventListener("message", (event) => {
+// Guarded so the module can be imported under Node (tests import it transitively via run-delegation) —
+// no window there. In the page main world (its real home) window always exists.
+if (typeof window !== "undefined") window.addEventListener("message", (event) => {
     const d = event.source === window && event.data && event.data.__mlSidebar;
     if (d === "present") { sidebarPresent = true; }
     else if (d === "ready") {
