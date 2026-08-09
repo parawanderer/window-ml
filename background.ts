@@ -782,7 +782,7 @@ const runControllers = new Map<string, AbortController>();
 // RESUME_RUN {runId, task} re-enters the loop from this history. In-memory only, so it's subject to
 // MV3 service-worker eviction (~30s idle) — resume works while the SW is warm (the common
 // finish-then-follow-up flow); an evicted run reports an actionable error and the caller starts fresh.
-const bgRuns = new Map<string, { p: StartRunPayload; tabId: number; messages: NeutralMessage[] }>();
+const bgRuns = new Map<string, { p: StartRunPayload; tabId: number; messages: NeutralMessage[]; sub?: import("./contract").SubcallUsage }>();
 
 // Per-run steering inbox (a.say() mid-run): the SW-side twin of the page loop's control.inbox. INJECT_MESSAGE
 // pushes here (only the owning tab may); the run's loop drains it at each step boundary (deps.drainInbox).
@@ -967,6 +967,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // accumulated history, overriding only the task with the follow-up. Only the owning tab may resume.
         let p: StartRunPayload;
         let resumeMessages: NeutralMessage[] | undefined;
+        let priorSub: import("./contract").SubcallUsage | undefined;   // a resumed session's accumulated sub-call spend
         if (message.type === "RESUME_RUN") {
             const rp = message.payload as ResumeRunPayload;
             const stored = bgRuns.get(rp.runId);
@@ -974,6 +975,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             if (stored.tabId !== tabId) { sendResponse({ error: `Run "${rp.runId}" belongs to another tab.` }); return true; }
             p = { ...stored.p, task: rp.task };
             resumeMessages = stored.messages;
+            priorSub = stored.sub;
         } else {
             p = message.payload as StartRunPayload;
             // A createAgent handle sends its prior history (control.messages) so the background CONTINUES
@@ -983,10 +985,12 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         const runId = p.runId;
         const stepBase = p.stepBase || 0, seqBase = p.seqBase || 0;   // offsets for a handle's continued turns
         let runMaxStep = 0, runMaxSeq = 0;   // this run's max step/seq (raw) → returned so the page advances its bases
-        // This turn's DELEGATED vision sub-call spend, summed from each delegated tool's envelope delta (the
+        // The session's DELEGATED vision sub-call spend, summed from each delegated tool's envelope delta (the
         // page meters it in bus.ts; the SW can't read that, so each call reports its own). Feeds chat_metadata
-        // + the UI "+N sub" chip on the background path, matching the page loop. Per handleRun = per turn.
-        const subTally = { prompt: 0, completion: 0, calls: 0 };
+        // + the UI "+N sub" chip on the background path, matching the page loop. CUMULATIVE across the session:
+        // seeded from the resumed run's stored tally (a per-turn reset would make chat_metadata report "none"
+        // on a turn that hadn't yet made a sub-call, even after prior turns spent thousands), persisted below.
+        const subTally = { prompt: priorSub?.prompt || 0, completion: priorSub?.completion || 0, calls: priorSub?.calls || 0 };
         const addSub = (s: import("./contract").SubcallUsage | undefined): void => {
             if (!s || !s.calls) return;
             subTally.prompt += s.prompt; subTally.completion += s.completion; subTally.calls += s.calls;
@@ -1193,8 +1197,9 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             .then(({ result: res, messages }) => {
                 // Keep the run resumable: stash its full history + payload (deps rebuild from it) so a later
                 // RESUME_RUN can continue it. Overwrites the prior turn's snapshot (same runId). SW-eviction
-                // may drop this — resume then reports an actionable error (see bgRuns).
-                bgRuns.set(runId, { p, tabId, messages });
+                // may drop this — resume then reports an actionable error (see bgRuns). `sub` carries the
+                // cumulative sub-call tally so a resumed turn's chat_metadata keeps reporting the session total.
+                bgRuns.set(runId, { p, tabId, messages, sub: { ...subTally } });
                 emitLifecycle({
                     kind: "agent-result", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: res.steps },
                     summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled,

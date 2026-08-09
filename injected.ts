@@ -659,6 +659,11 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             const firstTurn = !control.hash;
             const runHash = control.hash ?? shortHash();
             control.hash = runHash;
+            // Delegated-sub-call token tally is CUMULATIVE across the whole session (all turns), matching the
+            // "+N sub" gauge — reset ONCE when the session starts, not per turn. A per-turn reset made
+            // chat_metadata report "none" on any turn that hadn't yet made a vision sub-call (e.g. asked at
+            // step 1), even after prior turns had spent thousands.
+            if (firstTurn) resetSubcallUsage();
             // Register a createAgent HANDLE (not a throwaway ml.agent control) by its hash so a sidebar/HUD
             // composer can drive this session — say()/run()/cancel() — knowing only the hash. `run` present
             // ⇒ it's an AgentHandle. Registered mid-run so the composer can steer while it's still going.
@@ -924,7 +929,6 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             // raise it mid-run). answered resets per turn; the seq base advances so steps stay session-unique.
             const drive = async (t: string): Promise<AgentResult> => {
                 answered.length = 0;
-                resetSubcallUsage();   // per-turn tally of delegated look/locate/verify spend, matching genTotal
                 enterAgentRun();   // suppress orphan chat sessions from a tool's internal ml.chat; finally-decremented
                 try {
                     const r = await runAgentLoop(t, { tools: toolMetas, maxSteps: () => control.maxSteps, signal, unattended }, deps);

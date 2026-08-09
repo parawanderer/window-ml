@@ -199,9 +199,9 @@ test("chat_metadata reports the METERED delegated sub-call tokens when a tally e
     const calls = { emits: [] }; deps.emit = (ev) => calls.emits.push(ev);
     await runAgentLoop("x", { tools: [{ name: "chat_metadata", capabilities: ["meta"] }, { name: "locate", capabilities: ["vision"] }] }, deps);
     const done = calls.emits.find(e => e.tool === "chat_metadata" && !e.pending);
-    assert.match(done.result, /delegated vision sub-calls this turn: 3510 tokens over 3 calls/, "reports the metered number (prompt+completion)");
+    assert.match(done.result, /delegated vision sub-calls this session: 3510 tokens over 3 calls/, "reports the metered number (prompt+completion)");
     assert.match(done.result, /SEPARATE context.*not part of the occupancy/, "clarifies it's spend, not occupancy");
-    assert.doesNotMatch(done.result, /none yet this turn/, "the fallback note is replaced by the real number");
+    assert.doesNotMatch(done.result, /none yet this session/, "the fallback note is replaced by the real number");
 });
 
 test("reasoning_content is emitted per step, distinct from the content prose", async () => {

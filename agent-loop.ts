@@ -147,12 +147,12 @@ function formatChatMeta(
     // (gone after each call), so it's extra cost, NOT part of the occupancy above. Else fall back to the note.
     const sub = stats.sub;
     if (sub && sub.calls) {
-        L.push(`delegated vision sub-calls this turn: ${sub.prompt + sub.completion} tokens over ${sub.calls} call${sub.calls === 1 ? "" : "s"} (locate/look/verify — a SEPARATE context each, not part of the occupancy above)`);
+        L.push(`delegated vision sub-calls this session: ${sub.prompt + sub.completion} tokens over ${sub.calls} call${sub.calls === 1 ? "" : "s"} (locate/look/verify — a SEPARATE context each, not part of the occupancy above)`);
     } else {
         const delegated: string[] = [];
         if (tools.some(t => t.name === "locate")) delegated.push("`locate`");
         if (tools.some(t => t.name === "look") && !cm?.capabilities?.includes("vision")) delegated.push("`look` (delegated — this model can't see natively)");
-        if (delegated.length) L.push(`note: ${delegated.join(" and ")} run their own vision sub-call(s) whose tokens are NOT counted above (none yet this turn).`);
+        if (delegated.length) L.push(`note: ${delegated.join(" and ")} run their own vision sub-call(s) whose tokens are NOT counted above (none yet this session).`);
     }
     return L.join("\n");
 }

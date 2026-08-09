@@ -45,6 +45,21 @@ test("a chat-result OUTSIDE a run is never metered (it's a real session, not a s
     assert.equal(subcallUsage().calls, 0, "outside a run, a chat isn't a suppressed sub-call");
 });
 
+test("the tally is CUMULATIVE across turns — a turn boundary (exit→enter) does NOT clear it", () => {
+    // The bug: chat_metadata asked on turn 2 reported "none" because a per-turn reset wiped turn 1's
+    // sub-call spend. The fix moved the reset to session-start (firstTurn) only, so exit/enter — a turn
+    // boundary — must leave the tally intact; only resetSubcallUsage (a new session) clears it.
+    resetSubcallUsage();
+    enterAgentRun();
+    emitDebug(chatResult(1000, 40));   // turn 1 did a locate sub-call
+    exitAgentRun();                    // ← turn 1 ends
+    enterAgentRun();                   // ← turn 2 begins (no reset)
+    const u = subcallUsage();
+    assert.equal(u.calls, 1, "turn 1's sub-call still counted on turn 2");
+    assert.equal(u.prompt, 1000);
+    exitAgentRun();
+});
+
 test("a chat-result with NO usage still suppresses but contributes nothing", () => {
     resetSubcallUsage();
     enterAgentRun();
