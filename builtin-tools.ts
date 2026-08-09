@@ -557,7 +557,16 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                     ? "point located — fed back automatically (you always verify a coordinate)"
                     : `you set verify: true (equivalent to a follow-up look() on the ${o.kind === "box" ? "region" : "element"}, folded into this call)`;
                 if (o.kind === "pt" && o.x != null && o.y != null) {
-                    if (seenNearby(memory, o.x, o.y)) { markSeen(memory, o.x, o.y); return { ...base, content: base.content + "\n\n(You've already been shown this spot — not re-injecting the crop; act on what you saw, or change approach.)" }; }
+                    // Near-area dedup: if the model was already shown this spot, skip re-injecting the
+                    // near-identical crop (the re-snap-loop case) — UNLESS it EXPLICITLY asked (verify:true),
+                    // in which case the explicit request wins (it clearly wants a fresh look here). The dedup
+                    // path carries a `feedback` too, so "Sent to the model" says plainly that NO image went in
+                    // (otherwise the only visible image is the grounding debug viz, which reads as "it saw this").
+                    if (seenNearby(memory, o.x, o.y) && !verify) {
+                        markSeen(memory, o.x, o.y);
+                        return { ...base, content: base.content + "\n\n(You've already been shown this spot — not re-injecting the crop; act on what you saw, or change approach.)",
+                            feedback: { reason: "near a spot you were already shown — crop NOT re-injected (dedup)", via: "text", text: "No new image was sent — you'd already been shown this spot. Act on the earlier crop, or change approach." } };
+                    }
                     markSeen(memory, o.x, o.y);
                 }
                 // The image the model RECEIVES is the SAME tight crop look({@pt}/selector) gives by default —
