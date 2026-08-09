@@ -3,7 +3,7 @@
 // into injected.js.
 
 import { truncate, shadowRootStats, iframeStats } from "./dom";
-import type { ShotBox } from "./contract";
+import type { ShotBox, VisionMemory } from "./contract";
 
 /**
  * The agent's persistent JS scratchpad — a plain object injected into every `exec` body as the lexical
@@ -201,6 +201,19 @@ export const nearbyPoint = (x: number, y: number, within = 12): { token: string;
     }
     return best;
 };
+
+// --- Near-area vision memory: which spots the DRIVER has already SEEN a crop of --------
+// Distinct from `nearbyPoint` (which scans every MINTED point): this tracks only the points whose
+// marked crop actually entered the model's context — a `look({@pt})` or a `locate` snap auto-inject.
+// `locate` consults it before auto-injecting so a re-snap onto an already-shown spot doesn't re-inject
+// a near-identical crop. Radius = PT_LOOK_RADIUS: a look/inject crop spans ~that, so a point within it
+// is already visible in the prior view.
+export const SEEN_RADIUS = PT_LOOK_RADIUS;
+export const markSeen = (mem: VisionMemory | null | undefined, x: number, y: number): void => {
+    if (mem) mem.seen.push({ x: Math.round(x), y: Math.round(y) });
+};
+export const seenNearby = (mem: VisionMemory | null | undefined, x: number, y: number, within = SEEN_RADIUS): boolean =>
+    !!mem && mem.seen.some(p => Math.hypot(p.x - x, p.y - y) <= within);
 
 // --- Canvas coordinate CONTAINERS: an opaque `@box:<hex>` token → a viewport box ------
 // The REGION analogue of @pt. `locate({ container: true })` has the grounding model

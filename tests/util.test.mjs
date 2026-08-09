@@ -67,3 +67,38 @@ test("projectShotBox projects both corners → the viewport box is dpr-shrunk + 
         projectShotBox({ left: 0, top: 0, right: 200, bottom: 100 }, { left: 10, top: 20, dpr: 2 }),
         { left: 10, top: 20, right: 110, bottom: 70 });   // 200/2=100 wide, 100/2=50 tall
 });
+
+// ---- near-area vision memory (locate snap-inject dedup) ----
+// markSeen/seenNearby track which spots the DRIVER has already been shown a crop of, so a re-snap
+// onto a near-identical point doesn't re-inject the same crop (the re-snap-loop case).
+import { markSeen, seenNearby, SEEN_RADIUS } from "../util.ts";
+
+test("seenNearby: false on empty memory, and a null memory never matches", () => {
+    assert.equal(seenNearby({ seen: [] }, 100, 100), false);
+    assert.equal(seenNearby(null, 100, 100), false);
+    assert.equal(seenNearby(undefined, 100, 100), false);
+});
+
+test("seenNearby: a spot within SEEN_RADIUS of a seen point matches; outside it doesn't", () => {
+    const mem = { seen: [] };
+    markSeen(mem, 200, 200);
+    assert.equal(seenNearby(mem, 200, 200), true, "exact hit");
+    assert.equal(seenNearby(mem, 200 + SEEN_RADIUS - 1, 200), true, "just inside the radius");
+    assert.equal(seenNearby(mem, 200 + SEEN_RADIUS + 5, 200), false, "just outside the radius");
+});
+
+test("seenNearby: honours a custom radius and matches ANY seen point", () => {
+    const mem = { seen: [] };
+    markSeen(mem, 0, 0);
+    markSeen(mem, 500, 500);
+    assert.equal(seenNearby(mem, 30, 40, 50), true, "50px within (0,0) — hypot 50");
+    assert.equal(seenNearby(mem, 30, 40, 40), false, "40px radius excludes hypot 50");
+    assert.equal(seenNearby(mem, 505, 495, 20), true, "near the SECOND seen point");
+});
+
+test("markSeen: rounds coordinates and is a no-op on a null memory", () => {
+    const mem = { seen: [] };
+    markSeen(mem, 12.6, 40.2);
+    assert.deepEqual(mem.seen, [{ x: 13, y: 40 }]);
+    markSeen(null, 1, 1);   // no throw
+});

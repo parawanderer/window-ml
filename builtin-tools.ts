@@ -4,7 +4,7 @@
 // window.ml keeps thin delegating method wrappers. Not in the default read-only
 // domTools; opt in via extraTools, gated by the approval flow.
 
-import type { MlApi, MlTool, LocateSubstep, ToolResult, RenderDescriptor } from "./contract";
+import type { MlApi, MlTool, LocateSubstep, ToolResult, RenderDescriptor, VisionMemory, ToolContext } from "./contract";
 import { DEFAULT_GROUNDING_RANGE } from "./contract";
 import { PY_PACKAGE_LABELS } from "./python-env";
 import { truncate, clipOut, errText, elLine, queryAll, selectorError, googleSheetCsvUrl, nonEmptyTables, capturedClosedRoot, isElement } from "./dom";
@@ -13,7 +13,7 @@ import { accessibleName } from "./a11y";
 // Cap on python_exec output (stdout / value / error) fed back to the model — bigger than
 // exec's 500 (data output legitimately runs longer) but still bounds a runaway result.
 const PY_OUT_MAX = 2000;
-import { settle, VISION_NUM_CTX, cropDataUrl, MIN_SHOT_PX, POINT_RE, PT_LOOK_RADIUS, mintPoint, resolvePoint, nearbyPoint, BOX_RE, mintBox, resolveBox, projectShotPoint, projectShotBox } from "./util";
+import { settle, VISION_NUM_CTX, cropDataUrl, MIN_SHOT_PX, POINT_RE, PT_LOOK_RADIUS, mintPoint, resolvePoint, nearbyPoint, markSeen, seenNearby, BOX_RE, mintBox, resolveBox, projectShotPoint, projectShotBox } from "./util";
 import { collectCandidates, buildMarks, annotate, formatBox, letterboxToSquare, projectFromSquare, drawGrid, gridDims, validateCells, cellsBox, collectInBox, elementAtPoint, viewportBox, colorWordHues, pickOverlayColor, pickAccentColor, withHiddenSidebar, regionBox, REGION_NAMES, adjacentCells, type RegionName, type MarkFilter, type Box, type Mark } from "./locate";
 
 // --- Coordinate targets (canvas / WebGL) -----------------------------------
@@ -167,7 +167,7 @@ export const targetRender = (args: Record<string, unknown>): RenderDescriptor | 
     return { type: "elements", items: [{ path: sel, ...(idx ? { index: idx } : {}), ...(text ? { text } : {}) }] };
 };
 
-export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512 }: { model?: string | null; maxTokens?: number } = {}): MlTool => {
+export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512, memory = null }: { model?: string | null; maxTokens?: number; memory?: VisionMemory | null } = {}): MlTool => {
     return ml.defineTool({
         name: "look",
         summary: "Screenshots the page so the agent can see it.",
@@ -194,6 +194,9 @@ export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512 }: { mo
             // An @pt point token → screenshot returns a cropped, MARKED view of the click spot
             // (canvas verification): tailor the prompt to "what's at the mark", not page text.
             const isPoint = !!selector && POINT_RE.test(selector.trim());
+            // Looking at an @pt marks that spot SEEN, so locate's snap-feedback won't later re-inject a
+            // near-identical crop of it (the shared near-area dedup).
+            if (isPoint) { const p = resolvePoint(selector!); if (p) markSeen(memory, p.x, p.y); }
             let shot;
             try { shot = await ml.screenshot(selector || null, { fullPage, index: index || 0, margin: typeof margin === "number" ? margin : 0 }); }
             catch (e) { return `Error: ${errText(e)}`; }
@@ -252,7 +255,7 @@ const COORD_IN_DESC = /\(\s*-?\d{1,4}\s*,\s*-?\d{1,4}\s*\)|\b[xy]\s*[=:]\s*-?\d{
 // by this sub-call + shown in the sidebar (via the `render` envelope) — it never
 // enters the driver's history, so a text-only driver can still use it. Returns the
 // chosen element's selector (stateless currency) for click/type/answer.
-export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null, groundingRange = DEFAULT_GROUNDING_RANGE, maxTokens = 64 }: { model?: string | null; groundingModel?: string | null; groundingRange?: number; maxTokens?: number } = {}): MlTool => {
+export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null, groundingRange = DEFAULT_GROUNDING_RANGE, maxTokens = 64, memory = null }: { model?: string | null; groundingModel?: string | null; groundingRange?: number; maxTokens?: number; memory?: VisionMemory | null } = {}): MlTool => {
     const listOf = (marks: { id: number; role: string; name: string; selector: string }[]) =>
         marks.map(m => `#${m.id} [${m.role}] ${m.name ? `"${truncate(m.name, 50)}"` : "(no accessible name)"}  →  ${m.selector}`).join("\n");
     // Per-run cache of the grounding call (undefined = not asked; null = it errored).
@@ -325,11 +328,18 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                     type: "boolean",
                     description: "Set true to OUTLINE a sub-area rather than pick a control — the grounding model boxes a container (a panel, card, toolbar, dialog) and returns an `@box:…` region token instead of a click point. Use it on a busy <canvas> UI to zoom in: get the container box, then locate({ selector: \"@box:…\", description: \"…\" }) to find a control INSIDE it (recurse as needed), and click the final `@pt:…`. Needs a grounding model."
                 },
+                verify: {
+                    type: "boolean",
+                    description: "For a grounding result that resolves to a DOM element or an `@box:…` region: also return the marked crop for confirmation — structurally the same as calling look() on the result right after locating, but folded into THIS call (one turn, one screenshot; no extra round-trip). A point/`@pt:…` result ALWAYS returns one (you always verify a coordinate). Default false: a DOM element selector usually needs no visual check. Set true to eyeball a grounded element/region before acting."
+                },
             },
             required: ["description"],
         },
-        run: async ({ description, filter = "clickables", margin = 0, strategy = "auto", selector, index = 0, gridSize, cells, region: regionName, container = false }: { description: string; filter?: MarkFilter; margin?: number; strategy?: "auto" | "grounding" | "marks" | "grid" | "grid-grounding"; selector?: string; index?: number; gridSize?: number; cells?: number[]; region?: RegionName; container?: boolean }) => {
+        run: async ({ description, filter = "clickables", margin = 0, strategy = "auto", selector, index = 0, gridSize, cells, region: regionName, container = false, verify = false }: { description: string; filter?: MarkFilter; margin?: number; strategy?: "auto" | "grounding" | "marks" | "grid" | "grid-grounding"; selector?: string; index?: number; gridSize?: number; cells?: number[]; region?: RegionName; container?: boolean; verify?: boolean }, ctx?: ToolContext) => {
             if (!description) return "Provide a `description` of the element to find.";
+            // Does the DRIVER see the injected crop natively? Resolved ONCE in the auto-wire, read here off ctx
+            // (the same answer that chose native vs delegated `look`) — snap-feedback injects an image vs a description.
+            const driverSees = !!ctx?.driverSees;
             // Coordinates in the description mean the model already knows roughly where the target is
             // and is re-guessing with grounding — steer it to REUSE that knowledge. Skip when already
             // scoped to an @pt/@box (then it's doing the right thing; the coords are just noise).
@@ -485,6 +495,45 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 const token = mintPoint(x, y);
                 const dupWarn = dup ? ` ⚠ This is essentially the SAME spot as ${dup.token} (${dup.x}, ${dup.y}) you already located and it didn't work — do NOT re-verify it. Change approach: a different \`region\`, a re-worded description, or another strategy.` : "";
                 return { token, dupWarn };
+            };
+
+            // Feed a GROUNDING SNAP back into the driver's context so it can confirm in-turn and skip the
+            // separate look() → click round-trip (only fires here, where grounding actually located
+            // something — never the grid cell-CENTRE fallback, which stays manual by design). A point/@pt
+            // ALWAYS injects (the model always verifies a coordinate); a DOM element / @box only when the
+            // caller passed `verify` (a selector rarely needs an eyeball). A vision driver gets the marked
+            // crop as an inline IMAGE; a text-only driver gets a delegated DESCRIPTION of it (the same
+            // native/delegated split look() uses) with a clarification. Near-area dedup: if the model was
+            // already shown this spot (a prior look()/inject), skip re-injecting the near-identical crop.
+            const feedBack = async (base: ToolResult, o: { kind: "pt" | "selector" | "box"; target: string; label: string; x?: number; y?: number }): Promise<ToolResult> => {
+                if (o.kind !== "pt" && !verify) return base;   // selector/@box are opt-in
+                // Why the crop entered the model's context — surfaced in the debug render + export.
+                const reason = o.kind === "pt"
+                    ? "point located — fed back automatically (you always verify a coordinate)"
+                    : `you set verify: true (equivalent to a follow-up look() on the ${o.kind === "box" ? "region" : "element"}, folded into this call)`;
+                if (o.kind === "pt" && o.x != null && o.y != null) {
+                    if (seenNearby(memory, o.x, o.y)) { markSeen(memory, o.x, o.y); return { ...base, content: base.content + "\n\n(You've already been shown this spot — not re-injecting the crop; act on what you saw, or change approach.)" }; }
+                    markSeen(memory, o.x, o.y);
+                }
+                // The image the model RECEIVES is the SAME tight crop look({@pt}/selector) gives by default —
+                // a ~200px marked crop of the point (or the element/region), NOT the full annotated viewport
+                // (that stays in the debug Out render): too much screen to send. Regenerate via screenshot;
+                // if it fails, skip the inject rather than dump the whole page on the model.
+                let sent: string;
+                try { sent = await ml.screenshot(o.target, {}); } catch { return base; }
+                // For an @pt the crop carries a box labelled "click point" at the EXACT landing spot (its colour is
+                // contrast-picked, so name it by LABEL not colour). Steer the model to confirm the target sits under
+                // its MIDDLE and, if not, re-snap this SAME point (grounding around it) instead of clicking a
+                // near-miss — the re-locate loop, now with an explicit trigger tied to the image it's looking at.
+                const reSnap = o.kind === "pt"
+                    ? ` If the target is NOT centred under it, do NOT click — re-snap this SAME point: locate({ selector: "${o.target}", strategy: "grounding", margin: 60, description: "<the target's appearance>" }), then verify again.`
+                    : "";
+                if (driverSees) return { ...base, content: base.content + `\n\n↑ Marked crop shown above.${o.kind === "pt" ? ` Confirm "${truncate(description, 50)}" sits under the MIDDLE of the box labelled "click point".` : ""} If it's on target, act now (no need to look() first).${reSnap}`, image: sent, imageLabel: o.label, feedback: { reason, via: "image", image: sent, label: o.label } };
+                // Text-only driver: the reader describes the crop; the driver gets words, not the image.
+                let desc: string;
+                try { desc = String(await ml.chat(`A box labelled "click point" marks the located target on this crop. Describe concisely what is AT that mark — its colour, shape, and any text — so I can tell whether it's the "${truncate(description, 60)}" I asked for.`, { images: [sent], model, maxTokens: 256, numCtx: VISION_NUM_CTX })).trim(); }
+                catch { return base; }   // describe failed → leave the manual look() nudge intact
+                return { ...base, content: base.content + `\n\n👁 Target preview — you can't see images, so this is ${model || "the reader"}'s description of what's under the "click point" mark (NOT the image itself). Judge whether that's "${truncate(description, 50)}", then act or re-locate:\n${desc}${reSnap}`, feedback: { reason, via: "text", text: desc, image: sent, label: o.label } };
             };
 
             // grid-grounding needs a grounding model on BOTH its paths (fresh pick and the
@@ -745,10 +794,10 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                             if (!shot) shot = await ml.screenshot(null, {});
                             const token = mintBox(b);
                             const boxImg = await annotate(shot, [{ rect: rectOf(b), color: YELLOW, label: "container" }], dpr);
-                            return {
+                            return feedBack({
                                 content: `Outlined a container for "${description}"${scopeNote}: ${token} — a ${Math.round(b.right - b.left)}×${Math.round(b.bottom - b.top)}px region. Operate WITHIN it: verify with look({ selector: "${token}" }), then locate({ selector: "${token}", description: "…" }) to find a control inside (or container:true again to narrow further), then click the final @pt. Copy the token verbatim — it's a coordinate region, not a selector.`,
                                 render: groundResult([boxStep, { label: "Container region (@box)", image: boxImg }], { picked: token, pickedBy: "snap" }),
-                            };
+                            }, { kind: "box", target: token, label: "grounded container region" });
                         }
                         const cx = (b.left + b.right) / 2, cy = (b.top + b.bottom) / 2;
                         // OPAQUE surface (canvas / cross-origin iframe / sealed closed shadow) → no DOM node to
@@ -766,10 +815,10 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                             // Off-target: snap around THIS point (re-ground its neighborhood); a
                             // `margin` grows that search box if the target is cut off at its edge.
                             const snapHint = ` If it lands OFF the target but you can see it nearby, snap onto it: locate({ selector: "${token}", strategy: "grounding", description: "${truncate(description, 50)}" }) — re-searches just around this point (add margin: 40–120 if it's partly cut off at the edge).`;
-                            return {
+                            return feedBack({
                                 content: `Grounded "${description}"${scopeNote} on ${noun} — no DOM element, so this is a COORDINATE: ${token} at (${Math.round(cpt.x)}, ${Math.round(cpt.y)}).${upNote} First verify, then click: look({ selector: "${token}" }) → click({ selector: "${token}" }).${reservedClickNote(cpt.kind)}${dupWarn}${snapHint}${canvasScopeTip}`,
                                 render: groundResult([boxStep, { label: `${cpt.kind === "canvas" ? "Canvas" : cpt.kind === "iframe" ? "Iframe" : "Sealed-shadow"} point (no DOM element)`, image: ptImg }], { picked: `${token} @ (${Math.round(cpt.x)}, ${Math.round(cpt.y)})`, pickedBy: "snap" }),
-                            };
+                            }, { kind: "pt", target: token, label: `located point on ${noun}`, x: cpt.x, y: cpt.y });
                         }
                         const primary = elementAtPoint(cx, cy, filter);
                         const nearby = collectInBox(b, filter);
@@ -782,11 +831,11 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                         const snapStep: LocateSubstep = { label: `DOM snap${margin ? ` · +${margin}px search margin` : " · nearest element in the box"}`, image: snapImg };
                         if (chosen) {
                             const picked = pickedStr(marks[0]);
-                            return {
+                            return feedBack({
                                 content: `Grounded "${description}"${scopeNote}${margin ? ` (margin ${margin}px)` : ""} → ${picked}\n${actHint}\n\nOther elements in that region:\n${listOf(marks)}`,
                                 elements: ordered.slice(0, 50),
                                 render: groundResult([boxStep, snapStep], { picked, pickedBy: "snap" }),
-                            };
+                            }, { kind: "selector", target: marks[0].selector, label: "grounded element" });
                         }
                         // A box was returned but nothing interactive sits under it — here a
                         // larger `margin` genuinely helps (it expands a real box).

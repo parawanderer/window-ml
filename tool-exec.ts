@@ -3,14 +3,14 @@
 // today, and design A's RUN_TOOL_IN_PAGE handler (the background delegating page-context execution to
 // the page) will call the SAME function — so the two paths can't drift. Page-side (a tool's run()
 // touches the DOM and may return real Nodes); the delegation layer reduces `elements` to a count.
-import type { MlTool, ToolResult, RenderDescriptor, ToolContext } from "./contract";
+import type { MlTool, ToolResult, RenderDescriptor, ToolContext, ToolFeedback } from "./contract";
 import { validateArgs } from "./validate";
 import { errText } from "./dom";
 
 /** Build the runtime ToolContext from the run's toolset (+ model/caps). One helper so the page loop and the
  *  background-delegation path produce an identical `ctx`. `byName` is the same map both paths already hold. */
-export function toolContext(byName: Record<string, MlTool>, model: string | null = null, capabilities: string[] | null = null): ToolContext {
-    return { tools: Object.keys(byName), hasTool: (n) => n in byName, model, capabilities };
+export function toolContext(byName: Record<string, MlTool>, model: string | null = null, capabilities: string[] | null = null, driverSees = false, visionModel: string | null = null): ToolContext {
+    return { tools: Object.keys(byName), hasTool: (n) => n in byName, model, capabilities, driverSees, visionModel };
 }
 
 export interface ToolEnvelope {
@@ -22,6 +22,8 @@ export interface ToolEnvelope {
     renderIn?: RenderDescriptor;
     /** reserved-surface (cross-origin iframe / sealed shadow) click signal → the executor does a CDP click */
     cdpClick?: { x: number; y: number; hint?: string };
+    /** what the tool fed into the model's context (locate's snap-inject) → surfaced in the debug render + export */
+    feedback?: ToolFeedback;
 }
 
 export async function executeTool(tool: MlTool, args: Record<string, unknown>, ctx?: ToolContext): Promise<ToolEnvelope> {
@@ -44,7 +46,7 @@ export async function executeTool(tool: MlTool, args: Record<string, unknown>, c
         // also hand back real DOM nodes / a screenshot (routed to onStep/the transcript, never the model).
         if (raw && typeof raw === "object" && typeof (raw as ToolResult).content === "string") {
             const r = raw as ToolResult;
-            return { result: r.content + note, elements: r.elements, image: r.image, imageLabel: r.imageLabel, render: r.render, renderIn: r.renderIn, cdpClick: r.cdpClick };
+            return { result: r.content + note, elements: r.elements, image: r.image, imageLabel: r.imageLabel, render: r.render, renderIn: r.renderIn, cdpClick: r.cdpClick, feedback: r.feedback };
         }
         return { result: String(raw) + note };
     } catch (e) { return { result: `Error: ${errText(e)}` + note }; }

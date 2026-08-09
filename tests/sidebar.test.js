@@ -361,6 +361,29 @@ test("settings view: loads config, populates the model datalist, gates + persist
     assert.ok(!w.shadow.querySelector('input[type="number"]').disabled, "utility context enabled once a model is set");
 });
 
+test("settings: the 'vision capable?' override is DISABLED (locked to Auto) for an Ollama default model", async () => {
+    // caps non-null (an array) ⇒ the model is Ollama-probeable ⇒ detection wins ⇒ the manual override is moot.
+    const w = await loadSidebarWorld({ sync: { model: "llava", defaultModelVision: "yes" }, models: ["llava"], caps: ["completion", "vision"] });
+    await openSettings(w, "Models");
+    const sel = [...w.shadow.querySelectorAll("select")].find(s => [...s.options].some(o => /Auto-detect/.test(o.textContent)));
+    assert.ok(sel, "the vision-capable select is present");
+    await new Promise(r => w.window.setTimeout(r, 450));   // the vision probe is debounced 400ms
+    await w.tick();
+    assert.ok(sel.disabled, "an Ollama model locks the override (auto-detected)");
+    assert.equal(sel.value, "", "and it visually reads as Auto-detect, not the stored 'yes'");
+    assert.ok([...w.shadow.querySelectorAll(".set-moot")].some(m => /auto-detected/i.test(m.textContent)), "a note explains the lock");
+});
+
+test("settings: the 'vision capable?' override stays ENABLED for a cloud (unprobeable) default model", async () => {
+    const w = await loadSidebarWorld({ sync: { model: "gpt-4o", defaultModelVision: "yes" }, models: ["gpt-4o"], caps: null });   // caps null ⇒ can't probe ⇒ cloud
+    await openSettings(w, "Models");
+    const sel = [...w.shadow.querySelectorAll("select")].find(s => [...s.options].some(o => /Auto-detect/.test(o.textContent)));
+    await new Promise(r => w.window.setTimeout(r, 450));
+    await w.tick();
+    assert.ok(!sel.disabled, "a cloud model keeps the manual override selectable");
+    assert.equal(sel.value, "yes", "and shows the stored override value");
+});
+
 test("settings: Test models runs a per-model liveness check (set models pass, unset stays '—')", async () => {
     const w = await loadSidebarWorld({ sync: { model: "qwen3:14b", utilityModel: "gemma:2b" }, models: ["qwen3:14b"] });
     await openSettings(w, "Models");
@@ -2636,6 +2659,110 @@ test("card composer: no model configured → an inline nudge, NOT a run (pre-fli
     const err = doc.querySelector(".card-cmp-err");
     assert.ok(err && /model/i.test(err.textContent), "an inline 'set a model' nudge shows instead");
     assert.ok(doc.querySelector(".card-cmp-input"), "the composer stays open (not closed) so you can fix it");
+});
+
+test("card composer: the model picker overrides the run's model, and a cloud pick adds a per-call vision toggle", async () => {
+    const w = await loadSidebarWorld({
+        sync: { debugMode: "off", model: "llama3" },
+        models: ["llama3", "gpt-4o"], ollamaModels: ["llama3"],   // gpt-4o is non-Ollama (cloud) → offers native vision
+    });
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    await w.raw({ __mlSidebarSurface: "card" });
+    await w.raw({ __mlSidebarComposer: "open" });
+    await w.flush();
+    const doc = w.window.document;
+
+    // The chip shows the configured default; an Ollama default has NO native-vision toggle (auto-detected).
+    assert.match(doc.querySelector(".cmp-model-name").textContent, /llama3/, "the chip shows the default model");
+    assert.ok(!doc.querySelector(".cmp-vis"), "an Ollama default gets no vision toggle");
+
+    // Open the dropdown → both allowed models listed, the default row starred.
+    doc.querySelector(".cmp-model-btn").click();
+    await w.tick();
+    const rows = [...doc.querySelectorAll(".cmp-model-row")];
+    assert.equal(rows.length, 2, "the dropdown lists the allowed models (LIST_MODELS)");
+    const starOn = doc.querySelector(".cmp-model-row .cmp-model-star.on");
+    assert.ok(starOn && /llama3/.test(starOn.closest(".cmp-model-row").textContent), "the default model row is starred");
+
+    // Pick the cloud model → it becomes the run's model, and the eye (native vision) appears.
+    rows.find(r => /gpt-4o/.test(r.textContent)).click();
+    await w.tick();
+    assert.match(doc.querySelector(".cmp-model-name").textContent, /gpt-4o/, "the chip updates to the picked model");
+    const eye = doc.querySelector(".cmp-vis");
+    assert.ok(eye, "a non-Ollama pick surfaces the per-call vision toggle");
+    eye.click();   // enable native vision for THIS run
+    await w.tick();
+    assert.ok(doc.querySelector(".cmp-vis.on"), "the vision toggle reads as on");
+
+    // Type + Send → the startRun carries the per-call model AND vision:true.
+    const input = doc.querySelector(".card-cmp-input");
+    input.value = "read the chart";
+    input.dispatchEvent(new w.window.Event("input", { bubbles: true }));
+    await w.tick();
+    posted.length = 0;
+    [...doc.querySelectorAll(".card-foot button")].find(b => /Send/.test(b.textContent)).click();
+    await w.flush();
+    const start = posted.find(m => m.__mlSidebarApp === "startRun");
+    assert.equal(start.model, "gpt-4o", "the per-call model rides the startRun payload");
+    assert.equal(start.vision, true, "the per-call native-vision override rides along");
+});
+
+test("card composer: the default Ollama model sends NO per-call model/vision override", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off", model: "llama3" }, models: ["llama3", "gpt-4o"], ollamaModels: ["llama3"] });
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    await w.raw({ __mlSidebarSurface: "card" });
+    await w.raw({ __mlSidebarComposer: "open" });
+    await w.flush();
+    const doc = w.window.document;
+    const input = doc.querySelector(".card-cmp-input");
+    input.value = "click login";
+    input.dispatchEvent(new w.window.Event("input", { bubbles: true }));
+    await w.tick();
+    posted.length = 0;
+    [...doc.querySelectorAll(".card-foot button")].find(b => /Send/.test(b.textContent)).click();
+    await w.flush();
+    const start = posted.find(m => m.__mlSidebarApp === "startRun");
+    assert.equal(start.model, undefined, "no per-call model when the default is used — createAgent falls back to config");
+    assert.equal(start.vision, undefined, "no vision override for an auto-detected Ollama model");
+});
+
+test("card composer: the ★ persists the picked model as the default (SET_MODEL)", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off", model: "llama3" }, models: ["llama3", "gpt-4o"], ollamaModels: ["llama3"] });
+    w.window.postMessage = () => {};
+    const sent = [];
+    w.window.chrome.runtime.sendMessage = (msg, cb) => { sent.push(msg); if (cb) cb({ data: msg && msg.payload ? msg.payload.model : null }); };
+    await w.raw({ __mlSidebarSurface: "card" });
+    await w.raw({ __mlSidebarComposer: "open" });
+    await w.flush();
+    const doc = w.window.document;
+    doc.querySelector(".cmp-model-btn").click();
+    await w.tick();
+    const cloudRow = [...doc.querySelectorAll(".cmp-model-row")].find(r => /gpt-4o/.test(r.textContent));
+    cloudRow.querySelector(".cmp-model-star").click();
+    await w.tick();
+    const setMsg = sent.find(m => m.type === "SET_MODEL");
+    assert.ok(setMsg, "clicking the ★ sends a SET_MODEL");
+    assert.equal(setMsg.payload.model, "gpt-4o", "SET_MODEL targets the row's model");
+});
+
+test("card composer: the dropdown ALWAYS includes the configured default (even a cloud one not in the server list) and sorts A→Z", async () => {
+    const w = await loadSidebarWorld({
+        sync: { debugMode: "off", model: "deepseek-v4-pro" },   // a cloud default NOT present in the server model list
+        models: ["gemma4:e4b", "alpha:2b"], ollamaModels: ["gemma4:e4b", "alpha:2b"],
+    });
+    w.window.postMessage = () => {};
+    await w.raw({ __mlSidebarSurface: "card" });
+    await w.raw({ __mlSidebarComposer: "open" });
+    await w.flush();
+    const doc = w.window.document;
+    doc.querySelector(".cmp-model-btn").click();
+    await w.tick();
+    const names = [...doc.querySelectorAll(".cmp-model-row .cmp-model-row-name")].map(n => n.textContent);
+    assert.deepEqual(names, ["alpha:2b", "deepseek-v4-pro", "gemma4:e4b"], "the default is present and the list is alphabetical");
+    const starred = doc.querySelector(".cmp-model-row .cmp-model-star.on").closest(".cmp-model-row");
+    assert.match(starred.textContent, /deepseek-v4-pro/, "the default (not in the server list) is the starred row");
 });
 
 test("card surface: a cancelled run reads as 'Cancelled'", async () => {

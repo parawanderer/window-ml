@@ -8,7 +8,7 @@ import { render } from "preact";
 import type { ComponentChildren } from "preact";
 import { useState, useEffect, useRef } from "preact/hooks";
 import { signal } from "@preact/signals";
-import type { MlDebugEvent, DebugSessionConfig, DebugAgentConfig, NeutralMessage, MlConfig, ApiFormat, Theme, LoadedModel, ExtendProfile, RenderDescriptor, LocateSubstep, TokenUsage, TableSource } from "../contract";
+import type { MlDebugEvent, DebugSessionConfig, DebugAgentConfig, NeutralMessage, MlConfig, ApiFormat, Theme, LoadedModel, ExtendProfile, RenderDescriptor, ToolFeedback, LocateSubstep, TokenUsage, TableSource } from "../contract";
 import { DEFAULT_CONFIG, fmtCtx } from "../contract";
 import { elementReference, externalSheetIds } from "../dom";
 import {
@@ -21,7 +21,7 @@ import { pretty, shortStamp, fullStamp, truncate, collapsedPreview, highlight, b
 import { annotatedConfig, turnProfile, shownModel, sessionProfile } from "./model";
 import { exportSession, printSession } from "./export";
 import { applyTheme, applyFont, applyCodePrefs, initThemeStyle } from "./prefs";
-import { IconCopy, IconCheck, IconWarn, IconChevron, IconGear, IconExport, IconVram, IconSend, IconStop, IconUsage, IconBench, IconSheet } from "./icons";
+import { IconCopy, IconCheck, IconWarn, IconChevron, IconGear, IconExport, IconVram, IconSend, IconStop, IconUsage, IconBench, IconSheet, IconEye, IconEyeOff } from "./icons";
 import { Settings } from "./settings";
 
 // The highest (cumulative) step number seen so far — the position a say()/answer arriving NOW belongs at,
@@ -41,7 +41,7 @@ function onDebug(ev: MlDebugEvent): void {
     if (ev.kind === "agent-step") {
         const s = sessionMap.get(ev.session.hash);
         if (!s) return;
-        const step = { step: ev.step, localStep: ev.localStep, seq: ev.seq, pending: ev.pending, awaitingApproval: ev.awaitingApproval, thought: ev.thought, reasoning: ev.reasoning, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: ev.elements, renderIn: ev.renderIn, renderOut: ev.renderOut, argIssues: ev.argIssues, approval: ev.approval, usage: ev.usage };
+        const step = { step: ev.step, localStep: ev.localStep, seq: ev.seq, pending: ev.pending, awaitingApproval: ev.awaitingApproval, thought: ev.thought, reasoning: ev.reasoning, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: ev.elements, renderIn: ev.renderIn, renderOut: ev.renderOut, feedback: ev.feedback, argIssues: ev.argIssues, approval: ev.approval, usage: ev.usage };
         const steps = s.steps || [];
         // In-flight: a tool step arrives twice — a pending START then the DONE, sharing a `seq`.
         // Patch the existing row in place (immutably) so it fills in; otherwise append. Thoughts
@@ -793,6 +793,26 @@ function RenderPanel({ d }: { d: RenderDescriptor }) {
     }
 }
 
+// "Sent to the model" — what a tool fed straight INTO the model's context (locate's snap-inject: a
+// marked crop for a vision driver, a delegated description for a text-only one), plus WHY it was sent
+// (a point is automatic; a selector/@box only with verify:true). This is distinct from Out (which the
+// model also gets): it spotlights the extra VISUAL/DESCRIPTION payload the model received in-turn.
+function FeedbackBlock({ fb }: { fb: ToolFeedback }) {
+    // Collapsed by default — the injected crop is usually the same image already shown in the Out
+    // locate render above, so it's visually redundant; the summary (what + why) is the useful part.
+    return (
+        <details class="astep-feedback">
+            <summary class="feedback-head"><span class="tri" aria-hidden="true"><IconChevron /></span><IconEye /><span class="feedback-title">Sent to the model</span><span class="feedback-why">{fb.reason}</span></summary>
+            <div class="feedback-body">
+                {fb.image ? <ClickableImg src={fb.image} alt={fb.label || "located crop"} /> : null}
+                {fb.via === "text" && fb.text
+                    ? <div class="feedback-desc">{fb.image ? "The reader's description of the crop (this is the text the model actually received — it can't see the image):" : ""}<div class="feedback-desc-text">{fb.text}</div></div>
+                    : null}
+            </div>
+        </details>
+    );
+}
+
 // A Jupyter-style In:/Out: block: a gutter label + content, collapsible on its
 // own (a grey inline preview shows when collapsed). If a descriptor targets THIS
 // block it renders by default with a per-block rendered⇄raw toggle (e.g. exec's
@@ -978,6 +998,7 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                     <IoBlock label="Out" tip="What the tool returned to the model."
                         preview={st.pending ? "running…" : inlineText(st.result || "")} render={outRender}
                         raw={st.result ? <Code text={st.result} lang="text" /> : <span class="dim">{st.pending ? "running…" : "(no output)"}</span>} />
+                    {st.feedback ? <FeedbackBlock fb={st.feedback} /> : null}
                 </div>
                 : null}
             {/* On-demand plain-English gloss for a code step — CARD's Show-work trace only (the debug panel
@@ -1107,7 +1128,18 @@ function AgentOptionsBlock({ s }: { s: Session }) {
     const lines = [`model: ${s.model || "default"}`, `maxSteps: ${c.maxSteps}`];
     if (c.think != null) lines.push(`think: ${c.think}`);
     if (!c.env) lines.push("env: false");
-    if (c.vision != null && c.vision !== true) lines.push(`vision: ${JSON.stringify(c.vision)}`);
+    // Vision: what was PASSED + what RESOLVED — the debug line for "native / delegated / no-vision run".
+    // `passed`: auto (null) · true (forced native) · false (off) · "model" (forced reader). `driverSees` +
+    // `visionModel` are the resolved facts (newer events); fall back to just the passed value for old ones.
+    if (c.vision === false) {
+        lines.push("vision: false");
+    } else if (c.driverSees !== undefined || c.visionModel !== undefined) {
+        const passed = c.vision === true ? "true (forced native)" : typeof c.vision === "string" ? `${JSON.stringify(c.vision)} (forced reader)` : "auto";
+        const resolved = c.driverSees ? "local-sees: yes (native)" : c.visionModel ? `local-sees: no · reader: ${c.visionModel}` : "local-sees: no · no reader";
+        lines.push(`vision: ${passed} · ${resolved}`);
+    } else if (c.vision != null && c.vision !== true) {
+        lines.push(`vision: ${JSON.stringify(c.vision)}`);
+    }
     if (c.hints) lines.push(`hints: ${truncate(c.hints, 140)}`);
     // The full-defs viewer below lists every tool; only fall back to a one-line names summary when
     // those defs aren't available (older events), so the two don't duplicate.
@@ -1649,6 +1681,32 @@ const composerOpen = signal(false);          // the Spotlight composer — the H
 const composerMaxSteps = signal(20);         // step budget for a UI-started run (persists across opens)
 const STEP_BUDGETS = [10, 20, 50];           // the segmented presets in the composer
 const composerStarting = signal(0);          // timestamp: a UI run was sent, awaiting its first event (bridge pill)
+// Per-call model pick for a UI-started run. "" = follow the configured default (so switching the default
+// from the dropdown just keeps this on it). A non-"" value overrides the model FOR THIS RUN ONLY — the
+// startRun payload carries it to createAgent({ model }); it never touches config. Persists across opens.
+const composerModel = signal("");
+const composerModelOpen = signal(false);     // the model-picker dropdown is open (over the composer foot)
+// Per-call FORCE-NATIVE vision, only meaningful for a NON-Ollama picked model whose vision we can't probe
+// (e.g. GPT-4o / minimax). ON → startRun passes ml.agent's `vision: true` (see with its own model) for
+// this run; OFF → the default routing (delegate to the OCR reader if one sees). Ollama models auto-detect,
+// so the toggle is hidden for them — the composer mirror of the Settings "vision capable?" lock.
+const composerVision = signal(false);
+// Known Ollama-backed? The server's provenance list is authoritative.
+const isOllamaModel = (id: string): boolean => !!ollamaIds.value?.includes(id);
+// AFFIRMATIVELY non-Ollama — provenance is loaded (ollamaIds non-null) AND doesn't list it. Used to gate the
+// native-vision toggle: while the list is still loading (null) this is false, so the eye doesn't flash in then
+// out and shove the chip when LIST_MODELS lands. The send() vision override reads the same signal.
+const isCloudModel = (id: string): boolean => ollamaIds.value != null && !ollamaIds.value.includes(id);
+// The model a UI-started run will actually use: the per-call override, else the configured default.
+const composerResolvedModel = (): string => composerModel.value || config.value.model || "";
+// Switch the CONFIGURED default model from the composer dropdown (a testing convenience — no Settings trip).
+// SET_MODEL validates against the server list + persists to sync storage; the app's storage.onChanged
+// listener folds it back into config.value. Reset the per-call override so the composer follows the new default.
+function setDefaultModel(id: string): void {
+    chrome.runtime.sendMessage({ type: "SET_MODEL", payload: { model: id } }, () => { void chrome.runtime.lastError; });
+    composerModel.value = "";
+    composerModelOpen.value = false;
+}
 const orbHover = signal(false);              // hovering the working orb → it stretches into a labelled capsule
 const cardTitleTried = new Set<string>();
 
@@ -2069,6 +2127,70 @@ function CardTraceMsg({ label, text, cls }: { label: string; text: string; cls: 
     );
 }
 
+// The composer's model control: a chip showing the run's model (the per-call pick, else the default) that
+// opens a dropdown of the allowed models. Picking a row overrides the model FOR THIS RUN; the ★ persists it
+// as the new default (SET_MODEL) — a testing shortcut so you rarely open Settings. A non-Ollama pick also
+// gets an eye toggle for per-call native vision. Mirrors the Settings vision lock: Ollama auto-detects, so
+// no toggle there.
+function ComposerModelBar() {
+    const open = composerModelOpen.value;
+    const sel = composerResolvedModel();
+    const def = config.value.model || "";
+    // The allowed set (LIST_MODELS already applied modelFilter) — but ALWAYS include the configured default:
+    // a cloud default often isn't in the server's model list, and it'd be absurd to omit the model you're on.
+    // Sorted A→Z so a long local list is scannable.
+    const list = [...new Set(def ? [def, ...models.value] : models.value)].sort((a, b) => a.localeCompare(b));
+    // Offer the native-vision toggle ONLY for an AFFIRMATIVELY non-Ollama model — provenance is unknown until
+    // LIST_MODELS lands, and treating unknown as cloud made the eye flash in then out once the list loaded,
+    // shoving the chip sideways (the "snap" on open). Unknown → no eye, no flash.
+    const cloud = !!sel && isCloudModel(sel);
+    const wrapRef = useRef<HTMLDivElement>(null);
+    // Close on any pointer-down outside the control (the iframe's own document — the menu floats over the body).
+    useEffect(() => {
+        if (!open) return;
+        const onDown = (e: PointerEvent) => { if (!wrapRef.current?.contains(e.target as Node)) composerModelOpen.value = false; };
+        document.addEventListener("pointerdown", onDown, true);
+        return () => document.removeEventListener("pointerdown", onDown, true);
+    }, [open]);
+    return (
+        <div class="cmp-model" ref={wrapRef}>
+            <button class="cmp-model-btn" type="button" aria-haspopup="listbox" aria-expanded={open}
+                title="Model for this run — click to switch (★ sets your default)"
+                onClick={() => (composerModelOpen.value = !open)}>
+                <span class="cmp-model-name">{sel || "no model"}</span>
+                <IconChevron />
+            </button>
+            {cloud ? (
+                <button class={`cmp-vis${composerVision.value ? " on" : ""}`} type="button" aria-pressed={composerVision.value}
+                    aria-label={composerVision.value ? "Native vision on for this run" : "Native vision off for this run"}
+                    title={composerVision.value
+                        ? "This run: the model sees images itself (native vision) — click to turn off"
+                        : "This run: no native vision — delegates to the reader model. Click to turn on for a cloud model that can see (e.g. GPT-4o)."}
+                    onClick={() => (composerVision.value = !composerVision.value)}>{composerVision.value ? <IconEye /> : <IconEyeOff />}</button>
+            ) : null}
+            {open ? (
+                <div class="cmp-model-menu" role="listbox">
+                    {list.length === 0
+                        ? <div class="cmp-model-empty">No models loaded — check the server URL / API key in Settings.</div>
+                        : list.map(m => {
+                            const isSel = m === sel, isDef = m === def, tag = isOllamaModel(m) ? "ollama" : (ollamaIds.value ? "cloud" : "");
+                            return (
+                                <div key={m} class={`cmp-model-row${isSel ? " sel" : ""}`} role="option" aria-selected={isSel}
+                                    onClick={() => { composerModel.value = m === def ? "" : m; composerModelOpen.value = false; }}>
+                                    <span class="cmp-model-row-name">{m}</span>
+                                    {tag ? <span class={`cmp-model-tag ${tag}`}>{tag}</span> : null}
+                                    <button class={`cmp-model-star${isDef ? " on" : ""}`} type="button"
+                                        title={isDef ? "Your default model" : "Set as default model"}
+                                        onClick={e => { e.stopPropagation(); setDefaultModel(m); }}>{isDef ? "★" : "☆"}</button>
+                                </div>
+                            );
+                        })}
+                </div>
+            ) : null}
+        </div>
+    );
+}
+
 // The Spotlight composer — the HUD morphed into a task input. Reuses the card's head/body/foot anatomy
 // (same 🤖 in the same top-left spot as every other state) so it reads as the SAME blob reshaping, not a
 // new panel. On send it posts `startRun` to the shell → the page runs a real ml.agent() (hash, resumable).
@@ -2083,16 +2205,23 @@ function ComposerCard() {
     const send = () => {
         const t = text.trim();
         if (!t) return;
-        // Pre-flight: a HUD run with no default model would flash the orb, then fail at the background's
-        // prepareRequest with "No model configured". Catch it HERE instead — an inline nudge to Settings,
-        // so a fresh install that hasn't picked a model gets an actionable message, not a cryptic failure.
-        if (!config.value.model) { setErr("No model set. Open the extension settings (toolbar icon) and pick a model first."); return; }
+        // Pre-flight: a HUD run with no model at all would flash the orb, then fail at the background's
+        // prepareRequest with "No model configured". Catch it HERE instead — an inline nudge, so a fresh
+        // install that hasn't picked a model gets an actionable message, not a cryptic failure. A per-call
+        // pick counts, so this only fires when there's neither an override nor a configured default.
+        const model = composerModel.value.trim();   // "" = follow the configured default
+        const resolved = composerResolvedModel();
+        if (!resolved) { setErr("No model set. Pick one from the model menu above, or set a default in the extension settings."); return; }
+        // Native-vision override only rides along for a non-Ollama pick with the eye toggled on (Ollama
+        // vision is auto-detected, so we never send it there — the background resolves it). undefined ⇒
+        // omitted ⇒ ml.agent's default routing (delegate to the reader model if one sees).
+        const vision = (isCloudModel(resolved) && composerVision.value) ? true : undefined;
         // Bridge the round-trip: show a "Starting…" pill until the run's first event arrives (the composer
         // flies back to the corner and is instantly working). Safety-cleared if the run never surfaces.
         const t0 = Date.now();
         composerStarting.value = t0;
         setTimeout(() => { if (composerStarting.value === t0) composerStarting.value = 0; }, 10000);
-        window.parent.postMessage({ __mlSidebarApp: "startRun", task: t, maxSteps: composerMaxSteps.value }, "*");
+        window.parent.postMessage({ __mlSidebarApp: "startRun", task: t, maxSteps: composerMaxSteps.value, model: model || undefined, vision }, "*");
         close();
     };
     return (
@@ -2101,6 +2230,7 @@ function ComposerCard() {
                 <span class="card-bot" aria-hidden="true">🤖</span>
                 <span class="card-head-txt">New task</span>
                 <span class="sp" />
+                <ComposerModelBar />
                 <button class="card-x" aria-label="Cancel" title="Cancel" onClick={close}>✕</button>
             </div>
             <div class="card-body">

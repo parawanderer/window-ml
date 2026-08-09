@@ -294,6 +294,24 @@ html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
    assistant reply (.asst-collapsed:hover). */
 .astep-head:hover .astep-preview { color: var(--fg); }
 .astep-body { padding: 2px 0 4px 4px; }
+/* "Sent to the model" — the extra crop/description locate injected into the model's context. An accent
+   left-rail marks it as something the model RECEIVED (not just a debug visualisation). */
+.astep-feedback { margin: 6px 0 4px; padding: 5px 8px; border-radius: 6px;
+    border-left: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+    background: color-mix(in srgb, var(--accent) 8%, transparent); }
+/* Collapsed by default (the injected crop usually duplicates the Out render above); the summary is the point. */
+.astep-feedback > .feedback-head { display: flex; align-items: center; gap: 6px; cursor: pointer; list-style: none; }
+.astep-feedback > .feedback-head::-webkit-details-marker { display: none; }
+.astep-feedback .feedback-head .tri { display: inline-flex; flex: none; transition: transform .15s ease; color: var(--fg-faint); }
+.astep-feedback .feedback-head .tri svg { width: 11px; height: 11px; }
+.astep-feedback[open] .feedback-head .tri { transform: rotate(90deg); }
+.astep-feedback .feedback-head > svg { flex: none; width: 14px; height: 14px; color: var(--accent); }
+.astep-feedback .feedback-title { color: var(--fg); font-size: 0.82em; font-weight: 700; letter-spacing: .02em; }
+.astep-feedback .feedback-why { color: var(--fg-faint); font-size: 0.78em; font-style: italic; }
+.astep-feedback .feedback-body { margin-top: 6px; }
+.astep-feedback img { max-width: 100%; max-height: 320px; width: auto; border-radius: 5px; border: 1px solid var(--border); display: block; }
+.astep-feedback .feedback-desc { color: var(--fg-faint); font-size: 0.78em; }
+.astep-feedback .feedback-desc-text { margin-top: 3px; color: var(--fg-dim); font-size: 0.88em; line-height: 1.45; white-space: pre-wrap; }
 /* approval provenance — reuse the step's left border as a green/red outline + a pill. */
 .astep.tool.appr-yes { border-left-color: var(--ok); }
 .astep.tool.appr-no { border-left-color: var(--err); }
@@ -911,6 +929,47 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
 .seg .seg-opt.on { color: var(--fg); background: var(--panel); box-shadow: 0 1px 3px rgba(0, 0, 0, .28); }
 @keyframes cmp-in { from { opacity: 0; transform: scale(.97); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .card-cmp-input { animation: none; } }
+
+/* Composer model picker (in the head) — a chip showing the run's model that opens a dropdown of the allowed
+   models. A row overrides the model FOR THIS RUN; the ★ persists it as the default. A non-Ollama pick also
+   gets an eye toggle (per-call native vision). */
+.cmp-model { position: relative; display: flex; align-items: center; gap: 5px; min-width: 0; }
+/* Chip + eye share a fixed height so they line up exactly (box-sizing so borders don't add to it). */
+.cmp-model-btn { display: inline-flex; align-items: center; gap: 3px; max-width: 210px; height: 26px; box-sizing: border-box;
+    background: var(--panel); color: var(--fg); border: 1px solid var(--border); border-radius: 7px;
+    padding: 0 7px 0 9px; font: inherit; font-size: .82em; cursor: pointer; transition: background .15s ease; }
+.cmp-model-btn:hover { background: var(--panel-2); }
+.cmp-model-btn svg { width: 12px; height: 12px; flex: 0 0 auto; opacity: .7; }
+.cmp-model-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* Per-call native-vision toggle (cloud/unknown model only) — an SVG eye/eye-off, same height as the chip.
+   Dim (grayscale, off) → accent-ringed (on). */
+.cmp-vis { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 26px; box-sizing: border-box;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 7px;
+    color: var(--fg-faint); padding: 0; cursor: pointer; filter: grayscale(1); opacity: .6;
+    transition: opacity .15s ease, filter .15s ease, box-shadow .15s ease, border-color .15s ease, color .15s ease; }
+.cmp-vis svg { width: 15px; height: 15px; }
+.cmp-vis:hover { opacity: .85; }
+.cmp-vis.on { opacity: 1; filter: none; color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent); }
+/* The dropdown floats down from the chip over the composer body. Capped to the iframe viewport (100vh = the
+   composer card's own height, since the shell sizes the iframe to it) so a long model list SCROLLS inside the
+   menu instead of spilling past the card's bottom edge and being clipped by the iframe. */
+.cmp-model-menu { position: absolute; top: calc(100% + 5px); right: 0; z-index: 40; width: 260px; max-width: 78vw;
+    max-height: min(300px, calc(100vh - 60px)); overflow-y: auto; background: var(--panel); border: 1px solid var(--border); border-radius: 9px;
+    box-shadow: 0 14px 40px rgba(0, 0, 0, .34), 0 4px 12px rgba(0, 0, 0, .2); padding: 4px; cursor: default; }
+.cmp-model-row { display: flex; align-items: center; gap: 6px; padding: 5px 7px; border-radius: 6px; cursor: pointer; }
+.cmp-model-row:hover { background: var(--panel-2); }
+.cmp-model-row.sel { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.cmp-model-row-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: .88em; font-variant-numeric: tabular-nums; }
+.cmp-model-tag { flex: 0 0 auto; font-size: .68em; text-transform: uppercase; letter-spacing: .04em; font-weight: 700;
+    color: var(--fg-faint); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
+.cmp-model-tag.ollama { color: var(--ok); }
+.cmp-model-star { flex: 0 0 auto; background: transparent; border: none; color: var(--fg-faint); cursor: pointer;
+    font-size: .95em; line-height: 1; padding: 2px 3px; border-radius: 4px; }
+.cmp-model-star:hover { color: var(--accent); background: var(--panel-2-hover); }
+.cmp-model-star.on { color: var(--accent); }
+.cmp-model-empty { padding: 8px 9px; color: var(--fg-faint); font-size: .82em; line-height: 1.4; }
 
 /* HUD buttons: soft & Apple-ish, not neon. Approve/Send = a gentle green-tinted fill; Deny = a neutral
    ghost that only reddens on hover. Scoped to the card so the debug panel's brighter buttons stay as-is. */

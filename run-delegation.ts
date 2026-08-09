@@ -21,15 +21,18 @@ import { formatReadonlyExec } from "./approval";
 export interface PageRun {
     byName: Record<string, MlTool>;
     answered: Node[];
-    model?: string | null;   // the run's driver model, for the tools' ToolContext (background-delegated path)
+    model?: string | null;         // the run's driver model, for the tools' ToolContext (background-delegated path)
+    driverSees?: boolean;          // does the driver see natively (native vs delegated look/locate feedback)
+    visionModel?: string | null;   // the resolved vision reader — both carried onto the delegated ToolContext
 }
 
 const runs = new Map<string, PageRun>();
 
-/** Register an agent run's live toolset page-side (called by ml.agent's START_RUN shim). `model` feeds the
- *  ToolContext a delegated tool's run(args, ctx) receives (the page loop builds its own ctx directly). */
-export function registerRun(runId: string, tools: MlTool[], model: string | null = null): PageRun {
-    const run: PageRun = { byName: Object.fromEntries(tools.map(t => [t.name, t])), answered: [], model };
+/** Register an agent run's live toolset page-side (called by ml.agent's START_RUN shim). `model`/`driverSees`/
+ *  `visionModel` feed the ToolContext a delegated tool's run(args, ctx) receives (the page loop builds its own
+ *  ctx directly, from the SAME values) — so a background-hosted locate reads the same vision facts. */
+export function registerRun(runId: string, tools: MlTool[], model: string | null = null, driverSees = false, visionModel: string | null = null): PageRun {
+    const run: PageRun = { byName: Object.fromEntries(tools.map(t => [t.name, t])), answered: [], model, driverSees, visionModel };
     runs.set(runId, run);
     return run;
 }
@@ -77,7 +80,7 @@ export async function runDelegatedTool(runId: string, name: string, args: Record
             return { result, elementCount: elements ? elements.length : undefined, renderIn, renderOut, readonly: true };
         } catch { return { result: "", readonly: false }; }
     }
-    const env = await executeTool(tool, args, toolContext(run.byName, run.model ?? null));
+    const env = await executeTool(tool, args, toolContext(run.byName, run.model ?? null, null, run.driverSees ?? false, run.visionModel ?? null));
     // An answer-capable tool designates the caller-facing result node(s) → stash them page-side; only
     // the COUNT crosses to the background (the nodes reach the caller via AgentResult.elements).
     if (env.elements && env.elements.length && tool.capabilities && tool.capabilities.includes("answer")) {
@@ -91,6 +94,7 @@ export async function runDelegatedTool(runId: string, name: string, args: Record
         elementCount: env.elements ? env.elements.length : undefined,
         image: env.image, imageLabel: env.imageLabel,
         renderIn, renderOut,
+        feedback: env.feedback,   // what locate fed into the model's context → surfaced in the debug render + export
         cdpClick: env.cdpClick,   // reserved-surface click → the BACKGROUND does the CDP click (trusted)
     };
 }

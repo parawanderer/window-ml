@@ -650,8 +650,16 @@ function onWindowMessage(e: MessageEvent): void {
     // do itself (it has window.ml.agent) — every tool still gates through the unforgeable background gate.
     if (d.__mlSidebarApp === "startRun" && frame && e.source === frame.contentWindow && typeof d.task === "string" && d.task.trim()) {
         // Pass the HUD verbosity so the page picks the right system-prompt hint: quiet → stay silent mid-run;
-        // progress → keep between-step prose to one short HUD line (it shows live beside the orb).
-        window.postMessage({ __mlStartAgent: { task: d.task, maxSteps: typeof d.maxSteps === "number" ? d.maxSteps : undefined, hud: agentHud } }, "*");
+        // progress → keep between-step prose to one short HUD line (it shows live beside the orb). `model` is
+        // the composer's per-call pick (omitted ⇒ the page uses the configured default); `vision:true` is the
+        // per-call native-vision override for a non-Ollama model (omitted ⇒ default routing).
+        window.postMessage({ __mlStartAgent: {
+            task: d.task,
+            maxSteps: typeof d.maxSteps === "number" ? d.maxSteps : undefined,
+            model: typeof d.model === "string" && d.model.trim() ? d.model.trim() : undefined,
+            vision: d.vision === true ? true : undefined,
+            hud: agentHud,
+        } }, "*");
         return;
     }
     // The session composer: drive a live createAgent session by hash. Relayed to the PAGE, which decides

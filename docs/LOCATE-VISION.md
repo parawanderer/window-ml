@@ -326,6 +326,47 @@ sequenceDiagram
 
 ---
 
+## Snap-inject: skipping the verify `look`
+
+Notice the loop above still spends a whole turn on `look({@pt})` just to confirm the mark. When
+grounding *actually snaps* on something, that turn is usually ceremony — so `locate` can hand the
+marked crop **back into the driver's context itself**, collapsing `locate → look → click` to
+`locate → click`.
+
+```mermaid
+flowchart TD
+    G["grounding snaps<br/>(a real box → point/element)"] --> K{"result kind"}
+    K -->|"@pt / opaque"| A["ALWAYS inject<br/>(you always verify a coordinate)"]
+    K -->|"DOM selector / @box"| V{"verify: true?"}
+    V -->|yes| A
+    V -->|no| SKIP["no inject<br/>(a selector rarely needs an eyeball)"]
+    A --> D{"already seen this<br/>spot this run?"}
+    D -->|"within PT_LOOK_RADIUS"| SKIP2["skip — the model<br/>already has that crop"]
+    D -->|no| S{"driver sees?"}
+    S -->|"native"| IMG["inject the marked crop<br/>as an inline IMAGE"]
+    S -->|"text-only"| TXT["delegated describe →<br/>inject a DESCRIPTION + 'you can't see it'"]
+    style A fill:#2d3a2d,stroke:#22c55e,color:#fff
+    style IMG fill:#2d2d3a,stroke:#6366f1,color:#fff
+```
+
+Three things make it safe rather than a foot-gun:
+
+- **Only on a real snap.** It fires on the grounding-box success returns, never the grid
+  cell-*centre* fallback (the "may graze an off-centre target" case). There's no confidence *score*
+  to read — a VLM emits a box as text, not a probability — but *snapped vs fell-back* is exactly the
+  binary we want, and the code already forks on it.
+- **Near-area dedup.** A per-run `VisionMemory` (shared by the auto-wired `look` + `locate`) remembers
+  the spots the driver was already shown (a `look({@pt})` or a prior inject). A re-snap onto a point
+  within `PT_LOOK_RADIUS` of one of them skips the re-inject — otherwise the re-snap loop (locate →
+  see it's off → re-ground nearby → inject again) would spam near-identical crops.
+- **Universal, via the same native/delegated split as `look`.** A vision driver gets the crop as an
+  inline image; a text-only driver gets a reader's *description* of it, with a clarification that it
+  never saw the pixels. Either way the model can decide to click or re-locate in the same turn.
+
+What got fed in (and *why* — a point is automatic, a selector/box is `verify:true`) rides a
+`ToolFeedback` on the result and surfaces as a **"Sent to the model"** section in both the sidebar and
+the export — so the log is honest about the extra payload the model received.
+
 ## Why it's cursed (a closing meditation)
 
 Read that last diagram back and sit with it. To click one pixel we:

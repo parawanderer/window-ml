@@ -202,6 +202,29 @@ the delegated-sub-call `num_ctx` resident-caching gotcha. All four original slic
 canvas half: grid, grid-grounding, `@pt`). Pure geometry (`locate.ts`) is unit-tested standalone
 (`tests/locate.test.mjs`, importing the source directly via tsx); scoping guards in `tests/agent.test.js`.
 
+**Snap-inject (skip the verify `look`).** When grounding actually SNAPS on something at the end,
+`feedBack` (in `buildLocateTool`) feeds the marked crop straight into the driver's context so it can
+confirm in-turn and go `locate → click` instead of `locate → look → click`. Only fires on the
+grounding-box success returns — NOT the grid cell-CENTRE fallback ("may graze"), which stays manual by
+design (grounding gives no confidence score; the binary snapped-vs-fell-back IS the signal). An `@pt`
+ALWAYS injects (the model always verifies a coordinate); a DOM selector / `@box` only when the caller
+passes **`verify:true`** (structurally a `look()` on the result folded into the same call). A vision
+driver gets the crop as an inline **image**; a text-only driver gets a delegated **description** of it (a
+reader sub-call) with a clarification that it can't see the image. **"Does the driver see natively"
+(`driverSees`) + the resolved reader (`visionModel`) are resolved ONCE in the auto-wire and carried on
+the `ToolContext`** (`tool-exec.ts` `toolContext`; page loop + the background-delegated path in
+`run-delegation.ts` both build it from the same values) — so `locate`'s feedback reads the SAME answer
+that chose native-vs-delegated `look` instead of re-deriving it. That double-resolution was a real bug: a
+second `_modelSees(agentModel)` probe disagreed with `_resolveVisionModel` when `agentModel` resolved null,
+forcing a vision-capable Ollama agent onto the delegated "you can't see images" path. `driverSees` is now
+`visionModel === runModel` (the reader IS the agent's own model), and `runModel` is resolved once (was
+computed twice). Near-area **dedup**: a per-run `VisionMemory` (`{ seen }`,
+shared by the auto-wired `look` + `locate`; `markSeen`/`seenNearby` in util.ts, radius `PT_LOOK_RADIUS`)
+records the spots the driver was shown, so a re-snap onto an already-seen point doesn't re-inject the
+near-identical crop (the re-snap-loop case). What got injected + WHY rides a `ToolFeedback` on the
+result → the `agent-step` event → a **"Sent to the model"** section in the sidebar (`FeedbackBlock`) and
+the export (both surfaces, per the render-in-both rule). Dedup logic unit-tested in `tests/util.test.mjs`.
+
 **Agent self-knowledge (`agent_api_docs`).** The agent had none: asked "how do I call you
 from the console?" it answered from pre-training ("try typing `window`…"), because nothing in
 its context named `window.ml` or the extension. Two pieces fix it. `SELF_CLAUSE` (prompts.ts,

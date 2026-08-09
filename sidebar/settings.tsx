@@ -501,7 +501,10 @@ export function Settings() {
     const ocrSees = useVisionProbe(c.ocrModel);         // OCR is a vision role → flag a known non-vision pick
     const groundingSees = useVisionProbe(c.groundingModel);   // same for the grounding model
     // The override is redundant when we KNOW the answer (Ollama): detection wins, so a manual Yes/No is ignored.
-    const visionOverrideMoot = c.defaultModelVision !== "" && defModelSees !== null;
+    // When we can probe it (defModelSees !== null → an Ollama-backed model), the control is DISABLED and pinned
+    // to Auto — there's nothing for the human to override, so a live select would just be a lie.
+    const defVisionAutoDetected = defModelSees !== null;
+    const visionOverrideMoot = c.defaultModelVision !== "" && defVisionAutoDetected;
     // Refresh the server model list whenever Settings opens — the initial fetch (App mount / gear click) may
     // have raced or failed while the server was waking up, leaving the datalists empty with no way to retry.
     useEffect(() => {
@@ -572,13 +575,14 @@ export function Settings() {
                     <ModelPicker fieldKey="ocrModel" options={listed} placeholder="e.g. qwen2.5vl" cls={(excl(c.ocrModel) || ocrSees === false) ? "err" : ""} />
                     {ocrSees === false ? <div class="set-err">"{c.ocrModel.trim()}" doesn't report vision capability — this is a vision role; pick a vision model (e.g. qwen2.5vl, gemma3, llava).</div> : null}</label>
                 <label class="set-field"><Lbl tip={TIP.defaultModelVision}>Default model is vision capable?</Lbl>
-                    <select value={c.defaultModelVision} onChange={(e: any) => setField("defaultModelVision", e.target.value as VisionSupport)}>
+                    <select value={defVisionAutoDetected ? "" : c.defaultModelVision} disabled={defVisionAutoDetected}
+                        onChange={(e: any) => setField("defaultModelVision", e.target.value as VisionSupport)}>
                         <option value="">Auto-detect</option>
                         <option value="yes">Yes — native vision</option>
                         <option value="no">No</option>
                     </select>
                     <div class="set-hint">For a cloud model the extension can't probe (e.g. GPT-4o) — declaring <b>Yes</b> lets the agent see with its own model in the HUD instead of delegating to the OCR model. Ollama models are auto-detected.</div>
-                    {visionOverrideMoot ? <div class="set-moot">Ollama model — vision is auto-detected ({defModelSees ? "yes" : "no"}); this override is ignored.</div> : null}
+                    {defVisionAutoDetected ? <div class="set-moot">Ollama model — vision is auto-detected ({defModelSees ? "yes" : "no"}); this override is locked to Auto.</div> : null}
                 </label>
                 </Section>
 

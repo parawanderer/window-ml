@@ -23,6 +23,7 @@ import type {
     JsonSchema,
     ToolCall,
     RenderDescriptor,
+    ToolFeedback,
     ToolRenderInput,
     StoredSession,
     LoadedModel,
@@ -35,8 +36,8 @@ import { detectGroundingModel, DEFAULT_GROUNDING_RANGE } from "./contract";
 import { evalReadonly } from "./readonly-exec";
 import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement } from "./dom";
 import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_NOTE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_EXEC_NOTE, IFRAME_CLAUSE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE } from "./prompts";
-import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, PT_LOOK_RADIUS, BOX_RE, resolveBox, agentState } from "./util";
-import type { ShotBox, ServerTool } from "./contract";
+import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, markSeen, PT_LOOK_RADIUS, BOX_RE, resolveBox, agentState } from "./util";
+import type { ShotBox, ServerTool, VisionMemory } from "./contract";
 import { annotate, pickAccentColorForTarget } from "./locate";
 import { suspiciousArgsWarning, suspiciousChars } from "./security";
 import { emitDebug, debugId, shortHash, sessionRegistry, agentRegistry, handleRegistry, enterAgentRun, exitAgentRun } from "./bus";
@@ -531,9 +532,20 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             // cap / seq from it, so there's a single code path — a handle just persists it across turns.
             const control: AgentControl = _control ?? { hash: null, messages: [], inbox: [], maxSteps, running: false, seqBase: 0, stepBase: 0 };
             let toolset = [...(tools || this.domTools || []), ...extraTools];
+            // Vision facts resolved ONCE below and carried on every tool's ToolContext, so nothing re-derives
+            // them: `driverSees` = the agent's own model sees the pixels natively this run (drove native vs
+            // delegated `look`; read by `locate`'s snap-feedback); `runVisionModel` = the resolved reader a
+            // delegated vision sub-call uses. Both stay at their defaults unless a vision model resolves.
+            let driverSees = false;
+            let runVisionModel: string | null = null;
             // Config, fetched once (used for vision resolution + the read-only exec
             // auto-approve fast-path below).
             const agentCfg = await this.config().catch(() => null);
+            // The run's driver model — the SINGLE resolution reused for vision wiring, the ToolContext, and the
+            // loop below (was computed twice). The fresh-config fallback covers a momentarily-null agentCfg so
+            // this can't be null while the reader resolves non-null. Null only when neither a per-call model nor
+            // a configured default exists — the run then fails downstream at prepareRequest ("No model configured").
+            const runModel = model || agentCfg?.model || (await this.config().catch(() => null))?.model || null;
             const autoRO = !!(agentCfg && (agentCfg as { autoApproveReadonly?: boolean }).autoApproveReadonly);
             const autoPy = !!(agentCfg && (agentCfg as { autoApprovePython?: boolean }).autoApprovePython);
             // Closed-shadow-root piercing (opt-in). Set the dom.ts module flag from THIS run's config before
@@ -551,7 +563,6 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             // back to the delegated `lookTool` (#8). A forced `vision:"<model>"` is
             // always delegated (can't inline a model that isn't the agent's).
             if (vision !== false && !toolset.some(t => t.capabilities && t.capabilities.includes("vision"))) {
-                const agentModel = model || agentCfg?.model || null;
                 // The model that will SEE: forced value → agent's own (if it reports
                 // vision) → the OCR model → null. `look` prefers NATIVE inline vision
                 // when the agent's own model can see; otherwise it's delegated. `locate`
@@ -559,14 +570,22 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 // reader — added alongside look whenever one exists.
                 const visionModel = await this._resolveVisionModel(model, vision);
                 if (visionModel) {
-                    const forcedDelegate = typeof vision === "string" && !!vision;
-                    // Native (agent sees the pixels) when the caller FORCES it (`vision:true`,
-                    // bypassing the probe for a cloud model it knows sees) OR an auto-probe
-                    // confirms the agent's own model is vision-capable; else delegated.
-                    if (vision === true || (!forcedDelegate && await this._modelSees(agentModel))) {
-                        toolset.push(this._nativeLookTool());
+                    runVisionModel = visionModel;
+                    // The driver sees the injected pixels NATIVELY iff the reader `_resolveVisionModel` picked
+                    // IS the agent's own model (`runModel`) — it returns that only when forced-native (`vision:true`)
+                    // or a probe confirms it sees; otherwise it returns a DELEGATED reader (the OCR model). Deriving
+                    // driverSees from that ONE decision — not a second, independently-resolved `_modelSees` probe —
+                    // is what stops look-wiring and locate's snap-feedback from disagreeing: the bug where a
+                    // vision-capable Ollama agent (gemma4) hit the delegated "you can't see images" path even though
+                    // its own model resolves as the reader.
+                    driverSees = !!runModel && visionModel === runModel;
+                    // One near-area memory SHARED by look + locate this run: a look({@pt}) or a locate
+                    // snap-inject records the spot, so a re-snap onto it doesn't re-inject the same crop.
+                    const visionMemory: VisionMemory = { seen: [] };
+                    if (driverSees) {
+                        toolset.push(this._nativeLookTool(visionMemory));
                     } else {
-                        toolset.push(this.lookTool({ model: visionModel }));
+                        toolset.push(this.lookTool({ model: visionModel, memory: visionMemory }));
                     }
                     // Grounding (opt-in): the effective model is the explicit field, or
                     // the auto-detected qwen when it's blank; plus its coordinate range.
@@ -578,7 +597,8 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                             groundingModel = cfg.groundingModel.trim() || detectGroundingModel(await this.models()) || null;
                         }
                     } catch { /* config/models unavailable → Set-of-Marks only */ }
-                    toolset.push(this.locateTool({ model: visionModel, groundingModel, groundingRange }));
+                    // driverSees rides the ToolContext (below), not a build opt; memory is the shared dedup registry.
+                    toolset.push(this.locateTool({ model: visionModel, groundingModel, groundingRange, memory: visionMemory }));
                 }
             }
             // Unattended run: no human to approve, so shape the toolset for read-only autonomy. exec and
@@ -648,15 +668,14 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             // background/devtools turn — which never syncs messages back (the round-trip rejects), leaving
             // control.messages empty → the next run re-announced `agent` and WIPED the history. control.hash
             // survives a cancel, so firstTurn (above) keys off it instead.
-            // Resolve the driver model to the config default when none was passed, so the
-            // sidebar shows the REAL model (not "default") and can tell when a vision
-            // sub-call reused it (its `model` matches this) vs. ran on a different one.
-            const runModel = model || agentCfg?.model || null;
+            // `runModel` (resolved once up top) is the driver model — config default when none was passed —
+            // so the sidebar shows the REAL model (not "default") and can tell when a vision sub-call reused it.
             const mlApi = this as unknown as MlApi;   // typed self-ref for the deps' chatMeta (capabilities/ps)
             if (firstTurn) emitDebug({ kind: "agent", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, task, model: runModel, maxSteps, config: {
                 system: systemPrompt, customSystem: !!system,
                 tools: toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval, vision: !!(t.capabilities && t.capabilities.includes("vision")), description: t.description, parameters: t.parameters, summary: t.summary })),
-                maxSteps, think: (think === true || think === false) ? think : null, env, vision: vision ?? null, hints: hints || null, silent: silent || undefined, unattended: unattended || undefined,
+                maxSteps, think: (think === true || think === false) ? think : null, env, vision: vision ?? null,
+                driverSees, visionModel: runVisionModel, hints: hints || null, silent: silent || undefined, unattended: unattended || undefined,
             } });
             // A CONTINUATION (a handle's later run() with a task) shows the follow-up as a user message in the
             // conversation — the sidebar renders it exactly like the first task / a mid-run say (all "you").
@@ -685,7 +704,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     : (hasApprovalTool && !agentCfg?.pageApprovalAllowed) ? "off" : null;
             control.bg = !!bgSurface;   // so a handle's mid-run say() knows to steer via INJECT_MESSAGE, not the page inbox
             if (bgSurface) {
-                registerRun(runHash, toolset, runModel);
+                registerRun(runHash, toolset, runModel, driverSees, runVisionModel);
                 // Phase 2 resume for a BACKGROUND-hosted run: the run's history lives in the service worker,
                 // so continuing it is a RESUME_RUN round-trip (not the page-loop's in-memory drive()). We
                 // re-register the live tools (endRun cleared them after the prior turn) so delegation works
@@ -693,7 +712,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 agentRegistry.set(runHash, {
                     hash: runHash,
                     resume: async (t: string): Promise<AgentResult> => {
-                        registerRun(runHash, toolset, runModel);
+                        registerRun(runHash, toolset, runModel, driverSees, runVisionModel);
                         enterAgentRun();
                         try {
                             const res = await makeBackgroundTaskPromise<AgentResult>("RESUME_RUN_REQUEST", "RESUME_RUN_RESPONSE", { runId: runHash, task: t }, undefined, signal);
@@ -778,7 +797,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             // Enrich the loop's event with the page-only bits: argIssues, the element COUNT for the debug
             // event + the real nodes for onStep, and a best-effort In/Out render for a step the executor
             // DIDN'T run (pending START / denied / skipped), preferring the executor's own render when present.
-            const emit = (ev: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: unknown; tool?: string; arguments?: Record<string, unknown>; result?: string; approval?: "readonly" | "sandbox" | "user" | "denied" | "skipped"; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; usage?: unknown; elements?: unknown[] }) => {
+            const emit = (ev: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: unknown; tool?: string; arguments?: Record<string, unknown>; result?: string; approval?: "readonly" | "sandbox" | "user" | "denied" | "skipped"; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; usage?: unknown; elements?: unknown[] }) => {
                 const tool = ev.tool ? byName[ev.tool] : undefined;
                 const nodes = ev.elements as Node[] | undefined;
                 const argIssues = ev.tool && tool ? validateArgs(tool.parameters, ev.arguments || {}) : undefined;
@@ -801,7 +820,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     step, localStep: ev.step, seq, pending: ev.pending || undefined,
                     thought: ev.thought, reasoning: (ev.reasoning as string | null) || undefined, tool: ev.tool, arguments: ev.arguments,
                     result: ev.result, elements: nodes ? nodes.length : undefined,
-                    renderIn, renderOut,
+                    renderIn, renderOut, feedback: ev.feedback,
                     argIssues: argIssues && argIssues.length ? argIssues : undefined,
                     approval: ev.approval, usage: (ev.usage as TokenUsage | null) || undefined,
                 });
@@ -813,13 +832,13 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             // The page analogue of the background's delegating runTool — but it runs in the page's world.
             // The runtime ToolContext for this run — built once from the finalised toolset (byName) + model,
             // so a tool's run(args, ctx) can adapt to which companion tools are wired (e.g. `locate`).
-            const toolCtx = toolContext(byName, runModel);
+            const toolCtx = toolContext(byName, runModel, null, driverSees, runVisionModel);
             const runToolDep = async (name: string, args: Record<string, unknown>) => {
                 const tool = byName[name];
                 const env = await executeTool(tool, args, toolCtx);
                 const { in: renderIn, out: renderOut } = descriptorFor(tool, env, args);
                 if (tool && tool.capabilities && tool.capabilities.includes("answer") && env.elements && env.elements.length) answered.push(...env.elements as Node[]);
-                return { result: String(env.result), elements: env.elements, renderIn, renderOut, image: env.image, imageLabel: env.imageLabel };
+                return { result: String(env.result), elements: env.elements, renderIn, renderOut, image: env.image, imageLabel: env.imageLabel, feedback: env.feedback };
             };
 
             const deps: AgentLoopDeps = {
@@ -1275,7 +1294,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
          * @param {number} [options.maxTokens=512] Hard cap on the description length.
          * @returns {MlTool} A tool with `name: "look"` and `capabilities: ["vision"]`.
          */
-        lookTool: function(opts: { model?: string | null; maxTokens?: number } = {}): MlTool {
+        lookTool: function(opts: { model?: string | null; maxTokens?: number; memory?: VisionMemory } = {}): MlTool {
             return buildLookTool(this, opts);
         },
         /**
@@ -1288,7 +1307,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
          * @param {number} [opts.maxTokens=64] Cap on the sub-call (it returns a number).
          * @returns {MlTool} A tool with `name: "locate"` and `capabilities: ["vision"]`.
          */
-        locateTool: function(opts: { model?: string | null; groundingModel?: string | null; groundingRange?: number; maxTokens?: number } = {}): MlTool {
+        locateTool: function(opts: { model?: string | null; groundingModel?: string | null; groundingRange?: number; maxTokens?: number; memory?: VisionMemory } = {}): MlTool {
             return buildLocateTool(this, opts);
         },
         /**
@@ -1537,7 +1556,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
          * @returns {MlTool} A tool with `name: "look"`, `capabilities: ["vision"]`, returning
          *   `{ content, image, imageLabel, elements }` for inline vision.
          */
-        _nativeLookTool: function(): MlTool {
+        _nativeLookTool: function(memory?: VisionMemory): MlTool {
             const ml = this;
             return ml.defineTool({
                 name: "look",
@@ -1564,6 +1583,8 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 render: (_input, args) => targetRender(args),
                 run: async ({ selector, scope, index, margin }: { selector?: string; scope?: "viewport" | "page"; index?: number; margin?: number } = {}): Promise<string | ToolResult> => {
                     const fullPage = scope === "page" && !selector;
+                    // Looking at an @pt marks it SEEN → locate's snap-feedback won't re-inject its crop.
+                    if (selector && POINT_RE.test(selector.trim())) { const p = resolvePoint(selector); if (p) markSeen(memory, p.x, p.y); }
                     let shot;
                     try { shot = await ml.screenshot(selector || null, { fullPage, index: index || 0, margin: typeof margin === "number" ? margin : 0 }); }
                     catch (e) { return `Error: ${errText(e)}`; }
@@ -1856,6 +1877,12 @@ class AgentHandle implements MlAgentHandle, AgentControl {
         const proseClause = e.data.__mlStartAgent.hud === "quiet" ? HUD_PROSE_QUIET : HUD_PROSE_PROGRESS;
         const opts: Record<string, unknown> = { extraTools: [ml.clickTool(), ml.typeTool(), ml.pythonTool(), ml.chatMetaTool()], hints: HUD_HINT + proseClause };
         if (Number.isFinite(maxSteps) && maxSteps > 0) opts.maxSteps = maxSteps;   // the composer's step budget
+        // The composer's per-call model pick (omitted ⇒ the configured default) + a per-call FORCE-NATIVE
+        // vision override for a non-Ollama model (omitted ⇒ ml.agent's default vision routing). Same knobs a
+        // console ml.agent({ model, vision }) exposes — the HUD just wires the picker to them.
+        const startModel = e.data.__mlStartAgent.model;
+        if (typeof startModel === "string" && startModel.trim()) opts.model = startModel.trim();
+        if (e.data.__mlStartAgent.vision === true) opts.vision = true;
         // createAgent (not ml.agent) so the run registers a HANDLE the sidebar/HUD composer can drive —
         // follow-up run()s + say() steering from the "Send a message to this session…" box.
         try { void ml.createAgent(opts).run(task); }

@@ -274,6 +274,14 @@ function writeAgent(s: Session, d: Sink): void {
         }
         if (st.result != null && st.result !== "") d.block("Out", st.result);
         else if (st.elements != null) d.inline("Out", `${st.elements} element(s)`);
+        // What the tool fed straight INTO the model's context (locate's snap-inject) — a marked crop the
+        // model SAW, or a delegated description it received. A static export can't toggle, so show both the
+        // reason and the payload.
+        if (st.feedback) {
+            d.note(`Sent to the model (${st.feedback.reason})`);
+            if (st.feedback.image) d.image(st.feedback.image, `step-${st.step}-feedback`, `step ${st.step} — sent to the model`);
+            if (st.feedback.via === "text" && st.feedback.text) d.block("Description sent to the model", st.feedback.text);
+        }
     }
     flush(Infinity);   // trailing answer(s) + any follow-up prompt that landed after the last step
     // No per-turn answers recorded (a run still in flight, or an older session) → the single-answer tail.

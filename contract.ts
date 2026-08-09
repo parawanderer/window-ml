@@ -252,6 +252,28 @@ export interface JsonSchema {
  *  that computes its own visualization (e.g. `locate`'s badged Set-of-Marks
  *  image) returns a `render` descriptor directly — shown in the sidebar but, unlike
  *  `image`, NOT injected into the model's history (it's a debug artifact). */
+/** Per-run near-area vision memory shared by the auto-wired `look` + `locate`. Records the viewport
+ *  points whose marked crop the DRIVER has already been shown (a `look({@pt})` or a `locate` auto-inject),
+ *  so `locate`'s snap-feedback doesn't re-inject a near-identical crop the model already has in context
+ *  (the re-snap-loop case). `seen` grows for the run's lifetime; near-area = within `SEEN_RADIUS` px. */
+export interface VisionMemory {
+    seen: { x: number; y: number }[];
+}
+
+/** What a tool fed back INTO the model's context, for the debug render + export to surface (the model
+ *  received it via the normal channels — an inline image, or appended result text). `locate`'s snap-inject
+ *  sets it: a marked crop (vision driver) or a delegated description (text-only driver), plus the `reason`
+ *  it was sent (a point is automatic; a selector/@box only when `verify:true`). */
+export interface ToolFeedback {
+    reason: string;
+    via: "image" | "text";
+    /** the marked crop (data URL) — shown in the render even for a text-only driver (what got described) */
+    image?: string;
+    /** the delegated description text (via:"text" only) */
+    text?: string;
+    label?: string;
+}
+
 export interface ToolResult {
     content: string;
     elements?: Node[];
@@ -267,6 +289,8 @@ export interface ToolResult {
      *  docs/spec/CDP_CLICK.md. `hint` = a stuck-loop re-snap nudge to append when this @pt was clicked before
      *  (the CDP result string is built background-side, so the page threads the nudge here). */
     cdpClick?: { x: number; y: number; hint?: string };
+    /** what this tool fed into the model's context (locate's snap-inject); surfaced in the debug render + export */
+    feedback?: ToolFeedback;
 }
 
 /** One stage of a `locate` run: a vision sub-call (grid cell-pick, Set-of-Marks pick,
@@ -373,6 +397,15 @@ export interface ToolContext {
      *  undeterminable (cloud / non-Ollama / not probed). NOTE: for "does it see images" use `hasTool("look")`,
      *  NOT this — a cloud model with the vision OVERRIDE has null raw caps but a wired `look` tool. */
     capabilities: string[] | null;
+    /** Whether the DRIVER model itself sees the pixels NATIVELY this run (forced `vision:true`, or a probe
+     *  confirmed its own model is vision-capable — i.e. `look` was wired native, not delegated). Resolved ONCE
+     *  in the auto-wire and carried here so `locate`'s snap-feedback injects an inline image (native) vs a
+     *  delegated text description — reading the SAME answer that chose the look tool, never re-deriving it. */
+    driverSees: boolean;
+    /** The resolved VISION READER for this run — the model a delegated vision sub-call (look/locate describe)
+     *  uses. Equals `model` when the driver sees natively (`driverSees`), else a separate reader (the OCR
+     *  model); null when no vision model resolved. Carried from the auto-wire's one resolution. */
+    visionModel: string | null;
 }
 
 export interface MlTool {
@@ -711,6 +744,8 @@ export interface PageToolEnvelope {
     renderIn?: RenderDescriptor;
     /** Out slot — a visualization of the result */
     renderOut?: RenderDescriptor;
+    /** what locate fed into the model's context (snap-inject) — computed page-side, surfaced in the render + export */
+    feedback?: ToolFeedback;
     /** a readonlyTry that the mediated interpreter HANDLED (→ auto-approve) */
     readonly?: boolean;
     /** a precheck that found the action doomed (no target) → skip the gate, use `result` */
@@ -865,7 +900,12 @@ export interface DebugAgentConfig {
     maxSteps: number;
     think: boolean | null;
     env: boolean;
+    /** the `vision` option AS PASSED (true=forced native · false=off · string=forced reader · null=auto) */
     vision: boolean | string | null;
+    /** RESOLVED: does the driver's own model see the pixels natively this run (native vs delegated look)? */
+    driverSees?: boolean;
+    /** RESOLVED: the vision reader a delegated sub-call uses (equals the driver when native; null = none) */
+    visionModel?: string | null;
     hints: string | null;
     /** scripting run: kept out of the in-page HUD (the card reads this to stay hidden) */
     silent?: boolean;
@@ -893,6 +933,9 @@ export interface DebugAgentStep extends DebugBase {
     renderIn?: RenderDescriptor;
     /** rich render for the Out slot (the result) — else the raw result */
     renderOut?: RenderDescriptor;
+    /** what this tool fed into the model's context (locate's snap-inject) — the sidebar + export show a
+     *  "sent to the model" section (the crop / description + why) */
+    feedback?: ToolFeedback;
     /** JSON-Schema mismatches between the args and the tool's parameters */
     argIssues?: string[];
     /** How an approval-gated tool call was decided (undefined for tools that don't
@@ -975,11 +1018,15 @@ export interface MlApi {
     /** The default DOM tool registry (added right after injection). */
     domTools?: MlTool[];
 
-    /** Built-in vision tool factory (OCR/screenshot look). */
-    lookTool(opts?: { model?: string | null; maxTokens?: number }): MlTool;
+    /** Built-in vision tool factory (OCR/screenshot look). `memory` (when auto-wired) is the shared
+     *  near-area registry so a `look({@pt})` marks that spot seen — feeding `locate`'s auto-inject dedup. */
+    lookTool(opts?: { model?: string | null; maxTokens?: number; memory?: VisionMemory }): MlTool;
     /** Built-in delegated visual locator (find an element by describing it): grounding
-     *  VLM when configured, else Set-of-Marks; both snap to the DOM by hit-testing. */
-    locateTool(opts?: { model?: string | null; groundingModel?: string | null; groundingRange?: number; maxTokens?: number }): MlTool;
+     *  VLM when configured, else Set-of-Marks; both snap to the DOM by hit-testing.
+     *  Whether a grounding snap feeds the crop back as an inline IMAGE (native driver) or a delegated text
+     *  DESCRIPTION comes from `ctx.driverSees` at run time (not a build opt — one resolved source). `memory` =
+     *  the shared near-area dedup so a re-snap onto an already-seen spot doesn't re-inject the crop. */
+    locateTool(opts?: { model?: string | null; groundingModel?: string | null; groundingRange?: number; maxTokens?: number; memory?: VisionMemory }): MlTool;
     /** Built-in click tool factory. */
     clickTool(): MlTool;
     /** Built-in type tool factory. */
@@ -1039,7 +1086,7 @@ export interface MlApi {
     _loadTable(name: string, src: string | Element, raw?: boolean): Promise<{ name: string; source: TableSource; data: { kind: "rows"; columns: string[]; rows: (string | number | null)[][] } | { kind: "html"; html: string } }>;
     _resolveVisionModel(agentModel: string | null, vision: boolean | string | null): Promise<string | null>;
     _modelSees(model: string | null): Promise<boolean>;
-    _nativeLookTool(): MlTool;
+    _nativeLookTool(memory?: VisionMemory): MlTool;
     /** The crop transform (viewport top-left + dpr) of a raw screenshot of `target` — so a python_exec
      *  image-pixel coordinate can be projected to the viewport for a clickable @pt/@box. */
     _shotBox(target: string | Element, margin?: number): ShotBox | null;
