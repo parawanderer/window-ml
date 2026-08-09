@@ -40,6 +40,25 @@ test("INVARIANT: the gate resolves BEFORE the executor runs (ordering)", async (
     assert.deepEqual(calls.order, ["approve:danger", "run:danger"], "approve completes, THEN runTool — never the reverse");
 });
 
+test("CANCEL while awaiting approval → tool NOT run, a generic 'cancelled' result is stored, run exits cancelled", async () => {
+    // Simulate Stop pressed while the gate is open: approve() aborts the run's signal (as CANCEL_RUN does)
+    // then resolves (the background resolves the pending gate so the blocked loop can wake). The loop must
+    // treat the aborted signal as a CANCEL — not a deny — store a non-accusatory result, and exit cancelled.
+    const ctrl = new AbortController();
+    const { deps, calls } = makeDeps({
+        turns: [toolCall("danger"), reply("done")],
+        approve: () => { ctrl.abort(); return false; },
+    });
+    const res = await runAgentLoop("x", { tools: [danger], signal: ctrl.signal }, deps);
+    assert.equal(calls.runTool.length, 0, "SECURITY still holds: the tool NEVER ran (cancelled, not approved)");
+    const done = calls.emits.find(e => e.tool === "danger" && !e.pending);
+    assert.equal(done.approval, "cancelled", "provenance is 'cancelled', NOT 'denied' (it wasn't a rejection)");
+    assert.match(done.result, /cancelled the run/i, "a generic 'cancelled the run' result is emitted (clears the buttons)");
+    assert.match(res.transcript[0].result, /cancelled the run/i, "and it's stored in the transcript — coherent for a follow-up turn");
+    assert.doesNotMatch(done.result, /denied/i, "it does NOT read as 'denied/refused'");
+    assert.ok(res.cancelled, "the run resolves as cancelled");
+});
+
 test("auto-approve (a TRUSTED-world decision) skips the gate but still executes", async () => {
     const { deps, calls } = makeDeps({ turns: [toolCall("exec", { js: "readonlySurvey()" }), reply("done")], autoApprove: () => "readonly" });
     await runAgentLoop("x", { tools: [{ name: "exec", requiresApproval: true }] }, deps);

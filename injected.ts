@@ -797,7 +797,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             // Enrich the loop's event with the page-only bits: argIssues, the element COUNT for the debug
             // event + the real nodes for onStep, and a best-effort In/Out render for a step the executor
             // DIDN'T run (pending START / denied / skipped), preferring the executor's own render when present.
-            const emit = (ev: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: unknown; tool?: string; arguments?: Record<string, unknown>; result?: string; approval?: "readonly" | "sandbox" | "user" | "denied" | "skipped"; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; usage?: unknown; elements?: unknown[] }) => {
+            const emit = (ev: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: unknown; tool?: string; arguments?: Record<string, unknown>; result?: string; approval?: "readonly" | "sandbox" | "user" | "denied" | "skipped" | "cancelled"; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; usage?: unknown; elements?: unknown[] }) => {
                 const tool = ev.tool ? byName[ev.tool] : undefined;
                 const nodes = ev.elements as Node[] | undefined;
                 const argIssues = ev.tool && tool ? validateArgs(tool.parameters, ev.arguments || {}) : undefined;

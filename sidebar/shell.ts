@@ -522,7 +522,23 @@ function drawHighlight(left: number, top: number, width: number, height: number,
     // Tell the card where on the page the approval target sits (the card is the frame in off mode).
     if (hlKind === "approve" && frame) frame.contentWindow?.postMessage({ __mlHighlightPos: posLabel(left + width / 2, top + height / 2) }, "*");
 }
-function hideHighlight(): void { hlSeq++; hlKind = ""; if (highlightEl) { highlightEl.remove(); highlightEl = null; } }
+function hideHighlight(): void { hlSeq++; hlKind = ""; lastHlRef = null; if (highlightEl) { highlightEl.remove(); highlightEl = null; } }
+// Reposition on scroll/resize: the box/@pt marker is computed from getBoundingClientRect (viewport coords)
+// and drawn position:fixed, so a page scroll slides the element out from under a now-frozen box (and an @pt
+// off its target). Re-run the LAST highlight — throttled to one frame — so it tracks. Capture-phase catches
+// scrolls in nested containers too; a stale async ML_HL_AT reply is ignored by the hlSeq guard.
+let lastHlRef: { selector?: string; index?: number; token?: string; kind?: string } | null = null;
+let hlReRAF = 0, hlListenersOn = false;
+function repositionHighlight(): void {
+    if (!lastHlRef || hlReRAF) return;
+    hlReRAF = requestAnimationFrame(() => { hlReRAF = 0; if (lastHlRef) showHighlight(lastHlRef); });
+}
+function ensureHlListeners(): void {
+    if (hlListenersOn) return;
+    hlListenersOn = true;
+    window.addEventListener("scroll", repositionHighlight, true);
+    window.addEventListener("resize", repositionHighlight);
+}
 // Highlight a page target on hover. ELEMENT mode (`selector`): the shell shares the page DOM, so it
 // resolves a NATIVE-CSS selector itself. But ml's custom selectors (:contains/:has-text/:eq) throw in
 // document.querySelectorAll — so when native resolution fails, fall back to asking injected (main
@@ -530,11 +546,18 @@ function hideHighlight(): void { hlSeq++; hlKind = ""; if (highlightEl) { highli
 // (`token`): only the main world knows the coords, so it's always resolved by injected.
 function showHighlight(ref: { selector?: string; index?: number; token?: string; kind?: string } | null): void {
     if (!ref) return hideHighlight();
+    lastHlRef = ref;            // remembered so scroll/resize can recompute (below)
+    ensureHlListeners();
     hlKind = ref.kind === "approve" ? "approve" : "";
     const seq = ++hlSeq;
     if (ref.selector) {
+        // An ml-DIALECT selector (`>>>` boundary-crossing, or a :contains/:has-text/:eq/text= pseudo)
+        // must be resolved by INJECTED (queryAll + viewportRect, which crosses shadow/iframe boundaries and
+        // composes the frame offset into a TOP-viewport box). document.querySelectorAll can't parse it — and
+        // must not try, so a partial native match can't draw a wrong box for it. Route it straight to injected.
+        const mlDialect = /(^|\s)>>>(\s|$)|:contains\(|:has-text\(|:eq\(|(^|[\s>~+])text=/.test(ref.selector);
         let el: Element | null = null;
-        try { el = document.querySelectorAll(ref.selector)[ref.index || 0] || null; } catch { el = null; }
+        if (!mlDialect) try { el = document.querySelectorAll(ref.selector)[ref.index || 0] || null; } catch { el = null; }
         if (el) {
             const r = el.getBoundingClientRect();
             if (!r.width && !r.height) return hideHighlight();   // hidden/collapsed — nothing to show

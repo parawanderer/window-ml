@@ -167,6 +167,12 @@ export const targetRender = (args: Record<string, unknown>): RenderDescriptor | 
     return { type: "elements", items: [{ path: sel, ...(idx ? { index: idx } : {}), ...(text ? { text } : {}) }] };
 };
 
+// A marked-point crop has a coloured box + "click point" label drawn ON it BY THE TOOL — VLMs keep
+// mistaking that annotation for a real UI control ("the green square is a toggle"). Every prompt over such a
+// crop appends this so the reader looks THROUGH the mark at the page content beneath it. Shared by the
+// standalone `look` (@pt) and the `locate → look` snap-feedback describe, and shown in both debug renders.
+export const CLICK_MARK_NOTE = "\n\nIMPORTANT: the box and its \"click point\" label were added to this image BY THE TOOL, only to mark where a click would land — they are NOT part of the page and NOT a real UI control. Do not describe them as elements. Describe what is UNDERNEATH the box: the actual page content at that spot (its colour, shape, and any text).";
+
 export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512, memory = null }: { model?: string | null; maxTokens?: number; memory?: VisionMemory | null } = {}): MlTool => {
     return ml.defineTool({
         name: "look",
@@ -204,14 +210,14 @@ export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512, memory
                 : selector ? `the element "${selector}"${index ? ` (match #${index})` : ""}`
                 : (fullPage ? "the whole page" : "the current page");
             const base = question || (isPoint
-                ? `A crosshair box marks exactly where a click would land. Describe what is AT the mark — its colour and shape — and whether it matches what I'm after, so I don't click the wrong thing.`
+                ? `Describe what is at the marked spot — its colour, shape, and any text — and whether it matches what I'm after, so I don't click the wrong thing.`
                 : `Describe ${subject} concisely — what is shown and what stands out.`);
             // A full-page stitch is downscaled — the vision model's patches get
             // too coarse to read small text, so frame it as layout/orientation
             // and DON'T ask for verbatim anchors (those are confidently wrong at
             // that zoom). Viewport/element shots are sharp enough to quote text.
             const guidance = isPoint
-                ? ""   // a canvas point has no page text to quote
+                ? CLICK_MARK_NOTE   // clarify the box+label are a tool annotation, not page UI (appended even when a question is passed)
                 : fullPage
                 ? "\n\nThis is a DOWNSCALED full-page overview: report the overall layout and " +
                   "roughly where sections/items are. Do NOT try to read small text verbatim — " +
@@ -234,7 +240,7 @@ export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512, memory
             // A `look` Out render: the EXACT image the reader saw, WHICH model read it, and its output —
             // so a delegated look reads like a locate substep, not the weird auto-derived element text.
             // (`model` is the resolved reader passed at wiring; `output` is the raw model reply, no tip.)
-            const render: RenderDescriptor = { type: "look", image: shot, model, output: description, label: subject };
+            const render: RenderDescriptor = { type: "look", image: shot, model, output: description, label: subject, prompt: base + guidance };
             return { content: description + pointTip, render, ...(elements ? { elements } : {}) };
         }
     });
@@ -530,10 +536,11 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                     : "";
                 if (driverSees) return { ...base, content: base.content + `\n\n↑ Marked crop shown above.${o.kind === "pt" ? ` Confirm "${truncate(description, 50)}" sits under the MIDDLE of the box labelled "click point".` : ""} If it's on target, act now (no need to look() first).${reSnap}`, image: sent, imageLabel: o.label, feedback: { reason, via: "image", image: sent, label: o.label } };
                 // Text-only driver: the reader describes the crop; the driver gets words, not the image.
+                const describePrompt = `Describe concisely what is at the marked spot on this crop — its colour, shape, and any text — so I can tell whether it's the "${truncate(description, 60)}" I asked for.${CLICK_MARK_NOTE}`;
                 let desc: string;
-                try { desc = String(await ml.chat(`A box labelled "click point" marks the located target on this crop. Describe concisely what is AT that mark — its colour, shape, and any text — so I can tell whether it's the "${truncate(description, 60)}" I asked for.`, { images: [sent], model, maxTokens: 256, numCtx: VISION_NUM_CTX })).trim(); }
+                try { desc = String(await ml.chat(describePrompt, { images: [sent], model, maxTokens: 256, numCtx: VISION_NUM_CTX })).trim(); }
                 catch { return base; }   // describe failed → leave the manual look() nudge intact
-                return { ...base, content: base.content + `\n\n👁 Target preview — you can't see images, so this is ${model || "the reader"}'s description of what's under the "click point" mark (NOT the image itself). Judge whether that's "${truncate(description, 50)}", then act or re-locate:\n${desc}${reSnap}`, feedback: { reason, via: "text", text: desc, image: sent, label: o.label } };
+                return { ...base, content: base.content + `\n\n👁 Target preview — you can't see images, so this is ${model || "the reader"}'s description of what's under the "click point" mark (NOT the image itself). Judge whether that's "${truncate(description, 50)}", then act or re-locate:\n${desc}${reSnap}`, feedback: { reason, via: "text", text: desc, prompt: describePrompt, image: sent, label: o.label } };
             };
 
             // grid-grounding needs a grounding model on BOTH its paths (fresh pick and the

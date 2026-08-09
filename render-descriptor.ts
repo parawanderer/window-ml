@@ -9,7 +9,7 @@
 //          image / elements descriptor from the envelope.
 // Either may be undefined → the sidebar renders that block's raw view. Page-side (touches Element/DOM).
 import type { MlTool, RenderDescriptor, ToolRenderInput } from "./contract";
-import { clickSelector, truncate } from "./dom";
+import { clickSelector, truncate, isElement } from "./dom";
 import { accessibleName, placeholderText } from "./a11y";
 
 export function descriptorFor(
@@ -34,7 +34,10 @@ export function descriptorFor(
         // wouldn't match), and no `index`: clickSelector is unique, so the reference is a bare
         // querySelector and the display badge falls back to the array position.
         items: input.elements.slice(0, 50).map((el: Node) => {
-            const isEl = typeof Element !== "undefined" && el instanceof Element;
+            // isElement (nodeType===1), NOT `instanceof Element` — the latter is FALSE cross-realm for a node
+            // inside an iframe (its Element ≠ the top window's), which made the rendered list show the TAG
+            // ("BUTTON") + a broken path that didn't hover-highlight, while the raw output had the right `>>>`.
+            const isEl = isElement(el);
             return {
                 path: isEl ? clickSelector(el as Element) : String(el.nodeName || "node"),
                 // The ACCESSIBLE NAME (aria-label → placeholder → text), the SAME label the interactives text

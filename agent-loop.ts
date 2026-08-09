@@ -15,7 +15,7 @@
 import type { AgentResult, AgentTranscriptEntry, ApprovalDecision, ToolCall, RenderDescriptor, ToolFeedback } from "./contract";
 import { UNATTENDED_REFUSAL } from "./prompts";
 
-export type Approval = "readonly" | "sandbox" | "user" | "denied" | "skipped";
+export type Approval = "readonly" | "sandbox" | "user" | "denied" | "skipped" | "cancelled";
 export interface ToolMeta { name: string; requiresApproval?: boolean; capabilities?: string[]; }
 // The tool's serializable result. `renderIn`/`renderOut` are the debug-render slots computed by the
 // executor's world (page-side for the delegated path) so the emitter can show a rendered In/Out.
@@ -252,17 +252,29 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                     approval = "denied";
                     result = UNATTENDED_REFUSAL;
                 } else {
-                    const d = normalize(await deps.approve({ tool: call.name, arguments: args, seq: s, step }), args);
-                    if (!d.approved) {
-                        approval = "denied";
-                        result = d.feedback
-                            ? `Denied by the user: ${d.feedback}\nDo not retry this exact call unchanged; address the feedback or try another approach.`
-                            : "Denied by the user. Do not retry this exact call; try another approach.";
-                        // NB: runTool is NOT called — the security invariant.
+                    const rawDecision = await deps.approve({ tool: call.name, arguments: args, seq: s, step });
+                    if (signal?.aborted) {
+                        // CANCELLED while the gate was open (Stop pressed) — the gate promise resolved because
+                        // cancel wakes it (background CANCEL_RUN resolves the pending gate). The tool never ran;
+                        // store a generic, non-accusatory result — NOT "denied" — so a follow-up turn sees a
+                        // coherent transcript, then the signal check at the top of the next step exits the run as
+                        // cancelled. This is also what CLEARS the approve/deny buttons: the DONE emit below patches
+                        // the step out of `awaitingApproval` (with a result), instead of leaving it hung.
+                        approval = "cancelled";
+                        result = "The user cancelled the run. Stop here and wait for their next instructions — do not retry this call.";
                     } else {
-                        approval = "user";
-                        args = d.arguments;                                   // possibly gate-edited
-                        tr = await deps.runTool(call.name, args); result = tr.result;   // EXECUTE ONLY AFTER APPROVE
+                        const d = normalize(rawDecision, args);
+                        if (!d.approved) {
+                            approval = "denied";
+                            result = d.feedback
+                                ? `Denied by the user: ${d.feedback}\nDo not retry this exact call unchanged; address the feedback or try another approach.`
+                                : "Denied by the user. Do not retry this exact call; try another approach.";
+                            // NB: runTool is NOT called — the security invariant.
+                        } else {
+                            approval = "user";
+                            args = d.arguments;                                   // possibly gate-edited
+                            tr = await deps.runTool(call.name, args); result = tr.result;   // EXECUTE ONLY AFTER APPROVE
+                        }
                     }
                 }
             } else {

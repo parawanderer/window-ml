@@ -755,6 +755,10 @@ function LookRender({ d }: { d: Extract<RenderDescriptor, { type: "look" }> }) {
                 <ClickableImg src={d.image} alt={d.label || "look"} />
                 <div class="r-image-label">{d.label ? `${d.label} · ` : ""}viewed by <b>{d.model || "default"}</b></div>
             </div>
+            {/* The exact prompt the reader was asked over the image — collapsed by default (secondary), but
+                there so you can see WHY the VLM answered as it did (e.g. the click-mark annotation note). */}
+            {d.prompt ? <details class="r-py-sec r-look-prompt-sec"><summary class="r-py-lbl">prompt sent</summary>
+                <div class="r-look-prompt">{d.prompt}</div></details> : null}
             {/* The reader's output can be long → collapsible (open by default), same disclosure as python-out. */}
             <details class="r-py-sec r-look-out-sec" open>
                 <summary class="r-py-lbl">model output</summary>
@@ -805,6 +809,9 @@ function FeedbackBlock({ fb }: { fb: ToolFeedback }) {
             <summary class="feedback-head"><span class="tri" aria-hidden="true"><IconChevron /></span><IconEye /><span class="feedback-title">Sent to the model</span><span class="feedback-why">{fb.reason}</span></summary>
             <div class="feedback-body">
                 {fb.image ? <ClickableImg src={fb.image} alt={fb.label || "located crop"} /> : null}
+                {fb.via === "text" && fb.prompt
+                    ? <details class="r-py-sec r-look-prompt-sec"><summary class="r-py-lbl">prompt sent</summary><div class="r-look-prompt">{fb.prompt}</div></details>
+                    : null}
                 {fb.via === "text" && fb.text
                     ? <div class="feedback-desc">{fb.image ? "The reader's description of the crop (this is the text the model actually received — it can't see the image):" : ""}<div class="feedback-desc-text">{fb.text}</div></div>
                     : null}
@@ -895,10 +902,11 @@ const APPROVAL = {
     user: { label: "approved", tip: "Approved by you." },
     denied: { label: "denied", tip: "Denied by you." },
     skipped: { label: "skipped", tip: "No prompt needed — the target didn't resolve (no element / stale @pt / bad selector), so the action could only fail. It never ran." },
+    cancelled: { label: "cancelled", tip: "You cancelled the run while this call was awaiting approval — it never ran." },
 } as const;
 const ApprovalBadge = ({ approval }: { approval: keyof typeof APPROVAL }) => (
     <span class={`tt appr-badge appr-${approval}`}>
-        <span class={`appr ${approval === "denied" ? "no" : approval === "skipped" ? "skip" : "yes"}`}>{APPROVAL[approval].label}</span>
+        <span class={`appr ${approval === "denied" ? "no" : (approval === "skipped" || approval === "cancelled") ? "skip" : "yes"}`}>{APPROVAL[approval].label}</span>
         <span class="tt-pop left" role="tooltip">{APPROVAL[approval].tip}</span>
     </span>
 );
@@ -975,7 +983,7 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     // human the approval is a session-scoped grant, not a one-shot.
     const sheetGrants = awaiting ? externalSheetGrant(st.arguments) : [];
     return (
-        <div class={`astep tool${open ? " open" : ""}${st.pending ? " pending" : ""}${awaiting ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : st.approval === "skipped" ? " appr-skip" : " appr-yes") : ""}`}>
+        <div class={`astep tool${open ? " open" : ""}${st.pending ? " pending" : ""}${awaiting ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : (st.approval === "skipped" || st.approval === "cancelled") ? " appr-skip" : " appr-yes") : ""}`}>
             <button class="astep-head" onClick={() => setExpanded(v => !v)}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
                 <Dot status={st.pending ? "pending" : toolFailed(st.result) ? "err" : "ok"} />
@@ -1440,7 +1448,9 @@ function Composer({ s }: { s: Session }) {
         setText("");
     };
     const act = () => (stop ? cancel() : send());
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); act(); } };
+    // Enter SENDS only — it must NEVER cancel a run (pressing Enter with an empty box while a run is in
+    // flight used to hit the Stop path and kill the run out of nowhere). Cancelling is the Stop BUTTON only.
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey && !empty) { e.preventDefault(); send(); } };
     const placeholder = running ? (agent ? "Steer this run, or send to queue a follow-up…" : "Sending… or stop this turn")
         : "Send a message to continue this session…";
     return (
@@ -2145,6 +2155,11 @@ function ComposerModelBar() {
     // shoving the chip sideways (the "snap" on open). Unknown → no eye, no flash.
     const cloud = !!sel && isCloudModel(sel);
     const wrapRef = useRef<HTMLDivElement>(null);
+    // Type-to-filter (contains-anywhere, case-insensitive) — a long local model list is a pain to scan.
+    const [filter, setFilter] = useState("");
+    const filterRef = useRef<HTMLInputElement>(null);
+    const q = filter.trim().toLowerCase();
+    const shown = q ? list.filter(m => m.toLowerCase().includes(q)) : list;
     // Close on any pointer-down outside the control (the iframe's own document — the menu floats over the body).
     useEffect(() => {
         if (!open) return;
@@ -2152,6 +2167,9 @@ function ComposerModelBar() {
         document.addEventListener("pointerdown", onDown, true);
         return () => document.removeEventListener("pointerdown", onDown, true);
     }, [open]);
+    // Reset the filter + focus the box each time the menu opens, so you can just type.
+    useEffect(() => { if (open) { setFilter(""); const id = requestAnimationFrame(() => filterRef.current?.focus()); return () => cancelAnimationFrame(id); } }, [open]);
+    const pick = (m: string) => { composerModel.value = m === def ? "" : m; composerModelOpen.value = false; };
     return (
         <div class="cmp-model" ref={wrapRef}>
             <button class="cmp-model-btn" type="button" aria-haspopup="listbox" aria-expanded={open}
@@ -2170,21 +2188,30 @@ function ComposerModelBar() {
             ) : null}
             {open ? (
                 <div class="cmp-model-menu" role="listbox">
+                    <input ref={filterRef} class="cmp-model-filter" type="text" value={filter} placeholder="Filter models…"
+                        aria-label="Filter models"
+                        onInput={e => setFilter((e.target as HTMLInputElement).value)}
+                        onKeyDown={e => {
+                            if (e.key === "Enter" && shown.length) { e.preventDefault(); pick(shown[0]); }
+                            else if (e.key === "Escape") { e.preventDefault(); composerModelOpen.value = false; }
+                        }} />
                     {list.length === 0
                         ? <div class="cmp-model-empty">No models loaded — check the server URL / API key in Settings.</div>
-                        : list.map(m => {
-                            const isSel = m === sel, isDef = m === def, tag = isOllamaModel(m) ? "ollama" : (ollamaIds.value ? "cloud" : "");
-                            return (
-                                <div key={m} class={`cmp-model-row${isSel ? " sel" : ""}`} role="option" aria-selected={isSel}
-                                    onClick={() => { composerModel.value = m === def ? "" : m; composerModelOpen.value = false; }}>
-                                    <span class="cmp-model-row-name">{m}</span>
-                                    {tag ? <span class={`cmp-model-tag ${tag}`}>{tag}</span> : null}
-                                    <button class={`cmp-model-star${isDef ? " on" : ""}`} type="button"
-                                        title={isDef ? "Your default model" : "Set as default model"}
-                                        onClick={e => { e.stopPropagation(); setDefaultModel(m); }}>{isDef ? "★" : "☆"}</button>
-                                </div>
-                            );
-                        })}
+                        : shown.length === 0
+                            ? <div class="cmp-model-empty">No models match "{filter.trim()}".</div>
+                            : shown.map(m => {
+                                const isSel = m === sel, isDef = m === def, tag = isOllamaModel(m) ? "ollama" : (ollamaIds.value ? "cloud" : "");
+                                return (
+                                    <div key={m} class={`cmp-model-row${isSel ? " sel" : ""}`} role="option" aria-selected={isSel}
+                                        onClick={() => pick(m)}>
+                                        <span class="cmp-model-row-name">{m}</span>
+                                        {tag ? <span class={`cmp-model-tag ${tag}`}>{tag}</span> : null}
+                                        <button class={`cmp-model-star${isDef ? " on" : ""}`} type="button"
+                                            title={isDef ? "Your default model" : "Set as default model"}
+                                            onClick={e => { e.stopPropagation(); setDefaultModel(m); }}>{isDef ? "★" : "☆"}</button>
+                                    </div>
+                                );
+                            })}
                 </div>
             ) : null}
         </div>

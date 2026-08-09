@@ -271,6 +271,8 @@ export interface ToolFeedback {
     image?: string;
     /** the delegated description text (via:"text" only) */
     text?: string;
+    /** the exact prompt the reader was asked over the crop (via:"text") — shown in the debug render + export */
+    prompt?: string;
     label?: string;
 }
 
@@ -353,7 +355,7 @@ export type RenderDescriptor = (
     // A DELEGATED `look`'s Out slot: the exact image the vision reader saw, WHICH model read it, and
     // its text output — so a sub-call look reads like `locate`'s substeps (the native look just shows
     // the screenshot, since the agent itself is the viewer).
-    | { type: "look"; image: string; model?: string | null; output: string; label?: string }
+    | { type: "look"; image: string; model?: string | null; output: string; label?: string; prompt?: string }
     // A tool's INTENT for the user-facing approval card — the deterministic, human-readable description
     // of what the call will DO, produced by the tool's own `render` (so a custom approval-gated tool can
     // describe itself; a tool that returns none falls back to a utility-model description). `verb` is the
@@ -941,7 +943,7 @@ export interface DebugAgentStep extends DebugBase {
     /** How an approval-gated tool call was decided (undefined for tools that don't
      *  require approval). The sidebar renders it as a green/red provenance badge —
      *  and it's the slot a future interactive-approval control resolves into. */
-    approval?: "readonly" | "sandbox" | "user" | "denied" | "skipped";
+    approval?: "readonly" | "sandbox" | "user" | "denied" | "skipped" | "cancelled";
     /** Token counts for this step's driver call, when the server reports them. Each
      *  step re-sends the full growing history, so the LATEST step's usage is the run's
      *  current context occupancy (not a sum across steps — see TokenUsage). */

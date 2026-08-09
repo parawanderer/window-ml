@@ -269,8 +269,10 @@ function writeAgent(s: Session, d: Sink): void {
             d.details("value (DataFrame)", () => d.table(df.columns, df.rows));
         } else if (st.renderOut && st.renderOut.type === "look") {
             // A delegated look: the image the reader saw + which model + its output.
-            d.image(st.renderOut.image, `step-${st.step}`, `step ${st.step} — ${st.renderOut.label || "look"} · viewed by ${st.renderOut.model || "default"}`);
-            if (st.renderOut.output) d.prose(st.renderOut.output);
+            const lk = st.renderOut;   // local: TS widens st.renderOut back to the union inside the closure
+            d.image(lk.image, `step-${st.step}`, `step ${st.step} — ${lk.label || "look"} · viewed by ${lk.model || "default"}`);
+            if (lk.prompt) d.details("prompt sent", () => d.prose(lk.prompt as string));
+            if (lk.output) d.prose(lk.output);
         }
         if (st.result != null && st.result !== "") d.block("Out", st.result);
         else if (st.elements != null) d.inline("Out", `${st.elements} element(s)`);
@@ -280,6 +282,7 @@ function writeAgent(s: Session, d: Sink): void {
         if (st.feedback) {
             d.note(`Sent to the model (${st.feedback.reason})`);
             if (st.feedback.image) d.image(st.feedback.image, `step-${st.step}-feedback`, `step ${st.step} — sent to the model`);
+            if (st.feedback.via === "text" && st.feedback.prompt) d.details("prompt sent", () => d.prose(st.feedback!.prompt as string));
             if (st.feedback.via === "text" && st.feedback.text) d.block("Description sent to the model", st.feedback.text);
         }
     }

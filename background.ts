@@ -912,8 +912,18 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // controller → the loop stops at the next boundary and resolves { cancelled: true }; the model
         // call in flight is aborted too. A page can't forge this (no chrome.runtime path), and even a
         // forged cancel only aborts that page's own run — harmless.
-        const ctl = runControllers.get((message.payload as CancelRunPayload)?.runId);
+        const runId = (message.payload as CancelRunPayload)?.runId;
+        const ctl = runControllers.get(runId);
         if (ctl) ctl.abort();
+        // If the run is BLOCKED on an OPEN approval gate, aborting the controller alone can't unblock it — the
+        // gate promise only resolves via SET_APPROVAL. So resolve any pending gate for this run now: the loop
+        // wakes, sees the aborted signal, and exits cleanly with a stored "cancelled" tool result (clearing the
+        // approve/deny buttons) — instead of hanging forever with frozen buttons on every surface. The decision
+        // value is irrelevant (the loop treats an aborted signal as cancel); a later SET_APPROVAL click then
+        // finds no entry — a harmless no-op.
+        for (const [key, resolve] of [...pendingApprovals]) {
+            if (key.startsWith(`${runId}:`)) { pendingApprovals.delete(key); resolve(false); }
+        }
         return;   // fire-and-forget
     }
     if (message.type === "CDP_CLICK") {

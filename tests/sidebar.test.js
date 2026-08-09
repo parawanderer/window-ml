@@ -295,6 +295,38 @@ test("composer: typing enables Send and posts sessionSend; an empty box on a run
     assert.ok(posted.some(m => m.__mlSidebarApp === "sessionCancel" && m.hash === "cmp"), "Stop posts sessionCancel");
 });
 
+test("composer: Enter NEVER cancels a run — only the Stop button does (empty Enter is a no-op)", async () => {
+    const w = await loadSidebarWorld();
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    await w.dispatch(chatStart("cmp", 0, "hi"));
+    await w.dispatch(chatResult("cmp", 0, "hello"));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    // In-flight + empty box → the button is Stop (the state where Enter used to wrongly cancel).
+    await w.dispatch(chatStart("cmp", 1, "next"));
+    await w.tick();
+    const input = w.shadow.querySelector(".cinput");
+    assert.ok(w.shadow.querySelector(".cbtn.cstop"), "running + empty → Stop button");
+    const enter = () => input.dispatchEvent(new w.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+
+    posted.length = 0;
+    enter();
+    await w.tick();
+    assert.ok(!posted.some(m => m.__mlSidebarApp === "sessionCancel"), "Enter on an empty running box does NOT cancel the run");
+    assert.ok(!posted.some(m => m.__mlSidebarApp === "sessionSend"), "and sends nothing (the box is empty)");
+
+    // Enter WITH text sends — and still never cancels.
+    input.value = "steer left";
+    input.dispatchEvent(new w.window.Event("input", { bubbles: true }));
+    await w.tick();
+    posted.length = 0;
+    enter();
+    await w.tick();
+    assert.ok(posted.some(m => m.__mlSidebarApp === "sessionSend" && m.text === "steer left"), "Enter with text posts sessionSend");
+    assert.ok(!posted.some(m => m.__mlSidebarApp === "sessionCancel"), "and never cancels");
+});
+
 test("a result arriving while the detail view is OPEN re-renders it live (no stale …thinking)", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(chatStart("eee", 0, "q"));

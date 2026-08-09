@@ -403,6 +403,27 @@ test("same-origin iframe: the DOM tools cross it via `>>>` (findByText / describ
     assert.match(anc, /iframe/, "and reaches the host iframe in the parent document");
 });
 
+test("render descriptor: an iframe element renders its `>>>` selector, not the bare TAG (cross-realm instanceof)", () => {
+    const { descriptorFor } = require("../render-descriptor.ts");
+    const { document, window } = loadDomWorld('<iframe id="f"></iframe>');
+    const frame = document.getElementById("f");
+    if (!frame.contentDocument) { console.log("(skipped: jsdom has no iframe contentDocument)"); return; }
+    frame.contentDocument.body.innerHTML = '<button id="b" aria-label="Reveal secret">Reveal secret</button>';
+    const btn = frame.contentDocument.getElementById("b");
+    // descriptorFor builds the rendered "elements" list. The node lives in the FRAME's realm, so a bare
+    // `instanceof Element` was false → it fell back to `nodeName` ("BUTTON") + a broken (unhoverable) path.
+    // (require() loads dom.ts in node's scope, so bind the jsdom globals it reads for the call.)
+    const prevDoc = global.document, prevWin = global.window;
+    global.document = document; global.window = window;
+    try {
+        const { out } = descriptorFor({ name: "findByText" }, { result: "", elements: [btn] }, {});
+        assert.equal(out.type, "elements", "an elements descriptor is produced");
+        assert.match(out.items[0].path, />>>\s*#b/, "the path is the frame-crossing `>>>` selector (into the iframe)");
+        assert.notEqual(out.items[0].path, "BUTTON", "NOT the bare tag name");
+        assert.match(out.items[0].text, /Reveal secret/, "and the accessible name shows");
+    } finally { global.document = prevDoc; global.window = prevWin; }
+});
+
 test("shadow DOM: pierceClosedShadow lets the DOM tools reach a CLOSED root the document_start patch captured", () => {
     const { ml, document, window } = loadDomWorld('<button>light-only</button>');
     // Simulate shadow-patch.js (not loaded in the test harness): a CLOSED root, stashed as it's created.
