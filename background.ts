@@ -1077,9 +1077,19 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                             if (!cfg.cdpClick) return { result: `${env.result || ""}\n\nThis needs a debugger (CDP) click, which is OFF — enable "reserved-element clicking" in window.ml Settings → Advanced (cross-origin iframes / sealed shadow roots).`, renderIn: env.renderIn, renderOut: env.renderOut };
                             const r = await cdpClick(tabId, env.cdpClick.x, env.cdpClick.y);
                             const ok = "ok" in r;
-                            // Append the page-side stuck-loop re-snap nudge (a repeat @pt click) to the SUCCESS
-                            // result only — a refusal already carries its own actionable message.
-                            return { result: ok ? `Clicked the reserved target at (${env.cdpClick.x}, ${env.cdpClick.y}) via the debugger. Re-run look to see the result.${env.cdpClick.hint || ""}` : (r as { error: string }).error, renderIn: env.renderIn, renderOut: env.renderOut };
+                            if (!ok) return { result: (r as { error: string }).error, renderIn: env.renderIn, renderOut: env.renderOut };
+                            // The click succeeded. If `verify` was asked, ring the PAGE back to capture the area at
+                            // the click point NOW (it couldn't run inline — the click was deferred to us). Merge its
+                            // image/description/feedback so the model gets the result in THIS step, not a stray look().
+                            let vres = "", vimg: string | undefined, vimgLabel: string | undefined, vfeedback: import("./contract").ToolFeedback | undefined;
+                            if (env.cdpClick.verify) {
+                                const venv = await chrome.tabs.sendMessage(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, verifyAt: { x: env.cdpClick.x, y: env.cdpClick.y } } })
+                                    .catch(() => null) as Partial<import("./contract").PageToolEnvelope> | null;
+                                if (venv) { vres = venv.result || ""; vimg = venv.image; vimgLabel = venv.imageLabel; vfeedback = venv.feedback; }
+                            }
+                            // Append the page-side stuck-loop re-snap nudge (a repeat @pt click) to the SUCCESS result.
+                            const tail = env.cdpClick.verify ? "" : " Re-run look to see the result.";
+                            return { result: `Clicked the reserved target at (${env.cdpClick.x}, ${env.cdpClick.y}) via the debugger.${tail}${env.cdpClick.hint || ""}${vres}`, image: vimg, imageLabel: vimgLabel, feedback: vfeedback, renderIn: env.renderIn, renderOut: env.renderOut };
                         }
                         // The page already computed the rendered In/Out slots (descriptorFor) — forward them so
                         // the sidebar shows the rich view. `image` rides along for INLINE VISION (native look):

@@ -12,6 +12,7 @@
 // is `runAgentLoop` (agent-loop.ts), assembled background-side in a later slice.
 import type { MlTool, PageToolEnvelope } from "./contract";
 import { executeTool, toolContext } from "./tool-exec";
+import { captureVerify } from "./builtin-tools";
 import { descriptorFor } from "./render-descriptor";
 import { evalReadonly } from "./readonly-exec";
 import { formatReadonlyExec } from "./approval";
@@ -49,9 +50,19 @@ export function getRun(runId: string): PageRun | undefined { return runs.get(run
 /** Run ONE delegated tool call for a background-hosted run → a serializable envelope for the bus.
  *  executeTool already validates args + catches errors (never throws), so this only reduces the
  *  envelope: real nodes → a count, and an answer-capable tool's nodes are stashed page-side. */
-export async function runDelegatedTool(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean } = {}): Promise<PageToolEnvelope> {
+export async function runDelegatedTool(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number } } = {}): Promise<PageToolEnvelope> {
     const run = runs.get(runId);
     if (!run) return { result: `Error: no active agent run "${runId}" on this page (it may have ended).` };
+    // Post-CDP `verify`: the reserved-surface click was done BACKGROUND-side (CDP), so the page-side verify
+    // couldn't run inline — the background rings back HERE, after the click, to capture the general-area crop
+    // at the click point (captureVerify, with this run's driver-sees/reader ctx). Merged into the click result.
+    if (opts.verifyAt) {
+        const ctx = toolContext(run.byName, run.model ?? null, null, run.driverSees ?? false, run.visionModel ?? null);
+        const ml = (typeof window !== "undefined" ? window.ml : null) as unknown as import("./contract").MlApi;
+        if (!ml) return { result: "" };
+        const v = await captureVerify(ml, ctx, { x: opts.verifyAt.x, y: opts.verifyAt.y }, "clicked");
+        return { result: v.content || "", image: v.image, imageLabel: v.imageLabel, feedback: v.feedback };
+    }
     const tool = run.byName[name];
     if (!tool) return { result: `Error: no tool named "${name}".` };
     // Approval preview: compute the In render for the CALL without RUNNING the tool (side-effect-free).
@@ -105,8 +116,8 @@ export async function runDelegatedTool(runId: string, name: string, args: Record
 export function installToolDelegation(): void {
     window.addEventListener("message", async (event: MessageEvent) => {
         if (event.source !== window || !event.data || event.data.type !== "PAGE_TOOL_RUN") return;
-        const { callId, runId, name, args, renderOnly, readonlyTry, precheck } = event.data as { callId: string; runId: string; name: string; args: Record<string, unknown>; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean };
-        const envelope = await runDelegatedTool(runId, name, args || {}, { renderOnly: !!renderOnly, readonlyTry: !!readonlyTry, precheck: !!precheck });
+        const { callId, runId, name, args, renderOnly, readonlyTry, precheck, verifyAt } = event.data as { callId: string; runId: string; name: string; args: Record<string, unknown>; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number } };
+        const envelope = await runDelegatedTool(runId, name, args || {}, { renderOnly: !!renderOnly, readonlyTry: !!readonlyTry, precheck: !!precheck, verifyAt });
         window.postMessage({ type: "PAGE_TOOL_RESULT", callId, envelope }, "*");
     });
 }

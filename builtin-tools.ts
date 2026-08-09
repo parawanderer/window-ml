@@ -1052,7 +1052,9 @@ export const buildClickTool = (ml: MlApi): MlTool => {
                 if (reserved) {
                     const what = reserved.kind === "iframe" ? `a${reserved.origin ? ` ${reserved.origin}` : "n embedded cross-origin"} iframe` : "a sealed closed shadow root";
                     const hint = repeatPointHint(token);   // the CDP result is built background-side → thread the nudge
-                    return { content: `The target at (${pt.x}, ${pt.y}) is inside ${what} — a normal click can't reach it, so this needs a debugger (CDP) click.`, cdpClick: { x: pt.x, y: pt.y, hint: hint || undefined } };
+                    // verify rides the cdpClick signal: the click is deferred to the background (CDP), so it does
+                    // the verify capture AFTER the click (round-trips back to the page's captureVerify at this point).
+                    return { content: `The target at (${pt.x}, ${pt.y}) is inside ${what} — a normal click can't reach it, so this needs a debugger (CDP) click.`, cdpClick: { x: pt.x, y: pt.y, hint: hint || undefined, verify: verify || undefined } };
                 }
                 // A canvas point token → synthesize a click at that coordinate.
                 const before = (typeof location !== "undefined" && location.href) || "";

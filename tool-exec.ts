@@ -21,7 +21,7 @@ export interface ToolEnvelope {
     render?: RenderDescriptor;
     renderIn?: RenderDescriptor;
     /** reserved-surface (cross-origin iframe / sealed shadow) click signal → the executor does a CDP click */
-    cdpClick?: { x: number; y: number; hint?: string };
+    cdpClick?: { x: number; y: number; hint?: string; verify?: boolean };
     /** what the tool fed into the model's context (locate's snap-inject) → surfaced in the debug render + export */
     feedback?: ToolFeedback;
 }

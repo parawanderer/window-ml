@@ -290,7 +290,7 @@ export interface ToolResult {
      *  this viewport coordinate instead (page loop → CDP_CLICK message; background → cdpClick directly). See
      *  docs/spec/CDP_CLICK.md. `hint` = a stuck-loop re-snap nudge to append when this @pt was clicked before
      *  (the CDP result string is built background-side, so the page threads the nudge here). */
-    cdpClick?: { x: number; y: number; hint?: string };
+    cdpClick?: { x: number; y: number; hint?: string; verify?: boolean };
     /** what this tool fed into the model's context (locate's snap-inject); surfaced in the debug render + export */
     feedback?: ToolFeedback;
 }
@@ -755,7 +755,7 @@ export interface PageToolEnvelope {
     /** RESERVED-surface click: the page-side tool couldn't synth-click a cross-origin iframe / sealed shadow
      *  target and needs a CDP click at this viewport coordinate — the BACKGROUND (trusted) does it. `hint` is
      *  an optional stuck-loop re-snap nudge the background appends to the click result. */
-    cdpClick?: { x: number; y: number; hint?: string };
+    cdpClick?: { x: number; y: number; hint?: string; verify?: boolean };
 }
 
 /** A resumable chat session persisted to chrome.storage.local for { save: true }
