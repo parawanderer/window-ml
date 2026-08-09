@@ -7,7 +7,7 @@
 import type { MlApi, MlTool, LocateSubstep, ToolResult, RenderDescriptor, VisionMemory, ToolContext } from "./contract";
 import { DEFAULT_GROUNDING_RANGE } from "./contract";
 import { PY_PACKAGE_LABELS } from "./python-env";
-import { truncate, clipOut, errText, elLine, queryAll, selectorError, googleSheetCsvUrl, nonEmptyTables, capturedClosedRoot, isElement } from "./dom";
+import { truncate, clipOut, errText, elLine, queryAll, selectorError, googleSheetCsvUrl, nonEmptyTables, capturedClosedRoot, isElement, viewportRect } from "./dom";
 import { accessibleName } from "./a11y";
 
 // Cap on python_exec output (stdout / value / error) fed back to the model — bigger than
@@ -336,7 +336,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 },
                 verify: {
                     type: "boolean",
-                    description: "For a grounding result that resolves to a DOM element or an `@box:…` region: also return the marked crop for confirmation — structurally the same as calling look() on the result right after locating, but folded into THIS call (one turn, one screenshot; no extra round-trip). A point/`@pt:…` result ALWAYS returns one (you always verify a coordinate). Default false: a DOM element selector usually needs no visual check. Set true to eyeball a grounded element/region before acting."
+                    description: "This is an 'inline look()' option that saves you a turn. For a grounding result that resolves to a DOM element or an `@box:…` region: also return the marked crop for confirmation — structurally the same as calling look() on the result right after locating, but folded into THIS call (one turn, one screenshot; no extra round-trip). A point/`@pt:…` result ALWAYS returns one (you always verify a coordinate). Default false: a DOM element selector usually needs no visual check. Set true to eyeball a grounded element/region before acting."
                 },
             },
             required: ["description"],
@@ -961,6 +961,40 @@ const repeatPointHint = (token: string): string => {
         : ` ⚠ "${token}" clicked ${n}× with no effect — it's off-target; STOP re-clicking it. RE-SNAP: ${resnap} (or a fresh locate({ description: "…" })), then click the new @pt.`;
 };
 
+// Radius of the post-action `verify` crop — a GENERAL AREA around where the action happened (bigger than a
+// tight element crop) so the result (a menu that opened, a value that filled, a nav) is visible.
+const VERIFY_MARGIN = 150;
+// Optional `verify` on click/type: after the action, feed back a general-area crop centred on where it
+// happened — so a "do-the-task-then-look" chain is ONE turn instead of two. Same native/delegated split as
+// locate's snap-inject (vision driver → inline image; text-only → delegated description + the click-mark
+// note). `mutated` = the target vanished after the action (the page changed) → the crop is centred on the
+// element's PRE-action spot and annotated as such. Never automatic — only when the caller sets verify:true.
+async function verifyAfterAction(ml: MlApi, ctx: ToolContext | undefined, center: { x: number; y: number }, mutated: boolean, verb: string): Promise<Partial<ToolResult>> {
+    const driverSees = !!ctx?.driverSees;
+    const reader = ctx?.visionModel || null;
+    if (!driverSees && !reader) return { content: "\n\n(verify was requested, but no vision model is available to capture the result — read it with look/findByText next.)" };
+    const token = mintPoint(center.x, center.y);
+    let crop: string;
+    try { crop = await ml.screenshot(token, { margin: VERIFY_MARGIN }); } catch { return {}; }   // capture failed → no verify, base result stands
+    const mutNote = mutated
+        ? `The element you acted on is GONE — the page changed. This is the AREA where it was (the box marks the spot).`
+        : `This is the area around where you ${verb} (the box marks the spot).`;
+    const reason = mutated ? "after the action — target changed" : "after the action";
+    if (driverSees) return { content: `\n\n↑ ${mutNote} Read the result and continue — no need to look() first.`, image: crop, imageLabel: reason, feedback: { reason, via: "image", image: crop } };
+    // Text-only driver: the reader describes the crop; the driver gets words.
+    const question = `The image is a crop of the page just AFTER a "${verb}" action. Describe what is now shown at and around the marked spot — especially anything that CHANGED (a menu/panel/result that appeared, a new field value, a navigation).`;
+    const prompt = `${question}${CLICK_MARK_NOTE}`;
+    let desc: string;
+    try { desc = String(await ml.chat(prompt, { images: [crop], model: reader, maxTokens: 256, numCtx: VISION_NUM_CTX })).trim(); }
+    catch { return {}; }
+    return { content: `\n\n👁 ${mutNote} You can't see images, so this is ${reader || "the reader"}'s description of the crop:\n${desc}`, feedback: { reason, via: "text", text: desc, prompt, image: crop } };
+}
+// The viewport CENTRE of an element (composing iframe offsets), for a verify crop. null if it has no box.
+const elementCenter = (el: Element): { x: number; y: number } | null => {
+    const r = viewportRect(el);
+    return (r.width || r.height) ? { x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2 } : null;
+};
+
 export const buildClickTool = (ml: MlApi): MlTool => {
     // Side-effect-free resolution → an ERROR STRING if the click is doomed (an @box region, a stale
     // @pt, an invalid selector, or no match), else null. The loop uses it to SKIP the approval prompt
@@ -988,14 +1022,15 @@ export const buildClickTool = (ml: MlApi): MlTool => {
             type: "object",
             properties: {
                 selector: { type: "string", description: "CSS selector of the element to click, or an `@pt:…` point token from locate (canvas targets)." },
-                index: { type: "integer", description: "Which match to click (0-based); default 0." }
+                index: { type: "integer", description: "Which match to click (0-based); default 0." },
+                verify: { type: "boolean", description: "This is an 'inline look()' option that saves you a turn. Set true if you'd call look() right after — it returns a screenshot of the AREA around where you clicked in THIS call (a menu that opened, a nav, whatever changed), so you skip the separate look and see the result immediately. If the clicked element vanished (the page changed), you get the area where it was, flagged." }
             },
             required: ["selector"]
         },
         // In: a tool-provided INTENT (verb + human target + highlight selector) — the approval card reads
         // it deterministically, and the debug In slot renders it as a hoverable ref (outlines the element).
         render: (_input, args) => actionRender("Click", args),
-        run: async ({ selector, index = 0 }: { selector: string; index?: number }): Promise<string | ToolResult> => {
+        run: async ({ selector, index = 0, verify = false }: { selector: string; index?: number; verify?: boolean }, ctx?: ToolContext): Promise<string | ToolResult> => {
             const doomed = clickPrecheck({ selector, index });   // @box / stale @pt / bad selector / no match
             if (doomed) return doomed;
             // A point token from locate → click that coordinate.
@@ -1018,17 +1053,26 @@ export const buildClickTool = (ml: MlApi): MlTool => {
                 await settle(80);
                 const after = (typeof location !== "undefined" && location.href) || "";
                 const nav = after && after !== before ? ` Navigated to ${after}.` : "";
-                return `Clicked at (${pt.x}, ${pt.y}) on ${elLine(hit)}.${nav} Page title: ${truncate(document.title || "", 80)}. Re-run look to see the result.${repeatPointHint(token)}`;
+                const base = `Clicked at (${pt.x}, ${pt.y}) on ${elLine(hit)}.${nav} Page title: ${truncate(document.title || "", 80)}.${repeatPointHint(token)}`;
+                if (verify) { const v = await verifyAfterAction(ml, ctx, { x: pt.x, y: pt.y }, false, "clicked"); return { content: base + (v.content || ""), image: v.image, imageLabel: v.imageLabel, feedback: v.feedback }; }
+                return `${base} Re-run look to see the result.`;
             }
             const el = queryAll(selector)[index]!;   // precheck confirmed it matches
+            const preCenter = elementCenter(el);   // captured BEFORE the click, in case it removes/replaces the element
             const before = (typeof location !== "undefined" && location.href) || "";
             try { el.scrollIntoView({ block: "center", inline: "center" }); } catch {}
             (el as HTMLElement).click();
             await settle(80);   // let navigation / DOM updates begin
             const after = (typeof location !== "undefined" && location.href) || "";
             const nav = after && after !== before ? ` Navigated to ${after}.` : "";
-            return `Clicked ${elLine(el)}.${nav} Page title: ${truncate(document.title || "", 80)}. ` +
-                "Re-run look/findByText to see the result.";
+            const base = `Clicked ${elLine(el)}.${nav} Page title: ${truncate(document.title || "", 80)}.`;
+            if (verify) {
+                // Re-resolve: center on the element's CURRENT spot if it survived, else its pre-action spot (mutated).
+                let center = preCenter, mutated = false;
+                try { const now = queryAll(selector)[index]; const c = (now && isElement(now)) ? elementCenter(now) : null; if (c) center = c; else mutated = true; } catch { mutated = true; }
+                if (center) { const v = await verifyAfterAction(ml, ctx, center, mutated, "clicked"); return { content: base + (v.content || ""), image: v.image, imageLabel: v.imageLabel, feedback: v.feedback }; }
+            }
+            return `${base} Re-run look/findByText to see the result.`;
         }
     });
 };
@@ -1058,7 +1102,8 @@ export const buildTypeTool = (ml: MlApi): MlTool => {
                 text: { type: "string", description: "Text to type in." },
                 index: { type: "integer", description: "Which match (0-based); default 0." },
                 append: { type: "boolean", description: "Append instead of replacing the value." },
-                submit: { type: "boolean", description: "Press Enter afterwards (submit)." }
+                submit: { type: "boolean", description: "Press Enter afterwards (submit)." },
+                verify: { type: "boolean", description: "This is an 'inline look()' option that saves you a turn. Set true if you'd call look() right after — it returns a screenshot of the AREA around the field in THIS call (autocomplete/suggestions that appeared, a validation message, or — with submit — the result), so you skip the separate look. If the field vanished after submit (navigation), you get the area where it was, flagged." }
             },
             required: ["selector", "text"]
         },
@@ -1067,10 +1112,11 @@ export const buildTypeTool = (ml: MlApi): MlTool => {
             input: typeof args.text === "string" ? args.text : undefined,
             note: args.submit ? "then submit" : undefined,
         }),
-        run: async ({ selector, text = "", index = 0, append = false, submit = false }: { selector: string; text?: string; index?: number; append?: boolean; submit?: boolean }): Promise<string> => {
+        run: async ({ selector, text = "", index = 0, append = false, submit = false, verify = false }: { selector: string; text?: string; index?: number; append?: boolean; submit?: boolean; verify?: boolean }, ctx?: ToolContext): Promise<string | ToolResult> => {
             const doomed = typePrecheck({ selector, index });
             if (doomed) return doomed;
             const el = queryAll(selector)[index]!;   // precheck confirmed it matches
+            const preCenter = elementCenter(el);   // BEFORE typing/submit, in case submit navigates the field away
             const input = el as HTMLInputElement;
             const editable = "value" in el;
             const cur = editable ? input.value : (el.textContent || "");
@@ -1091,8 +1137,14 @@ export const buildTypeTool = (ml: MlApi): MlTool => {
                 note = " Submitted (Enter).";
             }
             const shown = editable ? input.value : (el.textContent || "");
-            return `Typed into ${elLine(el)}. Value now: "${truncate(shown, 100)}".${note} ` +
-                "Re-run look/findByText to see the result.";
+            const base = `Typed into ${elLine(el)}. Value now: "${truncate(shown, 100)}".${note}`;
+            if (verify) {
+                // Re-resolve: center on the field's CURRENT spot if it survived, else its pre-type spot (submit navigated it away → mutated).
+                let center = preCenter, mutated = false;
+                try { const now = queryAll(selector)[index]; const c = (now && isElement(now)) ? elementCenter(now) : null; if (c) center = c; else mutated = true; } catch { mutated = true; }
+                if (center) { const v = await verifyAfterAction(ml, ctx, center, mutated, "typed"); return { content: base + (v.content || ""), image: v.image, imageLabel: v.imageLabel, feedback: v.feedback }; }
+            }
+            return `${base} Re-run look/findByText to see the result.`;
         }
     });
 };

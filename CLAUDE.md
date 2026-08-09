@@ -225,6 +225,20 @@ near-identical crop (the re-snap-loop case). What got injected + WHY rides a `To
 result → the `agent-step` event → a **"Sent to the model"** section in the sidebar (`FeedbackBlock`) and
 the export (both surfaces, per the render-in-both rule). Dedup logic unit-tested in `tests/util.test.mjs`.
 
+**`verify` on `click`/`type` (fold the post-action `look`).** The other constant chain is
+*do-the-task → look*, so `click`/`type` take an optional **`verify:true`** (never automatic — the param
+description says "set it if you'd `look()` right after"). After the action, `verifyAfterAction`
+(builtin-tools.ts) captures a **general-area** crop (a `@pt` minted at the element's centre, screenshotted
+with `VERIFY_MARGIN` — bigger than a tight element crop, so a menu/nav/validation that appeared is visible)
+and feeds it back through the SAME native/delegated split as the locate snap-inject (`ctx.driverSees` →
+inline image; text-only → a delegated describe + `CLICK_MARK_NOTE`), as a `ToolResult` with the same
+`ToolFeedback` render. It targets the SAME element acted on — **but if that element vanished after the
+action** (re-resolve misses → the page mutated: a button that removed itself, a form that navigated), it
+falls back to the element's **pre-action centre** and annotates the crop "the element you acted on is
+GONE — the page changed" (`elementCenter` captures the centre BEFORE the action for exactly this). No
+builtin `wait` tool exists yet, so `verify` there is a follow-up (wait would be area-first — not tied to
+the waited element). Tested in `tests/agent.test.js` (native / delegated / mutated).
+
 **Agent self-knowledge (`agent_api_docs`).** The agent had none: asked "how do I call you
 from the console?" it answered from pre-training ("try typing `window`…"), because nothing in
 its context named `window.ml` or the extension. Two pieces fix it. `SELF_CLAUSE` (prompts.ts,

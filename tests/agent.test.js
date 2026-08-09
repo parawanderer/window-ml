@@ -424,6 +424,66 @@ test("render descriptor: an iframe element renders its `>>>` selector, not the b
     } finally { global.document = prevDoc; global.window = prevWin; }
 });
 
+// ---- click/type `verify`: fold the post-action look() into the call ----
+// (jsdom has no real screenshot + returns 0×0 rects, so stub screenshot/chat + mock the element rect.)
+const mockRect = (el, o) => { el.getBoundingClientRect = () => ({ left: o.x, top: o.y, width: o.w, height: o.h, right: o.x + o.w, bottom: o.y + o.h, x: o.x, y: o.y, toJSON() {} }); };
+const visionCtx = (driverSees) => ({ driverSees, visionModel: "vlm", tools: [], hasTool: () => false, model: "m", capabilities: null });
+
+test("click verify (vision driver): folds a post-action AREA screenshot into the result as an inline image", async () => {
+    const { ml, document } = loadDomWorld('<button id="b">Go</button>');
+    mockRect(document.getElementById("b"), { x: 10, y: 20, w: 80, h: 30 });
+    ml.screenshot = async () => "data:image/png;base64,CROP";   // stub the capture (no real tab in jsdom)
+    const res = await ml.clickTool().run({ selector: "#b", verify: true }, visionCtx(true));
+    assert.equal(typeof res, "object", "verify returns a ToolResult, not a bare string");
+    assert.equal(res.image, "data:image/png;base64,CROP", "the area crop is injected as an inline image (native driver)");
+    assert.equal(res.feedback.via, "image", "feedback provenance is image");
+    assert.match(res.content, /area around where you clicked/i, "the content notes the verify area");
+    assert.match(res.content, /Clicked/, "the base click result is still there");
+});
+
+test("click verify (text-only driver): describes the crop via the reader + the click-mark annotation note", async () => {
+    const { ml, document } = loadDomWorld('<button id="b">Go</button>');
+    mockRect(document.getElementById("b"), { x: 10, y: 20, w: 80, h: 30 });
+    ml.screenshot = async () => "data:image/png;base64,CROP";
+    let asked = "";
+    ml.chat = async (prompt) => { asked = prompt; return "a dropdown opened below the button"; };
+    const res = await ml.clickTool().run({ selector: "#b", verify: true }, visionCtx(false));
+    assert.equal(res.image, undefined, "no inline image for a text-only driver");
+    assert.equal(res.feedback.via, "text", "feedback is a text description");
+    assert.match(res.feedback.text, /dropdown opened/, "the reader's description rides along");
+    assert.match(asked, /added to this image BY THE TOOL|NOT a real UI control/i, "the describe prompt carries the click-mark annotation note");
+    assert.match(res.content, /description of the crop/i);
+});
+
+test("click verify: a self-removing element is flagged MUTATED (area centered on where it was)", async () => {
+    const { ml, document } = loadDomWorld('<button id="rm">X</button>');
+    const b = document.getElementById("rm");
+    mockRect(b, { x: 100, y: 200, w: 40, h: 20 });
+    b.addEventListener("click", () => b.remove());
+    ml.screenshot = async () => "data:image/png;base64,CROP";
+    const res = await ml.clickTool().run({ selector: "#rm", verify: true }, visionCtx(true));
+    assert.match(res.content, /GONE|page changed/i, "the removed element is flagged as mutated");
+    assert.match(res.feedback.reason, /changed/i, "and the feedback reason says the target changed");
+});
+
+test("type verify: captures the field area after typing", async () => {
+    const { ml, document } = loadDomWorld('<input id="q" type="text">');
+    mockRect(document.getElementById("q"), { x: 5, y: 5, w: 200, h: 24 });
+    ml.screenshot = async () => "data:image/png;base64,CROP";
+    const res = await ml.typeTool().run({ selector: "#q", text: "hello", verify: true }, visionCtx(true));
+    assert.equal(res.image, "data:image/png;base64,CROP", "the field-area crop is injected");
+    assert.match(res.content, /area around where you typed/i);
+    assert.match(res.content, /Value now: "hello"/, "the base type result is still there");
+});
+
+test("verify without a vision model → no capture, an honest note (never crashes)", async () => {
+    const { ml, document } = loadDomWorld('<button id="b">Go</button>');
+    mockRect(document.getElementById("b"), { x: 10, y: 20, w: 80, h: 30 });
+    const res = await ml.clickTool().run({ selector: "#b", verify: true }, { driverSees: false, visionModel: null, hasTool: () => false });
+    const s = typeof res === "string" ? res : res.content;
+    assert.match(s, /no vision model/i, "notes that verify couldn't run — no image/describe attempted");
+});
+
 test("shadow DOM: pierceClosedShadow lets the DOM tools reach a CLOSED root the document_start patch captured", () => {
     const { ml, document, window } = loadDomWorld('<button>light-only</button>');
     // Simulate shadow-patch.js (not loaded in the test harness): a CLOSED root, stashed as it's created.
