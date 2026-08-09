@@ -188,6 +188,22 @@ test("a meta-capability tool (chat_metadata) is answered BY THE LOOP with live t
     assert.doesNotMatch(done.result, /`look`/, "a VISION model's look inlines the image into context — NOT flagged as untracked");
 });
 
+test("chat_metadata reports the METERED delegated sub-call tokens when a tally exists (not just the note)", async () => {
+    const { deps } = makeDeps({ turns: [
+        { content: "", tool_calls: [{ id: "m1", name: "chat_metadata", arguments: {} }], usage: { promptTokens: 1200, completionTokens: 40, totalTokens: 1240 } },
+        reply("info"),
+    ] });
+    deps.chatMeta = async () => ({ model: "qwen3", contextWindow: 40960, capabilities: ["tools"], vramGB: null, local: true, backend: null, systemTokens: 100, toolTokens: 200 });
+    // bus.ts metered 3 delegated vision sub-calls this turn (look/locate/verify) → 3300 prompt + 210 completion.
+    deps.subcallTokens = () => ({ prompt: 3300, completion: 210, calls: 3 });
+    const calls = { emits: [] }; deps.emit = (ev) => calls.emits.push(ev);
+    await runAgentLoop("x", { tools: [{ name: "chat_metadata", capabilities: ["meta"] }, { name: "locate", capabilities: ["vision"] }] }, deps);
+    const done = calls.emits.find(e => e.tool === "chat_metadata" && !e.pending);
+    assert.match(done.result, /delegated vision sub-calls this turn: 3510 tokens over 3 calls/, "reports the metered number (prompt+completion)");
+    assert.match(done.result, /SEPARATE context.*not part of the occupancy/, "clarifies it's spend, not occupancy");
+    assert.doesNotMatch(done.result, /none yet this turn/, "the fallback note is replaced by the real number");
+});
+
 test("reasoning_content is emitted per step, distinct from the content prose", async () => {
     // The model thinks in reasoning_content and leaves content empty while tool-calling.
     const { deps, calls } = makeDeps({ turns: [

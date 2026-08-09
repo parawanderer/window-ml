@@ -71,6 +71,9 @@ export interface AgentLoopDeps {
     // World-specific (page: ml.capabilities/ml.ps/config; background: the SW's caches). The token/message
     // counts come from the loop itself (accurate on BOTH paths), so only the MODEL facts need a dep.
     chatMeta?(): Promise<ChatMeta | null>;
+    // This turn's DELEGATED-sub-call token tally (look/locate/verify's own vision calls) — spend the loop
+    // never sees directly, metered where those events are suppressed (bus.ts). Omit → no delegated calls.
+    subcallTokens?(): { prompt: number; completion: number; calls: number };
 }
 
 /** Model facts for chat_metadata, resolved per-world. `local`: true = Ollama-resident, false = cloud/remote,
@@ -107,7 +110,7 @@ function usageTokens(u: unknown): { prompt: number; completion: number } {
  *  conversation stats the loop tracks. Deliberately plain text — the model relays it. */
 function formatChatMeta(
     cm: ChatMeta | null,
-    stats: { promptLast: number; genTotal: number; calls: number },
+    stats: { promptLast: number; genTotal: number; calls: number; sub?: { prompt: number; completion: number; calls: number } },
     messages: unknown[],
     tools: ToolMeta[],
 ): string {
@@ -137,13 +140,20 @@ function formatChatMeta(
     if (cm?.vramGB) L.push(`VRAM resident: ~${cm.vramGB.toFixed(1)} GB`);
     // conversation SHAPE — "messages" was ambiguous; split turns / your messages / model replies
     L.push(`conversation so far: ${role("user")} of your messages · ${role("assistant")} model replies${imgs ? ` · ${imgs} carried images` : ""}`);
-    // Untracked sub-call tokens: `locate` is ALWAYS a delegated vision sub-call; `look` is only a sub-call
+    // Delegated sub-call tokens: `locate` is ALWAYS a delegated vision sub-call; `look` is only a sub-call
     // when the model itself can't see (delegated to a reader). A VISION model's `look` inlines the image into
-    // context (counted in "context in use"), so it's NOT untracked. Gate the look-note on the model's caps.
-    const untracked: string[] = [];
-    if (tools.some(t => t.name === "locate")) untracked.push("`locate`");
-    if (tools.some(t => t.name === "look") && !cm?.capabilities?.includes("vision")) untracked.push("`look` (delegated — this model can't see natively)");
-    if (untracked.length) L.push(`note: ${untracked.join(" and ")} run their own vision sub-call(s) whose tokens are NOT counted above.`);
+    // context (counted in "context in use"), so it's NOT delegated. Gate the look-note on the model's caps.
+    // When we've actually METERED some (stats.sub), report the real number — that spend is a SEPARATE context
+    // (gone after each call), so it's extra cost, NOT part of the occupancy above. Else fall back to the note.
+    const sub = stats.sub;
+    if (sub && sub.calls) {
+        L.push(`delegated vision sub-calls this turn: ${sub.prompt + sub.completion} tokens over ${sub.calls} call${sub.calls === 1 ? "" : "s"} (locate/look/verify — a SEPARATE context each, not part of the occupancy above)`);
+    } else {
+        const delegated: string[] = [];
+        if (tools.some(t => t.name === "locate")) delegated.push("`locate`");
+        if (tools.some(t => t.name === "look") && !cm?.capabilities?.includes("vision")) delegated.push("`look` (delegated — this model can't see natively)");
+        if (delegated.length) L.push(`note: ${delegated.join(" and ")} run their own vision sub-call(s) whose tokens are NOT counted above (none yet this turn).`);
+    }
     return L.join("\n");
 }
 
@@ -228,7 +238,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 // and message list, so the numbers are accurate on both the page and background paths with no
                 // extra plumbing. Never gated, never delegated to runTool (it only reads its own run's state).
                 const cm = deps.chatMeta ? await deps.chatMeta() : null;
-                result = formatChatMeta(cm, { promptLast, genTotal, calls: modelCalls }, messages, tools);
+                result = formatChatMeta(cm, { promptLast, genTotal, calls: modelCalls, sub: deps.subcallTokens?.() }, messages, tools);
             } else if (meta.requiresApproval) {
                 // Read-only try FIRST: the mediated interpreter can't mutate, so if the call is in its
                 // dialect it's already run safely — auto-approve with its result, no gate, no runTool.

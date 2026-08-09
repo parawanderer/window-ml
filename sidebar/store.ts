@@ -3,7 +3,7 @@
 // view module imports from here — extracted from app.tsx so the components can
 // live in their own files while still reading one source of truth.
 import { signal } from "@preact/signals";
-import type { DebugSessionConfig, DebugAgentConfig, MlConfig, LoadedModel, ExtendProfile, RenderDescriptor, ToolFeedback, TokenUsage } from "../contract";
+import type { DebugSessionConfig, DebugAgentConfig, MlConfig, LoadedModel, ExtendProfile, RenderDescriptor, ToolFeedback, TokenUsage, SubcallUsage } from "../contract";
 import { DEFAULT_CONFIG } from "../contract";
 
 export const FONT_KEY = "ml_debug_fontscale";
@@ -23,7 +23,7 @@ export interface Turn {
     reasoning?: string | null;  // separate thinking/reasoning text, if the model produced any
     usage?: TokenUsage | null;  // token counts for this turn, when the server reports them
 }
-export interface AgentStep { step: number; localStep?: number; seq?: number; pending?: boolean; awaitingApproval?: boolean; thought?: string; reasoning?: string | null; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: number; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; argIssues?: string[]; approval?: "readonly" | "sandbox" | "user" | "denied" | "skipped" | "cancelled"; usage?: TokenUsage | null; }
+export interface AgentStep { step: number; localStep?: number; seq?: number; pending?: boolean; awaitingApproval?: boolean; thought?: string; reasoning?: string | null; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: number; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; argIssues?: string[]; approval?: "readonly" | "sandbox" | "user" | "denied" | "skipped" | "cancelled"; usage?: TokenUsage | null; subUsage?: SubcallUsage; }
 
 // The agent's TURN count — the number of distinct `.step` values, NOT `steps.length`.
 // One turn (one LLM call) emits several `AgentStep` events (its thought + one per tool

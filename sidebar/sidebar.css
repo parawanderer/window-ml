@@ -206,6 +206,9 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .usage-track { width: 80px; height: 6px; border-radius: 999px; background: transparent; border: 1px solid var(--border); overflow: hidden; flex: 0 0 auto; }
 .usage-fill { display: block; height: 100%; border-radius: 999px; transition: width .3s ease, background .3s ease; }
 .usage-pct, .usage-total { color: var(--fg-dim); font-size: 0.8em; font-variant-numeric: tabular-nums; }
+/* Delegated sub-call spend (look/locate/verify's own vision calls) — a ghosted "+N sub" chip beside
+   the gauge. Faint on purpose: it's separate SPEND, not part of the context-window occupancy. */
+.usage-sub { margin-left: 6px; color: var(--fg-faint); font-size: 0.78em; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* --------------------------- shared bits -------------------------------- */
 /* The scroll area scrolls VERTICALLY only. A long unbreakable token (e.g. a huge

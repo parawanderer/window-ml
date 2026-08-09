@@ -41,7 +41,7 @@ function onDebug(ev: MlDebugEvent): void {
     if (ev.kind === "agent-step") {
         const s = sessionMap.get(ev.session.hash);
         if (!s) return;
-        const step = { step: ev.step, localStep: ev.localStep, seq: ev.seq, pending: ev.pending, awaitingApproval: ev.awaitingApproval, thought: ev.thought, reasoning: ev.reasoning, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: ev.elements, renderIn: ev.renderIn, renderOut: ev.renderOut, feedback: ev.feedback, argIssues: ev.argIssues, approval: ev.approval, usage: ev.usage };
+        const step = { step: ev.step, localStep: ev.localStep, seq: ev.seq, pending: ev.pending, awaitingApproval: ev.awaitingApproval, thought: ev.thought, reasoning: ev.reasoning, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: ev.elements, renderIn: ev.renderIn, renderOut: ev.renderOut, feedback: ev.feedback, argIssues: ev.argIssues, approval: ev.approval, usage: ev.usage, subUsage: ev.subUsage };
         const steps = s.steps || [];
         // In-flight: a tool step arrives twice — a pending START then the DONE, sharing a `seq`.
         // Patch the existing row in place (immutably) so it fills in; otherwise append. Thoughts
@@ -1367,6 +1367,19 @@ function sessionOccupancy(s: Session): number | null {
     return last.promptTokens + last.completionTokens;
 }
 
+// DELEGATED sub-call spend this turn — the auto-wired look/locate/verify make their own vision
+// calls the loop never sees; bus.ts meters them and rides a running tally on each agent-step. This
+// is NOT occupancy (a separate context, gone after each call), so the bar shows it as an extra "+N"
+// chip, not folded into the fill. The LATEST step's tally is the turn total (it's cumulative). Chat
+// sessions never delegate → always null.
+function sessionSubcall(s: Session): { tokens: number; calls: number } | null {
+    if (s.kind !== "agent") return null;
+    const subs = (s.steps || []).map(st => st.subUsage).filter((u): u is NonNullable<typeof u> => !!u && !!u.calls);
+    if (!subs.length) return null;
+    const last = subs[subs.length - 1];
+    return { tokens: last.prompt + last.completion, calls: last.calls };
+}
+
 // The context window the session's model was LOADED with, matched by full tagged
 // name: the LIVE resident window (/api/ps) if it's loaded now, else the last window
 // we observed it at (seenContext) — a model's window is a property of the model, so
@@ -1387,6 +1400,24 @@ function usageHue(frac: number): string {
     return `hsl(${Math.round(hue)}, 72%, 45%)`;
 }
 
+// A small ghosted chip beside the usage bar: tokens spent this turn on DELEGATED vision sub-calls
+// (look/locate/verify). Distinct from the fill — it's separate SPEND, not context occupancy — so it
+// reads as "+N sub" with its own tooltip. Null → renders nothing (no delegated calls this turn).
+function SubcallChip({ s }: { s: Session }) {
+    const sub = sessionSubcall(s);
+    if (!sub) return null;
+    return (
+        <span class="tt usage-sub">
+            +{fmtCtx(sub.tokens)} sub
+            <span class="tt-pop wrap above" role="tooltip">
+                {sub.tokens.toLocaleString()} tokens over {sub.calls} delegated vision sub-call{sub.calls === 1 ? "" : "s"} this turn
+                (look/locate/verify make their own model calls). This is separate SPEND, not context occupancy — each runs in
+                its own context that's discarded after the call, so it isn't part of the % on the left.
+            </span>
+        </span>
+    );
+}
+
 function UsageBar({ s }: { s: Session }) {
     const occupancy = sessionOccupancy(s);
     if (occupancy == null) return null;   // nothing to show until the server reports counts
@@ -1401,6 +1432,7 @@ function UsageBar({ s }: { s: Session }) {
         const frac = occupancy / limit;
         const pct = Math.round(frac * 100);
         return (
+            <>
             <span class="tt usage-gauge">
                 <span class="usage-ic" aria-hidden="true"><IconUsage /></span>
                 <span class="usage-track"><span class="usage-fill" style={{ width: `${Math.min(100, frac * 100).toFixed(1)}%`, background: usageHue(frac) }} /></span>
@@ -1410,11 +1442,14 @@ function UsageBar({ s }: { s: Session }) {
                     This is the live window occupancy — every turn re-sends the whole history. Near 100% the model starts truncating.
                 </span>
             </span>
+            <SubcallChip s={s} />
+            </>
         );
     }
     // Window unknown (a model we've never seen resident — a true cloud model): show the
     // raw occupancy, no %/bar. Same number as above, just no denominator to divide by.
     return (
+        <>
         <span class="tt usage-gauge">
             <span class="usage-ic" aria-hidden="true"><IconUsage /></span>
             <span class="usage-total">{fmtCtx(occupancy)} tok</span>
@@ -1422,6 +1457,8 @@ function UsageBar({ s }: { s: Session }) {
                 {occupancy.toLocaleString()} tokens in context (latest turn). No context limit is known for this model{model ? ` ("${model}")` : ""} — it's never been resident in Ollama (a cloud model?), so there's no window size to show a % against.
             </span>
         </span>
+        <SubcallChip s={s} />
+        </>
     );
 }
 

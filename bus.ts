@@ -52,13 +52,33 @@ try { window.postMessage({ __mlSidebar: "hello" }, "*"); } catch { /* pre-DOM / 
 // result already shows as the agent's tool step.
 let inAgentRun = 0;
 export const enterAgentRun = (): void => { inAgentRun++; };
-export const exitAgentRun = (): void => { inAgentRun--; };
+export const exitAgentRun = (): void => { inAgentRun = Math.max(0, inAgentRun - 1); };
+
+// The DELEGATED-sub-call token meter. The auto-wired `look`/`locate`/`verify` tools make their OWN
+// ml.chat() vision calls; those emit chat-result events we SUPPRESS below (they're not real sessions).
+// But their tokens are real spend the main loop never sees (a separate context, gone after the call) —
+// so we tally them HERE, at the exact point we throw the event away, and the agent's meta tool + the UI
+// report the otherwise-invisible cost. Per-turn (reset by injected.ts's drive), matching `genTotal`.
+let subUsage = { prompt: 0, completion: 0, calls: 0 };
+export const resetSubcallUsage = (): void => { subUsage = { prompt: 0, completion: 0, calls: 0 }; };
+export const subcallUsage = (): { prompt: number; completion: number; calls: number } => ({ ...subUsage });
 
 /** Emit a debug event to the sidebar via postMessage. No-op when there's no
  *  sidebar; buffered (not live) until the app handshakes; catches non-cloneable. */
 export const emitDebug = (event: MlDebugEvent): void => {
+    if (inAgentRun && event.kind.startsWith("chat")) {
+        // An internal sub-call (delegated look/locate/verify) during an agent run. We DON'T surface it as
+        // its own session — but meter its token spend first (the loop never sees these, so this is the only
+        // place they can be counted). `chat-result` carries the resolved usage; a `chat`/`chat-error` doesn't.
+        const u = (event as { usage?: { promptTokens?: number; completionTokens?: number } | null }).usage;
+        if (event.kind === "chat-result" && u) {
+            subUsage.prompt += u.promptTokens || 0;
+            subUsage.completion += u.completionTokens || 0;
+            subUsage.calls += 1;
+        }
+        return;   // never buffer/emit orphan internal chats
+    }
     if (!sidebarPresent) return;   // no sidebar → do nothing (disabled = zero cost)
-    if (inAgentRun && event.kind.startsWith("chat")) return;   // never buffer/emit orphan internal chats
     debugRing.push(event);
     if (debugRing.length > DEBUG_RING_MAX) debugRing.shift();
     if (!debugEnabled) return;

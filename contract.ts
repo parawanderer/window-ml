@@ -948,7 +948,13 @@ export interface DebugAgentStep extends DebugBase {
      *  step re-sends the full growing history, so the LATEST step's usage is the run's
      *  current context occupancy (not a sum across steps — see TokenUsage). */
     usage?: TokenUsage | null;
+    /** Running tally (this turn) of tokens spent by DELEGATED vision sub-calls — the auto-wired
+     *  look/locate/verify make their own ml.chat() calls the loop never sees. Separate SPEND, not
+     *  context occupancy (a different context, gone after the call). Shown beside the UI usage bar. */
+    subUsage?: SubcallUsage;
 }
+/** Delegated-sub-call token tally (look/locate/verify's own vision calls). See DebugAgentStep.subUsage. */
+export interface SubcallUsage { prompt: number; completion: number; calls: number; }
 export interface DebugAgentResult extends DebugBase { kind: "agent-result"; summary: string; steps: number; hitCap: boolean; cancelled?: boolean; error?: string | null; }
 
 /** A handle raised the step cap mid-run (a.maxSteps = N) — the sidebar/HUD updates its "STEP x/N" display. */

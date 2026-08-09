@@ -40,7 +40,7 @@ import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, markSeen
 import type { ShotBox, ServerTool, VisionMemory } from "./contract";
 import { annotate, pickAccentColorForTarget } from "./locate";
 import { suspiciousArgsWarning, suspiciousChars } from "./security";
-import { emitDebug, debugId, shortHash, sessionRegistry, agentRegistry, handleRegistry, enterAgentRun, exitAgentRun } from "./bus";
+import { emitDebug, debugId, shortHash, sessionRegistry, agentRegistry, handleRegistry, enterAgentRun, exitAgentRun, resetSubcallUsage, subcallUsage } from "./bus";
 import { makeDomTools } from "./tools";
 import { hideSidebarForShot, makeBackgroundTaskPromise, makeChatRequest, makeStreamingTaskPromise } from "./bridge";
 import { validateArgs, validateExtend } from "./validate";
@@ -823,6 +823,9 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     renderIn, renderOut, feedback: ev.feedback,
                     argIssues: argIssues && argIssues.length ? argIssues : undefined,
                     approval: ev.approval, usage: (ev.usage as TokenUsage | null) || undefined,
+                    // Running tally of delegated look/locate/verify token spend so far this turn (metered in
+                    // bus.ts). Rides every step so the UI bar can show it live; omitted when nothing delegated.
+                    subUsage: (() => { const s = subcallUsage(); return s.calls ? s : undefined; })(),
                 });
                 if (!onStep || ev.pending) return;
                 try { onStep(cb); } catch (e) { console.error("ml.agent onStep threw:", e); }
@@ -894,6 +897,9 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     images: images.map(p => p.image),
                 }),
                 emit,
+                // Delegated-sub-call token tally (this turn) for chat_metadata — the "invisible" spend of
+                // the auto-wired look/locate/verify vision calls the loop never sees directly (metered in bus.ts).
+                subcallTokens: () => subcallUsage(),
                 // chat_metadata: resolve the run's model FACTS (the loop supplies the live token/message
                 // counts). Each lookup degrades to null — the tool still reports the rest.
                 chatMeta: async () => {
@@ -918,6 +924,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             // raise it mid-run). answered resets per turn; the seq base advances so steps stay session-unique.
             const drive = async (t: string): Promise<AgentResult> => {
                 answered.length = 0;
+                resetSubcallUsage();   // per-turn tally of delegated look/locate/verify spend, matching genTotal
                 enterAgentRun();   // suppress orphan chat sessions from a tool's internal ml.chat; finally-decremented
                 try {
                     const r = await runAgentLoop(t, { tools: toolMetas, maxSteps: () => control.maxSteps, signal, unattended }, deps);
