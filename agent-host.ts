@@ -39,7 +39,7 @@ export interface RunAgentHostDeps {
     ): Promise<{ content?: string | null; tool_calls?: ToolCall[]; usage?: unknown; reasoning?: unknown }>;
     // Delegate a tool call to the page (RUN_TOOL_IN_PAGE) → its serializable result string. Reached for
     // a requiresApproval tool ONLY after the gate — the untrusted execution point.
-    delegateTool(name: string, args: Record<string, unknown>): Promise<{ result: string }>;
+    delegateTool(name: string, args: Record<string, unknown>): Promise<ToolRunResult>;
     // Self-introspection (chat_metadata): the run's model + its context window + capability list, from the
     // SW's caches. The loop supplies the token/message counts; this only adds the model facts. Optional.
     chatMeta?(): Promise<{ model: string | null; contextWindow: number | null; capabilities: string[] | null } | null>;

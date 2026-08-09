@@ -122,7 +122,7 @@ export async function runDelegatedTool(runId: string, name: string, args: Record
         return {
             result: env.result,
             elementCount: env.elements ? env.elements.length : undefined,
-            image: env.image, imageLabel: env.imageLabel,
+            image: env.image, imageLabel: env.imageLabel, images: env.images,
             renderIn, renderOut,
             feedback: env.feedback,   // what locate fed into the model's context → surfaced in the debug render + export
             cdpClick: env.cdpClick,   // reserved-surface click → the BACKGROUND does the CDP click (trusted)

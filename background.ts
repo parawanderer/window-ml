@@ -1110,7 +1110,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                         // The page already computed the rendered In/Out slots (descriptorFor) — forward them so
                         // the sidebar shows the rich view. `image` rides along for INLINE VISION (native look):
                         // the loop injects it into the model's next turn (pushToolImages).
-                        return { result: env?.result || `Error: the page returned nothing for tool "${name}".`, renderIn: env?.renderIn, renderOut: env?.renderOut, feedback: env?.feedback, image: env?.image, imageLabel: env?.imageLabel };
+                        return { result: env?.result || `Error: the page returned nothing for tool "${name}".`, renderIn: env?.renderIn, renderOut: env?.renderOut, feedback: env?.feedback, image: env?.image, imageLabel: env?.imageLabel, images: env?.images };
                     } finally {
                         pendingGrants.delete(tabId);   // grants were for THIS approved call's sub-ops only
                     }

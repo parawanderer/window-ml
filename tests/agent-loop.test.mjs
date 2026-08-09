@@ -236,6 +236,16 @@ test("inline vision: a tool that returns an image → pushToolImages injects it 
     assert.deepEqual(pushed, [[{ image: "data:img,SHOT", label: "viewport" }]], "the screenshot is handed to the next turn");
 });
 
+test("inline vision: a tool returning images[] injects EACH (look's overlay + no-overlay views)", async () => {
+    const { deps } = makeDeps({ turns: [toolCall("look"), reply("done")] });
+    deps.runTool = async () => ({ result: "captured", images: [{ image: "MARKED", label: "with box" }, { image: "CLEAN", label: "no box" }] });
+    const pushed = [];
+    deps.pushToolImages = (m, imgs) => { pushed.push(...imgs); };
+    await runAgentLoop("x", { tools: [{ name: "look", capabilities: ["vision"] }] }, deps);
+    assert.equal(pushed.length, 2, "both views become separate inline images");
+    assert.deepEqual(pushed.map(p => p.image), ["MARKED", "CLEAN"]);
+});
+
 test("no image → pushToolImages is never called (text-only driver / non-vision tool)", async () => {
     const { deps } = makeDeps({ turns: [toolCall("noop"), reply("done")] });   // default runTool returns no image
     let called = false;

@@ -45,7 +45,7 @@ import { makeDomTools } from "./tools";
 import { hideSidebarForShot, makeBackgroundTaskPromise, makeChatRequest, makeStreamingTaskPromise } from "./bridge";
 import { validateArgs, validateExtend } from "./validate";
 import { renderArgs, logStep, defaultApprove, normalizeApproval, formatReadonlyExec } from "./approval";
-import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPythonTool, targetRender, captureVerify } from "./builtin-tools";
+import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPythonTool, targetRender, captureVerify, lookViews, BOX_OVER_TEXT_TIP, VIEWS_PARAM } from "./builtin-tools";
 import { pyVarNameError } from "./python-env";
 import { autoApprovePython } from "./auto-approve";
 import { executeTool, toolContext } from "./tool-exec";
@@ -846,7 +846,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 const env = await executeTool(tool, args, toolCtx);
                 const { in: renderIn, out: renderOut } = descriptorFor(tool, env, args);
                 if (tool && tool.capabilities && tool.capabilities.includes("answer") && env.elements && env.elements.length) answered.push(...env.elements as Node[]);
-                return { result: String(env.result), elements: env.elements, renderIn, renderOut, image: env.image, imageLabel: env.imageLabel, feedback: env.feedback };
+                return { result: String(env.result), elements: env.elements, renderIn, renderOut, image: env.image, imageLabel: env.imageLabel, images: env.images, feedback: env.feedback };
             };
 
             const deps: AgentLoopDeps = {
@@ -1081,11 +1081,14 @@ class AgentHandle implements MlAgentHandle, AgentControl {
          *   point. 0 = the default look-radius. Ignored otherwise.
          * @returns {Promise<string>} The screenshot as a PNG data URL.
          */
-        screenshot: async function(target: string | Element | null = null, { scroll = true, fullPage = false, index = 0, raw = false, margin = 0 }: { scroll?: boolean; fullPage?: boolean; index?: number; raw?: boolean; margin?: number } = {}): Promise<string> {
+        screenshot: async function(target: string | Element | null = null, { scroll = true, fullPage = false, index = 0, raw = false, margin = 0, noOverlay = false, capture = null }: { scroll?: boolean; fullPage?: boolean; index?: number; raw?: boolean; margin?: number; noOverlay?: boolean; capture?: string | null } = {}): Promise<string> {
             // Hide the debug sidebar overlay (if mounted) for the shot, so it isn't
             // captured into the agent's `look`; restore after. No wait when the
             // sidebar is off (no #ml-sb-root) — it's a no-op then.
+            // `capture` (a pre-taken viewport data-URL) SHORT-CIRCUITS this: `look`'s two-view mode
+            // (overlay + no-overlay) crops both from ONE capture instead of re-screenshotting the tab.
             const viewport = async (): Promise<string> => {
+                if (capture) return capture;
                 await hideSidebarForShot();
                 try { return await makeBackgroundTaskPromise<string>("CAPTURE_TAB_REQUEST", "CAPTURE_TAB_RESPONSE", {}); }
                 finally { window.postMessage({ __mlSidebarShot: "show" }, "*"); }
@@ -1102,7 +1105,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 const left = Math.max(0, pt.x - R), top = Math.max(0, pt.y - R);
                 const rect = { left, top, width: Math.min(window.innerWidth, pt.x + R) - left, height: Math.min(window.innerHeight, pt.y + R) - top };
                 const cropped = await cropDataUrl(await viewport(), rect, dpr);
-                if (raw) return cropped;   // pythonExec: raw pixels of the neighbourhood, no marker overlay
+                if (raw || noOverlay) return cropped;   // raw: pythonExec pixels · noOverlay: look's clean copy (same crop, no marker)
                 const marker = { left: pt.x - left - 12, top: pt.y - top - 12, width: 24, height: 24 };
                 // Contrast the marker with the background AND the target under it (in image px).
                 const color = await pickAccentColorForTarget(cropped, { left: marker.left * dpr, top: marker.top * dpr, width: marker.width * dpr, height: marker.height * dpr });
@@ -1123,6 +1126,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 const rect = { left, top, width: Math.min(window.innerWidth, bx.right + pad) - left, height: Math.min(window.innerHeight, bx.bottom + pad) - top };
                 const cropped = await cropDataUrl(await viewport(), rect, dpr);
                 if (raw) return cropped;
+                if (noOverlay) return cropped;   // look's clean copy: same PADDED framing as the marked one, just no outline
                 const outline = { left: bx.left - left, top: bx.top - top, width: bx.right - bx.left, height: bx.bottom - bx.top };
                 const color = await pickAccentColorForTarget(cropped, { left: outline.left * dpr, top: outline.top * dpr, width: outline.width * dpr, height: outline.height * dpr });
                 return annotate(cropped, [{ rect: outline, color, label: "container" }], dpr);
@@ -1587,36 +1591,44 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                         selector: { type: "string", description: "CSS selector of an element; omit to see the page." },
                         scope: { type: "string", enum: ["viewport", "page"], description: "'viewport' (default), or 'page' to scroll+stitch the full page (only when no selector)." },
                         index: { type: "integer", description: "Which match of the selector to look at (0-based); iterate a grid with 0,1,2,…" },
-                        margin: { type: "number", description: "For an @pt: token only — the crop RADIUS in px around the point (bigger = more context). Ignored for CSS selectors." }
+                        margin: { type: "number", description: "For an @pt: token only — the crop RADIUS in px around the point (bigger = more context). Ignored for CSS selectors." },
+                        views: VIEWS_PARAM
                     }
                 },
                 // In: the target as a hoverable ref (hover → outline it on the page). No selector → raw args.
                 render: (_input, args) => targetRender(args),
-                run: async ({ selector, scope, index, margin }: { selector?: string; scope?: "viewport" | "page"; index?: number; margin?: number } = {}): Promise<string | ToolResult> => {
+                run: async ({ selector, scope, index, margin, views }: { selector?: string; scope?: "viewport" | "page"; index?: number; margin?: number; views?: string[] } = {}): Promise<string | ToolResult> => {
                     const fullPage = scope === "page" && !selector;
+                    const isPoint = !!selector && POINT_RE.test(selector.trim());
+                    const isMarked = !!selector && (isPoint || BOX_RE.test(selector.trim()));
                     // Looking at an @pt marks it SEEN → locate's snap-feedback won't re-inject its crop.
-                    if (selector && POINT_RE.test(selector.trim())) { const p = resolvePoint(selector); if (p) markSeen(memory, p.x, p.y); }
-                    let shot;
-                    try { shot = await ml.screenshot(selector || null, { fullPage, index: index || 0, margin: typeof margin === "number" ? margin : 0 }); }
+                    if (isPoint) { const p = resolvePoint(selector!); if (p) markSeen(memory, p.x, p.y); }
+                    // A marked target honours `views` (overlay / no-overlay / both, ONE capture); the driver sees
+                    // each crop as its own inline image. Everything else is the usual single shot.
+                    let shots: { image: string; label: string }[], crossesText = false;
+                    try {
+                        if (isMarked) { const v = await lookViews(ml, selector!, margin as number, views); shots = v.images; crossesText = v.crossesText; }
+                        else { const shot = await ml.screenshot(selector || null, { fullPage, index: index || 0, margin: typeof margin === "number" ? margin : 0 }); shots = [{ image: shot, label: selector ? `element "${selector}"${index ? ` #${index}` : ""}` : (fullPage ? "full page" : "viewport") }]; }
+                    }
                     catch (e) { return `Error: ${errText(e)}`; }
-                    const label = selector
-                        ? `element "${selector}"${index ? ` #${index}` : ""}`
-                        : (fullPage ? "full page" : "viewport");
+                    const label = shots[0].label;
                     // @pt verify shot → disclose the snap-around-point recovery, @pt-only: the
                     // driver can see here whether the mark grazes a target it can otherwise see.
-                    const isPoint = !!selector && POINT_RE.test((selector as string).trim());
                     const pointTip = isPoint
                         ? `\n\n(Verify before clicking. If the target IS visible in this crop but the mark isn't on it, re-locate just this area to snap onto it: locate({ selector: "${selector}", strategy: "grounding", description: "…" }) — searches only this box (add margin: 40–120 if the target is partly cut off at the edge). If the target ISN'T in this crop at all, it's the wrong spot: change region/description, don't re-verify here.)`
                         : "";
+                    // Targeted no-overlay nudge — only when the box was DETECTED over text AND a clean copy wasn't already sent.
+                    const overTextTip = crossesText && shots.length === 1 ? BOX_OVER_TEXT_TIP : "";
+                    const multi = shots.length > 1 ? ` (${shots.length} crops: ${shots.map(s => s.label).join(" · ")})` : "";
                     // Hand the screenshotted element back on the elements side-channel
                     // so it's hoverable in `logDebug`/`onStep` (never sent to the model).
                     // Guarded: a bad/stub-DOM selector just yields no node.
                     let elements;
                     if (selector) { try { const el = queryAll(selector)[index || 0]; if (el) elements = [el]; } catch {} }
                     return {
-                        content: `Screenshot of the ${label} captured — shown to you in the next message.${pointTip}`,
-                        image: shot,
-                        imageLabel: label,
+                        content: `Screenshot of the ${label}${multi} captured — shown to you in the next message.${pointTip}${overTextTip}`,
+                        // One view → the single `image` shortcut; two → `images` (each injected as its own turn).
+                        ...(shots.length > 1 ? { images: shots } : { image: shots[0].image, imageLabel: label }),
                         elements
                     };
                 }

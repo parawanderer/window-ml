@@ -7,7 +7,7 @@
 import type { MlApi, MlTool, LocateSubstep, ToolResult, RenderDescriptor, VisionMemory, ToolContext } from "./contract";
 import { DEFAULT_GROUNDING_RANGE } from "./contract";
 import { PY_PACKAGE_LABELS } from "./python-env";
-import { truncate, clipOut, errText, elLine, queryAll, selectorError, googleSheetCsvUrl, nonEmptyTables, capturedClosedRoot, isElement, viewportRect } from "./dom";
+import { truncate, clipOut, errText, elLine, queryAll, selectorError, googleSheetCsvUrl, nonEmptyTables, capturedClosedRoot, isElement, viewportRect, boxIntersectsText } from "./dom";
 import { accessibleName } from "./a11y";
 
 // Cap on python_exec output (stdout / value / error) fed back to the model — bigger than
@@ -173,6 +173,33 @@ export const targetRender = (args: Record<string, unknown>): RenderDescriptor | 
 // standalone `look` (@pt) and the `locate → look` snap-feedback describe, and shown in both debug renders.
 export const CLICK_MARK_NOTE = "\n\nIMPORTANT: the box and its \"click point\" label were added to this image BY THE TOOL, only to mark where a click would land — they are NOT part of the page and NOT a real UI control. Do not describe them as elements. Describe what is UNDERNEATH the box: the actual page content at that spot (its colour, shape, and any text).";
 
+// Appended when the click-point box is DETECTED to sit on page text (boxIntersectsText) — a targeted nudge,
+// not an always-on note, since it only matters when the overlay actually hides something you must read.
+export const BOX_OVER_TEXT_TIP = "\n\n⚠ The click-point box is sitting ON page text here — it may hide characters you need. For a clean read, call look again with views:[\"no-overlay\"] (or views:[\"overlay\",\"no-overlay\"] to get both the marked crop AND a clean copy).";
+
+// The shared `views` parameter for both look tools (native + delegated). Only meaningful for a marked
+// @pt/@box target — for a plain selector/viewport there's no overlay to drop.
+export const VIEWS_PARAM = { type: "array", items: { type: "string", enum: ["overlay", "no-overlay"] }, description: "For an @pt:/@box: target only: which crop(s) to return. \"overlay\" (default) draws the click-point box so you see WHERE a click lands; \"no-overlay\" is a clean copy so you can READ text the box would cover. Pass both — [\"overlay\",\"no-overlay\"] — when you need to do both at once." } as const;
+
+/** Produce the requested crop VIEWS of a MARKED @pt/@box token from ONE viewport capture (no re-screenshot):
+ *  `views` ⊆ ["overlay","no-overlay"], default ["overlay"]. Returns each as a labelled image (the caller
+ *  injects them natively or hands them to a reader) plus whether the click-point box crosses page text. */
+export async function lookViews(ml: MlApi, token: string, margin: number, views?: string[]): Promise<{ images: { image: string; label: string }[]; crossesText: boolean }> {
+    const m = typeof margin === "number" ? margin : 0;
+    const isPt = POINT_RE.test(token.trim());
+    const wantClean = Array.isArray(views) && views.includes("no-overlay");
+    const wantMarked = !Array.isArray(views) || views.length === 0 || views.includes("overlay");
+    // ONE capture when BOTH views are wanted (each crop reuses it); a single view captures once internally.
+    const cap = (wantClean && wantMarked) ? await ml.screenshot(null, {}) : null;
+    const images: { image: string; label: string }[] = [];
+    if (wantMarked) images.push({ image: await ml.screenshot(token, { margin: m, capture: cap }), label: isPt ? "with click-point box" : "with region outline" });
+    if (wantClean) images.push({ image: await ml.screenshot(token, { margin: m, noOverlay: true, capture: cap }), label: "clean — no box (read text here)" });
+    // Targeted warning: does the 24px marker box (an @pt only) cross page text? Same-origin DOM only.
+    let crossesText = false;
+    if (isPt) { const p = resolvePoint(token); if (p) crossesText = boxIntersectsText({ left: p.x - 12, top: p.y - 12, width: 24, height: 24 }); }
+    return { images, crossesText };
+}
+
 export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512, memory = null }: { model?: string | null; maxTokens?: number; memory?: VisionMemory | null } = {}): MlTool => {
     return ml.defineTool({
         name: "look",
@@ -190,21 +217,28 @@ export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512, memory
                 question: { type: "string", description: "What to determine (optional)." },
                 scope: { type: "string", enum: ["viewport", "page"], description: "'viewport' (default), or 'page' to scroll+stitch the full page (only when no selector)." },
                 index: { type: "integer", description: "Which match of the selector to look at (0-based); iterate a grid with 0,1,2,…" },
-                margin: { type: "number", description: "For an @pt: token only — the crop RADIUS in px around the point (bigger = more context). Ignored for CSS selectors." }
+                margin: { type: "number", description: "For an @pt: token only — the crop RADIUS in px around the point (bigger = more context). Ignored for CSS selectors." },
+                views: VIEWS_PARAM
             }
         },
         // In: the target as a hoverable ref (hover → outline it on the page). No selector (viewport/page) → raw args.
         render: (_input, args) => targetRender(args),
-        run: async ({ selector, question, scope, index, margin }: { selector?: string; question?: string; scope?: "viewport" | "page"; index?: number; margin?: number } = {}) => {
+        run: async ({ selector, question, scope, index, margin, views }: { selector?: string; question?: string; scope?: "viewport" | "page"; index?: number; margin?: number; views?: string[] } = {}) => {
             const fullPage = scope === "page" && !selector;
             // An @pt point token → screenshot returns a cropped, MARKED view of the click spot
             // (canvas verification): tailor the prompt to "what's at the mark", not page text.
             const isPoint = !!selector && POINT_RE.test(selector.trim());
+            const isMarked = !!selector && (isPoint || BOX_RE.test(selector.trim()));
             // Looking at an @pt marks that spot SEEN, so locate's snap-feedback won't later re-inject a
             // near-identical crop of it (the shared near-area dedup).
             if (isPoint) { const p = resolvePoint(selector!); if (p) markSeen(memory, p.x, p.y); }
-            let shot;
-            try { shot = await ml.screenshot(selector || null, { fullPage, index: index || 0, margin: typeof margin === "number" ? margin : 0 }); }
+            // A marked target honours `views` (overlay / no-overlay / both, one capture); everything else is
+            // the usual single shot. `shots` carries what the reader sees; `shot` is the primary (for render).
+            let shots: { image: string; label: string }[], shot: string, crossesText = false;
+            try {
+                if (isMarked) { const v = await lookViews(ml, selector!, margin as number, views); shots = v.images; crossesText = v.crossesText; shot = shots[0].image; }
+                else { shot = await ml.screenshot(selector || null, { fullPage, index: index || 0, margin: typeof margin === "number" ? margin : 0 }); shots = [{ image: shot, label: "screenshot" }]; }
+            }
             catch (e) { return `Error: ${errText(e)}`; }
             const subject = isPoint ? `the point marked on the canvas (${selector})`
                 : selector ? `the element "${selector}"${index ? ` (match #${index})` : ""}`
@@ -226,13 +260,18 @@ export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512, memory
                 : "\n\nThen list a few EXACT on-screen text strings (quoted, verbatim — labels, " +
                   "badges, prices, delivery text) I could search for with findByText to locate " +
                   "the key items.";
-            const description = await ml.chat(base + guidance, { images: [shot], model, maxTokens, numCtx: VISION_NUM_CTX }) as string;
+            // Multi-view (overlay + no-overlay): the reader sees BOTH crops — mention which is which so it
+            // can read the clean copy and still reason about where the box lands.
+            const viewNote = shots.length > 1 ? `\n\nTwo crops of the SAME spot follow: (1) ${shots[0].label}, (2) ${shots[1].label}. Read the clean one for text; use the marked one only to judge WHERE the click lands.` : "";
+            const description = await ml.chat(base + guidance + viewNote, { images: shots.map(s => s.image), model, maxTokens, numCtx: VISION_NUM_CTX }) as string;
             // Progressive-disclosure tip, @pt targets ONLY (irrelevant for a DOM look):
             // the verify step is exactly where the model can see the point grazing the
             // target — steer it to snap with grid-grounding rather than click a near-miss.
             const pointTip = isPoint
                 ? `\n\n(Verify before clicking. If the target IS visible in this preview but the mark isn't on it, re-locate just this area to snap onto it: locate({ description: "…", selector: "${selector}", strategy: "grounding" }) — searches only this box (add margin: 40–120 if the target is partly cut off at the edge). If the target ISN'T in this preview at all, it's the wrong spot: change \`region\`/description, don't re-verify here.)`
                 : "";
+            // Targeted no-overlay nudge — only when the box was DETECTED over text AND a clean copy wasn't already sent.
+            const overTextTip = crossesText && shots.length === 1 ? BOX_OVER_TEXT_TIP : "";
             // Attach the inspected element on the side-channel (debug-only,
             // never to the model). Guarded so a stub-DOM/bad selector no-ops.
             let elements;
@@ -241,7 +280,7 @@ export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512, memory
             // so a delegated look reads like a locate substep, not the weird auto-derived element text.
             // (`model` is the resolved reader passed at wiring; `output` is the raw model reply, no tip.)
             const render: RenderDescriptor = { type: "look", image: shot, model, output: description, label: subject, prompt: base + guidance };
-            return { content: description + pointTip, render, ...(elements ? { elements } : {}) };
+            return { content: description + pointTip + overTextTip, render, ...(elements ? { elements } : {}) };
         }
     });
 };
@@ -977,16 +1016,22 @@ export async function captureVerify(ml: MlApi, ctx: ToolContext | undefined, cen
     const reader = ctx?.visionModel || null;
     if (!driverSees && !reader) return { content: "\n\n(verify was requested, but no vision model is available to capture the result — read it with look/findByText next.)" };
     // An element/point action → a marked @pt crop of the general AREA around it; a `wait` (center null) → the
-    // whole viewport (area-first: you verify the settled page, not the thing you waited on).
+    // whole viewport (area-first: you verify the settled page, not the thing you waited on). Mint the point
+    // token so the model can re-look at this exact spot (e.g. clean, no overlay) if the marker hides text.
+    const tok = center ? mintPoint(center.x, center.y) : null;
     let crop: string;
-    try { crop = center ? await ml.screenshot(mintPoint(center.x, center.y), { margin: VERIFY_MARGIN }) : await ml.screenshot(null, {}); }
+    try { crop = tok ? await ml.screenshot(tok, { margin: VERIFY_MARGIN }) : await ml.screenshot(null, {}); }
     catch { return {}; }   // capture failed → no verify, base result stands
+    // Targeted no-overlay nudge: if the marker box actually sits on text, tell the model how to read it
+    // cleanly (a standalone look on the SAME token with the overlay off). Same-origin DOM only.
+    const overText = (tok && boxIntersectsText({ left: center!.x - 12, top: center!.y - 12, width: 24, height: 24 }))
+        ? ` ⚠ The marker box is sitting on text — to read what's under it, call look({ selector: "${tok}", views: ["no-overlay"] }).` : "";
     const areaNote = mutated
         ? `The element you acted on is GONE — the page changed. This is the AREA where it was (the box marks the spot).`
         : center ? `This is the area around where you ${verb} (the box marks the spot).`
             : `The page settled — here's the current viewport.`;
     const reason = mutated ? "after the action — target changed" : center ? "after the action" : "after wait";
-    if (driverSees) return { content: `\n\n ${areaNote} Read the result and continue — no need to look() first.`, image: crop, imageLabel: reason, feedback: { reason, via: "image", image: crop } };
+    if (driverSees) return { content: `\n\n ${areaNote} Read the result and continue — no need to look() first.${overText}`, image: crop, imageLabel: reason, feedback: { reason, via: "image", image: crop } };
     // Text-only driver: the reader describes the crop; the driver gets words. The click-mark note only applies
     // to a MARKED crop (an @pt) — a plain viewport (wait) has no annotation box on it.
     const question = center
@@ -995,7 +1040,7 @@ export async function captureVerify(ml: MlApi, ctx: ToolContext | undefined, cen
     let desc: string;
     try { desc = String(await ml.chat(question, { images: [crop], model: reader, maxTokens: 256, numCtx: VISION_NUM_CTX })).trim(); }
     catch { return {}; }
-    return { content: `\n\n👁 ${areaNote} You can't see images, so this is ${reader || "the reader"}'s description:\n${desc}`, feedback: { reason, via: "text", text: desc, prompt: question, image: crop } };
+    return { content: `\n\n👁 ${areaNote} You can't see images, so this is ${reader || "the reader"}'s description:\n${desc}${overText}`, feedback: { reason, via: "text", text: desc, prompt: question, image: crop } };
 }
 // The viewport CENTRE of an element (composing iframe offsets), for a verify crop. null if it has no box.
 const elementCenter = (el: Element): { x: number; y: number } | null => {

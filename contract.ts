@@ -281,6 +281,10 @@ export interface ToolResult {
     elements?: Node[];
     image?: string;
     imageLabel?: string;
+    /** MULTIPLE inline-vision images from ONE tool call, injected as separate images on the driver's next
+     *  turn (look's `views:["overlay","no-overlay"]` → the marked crop + a clean copy). Sits alongside the
+     *  single `image` shortcut; the loop pushes both. Full-resolution (not composited into one). */
+    images?: { image: string; label?: string }[];
     /** the Out slot: a visualization of the result (e.g. locate's marks) */
     render?: RenderDescriptor;
     /** the In slot: a visualization of the CALL (e.g. python's notebook-cell header) */
@@ -740,6 +744,9 @@ export interface PageToolEnvelope {
     /** screenshot data-URL (inline vision — reserved for the parity work) */
     image?: string;
     imageLabel?: string;
+    /** MULTIPLE inline-vision images from one call (look's overlay + no-overlay) — the background loop
+     *  pushes each to the driver's next turn, same as the page path. */
+    images?: { image: string; label?: string }[];
     /** In slot — a visualization of the call. The debug-render slots are computed PAGE-SIDE
      *  (descriptorFor) since the tool's render() method + its live envelope live there — so a
      *  background-hosted run shows the same rendered In/Out as the page. */
@@ -1057,7 +1064,7 @@ export interface MlApi {
     /** OCR/describe an image (element, url or data URL). */
     read(image: string | HTMLImageElement, opts?: { model?: string | null; prompt?: string | null }): Promise<string>;
     /** Capture the tab (or an element) to a data URL. */
-    screenshot(target?: string | Element | null, opts?: { scroll?: boolean; fullPage?: boolean; index?: number; raw?: boolean; margin?: number }): Promise<string>;
+    screenshot(target?: string | Element | null, opts?: { scroll?: boolean; fullPage?: boolean; index?: number; raw?: boolean; margin?: number; noOverlay?: boolean; capture?: string | null }): Promise<string>;
 
     /* ---- server / model management ---- */
     models(): Promise<string[]>;

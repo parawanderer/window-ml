@@ -260,6 +260,58 @@ export const sameOriginFrameDoc = (el: Element): Document | null => {
     try { return (el as HTMLIFrameElement).contentDocument; } catch { return null; }
 };
 
+/** Does rendered TEXT intersect this viewport box? Powers a TARGETED warning when `look`/verify's
+ *  click-point overlay box sits ON text the model may need to read — so we nudge it to re-look with
+ *  views:['no-overlay'] ONLY when the box actually crosses text, not on every marked crop. Samples caret
+ *  positions across the box and confirms a real glyph rect overlaps it. Descends into SAME-ORIGIN iframes
+ *  (coords translated); a CROSS-ORIGIN iframe's DOM is unreachable from this frame (SOP) — reaching it
+ *  would need that frame's own content script — and a canvas @pt has no DOM text, so both simply don't
+ *  trigger the warning (the manual no-overlay option still covers them). `doc`/`offset` are the recursion
+ *  handles; callers pass a viewport box. */
+export const boxIntersectsText = (box: { left: number; top: number; width: number; height: number }, doc: Document = document, offset: { x: number; y: number } = { x: 0, y: 0 }): boolean => {
+    type CaretDoc = Document & {
+        caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+        caretRangeFromPoint?: (x: number, y: number) => Range | null;
+    };
+    const d = doc as CaretDoc;
+    const caretNodeAt = (x: number, y: number): Node | null => {
+        if (typeof d.caretPositionFromPoint === "function") { const c = d.caretPositionFromPoint(x, y); return c ? c.offsetNode : null; }
+        if (typeof d.caretRangeFromPoint === "function") { const r = d.caretRangeFromPoint(x, y); return r ? r.startContainer : null; }
+        return null;
+    };
+    const w = box.width, h = box.height;
+    // Centre + 4 inset corners — a filled marker box is small, so these span it.
+    const pts: [number, number][] = [
+        [box.left + w / 2, box.top + h / 2],
+        [box.left + 2, box.top + 2], [box.left + w - 2, box.top + 2],
+        [box.left + 2, box.top + h - 2], [box.left + w - 2, box.top + h - 2],
+    ];
+    for (const [vx, vy] of pts) {
+        const lx = vx - offset.x, ly = vy - offset.y;   // top-viewport point → this doc's local coords
+        let el: Element | null = null;
+        try { el = doc.elementFromPoint(lx, ly); } catch { el = null; }
+        if (el && el.tagName === "IFRAME") {
+            const inner = sameOriginFrameDoc(el);   // cross-origin → null → its text is undetectable here
+            if (!inner) continue;
+            const fr = el.getBoundingClientRect();
+            if (boxIntersectsText(box, inner, { x: offset.x + fr.left, y: offset.y + fr.top })) return true;
+            continue;
+        }
+        const node = caretNodeAt(lx, ly);
+        if (!node || node.nodeType !== 3 || !((node.textContent || "").trim())) continue;
+        // A caret can resolve to a text node whose VISIBLE glyphs are elsewhere on the line — confirm a
+        // real character rect overlaps the box before warning.
+        let rects: DOMRectList;
+        try { const rr = doc.createRange(); rr.selectNodeContents(node); rects = rr.getClientRects(); } catch { continue; }
+        for (const r of Array.from(rects)) {
+            if (r.width < 1 || r.height < 1) continue;
+            const rl = r.left + offset.x, rt = r.top + offset.y;   // back to top-viewport coords
+            if (rl < box.left + w && rl + r.width > box.left && rt < box.top + h && rt + r.height > box.top) return true;
+        }
+    }
+    return false;
+};
+
 /**
  * One compact line for an element: tag#id.classes [data-*] "own text" (own text
  * only — never descendants' text or innerHTML). Shared by describeSkeleton and

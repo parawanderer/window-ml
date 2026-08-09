@@ -21,7 +21,7 @@ export interface ToolMeta { name: string; requiresApproval?: boolean; capabiliti
 // executor's world (page-side for the delegated path) so the emitter can show a rendered In/Out.
 // `image` is a screenshot a vision tool (native `look`) captured — INLINE VISION: it's injected into
 // the model's next turn as a user image (via pushToolImages) so the model reasons over the real pixels.
-export interface ToolRunResult { result: string; elements?: unknown[]; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; image?: string; imageLabel?: string; feedback?: ToolFeedback; }
+export interface ToolRunResult { result: string; elements?: unknown[]; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; image?: string; imageLabel?: string; images?: { image: string; label?: string }[]; feedback?: ToolFeedback; }
 
 export interface AgentLoopDeps {
     // One model turn → the assistant message (content + normalized tool_calls + usage + the separate
@@ -299,6 +299,8 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             deps.emit?.({ step, seq: s, tool: call.name, arguments: args, result, approval, renderIn: tr?.renderIn, renderOut: tr?.renderOut, feedback: tr?.feedback, elements: tr?.elements });   // DONE (patches the START)
             deps.pushToolResult(messages, call, result);
             if (tr?.image) pendingImages.push({ image: tr.image, label: tr.imageLabel || "screenshot" });
+            // Multiple images from one call (look's overlay + no-overlay) → each becomes its own inline image.
+            if (tr?.images) for (const im of tr.images) pendingImages.push({ image: im.image, label: im.label || "screenshot" });
         }
         // Inline vision: hand any screenshots this step captured to the model as a user turn, so the
         // next step reasons over the real pixels (the native `look` path; a text-only driver omits the dep).
