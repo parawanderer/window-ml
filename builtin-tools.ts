@@ -301,7 +301,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 },
                 selector: {
                     type: "string",
-                    description: "Optional CONTAINER selector to crop scanning to (a modal, a list row) — better for a small target in a busy area. For a target on a <canvas>, pass the canvas's selector here. NOT the target's own selector. An `@pt:…` token also works: re-searches the box around that point with ANY strategy (e.g. grid inside a point)."
+                    description: "Optional CONTAINER selector to crop scanning to (a modal, a list row) — better for a small target in a busy area. For a target on a <canvas>, pass the canvas's selector here. For iframes or shadow roots, pass a selector to the iframe or shadow root parent element here! NOT the target's own selector. An `@pt:…` token also works: re-searches the box around that point with ANY strategy (e.g. grid inside a point)."
                 },
                 index: {
                     type: "integer",
@@ -969,25 +969,33 @@ const VERIFY_MARGIN = 150;
 // locate's snap-inject (vision driver → inline image; text-only → delegated description + the click-mark
 // note). `mutated` = the target vanished after the action (the page changed) → the crop is centred on the
 // element's PRE-action spot and annotated as such. Never automatic — only when the caller sets verify:true.
-async function verifyAfterAction(ml: MlApi, ctx: ToolContext | undefined, center: { x: number; y: number }, mutated: boolean, verb: string): Promise<Partial<ToolResult>> {
+// A passed-in verify capability (built with `ml` where it's available) so the PURE domTools (wait, in
+// tools.ts, which have no `ml`) can verify too — without depending on ml directly.
+export type VerifyArea = (ctx: ToolContext | undefined, center: { x: number; y: number } | null, verb: string, mutated?: boolean) => Promise<Partial<ToolResult>>;
+export async function captureVerify(ml: MlApi, ctx: ToolContext | undefined, center: { x: number; y: number } | null, verb: string, mutated = false): Promise<Partial<ToolResult>> {
     const driverSees = !!ctx?.driverSees;
     const reader = ctx?.visionModel || null;
     if (!driverSees && !reader) return { content: "\n\n(verify was requested, but no vision model is available to capture the result — read it with look/findByText next.)" };
-    const token = mintPoint(center.x, center.y);
+    // An element/point action → a marked @pt crop of the general AREA around it; a `wait` (center null) → the
+    // whole viewport (area-first: you verify the settled page, not the thing you waited on).
     let crop: string;
-    try { crop = await ml.screenshot(token, { margin: VERIFY_MARGIN }); } catch { return {}; }   // capture failed → no verify, base result stands
-    const mutNote = mutated
+    try { crop = center ? await ml.screenshot(mintPoint(center.x, center.y), { margin: VERIFY_MARGIN }) : await ml.screenshot(null, {}); }
+    catch { return {}; }   // capture failed → no verify, base result stands
+    const areaNote = mutated
         ? `The element you acted on is GONE — the page changed. This is the AREA where it was (the box marks the spot).`
-        : `This is the area around where you ${verb} (the box marks the spot).`;
-    const reason = mutated ? "after the action — target changed" : "after the action";
-    if (driverSees) return { content: `\n\n↑ ${mutNote} Read the result and continue — no need to look() first.`, image: crop, imageLabel: reason, feedback: { reason, via: "image", image: crop } };
-    // Text-only driver: the reader describes the crop; the driver gets words.
-    const question = `The image is a crop of the page just AFTER a "${verb}" action. Describe what is now shown at and around the marked spot — especially anything that CHANGED (a menu/panel/result that appeared, a new field value, a navigation).`;
-    const prompt = `${question}${CLICK_MARK_NOTE}`;
+        : center ? `This is the area around where you ${verb} (the box marks the spot).`
+            : `The page settled — here's the current viewport.`;
+    const reason = mutated ? "after the action — target changed" : center ? "after the action" : "after wait";
+    if (driverSees) return { content: `\n\n↑ ${areaNote} Read the result and continue — no need to look() first.`, image: crop, imageLabel: reason, feedback: { reason, via: "image", image: crop } };
+    // Text-only driver: the reader describes the crop; the driver gets words. The click-mark note only applies
+    // to a MARKED crop (an @pt) — a plain viewport (wait) has no annotation box on it.
+    const question = center
+        ? `The image is a crop of the page just AFTER a "${verb}" action. Describe what is now shown at and around the marked spot — especially anything that CHANGED (a menu/panel/result that appeared, a new field value, a navigation).${CLICK_MARK_NOTE}`
+        : `The image is a screenshot of the page after it settled following a wait. Describe the current state — especially anything that just finished loading or changed.`;
     let desc: string;
-    try { desc = String(await ml.chat(prompt, { images: [crop], model: reader, maxTokens: 256, numCtx: VISION_NUM_CTX })).trim(); }
+    try { desc = String(await ml.chat(question, { images: [crop], model: reader, maxTokens: 256, numCtx: VISION_NUM_CTX })).trim(); }
     catch { return {}; }
-    return { content: `\n\n👁 ${mutNote} You can't see images, so this is ${reader || "the reader"}'s description of the crop:\n${desc}`, feedback: { reason, via: "text", text: desc, prompt, image: crop } };
+    return { content: `\n\n👁 ${areaNote} You can't see images, so this is ${reader || "the reader"}'s description:\n${desc}`, feedback: { reason, via: "text", text: desc, prompt: question, image: crop } };
 }
 // The viewport CENTRE of an element (composing iframe offsets), for a verify crop. null if it has no box.
 const elementCenter = (el: Element): { x: number; y: number } | null => {
@@ -1054,7 +1062,7 @@ export const buildClickTool = (ml: MlApi): MlTool => {
                 const after = (typeof location !== "undefined" && location.href) || "";
                 const nav = after && after !== before ? ` Navigated to ${after}.` : "";
                 const base = `Clicked at (${pt.x}, ${pt.y}) on ${elLine(hit)}.${nav} Page title: ${truncate(document.title || "", 80)}.${repeatPointHint(token)}`;
-                if (verify) { const v = await verifyAfterAction(ml, ctx, { x: pt.x, y: pt.y }, false, "clicked"); return { content: base + (v.content || ""), image: v.image, imageLabel: v.imageLabel, feedback: v.feedback }; }
+                if (verify) { const v = await captureVerify(ml, ctx, { x: pt.x, y: pt.y }, "clicked"); return { content: base + (v.content || ""), image: v.image, imageLabel: v.imageLabel, feedback: v.feedback }; }
                 return `${base} Re-run look to see the result.`;
             }
             const el = queryAll(selector)[index]!;   // precheck confirmed it matches
@@ -1070,7 +1078,7 @@ export const buildClickTool = (ml: MlApi): MlTool => {
                 // Re-resolve: center on the element's CURRENT spot if it survived, else its pre-action spot (mutated).
                 let center = preCenter, mutated = false;
                 try { const now = queryAll(selector)[index]; const c = (now && isElement(now)) ? elementCenter(now) : null; if (c) center = c; else mutated = true; } catch { mutated = true; }
-                if (center) { const v = await verifyAfterAction(ml, ctx, center, mutated, "clicked"); return { content: base + (v.content || ""), image: v.image, imageLabel: v.imageLabel, feedback: v.feedback }; }
+                if (center) { const v = await captureVerify(ml, ctx, center, "clicked", mutated); return { content: base + (v.content || ""), image: v.image, imageLabel: v.imageLabel, feedback: v.feedback }; }
             }
             return `${base} Re-run look/findByText to see the result.`;
         }
@@ -1142,7 +1150,7 @@ export const buildTypeTool = (ml: MlApi): MlTool => {
                 // Re-resolve: center on the field's CURRENT spot if it survived, else its pre-type spot (submit navigated it away → mutated).
                 let center = preCenter, mutated = false;
                 try { const now = queryAll(selector)[index]; const c = (now && isElement(now)) ? elementCenter(now) : null; if (c) center = c; else mutated = true; } catch { mutated = true; }
-                if (center) { const v = await verifyAfterAction(ml, ctx, center, mutated, "typed"); return { content: base + (v.content || ""), image: v.image, imageLabel: v.imageLabel, feedback: v.feedback }; }
+                if (center) { const v = await captureVerify(ml, ctx, center, "typed", mutated); return { content: base + (v.content || ""), image: v.image, imageLabel: v.imageLabel, feedback: v.feedback }; }
             }
             return `${base} Re-run look/findByText to see the result.`;
         }

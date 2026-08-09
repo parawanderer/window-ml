@@ -45,7 +45,7 @@ import { makeDomTools } from "./tools";
 import { hideSidebarForShot, makeBackgroundTaskPromise, makeChatRequest, makeStreamingTaskPromise } from "./bridge";
 import { validateArgs, validateExtend } from "./validate";
 import { renderArgs, logStep, defaultApprove, normalizeApproval, formatReadonlyExec } from "./approval";
-import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPythonTool, targetRender } from "./builtin-tools";
+import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPythonTool, targetRender, captureVerify } from "./builtin-tools";
 import { pyVarNameError } from "./python-env";
 import { autoApprovePython } from "./auto-approve";
 import { executeTool, toolContext } from "./tool-exec";
@@ -1817,7 +1817,10 @@ class AgentHandle implements MlAgentHandle, AgentControl {
     // Generic, page-agnostic DOM introspection + escape-hatch tools; defined in
     // tools.ts. Pass this array (or a superset — `[...ml.domTools, myTool]`) to
     // ml.agent. defineTool is detached (this-free), so pass it directly.
-    window.ml.domTools = makeDomTools(window.ml.defineTool);
+    // Pass a `verifyArea` capability (closes over ml) so the pure `wait` domTool can `verify` too — the
+    // domTools stay ml-free; they just receive this function. center=null → a viewport shot (wait is area-first).
+    window.ml.domTools = makeDomTools(window.ml.defineTool,
+        (ctx, center, verb, mutated) => captureVerify(window.ml as unknown as MlApi, ctx, center, verb, mutated));
 
     // listen for the background loop's delegated tool-run requests (relayed by content.ts
     // as PAGE_TOOL_RUN). A no-op until an agent run registers a toolset via _registerRun.

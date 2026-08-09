@@ -235,9 +235,14 @@ inline image; text-only → a delegated describe + `CLICK_MARK_NOTE`), as a `Too
 `ToolFeedback` render. It targets the SAME element acted on — **but if that element vanished after the
 action** (re-resolve misses → the page mutated: a button that removed itself, a form that navigated), it
 falls back to the element's **pre-action centre** and annotates the crop "the element you acted on is
-GONE — the page changed" (`elementCenter` captures the centre BEFORE the action for exactly this). No
-builtin `wait` tool exists yet, so `verify` there is a follow-up (wait would be area-first — not tied to
-the waited element). Tested in `tests/agent.test.js` (native / delegated / mutated).
+GONE — the page changed" (`elementCenter` captures the centre BEFORE the action for exactly this). The
+shared helper is `captureVerify(ml, ctx, center, verb, mutated?)` — **`center: null` → a whole-VIEWPORT
+shot** (no click-mark, no `CLICK_MARK_NOTE`) instead of a crop. `wait` (a PURE domTool in tools.ts, no
+`ml`) also takes `verify` and is **area-first** (you verify the settled page, not the element you waited
+on): it can't reach `captureVerify` directly, so `makeDomTools(defineTool, verifyArea?)` receives an
+ml-backed `VerifyArea` closure (built in injected.ts) — keeping the domTools ml-free. Tested in
+`tests/agent.test.js` (click/type native / delegated / mutated / no-vision; wait viewport native /
+delegated-no-mark).
 
 **Agent self-knowledge (`agent_api_docs`).** The agent had none: asked "how do I call you
 from the console?" it answered from pre-training ("try typing `window`…"), because nothing in

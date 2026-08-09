@@ -5,6 +5,7 @@
 // (detached, `this`-free) `defineTool` and returns the array.
 
 import type { MlTool, ToolResult, ToolContext } from "./contract";
+import type { VerifyArea } from "./builtin-tools";
 import { truncate, clipOut, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, deepQueryAll, closedShadowHosts, frameHostOf, selectorError } from "./dom";
 import { INTERACTIVE_SEL, roleOf, accessibleName, placeholderText, ariaState, hasLayout, styleHidden, isFaded } from "./a11y";
 import { pageContext, browserInfo, agentState } from "./util";
@@ -112,7 +113,7 @@ const shadowScanNote = (ctx?: ToolContext): string => {
 
 // Pass this array (or a superset — `[...ml.domTools, myTool]`) to ml.agent. Each
 // tool returns a short string; observations never balloon into raw HTML.
-export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): MlTool[] => {
+export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, verifyArea?: VerifyArea): MlTool[] => {
     const T = defineTool;
     return [
         T({
@@ -576,10 +577,18 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
                 properties: {
                     selector: { type: "string", description: "Wait until an element matching this appears (up to `timeout`)." },
                     ms: { type: "integer", description: "Fixed pause in milliseconds (used when no selector; default 500)." },
-                    timeout: { type: "integer", description: "Max wait for a selector, in ms (default 5000)." }
+                    timeout: { type: "integer", description: "Max wait for a selector, in ms (default 5000)." },
+                    verify: { type: "boolean", description: "Set true if you'd call look() right after — it returns a screenshot of the settled VIEWPORT in THIS call, so you skip the separate look and see the updated page immediately." }
                 }
             },
-            run: async ({ selector, ms, timeout = 5000 }: { selector?: string; ms?: number; timeout?: number } = {}): Promise<string> => {
+            run: async ({ selector, ms, timeout = 5000, verify = false }: { selector?: string; ms?: number; timeout?: number; verify?: boolean } = {}, ctx?: ToolContext): Promise<string | ToolResult> => {
+                // After the wait settles, optionally fold in a viewport screenshot (area-first: you verify the
+                // settled PAGE, not the element you waited on). `verifyArea` is null-center → a plain viewport shot.
+                const withVerify = async (base: string): Promise<string | ToolResult> => {
+                    if (!verify || !verifyArea) return base;
+                    const v = await verifyArea(ctx, null, "wait");
+                    return { content: base + (v.content || ""), image: v.image, imageLabel: v.imageLabel, feedback: v.feedback };
+                };
                 if (selector) {
                     const cap = Math.min(Math.max(timeout | 0, 0) || 5000, 30000);
                     const has = () => { try { return queryAll(selector).length > 0; } catch { return false; } };
@@ -592,13 +601,13 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool): Ml
                         catch { finish(false); return; }
                         const timer = setTimeout(() => finish(false), cap);
                     });
-                    return appeared
-                        ? `"${selector}" appeared after ${Date.now() - start}ms. Re-run look/findByText to see the updated page.`
-                        : `Timed out after ${cap}ms waiting for "${selector}" — it did not appear.`;
+                    return withVerify(appeared
+                        ? `"${selector}" appeared after ${Date.now() - start}ms.${verify ? "" : " Re-run look/findByText to see the updated page."}`
+                        : `Timed out after ${cap}ms waiting for "${selector}" — it did not appear.`);
                 }
                 const dur = Math.min(typeof ms === "number" && ms > 0 ? ms : 500, 30000);
                 await new Promise(r => setTimeout(r, dur));
-                return `Waited ${dur}ms. Re-run look/findByText to see any updates.`;
+                return withVerify(`Waited ${dur}ms.${verify ? "" : " Re-run look/findByText to see any updates."}`);
             }
         }),
         T({

@@ -452,7 +452,7 @@ test("click verify (text-only driver): describes the crop via the reader + the c
     assert.equal(res.feedback.via, "text", "feedback is a text description");
     assert.match(res.feedback.text, /dropdown opened/, "the reader's description rides along");
     assert.match(asked, /added to this image BY THE TOOL|NOT a real UI control/i, "the describe prompt carries the click-mark annotation note");
-    assert.match(res.content, /description of the crop/i);
+    assert.match(res.content, /vlm's description/i, "the content frames the reply as the reader's description");
 });
 
 test("click verify: a self-removing element is flagged MUTATED (area centered on where it was)", async () => {
@@ -482,6 +482,30 @@ test("verify without a vision model → no capture, an honest note (never crashe
     const res = await ml.clickTool().run({ selector: "#b", verify: true }, { driverSees: false, visionModel: null, hasTool: () => false });
     const s = typeof res === "string" ? res : res.content;
     assert.match(s, /no vision model/i, "notes that verify couldn't run — no image/describe attempted");
+});
+
+test("wait verify (vision driver): folds a settled-VIEWPORT screenshot in (area-first, not the waited element)", async () => {
+    const { ml, document } = loadDomWorld('<div id="x">here</div>');
+    ml.screenshot = async (target) => { assert.equal(target, null, "wait verify screenshots the whole VIEWPORT (null target), not a crop"); return "data:image/png;base64,VIEW"; };
+    const wait = ml.domTools.find(t => t.name === "wait");
+    const res = await wait.run({ selector: "#x", verify: true }, visionCtx(true));   // #x already present → appears immediately
+    assert.equal(res.image, "data:image/png;base64,VIEW", "the viewport is injected as an inline image");
+    assert.equal(res.feedback.via, "image");
+    assert.match(res.content, /appeared/, "the base wait result is still there");
+    assert.match(res.content, /viewport/i, "and the note frames it as the settled viewport");
+});
+
+test("wait verify (text-only): describes the settled viewport WITHOUT the click-mark note (no marked box)", async () => {
+    const { ml } = loadDomWorld('<p>hi</p>');
+    ml.screenshot = async () => "data:image/png;base64,VIEW";
+    let asked = "";
+    ml.chat = async (p) => { asked = p; return "the search results finished loading"; };
+    const wait = ml.domTools.find(t => t.name === "wait");
+    const res = await wait.run({ ms: 5, verify: true }, visionCtx(false));
+    assert.equal(res.feedback.via, "text");
+    assert.match(res.feedback.text, /results finished loading/);
+    assert.match(res.content, /Waited 5ms/, "the base ms-wait result is still there");
+    assert.doesNotMatch(asked, /click point|added to this image BY THE TOOL/i, "a viewport (unmarked) describe carries NO click-mark note");
 });
 
 test("shadow DOM: pierceClosedShadow lets the DOM tools reach a CLOSED root the document_start patch captured", () => {
