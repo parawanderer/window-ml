@@ -986,7 +986,7 @@ export async function captureVerify(ml: MlApi, ctx: ToolContext | undefined, cen
         : center ? `This is the area around where you ${verb} (the box marks the spot).`
             : `The page settled — here's the current viewport.`;
     const reason = mutated ? "after the action — target changed" : center ? "after the action" : "after wait";
-    if (driverSees) return { content: `\n\n↑ ${areaNote} Read the result and continue — no need to look() first.`, image: crop, imageLabel: reason, feedback: { reason, via: "image", image: crop } };
+    if (driverSees) return { content: `\n\n ${areaNote} Read the result and continue — no need to look() first.`, image: crop, imageLabel: reason, feedback: { reason, via: "image", image: crop } };
     // Text-only driver: the reader describes the crop; the driver gets words. The click-mark note only applies
     // to a MARKED crop (an @pt) — a plain viewport (wait) has no annotation box on it.
     const question = center
