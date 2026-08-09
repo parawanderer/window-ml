@@ -532,9 +532,9 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 // its MIDDLE and, if not, re-snap this SAME point (grounding around it) instead of clicking a
                 // near-miss — the re-locate loop, now with an explicit trigger tied to the image it's looking at.
                 const reSnap = o.kind === "pt"
-                    ? ` If the target is NOT centred under it, do NOT click — re-snap this SAME point: locate({ selector: "${o.target}", strategy: "grounding", margin: 60, description: "<the target's appearance>" }), then verify again.`
+                    ? ` If the target is NOT centred under it, do NOT click — if you can see the element in the image then you can directly re-snap this **SAME** point using this **EXACT** call (which is more precise than doing a new 'locate' call from scratch!!!): locate({ selector: "${o.target}", strategy: "grounding", margin: 60, description: "<the target's appearance>" }), then verify again.`
                     : "";
-                if (driverSees) return { ...base, content: base.content + `\n\n↑ Marked crop shown above.${o.kind === "pt" ? ` Confirm "${truncate(description, 50)}" sits under the MIDDLE of the box labelled "click point".` : ""} If it's on target, act now (no need to look() first).${reSnap}`, image: sent, imageLabel: o.label, feedback: { reason, via: "image", image: sent, label: o.label } };
+                if (driverSees) return { ...base, content: base.content + `\n\n Marked crop shown in the next prompt.${o.kind === "pt" ? ` Confirm "${truncate(description, 50)}" sits under the MIDDLE of the box labelled "click point".` : ""} If it's on target, act now (no need to look() first).${reSnap}`, image: sent, imageLabel: o.label, feedback: { reason, via: "image", image: sent, label: o.label } };
                 // Text-only driver: the reader describes the crop; the driver gets words, not the image.
                 const describePrompt = `Describe concisely what is at the marked spot on this crop — its colour, shape, and any text — so I can tell whether it's the "${truncate(description, 60)}" I asked for.${CLICK_MARK_NOTE}`;
                 let desc: string;
