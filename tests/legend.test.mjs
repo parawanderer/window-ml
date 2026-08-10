@@ -148,6 +148,23 @@ test("regionLegend: a cross-origin iframe boundary names its SELECTOR + @pt", ()
     assert.match(b, /@pt/, "tells the model to locate → @pt");
 });
 
+test("regionLegend: same-origin iframe TEXT is measured in TOP-viewport coords (composes the frame offset)", () => {
+    // The bug: visibleText measured words with Range.getBoundingClientRect (iframe-LOCAL), but the crop box
+    // is top-viewport — so an iframe's text (e.g. a revealed secret) never matched the box and was dropped,
+    // even though its CONTROL showed (controls use viewportRect, which composes the offset).
+    const win = mountDom(`<iframe id="f"></iframe>`);
+    const iframe = win.document.getElementById("f");
+    iframe.getBoundingClientRect = () => ({ left: 200, top: 100, right: 400, bottom: 300, width: 200, height: 200 });
+    const idoc = iframe.contentDocument;
+    idoc.body.innerHTML = `<p id="s">SAME-1234</p>`;
+    idoc.getElementById("s").getBoundingClientRect = () => ({ left: 5, top: 5, right: 90, bottom: 25, width: 85, height: 20 });   // iframe-LOCAL
+    iframe.contentWindow.Range.prototype.getBoundingClientRect = () => ({ left: 6, top: 6, right: 80, bottom: 24, width: 74, height: 18 });   // iframe-LOCAL word rect
+    // Crop is in TOP-viewport coords, over where the iframe text actually renders (composed ≈ 205,105) — it
+    // does NOT cover the iframe-local (5,5), so without the offset fix the word wouldn't match.
+    const lg = regionLegend({ left: 190, top: 90, right: 340, bottom: 240 });
+    assert.ok(lg.text.some(t => t.text === "SAME-1234"), `the iframe's text is anchored in top-viewport space (got ${JSON.stringify(lg.text)})`);
+});
+
 test("regionLegend: prose is NOT anchored (models read paragraphs from the image)", () => {
     mountDom(`<p id="long">${"word ".repeat(40)}</p>`);   // ~200 chars → over the prose limit
     const lg = regionLegend(SMALL);
@@ -166,4 +183,34 @@ test("regionLegend: an out-of-view box yields nothing (→ formatLegend suppress
     const lg = regionLegend({ left: 5000, top: 5000, right: 5100, bottom: 5100 });
     assert.equal(lg.controls.length + lg.media.length + lg.text.length + lg.boundaries.length, 0);
     assert.equal(formatLegend(lg), "");
+});
+
+// --- EXACT thresholds: the precise point where text anchoring stops -----------------------------------
+// These pin the cutoffs so they can't silently drift. MIN_VERT is pure (clipVisibleText); the rest exercise
+// regionLegend where the constant lives (jsdom stubs every word-rect in-box, so the full text is measured).
+
+test("threshold MIN_VERT (0.5): exactly half the height inside is KEPT; a hair less is dropped", () => {
+    // word line is y 0–20 (height 20); coverage = (20 − box.top) / 20.
+    assert.equal(clipVisibleText(SENT, W, { left: 0, top: 10, right: 300, bottom: 999 }), "hello world I am me", "top=10 → 50% → kept");
+    assert.equal(clipVisibleText(SENT, W, { left: 0, top: 11, right: 300, bottom: 999 }), "", "top=11 → 45% → dropped");
+});
+
+test("threshold MIN_ANCHOR (4): a 4-char anchor shows, a 3-char one is too little to bother with", () => {
+    mountDom(`<p id="p3">abc</p><p id="p4">abcd</p>`);
+    const lg = regionLegend(SMALL);
+    assert.ok(!lg.text.some(t => t.selector === "#p3"), "3 chars → dropped");
+    assert.ok(lg.text.some(t => t.selector === "#p4" && t.text === "abcd"), "4 chars → kept");
+});
+
+test("threshold PROSE_MAX (160): 160 chars still anchors (clamped to 80+…); 161 is skipped as prose", () => {
+    mountDom(`<p id="p160">${"a".repeat(160)}</p><p id="p161">${"a".repeat(161)}</p>`);
+    const lg = regionLegend(SMALL);
+    assert.ok(lg.text.some(t => t.selector === "#p160"), "160 → anchored");
+    assert.ok(!lg.text.some(t => t.selector === "#p161"), "161 → skipped (prose, read it from the image)");
+});
+
+test("threshold WIDE_FRAC (0.55): a crop under 55% of the viewport anchors text; at/over it drops ALL text", () => {
+    mountDom(`<p id="t">read me</p>`);   // window is 800×600 = 480000; 55% = 264000
+    assert.ok(regionLegend({ left: 0, top: 0, right: 700, bottom: 375 }).text.some(t => t.selector === "#t"), "700×375 = 262500 (<55%) → text kept");
+    assert.equal(regionLegend({ left: 0, top: 0, right: 700, bottom: 378 }).text.length, 0, "700×378 = 264600 (≥55%) → wide, no text");
 });

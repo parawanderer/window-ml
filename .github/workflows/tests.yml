@@ -46,6 +46,16 @@ jobs:
         with:
           name: legend-notebook-node${{ matrix.node }}
           path: tools/legend-notebook.html
+      # On failure, surface the notebook on the run's SUMMARY page (markdown, hard to miss) — otherwise the
+      # artifact is just listed at the bottom with nothing telling you it's the way to debug a red clip-case.
+      - name: Point to the notebook on failure
+        if: failure()
+        run: |
+          {
+            echo "### ❌ Tests failed on Node ${{ matrix.node }}"
+            echo ""
+            echo "If a **legend** word-clipping case is red, download the **\`legend-notebook-node${{ matrix.node }}\`** artifact from this run (Artifacts, below) and open \`legend-notebook.html\` — the failing cell shows the words, the crop box, and expected-vs-actual. The assertion itself is in the \`npm test\` step log above."
+          } >> "$GITHUB_STEP_SUMMARY"
 
   # Build the loadable extension and upload it, so users can grab a ready-to-load
   # dist/ from any run instead of building locally (the extension now needs a build).

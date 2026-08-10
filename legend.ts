@@ -55,6 +55,11 @@ export function clipVisibleText(text: string, words: { start: number; end: numbe
 function visibleText(el: Element, box: Box): string {
     const doc = el.ownerDocument;
     if (!doc) return "";
+    // Range.getBoundingClientRect returns coords in the ELEMENT's OWN document — iframe-LOCAL for a
+    // same-origin frame — but `box` is top-viewport. Compose the frame offset (the same one viewportRect
+    // folds in) so an iframe's text is measured against the crop correctly. 0 for a top-doc element.
+    let ox = 0, oy = 0;
+    try { const cr = el.getBoundingClientRect(), vr = viewportRect(el); ox = vr.left - cr.left; oy = vr.top - cr.top; } catch { /* detached — leave uncomposed */ }
     const range = doc.createRange();
     const words: { start: number; end: number; rect: Box }[] = [];
     let flat = "";
@@ -66,7 +71,7 @@ function visibleText(el: Element, box: Box): string {
                 while ((m = re.exec(txt))) {
                     try { range.setStart(c, m.index); range.setEnd(c, m.index + m[0].length); } catch { continue; }
                     const r = range.getBoundingClientRect();
-                    words.push({ start: off + m.index, end: off + m.index + m[0].length, rect: { left: r.left, top: r.top, right: r.right, bottom: r.bottom } });
+                    words.push({ start: off + m.index, end: off + m.index + m[0].length, rect: { left: r.left + ox, top: r.top + oy, right: r.right + ox, bottom: r.bottom + oy } });
                 }
                 flat += txt;
             } else if (c.nodeType === 1 && shown(c as Element)) walk(c);
