@@ -13,7 +13,7 @@ const collapseWs = (s) => s.replace(/\s+/g, " ").trim();   // case-preserved, mi
 // exactly what the notebook shows. A red case in the notebook == a failure here.
 for (const c of CLIP_CASES) {
     test(`clip-case: ${c.title}`, () => {
-        assert.equal(clipVisibleText(c.text, toWords(c.text, c.spans), { left: c.box[0], top: 0, right: c.box[1], bottom: 20 }), c.expect);
+        assert.equal(clipVisibleText(c.text, toWords(c.text, c.spans), { left: c.box[0], top: c.box[1], right: c.box[2], bottom: c.box[3] }), c.expect);
     });
 }
 
@@ -62,6 +62,12 @@ test("clipVisibleText: over-long visible run is word-truncated with a trailing �
 test("clipVisibleText: uses U+2026, never ...", () => {
     const out = clipVisibleText(SENT, W, { left: 55, top: 0, right: 135, bottom: 20 });
     assert.ok(out.includes("…") && !out.includes("..."));
+});
+test("clipVisibleText: a line the crop clips >50% VERTICALLY is dropped (unreadable sliver)", () => {
+    // words on the y 0–20 line; a crop whose TOP edge is at 12 leaves only the bottom 40% → dropped
+    assert.equal(clipVisibleText(SENT, W, { left: 0, top: 12, right: 300, bottom: 40 }), "");
+    // ≥50% of the height inside → kept
+    assert.equal(clipVisibleText(SENT, W, { left: 0, top: 8, right: 300, bottom: 40 }), "hello world I am me");
 });
 
 // --- formatLegend (pure): grouped lines + suppress-empty --------------------------------------------

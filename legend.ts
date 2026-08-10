@@ -16,7 +16,10 @@ const MAX_CONTROLS = 10, MAX_MEDIA = 5, MAX_TEXT = 5, MAX_FRAMES = 3, TOTAL_BUDG
 // PROSE_LEN caps a single anchor's displayed length (a long visible run truncates with …). PROSE_MAX skips
 // an element whose FULL text is clearly a paragraph — anchoring even a clipped slice of prose is noise; the
 // model reads prose from the image. MIN_ANCHOR drops a run too short to bother with (an edge sliver).
-const PROSE_LEN = 80, PROSE_MAX = 160, MIN_ANCHOR = 4, WIDE_FRAC = 0.55;
+// MIN_VERT: a word must be at least this fraction inside the crop VERTICALLY to count. Horizontally we keep
+// a word on any overlap (to complete a cut word), but a line the crop clips top/bottom — only a sliver of the
+// letters showing — isn't readable, so it's dropped (the "only the bottom of the heading is in the crop" case).
+const PROSE_LEN = 80, PROSE_MAX = 160, MIN_ANCHOR = 4, WIDE_FRAC = 0.55, MIN_VERT = 0.5;
 
 const boxIntersects = (r: { left: number; top: number; right: number; bottom: number } | null, box: Box): boolean =>
     !!r && r.right > r.left && r.bottom > r.top && r.left < box.right && r.right > box.left && r.top < box.bottom && r.bottom > box.top;
@@ -31,7 +34,14 @@ const shown = (el: Element): boolean => { try { return !styleHidden(el) && !isFa
  * unit-testable without a layout engine. "" if nothing is in the box.
  */
 export function clipVisibleText(text: string, words: { start: number; end: number; rect: Box }[], box: Box, maxLen = PROSE_LEN): string {
-    const inIdx = words.map((w, i) => (boxIntersects(w.rect, box) ? i : -1)).filter(i => i >= 0);
+    // Kept if it overlaps horizontally (any — complete a cut word) AND is ≥ MIN_VERT inside vertically (a
+    // line clipped top/bottom to a sliver is unreadable → dropped).
+    const kept = (r: Box): boolean => {
+        if (!(r.right > box.left && r.left < box.right)) return false;
+        const h = r.bottom - r.top;
+        return h > 0 && (Math.max(0, Math.min(r.bottom, box.bottom) - Math.max(r.top, box.top)) / h) >= MIN_VERT;
+    };
+    const inIdx = words.map((w, i) => (kept(w.rect) ? i : -1)).filter(i => i >= 0);
     if (!inIdx.length) return "";
     const first = inIdx[0], last = inIdx[inIdx.length - 1];
     let core = text.slice(words[first].start, words[last].end).replace(/\s+/g, " ").trim();
