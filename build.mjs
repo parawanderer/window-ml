@@ -8,6 +8,7 @@
 import * as esbuild from "esbuild";
 import { cpSync, rmSync, mkdirSync, existsSync, readdirSync } from "node:fs";
 import { generatePreview } from "./tools/preview-annotate.mjs";
+import { generatePreview as generateLegendPreview } from "./tools/preview-legend.mjs";
 import { writeApiDocs } from "./scripts/gen-api-docs.mjs";
 
 // output name (dist/<name>.js)  ->  source entry
@@ -121,8 +122,10 @@ if (watch) {
     copyAssets();
     copyPyodide();
     copyKatexFonts();
-    // Regenerate the standalone visual preview of locate's canvas annotate() (gitignored —
-    // it's a build artifact). Open tools/annotate-preview.html to eyeball label placement.
+    // Regenerate the standalone visual previews (gitignored build artifacts): locate's canvas
+    // annotate() label placement, and the legend word-clipping "visual test" notebook (CI uploads
+    // the latter so a failing legend case can be reviewed by eye). Open the HTMLs in a browser.
     await generatePreview();
-    console.log("built dist/ (+ tools/annotate-preview.html)");
+    await generateLegendPreview();
+    console.log("built dist/ (+ tools/annotate-preview.html, tools/legend-notebook.html)");
 }

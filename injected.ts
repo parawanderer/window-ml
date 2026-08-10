@@ -45,7 +45,7 @@ import { makeDomTools } from "./tools";
 import { hideSidebarForShot, makeBackgroundTaskPromise, makeChatRequest, makeStreamingTaskPromise } from "./bridge";
 import { validateArgs, validateExtend } from "./validate";
 import { renderArgs, logStep, defaultApprove, normalizeApproval, formatReadonlyExec } from "./approval";
-import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPythonTool, targetRender, captureVerify, lookViews, BOX_OVER_TEXT_TIP, VIEWS_PARAM } from "./builtin-tools";
+import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPythonTool, targetRender, captureVerify, lookViews, BOX_OVER_TEXT_TIP, VIEWS_PARAM, legendFor } from "./builtin-tools";
 import { pyVarNameError } from "./python-env";
 import { autoApprovePython } from "./auto-approve";
 import { executeTool, toolContext } from "./tool-exec";
@@ -1620,13 +1620,16 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     // Targeted no-overlay nudge — only when the box was DETECTED over text AND a clean copy wasn't already sent.
                     const overTextTip = crossesText && shots.length === 1 ? BOX_OVER_TEXT_TIP : "";
                     const multi = shots.length > 1 ? ` (${shots.length} crops: ${shots.map(s => s.label).join(" · ")})` : "";
+                    // DOM legend of what's IN this crop — actionable selectors beside the pixels. Skip for a
+                    // downscaled full-page overview (the model shouldn't act on tiny elements from it).
+                    const legend = fullPage ? "" : legendFor(selector || null, typeof margin === "number" ? margin : 0);
                     // Hand the screenshotted element back on the elements side-channel
                     // so it's hoverable in `logDebug`/`onStep` (never sent to the model).
                     // Guarded: a bad/stub-DOM selector just yields no node.
                     let elements;
                     if (selector) { try { const el = queryAll(selector)[index || 0]; if (el) elements = [el]; } catch {} }
                     return {
-                        content: `Screenshot of the ${label}${multi} captured — shown to you in the next message.${pointTip}${overTextTip}`,
+                        content: `Screenshot of the ${label}${multi} captured — shown to you in the next message.${pointTip}${overTextTip}${legend}`,
                         // One view → the single `image` shortcut; two → `images` (each injected as its own turn).
                         ...(shots.length > 1 ? { images: shots } : { image: shots[0].image, imageLabel: label }),
                         elements

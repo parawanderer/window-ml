@@ -34,6 +34,18 @@ jobs:
       - if: steps.pyocache.outputs.cache-hit != 'true'
         run: npm run fetch-pyodide
       - run: npm test
+      # The legend word-clipping "visual test" notebook — regenerate and upload it even when the run
+      # FAILED (if: always()), so a red clip-case can be reviewed by eye: download the artifact, open the
+      # HTML, and the failing cell shows the words, the crop box, and expected-vs-actual. Named per matrix
+      # leg (upload-artifact@v4 requires unique names).
+      - name: Legend visual-test notebook
+        if: always()
+        run: node tools/preview-legend.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: legend-notebook-node${{ matrix.node }}
+          path: tools/legend-notebook.html
 
   # Build the loadable extension and upload it, so users can grab a ready-to-load
   # dist/ from any run instead of building locally (the extension now needs a build).

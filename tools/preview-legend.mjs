@@ -1,0 +1,148 @@
+// A visual "notebook" for the legend's word-clipping (clipVisibleText) — the logic unit tests assert but
+// can't SHOW. It bundles the REAL legend.ts to a browser IIFE, inlines it + the SHARED cases
+// (tools/legend-cases.mjs), and renders each case: the words laid out, the crop box over them, which words
+// are kept vs dropped, and the actual clipVisibleText output next to the expected one with a PASS/FAIL
+// badge. Drag the crop's edges to explore. A red cell is a failing test you can literally look at.
+//
+//   node tools/preview-legend.mjs      # regenerate (always fresh against legend.ts)
+//   open tools/legend-notebook.html    # (or publish the same file as an artifact)
+import * as esbuild from "esbuild";
+import { writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { CLIP_CASES } from "./legend-cases.mjs";
+
+export async function generatePreview() {
+    // Real legend.ts → IIFE exposing window.legend (same code the extension + tests run).
+    const { outputFiles } = await esbuild.build({
+        entryPoints: ["legend.ts"], bundle: true, write: false, format: "iife",
+        globalName: "legend", target: ["chrome114"], logLevel: "silent",
+    });
+    const iife = outputFiles[0].text;
+
+    const page = /* html */ `<meta charset="utf-8"><title>legend word-clipping — visual tests</title>
+<style>
+  :root { --bg:#0d0d0f; --fg:#e5e5e7; --dim:#8a8a92; --line:#2a2a30; --card:#16161a; --kept:#37d67a; --drop:#4a4a52; --box:#c678dd; --ok:#37d67a; --bad:#ff5c6c; }
+  @media (prefers-color-scheme: light) { :root { --bg:#fbfbfc; --fg:#1a1a1e; --dim:#6a6a72; --line:#e3e3e8; --card:#fff; --drop:#c8c8d0; --box:#a626a4; } }
+  :root[data-theme="dark"] { --bg:#0d0d0f; --fg:#e5e5e7; --dim:#8a8a92; --line:#2a2a30; --card:#16161a; --drop:#4a4a52; --box:#c678dd; }
+  :root[data-theme="light"] { --bg:#fbfbfc; --fg:#1a1a1e; --dim:#6a6a72; --line:#e3e3e8; --card:#fff; --drop:#c8c8d0; --box:#a626a4; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 -apple-system, system-ui, sans-serif; }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 28px 20px 60px; }
+  h1 { font-size: 19px; margin: 0 0 4px; } .lede { color: var(--dim); margin: 0 0 20px; max-width: 68ch; }
+  .summary { font-weight: 600; padding: 8px 14px; border-radius: 8px; display: inline-block; margin-bottom: 22px; }
+  .summary.pass { background: color-mix(in srgb, var(--ok) 16%, transparent); color: var(--ok); }
+  .summary.fail { background: color-mix(in srgb, var(--bad) 16%, transparent); color: var(--bad); }
+  .cell { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; margin: 0 0 16px; }
+  .cell.bad { border-color: color-mix(in srgb, var(--bad) 55%, var(--line)); }
+  .cell-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+  .cell-title { font-weight: 600; font-size: 15px; }
+  .badge { margin-left: auto; font-size: 12px; font-weight: 700; padding: 2px 9px; border-radius: 999px; }
+  .badge.ok { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+  .badge.bad { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad); }
+  .note { color: var(--dim); font-size: 13px; margin: 0 0 12px; }
+  .stage { position: relative; height: 86px; margin: 6px 0 12px; user-select: none; }
+  .word { position: absolute; top: 30px; height: 26px; display: flex; align-items: center; justify-content: center;
+          font: 13px ui-monospace, monospace; border: 1.5px solid var(--drop); color: var(--dim); border-radius: 5px; background: transparent; }
+  .word.kept { border-color: var(--kept); color: var(--fg); background: color-mix(in srgb, var(--kept) 12%, transparent); }
+  .cbox { position: absolute; top: 18px; height: 50px; border: 2px solid var(--box); border-radius: 6px;
+          background: color-mix(in srgb, var(--box) 10%, transparent); }
+  .cbox .lbl { position: absolute; top: -19px; left: -2px; font-size: 11px; color: var(--box); font-weight: 700; }
+  .handle { position: absolute; top: -4px; width: 12px; height: 58px; cursor: ew-resize; }
+  .handle.l { left: -7px; } .handle.r { right: -7px; }
+  .io { display: grid; grid-template-columns: 84px 1fr; gap: 4px 12px; font: 13px ui-monospace, monospace; }
+  .io .k { color: var(--dim); } .io .v { white-space: pre-wrap; word-break: break-word; }
+  .io .v.expect { color: var(--dim); } .io .v.bad { color: var(--bad); }
+  .hint { color: var(--dim); font-size: 12px; margin-top: 8px; }
+</style>
+<div class="wrap">
+  <h1>legend · word-clipping <span style="color:var(--dim);font-weight:400">(clipVisibleText)</span></h1>
+  <p class="lede">Each cell is a unit test, drawn. The grey boxes are the words at their on-screen positions; the
+  <span style="color:var(--box);font-weight:600">purple box</span> is the screenshot crop. Words whose rect touches the crop
+  are <span style="color:var(--kept);font-weight:600">kept whole</span> (a cut word is completed); the rest are dropped, and a
+  <b>…</b> marks each spill. <b>Drag the crop's edges</b> to explore — the anchor recomputes live via the real
+  <code>legend.clipVisibleText</code>. A red cell is a failing case.</p>
+  <div id="summary" class="summary"></div>
+  <div id="cells"></div>
+  <p class="hint">Regenerate with <code>node tools/preview-legend.mjs</code> — always fresh against legend.ts.</p>
+</div>
+<script>${iife}</script>
+<script>
+const CASES = ${JSON.stringify(CLIP_CASES)};
+const SCALE = 4, OX = 4;   // px per unit, left inset
+const px = u => OX + u * SCALE;
+function toWords(text, spans) {
+  const out = []; let i = 0; const re = /\\S+/g; let m;
+  while ((m = re.exec(text))) { const [l, r] = spans[i++]; out.push({ start: m.index, end: m.index + m[0].length, rect: { left: l, top: 0, right: r, bottom: 20 } }); }
+  return out;
+}
+const cells = document.getElementById("cells");
+let failed = 0;
+
+for (const c of CASES) {
+  const words = toWords(c.text, c.spans);
+  const cell = document.createElement("div"); cell.className = "cell";
+  cell.innerHTML = \`<div class="cell-head"><span class="cell-title"></span><span class="badge"></span></div>
+    <p class="note"></p><div class="stage"></div>
+    <div class="io"><span class="k">expected</span><span class="v expect"></span><span class="k">actual</span><span class="v actual"></span></div>\`;
+  cell.querySelector(".cell-title").textContent = c.title;
+  cell.querySelector(".note").textContent = c.note || "";
+  cell.querySelector(".v.expect").textContent = JSON.stringify(c.expect);
+  const stage = cell.querySelector(".stage");
+
+  // words
+  const wordEls = words.map((w, i) => {
+    const el = document.createElement("div"); el.className = "word";
+    el.style.left = px(w.rect.left) + "px"; el.style.width = (w.rect.right - w.rect.left) * SCALE + "px";
+    el.textContent = c.text.slice(w.start, w.end); stage.appendChild(el); return el;
+  });
+  // crop box with drag handles
+  const box = { left: c.box[0], right: c.box[1] };
+  const cbox = document.createElement("div"); cbox.className = "cbox";
+  cbox.innerHTML = '<span class="lbl">crop</span><div class="handle l"></div><div class="handle r"></div>';
+  stage.appendChild(cbox);
+  const actualEl = cell.querySelector(".v.actual"), badge = cell.querySelector(".badge");
+
+  function render() {
+    cbox.style.left = px(box.left) + "px"; cbox.style.width = (box.right - box.left) * SCALE + "px";
+    const b = { left: box.left, top: -1, right: box.right, bottom: 21 };
+    words.forEach((w, i) => wordEls[i].classList.toggle("kept", w.rect.right > b.left && w.rect.left < b.right));
+    const actual = legend.clipVisibleText(c.text, words, b);
+    actualEl.textContent = JSON.stringify(actual);
+    const ok = actual === c.expect;
+    // Only the ORIGINAL box counts toward pass/fail; dragging is exploration.
+    return ok;
+  }
+  const passOriginal = render();
+  badge.textContent = passOriginal ? "PASS" : "FAIL";
+  badge.classList.add(passOriginal ? "ok" : "bad");
+  if (!passOriginal) { cell.classList.add("bad"); cell.querySelector(".v.actual").classList.add("bad"); failed++; }
+
+  // drag
+  let drag = null;
+  cbox.querySelectorAll(".handle").forEach(h => h.addEventListener("pointerdown", e => {
+    drag = h.classList.contains("l") ? "left" : "right"; h.setPointerCapture(e.pointerId); e.preventDefault();
+  }));
+  stage.addEventListener("pointermove", e => {
+    if (!drag) return;
+    const u = Math.max(0, Math.round((e.clientX - stage.getBoundingClientRect().left - OX) / SCALE));
+    if (drag === "left") box.left = Math.min(u, box.right - 2); else box.right = Math.max(u, box.left + 2);
+    render();
+  });
+  window.addEventListener("pointerup", () => { drag = null; });
+  cells.appendChild(cell);
+}
+
+const s = document.getElementById("summary");
+s.textContent = failed ? (failed + " / " + CASES.length + " FAILING — review the red cells") : (CASES.length + " / " + CASES.length + " passing");
+s.classList.add(failed ? "fail" : "pass");
+</script>`;
+
+    const dest = "tools/legend-notebook.html";
+    writeFileSync(dest, page);
+    return dest;
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+    const dest = await generatePreview();
+    console.log("wrote " + dest + " — open it in a browser (or publish it as an artifact).");
+}

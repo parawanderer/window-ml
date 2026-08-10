@@ -9,6 +9,7 @@ import { DEFAULT_GROUNDING_RANGE } from "./contract";
 import { PY_PACKAGE_LABELS } from "./python-env";
 import { truncate, clipOut, errText, elLine, queryAll, selectorError, googleSheetCsvUrl, nonEmptyTables, capturedClosedRoot, isElement, viewportRect, boxIntersectsText } from "./dom";
 import { accessibleName } from "./a11y";
+import { regionLegend, formatLegend, type Box as LegendBox } from "./legend";
 
 // Cap on python_exec output (stdout / value / error) fed back to the model — bigger than
 // exec's 500 (data output legitimately runs longer) but still bounds a runaway result.
@@ -200,6 +201,26 @@ export async function lookViews(ml: MlApi, token: string, margin: number, views?
     return { images, crossesText };
 }
 
+/** The viewport box a screenshot of `target` cropped — viewport (null), an @pt neighbourhood, an @box
+ *  region, or an element's rect — so the DOM legend enumerates the SAME area the image shows. */
+function boxForTarget(target: string | null, margin: number): LegendBox | null {
+    if (!target) return typeof window !== "undefined" ? { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight } : null;
+    const t = target.trim();
+    if (POINT_RE.test(t)) { const p = resolvePoint(t); if (!p) return null; const R = margin > 0 ? margin : PT_LOOK_RADIUS; return { left: p.x - R, top: p.y - R, right: p.x + R, bottom: p.y + R }; }
+    if (BOX_RE.test(t)) { const b = resolveBox(t); if (!b) return null; return { left: b.left - 16, top: b.top - 16, right: b.right + 16, bottom: b.bottom + 16 }; }
+    const el = queryAll(target)[0]; if (!isElement(el)) return null; const r = viewportRect(el); return { left: r.left, top: r.top, right: r.right, bottom: r.bottom };
+}
+
+/** The formatted DOM legend for a screenshot target ("" when nothing notable / on any failure). Defensive:
+ *  a legend is a NICE-TO-HAVE annotation — it must never break a look/verify. */
+export function legendFor(target: string | null, margin = 0): string {
+    try { const box = boxForTarget(target, margin); return box ? formatLegend(regionLegend(box)) : ""; } catch { return ""; }
+}
+/** Same, for a caller that already has the viewport box (verify crops). */
+export function legendForBox(box: LegendBox | null): string {
+    try { return box ? formatLegend(regionLegend(box)) : ""; } catch { return ""; }
+}
+
 export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512, memory = null }: { model?: string | null; maxTokens?: number; memory?: VisionMemory | null } = {}): MlTool => {
     return ml.defineTool({
         name: "look",
@@ -280,7 +301,10 @@ export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512, memory
             // so a delegated look reads like a locate substep, not the weird auto-derived element text.
             // (`model` is the resolved reader passed at wiring; `output` is the raw model reply, no tip.)
             const render: RenderDescriptor = { type: "look", image: shot, model, output: description, label: subject, prompt: base + guidance };
-            return { content: description + pointTip + overTextTip, render, ...(elements ? { elements } : {}) };
+            // DOM legend of what's IN this crop (controls/media/boundaries/text with selectors) — bridges the
+            // vision reply back to actionable selectors. Skipped for a downscaled full-page overview.
+            const legend = fullPage ? "" : legendFor(selector || null, margin as number);
+            return { content: description + pointTip + overTextTip + legend, render, ...(elements ? { elements } : {}) };
         }
     });
 };
@@ -582,13 +606,16 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                 const reSnap = o.kind === "pt"
                     ? ` If the target is NOT centred under it, do NOT click — if you can see the element in the image then you can directly re-snap this **SAME** point using this **EXACT** call (which is more precise than doing a new 'locate' call from scratch!!!): locate({ selector: "${o.target}", strategy: "grounding", margin: 60, description: "<the target's appearance>" }), then verify again.`
                     : "";
-                if (driverSees) return { ...base, content: base.content + `\n\n Marked crop shown in the next prompt.${o.kind === "pt" ? ` Confirm "${truncate(description, 50)}" sits under the MIDDLE of the box labelled "click point".` : ""} If it's on target, act now (no need to look() first).${reSnap}`, image: sent, imageLabel: o.label, feedback: { reason, via: "image", image: sent, label: o.label } };
+                // DOM legend of the located area — for a canvas/cross-origin @pt this flags "no DOM here /
+                // cross-origin iframe, use @pt"; for a DOM target it names the controls/text around it.
+                const legend = legendFor(o.target, 0);
+                if (driverSees) return { ...base, content: base.content + `\n\n Marked crop shown in the next prompt.${o.kind === "pt" ? ` Confirm "${truncate(description, 50)}" sits under the MIDDLE of the box labelled "click point".` : ""} If it's on target, act now (no need to look() first).${reSnap}${legend}`, image: sent, imageLabel: o.label, feedback: { reason, via: "image", image: sent, label: o.label } };
                 // Text-only driver: the reader describes the crop; the driver gets words, not the image.
                 const describePrompt = `Describe concisely what is at the marked spot on this crop — its colour, shape, and any text — so I can tell whether it's the "${truncate(description, 60)}" I asked for.${CLICK_MARK_NOTE}`;
                 let desc: string;
                 try { desc = String(await ml.chat(describePrompt, { images: [sent], model, maxTokens: 256, numCtx: VISION_NUM_CTX })).trim(); }
                 catch { return base; }   // describe failed → leave the manual look() nudge intact
-                return { ...base, content: base.content + `\n\n👁 Target preview — you can't see images, so this is ${model || "the reader"}'s description of what's under the "click point" mark (NOT the image itself). Judge whether that's "${truncate(description, 50)}", then act or re-locate:\n${desc}${reSnap}`, feedback: { reason, via: "text", text: desc, prompt: describePrompt, image: sent, label: o.label } };
+                return { ...base, content: base.content + `\n\n👁 Target preview — you can't see images, so this is ${model || "the reader"}'s description of what's under the "click point" mark (NOT the image itself). Judge whether that's "${truncate(description, 50)}", then act or re-locate:\n${desc}${reSnap}${legend}`, feedback: { reason, via: "text", text: desc, prompt: describePrompt, image: sent, label: o.label } };
             };
 
             // grid-grounding needs a grounding model on BOTH its paths (fresh pick and the
@@ -1040,7 +1067,10 @@ export async function captureVerify(ml: MlApi, ctx: ToolContext | undefined, cen
         : center ? `This is the area around where you ${verb} (the box marks the spot).`
             : `The page settled — here's the current viewport.`;
     const reason = mutated ? "after the action — target changed" : center ? "after the action" : "after wait";
-    if (driverSees) return { content: `\n\n ${areaNote} Read the result and continue — no need to look() first.${overText}`, image: crop, imageLabel: reason, feedback: { reason, via: "image", image: crop } };
+    // DOM legend of the verify area — names what just APPEARED (a menu that opened, a filled value) with
+    // selectors, so the model acts on the DOM instead of re-reading the pixels. Same box the crop shows.
+    const legend = legendForBox(center ? { left: center.x - VERIFY_MARGIN, top: center.y - VERIFY_MARGIN, right: center.x + VERIFY_MARGIN, bottom: center.y + VERIFY_MARGIN } : boxForTarget(null, 0));
+    if (driverSees) return { content: `\n\n ${areaNote} Read the result and continue — no need to look() first.${overText}${legend}`, image: crop, imageLabel: reason, feedback: { reason, via: "image", image: crop } };
     // Text-only driver: the reader describes the crop; the driver gets words. The click-mark note only applies
     // to a MARKED crop (an @pt) — a plain viewport (wait) has no annotation box on it.
     const question = center
@@ -1049,7 +1079,7 @@ export async function captureVerify(ml: MlApi, ctx: ToolContext | undefined, cen
     let desc: string;
     try { desc = String(await ml.chat(question, { images: [crop], model: reader, maxTokens: 256, numCtx: VISION_NUM_CTX })).trim(); }
     catch { return {}; }
-    return { content: `\n\n👁 ${areaNote} You can't see images, so this is ${reader || "the reader"}'s description:\n${desc}${overText}`, feedback: { reason, via: "text", text: desc, prompt: question, image: crop } };
+    return { content: `\n\n👁 ${areaNote} You can't see images, so this is ${reader || "the reader"}'s description:\n${desc}${overText}${legend}`, feedback: { reason, via: "text", text: desc, prompt: question, image: crop } };
 }
 // The viewport CENTRE of an element (composing iframe offsets), for a verify crop. null if it has no box.
 const elementCenter = (el: Element): { x: number; y: number } | null => {
