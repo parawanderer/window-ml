@@ -8,6 +8,8 @@
     --border: #3f3f46; --fg: #e4e4e7; --fg-dim: #a1a1aa; --fg-faint: #71717a;
     --accent: #6366f1; --accent-strong: #4f46e5; --accent-fg: #ffffff;
     --ok: #4ade80; --err: #f87171; --warn: #eab308; --err-border: #7f1d1d; --kind: #c7d2fe;
+    /* JSON-tree syntax colours, matched to the atom-one-dark code theme so the raw In tree reads like the code block. */
+    --j-key: #d19a66; --j-str: #98c379; --j-lit: #56b6c2; --j-base: #abb2bf;
 }
 :root[data-theme="light"] {
     color-scheme: light;
@@ -16,6 +18,7 @@
     --border: #d4d4d8; --fg: #18181b; --fg-dim: #52525b; --fg-faint: #a1a1aa;
     --accent: #6366f1; --accent-strong: #4f46e5; --accent-fg: #ffffff;
     --ok: #16a34a; --err: #dc2626; --warn: #ca8a04; --err-border: #fecaca; --kind: #4338ca;
+    --j-key: #986801; --j-str: #50a14f; --j-lit: #0184bb; --j-base: #383a42;   /* atom-one-light, matches the code block */
 }
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
@@ -653,13 +656,19 @@ details.io[open] > summary .io-preview { display: none; }
 .jt-row.jt-branch { cursor: pointer; }
 .jt-row.jt-branch:hover { background: var(--panel-2); border-radius: 3px; }
 .jt-row .tri { align-self: center; margin-left: -2px; }
-.jt-key { color: var(--kind); }
-.jt-brace { color: var(--fg-faint); }
+.jt-key { color: var(--j-key); }
+.jt-brace { color: var(--j-base); }
 .jt-preview { color: var(--fg-faint); font-style: italic; }
-.jt-string { color: var(--ok); word-break: break-word; }
-.jt-number { color: var(--accent); }
-.jt-boolean { color: var(--warn); }
-.jt-null { color: var(--fg-faint); }
+.jt-string { color: var(--j-str); word-break: break-word; }
+.jt-number { color: var(--j-key); }
+.jt-boolean { color: var(--j-lit); }
+.jt-null { color: var(--j-lit); }
+/* A key the tool schema documents → dotted underline (this key has a hover tooltip with its description). */
+.jt-key-doc { text-decoration: underline dotted; text-underline-offset: 2px; text-decoration-thickness: 1px; cursor: help; }
+.jt-key-doc:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; border-radius: 2px; }
+/* Raw In args tree: a corner copy button (a tree isn't drag-selectable like the old text block). */
+.jt-args { position: relative; }
+.jt-args-copy { position: absolute; top: 0; right: 0; z-index: 1; }
 
 .msg { border-radius: 7px; padding: 6px 9px; margin-bottom: 8px; border: 1px solid var(--border); }
 .msg.user { background: var(--user-bg); }

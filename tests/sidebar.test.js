@@ -2810,3 +2810,42 @@ test("card surface: a cancelled run reads as 'Cancelled'", async () => {
 
     assert.match(w.window.document.querySelector(".card-head-txt").textContent, /Cancelled/, "the headline shows Cancelled");
 });
+
+// --- Raw In args: schema-annotated JSON tree (hover a key for its description) -----------------------
+const agentCfg = (tools) => ({ system: "sys", customSystem: false, tools, maxSteps: 10, think: null, env: true, vision: null, hints: null, unattended: false, silent: false, driverSees: false, visionModel: null });
+const clickTool = { name: "click", requiresApproval: true, vision: false, description: "Click an element.", summary: "Clicks.",
+    parameters: { type: "object", required: ["selector"], properties: {
+        selector: { type: "string", description: "CSS selector or @pt token from locate." },
+        verify: { type: "boolean", description: "Look at the result after clicking." } } } };
+
+test("raw In args: a key documented in the tool schema gets a hover tooltip; undocumented keys stay plain", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("r1", "task", "m", 10, agentCfg([clickTool])));
+    await w.dispatch(agentStep("r1", 1, { seq: 1, tool: "click", arguments: { selector: "#b", verify: true, bogus: 1 } }));
+    w.shadow.querySelector(".row").click(); await w.tick();
+    w.shadow.querySelector(".astep.tool .astep-head").click(); await w.tick();
+
+    const docKeys = [...w.shadow.querySelectorAll(".astep.tool .jt-key-doc")].map(n => n.textContent);
+    assert.ok(docKeys.some(t => /selector/.test(t)) && docKeys.some(t => /verify/.test(t)), `documented keys are underlined (${docKeys})`);
+    const bogus = [...w.shadow.querySelectorAll(".astep.tool .jt-key")].find(n => /bogus/.test(n.textContent));
+    assert.ok(bogus && !bogus.classList.contains("jt-key-doc"), "an arg NOT in the schema carries no tooltip");
+    const tips = [...w.shadow.querySelectorAll(".astep.tool .jt-key-doc .tt-pop")].map(n => n.textContent).join(" | ");
+    assert.match(tips, /CSS selector or @pt/, "tooltip text is the schema description");
+    assert.ok(w.shadow.querySelector(".astep.tool .jt-args-copy"), "the tree carries a copy-JSON button (a tree isn't drag-selectable)");
+});
+
+test("raw In args: malformed schema / non-object args never crash the panel (falls back safely)", async () => {
+    const w = await loadSidebarWorld();
+    const badProps = { name: "x", parameters: { type: "object", properties: "not-an-object" } };
+    const badNode = { name: "y", parameters: { type: "object", properties: { a: "should-be-a-schema", b: 5 } } };
+    await w.dispatch(agentStart("r2", "t", "m", 10, agentCfg([badProps, badNode])));
+    await w.dispatch(agentStep("r2", 1, { seq: 1, tool: "x", arguments: { a: 1, b: 2 } }));
+    await w.dispatch(agentStep("r2", 2, { seq: 2, tool: "y", arguments: { a: { nested: true }, b: [1, 2] } }));
+    await w.dispatch(agentStep("r2", 3, { seq: 3, tool: "z", arguments: "a bare string, not an object" }));
+    w.shadow.querySelector(".row").click(); await w.tick();
+    for (const head of w.shadow.querySelectorAll(".astep.tool .astep-head")) { head.click(); await w.tick(); }
+
+    assert.ok(w.shadow.querySelectorAll(".astep.tool").length >= 3, "every step rendered — nothing threw");
+    assert.equal(w.shadow.querySelectorAll(".jt-key-doc").length, 0, "a malformed schema yields NO descriptions (never a crash)");
+    assert.ok(w.shadow.querySelector(".astep.tool .code"), "non-object args fall back to the copyable code renderer");
+});

@@ -951,8 +951,11 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     const [expanded, setExpanded] = useState(false);
     const [decided, setDecided] = useState(false);   // hide the controls the instant we click (before the DONE lands)
     const args = st.arguments && Object.keys(st.arguments).length ? st.arguments : null;
-    // The tool's own short human-friendly summary (contract MlTool.summary), from the run's tool defs.
-    const toolSummary = hash ? sessionMap.get(hash)?.agentConfig?.tools?.find(t => t.name === st.tool)?.summary : undefined;
+    // The run's def for THIS tool — its summary (hover on the name) + its parameter schema (the raw In view
+    // annotates each arg key with its schema description). Absent on older debug events (names only).
+    const toolDef = hash ? sessionMap.get(hash)?.agentConfig?.tools?.find(t => t.name === st.tool) : undefined;
+    const toolSummary = toolDef?.summary;
+    const paramSchema = toolDef?.parameters as JsonSchemaNode | undefined;
     // Each slot renders from its own descriptor; the block falls back to raw when absent.
     const inRender = st.renderIn;
     const outRender = st.renderOut;
@@ -1001,7 +1004,8 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                     {issues ? <div class="tt tt-row arg-issues"><IconWarn /><span>arg schema: {issues.join("; ")}</span><span class="tt-pop wrap left" role="tooltip">The args don't match this tool's parameter schema.</span></div> : null}
                     {args || inRender
                         ? <IoBlock label="In" tip="The arguments the model passed to this tool call."
-                            preview={inlineJson(args || {})} render={inRender} raw={<Code text={pretty(args || {})} lang="json" />} />
+                            preview={inlineJson(args || {})} render={inRender}
+                            raw={<RawArgs args={args || {}} schema={paramSchema} />} />
                         : null}
                     <IoBlock label="Out" tip="What the tool returned to the model."
                         preview={st.pending ? "running…" : inlineText(st.result || "")} render={outRender}
@@ -1074,14 +1078,25 @@ function jtPreview(v: object): string {
     if (!keys.length) return "{ }";
     return `{ ${keys.slice(0, 4).join(", ")}${keys.length > 4 ? ", …" : ""} }`;
 }
-function JsonNode({ k, v, depth = 0, defaultOpen }: { k?: string; v: unknown; depth?: number; defaultOpen?: boolean }) {
+// A JSON-schema node (as much as we read of it): its own `description`, and children by `properties`
+// (object) or `items` (array). Passed alongside a value so JsonNode can annotate keys with their schema
+// description — at ANY depth, not just the top level (nested-object args get tooltips too).
+interface JsonSchemaNode { description?: string; properties?: Record<string, JsonSchemaNode>; items?: JsonSchemaNode; }
+// A JSON key. When the schema gives it a description, it becomes a hoverable tooltip (same .tt/.tt-pop as
+// elsewhere) + a dotted underline so you can tell which keys carry docs — a debugging affordance over raw args.
+function JtKey({ name, desc }: { name: string; desc?: string }) {
+    return desc
+        ? <span class="tt jt-key jt-key-doc" tabIndex={0}>{name}:<span class="tt-pop wrap" role="tooltip">{desc}</span></span>
+        : <span class="jt-key">{name}:</span>;
+}
+function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, allOpen }: { k?: string; v: unknown; depth?: number; defaultOpen?: boolean; schema?: JsonSchemaNode; desc?: string; allOpen?: boolean }) {
     const branch = !!v && typeof v === "object";
-    const [open, setOpen] = useState(defaultOpen ?? depth < 1);
+    const [open, setOpen] = useState(allOpen || (defaultOpen ?? depth < 1));   // allOpen → expanded at EVERY depth (the raw In view)
     const pad = { paddingLeft: `${depth * 13}px` };
     if (!branch) {
         const t = v === null ? "null" : typeof v;
         return <div class="jt-row" style={pad}>
-            {k != null ? <span class="jt-key">{k}:</span> : null}
+            {k != null ? <JtKey name={k} desc={desc} /> : null}
             <span class={`jt-val jt-${t}`}>{typeof v === "string" ? JSON.stringify(v) : String(v)}</span>
         </div>;
     }
@@ -1089,18 +1104,34 @@ function JsonNode({ k, v, depth = 0, defaultOpen }: { k?: string; v: unknown; de
     const entries: [string, unknown][] = arr
         ? (v as unknown[]).map((x, i) => [String(i), x])
         : Object.entries(v as Record<string, unknown>);
+    // Resolve each child's schema node: an array's elements share `items`; an object's are `properties[key]`.
+    const childOf = (ck: string): JsonSchemaNode | undefined => arr ? schema?.items : schema?.properties?.[ck];
     return <div class="jt-node">
         <div class="jt-row jt-branch" style={pad} role="button" onClick={() => setOpen(o => !o)}>
             <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
-            {k != null ? <span class="jt-key">{k}:</span> : null}
+            {k != null ? <JtKey name={k} desc={desc} /> : null}
             {open ? <span class="jt-brace">{arr ? "[" : "{"}</span> : <span class="jt-preview">{jtPreview(v as object)}</span>}
         </div>
         {open ? <>
-            {entries.map(([ek, ev]) => <JsonNode key={ek} k={arr ? undefined : ek} v={ev} depth={depth + 1} />)}
+            {entries.map(([ek, ev]) => <JsonNode key={ek} k={arr ? undefined : ek} v={ev} depth={depth + 1} schema={childOf(ek)} desc={arr ? undefined : childOf(ek)?.description} allOpen={allOpen} />)}
             <div class="jt-row" style={pad}><span class="jt-brace">{arr ? "]" : "}"}</span></div>
         </> : null}
     </div>;
 }
+// The raw In view: an always-expanded, schema-annotated JSON tree (hover a key with a schema description
+// for its docs). A tree isn't selectable like the old text block, so it carries a COPY button. And anything
+// that isn't a plain object/array — or that won't serialize — falls back to the old code renderer, which is
+// always valid + copyable. `args` is already a parsed value off the bus, so this is belt-and-braces.
+function RawArgs({ args, schema }: { args: unknown; schema?: JsonSchemaNode }) {
+    let json = "", ok = true;
+    try { json = pretty(args ?? {}); } catch { ok = false; }   // circular / non-serialisable → use the fallback
+    const tree = ok && !!args && typeof args === "object";
+    return <div class="jt-args">
+        <span class="jt-args-copy"><CopyBtn text={ok ? json : String(args)} tip="copy JSON" /></span>
+        {tree ? <JsonNode v={args} schema={schema} allOpen defaultOpen /> : <Code text={ok ? json : String(args)} lang="json" />}
+    </div>;
+}
+
 // The agent's full tool definitions — name, approval/vision badges, description, and a JSON tree of
 // the parameter schema the model actually sees. Older debug events carry names only; those degrade
 // to just the head + description (no tree), since parameters weren't plumbed through then.
