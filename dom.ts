@@ -174,23 +174,32 @@ export const frameHostOf = (el: Element): Element | null => {
     return search(document);
 };
 
-/** An element's bounding box in the TOP document's viewport, composing offsets across same-origin iframe
- *  boundaries. An element INSIDE a frame reports getBoundingClientRect relative to the FRAME's viewport, so a
- *  top-level overlay (the approve-highlight, drawn in the top document) would place it at the frame-local
- *  position — wrong. Walk the frame chain, adding each host `<iframe>`'s position + its border. For a
- *  top-document element this is just getBoundingClientRect. */
-export const viewportRect = (el: Element): { left: number; top: number; right: number; bottom: number; width: number; height: number } => {
-    const r = el.getBoundingClientRect();
-    let left = r.left, top = r.top;
-    let host = frameHostOf(el);
-    while (host) {
+/** The page-relative offset of a (possibly same-origin-iframe-nested) element: how much to ADD to a
+ *  frame-LOCAL coordinate to get the TOP document's viewport coordinate. `{0,0}` for a top-document element.
+ *  This is the coordinate twin of `deepQueryAll` — the single answer to "this thing is nested in frames,
+ *  give me its page offset", reusable for ANY frame-local measurement (an element rect, a `Range` rect, a
+ *  DOMPoint, a canvas hit-test), not just the element's own box (which `viewportRect` wraps). Walk the frame
+ *  chain, adding each host `<iframe>`'s position + its border (the frame's content origin). */
+export const frameOffsetOf = (el: Element): { dx: number; dy: number } => {
+    let dx = 0, dy = 0;
+    for (let host = frameHostOf(el); host; host = frameHostOf(host)) {
         const fr = host.getBoundingClientRect();   // the <iframe>'s box in its own parent viewport
         let bl = 0, bt = 0;
         try { const cs = (host.ownerDocument.defaultView || window).getComputedStyle(host); bl = parseFloat(cs.borderLeftWidth) || 0; bt = parseFloat(cs.borderTopWidth) || 0; } catch { /* no view */ }
-        left += fr.left + bl; top += fr.top + bt;   // the frame's content origin = its box top-left + border
-        host = frameHostOf(host);
+        dx += fr.left + bl; dy += fr.top + bt;
     }
-    return { left, top, right: left + r.width, bottom: top + r.height, width: r.width, height: r.height };
+    return { dx, dy };
+};
+
+/** An element's bounding box in the TOP document's viewport, composing offsets across same-origin iframe
+ *  boundaries. An element INSIDE a frame reports getBoundingClientRect relative to the FRAME's viewport, so a
+ *  top-level overlay (the approve-highlight, drawn in the top document) would place it at the frame-local
+ *  position — wrong. `frameOffsetOf` does the frame walk; this just shifts the local rect by it. For a
+ *  top-document element this is just getBoundingClientRect. */
+export const viewportRect = (el: Element): { left: number; top: number; right: number; bottom: number; width: number; height: number } => {
+    const r = el.getBoundingClientRect();
+    const { dx, dy } = frameOffsetOf(el);
+    return { left: r.left + dx, top: r.top + dy, right: r.right + dx, bottom: r.bottom + dy, width: r.width, height: r.height };
 };
 // The shortest-unique-selector logic, scoped to a root (document OR a shadow root) so uniqueness is checked
 // within that tree and the walk-up stops at the root's boundary (a shadow tree's top element has no parent).

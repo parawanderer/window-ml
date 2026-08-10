@@ -2,7 +2,7 @@
 // verify crop. It bridges vision→DOM: the model SEES the pixels and gets the SELECTORS (and boundary
 // flags) to act on them — no second round-trip — and for a verify crop it names what just APPEARED.
 // Pure DOM enumeration over a viewport box; testable standalone. Grouped lines, omitted when empty.
-import { clickSelector, viewportRect, sameOriginFrameDoc, deepQueryAll, truncate } from "./dom";
+import { clickSelector, viewportRect, frameOffsetOf, sameOriginFrameDoc, deepQueryAll, truncate } from "./dom";
 import { INTERACTIVE_SEL, accessibleName, roleOf, styleHidden, isFaded } from "./a11y";
 
 export interface Box { left: number; top: number; right: number; bottom: number; }
@@ -56,10 +56,10 @@ function visibleText(el: Element, box: Box): string {
     const doc = el.ownerDocument;
     if (!doc) return "";
     // Range.getBoundingClientRect returns coords in the ELEMENT's OWN document — iframe-LOCAL for a
-    // same-origin frame — but `box` is top-viewport. Compose the frame offset (the same one viewportRect
-    // folds in) so an iframe's text is measured against the crop correctly. 0 for a top-doc element.
+    // same-origin frame — but `box` is top-viewport. Add the frame offset (the same one viewportRect folds
+    // in) so an iframe's text is measured against the crop correctly. {0,0} for a top-doc element.
     let ox = 0, oy = 0;
-    try { const cr = el.getBoundingClientRect(), vr = viewportRect(el); ox = vr.left - cr.left; oy = vr.top - cr.top; } catch { /* detached — leave uncomposed */ }
+    try { ({ dx: ox, dy: oy } = frameOffsetOf(el)); } catch { /* detached — leave uncomposed */ }
     const range = doc.createRange();
     const words: { start: number; end: number; rect: Box }[] = [];
     let flat = "";
