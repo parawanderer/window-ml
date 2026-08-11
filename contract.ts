@@ -1060,6 +1060,14 @@ export interface MlApi {
      *  agent loop answers it, so the counts are accurate on both the page and background paths. */
     chatMetaTool(): MlTool;
 
+    /* ---- DOM query ---- */
+    /** Like `document.querySelectorAll(selector)` but returns a real Array and understands the SAME
+     *  selector dialect the DOM tools use: `host >>> inner` crosses OPEN (and, if enabled, closed) shadow
+     *  roots and SAME-ORIGIN iframes — one `>>>` per boundary, nesting `a >>> b >>> c` — and
+     *  `:contains("text")` / `:has-text("text")` filters by visible text. It also supports Playwright selectors.
+     * Use this instead of hand-chaining `.shadowRoot.querySelector(...)` / `.contentDocument.querySelector(...)`. Read-only. */
+    queryAll(selector: string): Element[];
+
     /* ---- vision / OCR / capture ---- */
     /** OCR/describe an image (element, url or data URL). */
     read(image: string | HTMLImageElement, opts?: { model?: string | null; prompt?: string | null }): Promise<string>;

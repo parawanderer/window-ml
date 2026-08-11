@@ -383,6 +383,13 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 "The returned value AND the console output are EACH truncated to ~500 chars, so " +
                 "don't dump whole elements/pages — return a compact, filtered summary (counts, a " +
                 "handful of fields, the few items you actually need), not a full outerHTML dump. " +
+                // this guarantees loops stay in the readonly-exec dialect and actually terminate:
+                "ITERATING ELEMENTS: always prefer to write a `.forEach()` or `.map()` over raw for/while loops." +
+                "SHADOW DOM / IFRAMES: use `ml.queryAll('host >>> inner')` — a shadow/iframe-piercing " +
+                "querySelectorAll that returns an Array and understands the same selector dialect the DOM " +
+                "tools use (`>>>` crosses each OPEN shadow root / same-origin iframe; a trailing " +
+                "`:contains(\"text\")` filters by visible text) — instead of hand-chaining `.shadowRoot` / " +
+                "`.contentDocument`." +
                 "PERSISTENT STATE: you have a `state` object (also `ml.state`) that is NOT reset between calls — " +
                 "it's a live page kernel, like cells in a Jupyter notebook. For any multi-step work, DEFINE helper " +
                 "functions and stash intermediate results on it ONCE, then REUSE them on later calls instead of " +

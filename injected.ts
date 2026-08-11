@@ -1584,7 +1584,12 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     "to see the whole page stitched into one tall image (DOWNSCALED — use it for layout, not " +
                     "small text). To CLASSIFY items in a grid/list (which show a cat?), pass the item selector " +
                     "and iterate `index` (0,1,2,…) for a tight crop of each. After looking, DESCRIBE what you " +
-                    "see, then take the next action.",
+                    "see, then take the next action. BONUS: alongside the image the result appends a \"DOM in " +
+                    "view\" legend — the exact visible TEXT, controls and boundaries under the crop with their " +
+                    "selectors — so you read the ground-truth characters instead of guessing them from pixels " +
+                    "(no OCR risk) and get a ready anchor for click/type. It's a heuristic: it can't reach a " +
+                    "CANVAS or a CROSS-ORIGIN iframe (no DOM there), and a BUSY or LARGE selection skips the " +
+                    "text listing (too much to be useful) — so a tight crop gets the richest legend.",
                 parameters: {
                     type: "object",
                     properties: {
@@ -1652,6 +1657,9 @@ class AgentHandle implements MlAgentHandle, AgentControl {
         _elPath: elPath,
         _describeSkeleton: describeSkeleton,
         _queryAll: queryAll,
+        // Public alias: a shadow/iframe-piercing `document.querySelectorAll` the model can call from
+        // `exec` (and the readonly dialect) instead of hand-chaining `.shadowRoot`/`.contentDocument`.
+        queryAll,
         _selectorError: selectorError,
         // Parses a structured-output reply, tolerating a stray ```json fence
         // and surfacing the raw text on failure for debugging.

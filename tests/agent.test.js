@@ -669,18 +669,19 @@ test("describeElement describes the first match (+ node) and handles bad input",
     assert.doesNotMatch(run(ml, "describeElement", { selector: ".card" }).content, /matched/); // unique → no note
 });
 
-test("selectorError blames :contains placement only when it truly survives mid-selector", () => {
-    // Pure function (jsdom's nwsapi swallows `:contains` instead of throwing, so we
-    // can't reach it through a tool here) — call it directly with a synthetic throw.
+test("selectorError hints at :contains ONLY when the error is actually about the pseudo", () => {
+    // Pure function. The engine handles :contains/:has-text/:eq ANYWHERE now, so they're never the cause
+    // of a queryAll throw — a thrown error is a genuine CSS problem. selectorError keys off the ERROR
+    // MESSAGE, not the selector text.
     const { ml } = loadDomWorld("<button>8</button>");
-    const err = new Error("'x' is not a valid selector");
-    // Trailing :contains peels off cleanly; the throw is really the unescaped Tailwind
-    // `/`, NOT placement — surface the raw error, don't misdiagnose it (the run.md bug).
-    const trailing = ml._selectorError('button.border-gray-100/30:contains("8")', err);
+    // Real cause is the unescaped Tailwind `/`, not the (now-supported) :contains → surface it raw.
+    const cssErr = new Error("'button.border-gray-100/30' is not a valid selector");
+    const trailing = ml._selectorError('button.border-gray-100/30:contains("8")', cssErr);
     assert.match(trailing, /is not a valid selector/);
-    assert.ok(!/only supported at/.test(trailing), "must not misblame :contains placement");
-    // A genuine mid-selector text predicate DOES earn the placement message.
-    assert.match(ml._selectorError('div:contains("x") > span', err), /only supported at the END/);
+    assert.ok(!/ml\.queryAll/.test(trailing), "a native CSS error must not be misblamed on the pseudo");
+    // A raw document.querySelector that choked ON the pseudo (message mentions it) → the queryAll hint.
+    const pseudoErr = new Error(`'div:contains("x")' is not a valid selector`);
+    assert.match(ml._selectorError('div:contains("x") > span', pseudoErr), /ml\.queryAll/);
 });
 
 test("ancestors walks UP from a match, listing each ancestor by hop", () => {

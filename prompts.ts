@@ -106,10 +106,11 @@ export const IFRAME_CLAUSE =
     "selector reaches inside — reach a control visually with `locate`/`@pt` (that click needs the extension's " +
     "\"reserved-element clicking\" enabled, a debugger/CDP click).";
 // Appended to SHADOW_CLAUSE only when `exec` is available — the JS mapping is useless without it.
+// `ml.queryAll` resolves the WHOLE dialect (`>>>` hops + `:contains`) in one call, so the model
+// doesn't hand-chain `.shadowRoot`/`.contentDocument` (and it also reaches pierced closed roots).
 export const SHADOW_EXEC_NOTE =
-    " In `exec`, a `host >>> inner` path is `document.querySelector('host').shadowRoot.querySelector('inner')` " +
-    "— chain `.shadowRoot.querySelector(...)` once per `>>>` hop (a closed root's `.shadowRoot` is null); for a " +
-    "same-origin iframe hop it's `.contentDocument.querySelector(...)` instead.";
+    " In `exec`, pass the SAME `host >>> inner` selector to `ml.queryAll(...)` (a shadow/iframe-piercing " +
+    "querySelectorAll returning an Array) instead of hand-chaining `.shadowRoot`/`.contentDocument`.";
 export const WAIT_CLAUSE =
     "\n\nThe page updates ASYNCHRONOUSLY — clicks, typing, navigation and lazy-loading take " +
     "effect after a delay, NOT instantly. So after any action that triggers an update, use the " +

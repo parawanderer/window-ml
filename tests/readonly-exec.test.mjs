@@ -166,7 +166,7 @@ const OUT = {
     "for loop": `for (const x of []) { x }`,
     "assignment": `let x = 1; x = 2; x`,
     "new": `new Object()`,
-    "template literal": "`hi ${1}`",
+    "tagged template": "tag`hi ${1}`",   // a plain template is supported; a TAGGED one (a call) is not
 };
 for (const [name, js] of Object.entries(OUT)) {
     test(`falls back (NotInDialect): ${name}`, async () => {
@@ -291,4 +291,150 @@ test("await inside a host callback fails closed (the sync driver can't honour it
 test("an ml call that REJECTS propagates (→ the caller falls back to approval)", async () => {
     const down = { ...ML, models: async () => { throw new Error("server unreachable"); } };
     await assert.rejects(run(`await ml.models()`, world(), down), /server unreachable/);
+});
+
+// -------------------------------------------------------------- ml.queryAll (public facade) ---
+// queryAll joined ML_READONLY_METHODS: a shadow/iframe-piercing querySelectorAll the dialect may call
+// with NO approval. It returns live Elements (not plain data), but they flow through the same read
+// mediation as document.querySelectorAll's — no new capability.
+
+test("ml.queryAll is reachable in-dialect and returns mediated elements", async () => {
+    const doc = world();
+    const ml = { ...ML, queryAll: (sel) => [...doc.querySelectorAll(sel)] };
+    const { value } = await run(`(async () => { const els = await ml.queryAll('input'); return els.map(e => e.id); })()`, doc, ml);
+    assert.deepEqual(value, ["a", "d"]);
+});
+
+test("ml.queryAll auto-awaits (a forgotten await still reads the value)", async () => {
+    const doc = world();
+    const ml = { ...ML, queryAll: (sel) => [...doc.querySelectorAll(sel)] };
+    assert.equal((await run(`ml.queryAll('#a').length`, doc, ml)).value, 1);
+});
+
+test("ml.queryAll's returned element can't walk back to the realm", async () => {
+    const doc = world();
+    const ml = { ...ML, queryAll: (sel) => [...doc.querySelectorAll(sel)] };
+    await assert.rejects(run(`(await ml.queryAll('#a'))[0].ownerDocument`, doc, ml), e => e instanceof Denied);
+    await assert.rejects(run(`(await ml.queryAll('#a'))[0].constructor`, doc, ml), e => e instanceof Denied);
+});
+
+// ------------------------------------------------------------------------- getComputedStyle ---
+// A pure same-origin read, bound to the view so it never hands back `window`; its CSSStyleDeclaration's
+// walk-back to window is denied. (The classic :visited history leak is dead in all modern browsers.)
+
+function styleWorld() {
+    const dom = new JSDOM(`<!doctype html><body><div id="x" style="color: rgb(1, 2, 3); font-weight: 700"></div></body>`);
+    return dom.window.document;
+}
+
+test("getComputedStyle(el).<prop> reads in-dialect", async () => {
+    const { value } = await run(
+        `(() => { const s = getComputedStyle(document.querySelector('#x')); return { c: s.color, w: s.fontWeight }; })()`,
+        styleWorld(), null);
+    assert.equal(value.c, "rgb(1, 2, 3)");
+    assert.equal(value.w, "700");
+});
+
+test("getComputedStyle(el).getPropertyValue(...) reads in-dialect", async () => {
+    const { value } = await run(`getComputedStyle(document.querySelector('#x')).getPropertyValue('color')`, styleWorld(), null);
+    assert.equal(value, "rgb(1, 2, 3)");
+});
+
+test("getComputedStyle result CANNOT walk back to window (CSS-object hops denied)", async () => {
+    for (const prop of ["parentRule", "parentStyleSheet", "ownerNode"]) {
+        await assert.rejects(run(`getComputedStyle(document.querySelector('#x')).${prop}`, styleWorld(), null),
+            e => e instanceof Denied, `${prop} must be denied`);
+    }
+});
+
+test("getComputedStyle result: setProperty/removeProperty (mutation) are NOT callable", async () => {
+    await assert.rejects(run(`getComputedStyle(document.querySelector('#x')).setProperty('color','red')`, styleWorld(), null), outOfDialect);
+    await assert.rejects(run(`getComputedStyle(document.querySelector('#x')).removeProperty('color')`, styleWorld(), null), outOfDialect);
+});
+
+// ---------------------------------------------------------------------------------- try/catch ---
+// Pure control flow. The safety property: a catch/finally may NEVER swallow a Denied/NotInDialect —
+// those keep escalating to the human gate. A genuine runtime error (missing element) IS catchable.
+
+test("try/catch catches a RUNTIME error (method on a missing element) — handled in-dialect", async () => {
+    const { value } = await run(`
+        try { return document.querySelector('#nope').getAttribute('x'); }
+        catch (e) { return "handled"; }
+    `);
+    assert.equal(value, "handled");
+});
+
+test("try/catch catches an incidental throw (JSON.parse of junk)", async () => {
+    const { value } = await run(`try { return JSON.parse('{bad'); } catch (e) { return "caught"; }`);
+    assert.equal(value, "caught");
+});
+
+test("ESCAPE: try/catch must NOT swallow a Denied — it still escalates", async () => {
+    // reading a denied prop inside try must reject the whole survey, NOT return "swallowed".
+    await assert.rejects(run(`try { return document.querySelector('#a').constructor; } catch (e) { return "swallowed"; }`),
+        e => e instanceof Denied);
+});
+
+test("ESCAPE: try/catch must NOT swallow a NotInDialect (disallowed method)", async () => {
+    // a method the allowlist rejects is a dialect violation, not a program error — uncatchable.
+    await assert.rejects(run(`try { return document.querySelector('#a').click(); } catch (e) { return "swallowed"; }`),
+        e => e instanceof NotInDialect);
+});
+
+test("ESCAPE: an unavailable identifier inside try still escalates (window)", async () => {
+    await assert.rejects(run(`try { return window; } catch (e) { return "swallowed"; }`), e => e instanceof Denied);
+});
+
+test("ESCAPE: a gated ml method inside try still escalates (chat)", async () => {
+    await assert.rejects(run(`try { return await ml.chat("hi"); } catch (e) { return "swallowed"; }`), outOfDialect);
+});
+
+test("ESCAPE: a return in finally CANNOT paper over a guard denial", async () => {
+    // a normal `return 1` in finally overrides — but a Denied must win, so the survey still escalates.
+    await assert.rejects(run(`try { return window; } finally { return "swallowed"; }`), e => e instanceof Denied);
+});
+
+test("finally: a return in finally overrides a NORMAL result (JS semantics)", async () => {
+    assert.equal((await run(`try { return 1; } finally { return 2; }`)).value, 2);
+});
+
+test("try/catch around a REJECTED await catches it (driver throws back into the generator)", async () => {
+    const down = { ...ML, models: async () => { throw new Error("boom"); } };
+    const { value } = await run(`try { await ml.models(); return "no"; } catch (e) { return "rejected: " + e.message; }`, world(), down);
+    assert.equal(value, "rejected: boom");
+});
+
+// ------------------------------------------------------------------------- template literals ---
+
+test("template literal: basic interpolation + concatenation", async () => {
+    assert.equal((await run("`a${1+2}b${'c'}`")).value, "a3bc");
+});
+
+test("template literal: the user's iframe survey line runs in-dialect", async () => {
+    const dom = new JSDOM(`<!doctype html><body><iframe src="http://a.test/1"></iframe><iframe src="http://a.test/2"></iframe></body>`);
+    const { value } = await run(
+        "return [...document.querySelectorAll('iframe')].map((f, i) => `Frame ${i+1}: src=${f.src}`).join('\\n')",
+        dom.window.document, null);
+    assert.equal(value, "Frame 1: src=http://a.test/1\nFrame 2: src=http://a.test/2");
+});
+
+test("template literal: nested braces / object member inside ${}", async () => {
+    assert.equal((await run("`x${ {a: 5}.a }y`")).value, "x5y");
+});
+
+test("template literal: nested template inside an interpolation", async () => {
+    assert.equal((await run("`a${ `b${1+1}c` }d`")).value, "ab2cd");
+});
+
+test("template literal: escapes (\\n, \\`, \\$)", async () => {
+    assert.equal((await run("`line\\n\\`tick\\` end`")).value, "line\n`tick` end");
+});
+
+test("ESCAPE: a denied op inside ${} still escalates (can't be laundered through a template)", async () => {
+    await assert.rejects(run("`v=${window}`"), e => e instanceof Denied);
+    await assert.rejects(run("`v=${document.querySelector('#a').constructor}`"), e => e instanceof Denied);
+});
+
+test("ESCAPE: a statement smuggled into ${} fails closed", async () => {
+    await assert.rejects(run("`${1; 2}`"), outOfDialect);
 });

@@ -424,22 +424,13 @@ export const describeSkeleton = (el: Element, depth: number, indent = "", canLoc
     return out;
 };
 
-// Resolve a selector that MAY carry a jQuery/Sizzle/Playwright predicate the model
-// reaches for but native `querySelectorAll` lacks:
-//   • Playwright `text=Foo` engine (whole selector): match by visible text, keeping the
-//     smallest/leaf-most element (so a click hits the button, not <body>).
-//   • text — `:contains("x")` / `:has-text("x")`: peel OFF THE END, run the
-//     (native) base, filter by textContent (case-insensitive, all required).
-//   • positional — `:eq(n)` (jQuery, 0-based): peel and pick the nth match.
-//   • `:nth-of-type(n)` / `:nth-child(n)` FALLBACK: native, but the model habitually
-//     writes `.foo:nth-of-type(2)` meaning "the 2nd .foo"; native nth-of-type is
-//     per-TAG and usually matches nothing. So run the literal selector first and
-//     ONLY when it finds nothing, reinterpret a trailing nth as the 1-based nth
-//     match of the base set. Correct native uses (non-empty) are never touched.
-// Greedy prefixes so the LAST predicate peels first (chains like
-// `.card:contains("a"):eq(0)`).
-const TRAILING_TEXT_PSEUDO = /^([\s\S]*):(?:contains|has-text)\(\s*(['"]?)([\s\S]*?)\2\s*\)\s*$/i;
-const TRAILING_EQ_PSEUDO = /^([\s\S]*):eq\(\s*(\d+)\s*\)\s*$/i;
+// The jQuery/Sizzle/Playwright predicates the model reaches for but native `querySelectorAll` lacks are
+// handled by the queryAll engine (evalExtHop / extractStepPseudos, combinator-aware): the `text=Foo`
+// engine, `:contains("x")`/`:has-text("x")` text match, and `:eq(n)` positional pick. The one predicate
+// that stays a REGEX here is the `:nth-of-type/child(n)` FALLBACK: it IS native, but the model habitually
+// writes `.foo:nth-of-type(2)` meaning "the 2nd .foo"; native nth-of-type is per-TAG and usually matches
+// nothing, so queryAll runs the literal selector first and ONLY when it finds nothing reinterprets a
+// trailing nth as the 1-based nth match of the base set. Correct native uses (non-empty) are never touched.
 const TRAILING_NTH_NATIVE = /^([\s\S]*):nth-(?:of-type|child)\(\s*(\d+)\s*\)\s*$/i;
 
 /**
@@ -521,103 +512,176 @@ export const closedShadowHosts = (root: ParentNode = document, limit = 8): strin
     return hosts;
 };
 
-/** Resolve a BOUNDARY-crossing reference `outerSel >>> innerSel [>>> …]` (the inverse of clickSelector's
- *  `>>>` output): each `>>>` steps into the previous segment's shadow root OR — for a same-origin `<iframe>`
- *  — its inner document. One notation for both boundaries. */
-const resolveShadowPath = (path: string): Element[] => {
-    const segs = path.split(">>>").map(s => s.trim()).filter(Boolean);
-    if (!segs.length) return [];
-    let scopes: ParentNode[] = [document];
-    for (let i = 0; i < segs.length; i++) {
-        const matched: Element[] = [];
-        for (const sc of scopes) { try { matched.push(...sc.querySelectorAll(segs[i])); } catch { /* skip a bad segment */ } }
-        if (i === segs.length - 1) return matched;
-        scopes = matched.map(e => traversableRoot(e) ?? sameOriginFrameDoc(e)).filter((r): r is Document | ShadowRoot => !!r);
-        if (!scopes.length) return [];
+/** Text/positional filters peeled from a selector step. `texts` = ALL must be a visible-text substring
+ *  (case-insensitive); `eqIndex` = jQuery `:eq(n)` positional pick; `deepest` = `text=` leaf narrowing. */
+interface Hop { css: string; texts: string[]; eqIndex: number | null; deepest: boolean; }
+
+/** Apply a step's peeled pseudos to its raw CSS matches: text substring filter, then `text=`-only deepest
+ *  narrowing (drop matching ancestors so a click lands on the leaf), then a positional `:eq(n)` pick. */
+const applyHopFilters = (els: Element[], hop: Hop): Element[] => {
+    let out = els;
+    if (hop.texts.length) {
+        const wanted = hop.texts.map(normalizeText);
+        out = out.filter(el => { const tc = normalizeText(el.textContent); return wanted.every(w => tc.includes(w)); });
     }
-    return [];
+    if (hop.deepest && out.length > 1) out = out.filter(el => !out.some(o => o !== el && el.contains(o)));
+    if (hop.eqIndex !== null) return out[hop.eqIndex] ? [out[hop.eqIndex]] : [];
+    return out;
+};
+
+// Does a hop use an EXTENDED pseudo (:contains/:has-text/:eq) or the `text=` engine? Only those route
+// through the combinator-aware evaluator; a plain-CSS hop stays on the fast native path (deepQueryAll /
+// querySelectorAll), so common selectors are byte-for-byte unchanged and keep full shadow crossing.
+const EXT_PSEUDO = /:(?:contains|has-text|eq)\(/i;
+const hasExtPseudo = (seg: string): boolean => EXT_PSEUDO.test(seg) || /^\s*text=/i.test(seg);
+
+/** Pull EVERY `:contains(...)`/`:has-text(...)`/`:eq(n)` out of ONE simple selector (a compound with no
+ *  combinators — those are split out first) from ANYWHERE in it, leaving native CSS. Respects quotes +
+ *  nested parens so `:contains("a (b)")` / a native `:nth-child(2n)` aren't mis-cut. */
+const extractStepPseudos = (simple: string): { css: string; texts: string[]; eqIndex: number | null } => {
+    const texts: string[] = [];
+    let eqIndex: number | null = null, css = "", i = 0;
+    while (i < simple.length) {
+        const mm = /^:(contains|has-text|eq)\(/i.exec(simple.slice(i));
+        if (mm) {
+            const open = i + mm[0].length - 1;   // index of the "("
+            let depth = 0, j = open, quote = "";
+            for (; j < simple.length; j++) {
+                const c = simple[j];
+                if (quote) { if (c === quote) quote = ""; continue; }
+                if (c === '"' || c === "'") { quote = c; continue; }
+                if (c === "(") depth++;
+                else if (c === ")" && --depth === 0) break;
+            }
+            const inner = simple.slice(open + 1, j).trim().replace(/^(['"])([\s\S]*)\1$/, "$2");
+            if (mm[1].toLowerCase() === "eq") { const n = parseInt(inner, 10); if (!Number.isNaN(n) && eqIndex === null) eqIndex = n; }
+            else texts.push(inner);
+            i = j + 1;
+            continue;
+        }
+        css += simple[i++];
+    }
+    return { css: css.trim() || "*", texts, eqIndex };
+};
+
+/** Split a hop into combinator-joined STEPS: [{ combinator, simple }] — combinator is " "|">"|"+"|"~"
+ *  (the first step's is ignored). Respects quotes / () / [] so a combinator INSIDE `:contains("a > b")`
+ *  or `[data-x="a b"]` never splits the compound. */
+const splitSteps = (hop: string): { combinator: string; simple: string }[] => {
+    const steps: { combinator: string; simple: string }[] = [];
+    let cur = "", nextComb = " ", started = false, gap = false, dP = 0, dB = 0, quote = "";
+    const flush = () => { const s = cur.trim(); cur = ""; if (!s) return; steps.push({ combinator: started ? nextComb : " ", simple: s }); started = true; nextComb = " "; gap = false; };
+    for (const c of hop) {
+        if (quote) { cur += c; if (c === quote) quote = ""; continue; }
+        if (c === '"' || c === "'") { quote = c; cur += c; continue; }
+        if (c === "(") { dP++; cur += c; continue; }
+        if (c === ")") { dP--; cur += c; continue; }
+        if (c === "[") { dB++; cur += c; continue; }
+        if (c === "]") { dB--; cur += c; continue; }
+        if (dP || dB) { cur += c; continue; }
+        if (c === " " || c === "\t" || c === "\n") { if (cur.trim()) gap = true; continue; }
+        if (c === ">" || c === "+" || c === "~") { flush(); nextComb = c; gap = false; continue; }
+        if (gap) { flush(); nextComb = " "; gap = false; }   // whitespace was a descendant combinator
+        cur += c;
+    }
+    flush();
+    return steps;
+};
+
+/** Evaluate ONE extended hop (has :contains/:eq/text=) within `scopes`, COMBINATOR-AWARE: resolve each
+ *  step's native CSS by its combinator (descendant/`>`/`+`/`~`) against the previous step's matches, then
+ *  filter that step by its own text/eq. So `div:contains("foo") span:contains("bar")` = spans-with-bar
+ *  inside divs-with-foo. The FIRST step searches with deepQueryAll (single hop → crosses OPEN shadow
+ *  roots) or scoped querySelectorAll (multi-hop). Invalid CSS THROWS (the tool reports it) — never a
+ *  silent [], which is what let a model confabulate a cause when `:contains`+`>>>` quietly failed. */
+const evalExtHop = (seg: string, scopes: ParentNode[], deepFirst: boolean): Element[] => {
+    // `text=Foo` — whole-hop text engine (smallest text carrier).
+    const tm = /^\s*text=\s*(['"]?)([\s\S]+?)\1\s*$/i.exec(seg);
+    if (tm) {
+        const raw: Element[] = [];
+        for (const sc of scopes) raw.push(...(deepFirst && sc === document ? deepQueryAll("*") : Array.from(sc.querySelectorAll("*"))));
+        return applyHopFilters(raw, { css: "*", texts: [tm[2]], eqIndex: null, deepest: true });
+    }
+    const steps = splitSteps(seg);
+    let current: Element[] = [];
+    for (let s = 0; s < steps.length; s++) {
+        const { css, texts, eqIndex } = extractStepPseudos(steps[s].simple);
+        let matched: Element[] = [];
+        if (s === 0) {
+            for (const sc of scopes) {
+                if (deepFirst && sc === document) { document.querySelectorAll(css); matched.push(...deepQueryAll(css)); }   // validate (deepQueryAll swallows throws) then merge shadow
+                else matched.push(...Array.from(sc.querySelectorAll(css)));
+            }
+        } else {
+            const comb = steps[s].combinator;
+            for (const p of current) {
+                if (comb === ">") { for (const ch of Array.from(p.children)) if (ch.matches(css)) matched.push(ch); }
+                else if (comb === "+") { const n = p.nextElementSibling; if (n && n.matches(css)) matched.push(n); }
+                else if (comb === "~") { for (let n = p.nextElementSibling; n; n = n.nextElementSibling) if (n.matches(css)) matched.push(n); }
+                else matched.push(...Array.from(p.querySelectorAll(css)));   // descendant
+            }
+        }
+        current = applyHopFilters(Array.from(new Set(matched)), { css, texts, eqIndex, deepest: false });
+        if (!current.length) return [];
+    }
+    return current;
 };
 
 export const queryAll = (selector: string): Element[] => {
-    let base = String(selector).trim();
-    if (base.includes(">>>")) return resolveShadowPath(base);   // a shadow-crossing reference
-    const texts: string[] = [];
-    let eqIndex: number | null = null;   // trailing :eq(n) → jQuery-style 0-based positional pick
-    // Playwright's `text=Foo` / `text="Foo"` engine (a common model reflex): match by
-    // visible text, case-insensitive substring. Playwright targets the SMALLEST element
-    // with the text, so we run "*" + the text filter and keep only the leaf-most matches
-    // (below) — otherwise every ancestor (body/…) would match and click the wrong thing.
-    let deepest = false;
-    const tm = /^text=\s*(['"]?)([\s\S]+?)\1\s*$/i.exec(base);
-    if (tm) { texts.push(tm[2]); base = "*"; deepest = true; }
-    // Peel trailing :eq and text predicates (loop for chained/mixed ones). :eq
-    // comes off FIRST each pass: the text regex's optional-quote branch would
-    // otherwise greedily swallow a following `:eq(1)` into its match text.
-    for (let changed = true; changed; ) {
-        changed = false;
-        let m = base.match(TRAILING_EQ_PSEUDO);
-        if (m && eqIndex === null) { eqIndex = parseInt(m[2], 10); base = m[1].trim(); changed = true; continue; }
-        m = base.match(TRAILING_TEXT_PSEUDO);
-        if (m) { texts.unshift(m[3]); base = m[1].trim(); changed = true; }
-    }
-    const filterText = (els: Element[]): Element[] => {
-        if (!texts.length) return els;
-        const wanted = texts.map(normalizeText);
-        return els.filter(el => { const tc = normalizeText(el.textContent); return wanted.every(w => tc.includes(w)); });
-    };
-    // Run a selector + any text filter, ALWAYS merging light DOM + open shadow roots (deepQueryAll includes
-    // the light matches first, in document order). Merge — not a fallback-when-empty — because a text/tag can
-    // legitimately match in BOTH the page chrome AND inside a component (the task text mentions "Display name"
-    // while the real control is in a shadow root); the caller wants the shadow one too. On a shadow-free page
-    // deepQueryAll returns exactly the light matches, so behaviour there is unchanged.
-    const run = (sel: string): Element[] => {
-        // Validate first: deepQueryAll swallows per-scope throws, but an INVALID selector must still error
-        // (tools report "Invalid selector") rather than silently return 0 — native querySelectorAll throws here.
-        document.querySelectorAll(sel || "*");
-        return filterText(deepQueryAll(sel || "*"));
-    };
-    let els = run(base);
-    // `text=` → keep only the deepest text carriers (drop matching ancestors), so a click
-    // lands on the actual button, not <body>.
-    if (deepest && els.length > 1) els = els.filter(el => !els.some(o => o !== el && el.contains(o)));
-    if (eqIndex !== null) return els[eqIndex] ? [els[eqIndex]] : [];
-    if (!els.length) {
-        const m = base.match(TRAILING_NTH_NATIVE);
-        if (m) {
-            const pool = run(m[1].trim());
-            const i = parseInt(m[2], 10) - 1;   // CSS nth-* is 1-based
-            return pool[i] ? [pool[i]] : [];
+    // Parse into `>>>` HOPS first, so each hop's pseudos are evaluated in that hop's own scope.
+    const segs = String(selector).trim().split(">>>").map(s => s.trim()).filter(Boolean);
+    if (!segs.length) return [];
+    // MULTI-HOP (`>>>`): explicit boundary crossing. Resolve each hop in its current scope(s), then descend
+    // into each match's OPEN shadow root / same-origin iframe document for the next hop.
+    if (segs.length > 1) {
+        let scopes: ParentNode[] = [document];
+        for (let i = 0; i < segs.length; i++) {
+            let matched: Element[];
+            if (hasExtPseudo(segs[i])) matched = evalExtHop(segs[i], scopes, false);
+            else { const raw: Element[] = []; for (const sc of scopes) { try { raw.push(...sc.querySelectorAll(segs[i])); } catch { /* skip a bad segment */ } } matched = raw; }
+            if (i === segs.length - 1) return matched;
+            scopes = matched.map(e => traversableRoot(e) ?? sameOriginFrameDoc(e)).filter((r): r is Document | ShadowRoot => !!r);
+            if (!scopes.length) return [];
         }
+        return [];
+    }
+    // SINGLE HOP with an extended pseudo → the combinator-aware evaluator.
+    if (hasExtPseudo(segs[0])) return evalExtHop(segs[0], [document], true);
+    // SINGLE HOP, plain CSS → the fast native path (unchanged): merge light DOM + open shadow roots
+    // (deepQueryAll, light matches first in document order), with a native `:nth-of-type/child(n)` fallback.
+    const seg = segs[0];
+    document.querySelectorAll(seg);   // validate — an INVALID selector must throw, not silently return 0
+    const els = deepQueryAll(seg);
+    if (els.length) return els;
+    const m = seg.match(TRAILING_NTH_NATIVE);
+    if (m) {
+        const pool = deepQueryAll(m[1].trim() || "*");
+        const i = parseInt(m[2], 10) - 1;   // CSS nth-* is 1-based
+        return pool[i] ? [pool[i]] : [];
     }
     return els;
 };
 
 /**
- * Turn a querySelector failure into a useful message. A text pseudo is only
- * supported at the END (queryAll peels it there) — so blame placement ONLY when a
- * `:contains`/`:has-text` genuinely survives mid-selector after peeling the trailing
- * ones. Otherwise the throw was something else (e.g. an unescaped Tailwind `/` in a
- * class) — surface the raw error instead of misdiagnosing it as a placement problem.
+ * Turn a querySelector failure into a useful message. The DOM tools (and `ml.queryAll`) understand the
+ * extended pseudos `:contains`/`:has-text`/`:eq` ANYWHERE in a selector — so if the failed selector still
+ * carries one, the caller almost certainly ran it through RAW `document.querySelector` (which doesn't),
+ * and the fix is to route it through the tools instead. Otherwise the throw is a genuine CSS error (e.g.
+ * an unescaped Tailwind `/` in a class) — surface it raw rather than misdiagnosing.
  *
  * @param {string} selector The selector that failed.
  * @param {Error} err The caught querySelector error.
  * @returns {string} A `Invalid selector: …` message to hand back to the model.
  */
 export const selectorError = (selector: string, err: Error): string => {
-    // Peel trailing text/eq pseudos exactly as queryAll does, then see if a text
-    // predicate is still left mid-selector — that's the only real placement error.
-    let base = String(selector).trim();
-    for (let changed = true; changed; ) {
-        changed = false;
-        let m = base.match(TRAILING_EQ_PSEUDO);
-        if (m) { base = m[1].trim(); changed = true; continue; }
-        m = base.match(TRAILING_TEXT_PSEUDO);
-        if (m) { base = m[1].trim(); changed = true; }
-    }
-    if (/:has-text\s*\(|:contains\s*\(/i.test(base)) {
-        return "Invalid selector: :contains()/:has-text() text predicates are only supported at " +
-            'the END of a selector (e.g. `div.card:contains("text")`). Move it to the final part, ' +
-            "or use exec for a text filter.";
+    // Gate on the ERROR MESSAGE, not the selector: only when querySelector actually choked ON the pseudo
+    // (a raw document.querySelector call — the tools use queryAll, which handles it) is the hint right.
+    // A native CSS error elsewhere (an unescaped Tailwind `/`, a bad combinator) surfaces raw — the
+    // pseudos are supported anywhere now, so they're never the cause when the message is about something else.
+    if (/:has-text\s*\(|:contains\s*\(|:eq\s*\(/i.test(err.message)) {
+        return "Invalid selector: the extended pseudos :contains()/:has-text()/:eq() are NOT native CSS, " +
+            "so raw document.querySelector can't run them. Use `ml.queryAll(selector)` (or the DOM tools), " +
+            'which understand them anywhere — e.g. `ml.queryAll(\'div:contains("x") button\')`.';
     }
     return `Invalid selector: ${err.message}`;
 };

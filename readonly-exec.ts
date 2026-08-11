@@ -27,7 +27,50 @@ export class Denied extends Error {}
 
 // ---------------------------------------------------------------- tokenizer ---
 
-interface Tok { t: "num" | "str" | "name" | "punct" | "eof"; v: string; }
+interface Tok { t: "num" | "str" | "name" | "punct" | "eof" | "template"; v: string; quasis?: string[]; exprs?: string[]; }
+
+// --- template literals (`a${x}b`) ---------------------------------------------------------------
+// Pure string concatenation with interpolated expressions — no new capability (each ${expr} runs
+// through the same eval/mediation). The tokenizer extracts the literal QUASIS + the raw SOURCE of each
+// interpolation; the parser re-tokenizes+parses each source, so nesting/objects/quotes just work.
+// `skipTemplateSpan`/`findExprEnd` are mutually recursive so nested templates + braces are matched right.
+function skipTemplateSpan(src: string, start: number): number {   // start = opening backtick → index AFTER the close
+    let j = start + 1;
+    while (j < src.length) {
+        const c = src[j];
+        if (c === "\\") { j += 2; continue; }
+        if (c === "`") return j + 1;
+        if (c === "$" && src[j + 1] === "{") { j = findExprEnd(src, j + 2) + 1; continue; }
+        j++;
+    }
+    throw new NotInDialect("unterminated template literal");
+}
+function findExprEnd(src: string, start: number): number {   // start = just after `${` → index of the matching `}`
+    let depth = 1, j = start, quote = "";
+    while (j < src.length) {
+        const c = src[j];
+        if (quote) { if (c === "\\") { j += 2; continue; } if (c === quote) quote = ""; j++; continue; }
+        if (c === '"' || c === "'") { quote = c; j++; continue; }
+        if (c === "`") { j = skipTemplateSpan(src, j); continue; }
+        if (c === "{") { depth++; j++; continue; }
+        if (c === "}") { if (--depth === 0) return j; j++; continue; }
+        j++;
+    }
+    throw new NotInDialect("unterminated template expression");
+}
+function scanTemplate(src: string, start: number): { quasis: string[]; exprs: string[]; end: number } {
+    let i = start + 1;
+    const quasis: string[] = [], exprs: string[] = [];
+    let cur = "";
+    while (i < src.length) {
+        const c = src[i];
+        if (c === "\\") { const e = src[i + 1]; cur += e === "n" ? "\n" : e === "t" ? "\t" : e === "r" ? "\r" : e; i += 2; continue; }
+        if (c === "`") { quasis.push(cur); return { quasis, exprs, end: i + 1 }; }
+        if (c === "$" && src[i + 1] === "{") { quasis.push(cur); cur = ""; const end = findExprEnd(src, i + 2); exprs.push(src.slice(i + 2, end)); i = end + 1; continue; }
+        cur += c; i++;
+    }
+    throw new NotInDialect("unterminated template literal");
+}
 
 // Multi-char punctuators, longest first so greedy matching is correct.
 const PUNCT = [
@@ -47,7 +90,7 @@ function tokenize(src: string): Tok[] {
         // Line & block comments — the model sometimes annotates its surveys.
         if (c === "/" && src[i + 1] === "/") { while (i < src.length && src[i] !== "\n") i++; continue; }
         if (c === "/" && src[i + 1] === "*") { i += 2; while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++; i += 2; continue; }
-        if (c === "`") throw new NotInDialect("template literals not supported");   // add later
+        if (c === "`") { const { quasis, exprs, end } = scanTemplate(src, i); toks.push({ t: "template", v: "", quasis, exprs }); i = end; continue; }
         if (c >= "0" && c <= "9") {
             let j = i + 1;
             while (j < src.length && /[0-9.]/.test(src[j])) j++;
@@ -128,6 +171,22 @@ class Parser {
             if (!this.is(";") && !this.is("}") && this.peek().t !== "eof") arg = this.parseExpression();
             if (this.is(";")) this.i++;
             return { type: "Return", arg };
+        }
+        // try { … } catch (e) { … } finally { … } — pure control flow, no new capability. The
+        // evaluator NEVER lets a catch swallow a NotInDialect/Denied (those keep escalating to the
+        // human gate), so `try { <denied op> } catch {}` can't paper over a denial.
+        if (t.t === "name" && t.v === "try") {
+            this.next();
+            const block = this.parseBlock();
+            let param: string | null = null, handler: Node | null = null, finalizer: Node | null = null;
+            if (this.peek().t === "name" && this.peek().v === "catch") {
+                this.next();
+                if (this.is("(")) { this.eat("("); const n = this.next(); if (n.t !== "name") throw new NotInDialect("catch param"); param = n.v; this.eat(")"); }
+                handler = this.parseBlock();
+            }
+            if (this.peek().t === "name" && this.peek().v === "finally") { this.next(); finalizer = this.parseBlock(); }
+            if (!handler && !finalizer) throw new NotInDialect("try needs catch or finally");
+            return { type: "Try", block, param, handler, finalizer };
         }
         const e = this.parseExpression();
         if (this.is(";")) this.i++;
@@ -224,8 +283,23 @@ class Parser {
     }
     parsePrimary(): Node {
         const t = this.peek();
+        // `async` before a function/arrow — the models' `(async () => { … })()` reflex. The keyword is
+        // inert here: the body's `await` is already honoured by the driver, so skip it and re-dispatch to
+        // the function/arrow parse. Only when a function/arrow actually follows (else `async` is an ident).
+        if (t.t === "name" && t.v === "async") {
+            const n = this.peek(1);
+            const followsFn = n && ((n.t === "name" && n.v === "function") || (n.t === "punct" && n.v === "(") || (n.t === "name" && this.peek(2)?.t === "punct" && this.peek(2)?.v === "=>"));
+            if (followsFn) { this.i++; return this.parsePrimary(); }
+        }
         if (t.t === "num") { this.i++; return { type: "Lit", value: parseFloat(t.v) }; }
         if (t.t === "str") { this.i++; return { type: "Lit", value: t.v }; }
+        if (t.t === "template") {
+            this.i++;
+            // Re-parse each interpolation's raw source; require it to fully consume (a stray `;`/statement
+            // inside `${…}` fails closed rather than silently dropping code).
+            const exprs = (t.exprs || []).map(s => { const p = new Parser(tokenize(s)); const n = p.parseExpression(); if (p.peek().t !== "eof") throw new NotInDialect("bad template expression"); return n; });
+            return { type: "Template", quasis: t.quasis || [""], exprs };
+        }
         if (t.t === "name") {
             if (t.v === "true") { this.i++; return { type: "Lit", value: true }; }
             if (t.v === "false") { this.i++; return { type: "Lit", value: false }; }
@@ -316,6 +390,10 @@ const DENIED_PROPS = new Set([
     "__lookupGetter__", "__lookupSetter__", "ownerDocument", "defaultView",
     "contentWindow", "contentDocument", "frameElement", "location", "cookie",
     "parent", "top", "opener", "self", "window", "globalThis", "eval", "Function",
+    // Defense-in-depth for getComputedStyle's CSSStyleDeclaration: the ONLY walk-back to window is
+    // parentRule → parentStyleSheet → ownerNode → ownerDocument → defaultView, and ownerDocument/
+    // defaultView above already cut it — but deny the CSS-object hops too so it's cut at the source.
+    "parentRule", "parentStyleSheet", "ownerNode", "sheet",
 ]);
 
 // The ONLY methods a call may invoke — read/query/pure. No effectful method
@@ -348,18 +426,28 @@ const ALLOWED_METHODS = new Set([
     "all", "allSettled", "then",
     "max", "min", "floor", "ceil", "round", "abs", "pow", "sqrt", "sign", "trunc",
     "toFixed", "toString",
+    // CSSStyleDeclaration (getComputedStyle) — pure readers. Named property reads (`.color`) go
+    // through readMember and aren't denied; these are the method form. No setProperty/removeProperty
+    // (mutation, and they throw on a computed style anyway) — absent, so uncallable.
+    "getPropertyValue", "getPropertyPriority", "item",
     // console (captured)
     "log", "info", "warn", "error", "debug",
 ]);
 
-const CALLABLE_ROOTS = new Set(["String", "Number", "Boolean", "parseInt", "parseFloat", "isNaN", "isFinite"]);
+// Free identifiers that may be CALLED directly: coercion/parse builtins + getComputedStyle (a pure,
+// same-origin read; bound to the view in evalReadonly so it never hands back `window`, and its result's
+// walk-back to window is cut by DENIED_PROPS). Historic :visited history-sniffing is dead — every modern
+// browser returns the UNVISITED style through getComputedStyle.
+const CALLABLE_ROOTS = new Set(["String", "Number", "Boolean", "parseInt", "parseFloat", "isNaN", "isFinite", "getComputedStyle"]);
 
-// The `window.ml` methods this dialect may call — side-effect-free reads that return plain data:
-// no privilege, no page mutation, no tokens/VRAM. Everything else is simply ABSENT from the facade
-// we build, so it can't be reached: setModel/unload MUTATE (setModel would re-point the model the
-// run itself is using), chat/agent/read spend tokens and can recurse, pythonExec/screenshot are
-// privileged. `config()` is already the non-secret MlPublicConfig subset — no URL, no API key.
-export const ML_READONLY_METHODS = ["getModel", "config", "models", "capabilities", "ps", "serverTools"] as const;
+// The `window.ml` methods this dialect may call — side-effect-free reads: no privilege, no page
+// mutation, no tokens/VRAM. Everything else is simply ABSENT from the facade we build, so it can't
+// be reached: setModel/unload MUTATE (setModel would re-point the model the run itself is using),
+// chat/agent/read spend tokens and can recurse, pythonExec/screenshot are privileged. `config()` is
+// already the non-secret MlPublicConfig subset — no URL, no API key. `queryAll` returns live Elements
+// (not plain data), but those flow through the SAME read-mediation as document.querySelectorAll's —
+// a pure shadow/iframe-piercing query, no new capability over what the dialect already reaches.
+export const ML_READONLY_METHODS = ["getModel", "config", "models", "capabilities", "ps", "serverTools", "queryAll"] as const;
 
 /** Build the `ml` object the dialect sees: ONLY {@link ML_READONLY_METHODS}, bound to the real API.
  *  A purpose-built facade rather than `window.ml` itself, so the free set is enforced by what exists,
@@ -499,6 +587,37 @@ class Evaluator {
             case "Cond": return (yield* this.eval(node.cond, scope)) ? yield* this.eval(node.cons, scope) : yield* this.eval(node.alt, scope);
             case "Member": return yield* this.readMember(node, scope);
             case "Call": return yield* this.evalCall(node, scope);
+            case "Template": {
+                // Concatenate quasi[0] expr[0] quasi[1] … — String() coercion, exactly like JS.
+                let out = node.quasis[0];
+                for (let k = 0; k < node.exprs.length; k++) out += String(yield* this.eval(node.exprs[k], scope)) + node.quasis[k + 1];
+                return out;
+            }
+            case "Try": {
+                // A NotInDialect/Denied is a GUARD signal, not a program error — it must ALWAYS reach the
+                // driver so the survey escalates to the human gate. A user catch/finally can never swallow
+                // it (that's the whole safety property); a normal throw (a DOM op, JSON.parse, …) IS caught.
+                let result: unknown, guardErr: NotInDialect | Denied | null = null, otherErr: unknown, hasOther = false;
+                try {
+                    result = yield* this.eval(node.block, scope);   // undefined or a RETURN wrapper
+                } catch (e) {
+                    if (e instanceof NotInDialect || e instanceof Denied) guardErr = e;
+                    else if (node.handler) {
+                        const child = Object.create(scope);
+                        if (node.param) child[node.param] = e;
+                        try { result = yield* this.eval(node.handler, child); }
+                        catch (e2) { if (e2 instanceof NotInDialect || e2 instanceof Denied) guardErr = e2; else { otherErr = e2; hasOther = true; } }
+                    } else { otherErr = e; hasOther = true; }
+                }
+                if (node.finalizer) {
+                    const f = yield* this.eval(node.finalizer, scope);
+                    // A `return` in finally overrides a normal result/throw — but NEVER a guard denial.
+                    if (!guardErr && f && typeof f === "object" && RETURN in (f as object)) return f;
+                }
+                if (guardErr) throw guardErr;   // escalate — no try/catch/finally can paper over a denial
+                if (hasOther) throw otherErr;
+                return result;                  // undefined or a RETURN wrapper (propagates up the block loop)
+            }
         }
         throw new NotInDialect(`node '${node.type}'`);
     }
@@ -550,7 +669,12 @@ class Evaluator {
                 return yield* this.callArrow(ours.node, ours.scope, [obj]);
             }
             const fn = obj?.[key];
-            if (typeof fn !== "function") throw new NotInDialect(`'${key}' is not callable`);
+            // The method name already passed the allowlist (above), so a non-function here is a RUNTIME
+            // error — the receiver is null/undefined or the wrong type (`document.querySelector('#gone')
+            // .getAttribute(x)`). Throw a real TypeError, NOT a guard NotInDialect: it's catchable by a
+            // dialect try/catch (so a survey can handle a missing element in-dialect, no escalation),
+            // while genuine denials (Denied / method-not-allowed NotInDialect) still bypass catch.
+            if (typeof fn !== "function") throw new TypeError(`${obj == null ? String(obj) : "value"} has no callable '${key}'`);
             const out = fn.apply(obj, yield* this.evalArgs(node.args, scope));
             // Every ml method is async, so await it here too: a forgotten `await` then still reads the
             // value instead of a Promise the model can't do anything with.
@@ -577,13 +701,17 @@ class Evaluator {
 
 // -------------------------------------------------------------------- drivers ---
 
-/** Run an evaluation to completion, AWAITING every yielded value. The top-level driver. */
+/** Run an evaluation to completion, AWAITING every yielded value. The top-level driver. A rejected
+ *  awaited value (e.g. an `ml` read that throws) is thrown BACK INTO the generator via `gen.throw`, so a
+ *  dialect `try { await … } catch` can catch it; uncaught, it propagates out (→ falls back to approval). */
 async function runAsync(gen: Ev): Promise<unknown> {
-    let sent: unknown;
+    let sent: unknown, err: unknown, hasErr = false;
     for (;;) {
-        const r = gen.next(sent);
+        const r = hasErr ? gen.throw(err) : gen.next(sent);
+        hasErr = false;
         if (r.done) return r.value;
-        sent = await r.value;
+        try { sent = await r.value; }
+        catch (e) { err = e; hasErr = true; }
     }
 }
 
@@ -616,6 +744,10 @@ export async function evalReadonly(code: string, doc: Document, ml?: unknown): P
         console: { log: rec, info: rec, warn: rec, error: rec, debug: rec },
     });
     if (facade) root.ml = facade;
+    // getComputedStyle bound to the view (never exposed itself, so calling it can't hand back `window`).
+    // Its CSSStyleDeclaration reads are mediated like any other object; the walk-back to window is denied.
+    const view = doc.defaultView;
+    if (view && typeof view.getComputedStyle === "function") root.getComputedStyle = view.getComputedStyle.bind(view);
     const ast = new Parser(tokenize(code)).parseProgram();
     const value = await runAsync(new Evaluator(facade).eval(ast, root));
     return { value, logs };
