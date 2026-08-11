@@ -142,6 +142,8 @@ function writeAgent(s: Session, d: Sink): void {
         ["Steps", `${turnsRun(s.steps)}${s.maxSteps ? ` / ${s.maxSteps}` : ""}`],
         ["Outcome", s.hitCap ? "stopped (step cap)" : s.status === "err" ? "error" : s.summary != null ? "answered" : "running"],
     ]);
+    // Composer attachments the user pasted with the initial task → PNG sidecars (as the sidebar shows them).
+    (s.taskImages || []).forEach((img, j) => d.image(img, `task-img-${j + 1}`, `task image ${j + 1}`));
     const c = s.agentConfig;
     if (c) {
         const lines = [`model: ${s.model || "default"}`, `maxSteps: ${c.maxSteps}`];
@@ -160,7 +162,7 @@ function writeAgent(s: Session, d: Sink): void {
     // before the next turn's prompt at the same step). The LAST answer is the final one (Answer/Stopped).
     const answers = s.answers || [];
     const inter = [
-        ...(s.says || []).map(x => ({ pos: x.atStep || 0, ts: x.ts, say: x.text })),
+        ...(s.says || []).map((x, j) => ({ pos: x.atStep || 0, ts: x.ts, say: x.text, sayImages: x.images, sayIdx: j })),
         ...answers.map((a, i) => ({ pos: a.atStep || 0, ts: a.ts, answer: a, last: i === answers.length - 1 })),
     ].sort((a, b) => (a.pos - b.pos)
         // At the SAME step (a turn that ran no tool steps keeps the prior step count), TIME is authoritative —
@@ -170,7 +172,7 @@ function writeAgent(s: Session, d: Sink): void {
     let ii = 0;
     const emitInter = (x: typeof inter[number]) => {
         // "User Asked" (not "you") — the export is shared with the DevTools panel; "you" is HUD-only.
-        if ("say" in x) { d.head("User Asked"); d.prose(x.say || ""); return; }
+        if ("say" in x) { d.head("User Asked"); (x.sayImages || []).forEach((img, k) => d.image(img, `say-${x.sayIdx}-img-${k + 1}`, `follow-up image ${k + 1}`)); d.prose(x.say || ""); return; }
         const a = x.answer;
         d.head(x.last ? (a.hitCap ? "Stopped (step cap)" : a.cancelled ? "Cancelled" : a.error ? "Error" : "Answer") : "Answered");
         d.prose(a.error || a.text || "(no answer)", !a.text && !a.error);
@@ -317,7 +319,7 @@ const writeSession = (s: Session, d: Sink): void => (s.kind === "agent" ? writeA
 
 // Serialise a session to `{ md, images }` — the markdown references each image as
 // `images/…`, and the bytes ride alongside as sidecars for the zip.
-function serializeSession(s: Session): { md: string; images: Sidecar[] } {
+export function serializeSession(s: Session): { md: string; images: Sidecar[] } {
     const { sink, done } = mdSink();
     writeSession(s, sink);
     const { md, images } = done();

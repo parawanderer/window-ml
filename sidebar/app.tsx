@@ -33,7 +33,7 @@ function onDebug(ev: MlDebugEvent): void {
     if (ev.kind === "agent") {
         sessionMap.set(ev.session.hash, {
             hash: ev.session.hash, model: ev.model, tag: "session", kind: "agent",
-            createdTs: ev.ts, lastTs: ev.ts, status: "pending", turns: [], steps: [], task: ev.task, maxSteps: ev.maxSteps, agentConfig: ev.config,
+            createdTs: ev.ts, lastTs: ev.ts, status: "pending", turns: [], steps: [], task: ev.task, taskImages: ev.images, maxSteps: ev.maxSteps, agentConfig: ev.config,
             config: { system: null, model: ev.model, think: null, schema: false, toolIds: null, maxTokens: null, save: false },
         });
         rev.value++; return;
@@ -91,7 +91,7 @@ function onDebug(ev: MlDebugEvent): void {
         const s = sessionMap.get(ev.session.hash);
         // A new user message means the agent is (about to be) working → back to pending, so the live footer
         // shows during a follow-up run (harmless for a mid-run steer, which is already pending).
-        if (s) { s.says = [...(s.says || []), { text: ev.text, ts: ev.ts, atStep: maxSessionStep(s) }]; s.status = "pending"; s.ended = false; s.lastTs = ev.ts; rev.value++; }
+        if (s) { s.says = [...(s.says || []), { text: ev.text, ts: ev.ts, atStep: maxSessionStep(s), images: ev.images }]; s.status = "pending"; s.ended = false; s.lastTs = ev.ts; rev.value++; }
         return;
     }
     if (ev.kind === "chat") {
@@ -1221,10 +1221,11 @@ function AgentOptionsBlock({ s }: { s: Session }) {
 
 // A user message in the conversation — the initial task, a follow-up run()'s task, or a mid-run say().
 // All identical: from the chat's point of view there's nothing to distinguish them (they're all "you").
-const UserBubble = ({ text, ts }: { text: string; ts: number }) => (
+const UserBubble = ({ text, ts, images }: { text: string; ts: number; images?: string[] }) => (
     <div class="msg user">
         <div class="mrow"><span class="who">you</span><span class="sp" /><Stamp ts={ts} /></div>
-        <div class="utext">{text}</div>
+        {images?.length ? <div class="thumbs">{images.map((src, i) => <ClickableImg key={i} src={src} />)}</div> : null}
+        {text ? <div class="utext">{text}</div> : null}
     </div>
 );
 
@@ -1245,10 +1246,10 @@ function AgentRunView({ s }: { s: Session }) {
     // chat-style reply, or a cancel), every answer/say lands at the SAME atStep, so the fraction forced ALL
     // answers ahead of ALL says regardless of when they actually happened. ts is the authoritative order.
     const items: { pos: number; ts: number; el: preact.JSX.Element }[] = [
-        { pos: -1, ts: s.createdTs, el: <UserBubble key="task" text={s.task || ""} ts={s.createdTs} /> },
+        { pos: -1, ts: s.createdTs, el: <UserBubble key="task" text={s.task || ""} ts={s.createdTs} images={s.taskImages} /> },
         ...groups.map(g => ({ pos: g.step, ts: 0, el: <AgentTurn key={`t${g.step}`} turn={g} max={s.maxSteps} hash={s.hash} /> })),
         ...(s.answers || []).map((a, i) => ({ pos: a.atStep + 0.5, ts: a.ts, el: answer(a, `a${i}`) })),
-        ...(s.says || []).map((sy, i) => ({ pos: sy.atStep + 0.5, ts: sy.ts, el: <UserBubble key={`s${i}`} text={sy.text} ts={sy.ts} /> })),
+        ...(s.says || []).map((sy, i) => ({ pos: sy.atStep + 0.5, ts: sy.ts, el: <UserBubble key={`s${i}`} text={sy.text} ts={sy.ts} images={sy.images} /> })),
     ].sort((a, b) => a.pos - b.pos || a.ts - b.ts);
     return (
         <>
@@ -2197,8 +2198,8 @@ function ShowWork({ run }: { run: Session }) {
     // Answers and says share one positional base (atStep + 0.5); TS breaks the tie — see AgentRunView for
     // why a fixed answer-before-say fraction mis-orders a chat-style turn that ran no tool steps.
     const traceItems: { pos: number; ts: number; el: preact.JSX.Element }[] = [
-        ...(run.task ? [{ pos: -1, ts: run.createdTs || 0, el: <CardTraceMsg key="task" label="you asked" text={run.task} cls="acard-you" /> }] : []),
-        ...(run.says || []).map((s, i) => ({ pos: s.atStep + 0.5, ts: s.ts, el: <CardTraceMsg key={`say${i}`} label="you asked" text={s.text} cls="acard-you" /> })),
+        ...(run.task || run.taskImages?.length ? [{ pos: -1, ts: run.createdTs || 0, el: <CardTraceMsg key="task" label="you asked" text={run.task || ""} cls="acard-you" images={run.taskImages} /> }] : []),
+        ...(run.says || []).map((s, i) => ({ pos: s.atStep + 0.5, ts: s.ts, el: <CardTraceMsg key={`say${i}`} label="you asked" text={s.text} cls="acard-you" images={s.images} /> })),
         ...pastAnswers.map((a, i) => ({ pos: a.atStep + 0.5, ts: a.ts, el: <CardTraceMsg key={`ans${i}`} label={a.cancelled ? "cancelled" : a.hitCap ? "stopped early" : "answered"} text={a.text || "(no reply)"} cls="acard-ans" /> })),
         ...turns.map(t => ({ pos: t.step, ts: 0, el: <AgentTurn key={`t${t.step}`} turn={t} max={run.maxSteps} hash={run.hash} /> })),
     ].sort((a, b) => a.pos - b.pos || a.ts - b.ts);
@@ -2246,7 +2247,7 @@ function ShowWork({ run }: { run: Session }) {
 // styled like the thinking block, so Show-work reads as a scannable conversation SHAPE (ask → work → answer
 // → ask → …). Collapsed with a one-line preview; expand for the full text. This is how a multi-turn HUD run
 // stays legible: you can tell which steps belonged to which of your prompts.
-function CardTraceMsg({ label, text, cls }: { label: string; text: string; cls: string }) {
+function CardTraceMsg({ label, text, cls, images }: { label: string; text: string; cls: string; images?: string[] }) {
     const [open, setOpen] = useState(false);
     return (
         <div class={`athought ${cls}`}>
@@ -2255,7 +2256,8 @@ function CardTraceMsg({ label, text, cls }: { label: string; text: string; cls: 
                 <span class="who">{label}</span>
                 {!open ? <span class="astep-preview">{inlineText(text || "")}</span> : null}
             </button>
-            {open ? <div class="md astep-body" dangerouslySetInnerHTML={{ __html: markdown(text || "", { math: true }) }} /> : null}
+            {images?.length ? <div class="thumbs">{images.map((src, i) => <ClickableImg key={i} src={src} />)}</div> : null}
+            {open && text ? <div class="md astep-body" dangerouslySetInnerHTML={{ __html: markdown(text || "", { math: true }) }} /> : null}
         </div>
     );
 }
@@ -2385,6 +2387,7 @@ function ComposerCard() {
                 <button class="card-x" aria-label="Cancel" title="Cancel" onClick={close}>✕</button>
             </div>
             <div class="card-body">
+                <ThumbStrip imgs={att.imgs} loading={att.loading} onRemove={att.remove} />
                 <textarea ref={ref} class="card-cmp-input" rows={3}
                     placeholder="Ask window.ml to do something on this page… (paste a screenshot to attach)"
                     value={text}
@@ -2394,13 +2397,12 @@ function ComposerCard() {
                         if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
                         else if (e.key === "Escape") { e.preventDefault(); close(); }
                     }} />
-                <ThumbStrip imgs={att.imgs} loading={att.loading} onRemove={att.remove} />
                 {err ? <div class="card-cmp-err">{err}</div> : null}
             </div>
             <div class="card-foot card-cmp-foot">
                 <input ref={att.fileRef} type="file" accept="image/*" multiple style="display:none"
                     onChange={e => { att.addFiles((e.target as HTMLInputElement).files); (e.target as HTMLInputElement).value = ""; }} />
-                <button class="tt cbtn" onClick={() => att.fileRef.current?.click()} aria-label="Attach an image">＋<span class="tt-pop above" role="tooltip">Attach an image (or paste a screenshot)</span></button>
+                <button class="tt cbtn" onClick={() => att.fileRef.current?.click()} aria-label="Attach an image">＋<span class="tt-pop left above" role="tooltip">Attach an image (or paste a screenshot)</span></button>
                 <span class="card-cmp-hint"><kbd class="kb">↵</kbd> send · <kbd class="kb">esc</kbd> cancel</span>
                 <span class="sp" />
                 {/* Step budget — a pretty segmented control (not a bare <select>); caps the agent loop. */}
@@ -2668,21 +2670,22 @@ function CardReply({ hash }: { hash: string }) {
     // materialises once you type. Escape / empty blur collapses back to the ghost.
     const [open, setOpen] = useState(false);
     const [text, setText] = useState("");
+    const att = useImageAttach();
     const inputRef = useRef<HTMLInputElement>(null);
     const send = () => {
         const t = text.trim();
-        if (!t) return;
-        window.parent.postMessage({ __mlSidebarApp: "sessionSend", hash, text: t }, "*");
+        if (!t && !att.imgs.length) return;
+        window.parent.postMessage({ __mlSidebarApp: "sessionSend", hash, text: t, images: att.imgs }, "*");
         // Optimistic: flip the session to WORKING now so the card morphs to the orb the instant you hit
         // Enter, instead of showing the stale answer until the follow-up's first event lands (in off/card
         // mode the page's agent-say bridge is dormant, so there'd otherwise be a visible lag).
         const s = sessionMap.get(hash);
         if (s) { s.status = "pending"; s.lastTs = Date.now(); rev.value++; }
-        setText(""); setOpen(false);
+        setText(""); att.clear(); setOpen(false);
     };
     const onKey = (e: KeyboardEvent) => {
         if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
-        else if (e.key === "Escape") { e.preventDefault(); setText(""); setOpen(false); }
+        else if (e.key === "Escape") { e.preventDefault(); setText(""); att.clear(); setOpen(false); }
     };
     useEffect(() => { if (open) inputRef.current?.focus(); }, [open]);
 
@@ -2695,13 +2698,18 @@ function CardReply({ hash }: { hash: string }) {
             </div>
         );
     }
-    const has = !!text.trim();
+    const has = !!text.trim() || att.imgs.length > 0;
     return (
         <div class="card-reply">
+            <ThumbStrip imgs={att.imgs} loading={att.loading} onRemove={att.remove} />
             <div class="card-reply-field">
+                <input ref={att.fileRef} type="file" accept="image/*" multiple style="display:none"
+                    onChange={e => { att.addFiles((e.target as HTMLInputElement).files); (e.target as HTMLInputElement).value = ""; }} />
+                {/* preventDefault on mousedown so clicking ＋ doesn't blur the input (which would collapse the box). */}
+                <button class="cbtn card-reply-attach" aria-label="Attach an image" onMouseDown={e => e.preventDefault()} onClick={() => att.fileRef.current?.click()}>＋</button>
                 <input ref={inputRef} class="card-reply-in" type="text" value={text} placeholder="Reply to continue this run…"
-                    onInput={e => setText((e.target as HTMLInputElement).value)} onKeyDown={onKey}
-                    onBlur={() => { if (!text.trim()) setOpen(false); }} />
+                    onInput={e => setText((e.target as HTMLInputElement).value)} onKeyDown={onKey} onPaste={att.onPaste}
+                    onBlur={() => { if (!text.trim() && !att.imgs.length && !att.loading) setOpen(false); }} />
                 <button class={`card-reply-send${has ? " show" : ""}`} aria-label="Send" tabIndex={has ? 0 : -1}
                     onMouseDown={e => e.preventDefault()} onClick={send} disabled={!has}>
                     <IconSend />

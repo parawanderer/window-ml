@@ -90,6 +90,22 @@ test("detail shows the options-first-message and renders assistant markdown with
     assert.match(w.shadow.querySelector(".msg.asst .code").textContent, /\*\*bold\*\*/);
 });
 
+test("agent session: a pasted task image + a follow-up (say) image render as thumbnails in the chat log", async () => {
+    const w = await loadSidebarWorld();
+    const IMG1 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA";
+    const IMG2 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgBB";
+    await w.dispatch({ ...agentStart("imgs", "look at this"), images: [IMG1] });
+    await w.dispatch(agentResult("imgs", "seen it", 0));
+    // a follow-up turn (agent-say) with its OWN pasted image
+    await w.dispatch({ kind: "agent-say", id: "imgs", ts: Date.now() + 5, save: false, session: { hash: "imgs", turn: 0 }, text: "and this?", images: [IMG2] });
+    await w.dispatch(agentResult("imgs", "seen that too", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const srcs = [...w.shadow.querySelectorAll(".msg.user img")].map(i => i.getAttribute("src"));
+    assert.ok(srcs.includes(IMG1), "the pasted task image is shown in the conversation");
+    assert.ok(srcs.includes(IMG2), "the follow-up (say) image is shown too");
+});
+
 test("assistant markdown renders a GFM table (aligned, XSS-safe); a lone pipe stays a paragraph", async () => {
     const w = await loadSidebarWorld();
     const md = [

@@ -38,6 +38,7 @@ export interface Session {
     // ml.agent runs (kind === "agent"): a task + a list of steps + a final summary.
     kind?: "agent";
     task?: string;
+    taskImages?: string[];   // composer attachments the user pasted with the initial task (data URLs)
     steps?: AgentStep[];
     summary?: string;
     error?: string;   // a FATAL run error (model call failed / unexpected throw) — distinct from a tool's Error result
@@ -56,7 +57,7 @@ export interface Session {
     // run()'s task, and a mid-run say() — is a `say` (all rendered identically as "you"); every turn's final
     // answer is an `answer`. `atStep` is the cumulative step count when it arrived, so the render interleaves
     // them with the turn step-groups in order. (`summary` still holds the LATEST answer for the title/status.)
-    says?: { text: string; ts: number; atStep: number }[];
+    says?: { text: string; ts: number; atStep: number; images?: string[] }[];
     answers?: { text: string; ts: number; atStep: number; status: Status; hitCap?: boolean; cancelled?: boolean; error?: string }[];
 }
 

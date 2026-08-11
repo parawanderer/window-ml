@@ -954,7 +954,7 @@ export interface DebugAgentConfig {
     /** headless run: approval-gated calls are refused (no human to approve) */
     unattended?: boolean;
 }
-export interface DebugAgentStart extends DebugBase { kind: "agent"; task: string; model: string | null; maxSteps: number; config: DebugAgentConfig; }
+export interface DebugAgentStart extends DebugBase { kind: "agent"; task: string; images?: string[]; model: string | null; maxSteps: number; config: DebugAgentConfig; }
 export interface DebugAgentStep extends DebugBase {
     kind: "agent-step"; step: number;
     /** The PER-TURN step number (1-based, resets each run()), for the "STEP x/maxSteps" display — `step`
@@ -1001,7 +1001,7 @@ export interface DebugAgentResult extends DebugBase { kind: "agent-result"; summ
 export interface DebugAgentCap extends DebugBase { kind: "agent-cap"; maxSteps: number; }
 /** A handle inserted a user message into a RUNNING loop (a.say(text)) — shown immediately (pending), even
  *  though the model only sees it at the next step boundary. */
-export interface DebugAgentSay extends DebugBase { kind: "agent-say"; text: string; }
+export interface DebugAgentSay extends DebugBase { kind: "agent-say"; text: string; images?: string[]; }
 
 /** The event stream injected.js emits over window.postMessage for the sidebar. */
 export type MlDebugEvent = DebugChatStart | DebugChatResult | DebugChatError

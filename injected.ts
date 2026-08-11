@@ -609,9 +609,11 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             // content — with an honest note it didn't see the pixels itself. driverSees/runVisionModel are the
             // SAME values that chose native-vs-delegated `look`, so the image path matches the tool path.
             let pendingImages: string[] | undefined;
+            let turnImages: string[] = [];   // the resolved data URLs, for the debug transcript (shown in BOTH the vision + OCR cases)
             if (images && images.length) {
                 try {
                     const urls = await Promise.all(images.map(im => this._imageToDataUrl(im)));
+                    turnImages = urls;
                     if (driverSees) pendingImages = urls;
                     else {
                         const notes: string[] = [];
@@ -700,7 +702,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             // `runModel` (resolved once up top) is the driver model — config default when none was passed —
             // so the sidebar shows the REAL model (not "default") and can tell when a vision sub-call reused it.
             const mlApi = this as unknown as MlApi;   // typed self-ref for the deps' chatMeta (capabilities/ps)
-            if (firstTurn) emitDebug({ kind: "agent", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, task, model: runModel, maxSteps, config: {
+            if (firstTurn) emitDebug({ kind: "agent", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, task, images: turnImages.length ? turnImages : undefined, model: runModel, maxSteps, config: {
                 system: systemPrompt, customSystem: !!system,
                 tools: toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval, vision: !!(t.capabilities && t.capabilities.includes("vision")), description: t.description, parameters: t.parameters, summary: t.summary })),
                 maxSteps, think: (think === true || think === false) ? think : null, env, vision: vision ?? null,
@@ -708,7 +710,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             } });
             // A CONTINUATION (a handle's later run() with a task) shows the follow-up as a user message in the
             // conversation — the sidebar renders it exactly like the first task / a mid-run say (all "you").
-            else if (task) emitDebug({ kind: "agent-say", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, text: task });
+            else if (task || turnImages.length) emitDebug({ kind: "agent-say", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, text: task, images: turnImages.length ? turnImages : undefined });
 
             // ── Design A: route through the BACKGROUND loop so the approval gate lives at the extension
             // origin (unforgeable by the page — a page-set window.confirm or a hostile approve() can't
