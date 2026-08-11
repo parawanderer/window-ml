@@ -1051,35 +1051,35 @@ export async function captureVerify(ml: MlApi, ctx: ToolContext | undefined, cen
     const driverSees = !!ctx?.driverSees;
     const reader = ctx?.visionModel || null;
     if (!driverSees && !reader) return { content: "\n\n(verify was requested, but no vision model is available to capture the result — read it with look/findByText next.)" };
-    // An element/point action → a marked @pt crop of the general AREA around it; a `wait` (center null) → the
-    // whole viewport (area-first: you verify the settled page, not the thing you waited on). Mint the point
-    // token so the model can re-look at this exact spot (e.g. clean, no overlay) if the marker hides text.
+    // An element/point action → a CLEAN crop of the general AREA around it, the target dead-CENTRE (NO
+    // click-mark overlay by default: the model almost always looked at the target before acting, so it
+    // doesn't need re-marking — and a marker box can occlude the very result it's meant to confirm, which
+    // makes the VLM confabulate the hidden characters). A `wait` (center null) → the whole viewport. The
+    // point token is still minted so the model can look() it to see EXACTLY where the click landed if needed.
     const tok = center ? mintPoint(center.x, center.y) : null;
     let crop: string;
-    try { crop = tok ? await ml.screenshot(tok, { margin: VERIFY_MARGIN }) : await ml.screenshot(null, {}); }
+    try { crop = tok ? await ml.screenshot(tok, { margin: VERIFY_MARGIN, noOverlay: true }) : await ml.screenshot(null, {}); }
     catch { return {}; }   // capture failed → no verify, base result stands
-    // Targeted no-overlay nudge: if the marker box actually sits on text, tell the model how to read it
-    // cleanly (a standalone look on the SAME token with the overlay off). Same-origin DOM only.
-    const overText = (tok && boxIntersectsText({ left: center!.x - 12, top: center!.y - 12, width: 24, height: 24 }))
-        ? ` ⚠ The marker box is sitting on text — to read what's under it, call look({ selector: "${tok}", views: ["no-overlay"] }).` : "";
+    // The target is at the crop's centre — say so instead of drawing a box on it. Need the precise landing
+    // spot (the click box)? a follow-up look() on the token draws it, without occluding this verify crop.
+    const clickPoint = tok ? ` The target you ${verb} is at the CENTRE of this crop; to see the exact click point, look({ selector: "${tok}" }).` : "";
     const areaNote = mutated
-        ? `The element you acted on is GONE — the page changed. This is the AREA where it was (the box marks the spot).`
-        : center ? `This is the area around where you ${verb} (the box marks the spot).`
+        ? `The element you ${verb} is GONE — the page changed. This crop is centred where it was.`
+        : center ? `Here's the area where you ${verb}.`
             : `The page settled — here's the current viewport.`;
     const reason = mutated ? "after the action — target changed" : center ? "after the action" : "after wait";
     // DOM legend of the verify area — names what just APPEARED (a menu that opened, a filled value) with
     // selectors, so the model acts on the DOM instead of re-reading the pixels. Same box the crop shows.
     const legend = legendForBox(center ? { left: center.x - VERIFY_MARGIN, top: center.y - VERIFY_MARGIN, right: center.x + VERIFY_MARGIN, bottom: center.y + VERIFY_MARGIN } : boxForTarget(null, 0));
-    if (driverSees) return { content: `\n\n ${areaNote} Read the result and continue — no need to look() first.${overText}${legend}`, image: crop, imageLabel: reason, feedback: { reason, via: "image", image: crop } };
-    // Text-only driver: the reader describes the crop; the driver gets words. The click-mark note only applies
-    // to a MARKED crop (an @pt) — a plain viewport (wait) has no annotation box on it.
+    if (driverSees) return { content: `\n\n ${areaNote}${clickPoint} Read the result and continue — no need to look() first.${legend}`, image: crop, imageLabel: reason, feedback: { reason, via: "image", image: crop } };
+    // Text-only driver: the reader describes the crop (no marker to explain — it's a plain crop).
     const question = center
-        ? `The image is a crop of the page just AFTER a "${verb}" action. Describe what is now shown at and around the marked spot — especially anything that CHANGED (a menu/panel/result that appeared, a new field value, a navigation).${CLICK_MARK_NOTE}`
+        ? `The image is a crop of the page just AFTER a "${verb}" action; the target is at the exact CENTRE. Describe what is now shown there and around it — especially anything that CHANGED (a menu/panel/result that appeared, a new field value, a navigation).`
         : `The image is a screenshot of the page after it settled following a wait. Describe the current state — especially anything that just finished loading or changed.`;
     let desc: string;
     try { desc = String(await ml.chat(question, { images: [crop], model: reader, maxTokens: 256, numCtx: VISION_NUM_CTX })).trim(); }
     catch { return {}; }
-    return { content: `\n\n👁 ${areaNote} You can't see images, so this is ${reader || "the reader"}'s description:\n${desc}${overText}${legend}`, feedback: { reason, via: "text", text: desc, prompt: question, image: crop } };
+    return { content: `\n\n👁 ${areaNote} You can't see images, so this is ${reader || "the reader"}'s description:\n${desc}${clickPoint}${legend}`, feedback: { reason, via: "text", text: desc, prompt: question, image: crop } };
 }
 // The viewport CENTRE of an element (composing iframe offsets), for a verify crop. null if it has no box.
 const elementCenter = (el: Element): { x: number; y: number } | null => {

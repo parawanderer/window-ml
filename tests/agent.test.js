@@ -429,19 +429,22 @@ test("render descriptor: an iframe element renders its `>>>` selector, not the b
 const mockRect = (el, o) => { el.getBoundingClientRect = () => ({ left: o.x, top: o.y, width: o.w, height: o.h, right: o.x + o.w, bottom: o.y + o.h, x: o.x, y: o.y, toJSON() {} }); };
 const visionCtx = (driverSees) => ({ driverSees, visionModel: "vlm", tools: [], hasTool: () => false, model: "m", capabilities: null });
 
-test("click verify (vision driver): folds a post-action AREA screenshot into the result as an inline image", async () => {
+test("click verify (vision driver): folds a CLEAN (no-overlay) post-action AREA crop in, target centred", async () => {
     const { ml, document } = loadDomWorld('<button id="b">Go</button>');
     mockRect(document.getElementById("b"), { x: 10, y: 20, w: 80, h: 30 });
-    ml.screenshot = async () => "data:image/png;base64,CROP";   // stub the capture (no real tab in jsdom)
+    let shotOpts = null;
+    ml.screenshot = async (_t, o) => { shotOpts = o; return "data:image/png;base64,CROP"; };   // stub the capture (no real tab in jsdom)
     const res = await ml.clickTool().run({ selector: "#b", verify: true }, visionCtx(true));
     assert.equal(typeof res, "object", "verify returns a ToolResult, not a bare string");
     assert.equal(res.image, "data:image/png;base64,CROP", "the area crop is injected as an inline image (native driver)");
+    assert.equal(shotOpts && shotOpts.noOverlay, true, "the crop is CLEAN — no click-mark overlay (can't occlude the result → fewer hallucinations)");
     assert.equal(res.feedback.via, "image", "feedback provenance is image");
-    assert.match(res.content, /area around where you clicked/i, "the content notes the verify area");
+    assert.match(res.content, /CENTRE of this crop/i, "the note says the target is dead-centre (no drawn box)");
+    assert.match(res.content, /look\(\{ selector: "@pt:/, "and offers a look() on the point for the exact click box");
     assert.match(res.content, /Clicked/, "the base click result is still there");
 });
 
-test("click verify (text-only driver): describes the crop via the reader + the click-mark annotation note", async () => {
+test("click verify (text-only driver): describes the CLEAN crop via the reader (target centred, no click-mark)", async () => {
     const { ml, document } = loadDomWorld('<button id="b">Go</button>');
     mockRect(document.getElementById("b"), { x: 10, y: 20, w: 80, h: 30 });
     ml.screenshot = async () => "data:image/png;base64,CROP";
@@ -451,7 +454,8 @@ test("click verify (text-only driver): describes the crop via the reader + the c
     assert.equal(res.image, undefined, "no inline image for a text-only driver");
     assert.equal(res.feedback.via, "text", "feedback is a text description");
     assert.match(res.feedback.text, /dropdown opened/, "the reader's description rides along");
-    assert.match(asked, /added to this image BY THE TOOL|NOT a real UI control/i, "the describe prompt carries the click-mark annotation note");
+    assert.match(asked, /at the exact CENTRE/i, "the describe prompt frames the target as centred (no click-mark note — there's no mark)");
+    assert.doesNotMatch(asked, /added to this image BY THE TOOL/i, "no click-mark annotation note (the crop is clean)");
     assert.match(res.content, /vlm's description/i, "the content frames the reply as the reader's description");
 });
 
@@ -472,7 +476,7 @@ test("type verify: captures the field area after typing", async () => {
     ml.screenshot = async () => "data:image/png;base64,CROP";
     const res = await ml.typeTool().run({ selector: "#q", text: "hello", verify: true }, visionCtx(true));
     assert.equal(res.image, "data:image/png;base64,CROP", "the field-area crop is injected");
-    assert.match(res.content, /area around where you typed/i);
+    assert.match(res.content, /area where you typed/i);
     assert.match(res.content, /Value now: "hello"/, "the base type result is still there");
 });
 
