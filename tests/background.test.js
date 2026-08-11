@@ -207,6 +207,49 @@ test("num_ctx: the cap is kept when the resident window is SMALLER than requeste
     assert.equal(chatBody.params.num_ctx, 8192, "resident 2048 < 8192 → keep the override");
 });
 
+test("num_ctx: ml.read (ocr) applies the small ocrNumCtx default — no 256K balloon on a fresh load", async () => {
+    let chatBody = null;
+    const bg = loadBackground({
+        config: baseConfig({ ocrModel: "vision:7b", ocrNumCtx: 8192 }),
+        onFetch: (call) => {
+            if (call.url.includes("/api/ps")) return jsonResponse({ models: [] });   // OCR model not loaded
+            chatBody = call.body;
+            return jsonResponse({ choices: [{ message: { content: "ok" } }] });
+        },
+    });
+    // ml.read sends ocr:true with NO explicit numCtx → prepareRequest fills config.ocrNumCtx.
+    await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "read", images: ["data:image/png;base64,x"] }], ocr: true } });
+    assert.equal(chatBody.params.num_ctx, 8192, "ocr default → small ocrNumCtx, not the model's full window");
+});
+
+test("num_ctx: ml.read({ numCtx }) overrides the ocrNumCtx default", async () => {
+    let chatBody = null;
+    const bg = loadBackground({
+        config: baseConfig({ ocrModel: "vision:7b", ocrNumCtx: 8192 }),
+        onFetch: (call) => {
+            if (call.url.includes("/api/ps")) return jsonResponse({ models: [] });
+            chatBody = call.body;
+            return jsonResponse({ choices: [{ message: { content: "ok" } }] });
+        },
+    });
+    await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "read" }], ocr: true, numCtx: 16384 } });
+    assert.equal(chatBody.params.num_ctx, 16384, "explicit per-call numCtx wins over the ocrNumCtx default");
+});
+
+test("num_ctx: ml.read reuses an OCR model already resident at a bigger window (no reload)", async () => {
+    let chatBody = null;
+    const bg = loadBackground({
+        config: baseConfig({ ocrModel: "vision:7b", ocrNumCtx: 8192 }),
+        onFetch: (call) => {
+            if (call.url.includes("/api/ps")) return jsonResponse({ models: [{ model: "vision:7b", context_length: 131072, size_vram: 1 }] });
+            chatBody = call.body;
+            return jsonResponse({ choices: [{ message: { content: "ok" } }] });
+        },
+    });
+    await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "read" }], ocr: true } });
+    assert.equal(chatBody.params.num_ctx, 131072, "resident 131072 ≥ 8192 → reuse the running instance, no reload");
+});
+
 test("FETCH_LLM omits think unless it is a boolean", async () => {
     const bg = loadBackground({
         config: baseConfig(),
@@ -528,7 +571,7 @@ test("GET_CONFIG returns the model/ocrModel/apiFormat and withholds the URL and 
 
     const res = await bg.send({ type: "GET_CONFIG", payload: {} });
     assert.deepEqual(res.data, {
-        model: "qwen3:235b", ocrModel: "qwen2.5vl", apiFormat: "ollama", defaultModelVision: "",
+        model: "qwen3:235b", ocrModel: "qwen2.5vl", ocrNumCtx: 8192, apiFormat: "ollama", defaultModelVision: "",
         utilityModel: "", utilityNumCtx: 4096, utilityForceCpu: false, autoApproveReadonly: false, autoApprovePython: false,
         pierceClosedShadow: true,
         groundingEnabled: false, groundingModel: "", groundingRange: 1000, debugMode: "off",

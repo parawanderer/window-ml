@@ -1041,7 +1041,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
          * @param {string} [options.prompt=null] Override the default transcription prompt.
          * @returns {Promise<string>} The transcribed text.
          */
-        read: async function(image: string | HTMLImageElement, { model = null, prompt = null }: { model?: string | null; prompt?: string | null } = {}): Promise<string> {
+        read: async function(image: string | HTMLImageElement, { model = null, prompt = null, numCtx = null }: { model?: string | null; prompt?: string | null; numCtx?: number | null } = {}): Promise<string> {
             const dataUrl = await this._imageToDataUrl(image);
             const instruction = prompt ||
                 "Transcribe all text in this image exactly as it appears, " +
@@ -1054,6 +1054,9 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     "messages": [{ role: "user", content: instruction, images: [dataUrl] }],
                     "think": null,
                     "model": model,
+                    // Per-call override; when omitted, prepareRequest applies the small config.ocrNumCtx
+                    // default (residency-guarded, so a bigger already-loaded model is reused, not reloaded).
+                    "numCtx": typeof numCtx === "number" ? numCtx : undefined,
                     "ocr": true
                 }
             );

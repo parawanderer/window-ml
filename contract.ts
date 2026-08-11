@@ -33,6 +33,11 @@ export interface MlConfig {
     apiFormat: ApiFormat;
     /** OCR/vision model used for vision tasks by default, e.g. in ml.read(…). May not always be set. */
     ocrModel: string;
+    /** Context window (Ollama num_ctx) for ml.read's OCR call — kept SMALL by default so the OCR model
+     *  doesn't load at its full 256K window (a huge KV allocation for a task that needs a few K tokens).
+     *  Overridable per-call via ml.read(img, { numCtx }); a model already resident at a bigger window is
+     *  reused, not reloaded (prepareRequest's residency guard). */
+    ocrNumCtx: number;
     /** Whether the DEFAULT `model` sees images natively — an override for the auto-probe. "" = auto-discover
      *  (read Ollama /api/show); "yes"/"no" = declared. Only consulted when the probe is inconclusive (cloud /
      *  non-Ollama models), so it's the one way a cloud model can use NATIVE vision (e.g. gpt-4o in the HUD).
@@ -142,6 +147,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     model: "",
     apiFormat: "openai",
     ocrModel: "",
+    ocrNumCtx: 8192,
     defaultModelVision: "",
     modelFilter: "",
     debugMode: "off",
@@ -182,7 +188,7 @@ export const detectGroundingModel = (models: string[]): string =>
  *  ml.agent can decide whether to route a run through the unforgeable BACKGROUND loop (design A —
  *  when a debug surface is enabled) or the in-page loop (off). It's UI state, not a secret. */
 export type MlPublicConfig = Pick<MlConfig,
-    "model" | "ocrModel" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "autoApprovePython" | "pierceClosedShadow" | "groundingEnabled" | "groundingModel" | "groundingRange" | "debugMode" | "defaultModelVision"> & {
+    "model" | "ocrModel" | "ocrNumCtx" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "autoApprovePython" | "pierceClosedShadow" | "groundingEnabled" | "groundingModel" | "groundingRange" | "debugMode" | "defaultModelVision"> & {
     /** COMPUTED per request (not stored): whether THIS page's origin is on the user's page-approval
      *  whitelist. When true, ml.agent honours the page's own approve()/confirm gate (the user trusts this
      *  domain); otherwise a privileged tool routes to the unforgeable background gate. The raw domain
@@ -1074,7 +1080,7 @@ export interface MlApi {
 
     /* ---- vision / OCR / capture ---- */
     /** OCR/describe an image (element, url or data URL). */
-    read(image: string | HTMLImageElement, opts?: { model?: string | null; prompt?: string | null }): Promise<string>;
+    read(image: string | HTMLImageElement, opts?: { model?: string | null; prompt?: string | null; numCtx?: number | null }): Promise<string>;
     /** Capture the tab (or an element) to a data URL. */
     screenshot(target?: string | Element | null, opts?: { scroll?: boolean; fullPage?: boolean; index?: number; raw?: boolean; margin?: number; noOverlay?: boolean; capture?: string | null }): Promise<string>;
 

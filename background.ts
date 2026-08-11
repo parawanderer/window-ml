@@ -390,7 +390,10 @@ async function prepareRequest(payload: FetchLlmPayload, signal?: AbortSignal) {
     // format handler puts them where each backend reads them (Ollama `options` vs
     // OpenAI-compat top-level) — OpenWebUI's OpenAI route ignores an options
     // object, so mis-placing them silently dropped Force-CPU / context.
-    let numCtx = payload.numCtx ?? (useUtility ? config.utilityNumCtx : undefined);
+    // extend:"utility" → the utility profile's num_ctx; ml.read (ocr) → the small ocrNumCtx so the OCR
+    // model doesn't fresh-load at its full 256K window. An explicit payload.numCtx overrides either. The
+    // residency guard below then reuses an already-loaded (bigger) model instead of reloading it.
+    let numCtx = payload.numCtx ?? (useUtility ? config.utilityNumCtx : payload.ocr ? config.ocrNumCtx : undefined);
     const numGpu = payload.numGpu ?? (useUtility && config.utilityForceCpu ? 0 : undefined);
     // Reuse an already-loaded model instead of reloading it at a smaller context.
     // A num_ctx override that's SMALLER than what the model is currently resident
@@ -1396,7 +1399,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     pageApprovalAllowed = !!host && (config.pageApprovalDomains || []).includes(host);
                 } catch { /* opaque/blank origin → not allowed */ }
                 sendResponse({ data: {
-                    model: config.model, ocrModel: config.ocrModel, apiFormat: config.apiFormat,
+                    model: config.model, ocrModel: config.ocrModel, ocrNumCtx: config.ocrNumCtx, apiFormat: config.apiFormat,
                     defaultModelVision: config.defaultModelVision,
                     utilityModel: config.utilityModel, utilityNumCtx: config.utilityNumCtx, utilityForceCpu: config.utilityForceCpu,
                     autoApproveReadonly: config.autoApproveReadonly, autoApprovePython: config.autoApprovePython,
