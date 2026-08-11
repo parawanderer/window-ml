@@ -133,6 +133,16 @@ export function modelFilterAllows(model: string, filter: string): boolean {
     try { return new RegExp(filter).test(model); } catch { return true; }
 }
 
+/** Sanitize composer image attachments relayed from the sidebar app (a pasted/uploaded screenshot):
+ *  keep only `data:image/*` strings, size-capped so a runaway paste can't bloat a postMessage, max 8 per
+ *  turn. Returns undefined when there's nothing valid (keeps the relayed message clean). Pure; shared by
+ *  the overlay shell and the DevTools panel relays so both validate identically. */
+export function cleanImages(v: unknown): string[] | undefined {
+    if (!Array.isArray(v)) return undefined;
+    const out = v.filter((x): x is string => typeof x === "string" && /^data:image\//.test(x) && x.length <= 8_000_000).slice(0, 8);
+    return out.length ? out : undefined;
+}
+
 /** Single source of truth for config defaults — imported by background.ts,
  *  popup.ts, and the sidebar app so the three can't drift.
  *  - chatUrl: OpenWebUI's OpenAI-compatible endpoint. No root /v1 alias (tested
@@ -552,8 +562,9 @@ export interface MlAgentHandle {
     /** is a loop in flight right now? */
     running: boolean;
     /** run a full end-to-end loop until the agent completes its turn. Call again for the next turn (same
-     *  session). Rejects if a loop is already in flight. With no task, runs over whatever say() has queued. */
-    run(task?: string): Promise<AgentResult>;
+     *  session). Rejects if a loop is already in flight. With no task, runs over whatever say() has queued.
+     *  `images` attach to THIS turn's user message (a composer paste) — native-vision or OCR-transcribed. */
+    run(task?: string, images?: (string | HTMLImageElement)[]): Promise<AgentResult>;
     /** put a user message into the session: MID-RUN it steers (injected at the next step boundary); IDLE it
      *  appends to history for the next run() (with a console note). Never throws. */
     say(text: string): void;

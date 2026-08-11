@@ -4,6 +4,7 @@
 // iframe (sidebar.html) is byte-for-byte the overlay's — it just sees a parent relaying
 // __mlDebug, exactly as under the shell — so the app needs no changes. (`chrome` is the
 // @types/chrome global — a local `declare` would poison the type across the project.)
+import { cleanImages } from "../contract";
 const frame = document.getElementById("app") as HTMLIFrameElement;
 
 // This panel only streams when it's the ACTIVE debug surface (debugMode === "devtools").
@@ -115,8 +116,8 @@ window.addEventListener("message", (e: MessageEvent) => {
     if ("__mlHighlight" in d) { void chrome.runtime.sendMessage({ type: "ML_HL_REMOTE", tabId, ref: d.__mlHighlight }).catch(() => {}); return; }
     // Session composer reverse channel: the panel can't touch the inspected page, so relay to the
     // background → that tab's shell → the page's handle registry (same route as hover-highlight).
-    if (d.__mlSidebarApp === "sessionSend" && typeof d.hash === "string" && typeof d.text === "string" && d.text.trim()) {
-        void chrome.runtime.sendMessage({ type: "ML_SESSION_REMOTE", tabId, action: "send", hash: d.hash, text: d.text }).catch(() => {});
+    if (d.__mlSidebarApp === "sessionSend" && typeof d.hash === "string" && typeof d.text === "string" && (d.text.trim() || cleanImages(d.images))) {
+        void chrome.runtime.sendMessage({ type: "ML_SESSION_REMOTE", tabId, action: "send", hash: d.hash, text: d.text, images: cleanImages(d.images) }).catch(() => {});
         return;
     }
     if (d.__mlSidebarApp === "sessionCancel" && typeof d.hash === "string") {

@@ -13,6 +13,7 @@
 // injected's async <script> is listening — which stranded the devtools panel on Ctrl+R)
 // can't leave it un-live.
 import { SB_ROOT, SB_HOST, SB_TAB, SB_FRAME, SB_LIGHTBOX, SB_LIGHTBOX_X, SB_HIGHLIGHT, SB_CARD } from "../ids";
+import { cleanImages } from "../contract";
 import type { DebugMode } from "../contract";
 
 const WIDTH_KEY = "ml_debug_width";
@@ -681,6 +682,7 @@ function onWindowMessage(e: MessageEvent): void {
             maxSteps: typeof d.maxSteps === "number" ? d.maxSteps : undefined,
             model: typeof d.model === "string" && d.model.trim() ? d.model.trim() : undefined,
             vision: d.vision === true ? true : undefined,
+            images: cleanImages(d.images),
             hud: agentHud,
         } }, "*");
         return;
@@ -688,8 +690,9 @@ function onWindowMessage(e: MessageEvent): void {
     // The session composer: drive a live createAgent session by hash. Relayed to the PAGE, which decides
     // from the handle's live state whether to STEER (say) or start a new turn (run), or cancels the run.
     // Origin-checked (real iframe); reaches only this page's own handle registry — nothing cross-origin.
-    if (d.__mlSidebarApp === "sessionSend" && frame && e.source === frame.contentWindow && typeof d.hash === "string" && typeof d.text === "string" && d.text.trim()) {
-        window.postMessage({ __mlSessionSend: { hash: d.hash, text: d.text } }, "*");
+    // Allow an IMAGE-ONLY send (a pasted screenshot with no text) — not just non-empty text.
+    if (d.__mlSidebarApp === "sessionSend" && frame && e.source === frame.contentWindow && typeof d.hash === "string" && typeof d.text === "string" && (d.text.trim() || cleanImages(d.images))) {
+        window.postMessage({ __mlSessionSend: { hash: d.hash, text: d.text, images: cleanImages(d.images) } }, "*");
         return;
     }
     if (d.__mlSidebarApp === "sessionCancel" && frame && e.source === frame.contentWindow && typeof d.hash === "string") {
@@ -1041,7 +1044,7 @@ chrome.runtime.onMessage.addListener((msg) => {
     // DevTools session composer (panel → background → here): relay to the PAGE, which drives the handle
     // by hash (steer/run/cancel). Any mode — the page's handle registry is what acts, not this shell.
     else if (msg?.type === "ML_SESSION_TO_PAGE") {
-        if (msg.action === "send") window.postMessage({ __mlSessionSend: { hash: msg.hash, text: msg.text } }, "*");
+        if (msg.action === "send") window.postMessage({ __mlSessionSend: { hash: msg.hash, text: msg.text, images: cleanImages(msg.images) } }, "*");
         else if (msg.action === "cancel") window.postMessage({ __mlCancelSession: { hash: msg.hash } }, "*");
     }
 });

@@ -1929,14 +1929,16 @@ class AgentHandle implements MlAgentHandle, AgentControl {
     window.addEventListener("message", (e: MessageEvent) => {
         if (e.source !== window || !e.data || !e.data.__mlStartAgent) return;
         const task = String(e.data.__mlStartAgent.task || "").trim();
-        if (!task) return;
+        // Composer attachments (pasted/uploaded screenshots) — the shell already sanitised them to data URLs.
+        const images = Array.isArray(e.data.__mlStartAgent.images) ? e.data.__mlStartAgent.images as string[] : undefined;
+        if (!task && !(images && images.length)) return;   // allow an image-only start
         // A UI-started run is a PRODUCT surface (a user typing "click the button" expects click to work),
         // so give it a capable default kit — click/type/python ON TOP of the default domTools + auto-wired
         // look/locate. (The console `ml.agent` primitive stays minimal — callers compose their own.) Each
         // added tool still requires approval, gated by the unforgeable card.
         const maxSteps = Number(e.data.__mlStartAgent.maxSteps);
         const ml = window.ml as unknown as {
-            createAgent: (o?: unknown) => MlAgentHandle;
+            createAgent: (o?: unknown) => MlAgentHandle & { run: (t?: string, images?: (string | HTMLImageElement)[]) => Promise<unknown> };
             clickTool: () => unknown; typeTool: () => unknown; pythonTool: () => unknown; chatMetaTool: () => unknown;
         };
         // `hints` (appended to the system prompt) rather than `system` (which would REPLACE the
@@ -1956,7 +1958,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
         if (e.data.__mlStartAgent.vision === true) opts.vision = true;
         // createAgent (not ml.agent) so the run registers a HANDLE the sidebar/HUD composer can drive —
         // follow-up run()s + say() steering from the "Send a message to this session…" box.
-        try { void ml.createAgent(opts).run(task); }
+        try { void ml.createAgent(opts).run(task, images); }
         catch (err) { console.error("ml: UI-started run failed:", err); }
     });
 
@@ -1969,7 +1971,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
     // AbortController per session hash and abort it on cancel. Only composer-driven turns are tracked (a
     // console `history.chat()` isn't), which is fine: the stop button only fronts turns the composer started.
     const chatInflight = new Map<string, AbortController>();
-    async function continueChatSession(hash: string, text: string): Promise<void> {
+    async function continueChatSession(hash: string, text: string, images?: (string | HTMLImageElement)[]): Promise<void> {
         // Same-tab sessions live in the registry; a saved session from another tab/reload rehydrates.
         const resume = (window.ml as unknown as { resumeChat: (h: string) => Promise<MlHistory> }).resumeChat;
         let h = sessionRegistry.get(hash);
@@ -1977,24 +1979,26 @@ class AgentHandle implements MlAgentHandle, AgentControl {
         if (!h) return;
         const ctrl = new AbortController();
         chatInflight.set(hash, ctrl);
-        try { await h.chat(text, { signal: ctrl.signal }); }
+        try { await h.chat(text, { images: images || [], signal: ctrl.signal }); }
         catch { /* aborted or failed — the chat-error event already surfaced it in the sidebar */ }
         finally { if (chatInflight.get(hash) === ctrl) chatInflight.delete(hash); }
     }
 
     window.addEventListener("message", (e: MessageEvent) => {
         if (e.source !== window || !e.data) return;
-        const d = e.data as { __mlSessionSend?: { hash: string; text: string }; __mlCancelSession?: { hash: string } };
+        const d = e.data as { __mlSessionSend?: { hash: string; text: string; images?: string[] }; __mlCancelSession?: { hash: string } };
         try {
             if (d.__mlSessionSend) {
                 const hash = String(d.__mlSessionSend.hash);
                 const text = String(d.__mlSessionSend.text || "");
-                if (!text) return;
+                const images = Array.isArray(d.__mlSessionSend.images) ? d.__mlSessionSend.images : undefined;
+                if (!text && !(images && images.length)) return;   // allow an image-only follow-up
                 const h = handleRegistry.get(hash);
-                // An AGENT handle holds live state: steer a RUNNING loop (say), else a new turn (run).
-                if (h) { if (h.running) h.say(text); else void h.run(text); return; }
+                // An AGENT handle holds live state: steer a RUNNING loop (say — text only, no image mid-steer),
+                // else a new turn (run, which carries this turn's images).
+                if (h) { if (h.running) h.say(text); else void h.run(text, images); return; }
                 // Otherwise it's a plain chat session — continue the conversation with another turn.
-                void continueChatSession(hash, text);
+                void continueChatSession(hash, text, images);
                 return;
             }
             if (d.__mlCancelSession) {

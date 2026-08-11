@@ -1507,31 +1507,66 @@ function Composer({ s }: { s: Session }) {
     const r = rev.value;   // subscribe: `s.status` is mutated in place (same ref), so without a signal read this
                            // stateful child won't re-render when the run goes pending/idle → the Stop button.
     const [text, setText] = useState("");
+    const [imgs, setImgs] = useState<string[]>([]);   // attached screenshots (data URLs), sent with the turn
+    const [loading, setLoading] = useState(0);        // in-flight file→dataURL decodes (spinner placeholders)
+    const fileRef = useRef<HTMLInputElement>(null);
     // Every session is continuable: an AGENT session has a steerable handle in the page's registry
     // (say/run/cancel); a plain CHAT session continues via its history in the session registry (a fresh turn,
     // or the in-flight fetch aborted). The page routes `sessionSend`/`sessionCancel` to whichever it is.
     const agent = s.kind === "agent";
     const running = s.status === "pending";
-    const empty = !text.trim();
+    const empty = !text.trim() && !imgs.length;   // an IMAGE-only send is allowed
     const stop = running && empty;   // in-flight + empty box → the button cancels the run/turn (Claude-Code style)
     const cancel = () => window.parent.postMessage({ __mlSidebarApp: "sessionCancel", hash: s.hash }, "*");
     const send = () => {
         const t = text.trim();
-        if (!t) return;
-        window.parent.postMessage({ __mlSidebarApp: "sessionSend", hash: s.hash, text: t }, "*");
-        setText("");
+        if (!t && !imgs.length) return;
+        window.parent.postMessage({ __mlSidebarApp: "sessionSend", hash: s.hash, text: t, images: imgs }, "*");
+        setText(""); setImgs([]);
     };
     const act = () => (stop ? cancel() : send());
     // Enter SENDS only — it must NEVER cancel a run (pressing Enter with an empty box while a run is in
     // flight used to hit the Stop path and kill the run out of nowhere). Cancelling is the Stop BUTTON only.
     const onKey = (e: KeyboardEvent) => { if (e.key === "Enter" && !e.shiftKey && !empty) { e.preventDefault(); send(); } };
+    // Read image files → data URLs, tracking a loading count so a thumb spinner shows while decoding.
+    const addFiles = (files: FileList | File[] | null | undefined) => {
+        const list = [...(files || [])].filter(f => f && f.type.startsWith("image/"));
+        if (!list.length) return;
+        setLoading(n => n + list.length);
+        for (const f of list) {
+            const rd = new FileReader();
+            rd.onload = () => { const url = String(rd.result || ""); if (url.startsWith("data:image/")) setImgs(a => [...a, url]); setLoading(n => Math.max(0, n - 1)); };
+            rd.onerror = () => setLoading(n => Math.max(0, n - 1));
+            rd.readAsDataURL(f);
+        }
+    };
+    // Paste a screenshot straight into the box (the common flow: a system screenshot on the clipboard).
+    const onPaste = (e: ClipboardEvent) => {
+        const files = [...(e.clipboardData?.items || [])].filter(it => it.kind === "file" && it.type.startsWith("image/")).map(it => it.getAsFile()).filter(Boolean) as File[];
+        if (!files.length) return;   // no image on the clipboard → let the normal text paste happen
+        e.preventDefault();
+        addFiles(files);
+    };
     const placeholder = running ? (agent ? "Steer this run, or send to queue a follow-up…" : "Sending… or stop this turn")
-        : "Send a message to continue this session…";
+        : "Send a message (or paste a screenshot) to continue…";
     return (
         <div class="composer" data-rev={r}>
+            {imgs.length || loading ? (
+                <div class="cthumbs">
+                    {imgs.map((src, i) => (
+                        <div class="cthumb" key={i}>
+                            <img src={src} alt="attachment" />
+                            <button class="cthumb-x" onClick={() => setImgs(a => a.filter((_, j) => j !== i))} aria-label="Remove image" title="Remove">×</button>
+                        </div>
+                    ))}
+                    {Array.from({ length: loading }, (_, i) => <div class="cthumb cthumb-load" key={`l${i}`}><span class="cspin" /></div>)}
+                </div>
+            ) : null}
             <div class="composer-row">
-                <button class="tt cbtn" disabled aria-label="Upload an image">＋<span class="tt-pop left above" role="tooltip">Attach an image — coming soon (you'll be able to paste screenshots here)</span></button>
-                <input class="cinput" type="text" value={text} onInput={e => setText((e.target as HTMLInputElement).value)} onKeyDown={onKey}
+                <input ref={fileRef} type="file" accept="image/*" multiple style="display:none"
+                    onChange={e => { addFiles((e.target as HTMLInputElement).files); (e.target as HTMLInputElement).value = ""; }} />
+                <button class="tt cbtn" onClick={() => fileRef.current?.click()} aria-label="Attach an image">＋<span class="tt-pop left above" role="tooltip">Attach an image (or paste a screenshot into the box)</span></button>
+                <input class="cinput" type="text" value={text} onInput={e => setText((e.target as HTMLInputElement).value)} onKeyDown={onKey} onPaste={onPaste}
                     placeholder={placeholder} />
                 <button class={`tt cbtn ${stop ? "cstop" : "csend"}`} onClick={act} disabled={!stop && empty} aria-label={stop ? "Stop the run" : "Send"}>
                     {stop ? <IconStop /> : <IconSend />}<span class="tt-pop above" role="tooltip">{stop ? "Stop (cancel)" : running ? "Steer the run" : "Send"}</span>

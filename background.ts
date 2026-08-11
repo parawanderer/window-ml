@@ -892,7 +892,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     // The panel is an extension page (can chrome.runtime.sendMessage); the inspected page has no such path,
     // so it can't forge this. Same relay shape as ML_HL_REMOTE.
     if (message.type === "ML_SESSION_REMOTE" && typeof message.tabId === "number") {
-        try { void chrome.tabs.sendMessage(message.tabId, { type: "ML_SESSION_TO_PAGE", action: message.action, hash: message.hash, text: message.text }).catch(() => {}); } catch { /* tab gone */ }
+        try { void chrome.tabs.sendMessage(message.tabId, { type: "ML_SESSION_TO_PAGE", action: message.action, hash: message.hash, text: message.text, images: message.images }).catch(() => {}); } catch { /* tab gone */ }
         return;
     }
     if (message.type === "SET_APPROVAL") {
