@@ -42,3 +42,14 @@ test("deep nesting closes correctly on dedent", () => {
     const html = markdown("- 1\n  - 1a\n    - 1a-i\n- 2");
     assert.equal(html, "<ul><li>1<ul><li>1a<ul><li>1a-i</li></ul></li></ul></li><li>2</li></ul>");
 });
+
+test("inline code protects its contents from bold/italic (the `*` bug)", () => {
+    // Two `*` code spans used to look like an italic run → both asterisks eaten.
+    assert.equal(markdown("`*` >>> `*`"), "<p><code>*</code> &gt;&gt;&gt; <code>*</code></p>");
+    // A single `*` in code survives too.
+    assert.equal(markdown("the wildcard `*` matches all"), "<p>the wildcard <code>*</code> matches all</p>");
+    // Real italic OUTSIDE code still works alongside a code span.
+    assert.equal(markdown("*em* and `code`"), "<p><em>em</em> and <code>code</code></p>");
+    // Underscores/asterisks inside code are literal, not emphasis.
+    assert.equal(markdown("`a_b_c` and `x**y**z`"), "<p><code>a_b_c</code> and <code>x**y**z</code></p>");
+});

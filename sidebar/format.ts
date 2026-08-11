@@ -145,11 +145,18 @@ export function markdown(src: string, opts: { math?: boolean } = {}): string {
         // but dollar amounts and prose don't. $$…$$ / \(…\) / \[…\] are explicit → always rendered.
         .replace(/(?<![\\$])\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\d)/g, (m: string, t: string) => /[\\^_]/.test(t) ? stashMath(t, false) : m);
     const text = escapeHtml(mathed);
-    const inline = (t: string): string => t
-        .replace(/`([^`]+)`/g, "<code>$1</code>")
-        .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-        .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>")
-        .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    const inline = (t: string): string => {
+        // Stash inline code FIRST, so the bold/italic/link passes never see its contents. Otherwise a `*`
+        // inside code got eaten: `<code>*</code> … <code>*</code>` looks like an italic `*…*` run to the
+        // italic regex, which wrapped the middle in <em> and deleted both asterisks. (Content is already
+        // HTML-escaped upstream, so <code>${c}</code> is safe — same as before.)
+        const codeSpans: string[] = [];
+        return t.replace(/`([^`]+)`/g, (_, c: string) => { codeSpans.push(`<code>${c}</code>`); return `@@IC${codeSpans.length - 1}@@`; })
+            .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+            .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>")
+            .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+            .replace(/@@IC(\d+)@@/g, (_, i: string) => codeSpans[+i]);
+    };
     // GFM table helpers. Cells are already-escaped `text` (never raw source), so
     // inline() on a cell is as safe as anywhere else. Leading/trailing pipes optional.
     const splitRow = (l: string): string[] => {
