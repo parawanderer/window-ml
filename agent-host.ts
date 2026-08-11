@@ -29,6 +29,7 @@ export interface RunAgentConfig {
     autoApprovePython?: boolean;   // the trusted config flag, read background-side
     unattended?: boolean;          // headless run: refuse any call that reaches the human gate (see ml.agent's `unattended`)
     resumeMessages?: NeutralMessage[];   // RESUME: continue this prior history (+ `task` as a new user turn) instead of a fresh system+task
+    images?: string[];   // native-vision composer attachments (data URLs) → attached to THIS turn's user message. The OCR fallback for a text-only driver already folded into `task` page-side.
 }
 
 export interface RunAgentHostDeps {
@@ -74,16 +75,19 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
     // starts with system + task.
     let built: NeutralMessage[] = [];
     const buildMessages = (task: string): NeutralMessage[] => {
+        // This turn's user message — carries native-vision composer images when present. Emitted only when
+        // there's text OR an image (a.run() with no arg + no image runs over what say() already queued).
+        const userTurn = (task || cfg.images?.length)
+            ? [{ role: "user", content: task || "", ...(cfg.images?.length ? { images: cfg.images } : {}) } as NeutralMessage] : [];
         built = cfg.resumeMessages && cfg.resumeMessages.length
             // Continue the handle's prior history. Ensure a system prompt heads it (an idle say() before the
-            // first run() has none), and append `task` only when non-empty (a.run() with no arg runs over
-            // whatever say() already queued — no empty user turn).
+            // first run() has none).
             ? [
                 ...(cfg.resumeMessages[0]?.role === "system" ? [] : [{ role: "system", content: cfg.systemPrompt } as NeutralMessage]),
                 ...cfg.resumeMessages,
-                ...(task ? [{ role: "user", content: task } as NeutralMessage] : []),
+                ...userTurn,
             ]
-            : [{ role: "system", content: cfg.systemPrompt }, { role: "user", content: task }];
+            : [{ role: "system", content: cfg.systemPrompt }, ...userTurn];
         return built;
     };
     const pushAssistant = (messages: NeutralMessage[], msg: { content?: string | null; tool_calls?: ToolCall[] }): void => {

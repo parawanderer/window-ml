@@ -529,6 +529,10 @@ export interface AgentOptions {
     signal?: AbortSignal | null;
     /** continue the run with this hash: append `task` as a follow-up turn (same session) */
     resume?: string | null;
+    /** images (URLs / data URLs / <img>) to attach to THIS turn's user message — e.g. a screenshot the
+     *  user pasted into the HUD/sidebar composer. A vision-capable driver sees them natively; otherwise
+     *  they're transcribed via ml.read and injected as text (with a note the model didn't see the pixels). */
+    images?: (string | HTMLImageElement)[];
     /** scripting mode: keep this run OUT of the in-page HUD (no working orb, no answer card). Approvals STILL surface (privileged consent can't be silenced). The debug sidebar/panel is unaffected. */
     silent?: boolean;
     /** headless mode: no human to approve, so any approval-gated call is REFUSED with a steer to read-only. exec/python_exec are wired ONLY when their auto-approve config is on (read-only survey / sandbox), and told full/mutating use is disabled; otherwise dropped. Auto-approvable read-only ops still run. */
@@ -675,6 +679,10 @@ export interface StartRunPayload {
      *  across turns (the run's final history rides back in the response). Empty/absent → a fresh first turn
      *  (and the background announces the `agent` session start; a continuation does not, avoiding a reset). */
     resumeMessages?: NeutralMessage[];
+    /** Native-vision composer attachments (data URLs) for THIS turn's user message. Resolved page-side
+     *  (a text-only driver's OCR fallback is already folded into `task`), so this is only the see-natively
+     *  path — the background attaches them to the task turn. */
+    images?: string[];
     /** Offsets for this turn's step/seq numbers so the sidebar's turn groups stay distinct across a
      *  handle's turns (the background-path twin of the page loop's control.stepBase/seqBase). The run's own
      *  max step/seq ride back in the response so the page can advance them for the next turn. */

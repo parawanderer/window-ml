@@ -101,7 +101,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
 
     /** Run a full loop until the agent completes its turn. Call again for the next turn (same session).
      *  Rejects while a loop is in flight. No task → runs over whatever say() has queued into history. */
-    async run(task?: string): Promise<AgentResult> {
+    async run(task?: string, images?: (string | HTMLImageElement)[]): Promise<AgentResult> {
         if (this.running) throw new Error("ml.createAgent: a run is already in flight — use say() to add to it, or cancel() first.");
         // Flush any leftover steering into the history so it's never lost: a mid-run say() that a background
         // loop couldn't drain live (arrived after its last step) sits in the inbox — pick it up this run.
@@ -111,7 +111,8 @@ class AgentHandle implements MlAgentHandle, AgentControl {
         this._ctrl = new AbortController();
         this.running = true;
         try {
-            const r = await this._ml.agent(task ?? "", { ...this._opts, signal: this._opts.signal || this._ctrl.signal, _control: this } as AgentOptions);
+            // images are PER-TURN (a composer paste), so they override any left on _opts.
+            const r = await this._ml.agent(task ?? "", { ...this._opts, images: images || [], signal: this._opts.signal || this._ctrl.signal, _control: this } as AgentOptions);
             // Accumulate: a handle's transcript is the WHOLE conversation's actions, not just this turn's
             // (mirrors messages/hash spanning turns). ml.agent()'s per-call transcript is unchanged.
             this._transcript.push(...r.transcript);
@@ -496,7 +497,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
          *   `elements` is the live DOM node(s) the model designated via an
          *   `answer`-capable tool (empty for tasks that just act on the page).
          */
-        agent: async function(task: string, { tools = null, extraTools = [], system = null, hints = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null, resume = null, silent = false, unattended = false, _control = null }: {
+        agent: async function(task: string, { tools = null, extraTools = [], system = null, hints = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null, resume = null, silent = false, unattended = false, images = [], _control = null }: {
             tools?: MlTool[] | null;
             extraTools?: MlTool[];
             system?: string | null;
@@ -513,6 +514,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             resume?: string | null;
             silent?: boolean;
             unattended?: boolean;
+            images?: (string | HTMLImageElement)[];   // attachments for THIS turn (composer paste/upload)
             _control?: AgentControl | null;   // internal: a handle's persistent session state (ml.createAgent). Absent → a throwaway per-call one.
         } = {}): Promise<AgentResult> {
             // Resume a run held in this tab: reuse its stored loop (same toolset/system/model +
@@ -600,6 +602,28 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     // driverSees rides the ToolContext (below), not a build opt; memory is the shared dedup registry.
                     toolset.push(this.locateTool({ model: visionModel, groundingModel, groundingRange, memory: visionMemory }));
                 }
+            }
+            // Composer attachments for THIS turn's first user message (a screenshot pasted/uploaded into the
+            // HUD/sidebar). A vision-capable driver sees them natively; otherwise transcribe via the reader
+            // (ml.read → the OCR model) and fold the text into the task, so a text-only agent still gets the
+            // content — with an honest note it didn't see the pixels itself. driverSees/runVisionModel are the
+            // SAME values that chose native-vs-delegated `look`, so the image path matches the tool path.
+            let pendingImages: string[] | undefined;
+            if (images && images.length) {
+                try {
+                    const urls = await Promise.all(images.map(im => this._imageToDataUrl(im)));
+                    if (driverSees) pendingImages = urls;
+                    else {
+                        const notes: string[] = [];
+                        for (let i = 0; i < urls.length; i++) {
+                            let txt = "";
+                            try { txt = await this.read(urls[i], { model: runVisionModel }); } catch { /* reader unavailable → leave blank */ }
+                            const which = urls.length > 1 ? ` ${i + 1}` : "";
+                            notes.push(`[Pasted image${which} — you can't see images, so here is its transcribed text:]\n${txt || "(could not read the image)"}`);
+                        }
+                        task = task ? `${task}\n\n${notes.join("\n\n")}` : notes.join("\n\n");
+                    }
+                } catch { /* image conversion failed → proceed without the attachment */ }
             }
             // Unattended run: no human to approve, so shape the toolset for read-only autonomy. exec and
             // python_exec are kept ONLY when their read-only auto-approve path is configured on (a readonly
@@ -749,6 +773,8 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                         runId: runHash, task, systemPrompt, tools: descriptors,
                         model: runModel, think: (think === true || think === false) ? think : null,
                         maxSteps, autoApprovePython: autoPy, autoApproveReadonly: autoRO, surface: bgSurface,
+                        images: pendingImages,   // native-vision composer attachments for this turn's user message
+                        // (OCR fallback for a text-only driver is already folded into `task` above)
                         unattended: unattended || undefined, silent: silent || undefined,
                         // A handle's prior history (empty on the first turn) → the background CONTINUES it,
                         // so control.messages stays authoritative across turns even on the background path.
@@ -885,7 +911,13 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 // append this turn's task (empty when run() was called with no arg — it runs over prior say()s).
                 buildMessages: (t) => {
                     if (!control.messages.some(m => m.role === "system")) control.messages.unshift({ role: "system", content: systemPrompt });
-                    if (t) control.messages.push({ role: "user", content: t });
+                    // Attach this turn's composer images to the user message (native-vision path); the OCR
+                    // path already folded its text into `t`. pendingImages is consumed once → first turn only.
+                    if (t || pendingImages) {
+                        const um: NeutralMessage = { role: "user", content: t || "" };
+                        if (pendingImages) { um.images = pendingImages; pendingImages = undefined; }
+                        control.messages.push(um);
+                    }
                     return control.messages;
                 },
                 pushAssistant: (messages, msg) => (messages as NeutralMessage[]).push({ role: "assistant", content: msg.content || "", tool_calls: msg.tool_calls }),

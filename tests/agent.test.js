@@ -2252,6 +2252,41 @@ test("inline vision (#3): a vision-capable agent model gets the screenshot in it
     assert.equal(res.summary, "I can see a search box at the top.");
 });
 
+test("composer image: a VISION-capable agent gets the pasted image in its first user turn", async () => {
+    const steps = [];
+    const world = loadPageWorld({
+        onRuntimeMessage: (m) => {
+            if (m.type === "GET_CONFIG") return { data: { model: "qwen-vl", ocrModel: "", pageApprovalAllowed: true } };
+            if (m.type === "MODEL_CAPS") return { data: ["completion", "vision"] };   // agent model sees natively
+            steps.push(m.payload.messages);
+            return { data: { content: "done", tool_calls: [] } };
+        }
+    });
+    await world.ml.agent("what's this?", { images: ["data:image/png;base64,PASTED"] });
+    const firstUser = steps[0].find(m => m.role === "user");
+    assert.ok(Array.isArray(firstUser.images) && firstUser.images.includes("data:image/png;base64,PASTED"), "pasted image attached to the first user turn");
+    assert.match(firstUser.content, /what's this\?/);
+});
+
+test("composer image: a TEXT-ONLY agent gets the pasted image transcribed (OCR fallback)", async () => {
+    const steps = [];
+    const world = loadPageWorld({
+        onRuntimeMessage: (m) => {
+            if (m.type === "GET_CONFIG") return { data: { model: "text-llm", ocrModel: "reader-vl", pageApprovalAllowed: true } };
+            if (m.type === "MODEL_CAPS") return { data: m.payload?.model === "reader-vl" ? ["completion", "vision"] : ["completion"] };
+            if (m.type === "FETCH_LLM" && m.payload?.ocr) return { data: "SECRET-1234" };   // ml.read transcription (data = content string)
+            steps.push(m.payload.messages);
+            return { data: { content: "done", tool_calls: [] } };
+        }
+    });
+    await world.ml.agent("read it", { images: ["data:image/png;base64,PASTED"] });
+    const firstUser = steps[0].find(m => m.role === "user");
+    assert.ok(!firstUser.images, "no image attached — the driver can't see");
+    assert.match(firstUser.content, /read it/);
+    assert.match(firstUser.content, /SECRET-1234/, "OCR transcription folded into the task text");
+    assert.match(firstUser.content, /can't see images/);
+});
+
 test("vision:true forces NATIVE look on the agent's own model, bypassing the caps probe", async () => {
     const steps = [];
     const world = loadPageWorld({
