@@ -358,7 +358,10 @@ pre.code { margin: .3em 0 .7em; padding: .6em .7em; background: #f4f4f5; border:
 details { margin: .3em 0 .6em; }
 summary { color: #52525b; cursor: default; }
 .md > :first-child { margin-top: 0; }
-.md ul { margin: .3em 0; padding-left: 1.2em; }
+.md ul { margin: .3em 0; padding-left: 1.2em; list-style: disc; }
+.md ol { margin: .3em 0; padding-left: 1.4em; list-style: decimal; }
+.md ul ul, .md ol ol, .md ul ol, .md ol ul { margin: 0; }
+.md hr { border: none; border-top: 1px solid #ddd; margin: .8em 0; }
 /* python_exec df preview — a real table (all rows), zebra + numeric alignment; rows may span pages. */
 table.dftable { border-collapse: collapse; margin: .3em 0 .8em; font-size: .82em; }
 table.dftable th, table.dftable td { border: 1px solid #d4d4d8; padding: 2px 8px; text-align: left; white-space: nowrap; }

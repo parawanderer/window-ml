@@ -166,9 +166,29 @@ export function markdown(src: string, opts: { math?: boolean } = {}): string {
     const isSep = (l: string): boolean => { const c = splitRow(l); return c.length > 0 && c.every(x => alignOf(x) !== null); };
     const cell = (c: string, tag: string, a: string | null) =>
         `<${tag}${a ? ` style="text-align:${a}"` : ""}>${inline(c)}</${tag}>`;
+    // Build nested <ul>/<ol> from a flat list of items with indent depths (2 spaces / a tab per level).
+    // A stack of open lists: deeper indent opens a nested list INSIDE the current <li>; a shallower one
+    // closes back down. The list TYPE (ul vs ol) is decided by the first item at each level.
+    type Item = { indent: number; ordered: boolean; text: string };
+    const buildList = (items: Item[]): string => {
+        let html = "";
+        const stack: { ordered: boolean; indent: number }[] = [];
+        for (const it of items) {
+            if (!stack.length || it.indent > stack[stack.length - 1].indent) {
+                html += it.ordered ? "<ol>" : "<ul>";
+                stack.push({ ordered: it.ordered, indent: it.indent });
+            } else {
+                while (stack.length > 1 && it.indent < stack[stack.length - 1].indent) { const t = stack.pop()!; html += t.ordered ? "</li></ol>" : "</li></ul>"; }
+                html += "</li>";   // close the previous sibling <li>
+            }
+            html += `<li>${inline(it.text)}`;
+        }
+        while (stack.length) { const t = stack.pop()!; html += t.ordered ? "</li></ol>" : "</li></ul>"; }
+        return html;
+    };
     const out: string[] = [];
-    let list: string[] | null = null;
-    const flush = () => { if (list) { out.push("<ul>" + list.join("") + "</ul>"); list = null; } };
+    let items: Item[] | null = null;
+    const flush = () => { if (items) { out.push(buildList(items)); items = null; } };
     const lines = text.split("\n");
     for (let i = 0; i < lines.length; i++) {
         const line = lines[i].trimEnd();
@@ -186,9 +206,11 @@ export function markdown(src: string, opts: { math?: boolean } = {}): string {
             continue;
         }
         const h = line.match(/^(#{1,6})\s+(.*)$/);
-        const li = line.match(/^[-*]\s+(.*)$/);
-        if (h) { flush(); out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`); }
-        else if (li) { (list ??= []).push(`<li>${inline(li[1])}</li>`); }
+        // A list item: leading indent (nesting) + a `-`/`*`/`+` bullet OR an ordered `1.` / `1)` marker.
+        const li = line.match(/^([ \t]*)(?:[-*+]|\d+[.)])\s+(.*)$/);
+        if (/^\s{0,3}(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { flush(); out.push("<hr>"); }   // thematic break
+        else if (h) { flush(); out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`); }
+        else if (li) { (items ??= []).push({ indent: li[1].replace(/\t/g, "  ").length, ordered: /\d/.test(line.trimStart()[0]), text: li[2] }); }
         else if (!line.trim()) { flush(); }
         else { flush(); out.push(`<p>${inline(line)}</p>`); }
     }

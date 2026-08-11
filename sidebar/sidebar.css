@@ -718,8 +718,11 @@ details.io[open] > summary .io-preview { display: none; }
 /* em (relative to --fs) so content scales with the font-size setting */
 .md h1 { font-size: 1.25em; } .md h2 { font-size: 1.17em; } .md h3 { font-size: 1.08em; }
 .md h4, .md h5, .md h6 { font-size: 1em; }
-.md ul { margin: 4px 0; padding-left: 18px; }
+.md ul { margin: 4px 0; padding-left: 18px; list-style: disc; }
+.md ol { margin: 4px 0; padding-left: 20px; list-style: decimal; }
+.md ul ul, .md ol ol, .md ul ol, .md ol ul { margin: 1px 0; }   /* tighter nested lists */
 .md li { margin: 1px 0; }
+.md hr { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
 .md a { color: var(--accent); }
 .md code { background: var(--panel-2); border-radius: 3px; padding: 0 3px; font: 0.92em ui-monospace, SFMono-Regular, Menlo, monospace; }
 
