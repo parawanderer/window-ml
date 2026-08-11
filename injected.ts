@@ -49,7 +49,7 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
 import { pyVarNameError } from "./python-env";
 import { autoApprovePython } from "./auto-approve";
 import { executeTool, toolContext } from "./tool-exec";
-import { runAgentLoop } from "./agent-loop";
+import { runAgentLoop, shotTurnMessage } from "./agent-loop";
 import type { AgentLoopDeps } from "./agent-loop";
 
 /** The mutable state of ONE agent session, shared between ml.agent's page loop and (for a handle) the
@@ -897,8 +897,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 // captured to the (vision-capable) driver as a user turn for its NEXT call.
                 pushToolImages: (messages, images) => (messages as NeutralMessage[]).push({
                     role: "user",
-                    content: `Screenshot${images.length > 1 ? "s" : ""} you requested (${images.map(p => p.label).join(", ")}). ` +
-                        "Describe what you see, then take the next action — or give your final answer if the task is done.",
+                    content: shotTurnMessage(images.map(p => p.label).join(", "), images.length),
                     images: images.map(p => p.image),
                 }),
                 emit,

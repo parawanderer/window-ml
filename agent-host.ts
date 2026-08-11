@@ -12,7 +12,7 @@
 // page-context, so a forged "it's read-only" gains nothing the page couldn't already do; it stays a
 // page-side concern of the delegated exec path. See principle-adding-a-privileged-tool.)
 import type { NeutralMessage, ToolCall, AgentResult, ApprovalDecision } from "./contract";
-import { runAgentLoop } from "./agent-loop";
+import { runAgentLoop, shotTurnMessage } from "./agent-loop";
 import type { ToolMeta, AgentLoopDeps, ToolRunResult } from "./agent-loop";
 import { autoApprovePython } from "./auto-approve";
 
@@ -95,11 +95,9 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
     // Inline vision: a tool RESULT can't carry an image, but a user turn can — so a native `look`
     // screenshot reaches the (vision-capable) driver model on its next turn. Mirrors the page loop.
     const pushToolImages = (messages: NeutralMessage[], images: { image: string; label: string }[]): void => {
-        const labels = images.map(p => p.label).join(", ");
         messages.push({
             role: "user",
-            content: `Screenshot${images.length > 1 ? "s" : ""} you requested (${labels}). ` +
-                "Describe what you see, then take the next action — or give your final answer if the task is done.",
+            content: shotTurnMessage(images.map(p => p.label).join(", "), images.length),
             images: images.map(p => p.image),
         });
     };

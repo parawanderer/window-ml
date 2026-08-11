@@ -157,6 +157,14 @@ function formatChatMeta(
     return L.join("\n");
 }
 
+/** The user turn that carries a native-vision `look`/`locate` screenshot to the driver on its next call.
+ *  Deliberately MINIMAL — just labels the image so the model correlates it to its request. The `look`
+ *  tool description already says to describe + act; re-forcing "Describe what you see, then take the next
+ *  action" on EVERY vision turn only bloated the prompt (repeated boilerplate) and made the model write a
+ *  paragraph before acting (wasted completion tokens on a split-second visual check). Shared by the page
+ *  loop and the background host so the two can't drift. */
+export const shotTurnMessage = (labels: string, count: number): string => `[Screenshot${count > 1 ? "s" : ""}: ${labels}]`;
+
 export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number | (() => number); signal?: AbortSignal | null; unattended?: boolean; }
 
 // Normalize an approval gate's return (boolean OR the rich contract) into a decision. Inlined (not

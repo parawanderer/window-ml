@@ -2247,7 +2247,8 @@ test("inline vision (#3): a vision-capable agent model gets the screenshot in it
         m.role === "user" && Array.isArray(m.images) && m.images.includes("data:image/png;base64,SHOT")));
     assert.ok(injected, "screenshot injected into the agent's own history");
     const imgTurn = steps.flat().find(m => m.role === "user" && Array.isArray(m.images));
-    assert.match(imgTurn.content, /Describe what you see/);
+    // The carrier turn is MINIMAL — just a labelled marker (no forced "describe what you see" paragraph).
+    assert.match(imgTurn.content, /^\[Screenshot: .+\]$/);
     assert.equal(res.summary, "I can see a search box at the top.");
 });
 
