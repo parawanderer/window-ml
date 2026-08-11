@@ -213,12 +213,12 @@ function boxForTarget(target: string | null, margin: number): LegendBox | null {
 
 /** The formatted DOM legend for a screenshot target ("" when nothing notable / on any failure). Defensive:
  *  a legend is a NICE-TO-HAVE annotation — it must never break a look/verify. */
-export function legendFor(target: string | null, margin = 0): string {
-    try { const box = boxForTarget(target, margin); return box ? formatLegend(regionLegend(box)) : ""; } catch { return ""; }
+export function legendFor(target: string | null, margin = 0, seen?: Set<string>): string {
+    try { const box = boxForTarget(target, margin); return box ? formatLegend(regionLegend(box), seen) : ""; } catch { return ""; }
 }
 /** Same, for a caller that already has the viewport box (verify crops). */
-export function legendForBox(box: LegendBox | null): string {
-    try { return box ? formatLegend(regionLegend(box)) : ""; } catch { return ""; }
+export function legendForBox(box: LegendBox | null, seen?: Set<string>): string {
+    try { return box ? formatLegend(regionLegend(box), seen) : ""; } catch { return ""; }
 }
 
 export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512, memory = null }: { model?: string | null; maxTokens?: number; memory?: VisionMemory | null } = {}): MlTool => {
@@ -303,7 +303,7 @@ export const buildLookTool = (ml: MlApi, { model = null, maxTokens = 512, memory
             const render: RenderDescriptor = { type: "look", image: shot, model, output: description, label: subject, prompt: base + guidance };
             // DOM legend of what's IN this crop (controls/media/boundaries/text with selectors) — bridges the
             // vision reply back to actionable selectors. Skipped for a downscaled full-page overview.
-            const legend = fullPage ? "" : legendFor(selector || null, margin as number);
+            const legend = fullPage ? "" : legendFor(selector || null, margin as number, memory?.boundariesSeen);
             return { content: description + pointTip + overTextTip + legend, render, ...(elements ? { elements } : {}) };
         }
     });
@@ -608,7 +608,7 @@ export const buildLocateTool = (ml: MlApi, { model = null, groundingModel = null
                     : "";
                 // DOM legend of the located area — for a canvas/cross-origin @pt this flags "no DOM here /
                 // cross-origin iframe, use @pt"; for a DOM target it names the controls/text around it.
-                const legend = legendFor(o.target, 0);
+                const legend = legendFor(o.target, 0, memory?.boundariesSeen);
                 if (driverSees) return { ...base, content: base.content + `\n\n Marked crop shown in the next prompt.${o.kind === "pt" ? ` Confirm "${truncate(description, 50)}" sits under the MIDDLE of the box labelled "click point".` : ""} If it's on target, act now (no need to look() first).${reSnap}${legend}`, image: sent, imageLabel: o.label, feedback: { reason, via: "image", image: sent, label: o.label } };
                 // Text-only driver: the reader describes the crop; the driver gets words, not the image.
                 const describePrompt = `Describe concisely what is at the marked spot on this crop — its colour, shape, and any text — so I can tell whether it's the "${truncate(description, 60)}" I asked for.${CLICK_MARK_NOTE}`;

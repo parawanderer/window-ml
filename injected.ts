@@ -581,7 +581,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     driverSees = !!runModel && visionModel === runModel;
                     // One near-area memory SHARED by look + locate this run: a look({@pt}) or a locate
                     // snap-inject records the spot, so a re-snap onto it doesn't re-inject the same crop.
-                    const visionMemory: VisionMemory = { seen: [] };
+                    const visionMemory: VisionMemory = { seen: [], boundariesSeen: new Set() };
                     if (driverSees) {
                         toolset.push(this._nativeLookTool(visionMemory));
                     } else {

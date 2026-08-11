@@ -264,6 +264,10 @@ export interface JsonSchema {
  *  (the re-snap-loop case). `seen` grows for the run's lifetime; near-area = within `SEEN_RADIUS` px. */
 export interface VisionMemory {
     seen: { x: number; y: number }[];
+    /** DOM-legend boundary lines (cross-origin/same-origin iframe + shadow-root notices) already shown to
+     *  the driver this run, so a look/locate crop doesn't RE-append the identical structural warning on
+     *  every vision turn. Deduped by exact string — a genuinely new boundary still shows. */
+    boundariesSeen?: Set<string>;
 }
 
 /** What a tool fed back INTO the model's context, for the debug render + export to surface (the model

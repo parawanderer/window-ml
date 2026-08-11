@@ -90,6 +90,26 @@ test("formatLegend: nothing notable → empty string (suppress-empty)", () => {
     assert.equal(formatLegend({ controls: [], media: [], text: [], boundaries: [], moreControls: 0, moreMedia: 0 }), "");
 });
 
+test("formatLegend: a `seen` set dedups the BOUNDARIES line across calls (not controls/text)", () => {
+    const seen = new Set();
+    const lg = () => ({
+        controls: [{ name: "«Go»", selector: "#g" }],
+        text: [{ text: "VAL", selector: ".v" }],
+        media: [],
+        boundaries: ["1 same-origin iframe (`#f`) — reach inside with `<selector> >>> …`"],
+        moreControls: 0, moreMedia: 0,
+    });
+    const first = formatLegend(lg(), seen);
+    assert.match(first, /• boundaries: 1 same-origin iframe/, "first crop shows the boundary");
+    const second = formatLegend(lg(), seen);
+    assert.doesNotMatch(second, /• boundaries:/, "same boundary is not re-shown");
+    assert.match(second, /• controls: «Go» `#g`/, "crop-specific controls/text are NOT deduped");
+    assert.match(second, /• text: «VAL» `\.v`/);
+    // A genuinely NEW boundary still appears.
+    const third = formatLegend({ ...lg(), boundaries: ["⚠ 1 cross-origin iframe (`#x`) — no selector reaches inside"] }, seen);
+    assert.match(third, /• boundaries: ⚠ 1 cross-origin iframe \(`#x`\)/);
+});
+
 test("formatLegend: truncation counts show as …+N", () => {
     const s = formatLegend({ controls: [{ name: '"a"', selector: "#a" }], media: [], text: [], boundaries: [], moreControls: 3, moreMedia: 0 });
     assert.match(s, /…\+3/);

@@ -161,12 +161,17 @@ export function regionLegend(box: Box): RegionLegend {
     return { controls, media, boundaries, text, moreControls: Math.max(0, controlsF.length - MAX_CONTROLS), moreMedia: Math.max(0, mediaEls.length - MAX_MEDIA) };
 }
 
-/** Render a RegionLegend as grouped lines for the model — "" when there's nothing notable (suppress-empty). */
-export function formatLegend(lg: RegionLegend): string {
+/** Render a RegionLegend as grouped lines for the model — "" when there's nothing notable (suppress-empty).
+ *  `seen` (a per-run set) dedups the BOUNDARIES line only: iframe/shadow notices are stable page facts, so
+ *  re-appending the identical warning on every look/locate crop is noise — controls/media/text are
+ *  crop-specific and never deduped. A genuinely new boundary (a different frame) still shows. */
+export function formatLegend(lg: RegionLegend, seen?: Set<string>): string {
     const lines: string[] = [];
     if (lg.controls.length) lines.push("• controls: " + lg.controls.map(c => `${c.name} \`${c.selector}\``).join(" · ") + (lg.moreControls ? ` …+${lg.moreControls}` : ""));
     if (lg.media.length) lines.push("• media: " + lg.media.map(m => `${m.name} \`${m.selector}\``).join(" · ") + (lg.moreMedia ? ` …+${lg.moreMedia}` : ""));
     if (lg.text.length) lines.push("• text: " + lg.text.map(t => `«${t.text}» \`${t.selector}\``).join(" · "));
-    if (lg.boundaries.length) lines.push("• boundaries: " + lg.boundaries.join(" · "));
+    const boundaries = seen ? lg.boundaries.filter(b => !seen.has(b)) : lg.boundaries;
+    if (seen) boundaries.forEach(b => seen.add(b));
+    if (boundaries.length) lines.push("• boundaries: " + boundaries.join(" · "));
     return lines.length ? "\n\nDOM in view (use these selectors with click/type/findByText):\n" + lines.join("\n") : "";
 }
