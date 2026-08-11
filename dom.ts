@@ -807,16 +807,29 @@ const isFeedItem = (el: Element): boolean => {
     return sibs.length >= 3 && (el.textContent || "").replace(/\s+/g, " ").trim().length >= 25;
 };
 
+/** Is `el` a PAGE-LEVEL region (holds MULTIPLE content units / section headings), not a single content
+ *  unit? The signal we've climbed TOO FAR: a tweet/comment/card holds one coherent thing; a page column
+ *  or a whole feed holds many. This catches the narrow-but-tall <main> that a purely GEOMETRIC cap misses
+ *  (a centered 760px column never hits width ≥90% of the viewport). Cheap: two shallow querySelectorAll. */
+const isPageLevel = (el: Element): boolean => {
+    try {
+        return el.querySelectorAll('article, section, [role="article"], [role="listitem"]').length >= 2
+            || el.querySelectorAll("h1, h2, h3").length >= 2;
+    } catch { return false; }
+};
+
 /** Resolve the semantic content container for a right-clicked node. @see the section comment. */
 export const resolveContextContainer = (target: Element): Element => {
-    // (1) Nearest semantic/ARIA container — unless it spans the whole viewport (a <main> wrapping the page).
+    // (1) Nearest semantic/ARIA container — unless it's the whole viewport or a page-level region (a
+    // <section> wrapping a whole feed, say) rather than a single content unit.
     const semantic = target.closest(CONTAINER_SEL);
-    if (semantic && !spansViewport(semantic)) return semantic;
-    // (2) Climb, scoring by content density; short-circuit on a feed ITEM; stop at the page wrapper.
+    if (semantic && !spansViewport(semantic) && !isPageLevel(semantic)) return semantic;
+    // (2) Climb, scoring by content density; short-circuit on a feed ITEM; stop at the page wrapper (by
+    // geometry OR because it holds multiple units — the fix for a link click climbing all the way to <main>).
     let current: Element | null = target.parentElement;
     let best: Element = target, bestScore = -Infinity;
     while (current && current !== document.body && current !== document.documentElement) {
-        if (spansViewport(current)) break;   // (4) geometry cap — never the whole column/page
+        if (spansViewport(current) || isPageLevel(current)) break;   // (4) geometry / page-level cap
         if (isFeedItem(current)) return current;   // (3) a repeating-feed item is the unit
         const score = contentScore(current);
         if (score > bestScore) { bestScore = score; best = current; }

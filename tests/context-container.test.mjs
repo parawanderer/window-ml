@@ -133,6 +133,20 @@ test("examples/ask-about-this.html: each region resolves to the unit its answer 
     assert.equal(R(doc.querySelector('._c0[data-cmt="b"] ._b')).getAttribute("data-cmt"), "b");
     // §3 product: the price → the whole <section class="product">
     assert.equal(R(doc.querySelector("#product-1 .price")).id, "product-1");
-    // §4 nav junk: a footer link is NOT resolved up to the link-dense nav
-    assert.notEqual(R(doc.querySelector("#footer a")).id, "footer");
+    // §4 nav junk: a footer link stays on the LINK — not the nav, and NOT the page-level <main> (the
+    // density climb used to walk past the junk nav all the way up to the highest-text page wrapper).
+    const linkRes = R(doc.querySelector("#footer a"));
+    assert.equal(linkRes.tagName, "A", "a footer link resolves to the link itself, not the page");
+});
+
+test("page-level cap: a link climb stops before <main> even when the nav isn't the whole viewport", () => {
+    mount(`<main>
+        <h1>Site</h1><h2>Section A</h2><h2>Section B</h2>
+        <article id="a1"><p>A real post with sentences, punctuation, and enough text to score.</p></article>
+        <nav id="nav"><a href="#" id="lnk">Home</a><a href="#">About</a><a href="#">Careers</a></nav>
+    </main>`);
+    // <main> holds multiple headings + an article → page-level → the climb never grabs it.
+    assert.equal(resolveContextContainer(document.getElementById("lnk")).tagName, "A");
+    // and a click in the article still resolves to the article, not <main>.
+    assert.equal(resolveContextContainer(document.querySelector("#a1 p")).id, "a1");
 });
