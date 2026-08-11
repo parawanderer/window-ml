@@ -351,7 +351,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
             parameters: {
                 type: "object",
                 properties: {
-                    selector: { type: "string" },
+                    selector: { type: "string", description: "CSS selector for possible matches." },
                     n: { type: "integer", description: "How many matches to sample (default 5)." }
                 },
                 required: ["selector"]
