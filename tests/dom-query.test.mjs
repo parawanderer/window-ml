@@ -143,3 +143,42 @@ test(":contains on the INNER >>> hop filters after crossing the boundary", () =>
     assert.equal(ids(queryAll('x-a >>> button:contains("beta")')), "btn-h2");
     assert.equal(ids(queryAll('x-a >>> button:contains("go")')), "btn-h1,btn-h2");
 });
+
+// ------------------------------------------------------------ role= / label= engines (a11y) ---
+
+test("role= matches native tags AND aria-role widgets", () => {
+    mount(`<button id="native">Save</button><div role="button" id="widget">Cancel</div><a id="lnk" href="#">go</a>`);
+    assert.deepEqual(queryAll('role=button').map(e => e.id).sort(), ["native", "widget"]);   // <a> is a link, not a button
+});
+
+test("role= with [name=...] filters by accessible name (case-insensitive substring)", () => {
+    mount(`<button id="a">Save changes</button><button id="b">Cancel</button>`);
+    assert.deepEqual(queryAll('role=button[name="save"]').map(e => e.id), ["a"]);
+    assert.equal(queryAll('role=button[name="nope"]').length, 0);
+});
+
+test("role=heading[level=N] (implicit role + aria-level)", () => {
+    mount(`<h1 id="h1">Title</h1><h2 id="h2">Sub</h2><div role="heading" aria-level="1" id="hx">Aria</div>`);
+    assert.deepEqual(queryAll('role=heading[level=1]').map(e => e.id).sort(), ["h1", "hx"]);
+    assert.deepEqual(queryAll('role=heading[level=2]').map(e => e.id), ["h2"]);
+});
+
+test("role=checkbox[checked] boolean state (native + aria)", () => {
+    mount(`<input type="checkbox" id="on" checked><input type="checkbox" id="off"><div role="checkbox" aria-checked="true" id="aria">x</div>`);
+    assert.deepEqual(queryAll('role=checkbox[checked]').map(e => e.id).sort(), ["aria", "on"]);
+});
+
+test("label= finds a control by its accessible name (wrapping label / aria-label)", () => {
+    mount(`<label>Username <input id="u"></label><label>Password <input id="p"></label><input id="bare" aria-label="Search box">`);
+    assert.deepEqual(queryAll('label="Username"').map(e => e.id), ["u"]);
+    assert.deepEqual(queryAll('label=Search').map(e => e.id), ["bare"]);
+});
+
+test("role= / label= pierce a same-origin iframe with no explicit >>>", () => {
+    const dom = new JSDOM(`<!doctype html><body><iframe id="f"></iframe></body>`);
+    globalThis.window = dom.window; globalThis.document = dom.window.document;
+    const ifr = dom.window.document.getElementById("f");
+    if (!ifr.contentDocument) { console.log("jsdom: no iframe contentDocument — skipping"); return; }
+    ifr.contentDocument.body.innerHTML = `<button id="inner">Reveal</button>`;
+    assert.deepEqual(queryAll('role=button[name="Reveal"]').map(e => e.id), ["inner"]);
+});

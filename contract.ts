@@ -1062,10 +1062,14 @@ export interface MlApi {
 
     /* ---- DOM query ---- */
     /** Like `document.querySelectorAll(selector)` but returns a real Array and understands the SAME
-     *  selector dialect the DOM tools use: `host >>> inner` crosses OPEN (and, if enabled, closed) shadow
-     *  roots and SAME-ORIGIN iframes — one `>>>` per boundary, nesting `a >>> b >>> c` — and
-     *  `:contains("text")` / `:has-text("text")` filters by visible text. It also supports Playwright selectors.
-     * Use this instead of hand-chaining `.shadowRoot.querySelector(...)` / `.contentDocument.querySelector(...)`. Read-only. */
+     *  selector dialect the DOM tools use. Boundary crossing: `host >>> inner` crosses OPEN (and, if
+     *  enabled, closed) shadow roots and SAME-ORIGIN iframes — one `>>>` per boundary, nesting
+     *  `a >>> b >>> c`; plain CSS/text also pierces same-origin frames + open shadow roots automatically.
+     *  Extended pseudos (usable on ANY step, not just the last): `:contains("t")` / `:has-text("t")`
+     *  (visible-text substring), `:eq(n)` (0-based pick). Playwright-style ENGINES (whole selector):
+     *  `text="t"` (smallest text carrier), `role=button[name="Save"]` / `role=heading[level=1]` (ARIA role
+     *  + accessible-name substring + state), `label="Username"` (form control by its label/accessible
+     *  name). Use this instead of hand-chaining `.shadowRoot`/`.contentDocument`. Read-only. */
     queryAll(selector: string): Element[];
 
     /* ---- vision / OCR / capture ---- */

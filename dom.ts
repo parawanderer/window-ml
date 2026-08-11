@@ -1,6 +1,7 @@
 // Pure DOM / string utilities used across injected.js — path building, the
 // jQuery-tolerant query engine, skeleton descriptions, text normalization. No
 // dependency on injected's closure state; only args + browser globals.
+import { roleOf, accessibleName } from "./a11y";   // for the `role=` / `label=` selector engines (a11y has no dom import → no cycle)
 
 /**
  * Collapse whitespace, then truncate to a max length with a trailing ellipsis.
@@ -533,7 +534,7 @@ const applyHopFilters = (els: Element[], hop: Hop): Element[] => {
 // through the combinator-aware evaluator; a plain-CSS hop stays on the fast native path (deepQueryAll /
 // querySelectorAll), so common selectors are byte-for-byte unchanged and keep full shadow crossing.
 const EXT_PSEUDO = /:(?:contains|has-text|eq)\(/i;
-const hasExtPseudo = (seg: string): boolean => EXT_PSEUDO.test(seg) || /^\s*text=/i.test(seg);
+const hasExtPseudo = (seg: string): boolean => EXT_PSEUDO.test(seg) || /^\s*(?:text|role|label)=/i.test(seg);
 
 /** Pull EVERY `:contains(...)`/`:has-text(...)`/`:eq(n)` out of ONE simple selector (a compound with no
  *  combinators — those are split out first) from ANYWHERE in it, leaving native CSS. Respects quotes +
@@ -594,13 +595,86 @@ const splitSteps = (hop: string): { combinator: string; simple: string }[] => {
  *  inside divs-with-foo. The FIRST step searches with deepQueryAll (single hop → crosses OPEN shadow
  *  roots) or scoped querySelectorAll (multi-hop). Invalid CSS THROWS (the tool reports it) — never a
  *  silent [], which is what let a model confabulate a cause when `:contains`+`>>>` quietly failed. */
+// Strip one layer of matching surrounding quotes from an engine argument (`"Foo"` → `Foo`).
+const unquote = (s: string): string => s.trim().replace(/^(['"])([\s\S]*)\1$/, "$2");
+
+// ARIA boolean state for `role=…[checked]` / `[disabled]` / `[selected]` / `[expanded]` / `[pressed]`:
+// presence (`[checked]`) or `[checked=true|false]`. Reads aria-* first, then the native property/attribute.
+const ariaBool = (el: Element, key: string, val: string): boolean => {
+    const want = val === "" || /^true$/i.test(val);
+    const aria = el.getAttribute(`aria-${key}`);
+    let actual: boolean;
+    if (aria != null) actual = /^true$/i.test(aria);
+    else if (key === "checked") actual = !!(el as HTMLInputElement).checked;
+    else if (key === "disabled") actual = !!(el as HTMLInputElement).disabled || el.hasAttribute("disabled");
+    else if (key === "selected") actual = !!(el as HTMLOptionElement).selected;
+    else actual = el.hasAttribute(key);
+    return actual === want;
+};
+// Heading level for `role=heading[level=N]` — <h1..6> or an explicit aria-level.
+const headingLevel = (el: Element): number | null => {
+    const m = /^h([1-6])$/i.exec(el.tagName);
+    if (m) return parseInt(m[1], 10);
+    const al = el.getAttribute("aria-level");
+    return al ? parseInt(al, 10) : null;
+};
+
+// Implicit ARIA roles roleOf() leaves as the raw tag (it targets interactives) — heading, landmarks,
+// lists. Combined with roleOf (button/link/textbox/checkbox/…) this covers what `role=` is asked for.
+const IMPLICIT_ROLE: Record<string, string> = {
+    h1: "heading", h2: "heading", h3: "heading", h4: "heading", h5: "heading", h6: "heading",
+    nav: "navigation", main: "main", aside: "complementary", header: "banner", footer: "contentinfo",
+    ul: "list", ol: "list", li: "listitem", table: "table", tr: "row", td: "cell", th: "columnheader",
+    article: "article", dialog: "dialog", form: "form", img: "img",
+};
+const roleMatches = (el: Element, role: string): boolean => {
+    const explicit = el.getAttribute("role");
+    if (explicit) return explicit.trim().split(/\s+/)[0].toLowerCase() === role;
+    return roleOf(el) === role || IMPLICIT_ROLE[el.tagName.toLowerCase()] === role;
+};
+
+/** Playwright `role=button[name="Save"][checked]` / `role=heading[level=1]` — match by ARIA role (explicit,
+ *  roleOf, or implicit-tag), optional accessible-NAME substring (case-insensitive), heading level, and
+ *  boolean states. Stable when class names are auto-generated; works for `<div role="button">` widgets. */
+const matchRole = (pool: Element[], arg: string): Element[] => {
+    const head = /^\s*([a-z-]+)([\s\S]*)$/i.exec(arg);
+    if (!head) return [];
+    const role = head[1].toLowerCase();
+    const filters = [...head[2].matchAll(/\[\s*([a-z-]+)\s*(?:=\s*(['"]?)([\s\S]*?)\2\s*)?\]/gi)];
+    return pool.filter(el => {
+        if (!roleMatches(el, role)) return false;
+        for (const f of filters) {
+            const key = f[1].toLowerCase(), val = f[3] ?? "";
+            if (key === "name") { if (!normalizeText(accessibleName(el)).includes(normalizeText(unquote(val)))) return false; }
+            else if (key === "level") { if (headingLevel(el) !== parseInt(val, 10)) return false; }
+            else if (!ariaBool(el, key, val)) return false;
+        }
+        return true;
+    });
+};
+
+// Elements that carry a label (form controls + their ARIA equivalents) — the `label=` engine's candidates.
+const LABELABLE = 'input:not([type="hidden"]), textarea, select, [contenteditable=""], [contenteditable="true"], ' +
+    '[role="textbox"], [role="combobox"], [role="checkbox"], [role="radio"], [role="switch"], [role="spinbutton"], [role="slider"], [role="searchbox"]';
+/** Playwright `label="Username"` — a form control whose ACCESSIBLE NAME (accessibleName already resolves a
+ *  `<label for>`, a wrapping `<label>`, and aria-label) contains the text (case-insensitive). */
+const matchLabel = (pool: Element[], text: string): Element[] => {
+    const want = normalizeText(text);
+    return pool.filter(el => { try { return el.matches(LABELABLE) && normalizeText(accessibleName(el)).includes(want); } catch { return false; } });
+};
+
 const evalExtHop = (seg: string, scopes: ParentNode[], deepFirst: boolean): Element[] => {
-    // `text=Foo` — whole-hop text engine (smallest text carrier).
-    const tm = /^\s*text=\s*(['"]?)([\s\S]+?)\1\s*$/i.exec(seg);
-    if (tm) {
-        const raw: Element[] = [];
-        for (const sc of scopes) raw.push(...(deepFirst && sc === document ? deepQueryAll("*") : Array.from(sc.querySelectorAll("*"))));
-        return applyHopFilters(raw, { css: "*", texts: [tm[2]], eqIndex: null, deepest: true });
+    // Whole-hop ENGINE prefixes (Playwright-style): text= / role= / label=. Each scans every element in
+    // scope (piercing shadow/iframe on the first hop) and filters by its own predicate.
+    const eng = /^\s*(text|role|label)=([\s\S]+)$/i.exec(seg);
+    if (eng) {
+        const kind = eng[1].toLowerCase(), arg = eng[2];
+        const pool: Element[] = [];
+        for (const sc of scopes) pool.push(...(deepFirst && sc === document ? deepQueryAll("*") : Array.from(sc.querySelectorAll("*"))));
+        const uniq = Array.from(new Set(pool));
+        if (kind === "text") return applyHopFilters(uniq, { css: "*", texts: [unquote(arg)], eqIndex: null, deepest: true });
+        if (kind === "role") return matchRole(uniq, arg);
+        return matchLabel(uniq, unquote(arg));
     }
     const steps = splitSteps(seg);
     let current: Element[] = [];
