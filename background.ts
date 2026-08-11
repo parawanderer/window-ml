@@ -981,6 +981,11 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             // A createAgent handle sends its prior history (control.messages) so the background CONTINUES
             // it — the page stays authoritative across turns, and the updated history rides back below.
             resumeMessages = p.resumeMessages;
+            // A handle's 2nd+ turn re-enters via START_RUN (NOT RESUME_RUN), so seed the sub-call tally from
+            // the stored run too — else subTally resets to 0 each turn and chat_metadata reports "none" on a
+            // continued turn even after prior turns spent thousands (the UI chip hid this: it reads the last
+            // non-empty step, which still holds the prior turn's total). First turn → no stored run → 0.
+            priorSub = bgRuns.get(p.runId)?.sub;
         }
         const runId = p.runId;
         const stepBase = p.stepBase || 0, seqBase = p.seqBase || 0;   // offsets for a handle's continued turns
