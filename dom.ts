@@ -760,6 +760,67 @@ export const selectorError = (selector: string, err: Error): string => {
     return `Invalid selector: ${err.message}`;
 };
 
+// ------------------------------------------------- right-click "ask about this" context container ---
+// Resolve the semantic CONTENT container around a right-clicked leaf node — the whole tweet/comment/card
+// around the avatar or timestamp you actually clicked — so "ask window.ml about this" sends the coherent
+// unit, not a bare <span>. Deterministic (no model, <1ms): (1) a semantic/ARIA ancestor if there is one;
+// else (2) a Readability-style text/link-density climb (real content is text-dense + low link-density);
+// with (3) a feed-item short-circuit for div-soup feeds and (4) a geometry cap so it never returns the
+// whole-page/column wrapper. Pure; the density + feed + semantic paths are unit-tested (jsdom's
+// getBoundingClientRect is 0, so the geometry cap simply no-ops there — it's a defensive browser guard).
+const CONTAINER_SEL = 'article, [role="article"], [role="listitem"], [role="comment"], [role="region"], ' +
+    'section, main, [role="main"], blockquote, figure';
+
+/** Does `el` cover ~the whole viewport (a page/column wrapper, not a content unit)? 0-rects (jsdom) → false. */
+const spansViewport = (el: Element): boolean => {
+    try {
+        const r = el.getBoundingClientRect();
+        const w = typeof window !== "undefined" ? window.innerWidth : 0;
+        const h = typeof window !== "undefined" ? window.innerHeight : 0;
+        return !!w && !!h && r.width >= w * 0.9 && r.height >= h * 0.9;
+    } catch { return false; }
+};
+
+/** Readability-style content score: reward text volume + sentence punctuation, penalise link density
+ *  (navbars/footers are link-dense). -Infinity for a too-small or link-dominated block (never a content unit). */
+const contentScore = (el: Element): number => {
+    const text = (el.textContent || "").replace(/\s+/g, " ").trim();
+    const textLen = text.length;
+    if (textLen < 25) return -Infinity;
+    let linkLen = 0;
+    try { for (const a of el.querySelectorAll("a")) linkLen += (a.textContent || "").length; } catch { /* ignore */ }
+    const linkDensity = linkLen / textLen;
+    if (linkDensity > 0.5) return -Infinity;
+    const punct = (text.match(/[,.!?;:]/g) || []).length * 10;
+    return (textLen - linkLen) * (1 - linkDensity) + punct;
+};
+
+/** Is `el` ONE item in a repeating feed? (div-soup feeds: ≥3 structurally-similar siblings with real text.) */
+const isFeedItem = (el: Element): boolean => {
+    const p = el.parentElement;
+    if (!p) return false;
+    const sibs = [...p.children].filter(c => c.tagName === el.tagName);
+    return sibs.length >= 3 && (el.textContent || "").replace(/\s+/g, " ").trim().length >= 25;
+};
+
+/** Resolve the semantic content container for a right-clicked node. @see the section comment. */
+export const resolveContextContainer = (target: Element): Element => {
+    // (1) Nearest semantic/ARIA container — unless it spans the whole viewport (a <main> wrapping the page).
+    const semantic = target.closest(CONTAINER_SEL);
+    if (semantic && !spansViewport(semantic)) return semantic;
+    // (2) Climb, scoring by content density; short-circuit on a feed ITEM; stop at the page wrapper.
+    let current: Element | null = target.parentElement;
+    let best: Element = target, bestScore = -Infinity;
+    while (current && current !== document.body && current !== document.documentElement) {
+        if (spansViewport(current)) break;   // (4) geometry cap — never the whole column/page
+        if (isFeedItem(current)) return current;   // (3) a repeating-feed item is the unit
+        const score = contentScore(current);
+        if (score > bestScore) { bestScore = score; best = current; }
+        current = current.parentElement;
+    }
+    return best;
+};
+
 /** A page table → a structured `{ columns, rows }` for a pandas DataFrame, or `null` when the
  *  element isn't a clean table (no recognizable table/ARIA-grid, or it uses col/rowspans — the
  *  caller then falls back to pandas.read_html on its outerHTML). Case-preserving (unlike
