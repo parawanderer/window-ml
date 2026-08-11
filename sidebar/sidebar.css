@@ -653,8 +653,8 @@ details.io[open] > summary .io-preview { display: none; }
 /* Zero-dep JSON tree (DevTools-console style). */
 .jt-node { }
 .jt-row { display: flex; align-items: baseline; gap: 4px; font: 0.86em/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
-.jt-row.jt-branch { cursor: pointer; }
-.jt-row.jt-branch:hover { background: var(--panel-2); border-radius: 3px; }
+.jt-row.jt-clickable { cursor: pointer; }
+.jt-row.jt-clickable:hover { background: var(--panel-2); border-radius: 3px; }
 .jt-row .tri { align-self: center; margin-left: -2px; }
 .jt-key { color: var(--j-key); }
 .jt-brace { color: var(--j-base); }
@@ -666,8 +666,12 @@ details.io[open] > summary .io-preview { display: none; }
 /* A key the tool schema documents → dotted underline (this key has a hover tooltip with its description). */
 .jt-key-doc { text-decoration: underline dotted; text-underline-offset: 2px; text-decoration-thickness: 1px; cursor: help; }
 .jt-key-doc:focus-visible { outline: 1px solid var(--accent); outline-offset: 1px; border-radius: 2px; }
-/* Raw In args tree: a corner copy button (a tree isn't drag-selectable like the old text block). */
-.jt-args { position: relative; }
+/* A key the schema does NOT define → red wavy squiggle + a warning tooltip (probably a hallucinated arg). */
+.jt-key-unknown { text-decoration: underline wavy var(--err); text-underline-offset: 3px; text-decoration-thickness: 1px; cursor: help; }
+.jt-key-unknown:focus-visible { outline: 1px solid var(--err); outline-offset: 1px; border-radius: 2px; }
+/* Raw In args tree: a corner copy button (a tree isn't drag-selectable like the old text block). Small
+   left inset so the flush-left braces don't hug the block edge; right room so text never runs under copy. */
+.jt-args { position: relative; padding: 1px 22px 1px 2px; }
 .jt-args-copy { position: absolute; top: 0; right: 0; z-index: 1; }
 
 .msg { border-radius: 7px; padding: 6px 9px; margin-bottom: 8px; border: 1px solid var(--border); }

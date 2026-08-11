@@ -1084,19 +1084,19 @@ function jtPreview(v: object): string {
 interface JsonSchemaNode { description?: string; properties?: Record<string, JsonSchemaNode>; items?: JsonSchemaNode; }
 // A JSON key. When the schema gives it a description, it becomes a hoverable tooltip (same .tt/.tt-pop as
 // elsewhere) + a dotted underline so you can tell which keys carry docs — a debugging affordance over raw args.
-function JtKey({ name, desc }: { name: string; desc?: string }) {
-    return desc
-        ? <span class="tt jt-key jt-key-doc" tabIndex={0}>{name}:<span class="tt-pop wrap" role="tooltip">{desc}</span></span>
-        : <span class="jt-key">{name}:</span>;
+function JtKey({ name, desc, unknown }: { name: string; desc?: string; unknown?: boolean }) {
+    if (unknown) return <span class="tt jt-key jt-key-unknown" tabIndex={0}>{name}:<span class="tt-pop left" role="tooltip">Not in this tool's parameter schema — likely a hallucinated argument, so the tool will ignore it or error.</span></span>;
+    if (desc) return <span class="tt jt-key jt-key-doc" tabIndex={0}>{name}:<span class="tt-pop left" role="tooltip">{desc}</span></span>;
+    return <span class="jt-key">{name}:</span>;
 }
-function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, allOpen }: { k?: string; v: unknown; depth?: number; defaultOpen?: boolean; schema?: JsonSchemaNode; desc?: string; allOpen?: boolean }) {
+function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, unknown, allOpen }: { k?: string; v: unknown; depth?: number; defaultOpen?: boolean; schema?: JsonSchemaNode; desc?: string; unknown?: boolean; allOpen?: boolean }) {
     const branch = !!v && typeof v === "object";
     const [open, setOpen] = useState(allOpen || (defaultOpen ?? depth < 1));   // allOpen → expanded at EVERY depth (the raw In view)
     const pad = { paddingLeft: `${depth * 13}px` };
     if (!branch) {
         const t = v === null ? "null" : typeof v;
         return <div class="jt-row" style={pad}>
-            {k != null ? <JtKey name={k} desc={desc} /> : null}
+            {k != null ? <JtKey name={k} desc={desc} unknown={unknown} /> : null}
             <span class={`jt-val jt-${t}`}>{typeof v === "string" ? JSON.stringify(v) : String(v)}</span>
         </div>;
     }
@@ -1106,14 +1106,20 @@ function JsonNode({ k, v, depth = 0, defaultOpen, schema, desc, allOpen }: { k?:
         : Object.entries(v as Record<string, unknown>);
     // Resolve each child's schema node: an array's elements share `items`; an object's are `properties[key]`.
     const childOf = (ck: string): JsonSchemaNode | undefined => arr ? schema?.items : schema?.properties?.[ck];
+    // Only flag "not in schema" when this node's schema actually DEFINES its keys (a real `properties` map) —
+    // otherwise we don't know the allowed shape and mustn't false-flag. Arrays have no per-key schema.
+    const props = !arr && schema?.properties && typeof schema.properties === "object" ? schema.properties as Record<string, unknown> : null;
+    // allOpen (the raw In view) is non-collapsible → drop the chevron, so the opening brace isn't pushed
+    // right of the closing one and keys indent cleanly under it.
+    const collapsible = !allOpen;
     return <div class="jt-node">
-        <div class="jt-row jt-branch" style={pad} role="button" onClick={() => setOpen(o => !o)}>
-            <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
-            {k != null ? <JtKey name={k} desc={desc} /> : null}
+        <div class={`jt-row jt-branch${collapsible ? " jt-clickable" : ""}`} style={pad} role={collapsible ? "button" : undefined} onClick={collapsible ? () => setOpen(o => !o) : undefined}>
+            {collapsible ? <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span> : null}
+            {k != null ? <JtKey name={k} desc={desc} unknown={unknown} /> : null}
             {open ? <span class="jt-brace">{arr ? "[" : "{"}</span> : <span class="jt-preview">{jtPreview(v as object)}</span>}
         </div>
         {open ? <>
-            {entries.map(([ek, ev]) => <JsonNode key={ek} k={arr ? undefined : ek} v={ev} depth={depth + 1} schema={childOf(ek)} desc={arr ? undefined : childOf(ek)?.description} allOpen={allOpen} />)}
+            {entries.map(([ek, ev]) => <JsonNode key={ek} k={arr ? undefined : ek} v={ev} depth={depth + 1} schema={childOf(ek)} desc={arr ? undefined : childOf(ek)?.description} unknown={!!props && !(ek in props)} allOpen={allOpen} />)}
             <div class="jt-row" style={pad}><span class="jt-brace">{arr ? "]" : "}"}</span></div>
         </> : null}
     </div>;

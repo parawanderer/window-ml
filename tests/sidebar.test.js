@@ -2818,7 +2818,7 @@ const clickTool = { name: "click", requiresApproval: true, vision: false, descri
         selector: { type: "string", description: "CSS selector or @pt token from locate." },
         verify: { type: "boolean", description: "Look at the result after clicking." } } } };
 
-test("raw In args: a key documented in the tool schema gets a hover tooltip; undocumented keys stay plain", async () => {
+test("raw In args: a key documented in the tool schema gets a hover tooltip; an undefined arg gets a red-squiggle warning", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("r1", "task", "m", 10, agentCfg([clickTool])));
     await w.dispatch(agentStep("r1", 1, { seq: 1, tool: "click", arguments: { selector: "#b", verify: true, bogus: 1 } }));
@@ -2828,7 +2828,8 @@ test("raw In args: a key documented in the tool schema gets a hover tooltip; und
     const docKeys = [...w.shadow.querySelectorAll(".astep.tool .jt-key-doc")].map(n => n.textContent);
     assert.ok(docKeys.some(t => /selector/.test(t)) && docKeys.some(t => /verify/.test(t)), `documented keys are underlined (${docKeys})`);
     const bogus = [...w.shadow.querySelectorAll(".astep.tool .jt-key")].find(n => /bogus/.test(n.textContent));
-    assert.ok(bogus && !bogus.classList.contains("jt-key-doc"), "an arg NOT in the schema carries no tooltip");
+    assert.ok(bogus && bogus.classList.contains("jt-key-unknown"), "an arg NOT in the schema gets the red-squiggle 'unknown' style");
+    assert.match(bogus.querySelector(".tt-pop").textContent, /Not in this tool's parameter schema/, "…with a hallucinated-arg warning");
     const tips = [...w.shadow.querySelectorAll(".astep.tool .jt-key-doc .tt-pop")].map(n => n.textContent).join(" | ");
     assert.match(tips, /CSS selector or @pt/, "tooltip text is the schema description");
     assert.ok(w.shadow.querySelector(".astep.tool .jt-args-copy"), "the tree carries a copy-JSON button (a tree isn't drag-selectable)");
@@ -2848,4 +2849,66 @@ test("raw In args: malformed schema / non-object args never crash the panel (fal
     assert.ok(w.shadow.querySelectorAll(".astep.tool").length >= 3, "every step rendered — nothing threw");
     assert.equal(w.shadow.querySelectorAll(".jt-key-doc").length, 0, "a malformed schema yields NO descriptions (never a crash)");
     assert.ok(w.shadow.querySelector(".astep.tool .code"), "non-object args fall back to the copyable code renderer");
+});
+
+// --- JsonNode renderer, focused ---------------------------------------------------------------------
+const nestedTool = { name: "cfg", summary: "Configures.", parameters: { type: "object", properties: {
+    opts: { type: "object", description: "Options bag.", properties: { retries: { type: "number", description: "How many times to retry." } } } } } };
+
+test("raw In args: a NESTED arg key gets its schema description (schema walk recurses)", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("rn", "t", "m", 10, agentCfg([nestedTool])));
+    await w.dispatch(agentStep("rn", 1, { seq: 1, tool: "cfg", arguments: { opts: { retries: 3 } } }));
+    w.shadow.querySelector(".row").click(); await w.tick();
+    w.shadow.querySelector(".astep.tool .astep-head").click(); await w.tick();
+    const retries = [...w.shadow.querySelectorAll(".astep.tool .jt-key-doc")].find(n => /retries/.test(n.textContent));
+    assert.ok(retries, "the nested key is documented");
+    assert.match(retries.querySelector(".tt-pop").textContent, /How many times to retry/, "nested tooltip is the nested schema description");
+});
+
+test("raw In args: the always-expanded tree has NO collapse chevrons and shows nested values", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("re", "t", "m", 10, agentCfg([nestedTool])));
+    await w.dispatch(agentStep("re", 1, { seq: 1, tool: "cfg", arguments: { opts: { retries: 3 } } }));
+    w.shadow.querySelector(".row").click(); await w.tick();
+    w.shadow.querySelector(".astep.tool .astep-head").click(); await w.tick();
+    assert.equal(w.shadow.querySelectorAll(".astep.tool .jt-args .tri").length, 0, "no chevrons in the raw In tree (allOpen)");
+    assert.ok([...w.shadow.querySelectorAll(".astep.tool .jt-key")].some(n => /retries/.test(n.textContent)), "the nested value is expanded, not collapsed behind a preview");
+});
+
+// --- Agent-step render: gotchas NOT already covered above ("in-flight patch" + "approval provenance
+// badge" already have tests near line 1104/1511 — these fill the remaining gaps). ------------------------
+test("agent-step: an arg-schema mismatch shows the warning count + the red strip", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("i1", "t"));
+    await w.dispatch(agentStep("i1", 1, { seq: 1, tool: "click", arguments: { selector: 1 }, result: "ok", argIssues: ["selector should be string"] }));
+    w.shadow.querySelector(".row").click(); await w.tick();
+    assert.ok(w.shadow.querySelector(".astep.tool .arg-warn"), "the head shows an arg-warn count");
+    w.shadow.querySelector(".astep.tool .astep-head").click(); await w.tick();
+    assert.match(w.shadow.querySelector(".astep.tool .arg-issues").textContent, /selector should be string/, "the red strip lists the issue");
+});
+
+test("agent-step: a tool's feedback renders the 'Sent to the model' block", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("f1", "t"));
+    await w.dispatch(agentStep("f1", 1, { seq: 1, tool: "locate", arguments: { description: "x" }, result: "ok",
+        feedback: { reason: "point located — fed back automatically", via: "image", image: "data:image/png;base64,AAAA" } }));
+    w.shadow.querySelector(".row").click(); await w.tick();
+    w.shadow.querySelector(".astep.tool .astep-head").click(); await w.tick();
+    const fb = w.shadow.querySelector(".astep.tool .astep-feedback");
+    assert.ok(fb, "the feedback disclosure is present");
+    assert.match(fb.querySelector(".feedback-title").textContent, /Sent to the model/);
+    assert.match(fb.querySelector(".feedback-why").textContent, /point located/);
+});
+
+test("agent-step: a step's delegated sub-call tokens surface as the '+N sub' usage chip", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("s1", "t"));
+    await w.dispatch(agentStep("s1", 1, { seq: 1, tool: "locate", arguments: { description: "x" }, result: "ok",
+        usage: { promptTokens: 1000, completionTokens: 20, totalTokens: 1020 }, subUsage: { prompt: 2800, completion: 60, calls: 2 } }));
+    w.shadow.querySelector(".row").click(); await w.tick();
+    const sub = w.shadow.querySelector(".usage-sub");
+    assert.ok(sub, "the usage bar shows the delegated sub-call chip");
+    assert.match(sub.textContent, /sub/, "labelled as sub-call spend");
+    assert.match(sub.querySelector(".tt-pop").textContent, /2,860 tokens over 2 delegated/, "tooltip has the total + call count");
 });
