@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Right-click scoping demo — "Ask window.ml about this"</title>
+<style>
+  :root { --bg:#fbfbfd; --fg:#111; --dim:#555; --faint:#888; --line:#e3e3e8; --panel:#fff; --panel2:#f5f5f8; --accent:#4f46e5; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#17171b; --fg:#eaeaee; --dim:#b3b3bd; --faint:#7a7a86; --line:#2e2e36; --panel:#1e1e24; --panel2:#26262e; --accent:#8b83ff; }
+  }
+  * { box-sizing: border-box; }
+  body { font: 15px/1.5 system-ui, -apple-system, sans-serif; margin: 0; background: var(--bg); color: var(--fg); }
+  main { max-width: 760px; margin: 0 auto; padding: 28px 20px 80px; }
+  h1 { font-size: 22px; margin: 0 0 6px; }
+  h2 { font-size: 15px; margin: 34px 0 4px; color: var(--dim); text-transform: uppercase; letter-spacing: .04em; }
+  p { color: var(--dim); max-width: 68ch; }
+  code { font: 12.5px ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--panel2); padding: 1px 5px; border-radius: 4px; }
+  .lead { color: var(--fg); }
+  .how { background: var(--panel2); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; margin-top: 14px; }
+  .how b { color: var(--fg); }
+  .note { font-size: 13.5px; color: var(--faint); margin: 4px 0 10px; }
+  kbd { font: 11px ui-monospace, monospace; background: var(--panel); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 1px 5px; color: var(--dim); }
+
+  /* --- 1. semantic feed (<article>) --- */
+  .feed { display: flex; flex-direction: column; gap: 12px; }
+  .tweet { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 14px 16px; display: grid; grid-template-columns: 44px 1fr; gap: 12px; }
+  .avatar { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; font-size: 20px; color: #fff; }
+  .tw-head { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+  .tw-name { font-weight: 700; color: var(--fg); }
+  .tw-handle, .tw-time { color: var(--faint); font-size: 13.5px; }
+  .tw-body { margin: 4px 0 8px; color: var(--fg); }
+  .tw-media { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; margin: 8px 0; }
+  .tw-media svg { display: block; width: 100%; height: 140px; }
+  .tw-actions { display: flex; gap: 22px; color: var(--faint); font-size: 13px; margin-top: 4px; }
+  .tw-actions span { cursor: default; }
+
+  /* --- 2. div soup (obfuscated class names, no semantic tags) --- */
+  ._q7 { display: flex; flex-direction: column; gap: 10px; }
+  ._c0 { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); padding: 10px 14px; }
+  ._c0 ._h { display: flex; gap: 8px; align-items: center; margin-bottom: 4px; }
+  ._c0 ._u { font-weight: 600; color: var(--fg); font-size: 13.5px; }
+  ._c0 ._t { color: var(--faint); font-size: 12px; }
+  ._c0 ._b { color: var(--fg); }
+  ._c0 ._k { color: var(--faint); font-size: 12px; margin-top: 6px; }
+
+  /* --- 3. product card (<section>/<figure>) --- */
+  .product { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); overflow: hidden; display: grid; grid-template-columns: 120px 1fr; }
+  .product figure { margin: 0; }
+  .product figure svg { display: block; width: 120px; height: 100%; }
+  .product .body { padding: 14px 16px; }
+  .product .name { font-weight: 700; color: var(--fg); }
+  .product .desc { font-size: 13.5px; color: var(--dim); margin: 4px 0; }
+  .product .price { font-weight: 700; color: var(--accent); font-size: 17px; }
+
+  /* --- 4. link-dense nav (junk) --- */
+  .footer-nav { display: flex; flex-wrap: wrap; gap: 6px 18px; border-top: 1px solid var(--line); padding: 16px 0; margin-top: 8px; }
+  .footer-nav a { color: var(--faint); font-size: 13px; text-decoration: none; }
+  .footer-nav a:hover { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Right-click scoping demo</h1>
+  <p class="lead">A 1-pixel click lands on a deep leaf node (an avatar, a timestamp, a like count). Sending
+  <em>that</em> to a model is useless. The right-click resolver climbs to the SEMANTIC UNIT around it — the whole
+  tweet, comment, or card — and sends clean text + a scope selector, not a screenshot or raw HTML.</p>
+
+  <p class="how"><b>Try it:</b> right-click ANY deep leaf below → <b>"Ask window.ml about this"</b>. The Commander
+  opens with a <b>📌 pill</b> naming the container it resolved (not the leaf). <b>Hover the pill</b> to see that
+  container boxed on this page — so you know exactly what context is captured before you send.
+  <br><span class="note">(Needs the window.ml extension loaded, with the HUD available. Then type a question like
+  <em>"how dumb is this post?"</em> and Send.)</span></p>
+
+  <!--
+    ANSWER KEY — what resolveContextContainer should return for a right-click INSIDE each region:
+      §1 semantic:  any leaf in a .tweet (avatar / @handle / time / body / 👍 count)  →  the whole <article> (#tweet-N)
+                    [path: target.closest('article')]
+      §2 div soup:  any leaf in a ._c0 comment (no <article>/<section> anywhere)       →  that ._c0 comment div
+                    [path: text/link-density climb + feed-item short-circuit — ≥3 similar sibling divs]
+      §3 product:   the price / thumbnail / name in a card                             →  the whole <section class="product">
+                    [path: target.closest('section')]
+      §4 nav junk:  a link in .footer-nav (link density ≈ 1.0)                          →  NOT the nav; stays on the <a>
+                    [path: nav is not a semantic container + link-dense → rejected as junk]
+  -->
+
+  <h2>1 · Semantic feed &lt;article&gt;</h2>
+  <p class="note">Right-click the avatar, the @handle, the timestamp, or the 👍 count — each climbs to the whole <code>&lt;article&gt;</code>.</p>
+  <div class="feed">
+    <article class="tweet" id="tweet-1">
+      <div class="avatar" style="background:#e0245e">🦖</div>
+      <div>
+        <div class="tw-head"><span class="tw-name">Dr. Gravity Truth</span><span class="tw-handle">@flatgravity</span><span class="tw-time">· 2h</span></div>
+        <div class="tw-body">Vaccines cause gravity to flip upside down. That's why astronauts float. Wake up, sheeple. 🧠</div>
+        <div class="tw-media"><svg viewBox="0 0 400 140" xmlns="http://www.w3.org/2000/svg"><rect width="400" height="140" fill="#f0f0f5"/><polyline points="10,120 90,60 170,90 250,30 330,80 390,20" fill="none" stroke="#e0245e" stroke-width="3"/><text x="12" y="24" font-family="system-ui" font-size="12" fill="#888">"gravity flip incidents" (definitely real)</text></svg></div>
+        <div class="tw-actions"><span>💬 84</span><span>🔁 1.2K</span><span>👍 12.4K</span><span>📊 3.1M</span></div>
+      </div>
+    </article>
+    <article class="tweet" id="tweet-2">
+      <div class="avatar" style="background:#1d9bf0">🥸</div>
+      <div>
+        <div class="tw-head"><span class="tw-name">Certified Genius</span><span class="tw-handle">@bigbrain</span><span class="tw-time">· 5h</span></div>
+        <div class="tw-body">If the Earth were round, my coffee would slide off my desk. Checkmate, physicists. I have a degree in Common Sense.</div>
+        <div class="tw-actions"><span>💬 402</span><span>🔁 88</span><span>👍 6.7K</span><span>📊 900K</span></div>
+      </div>
+    </article>
+    <article class="tweet" id="tweet-3">
+      <div class="avatar" style="background:#00ba7c">🤠</div>
+      <div>
+        <div class="tw-head"><span class="tw-name">Ranch Facts</span><span class="tw-handle">@bigsky</span><span class="tw-time">· 1d</span></div>
+        <div class="tw-body">Birds aren't real, they're government drones. I've never seen one charge its battery, which proves they hide it. Do your own research.</div>
+        <div class="tw-actions"><span>💬 21</span><span>🔁 340</span><span>👍 9.9K</span><span>📊 1.4M</span></div>
+      </div>
+    </article>
+  </div>
+
+  <h2>2 · Div soup — no semantic tags, build-hashed classes</h2>
+  <p class="note">There's no <code>&lt;article&gt;</code> here, just nested <code>&lt;div&gt;</code>s with obfuscated
+  class names (like a real SPA). The resolver falls back to text/link-density and the feed-item heuristic —
+  right-click inside a comment and it resolves that whole comment, not the page column.</p>
+  <div class="_q7">
+    <div class="_c0" data-cmt="a">
+      <div class="_h"><span class="_u">u/deleted_user</span><span class="_t">· 3 points · 4h</span></div>
+      <div class="_b">Actually, the moon is just a big light bulb. Ever notice you can't feel the heat? That's LED efficiency.</div>
+      <div class="_k">Reply · Share · Report</div>
+    </div>
+    <div class="_c0" data-cmt="b">
+      <div class="_h"><span class="_u">u/skeptic_92</span><span class="_t">· 128 points · 3h</span></div>
+      <div class="_b">This is the most confidently wrong thing I've read all week, and I moderate three conspiracy subreddits.</div>
+      <div class="_k">Reply · Share · Report</div>
+    </div>
+    <div class="_c0" data-cmt="c">
+      <div class="_h"><span class="_u">u/lurker</span><span class="_t">· 7 points · 2h</span></div>
+      <div class="_b">I came here to learn and now I have more questions than when I arrived. Thanks, I hate it.</div>
+      <div class="_k">Reply · Share · Report</div>
+    </div>
+  </div>
+
+  <h2>3 · Product card &lt;section&gt; / &lt;figure&gt;</h2>
+  <p class="note">Right-click the price, the thumbnail, or the name — all climb to the whole <code>&lt;section class="product"&gt;</code>.</p>
+  <section class="product" id="product-1" aria-label="Anti-Gravity Boots">
+    <figure><svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg"><rect width="120" height="120" fill="#eef"/><text x="60" y="66" text-anchor="middle" font-size="40">🥾</text></svg></figure>
+    <div class="body">
+      <div class="name">Anti-Gravity Boots</div>
+      <div class="desc">Defies the (recently flipped) laws of physics. As seen on @flatgravity. Batteries not included; neither is gravity.</div>
+      <div class="price">$249.99</div>
+    </div>
+  </section>
+
+  <h2>4 · Link-dense nav — junk, NOT grabbed</h2>
+  <p class="note">Right-click a link below: the resolver <b>rejects</b> the link-dense nav as junk (link density ≈ 1.0)
+  and stays on the link itself — so a footer menu never gets dumped into the model as "context".</p>
+  <nav class="footer-nav" id="footer" aria-label="Footer">
+    <a href="#">Home</a><a href="#">About</a><a href="#">Careers</a><a href="#">Press</a><a href="#">Blog</a>
+    <a href="#">Help</a><a href="#">Privacy</a><a href="#">Terms</a><a href="#">Cookies</a><a href="#">Contact</a>
+    <a href="#">Status</a><a href="#">Sitemap</a>
+  </nav>
+
+  <p class="note" style="margin-top:28px">You can also drive it from the console — the same context resolution the
+  right-click uses is <code>ml.queryAll</code>-friendly:</p>
+  <p><code>await ml.agent("How dumb is this take, and does it contradict itself? Read it with findByText scoped to #tweet-1.", { extraTools: [] })</code></p>
+</main>
+</body>
+</html>

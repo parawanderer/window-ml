@@ -769,8 +769,11 @@ export const selectorError = (selector: string, err: Error): string => {
 // with (3) a feed-item short-circuit for div-soup feeds and (4) a geometry cap so it never returns the
 // whole-page/column wrapper. Pure; the density + feed + semantic paths are unit-tested (jsdom's
 // getBoundingClientRect is 0, so the geometry cap simply no-ops there — it's a defensive browser guard).
+// Deliberately EXCLUDES <main>/[role="main"] — that's the PAGE wrapper, not the localized unit a
+// right-click wants (a centered content column may not even trip the geometry cap). A too-coarse
+// <section>/[role="region"] is still caught by spansViewport below.
 const CONTAINER_SEL = 'article, [role="article"], [role="listitem"], [role="comment"], [role="region"], ' +
-    'section, main, [role="main"], blockquote, figure';
+    'section, blockquote, figure';
 
 /** Does `el` cover ~the whole viewport (a page/column wrapper, not a content unit)? 0-rects (jsdom) → false. */
 const spansViewport = (el: Element): boolean => {

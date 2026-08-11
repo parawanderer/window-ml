@@ -114,3 +114,25 @@ test("askAboutTask frames the element content + scope selector around the user's
     // element-only (no typed question) → a sensible default task
     assert.match(askAboutTask("", ctx), /Tell me about the selected content/);
 });
+
+// --------------------------------------------- the demo page resolves as its ANSWER KEY documents ---
+import { readFileSync } from "node:fs";
+
+test("examples/ask-about-this.html: each region resolves to the unit its answer key claims", () => {
+    const html = readFileSync(new URL("../examples/ask-about-this.html", import.meta.url), "utf8");
+    const dom = new JSDOM(html);
+    globalThis.window = dom.window; globalThis.document = dom.window.document;
+    const doc = dom.window.document;
+    const R = (el) => resolveContextContainer(el);
+
+    // §1 semantic: the timestamp AND the 👍 count both climb to the whole <article>
+    assert.equal(R(doc.querySelector("#tweet-1 .tw-time")).id, "tweet-1");
+    const like = [...doc.querySelectorAll("#tweet-1 .tw-actions span")].find(s => /12\.4K/.test(s.textContent));
+    assert.equal(R(like).id, "tweet-1");
+    // §2 div soup: a comment body → that ._c0 comment (NOT the <main> wrapper)
+    assert.equal(R(doc.querySelector('._c0[data-cmt="b"] ._b')).getAttribute("data-cmt"), "b");
+    // §3 product: the price → the whole <section class="product">
+    assert.equal(R(doc.querySelector("#product-1 .price")).id, "product-1");
+    // §4 nav junk: a footer link is NOT resolved up to the link-dense nav
+    assert.notEqual(R(doc.querySelector("#footer a")).id, "footer");
+});
