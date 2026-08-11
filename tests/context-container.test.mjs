@@ -52,3 +52,45 @@ test("nav junk: clicking a link in a link-dense nav does NOT grab the nav", () =
     const r = pick("lnk");
     assert.notEqual(r.id, "nav", "a link-dense nav is rejected as junk");
 });
+
+// -------------------------------------------------------------------- domToContext (extraction) ---
+import { domToContext } from "../dom.ts";
+
+test("domToContext: block-structured text + media + links + scope selector + anchor", () => {
+    mount(`<article id="post">
+        <span id="who">@john_doe</span>
+        <p>Vaccines cause gravity to flip.</p>
+        <p>Second paragraph here.</p>
+        <img src="https://x.test/chart.png" alt="a chart">
+        <img src="data:image/png;base64,AAAA" alt="tracking pixel">
+        <a href="https://x.test/src">source</a>
+        <a href="https://x.test/src">source dup</a>
+        <a href="javascript:void(0)">js</a>
+    </article>`);
+    const ctx = domToContext(document.getElementById("post"), document.getElementById("who"));
+    // block text keeps paragraph breaks (not one run-on line)
+    assert.match(ctx.text, /Vaccines cause gravity to flip\./);
+    assert.match(ctx.text, /\n/, "block boundaries become newlines");
+    // media: real image kept, data: URL (tracking) skipped
+    assert.deepEqual(ctx.media, [{ src: "https://x.test/chart.png", alt: "a chart" }]);
+    // links: deduped by href, javascript: dropped
+    assert.deepEqual(ctx.links, [{ text: "source", href: "https://x.test/src" }]);
+    assert.equal(ctx.role, "article");
+    assert.match(ctx.selector, /#post/);
+    assert.equal(ctx.anchorText, "@john_doe");
+});
+
+test("domToContext: long text is capped with a truncation marker", () => {
+    const long = "word ".repeat(600);   // ~3000 chars
+    mount(`<div id="big"><p>${long}</p></div>`);
+    const ctx = domToContext(document.getElementById("big"), null, 200);
+    assert.ok(ctx.text.length < 260, "text capped near maxText");
+    assert.match(ctx.text, /\[\+\d+ chars\]/);
+});
+
+test("domToContext: script/style content is not included in the text", () => {
+    mount(`<div id="c"><style>.x{color:red}</style><script>var secret=1</script><p>Real content.</p></div>`);
+    const ctx = domToContext(document.getElementById("c"), null);
+    assert.match(ctx.text, /Real content\./);
+    assert.doesNotMatch(ctx.text, /color:red|var secret/);
+});

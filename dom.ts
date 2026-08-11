@@ -821,6 +821,70 @@ export const resolveContextContainer = (target: Element): Element => {
     return best;
 };
 
+/** The clean, token-efficient context payload for a resolved container — what "ask about this" sends
+ *  instead of a screenshot or raw HTML. Passing outerHTML is an anti-pattern (class-name/SVG/tracking
+ *  noise); this is block-structured visible TEXT + the media/links the model would otherwise miss + a
+ *  `selector` scope handle so the agent's DOM tools (click/read/findByText) can keep working inside it. */
+export interface ElementContext {
+    selector: string;                              // the container's scope handle (clickSelector)
+    role: string;                                  // ARIA role (roleOf) — "article", "listitem", …
+    text: string;                                  // clean block-structured visible text (capped)
+    anchorText?: string;                           // the leaf the user actually right-clicked
+    media: { src: string; alt: string }[];
+    links: { text: string; href: string }[];
+}
+
+const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "SVG", "TEMPLATE"]);
+const BLOCK_TAGS = new Set(["P", "DIV", "LI", "H1", "H2", "H3", "H4", "H5", "H6", "BLOCKQUOTE", "ARTICLE",
+    "SECTION", "HEADER", "FOOTER", "BR", "TR", "UL", "OL", "PRE", "FIGCAPTION"]);
+
+/** Visible text with block boundaries preserved as newlines (jsdom lacks innerText). Skips script/style/svg. */
+const blockText = (el: Element): string => {
+    let out = "";
+    for (const node of Array.from(el.childNodes)) {
+        if (node.nodeType === 3) out += node.textContent || "";                 // text node
+        else if (node.nodeType === 1) {
+            const e = node as Element;
+            if (SKIP_TAGS.has(e.tagName)) continue;
+            out += blockText(e);
+            if (BLOCK_TAGS.has(e.tagName)) out += "\n";
+        }
+    }
+    return out;
+};
+
+/** Extract a resolved container into a clean {@link ElementContext}. Pure. */
+export const domToContext = (container: Element, anchor?: Element | null, maxText = 2000): ElementContext => {
+    const raw = blockText(container).replace(/[ \t]+/g, " ").replace(/\n[ \t]*/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+    const text = raw.length > maxText ? raw.slice(0, maxText) + `\n… [+${raw.length - maxText} chars]` : raw;
+    const media: { src: string; alt: string }[] = [];
+    try {
+        for (const m of container.querySelectorAll("img[src], video[src], video source[src]")) {
+            const src = m.getAttribute("src") || "";
+            if (src && !src.startsWith("data:")) media.push({ src, alt: m.getAttribute("alt") || "" });
+            if (media.length >= 12) break;
+        }
+    } catch { /* ignore */ }
+    const links: { text: string; href: string }[] = [];
+    const seen = new Set<string>();
+    try {
+        for (const a of container.querySelectorAll("a[href]")) {
+            const href = a.getAttribute("href") || "";
+            const t = (a.textContent || "").replace(/\s+/g, " ").trim();
+            if (!href || href.startsWith("javascript:") || seen.has(href)) continue;
+            seen.add(href); links.push({ text: t, href });
+            if (links.length >= 20) break;
+        }
+    } catch { /* ignore */ }
+    return {
+        selector: clickSelector(container),
+        role: roleOf(container),
+        text,
+        anchorText: anchor ? (anchor.textContent || "").replace(/\s+/g, " ").trim().slice(0, 120) || undefined : undefined,
+        media, links,
+    };
+};
+
 /** A page table → a structured `{ columns, rows }` for a pandas DataFrame, or `null` when the
  *  element isn't a clean table (no recognizable table/ARIA-grid, or it uses col/rowspans — the
  *  caller then falls back to pandas.read_html on its outerHTML). Case-preserving (unlike
