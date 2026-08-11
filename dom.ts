@@ -2,6 +2,7 @@
 // jQuery-tolerant query engine, skeleton descriptions, text normalization. No
 // dependency on injected's closure state; only args + browser globals.
 import { roleOf, accessibleName } from "./a11y";   // for the `role=` / `label=` selector engines (a11y has no dom import → no cycle)
+import type { ElementContext } from "./contract";
 
 /**
  * Collapse whitespace, then truncate to a max length with a trailing ellipsis.
@@ -820,19 +821,6 @@ export const resolveContextContainer = (target: Element): Element => {
     }
     return best;
 };
-
-/** The clean, token-efficient context payload for a resolved container — what "ask about this" sends
- *  instead of a screenshot or raw HTML. Passing outerHTML is an anti-pattern (class-name/SVG/tracking
- *  noise); this is block-structured visible TEXT + the media/links the model would otherwise miss + a
- *  `selector` scope handle so the agent's DOM tools (click/read/findByText) can keep working inside it. */
-export interface ElementContext {
-    selector: string;                              // the container's scope handle (clickSelector)
-    role: string;                                  // ARIA role (roleOf) — "article", "listitem", …
-    text: string;                                  // clean block-structured visible text (capped)
-    anchorText?: string;                           // the leaf the user actually right-clicked
-    media: { src: string; alt: string }[];
-    links: { text: string; href: string }[];
-}
 
 const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "SVG", "TEMPLATE"]);
 const BLOCK_TAGS = new Set(["P", "DIV", "LI", "H1", "H2", "H3", "H4", "H5", "H6", "BLOCKQUOTE", "ARTICLE",

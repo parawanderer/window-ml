@@ -94,3 +94,23 @@ test("domToContext: script/style content is not included in the text", () => {
     assert.match(ctx.text, /Real content\./);
     assert.doesNotMatch(ctx.text, /color:red|var secret/);
 });
+
+// ------------------------------------------------------- askAboutTask (right-click task framing) ---
+import { askAboutTask } from "../prompts.ts";
+
+test("askAboutTask frames the element content + scope selector around the user's question", () => {
+    const ctx = {
+        selector: "#post", role: "article", text: "Vaccines cause gravity to flip.", anchorText: "12.4K",
+        media: [{ src: "chart.png", alt: "a chart" }], links: [{ text: "source", href: "http://x/s" }],
+    };
+    const t = askAboutTask("how dumb is this?", ctx);
+    assert.match(t, /RIGHT-CLICKED/);
+    assert.match(t, /selector: #post/, "container selector named");
+    assert.match(t, /Vaccines cause gravity/, "clean content included");
+    assert.match(t, /chart\.png/, "media listed");
+    assert.match(t, /source → http:\/\/x\/s/, "links listed");
+    assert.match(t, /`#post`/, "scope selector offered for the DOM tools");
+    assert.match(t, /how dumb is this\?/, "user's question preserved");
+    // element-only (no typed question) → a sensible default task
+    assert.match(askAboutTask("", ctx), /Tell me about the selected content/);
+});

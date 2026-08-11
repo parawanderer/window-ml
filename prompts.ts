@@ -1,5 +1,6 @@
 // The ml.agent system prompt + the tool-aware clauses appended to it. Split out
 // so the prompt is easy to find and tune. Bundled into injected.js.
+import type { ElementContext } from "./contract";
 
 export const AGENT_SYSTEM = [
     "You are an automation agent operating on the CURRENT web page through a set",
@@ -155,3 +156,20 @@ export const UNATTENDED_EXEC_NOTE =
     "mutation). A mutating call is refused.";
 export const UNATTENDED_PY_NOTE =
     " NOTE: this run is UNATTENDED — only readonly-mode runs here; full mode (network) is refused.";
+
+/** Frame a right-click "ask about this" run: the resolved element's clean content as CONTEXT + the scope
+ *  selector the agent can keep interacting through, wrapped around the user's question. Built page-side
+ *  from an ElementContext (dom.ts domToContext) at the __mlStartAgent handler. */
+export const askAboutTask = (userTask: string, ctx: ElementContext): string => {
+    const parts: string[] = [
+        "The user RIGHT-CLICKED an element on the page to ask about it. Its clean content is below.",
+        `\n--- SELECTED CONTENT (role: ${ctx.role || "element"}; selector: ${ctx.selector}) ---`,
+    ];
+    if (ctx.text) parts.push(ctx.text);
+    if (ctx.media?.length) parts.push(`\nMedia: ${ctx.media.map(m => m.alt ? `${m.src} ("${m.alt}")` : m.src).join(", ")}`);
+    if (ctx.links?.length) parts.push(`\nLinks: ${ctx.links.slice(0, 10).map(l => `${l.text || "(link)"} → ${l.href}`).join(" · ")}`);
+    parts.push("--- END SELECTED CONTENT ---");
+    parts.push(`\nYou can act on this element directly with its selector \`${ctx.selector}\` (click/type/findByText, or ml.queryAll scoped to it) if you need more than the text above.`);
+    parts.push(`\nUser's question: ${userTask.trim() || "Tell me about the selected content."}`);
+    return parts.join("\n");
+};

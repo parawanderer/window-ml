@@ -143,6 +143,19 @@ export function cleanImages(v: unknown): string[] | undefined {
     return out.length ? out : undefined;
 }
 
+/** The clean, token-efficient context payload for a right-click "ask about this" — what it sends instead
+ *  of a screenshot or raw HTML. Block-structured visible TEXT + the media/links the model would otherwise
+ *  miss + a `selector` scope handle so the agent's DOM tools (click/read/findByText) keep working inside
+ *  the resolved container. Built page-side by domToContext; travels the bus to the Commander pill. */
+export interface ElementContext {
+    selector: string;                              // the container's scope handle (clickSelector)
+    role: string;                                  // ARIA role (roleOf) — "article", "listitem", …
+    text: string;                                  // clean block-structured visible text (capped)
+    anchorText?: string;                           // the leaf the user actually right-clicked
+    media: { src: string; alt: string }[];
+    links: { text: string; href: string }[];
+}
+
 /** Single source of truth for config defaults — imported by background.ts,
  *  popup.ts, and the sidebar app so the three can't drift.
  *  - chatUrl: OpenWebUI's OpenAI-compatible endpoint. No root /v1 alias (tested

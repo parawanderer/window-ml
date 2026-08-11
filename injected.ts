@@ -35,7 +35,7 @@ import type {
 import { detectGroundingModel, DEFAULT_GROUNDING_RANGE } from "./contract";
 import { evalReadonly } from "./readonly-exec";
 import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement } from "./dom";
-import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_NOTE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_EXEC_NOTE, IFRAME_CLAUSE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE } from "./prompts";
+import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_NOTE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_EXEC_NOTE, IFRAME_CLAUSE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, askAboutTask } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, markSeen, PT_LOOK_RADIUS, BOX_RE, resolveBox, agentState } from "./util";
 import type { ShotBox, ServerTool, VisionMemory } from "./contract";
 import { annotate, pickAccentColorForTarget } from "./locate";
@@ -1930,9 +1930,13 @@ class AgentHandle implements MlAgentHandle, AgentControl {
     // Grants nothing extra: the page already has window.ml.agent, and every tool gates on the background.
     window.addEventListener("message", (e: MessageEvent) => {
         if (e.source !== window || !e.data || !e.data.__mlStartAgent) return;
-        const task = String(e.data.__mlStartAgent.task || "").trim();
+        let task = String(e.data.__mlStartAgent.task || "").trim();
         // Composer attachments (pasted/uploaded screenshots) — the shell already sanitised them to data URLs.
         const images = Array.isArray(e.data.__mlStartAgent.images) ? e.data.__mlStartAgent.images as string[] : undefined;
+        // Right-click "ask about this": the shell resolved the clicked element to a clean ElementContext.
+        // Frame it around the user's question (content as context + the scope selector for the DOM tools).
+        const elementContext = e.data.__mlStartAgent.elementContext as import("./contract").ElementContext | undefined;
+        if (elementContext && typeof elementContext.selector === "string") task = askAboutTask(task, elementContext);
         if (!task && !(images && images.length)) return;   // allow an image-only start
         // A UI-started run is a PRODUCT surface (a user typing "click the button" expects click to work),
         // so give it a capable default kit — click/type/python ON TOP of the default domTools + auto-wired

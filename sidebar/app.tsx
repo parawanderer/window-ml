@@ -8,7 +8,7 @@ import { render } from "preact";
 import type { ComponentChildren } from "preact";
 import { useState, useEffect, useRef } from "preact/hooks";
 import { signal } from "@preact/signals";
-import type { MlDebugEvent, DebugSessionConfig, DebugAgentConfig, NeutralMessage, MlConfig, ApiFormat, Theme, LoadedModel, ExtendProfile, RenderDescriptor, ToolFeedback, LocateSubstep, TokenUsage, TableSource } from "../contract";
+import type { MlDebugEvent, DebugSessionConfig, DebugAgentConfig, NeutralMessage, MlConfig, ApiFormat, Theme, LoadedModel, ExtendProfile, RenderDescriptor, ToolFeedback, LocateSubstep, TokenUsage, TableSource, ElementContext } from "../contract";
 import { DEFAULT_CONFIG, fmtCtx } from "../contract";
 import { elementReference, externalSheetIds } from "../dom";
 import {
@@ -1549,6 +1549,20 @@ function ThumbStrip({ imgs, loading, onRemove }: { imgs: string[]; loading: numb
     );
 }
 
+// The right-click "ask about this" reference pill: a removable chip naming the resolved container (role +
+// the leaf you clicked). Hovering it BOXES that container on the live page (reuses the hover-highlight),
+// so you see exactly what context is captured before sending.
+function ElementPill({ ctx, onRemove }: { ctx: ElementContext; onRemove: () => void }) {
+    const label = ctx.anchorText ? `${ctx.role || "element"} · "${truncate(ctx.anchorText, 30)}"` : (ctx.role || "element");
+    return (
+        <div class="el-pill" onPointerEnter={() => highlightEl(ctx.selector)} onPointerLeave={clearHighlight} title={ctx.selector}>
+            <span class="el-pill-ic" aria-hidden="true">📌</span>
+            <span class="el-pill-txt">{label}</span>
+            <button class="el-pill-x" onClick={onRemove} aria-label="Remove element context" title="Remove">×</button>
+        </div>
+    );
+}
+
 function Composer({ s }: { s: Session }) {
     const r = rev.value;   // subscribe: `s.status` is mutated in place (same ref), so without a signal read this
                            // stateful child won't re-render when the run goes pending/idle → the Stop button.
@@ -1812,6 +1826,7 @@ const cardDismissed = signal<string>("");    // the run hash the user dismissed 
 // glitch). "" = nothing open. Also naturally scopes to the active run once the card has tabs.
 const cardShowWorkHash = signal<string>("");
 const composerOpen = signal(false);          // the Spotlight composer — the HUD morphs into a task input
+const composerElement = signal<ElementContext | null>(null);   // right-click "ask about this" → the element pill's context
 const composerMaxSteps = signal(20);         // step budget for a UI-started run (persists across opens)
 const STEP_BUDGETS = [10, 20, 50];           // the segmented presets in the composer
 const composerStarting = signal(0);          // timestamp: a UI run was sent, awaiting its first event (bridge pill)
@@ -2354,10 +2369,11 @@ function ComposerCard() {
     const ref = useRef<HTMLTextAreaElement>(null);
     // Focus after a frame so the container's morph (and the shell's frame.focus) has landed.
     useEffect(() => { const id = requestAnimationFrame(() => ref.current?.focus()); return () => cancelAnimationFrame(id); }, []);
-    const close = () => { composerOpen.value = false; };
+    const el = composerElement.value;   // right-click "ask about this" context, if any
+    const close = () => { composerOpen.value = false; composerElement.value = null; };
     const send = () => {
         const t = text.trim();
-        if (!t && !att.imgs.length) return;   // allow an image-only task
+        if (!t && !att.imgs.length && !el) return;   // allow an image-only OR element-only task
         // Pre-flight: a HUD run with no model at all would flash the orb, then fail at the background's
         // prepareRequest with "No model configured". Catch it HERE instead — an inline nudge, so a fresh
         // install that hasn't picked a model gets an actionable message, not a cryptic failure. A per-call
@@ -2374,7 +2390,7 @@ function ComposerCard() {
         const t0 = Date.now();
         composerStarting.value = t0;
         setTimeout(() => { if (composerStarting.value === t0) composerStarting.value = 0; }, 10000);
-        window.parent.postMessage({ __mlSidebarApp: "startRun", task: t, maxSteps: composerMaxSteps.value, model: model || undefined, vision, images: att.imgs }, "*");
+        window.parent.postMessage({ __mlSidebarApp: "startRun", task: t, maxSteps: composerMaxSteps.value, model: model || undefined, vision, images: att.imgs, elementContext: el || undefined }, "*");
         close();
     };
     return (
@@ -2387,9 +2403,10 @@ function ComposerCard() {
                 <button class="card-x" aria-label="Cancel" title="Cancel" onClick={close}>✕</button>
             </div>
             <div class="card-body">
+                {el ? <ElementPill ctx={el} onRemove={() => (composerElement.value = null)} /> : null}
                 <ThumbStrip imgs={att.imgs} loading={att.loading} onRemove={att.remove} />
                 <textarea ref={ref} class="card-cmp-input" rows={3}
-                    placeholder="Ask window.ml to do something on this page… (paste a screenshot to attach)"
+                    placeholder={el ? "Ask about the selected element…" : "Ask window.ml to do something on this page… (paste a screenshot to attach)"}
                     value={text}
                     onInput={e => { setText((e.target as HTMLTextAreaElement).value); if (err) setErr(""); }}
                     onPaste={att.onPaste}
@@ -2415,7 +2432,7 @@ function ComposerCard() {
                         ))}
                     </div>
                 </div>
-                <button class="appr-btn yes" onClick={send} disabled={!text.trim() && !att.imgs.length}>Send</button>
+                <button class="appr-btn yes" onClick={send} disabled={!text.trim() && !att.imgs.length && !el}>Send</button>
             </div>
         </div>
     );
@@ -2868,7 +2885,8 @@ function onMessage(e: MessageEvent): void {
         sidebarOpen.value = d.__mlSidebarOpen;
         if (d.__mlSidebarOpen && !wasOpen) titleTried.clear();   // fresh open → backfill missing titles
     }
-    else if (typeof d.__mlSidebarComposer === "string") composerOpen.value = d.__mlSidebarComposer === "open";   // Spotlight bar
+    else if (typeof d.__mlSidebarComposer === "string") { composerOpen.value = d.__mlSidebarComposer === "open"; if (d.__mlSidebarComposer !== "open") composerElement.value = null; }   // Spotlight bar
+    else if (d.__mlComposerElement) composerElement.value = d.__mlComposerElement as ElementContext;   // right-click "ask about this" → element pill
     else if (d.__mlSidebarCardEndDrag) endActiveCardDrag?.();   // shell's safety net force-ended a stuck drag → clean up our listeners
 }
 

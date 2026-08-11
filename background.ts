@@ -1562,6 +1562,17 @@ chrome.commands?.onCommand.addListener((command, tab) => {
         chrome.tabs.sendMessage(tab.id, { type: "ML_OPEN_COMPOSER" }).catch(() => { /* no content script on this tab */ });
 });
 
+// Right-click "Ask window.ml about this" — the content-script shell resolves the clicked element's
+// semantic container + clean context and opens the Commander pre-loaded with it (see shell.ts). Created on
+// install (persists); re-created defensively in case the item was cleared. contextMenus may be absent in tests.
+chrome.runtime.onInstalled?.addListener(() => {
+    try { chrome.contextMenus?.removeAll?.(() => chrome.contextMenus?.create({ id: "ml-ask-about-this", title: "Ask window.ml about this…", contexts: ["all"] })); } catch { /* not available */ }
+});
+chrome.contextMenus?.onClicked.addListener((info, tab) => {
+    if (info.menuItemId === "ml-ask-about-this" && tab?.id != null)
+        chrome.tabs.sendMessage(tab.id, { type: "ML_ASK_ABOUT_THIS" }).catch(() => { /* no content script on this tab */ });
+});
+
 // ---- Google Sheets CSV fetch (python_exec `sheet`) ----
 // Fetch the sheet's CSV export with the user's own cookies (credentials:"include"), so a
 // PRIVATE sheet they can see works — the page DOM can't (Sheets renders to canvas). If they

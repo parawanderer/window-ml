@@ -215,6 +215,14 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .cspin { width: 16px; height: 16px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: cspin 0.7s linear infinite; }
 @keyframes cspin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .cspin { animation-duration: 2s; } }
+/* Right-click "ask about this" element pill: a removable chip; hover boxes the container on the page. */
+.el-pill { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; margin-bottom: 6px; padding: 3px 5px 3px 7px;
+  border: 1px solid var(--border); border-radius: 6px; background: var(--panel); font-size: 0.85em; cursor: default; }
+.el-pill-ic { flex: 0 0 auto; font-size: 0.9em; }
+.el-pill-txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-dim); }
+.el-pill-x { flex: 0 0 auto; width: 15px; height: 15px; line-height: 13px; text-align: center; border-radius: 50%;
+  border: none; background: transparent; color: var(--fg-faint); cursor: pointer; font-size: 12px; padding: 0; }
+.el-pill-x:hover { color: var(--fg); background: var(--bg); }
 /* Context-usage gauge (bottom-right of the composer): a small dial icon + a thin
    bar + the figure — outlined track, colour only in the fill. */
 .usage-gauge { gap: 5px; }

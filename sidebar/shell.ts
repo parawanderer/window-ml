@@ -14,7 +14,8 @@
 // can't leave it un-live.
 import { SB_ROOT, SB_HOST, SB_TAB, SB_FRAME, SB_LIGHTBOX, SB_LIGHTBOX_X, SB_HIGHLIGHT, SB_CARD } from "../ids";
 import { cleanImages } from "../contract";
-import type { DebugMode } from "../contract";
+import { resolveContextContainer, domToContext } from "../dom";   // right-click "ask about this" (content script sees the page DOM)
+import type { DebugMode, ElementContext } from "../contract";
 
 const WIDTH_KEY = "ml_debug_width";
 const MIN_W = 280, TAB_W = 34, DEFAULT_W = 400;
@@ -683,6 +684,7 @@ function onWindowMessage(e: MessageEvent): void {
             model: typeof d.model === "string" && d.model.trim() ? d.model.trim() : undefined,
             vision: d.vision === true ? true : undefined,
             images: cleanImages(d.images),
+            elementContext: (d.elementContext && typeof d.elementContext.selector === "string") ? d.elementContext : undefined,
             hud: agentHud,
         } }, "*");
         return;
@@ -810,7 +812,7 @@ function onWindowMessage(e: MessageEvent): void {
             frame.contentWindow?.postMessage({ __mlSidebarSurface: "card" }, "*");
             for (const ev of bgRing) frame.contentWindow?.postMessage(ev, "*");
             bgRing.length = 0;
-            if (composerPendingOpen) { composerPendingOpen = false; frame.contentWindow?.postMessage({ __mlSidebarComposer: "open" }, "*"); try { frame.focus(); } catch { /* ignore */ } }
+            if (composerPendingOpen) { composerPendingOpen = false; frame.contentWindow?.postMessage({ __mlSidebarComposer: "open" }, "*"); if (composerPendingCtx) { frame.contentWindow?.postMessage({ __mlComposerElement: composerPendingCtx }, "*"); composerPendingCtx = null; } try { frame.focus(); } catch { /* ignore */ } }
             return;
         }
         window.postMessage({ __mlSidebar: "ready" }, "*");
@@ -952,18 +954,29 @@ function unmountCard(): void {
     cardHost = cardWrap = frame = null;   // `frame` is the card iframe in off mode
     cardReady = false;
     composerPendingOpen = false;
+    composerPendingCtx = null;
     bgRing.length = 0;
 }
 
+// Right-click "ask about this": remember the leaf the user right-clicked (capture phase, so a page's own
+// contextmenu handler can't pre-empt us). Resolved into a semantic container + clean context on the
+// background's ML_ASK_ABOUT_THIS cue, below, then the Commander opens pre-loaded with it.
+let lastAskEl: Element | null = null;
+addEventListener("contextmenu", e => { const t = e.target; if (t instanceof Element) lastAskEl = t; }, true);
+
 // The Spotlight command bar: mount the HUD card on demand (even with no run) and tell its app to open
-// the composer, so the user can START a run from the keyboard. Buffered until the iframe handshakes.
-// Only where the HUD lives (off / devtools-coexist) — overlay has its own surface (a follow-up).
+// the composer, so the user can START a run from the keyboard OR a right-click. Buffered until the iframe
+// handshakes. Only where the HUD lives (off / devtools-coexist) — overlay has its own surface (a follow-up).
 let composerPendingOpen = false;
-function openComposer(): void {
+let composerPendingCtx: ElementContext | null = null;   // a right-click's resolved context, if any
+function openComposer(ctx: ElementContext | null = null): void {
     if (!hudActive()) return;
     if (!cardHost) mountCard();
-    if (cardReady && frame) { frame.contentWindow?.postMessage({ __mlSidebarComposer: "open" }, "*"); try { frame.focus(); } catch { /* ignore */ } }
-    else composerPendingOpen = true;   // flushed on the app's `ready`
+    if (cardReady && frame) {
+        frame.contentWindow?.postMessage({ __mlSidebarComposer: "open" }, "*");
+        if (ctx) frame.contentWindow?.postMessage({ __mlComposerElement: ctx }, "*");
+        try { frame.focus(); } catch { /* ignore */ }
+    } else { composerPendingOpen = true; composerPendingCtx = ctx; }   // flushed on the app's `ready`
 }
 
 // Detach everything: remove the overlay/card DOM (if any), drop the listener, and — only if we brought
@@ -1041,6 +1054,15 @@ chrome.runtime.onMessage.addListener((msg) => {
     // The Spotlight shortcut (background `commands` → this tab). Open the HUD composer; no-op unless the
     // HUD is the active surface (off / devtools-coexist).
     else if (msg?.type === "ML_OPEN_COMPOSER") openComposer();
+    // Right-click "Ask window.ml about this": resolve the last right-clicked element's semantic container
+    // + clean context RIGHT HERE (the content script sees the page DOM) and open the Commander with it.
+    else if (msg?.type === "ML_ASK_ABOUT_THIS") {
+        let ctx: ElementContext | null = null;
+        if (lastAskEl && lastAskEl.isConnected) {
+            try { ctx = domToContext(resolveContextContainer(lastAskEl), lastAskEl); } catch { /* fall back to a plain composer */ }
+        }
+        openComposer(ctx);
+    }
     // DevTools session composer (panel → background → here): relay to the PAGE, which drives the handle
     // by hash (steer/run/cancel). Any mode — the page's handle registry is what acts, not this shell.
     else if (msg?.type === "ML_SESSION_TO_PAGE") {
