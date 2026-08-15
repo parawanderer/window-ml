@@ -1357,6 +1357,24 @@ function expiresIn(expiresAt: string | null): string | null {
     return s < 90 ? `expires in ${s}s` : `expires in ${Math.round(s / 60)}m`;
 }
 
+// Live keep-alive countdown from an /api/ps expires_at stamp, as a compact
+// two-unit d/h/m/s string ("2d 3h", "5m 12s", "44s") for the VRAM row. Ollama
+// evicts a model once this hits zero; each use resets it (Ollama recomputes
+// expires_at). Returns null when there's no stamp or it's already elapsed.
+function fmtTTL(expiresAt: string | null): string | null {
+    if (!expiresAt) return null;
+    const ms = new Date(expiresAt).getTime() - Date.now();
+    if (isNaN(ms) || ms <= 0) return null;
+    let s = Math.floor(ms / 1000);
+    const d = Math.floor(s / 86400); s -= d * 86400;
+    const h = Math.floor(s / 3600); s -= h * 3600;
+    const m = Math.floor(s / 60); s -= m * 60;
+    if (d) return `${d}d ${h}h`;
+    if (h) return `${h}h ${m}m`;
+    if (m) return `${m}m ${s}s`;
+    return `${s}s`;
+}
+
 // Live model-load state for the header's "responds-next" model, from /api/ps
 // (resident) + the installed list + our own in-flight flag. Five states, detail
 // in the tooltip (see SIDEBAR_UI_FEEDBACK.md). Reads signals directly so it
@@ -1632,6 +1650,11 @@ function VramPanel() {
     const [history, setHistory] = useState<Record<string, number>[]>([]);
     const sumVisible = (snap: Record<string, number>) =>
         Object.entries(snap).reduce((s, [m, v]) => s + (hidden.has(m) ? 0 : v), 0);
+    // Tick once a second so the TTL countdowns tick down smoothly between the
+    // slower /api/ps polls (VRAM_POLL_MS). Cleared on unmount (the panel is only
+    // mounted while open) so it never keeps a jsdom test window alive.
+    const [, tick] = useState(0);
+    useEffect(() => { const id = setInterval(() => tick(t => t + 1), 1000); return () => clearInterval(id); }, []);
     useEffect(() => { pollPs(); }, []);   // immediate poll on open (don't wait for the interval)
     useEffect(() => {
         if (!loaded) return;
@@ -1679,6 +1702,11 @@ function VramPanel() {
                             {m.contextLength ? (
                                 <span class="tt vram-ctx">{fmtCtx(m.contextLength)}
                                     <span class="tt-pop left" role="tooltip">Loaded with a {m.contextLength.toLocaleString()}-token context window. Ollama preallocates the KV cache for the FULL window, even when your prompts are short. Load with a smaller <code>num_ctx</code> to reclaim it.</span>
+                                </span>
+                            ) : null}
+                            {fmtTTL(m.expiresAt) ? (
+                                <span class="tt vram-ttl">{fmtTTL(m.expiresAt)}
+                                    <span class="tt-pop left" role="tooltip">Keep-alive TTL — Ollama evicts this model from {m.vramGB ? "VRAM" : "memory"} when the countdown reaches zero (expires {new Date(m.expiresAt!).toLocaleTimeString()}). Each use resets it. Set <code>keep_alive</code> to change how long it lingers.</span>
                                 </span>
                             ) : null}
                             <span class="sp" />

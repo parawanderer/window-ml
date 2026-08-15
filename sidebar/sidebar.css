@@ -64,12 +64,16 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .vram-row { display: flex; align-items: center; gap: 6px; font-size: 0.83em; }
 /* Colour indicator doubles as a hide/show toggle (greys out when hidden). */
 .vram-dot { width: 0.7em; height: 0.7em; border-radius: 50%; flex: 0 0 auto; padding: 0; border: none; cursor: pointer; }
-.vram-row.off .vram-name, .vram-row.off .vram-gb, .vram-row.off .vram-ctx { opacity: 0.45; text-decoration: line-through; }
+.vram-row.off .vram-name, .vram-row.off .vram-gb, .vram-row.off .vram-ctx, .vram-row.off .vram-ttl { opacity: 0.45; text-decoration: line-through; }
 .vram-name { color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Context the model was LOADED with — Ollama preallocates KV cache for the whole
    window, so it explains much of the GB on the right. Sits by the name, dimmed. */
 .vram-ctx { flex: 0 0 auto; color: var(--fg-faint); font-size: 0.9em; font-variant-numeric: tabular-nums;
   border: 1px solid var(--border); border-radius: 3px; padding: 0 3px; line-height: 1.35; cursor: help; }
+/* Live keep-alive countdown — same chip shape as the context badge, sat beside it. */
+.vram-ttl { flex: 0 0 auto; color: var(--fg-faint); font-size: 0.9em; font-variant-numeric: tabular-nums;
+  border: 1px solid var(--border); border-radius: 3px; padding: 0 3px; line-height: 1.35; cursor: help; }
+.vram-ttl::before { content: "⏱"; opacity: 0.7; margin-right: 3px; }
 .vram-gb { color: var(--fg-dim); font-variant-numeric: tabular-nums; }
 .vram-x { background: transparent; border: none; color: var(--fg-faint); cursor: pointer; padding: 0 4px; font-size: 0.92em; border-radius: 3px; line-height: 1; }
 .vram-x:hover { background: var(--panel-2); color: var(--err); }
