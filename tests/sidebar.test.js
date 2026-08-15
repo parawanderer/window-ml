@@ -2827,6 +2827,183 @@ test("card surface: a cancelled run reads as 'Cancelled'", async () => {
     assert.match(w.window.document.querySelector(".card-head-txt").textContent, /Cancelled/, "the headline shows Cancelled");
 });
 
+// --- HUD concurrency: multiple live agent runs share the corner card via a tab strip ----------------
+// Events with EXPLICIT ts so createdTs (tab order) + lastTs (latest-active) are deterministic.
+const cStart = (hash, task, ts, config = null) => ({ kind: "agent", id: hash, ts, save: false, session: { hash, turn: 0 }, task, model: "m", maxSteps: 10, config });
+const cStep = (hash, step, ts, fields) => ({ kind: "agent-step", id: hash, ts, save: false, session: { hash, turn: step }, step, ...fields });
+const cResult = (hash, summary, ts, steps = 1, extra = {}) => ({ kind: "agent-result", id: hash, ts, save: false, session: { hash, turn: steps }, summary, steps, hitCap: false, ...extra });
+const APPROVAL_STEP = { seq: 0, pending: true, awaitingApproval: true, tool: "click", arguments: { selector: "#danger" },
+    renderIn: { type: "action", verb: "Click", kind: "button", target: "Delete account", selector: "#danger" } };
+const pointerDown = (win, el) => el.dispatchEvent(new win.Event("pointerdown", { bubbles: true, cancelable: true }));
+
+test("card concurrency: a second run does NOT steal the card from a run awaiting approval (badge-don't-steal)", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    w.window.postMessage = () => {};
+    await w.raw({ __mlSidebarSurface: "card" });
+
+    // Run A hits an approval gate → it becomes the selected, expanded card.
+    await w.dispatch(cStart("A", "delete the account", 1000));
+    await w.dispatch(cStep("A", 1, 1010, APPROVAL_STEP));
+    await w.flush();
+    assert.match(w.window.document.querySelector(".card-head-txt").textContent, /Approval needed/, "A's approval is shown");
+
+    // Run B starts LATER and streams steps (higher lastTs than A). It must NOT hijack the visible approval.
+    await w.dispatch(cStart("B", "summarise the page", 2000));
+    await w.dispatch(cStep("B", 1, 2010, { thought: "reading…" }));
+    await w.dispatch(cStep("B", 1, 2020, { seq: 0, tool: "look", arguments: {}, result: "ok" }));
+    await w.flush();
+
+    assert.match(w.window.document.querySelector(".card-head-txt").textContent, /Approval needed/, "still A's approval — B added a tab, it didn't steal the view");
+    assert.match(w.window.document.querySelector(".action-sentence").textContent, /Delete account/, "the shown approval is still A's target");
+});
+
+test("card concurrency: the selected run stays put even after the OTHER run finishes", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    w.window.postMessage = () => {};
+    await w.raw({ __mlSidebarSurface: "card" });
+
+    await w.dispatch(cStart("A", "delete the account", 1000));
+    await w.dispatch(cStep("A", 1, 1010, APPROVAL_STEP));      // A pending → selected
+    await w.dispatch(cStart("B", "quick lookup", 2000));
+    await w.dispatch(cResult("B", "The answer is 42.", 2100)); // B finishes with an answer
+    await w.flush();
+
+    // Selection is sticky on A's approval; B's completion does not yank the card over to B's answer.
+    assert.match(w.window.document.querySelector(".card-head-txt").textContent, /Approval needed/, "A's approval still holds the card");
+    assert.doesNotMatch(w.window.document.body.textContent, /The answer is 42/, "B's answer did not steal the view");
+});
+
+test("card concurrency: dismissing the shown run falls back to the OTHER run, not a blank card", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    w.window.postMessage = () => {};
+    await w.raw({ __mlSidebarSurface: "card" });
+
+    await w.dispatch(cStart("A", "task A", 1000));
+    await w.dispatch(cResult("A", "Answer A.", 1100));
+    await w.dispatch(cStart("B", "task B", 1200));
+    await w.dispatch(cResult("B", "Answer B.", 1300));
+    await w.flush();
+    // No pending run → auto-pick the most recently active (B, lastTs 1300).
+    assert.match(w.window.document.querySelector(".card-answer").textContent, /Answer B/, "the most-recent finished run shows first");
+
+    // × on the finished card dismisses THIS run only (pointerdown, as the real handler binds).
+    pointerDown(w.window, w.window.document.querySelector(".card-head .card-x"));
+    await w.flush();
+    assert.match(w.window.document.querySelector(".card-answer").textContent, /Answer A/, "dismiss revealed the other run, not an empty/hidden card");
+
+    // Dismiss the last one too → the card goes away entirely.
+    pointerDown(w.window, w.window.document.querySelector(".card-head .card-x"));
+    await w.flush();
+    assert.ok(!w.window.document.querySelector(".card-answer"), "dismissing the last run hides the card");
+});
+
+test("card concurrency: a single run behaves exactly as before (no tab strip)", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    w.window.postMessage = () => {};
+    await w.raw({ __mlSidebarSurface: "card" });
+    await w.dispatch(cStart("solo", "one task", 1000));
+    await w.dispatch(cResult("solo", "All done.", 1100));
+    await w.flush();
+    assert.match(w.window.document.querySelector(".card-answer").textContent, /All done/, "the single finished run shows its answer");
+    assert.ok(!w.window.document.querySelector(".card-tabs"), "no tab strip for a single run");
+});
+
+test("card concurrency: >1 run shows a tab strip; clicking a tab switches the shown run", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    w.window.postMessage = () => {};
+    await w.raw({ __mlSidebarSurface: "card" });
+
+    await w.dispatch(cStart("A", "task A", 1000));
+    await w.dispatch(cResult("A", "Answer A.", 1100));
+    await w.dispatch(cStart("B", "task B", 1200));
+    await w.dispatch(cResult("B", "Answer B.", 1300));
+    await w.flush();
+
+    const tabs = w.window.document.querySelectorAll(".card-tabs .card-tab");
+    assert.equal(tabs.length, 2, "two tabs for two runs");
+    // Stable order by createdTs: A then B. B (latest) is the shown/active one by default.
+    assert.match(tabs[0].querySelector(".card-tab-label").textContent, /task A/);
+    assert.match(tabs[1].querySelector(".card-tab-label").textContent, /task B/);
+    assert.ok(tabs[1].classList.contains("on"), "the latest run's tab is active by default");
+    assert.match(w.window.document.querySelector(".card-answer").textContent, /Answer B/, "B's answer shows");
+
+    // Click A's tab → the card switches to A (manual selection sticks).
+    tabs[0].click(); await w.flush();
+    assert.match(w.window.document.querySelector(".card-answer").textContent, /Answer A/, "clicking A's tab shows A");
+    assert.ok(w.window.document.querySelectorAll(".card-tabs .card-tab")[0].classList.contains("on"), "A's tab is now active");
+});
+
+test("card concurrency: a run awaiting approval shows an amber pulse dot on its tab (badge)", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    w.window.postMessage = () => {};
+    await w.raw({ __mlSidebarSurface: "card" });
+
+    // A is a finished run the user is viewing; B (later) hits an approval gate.
+    await w.dispatch(cStart("A", "finished task", 1000));
+    await w.dispatch(cResult("A", "Answer A.", 1100));
+    await w.dispatch(cStart("B", "risky task", 1200));
+    await w.dispatch(cStep("B", 1, 1210, APPROVAL_STEP));
+    await w.flush();
+
+    // selectedRun prefers the PENDING run → B's approval is shown, with tabs.
+    assert.match(w.window.document.querySelector(".card-head-txt").textContent, /Approval needed/, "the pending run surfaces");
+    const bTab = [...w.window.document.querySelectorAll(".card-tab")].find(t => /risky task/.test(t.textContent));
+    assert.ok(bTab.querySelector(".card-tab-dot.pend"), "the pending run's tab carries the amber pulse dot");
+    assert.ok(bTab.classList.contains("pend"), "…and the tab is flagged pending");
+    // A's tab shows the done ✓, not a pulse.
+    const aTab = [...w.window.document.querySelectorAll(".card-tab")].find(t => /finished task/.test(t.textContent));
+    assert.ok(aTab.querySelector(".card-tab-fin"), "the finished run's tab shows a done glyph");
+    assert.ok(!aTab.querySelector(".card-tab-dot"), "…and no pending dot");
+});
+
+test("card concurrency: a running run's tab shows a spinner; the × on a tab dismisses THAT run", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    w.window.postMessage = () => {};
+    await w.raw({ __mlSidebarSurface: "card" });
+
+    await w.dispatch(cStart("A", "done task", 1000));
+    await w.dispatch(cResult("A", "Answer A.", 1100));
+    await w.dispatch(cStart("B", "working task", 1200));
+    await w.dispatch(cStep("B", 1, 1210, { thought: "still going…" }));
+    await w.flush();
+
+    // Two runs → tabs; B is working (higher lastTs) so it's shown as a compact toast with a spinner tab.
+    const bTab = [...w.window.document.querySelectorAll(".card-tab")].find(t => /working task/.test(t.textContent));
+    assert.ok(bTab.querySelector(".card-tab-spin"), "the running run's tab shows a spinner");
+
+    // × on A's tab dismisses A only → one tab left, no strip (single run), B still shown.
+    const aTab = [...w.window.document.querySelectorAll(".card-tab")].find(t => /done task/.test(t.textContent));
+    pointerDown(w.window, aTab.querySelector(".card-tab-x"));
+    await w.flush();
+    assert.ok(!w.window.document.querySelector(".card-tabs"), "dismissing down to one run drops the tab strip");
+    // With only one run left, B (working) reverts to the bare orb (single-run look) — still shown, not hidden.
+    assert.ok(w.window.document.querySelector(".card-orb"), "the remaining working run shows as an orb");
+});
+
+test("card concurrency: several runs merely WORKING stay a single orb — it narrates the last op across runs", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });   // progress HUD → live caption
+    w.window.postMessage = () => {};
+    await w.raw({ __mlSidebarSurface: "card" });
+
+    // Two runs, both only working (no approval, no answer) → no card content to reach → keep the bare orb.
+    await w.dispatch(cStart("A", "task A", 1000));
+    await w.dispatch(cStep("A", 1, 1010, { thought: "run A: reading the header…" }));
+    await w.dispatch(cStart("B", "task B", 1100));
+    await w.dispatch(cStep("B", 1, 1110, { thought: "run B: scanning the table…" }));
+    await w.flush();
+
+    assert.ok(!w.window.document.querySelector(".card-tabs"), "no tab strip while every run is merely working");
+    const label = w.window.document.querySelector(".card-orb.prose .card-orb-label");
+    assert.ok(label && /run B: scanning the table/.test(label.textContent), "the orb narrates the most recent op (run B)");
+
+    // Run A then does the newer op → the SAME single orb now narrates A (last op across runs).
+    await w.dispatch(cStep("A", 2, 1200, { thought: "run A: clicking submit…" }));
+    await w.flush();
+    const label2 = w.window.document.querySelector(".card-orb.prose .card-orb-label");
+    assert.ok(label2 && /run A: clicking submit/.test(label2.textContent), "the orb follows the latest op across runs");
+    assert.ok(!w.window.document.querySelector(".card-tabs"), "still one orb, no tabs");
+});
+
 // --- Raw In args: schema-annotated JSON tree (hover a key for its description) -----------------------
 const agentCfg = (tools) => ({ system: "sys", customSystem: false, tools, maxSteps: 10, think: null, env: true, vision: null, hints: null, unattended: false, silent: false, driverSees: false, visionModel: null });
 const clickTool = { name: "click", requiresApproval: true, vision: false, description: "Click an element.", summary: "Clicks.",

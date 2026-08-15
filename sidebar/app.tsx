@@ -1846,8 +1846,21 @@ function PythonBench() {
  */
 // Which surface this app instance is (the shell posts it once, on our ready handshake).
 const surface = signal<"panel" | "card">("panel");
-const cardCollapsed = signal(false);         // user collapsed a FINISHED card down to a toast (default: show it)
-const cardDismissed = signal<string>("");    // the run hash the user dismissed (closes a finished card)
+// Multi-run HUD state. The card shows ONE run (the SELECTED one); a tab strip switches between concurrent
+// runs. These are keyed by run hash so one run's collapse/dismiss never touches another's ("" selection =
+// auto-pick). Sets are replaced immutably (a mutate-in-place wouldn't re-render — signals gotcha).
+const cardSelectedHash = signal<string>("");        // which run's card is showing ("" → auto-pick)
+const cardCollapsedSet = signal<Set<string>>(new Set());   // run hashes collapsed to a toast (finished cards)
+const cardDismissedSet = signal<Set<string>>(new Set());   // run hashes the user dismissed (× on a card)
+const isCardCollapsed = (h: string): boolean => cardCollapsedSet.value.has(h);
+const isCardDismissed = (h: string): boolean => cardDismissedSet.value.has(h);
+const setCardCollapsed = (h: string, v: boolean): void => {
+    const s = new Set(cardCollapsedSet.value); v ? s.add(h) : s.delete(h); cardCollapsedSet.value = s;
+};
+const dismissCardRun = (h: string): void => {
+    const s = new Set(cardDismissedSet.value); s.add(h); cardDismissedSet.value = s;
+    if (cardSelectedHash.value === h) cardSelectedHash.value = "";   // let the reconciler auto-pick the next
+};
 // "Show work" open-state, keyed by the run's HASH (not a global boolean). A new run's hash won't match, so
 // its trace is COLLAPSED by default with NO post-render reset — the reset-as-effect was why a fast/quiet run
 // first painted with the PREVIOUS run's trace expanded (tall) then collapsed (the "opens huge then shrinks"
@@ -1887,14 +1900,31 @@ function setDefaultModel(id: string): void {
 const orbHover = signal(false);              // hovering the working orb → it stretches into a labelled capsule
 const cardTitleTried = new Set<string>();
 
-const latestAgentRun = (): Session | null => {
-    let best: Session | null = null;
-    for (const s of sessionMap.values()) if (s.kind === "agent" && (!best || s.lastTs > best.lastTs)) best = s;
-    return best;
-};
 // A live, not-yet-decided approval gate (mirrors PendingNote's blocked check).
 const isPendingGate = (hash: string, st: AgentStep): boolean =>
     !!(st.pending && st.awaitingApproval && !(st.seq != null && decidedSteps.has(stepKey(hash, st.seq))));
+
+// --- Multi-run card selection ---------------------------------------------------------------------
+// A run is TERMINAL once its turn settled (not mid-turn): a follow-up run() keeps the prior summary, so
+// the status guard is what stops a stale answer showing instead of the working orb.
+const runIsDone = (s: Session): boolean => s.status !== "pending" && (s.summary != null || !!s.error || !!s.cancelled);
+const runIsPending = (s: Session): boolean => (s.steps || []).some(st => isPendingGate(s.hash, st));
+// The runs the card cares about: non-silent agent runs the user hasn't dismissed. A silent run
+// (ml.agent({ silent })) shows no card (approvals still surface, handled per-run below). Stable tab
+// order by createdTs so tabs don't reshuffle as runs emit.
+const cardWorthy = (s: Session): boolean => s.kind === "agent" && !s.agentConfig?.silent && !isCardDismissed(s.hash);
+const cardRuns = (): Session[] => [...sessionMap.values()].filter(cardWorthy).sort((a, b) => a.createdTs - b.createdTs);
+// The run whose card is showing. STICKY (badge-don't-steal): keep the current selection while it's still
+// card-worthy — a new concurrent run adds a tab, it never hijacks the view. Auto-pick only when nothing
+// valid is selected: prefer a run awaiting approval (it needs you), else the most recently active.
+const selectedRun = (): Session | null => {
+    const runs = cardRuns();
+    if (!runs.length) return null;
+    const cur = cardSelectedHash.value && runs.find(s => s.hash === cardSelectedHash.value);
+    if (cur) return cur;
+    const pending = runs.filter(runIsPending).sort((a, b) => b.lastTs - a.lastTs)[0];
+    return pending || runs.reduce<Session | null>((best, s) => (!best || s.lastTs > best.lastTs ? s : best), null);
+};
 
 // Lazily summarise the run's task with the utility model (if configured) for the toast headline —
 // the sidebar's title machinery, but ungated on sidebarOpen (irrelevant to the card).
@@ -2114,7 +2144,7 @@ function liveProseFor(run: Session): string | null {
 // Carry the run hash (for Copy run id / Cancel) + whether it's still live (Cancel only shows then).
 const cardCtxMenu = (e: any) => {
     e.preventDefault();
-    const run = latestAgentRun();
+    const run = selectedRun();
     const live = !!run && run.summary == null && !run.error;
     window.parent.postMessage({ __mlSidebarCornerMenu: { x: e.clientX, y: e.clientY, hash: run?.hash || "", live } }, "*");
     armMenuDismiss();
@@ -2484,10 +2514,41 @@ function Orb({ icon, label, wide, prose }: { icon: string; label: string; wide: 
     );
 }
 
+// The concurrency tab strip: one tab per card-worthy run, shown only when >1 run is live (single run =
+// no strip). Each tab carries a status glyph (amber-pulse dot = awaiting approval · spinner = running ·
+// ✓/✗ = done/failed), the run's title, and a × to drop it from the HUD. Clicking selects (manual pick,
+// which selectedRun then honours over the pending/latest default). Its own pointer handlers stopProp so
+// a tab click/dismiss never starts the card drag underneath.
+function CardTabs({ runs, selected }: { runs: Session[]; selected?: string }) {
+    return (
+        <div class="card-tabs" role="tablist" onPointerDown={e => e.stopPropagation()}>
+            {runs.map(s => {
+                const pend = runIsPending(s), fin = runIsDone(s);
+                const bad = !!s.error || !!s.cancelled;
+                const glyph = pend ? <span class="card-tab-dot pend" aria-hidden="true" />
+                    : fin ? <span class={`card-tab-fin${bad ? " bad" : ""}`} aria-hidden="true">{bad ? "✗" : "✓"}</span>
+                        : <span class="card-tab-spin" aria-hidden="true" />;
+                return (
+                    <div class={`card-tab${s.hash === selected ? " on" : ""}${pend ? " pend" : ""}`} role="tab"
+                        aria-selected={s.hash === selected} title={s.title || s.task || "Agent run"}
+                        onClick={e => { e.stopPropagation(); cardSelectedHash.value = s.hash; }}>
+                        {glyph}
+                        <span class="card-tab-label">{s.title || truncate(s.task || "Run", 22)}</span>
+                        <button class="card-tab-x" aria-label="Dismiss run"
+                            onPointerDown={e => { e.stopPropagation(); e.preventDefault(); dismissCardRun(s.hash); }}
+                            onClick={e => e.stopPropagation()}>✕</button>
+                    </div>
+                );
+            })}
+        </div>
+    );
+}
+
 function CardApp() {
     const r = rev.value;   // subscribe to session changes (retained via data-rev below)
     const composing = composerOpen.value;   // Spotlight bar open → the HUD morphs into the task input
-    const run = latestAgentRun();
+    const runs = cardRuns();               // all card-worthy concurrent runs (for the tab strip)
+    const run = selectedRun();             // the ONE run whose card is showing (see selectedRun: user pick, else pending, else latest)
     const hash = run?.hash;
     const showWork = !!hash && cardShowWorkHash.value === hash;   // active run's trace open? (subscribe → re-measure height on toggle)
     const pendingStep = run ? (run.steps || []).find(st => isPendingGate(run.hash, st)) : undefined;
@@ -2496,8 +2557,13 @@ function CardApp() {
     // the status guard `done` would stay true and the card would show the stale answer instead of collapsing
     // to the working orb. status flips to "pending" on a new turn (optimistically in CardReply, and on any
     // agent-step) and back to ok/err on the next agent-result.
-    const done = !!run && run.status !== "pending" && (run.summary != null || !!run.error || !!run.cancelled);
-    const dismissed = !!run && cardDismissed.value === run.hash;
+    const done = !!run && runIsDone(run);
+    const tabs = runs.length > 1;          // >1 card-worthy run → show the tab strip (single run = today's look)
+    // Is there any run with a CARD to reach (an approval or a finished answer)? When several runs are
+    // merely working, we keep the bare orb (it narrates the last op across runs — selectedRun returns the
+    // latest-active, so the caption already reflects whichever run just stepped); tabs only take over once
+    // a run has content worth switching to, so the answer/approval is reachable.
+    const anyContent = runs.some(s => runIsPending(s) || runIsDone(s));
     // BRIDGE: the composer was just sent but the run's first event hasn't surfaced yet — show a
     // "Starting…" pill immediately (so hitting Enter has an instant HUD response, like the DevTools
     // panel), overriding any older run. Cleared once the new run (createdTs ≥ the send time) appears.
@@ -2520,8 +2586,8 @@ function CardApp() {
     const liveProse = (showOrb && !starting) ? liveProseFor(run!) : null;
     const state = composing ? "composer"                       // the composer takes over — centered Spotlight bar
         : pending ? "expanded"                                 // an approval: show the action directly (even for a silent run)
-            : showOrb ? (liveProse ? "orbprose" : hovering ? "orblabel" : "orb")   // in flight → orb; caption when narrating; capsule on hover
-                : (done && !dismissed && !silent) ? (cardCollapsed.value ? "toast" : "expanded")   // finished: the answer
+            : showOrb ? ((tabs && anyContent) ? "toast" : (liveProse ? "orbprose" : hovering ? "orblabel" : "orb"))   // in flight → orb (caption/capsule); a toast (with tabs) only when another run has content to reach
+                : (done && !silent) ? (isCardCollapsed(run!.hash) ? "toast" : "expanded")   // finished: the answer (selected run is never dismissed — it'd leave cardRuns)
                     : "hidden";
 
     // Clear a STALE hover whenever we're not showing the orb — the orb can unmount while hovered (the
@@ -2633,7 +2699,7 @@ function CardApp() {
     const onClose = (e: Event) => {
         e.stopPropagation();
         if (pendingStep) decide(false);          // × on a pending gate = a fast Deny
-        else cardDismissed.value = run.hash;     // × on a finished card = dismiss
+        else dismissCardRun(run.hash);           // × on a finished card = dismiss (drops it from the tab strip)
     };
     // Dismiss on POINTERDOWN (not click/pointerup): if the pointer wobbles between the × and the toast body,
     // the browser fires `click` on their common ANCESTOR (the toast), whose handler EXPANDS — and a pointerUP
@@ -2657,9 +2723,13 @@ function CardApp() {
         return <Orb icon={a.icon} label={a.label} wide={state === "orblabel"} />;
     }
     if (state === "toast") {
+        // A done run's toast expands to its answer on click; a WORKING run promoted to a toast (because >1
+        // run is live) is NOT expandable — its expanded body would be an empty "no reply yet". Switch runs
+        // via the tabs instead.
         return (
             <div class="card-app" data-rev={r}>
-                <div class="card-toast" role="button" title="Click to review · drag or right-click to move" onPointerDown={startCardDrag} onClick={e => { if (!(e.target as HTMLElement).closest(".card-x")) cardCollapsed.value = false; }} onContextMenu={cardCtxMenu}>
+                {tabs ? <CardTabs runs={runs} selected={hash} /> : null}
+                <div class="card-toast" role="button" title={done ? "Click to review · drag or right-click to move" : "Drag or right-click to move"} onPointerDown={startCardDrag} onClick={e => { if (done && !(e.target as HTMLElement).closest(".card-x")) setCardCollapsed(run.hash, false); }} onContextMenu={cardCtxMenu}>
                     <span class="card-bot" aria-hidden="true">🤖</span>
                     <span class="card-toast-txt">
                         <span class="card-toast-head">{headline}</span>
@@ -2672,11 +2742,12 @@ function CardApp() {
     }
     return (
         <div class="card-app" data-rev={r}>
+            {tabs ? <CardTabs runs={runs} selected={hash} /> : null}
             <div class="card-head" onPointerDown={startCardDrag} onContextMenu={cardCtxMenu}>
                 <span class="card-bot" aria-hidden="true">🤖</span>
                 <span class={`card-head-txt${pending ? " pending" : ""}`}>{headline}</span>
                 <span class="sp" />
-                {pending ? null : <button class="card-icon" aria-label="Collapse" title="Collapse" onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); cardCollapsed.value = true; }}>▾</button>}
+                {pending ? null : <button class="card-icon" aria-label="Collapse" title="Collapse" onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); setCardCollapsed(run.hash, true); }}>▾</button>}
                 <button class="card-x" aria-label={pending ? "Deny" : "Dismiss"} onPointerDown={onCloseDown} onClick={e => e.stopPropagation()}>✕</button>
             </div>
             <div class="card-body">

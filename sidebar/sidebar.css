@@ -832,6 +832,34 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
 .card-app { height: 100%; min-height: 0; display: flex; flex-direction: column; color: var(--fg);
     font: var(--fs)/1.45 system-ui, -apple-system, sans-serif; }
 
+/* Concurrency tab strip — one tab per live run, above the card head/toast; only when >1 run is live.
+   Sits on the translucent acrylic, so surfaces use fg-opacity mixes (like the card's grays). */
+.card-tabs { display: flex; gap: 4px; padding: 5px 6px 0; overflow-x: auto; scrollbar-width: none; flex: 0 0 auto; }
+.card-tabs::-webkit-scrollbar { display: none; }
+.card-tab { display: flex; align-items: center; gap: 5px; max-width: 150px; padding: 3px 4px 3px 7px;
+    border-radius: 7px 7px 0 0; background: color-mix(in srgb, var(--fg) 8%, transparent);
+    border: 1px solid transparent; border-bottom: none; cursor: pointer; font-size: .82em; color: var(--fg-dim); user-select: none; }
+.card-tab:hover { background: color-mix(in srgb, var(--fg) 13%, transparent); color: var(--fg); }
+.card-tab.on { background: color-mix(in srgb, var(--fg) 16%, transparent); color: var(--fg);
+    border-color: color-mix(in srgb, var(--fg) 14%, transparent); }
+.card-tab-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.card-tab-x { flex: 0 0 auto; background: transparent; border: none; color: var(--fg-faint); cursor: pointer;
+    font-size: .9em; line-height: 1; padding: 0 2px; border-radius: 3px; opacity: 0; }
+.card-tab:hover .card-tab-x, .card-tab.on .card-tab-x { opacity: 1; }
+.card-tab-x:hover { color: var(--err); background: color-mix(in srgb, var(--fg) 14%, transparent); }
+/* status glyphs: amber pulse = awaiting approval · spinner = running · ✓/✗ = done/failed */
+.card-tab-dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; background: var(--warn); }
+.card-tab-dot.pend { animation: tab-pulse 1.3s ease-in-out infinite; }
+.card-tab-fin { font-size: .8em; line-height: 1; color: var(--ok); flex: 0 0 auto; }
+.card-tab-fin.bad { color: var(--err); }
+.card-tab-spin { width: 9px; height: 9px; flex: 0 0 auto; border-radius: 50%;
+    border: 1.5px solid color-mix(in srgb, var(--fg) 25%, transparent); border-top-color: var(--fg);
+    animation: tab-spin .8s linear infinite; }
+@keyframes tab-pulse { 0%, 100% { opacity: 1; box-shadow: 0 0 0 0 color-mix(in srgb, var(--warn) 70%, transparent); }
+    50% { opacity: .5; box-shadow: 0 0 0 3px transparent; } }
+@keyframes tab-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .card-tab-dot.pend, .card-tab-spin { animation: none; } }
+
 /* Live "working" pill — headless progress: a per-tool icon (bobbing) + short label + animated dots. */
 .card-pill { display: flex; align-items: center; gap: 8px; padding: 10px 13px; cursor: default; user-select: none; }
 .pill-ic { font-size: 16px; line-height: 1; animation: pill-bob 1.4s ease-in-out infinite; }
