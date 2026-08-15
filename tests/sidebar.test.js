@@ -2980,6 +2980,68 @@ test("card concurrency: a running run's tab shows a spinner; the × on a tab dis
     assert.ok(w.window.document.querySelector(".card-orb"), "the remaining working run shows as an orb");
 });
 
+test("card concurrency: the expanded head NAMES the selected run (its title), not a generic 'Task complete'", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    w.window.postMessage = () => {};
+    await w.raw({ __mlSidebarSurface: "card" });
+    await w.dispatch(cStart("A", "count the sales rows", 1000));
+    await w.dispatch(cResult("A", "Answer A.", 1100));
+    await w.dispatch(cStart("B", "summarise the reviews", 1200));
+    await w.dispatch(cResult("B", "Answer B.", 1300));
+    await w.flush();
+
+    // Multi-run detail: the head is the SELECTED run's title (B, latest), not "Task complete".
+    assert.match(w.window.document.querySelector(".card-head-txt").textContent, /summarise the reviews/);
+    assert.doesNotMatch(w.window.document.querySelector(".card-head-txt").textContent, /Task complete/);
+    // The tab carries the full title as a hover tooltip (native title=), so a shrunk tab is still identifiable.
+    const aTab = [...w.window.document.querySelectorAll(".card-tab")].find(t => /count the sales/.test(t.textContent));
+    assert.match(aTab.getAttribute("title") || "", /count the sales rows/, "the tab's full title is the hover tooltip");
+    // Switch to A → the head renames to A's title.
+    aTab.click(); await w.flush();
+    assert.match(w.window.document.querySelector(".card-head-txt").textContent, /count the sales rows/);
+});
+
+test("card concurrency: collapsing a multi-run card shows a calm SUMMARY (count badge, no tabs, no per-run title)", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    w.window.postMessage = () => {};
+    await w.raw({ __mlSidebarSurface: "card" });
+    for (const [h, t, a] of [["A", "task A", 1000], ["B", "task B", 1200], ["C", "task C", 1400]]) {
+        await w.dispatch(cStart(h, t, a));
+        await w.dispatch(cResult(h, `Answer ${h}.`, a + 100));
+    }
+    await w.flush();
+
+    // Collapse via the ▾ header button → the calm summary.
+    w.window.document.querySelector(".card-head .card-icon").click(); await w.flush();
+    assert.ok(w.window.document.querySelector(".card-toast.summary"), "collapsed to the summary toast");
+    assert.match(w.window.document.querySelector(".card-toast-head").textContent, /All tasks complete/, "generic status, all done");
+    assert.equal(w.window.document.querySelector(".card-count").textContent, "3", "count badge = number of runs");
+    assert.ok(!w.window.document.querySelector(".card-tabs"), "the summary has NO tab strip");
+    assert.ok(!w.window.document.querySelector(".card-toast-sub"), "no per-run title subtitle in the summary");
+    assert.ok(!w.window.document.querySelector(".card-answer"), "no per-run answer in the summary");
+
+    // Clicking the summary re-expands to the tabbed detail with the selected run's answer.
+    w.window.document.querySelector(".card-toast.summary").click(); await w.flush();
+    assert.ok(w.window.document.querySelector(".card-tabs"), "clicking the summary reopens the tabbed detail");
+    assert.ok(w.window.document.querySelector(".card-answer"), "…with the selected run's answer");
+});
+
+test("card concurrency: the summary reads 'Some tasks complete' while one run is still working", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    w.window.postMessage = () => {};
+    await w.raw({ __mlSidebarSurface: "card" });
+    await w.dispatch(cStart("A", "task A", 1000));
+    await w.dispatch(cResult("A", "Answer A.", 1100));   // done
+    await w.dispatch(cStart("B", "task B", 1200));
+    await w.dispatch(cStep("B", 1, 1210, { thought: "still working…" }));   // running
+    await w.flush();
+
+    // B (working) is the selected detail; collapse to the summary.
+    w.window.document.querySelector(".card-head .card-icon").click(); await w.flush();
+    assert.match(w.window.document.querySelector(".card-toast-head").textContent, /Some tasks complete/, "1 of 2 done → 'Some tasks complete'");
+    assert.equal(w.window.document.querySelector(".card-count").textContent, "2");
+});
+
 test("card concurrency: several runs merely WORKING stay a single orb — it narrates the last op across runs", async () => {
     const w = await loadSidebarWorld({ sync: { debugMode: "off" } });   // progress HUD → live caption
     w.window.postMessage = () => {};

@@ -836,13 +836,15 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
    Sits on the translucent acrylic, so surfaces use fg-opacity mixes (like the card's grays). */
 .card-tabs { display: flex; gap: 4px; padding: 5px 6px 0; overflow-x: auto; scrollbar-width: none; flex: 0 0 auto; }
 .card-tabs::-webkit-scrollbar { display: none; }
-.card-tab { display: flex; align-items: center; gap: 5px; max-width: 150px; padding: 3px 4px 3px 7px;
-    border-radius: 7px 7px 0 0; background: color-mix(in srgb, var(--fg) 8%, transparent);
+/* Chrome-style: tabs SHARE the width and shrink as more open (down to a glyph), so you never need to
+   scroll to reach one; the full title is the native hover tooltip (title=). The active tab stays wider. */
+.card-tab { flex: 1 1 0; min-width: 42px; max-width: 168px; display: flex; align-items: center; gap: 5px;
+    padding: 3px 4px 3px 7px; border-radius: 7px 7px 0 0; background: color-mix(in srgb, var(--fg) 8%, transparent);
     border: 1px solid transparent; border-bottom: none; cursor: pointer; font-size: .82em; color: var(--fg-dim); user-select: none; }
 .card-tab:hover { background: color-mix(in srgb, var(--fg) 13%, transparent); color: var(--fg); }
-.card-tab.on { background: color-mix(in srgb, var(--fg) 16%, transparent); color: var(--fg);
-    border-color: color-mix(in srgb, var(--fg) 14%, transparent); }
-.card-tab-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.card-tab.on { flex-grow: 1.7; min-width: 96px; background: color-mix(in srgb, var(--fg) 16%, transparent);
+    color: var(--fg); border-color: color-mix(in srgb, var(--fg) 14%, transparent); }
+.card-tab-label { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .card-tab-x { flex: 0 0 auto; background: transparent; border: none; color: var(--fg-faint); cursor: pointer;
     font-size: .9em; line-height: 1; padding: 0 2px; border-radius: 3px; opacity: 0; }
 .card-tab:hover .card-tab-x, .card-tab.on .card-tab-x { opacity: 1; }
@@ -892,6 +894,17 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
 
 /* Collapsed toast — a single notification row: 🤖 · headline/summary · close. */
 .card-toast { display: flex; align-items: center; gap: 11px; padding: 13px 10px 13px 14px; cursor: pointer; }
+/* Multi-run COLLAPSED summary: 🤖 + a generic status + a count badge (how many runs are inside). A calm
+   overview — no per-run title, no tab strip. */
+.card-toast.summary { gap: 9px; }
+.card-count { flex: 0 0 auto; min-width: 19px; height: 19px; padding: 0 5px; border-radius: 10px;
+    background: color-mix(in srgb, var(--fg) 16%, transparent); color: var(--fg); font-size: .8em; font-weight: 700;
+    display: inline-flex; align-items: center; justify-content: center; font-variant-numeric: tabular-nums; }
+/* A run is awaiting approval somewhere in the set → the count pulses amber so the summary never buries it. */
+.card-count.pend { background: color-mix(in srgb, var(--warn) 30%, transparent); color: var(--warn); animation: tab-pulse 1.3s ease-in-out infinite; }
+/* A working run browsed via a tab: the live "Working…" line in the detail body (dimmed, with the bobbing dots). */
+.card-working { display: flex; align-items: center; gap: 7px; }
+.card-work-ic { font-size: 15px; line-height: 1; flex: 0 0 auto; }
 .card-bot { font-size: 22px; line-height: 1; flex: 0 0 auto; }
 .card-toast-txt { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .card-toast-head { font-weight: 650; font-size: 1.08em; letter-spacing: .01em; }
@@ -908,7 +921,8 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
 /* Expanded panel — a header over a scrolling curated body. */
 .card-head { display: flex; align-items: center; gap: 8px; flex: 0 0 auto;
     padding: 9px 8px 9px 13px; border-bottom: 1px solid var(--border); }
-.card-head-txt { font-weight: 650; font-size: 1.05em; }
+/* Ellipsize: in a multi-run card the head shows the SELECTED run's title, which can be long. */
+.card-head-txt { font-weight: 650; font-size: 1.05em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Grab-drag affordance (pill/toast/head are draggable → snap to a corner). Buttons inside keep their own
    cursor; touch-action:none so a touch-drag moves the HUD instead of scrolling the page. */
 .card-pill, .card-toast, .card-head, .card-orb { cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }

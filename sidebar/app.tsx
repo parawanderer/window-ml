@@ -1850,6 +1850,7 @@ const surface = signal<"panel" | "card">("panel");
 // runs. These are keyed by run hash so one run's collapse/dismiss never touches another's ("" selection =
 // auto-pick). Sets are replaced immutably (a mutate-in-place wouldn't re-render — signals gotcha).
 const cardSelectedHash = signal<string>("");        // which run's card is showing ("" → auto-pick)
+const cardDetail = signal(true);                    // multi-run: tabbed DETAIL (true) ⇄ calm summary toast (false)
 const cardCollapsedSet = signal<Set<string>>(new Set());   // run hashes collapsed to a toast (finished cards)
 const cardDismissedSet = signal<Set<string>>(new Set());   // run hashes the user dismissed (× on a card)
 const isCardCollapsed = (h: string): boolean => cardCollapsedSet.value.has(h);
@@ -2586,15 +2587,19 @@ function CardApp() {
     const liveProse = (showOrb && !starting) ? liveProseFor(run!) : null;
     const state = composing ? "composer"                       // the composer takes over — centered Spotlight bar
         : pending ? "expanded"                                 // an approval: show the action directly (even for a silent run)
-            : showOrb ? ((tabs && anyContent) ? "toast" : (liveProse ? "orbprose" : hovering ? "orblabel" : "orb"))   // in flight → orb (caption/capsule); a toast (with tabs) only when another run has content to reach
-                : (done && !silent) ? (isCardCollapsed(run!.hash) ? "toast" : "expanded")   // finished: the answer (selected run is never dismissed — it'd leave cardRuns)
-                    : "hidden";
+            : (tabs && anyContent) ? (cardDetail.value ? "expanded" : "toast")   // multi-run with content: tabbed detail ⇄ calm summary toast (one card-level toggle)
+                : showOrb ? (liveProse ? "orbprose" : hovering ? "orblabel" : "orb")   // in flight → orb; caption when narrating; capsule on hover (single run, or several all merely working)
+                    : (done && !silent) ? (isCardCollapsed(run!.hash) ? "toast" : "expanded")   // single finished run: the answer (selected run is never dismissed — it'd leave cardRuns)
+                        : "hidden";
 
     // Clear a STALE hover whenever we're not showing the orb — the orb can unmount while hovered (the
     // composer opens over it, an approval expands) and then no pointerleave fires, which would wrongly
     // reopen the capsule (orblabel) when the orb next appears (e.g. the "Starting…" bridge). So a fresh
     // orb always starts circular until a real pointerenter.
     useEffect(() => { if (state !== "orb" && state !== "orblabel" && state !== "orbprose") orbHover.value = false; }, [state]);
+    // An approval opens the tabbed DETAIL (a multi-run summary would hide the action), and stays open through
+    // the decision so the outcome is visible instead of snapping back to the calm summary.
+    useEffect(() => { if (pending) cardDetail.value = true; }, [pending]);
     useEffect(() => { if (startedAt > 0 && newRunUp) composerStarting.value = 0; }, [newRunUp]);   // run surfaced → drop the bridge
     useEffect(() => { if (run) ensureCardTitle(run); }, [hash, r]);
     // No reset effect needed — show-work is keyed by hash, so a new run is collapsed by default (its hash
@@ -2689,6 +2694,15 @@ function CardApp() {
 
     const title = run.title || truncate(run.task || "Agent run", 80);
     const headline = pending ? "Approval needed" : run.error ? "Run failed" : run.cancelled ? "Cancelled" : done ? (run.hitCap ? "Stopped" : "Task complete") : "Working…";
+    // Multi-run EXPANDED head: name the selected run (its title, ellipsized in CSS) rather than the generic
+    // "Task complete" — the status is already carried by the tab's glyph. Keep the status word for the
+    // states that matter more than a name (approval / failure / cancel).
+    const headText = tabs ? (pending ? "Approval needed" : run.error ? "Run failed" : run.cancelled ? "Cancelled" : title) : headline;
+    // Multi-run COLLAPSED summary: a calm overview, not per-run detail — a generic status + a count badge,
+    // no title subtitle, no tab strip. (A pending run would force the EXPANDED state, so it isn't seen here.)
+    const doneN = runs.filter(runIsDone).length;
+    const anyPend = runs.some(runIsPending);   // a run needs approval — must stay visible even in the summary
+    const summaryHead = anyPend ? "Approval needed" : doneN === runs.length ? "All tasks complete" : doneN > 0 ? "Some tasks complete" : "Tasks running…";
     const decide = (ok: boolean) => {
         if (!pendingStep || pendingStep.seq == null) return;
         decidedSteps.add(stepKey(run.hash, pendingStep.seq));
@@ -2723,13 +2737,28 @@ function CardApp() {
         return <Orb icon={a.icon} label={a.label} wide={state === "orblabel"} />;
     }
     if (state === "toast") {
-        // A done run's toast expands to its answer on click; a WORKING run promoted to a toast (because >1
-        // run is live) is NOT expandable — its expanded body would be an empty "no reply yet". Switch runs
-        // via the tabs instead.
+        // MULTI-RUN collapsed → a calm SUMMARY: 🤖 + a generic status + a count badge, no per-run title, no
+        // tab strip. Click expands to the tabbed detail; × dismisses ALL runs (close the summary). SINGLE run
+        // → the classic toast (headline + the task subtitle), which expands to its own answer.
+        if (tabs) {
+            return (
+                <div class="card-app" data-rev={r}>
+                    <div class="card-toast summary" role="button" title="Click to review · drag or right-click to move"
+                        onPointerDown={startCardDrag}
+                        onClick={e => { if (!(e.target as HTMLElement).closest(".card-x")) cardDetail.value = true; }}
+                        onContextMenu={cardCtxMenu}>
+                        <span class="card-bot" aria-hidden="true">🤖</span>
+                        <span class={`card-toast-head${anyPend ? " pending" : ""}`}>{summaryHead}</span>
+                        <span class={`card-count${anyPend ? " pend" : ""}`} title={`${runs.length} runs`}>{runs.length}</span>
+                        <span class="sp" />
+                        <button class="card-x" aria-label="Dismiss all" onPointerDown={e => { e.stopPropagation(); e.preventDefault(); runs.forEach(s => dismissCardRun(s.hash)); }} onClick={e => e.stopPropagation()}>✕</button>
+                    </div>
+                </div>
+            );
+        }
         return (
             <div class="card-app" data-rev={r}>
-                {tabs ? <CardTabs runs={runs} selected={hash} /> : null}
-                <div class="card-toast" role="button" title={done ? "Click to review · drag or right-click to move" : "Drag or right-click to move"} onPointerDown={startCardDrag} onClick={e => { if (done && !(e.target as HTMLElement).closest(".card-x")) setCardCollapsed(run.hash, false); }} onContextMenu={cardCtxMenu}>
+                <div class="card-toast" role="button" title="Click to review · drag or right-click to move" onPointerDown={startCardDrag} onClick={e => { if (!(e.target as HTMLElement).closest(".card-x")) setCardCollapsed(run.hash, false); }} onContextMenu={cardCtxMenu}>
                     <span class="card-bot" aria-hidden="true">🤖</span>
                     <span class="card-toast-txt">
                         <span class="card-toast-head">{headline}</span>
@@ -2745,24 +2774,31 @@ function CardApp() {
             {tabs ? <CardTabs runs={runs} selected={hash} /> : null}
             <div class="card-head" onPointerDown={startCardDrag} onContextMenu={cardCtxMenu}>
                 <span class="card-bot" aria-hidden="true">🤖</span>
-                <span class={`card-head-txt${pending ? " pending" : ""}`}>{headline}</span>
+                <span class={`card-head-txt${pending ? " pending" : ""}`} title={tabs ? headText : undefined}>{headText}</span>
                 <span class="sp" />
-                {pending ? null : <button class="card-icon" aria-label="Collapse" title="Collapse" onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); setCardCollapsed(run.hash, true); }}>▾</button>}
+                {pending ? null : <button class="card-icon" aria-label="Collapse" title="Collapse" onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); tabs ? (cardDetail.value = false) : setCardCollapsed(run.hash, true); }}>▾</button>}
                 <button class="card-x" aria-label={pending ? "Deny" : "Dismiss"} onPointerDown={onCloseDown} onClick={e => e.stopPropagation()}>✕</button>
             </div>
             <div class="card-body">
                 {pending && pendingStep
                     ? <ApprovalBody st={pendingStep} hash={run.hash} goal={title} />
-                    : <>
-                        {run.error
-                            ? <div class="card-error">{run.error}</div>
-                            : (run.summary || "").trim()
-                                ? <div class="card-answer md" dangerouslySetInnerHTML={{ __html: markdown(run.summary || "", { math: true }) }} />
-                                : <div class="card-answer dim card-answer-empty">{run.cancelled ? "Run cancelled — the agent returned no text." : "The run finished without a text reply."}</div>}
-                        {/* Only when there's actual WORK — at least one tool step. A pure chat answer (0 tool
-                            steps) has nothing to show, so no "Show work · 0 steps". */}
-                        {(run.steps || []).some(s => s.tool) ? <ShowWork run={run} /> : null}
-                      </>}
+                    : !done
+                        // A working run browsed via a tab (multi-run detail): show a live "Working…" line + its
+                        // trace, not the finished-answer branch (which would render an empty "no reply yet").
+                        ? <>
+                            <div class="card-answer dim card-working"><span class="card-work-ic" aria-hidden="true">{activityFor(run).icon}</span>{liveProseFor(run) || activityFor(run).label}<span class="pill-dots"><i /><i /><i /></span></div>
+                            {(run.steps || []).some(s => s.tool) ? <ShowWork run={run} /> : null}
+                          </>
+                        : <>
+                            {run.error
+                                ? <div class="card-error">{run.error}</div>
+                                : (run.summary || "").trim()
+                                    ? <div class="card-answer md" dangerouslySetInnerHTML={{ __html: markdown(run.summary || "", { math: true }) }} />
+                                    : <div class="card-answer dim card-answer-empty">{run.cancelled ? "Run cancelled — the agent returned no text." : "The run finished without a text reply."}</div>}
+                            {/* Only when there's actual WORK — at least one tool step. A pure chat answer (0 tool
+                                steps) has nothing to show, so no "Show work · 0 steps". */}
+                            {(run.steps || []).some(s => s.tool) ? <ShowWork run={run} /> : null}
+                          </>}
             </div>
             {/* Deny/Approve as a FIXED footer — outside the scroll area, so it's always visible (a
                 drag-collapse or the scrollbar appearing can never cut or shift the buttons). */}
