@@ -19,6 +19,13 @@ export const applyTheme = (): void => {
     const t = resolveTheme();
     document.documentElement.setAttribute("data-theme", t);
     if (hljsStyleEl) hljsStyleEl.textContent = t === "dark" ? atomOneDark : atomOneLight;
+    // Tell the shell our AUTHORITATIVE resolved theme so the off-mode card's acrylic
+    // (drawn page-side, in the shell's shadow root) matches. The shell resolves theme
+    // from the CONTENT-SCRIPT window's matchMedia, which is unreliable on some hosts
+    // (GitHub reports light there) — that split-brain painted a white acrylic behind
+    // our transparent card. This iframe's resolution is the correct one; the shell
+    // ignores the message unless it's the card frame. See shell.ts onMessage.
+    try { window.parent?.postMessage({ __mlSidebarCardTheme: t }, "*"); } catch { /* not framed */ }
 };
 themeMedia.addEventListener("change", applyTheme);
 

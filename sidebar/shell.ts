@@ -701,6 +701,15 @@ function onWindowMessage(e: MessageEvent): void {
         window.postMessage({ __mlCancelSession: { hash: d.hash } }, "*");
         return;
     }
+    // The card app posts its AUTHORITATIVE resolved theme (config.theme, auto→OS, resolved inside the
+    // iframe where matchMedia is reliable). The acrylic wrap is drawn here, page-side, and our own
+    // matchMedia is unreliable on some hosts (GitHub reports light in the content-script world) — which
+    // painted a white acrylic behind the transparent card. Trust the app's value. Origin-checked.
+    if ((d.__mlSidebarCardTheme === "dark" || d.__mlSidebarCardTheme === "light") && frame && e.source === frame.contentWindow) {
+        appThemeOverride = d.__mlSidebarCardTheme;
+        applyCardTheme();
+        return;
+    }
     // The off-mode card app tells us its desired visual state (hidden / toast / expanded) — it alone
     // knows whether there's a pending approval or a final answer worth showing. We drive the container's
     // size + reveal (a CSS transition). Origin-checked: only the real card iframe.
@@ -1014,10 +1023,15 @@ function applyMode(next: DebugMode): void {
 // user who forces one theme doesn't get mismatched (e.g. dark text on a dark acrylic). We resolve the
 // same way prefs.ts does and stamp it on the wrap; the CARD_CSS keys the acrylic off [data-theme].
 let rawTheme = "auto";
+// The app (inside the iframe) posts its authoritative resolved theme, which overrides
+// this initial guess (appThemeOverride). We keep a guess only so the acrylic isn't
+// unset before the app boots. NB: this content-script window's matchMedia is
+// unreliable on some hosts (GitHub reports light) — hence the app-authoritative post.
+let appThemeOverride: "dark" | "light" | null = null;
 const themeMedia = typeof window.matchMedia === "function" ? window.matchMedia("(prefers-color-scheme: dark)") : null;
 function applyCardTheme(): void {
-    const resolved = (rawTheme === "light" || rawTheme === "dark") ? rawTheme : (themeMedia?.matches ? "dark" : "light");
-    if (cardWrap) cardWrap.dataset.theme = resolved;
+    const guess = (rawTheme === "light" || rawTheme === "dark") ? rawTheme : (themeMedia?.matches ? "dark" : "light");
+    if (cardWrap) cardWrap.dataset.theme = appThemeOverride ?? guess;
 }
 function applyCardCorner(): void { if (cardWrap) { cardWrap.dataset.corner = cardCorner; layoutCard(); } }   // re-anchor + animate to it
 themeMedia?.addEventListener("change", applyCardTheme);   // "auto" follows the OS

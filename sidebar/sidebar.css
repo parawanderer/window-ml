@@ -801,12 +801,18 @@ details.thinking .md { color: var(--fg-dim); font-size: 0.95em; }
    the blur shows through; style the collapsed toast + the expanded panel. It reuses
    every run component (ToolStep/ReplyBubble/markdown), so only the chrome is new. */
 /* Make the iframe DOCUMENT itself transparent so the shell's acrylic shows through: drop the opaque
-   canvas background AND `color-scheme` (which otherwise paints a solid dark/light backdrop behind the
-   transparent html). `!important` so it wins over the theme's `:root[data-theme=…]` color-scheme. */
+   canvas background. color-scheme must be the RESOLVED THEME, never `normal` — `normal` means "inherit",
+   which for a cross-origin embed resolves against the HOST page (GitHub forces light in that context →
+   a WHITE backdrop behind our transparent card). Keying it to the app's data-theme keeps the iframe
+   transparent (the frost still shows) AND paints the right backdrop regardless of the host. `!important`
+   so it wins over the base `:root[data-theme=…]` color-scheme. (Verified: `dark` keeps the frost; the
+   old `normal` was the bug.) */
 /* Card mode: the app FILLS the iframe (the shell sizes the iframe from the reported CONTENT height —
    a cross-origin frame can't auto-size — and caps it to the viewport), transparent, no page scroll. */
 html[data-surface="card"], html[data-surface="card"] body { background: transparent !important; overflow: hidden; height: 100%; }
-html[data-surface="card"] { color-scheme: normal !important; }
+html[data-surface="card"][data-theme="dark"]  { color-scheme: dark  !important; }
+html[data-surface="card"][data-theme="light"] { color-scheme: light !important; }
+html[data-surface="card"]:not([data-theme])   { color-scheme: dark  !important; }   /* pre-theme: never inherit the host → never white */
 /* The card is TRANSLUCENT acrylic — over a dark page the fixed grays (--fg-dim/--fg-faint) blend into the
    tinted glass and become unreadable (previews, "N steps", the reply placeholder). Use white-with-opacity
    instead, which stays legible whatever the backdrop tints the glass to. Flip to black-opacity on a light
