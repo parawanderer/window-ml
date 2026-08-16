@@ -2773,7 +2773,7 @@ function CardApp() {
         <div class="card-app" data-rev={r}>
             {tabs ? <CardTabs runs={runs} selected={hash} /> : null}
             <div class="card-head" onPointerDown={startCardDrag} onContextMenu={cardCtxMenu}>
-                <span class="card-bot" aria-hidden="true">🤖</span>
+                {tabs ? null : <span class="card-bot" aria-hidden="true">🤖</span>}   {/* multi-run: the tab strip already IDs the run — drop the 🤖 to de-clutter */}
                 <span class={`card-head-txt${pending ? " pending" : ""}`} title={tabs ? headText : undefined}>{headText}</span>
                 <span class="sp" />
                 {pending ? null : <button class="card-icon" aria-label="Collapse" title="Collapse" onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); tabs ? (cardDetail.value = false) : setCardCollapsed(run.hash, true); }}>▾</button>}
