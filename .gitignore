@@ -9,3 +9,8 @@ api-docs.gen.ts
 tools/annotate-preview.html
 tools/legend-notebook.html
 pyodide-wheels/
+
+# Playwright E2E output
+test-results/
+playwright-report/
+tests/e2e/artifacts/

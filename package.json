@@ -8,9 +8,12 @@
         "gen-api-docs": "node scripts/gen-api-docs.mjs",
         "typecheck": "npm run gen-api-docs && tsc --noEmit",
         "pretest": "npm run build",
-        "test": "node --import tsx --test --test-concurrency=1 tests/*.test.js tests/*.test.mjs"
+        "test": "node --import tsx --test --test-concurrency=1 tests/*.test.js tests/*.test.mjs",
+        "pretest:e2e": "npm run build",
+        "test:e2e": "playwright test"
     },
     "devDependencies": {
+        "@playwright/test": "^1.50.1",
         "@types/chrome": "^0.2.2",
         "esbuild": "^0.28.1",
         "jsdom": "^29.1.1",

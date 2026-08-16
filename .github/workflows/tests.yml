@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "0 6 * * *"   # nightly — for the non-blocking real-model sanity job below
+  workflow_dispatch:
 
 jobs:
   test:
@@ -83,3 +86,58 @@ jobs:
         with:
           name: window-ml-extension
           path: dist/
+
+  # End-to-end: load the BUILT extension in a real Chromium (Playwright) and drive the actual pipeline
+  # (background loop → tool delegation → page) against a scripted fake-LLM — deterministic, no Ollama.
+  # Kept minimal on purpose (real browsers are slow); only behaviour that genuinely needs a browser
+  # lives here (see CLAUDE.md "End-to-end tests"). Everything else is in the fast `test` job above.
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      # `test:e2e` runs `pretest:e2e` (npm run build) first, so it exercises the built dist/. The harness is
+      # headful by default (an MV3 service worker doesn't register under headless), so run it under xvfb.
+      - name: Run E2E
+        run: xvfb-run -a npm run test:e2e
+
+  # Non-blocking sanity check against a REAL, free, OpenAI-shaped model (default: Groq). NOT a gate — a real
+  # model is non-deterministic + rate-limited, so it runs only on demand / nightly and never fails the
+  # pipeline (continue-on-error). Enabled by the repo SECRET `GROQ_API_KEY_FREE` (a free Groq API key);
+  # override endpoint/model with repo VARIABLES `E2E_REAL_BACKEND` / `E2E_REAL_MODEL` for any other
+  # OpenAI-compatible provider. Without the secret the job self-skips. (GitHub Models was the natural fit but
+  # is being retired — verified: its API now 410s a "retirement brownout".)
+  e2e-real-model:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Gate on a configured key
+        id: gate
+        run: echo "have_key=${{ secrets.GROQ_API_KEY_FREE != '' }}" >> "$GITHUB_OUTPUT"
+      - if: steps.gate.outputs.have_key == 'true'
+        run: npx playwright install --with-deps chromium
+      - name: E2E against a real (free) model
+        if: steps.gate.outputs.have_key == 'true'
+        env:
+          E2E_BACKEND: ${{ vars.E2E_REAL_BACKEND || 'https://api.groq.com/openai/v1/chat/completions' }}
+          E2E_MODEL: ${{ vars.E2E_REAL_MODEL || 'openai/gpt-oss-20b' }}   # llama-3.3 emitted malformed tool calls; gpt-oss complies
+          E2E_KEY: ${{ secrets.GROQ_API_KEY_FREE }}
+        run: xvfb-run -a npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.gate.outputs.have_key == 'true'
+        with:
+          name: e2e-real-model-artifacts
+          path: test-results/

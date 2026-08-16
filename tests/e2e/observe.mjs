@@ -1,0 +1,213 @@
+// observe.mjs — a standalone "let me watch a run end-to-end" harness so I (Claude) can debug the real
+// extension in a real browser by reading ARTIFACTS: the extension's OWN markdown transcript (run.md, via
+// serializeSession) + a screenshot per step + the raw event stream. Not a test — a debug tool.
+//
+//   node --import tsx tests/e2e/observe.mjs                 # deterministic: scripted fake-LLM
+//   E2E_BACKEND=<chatUrl> E2E_MODEL=<id> TASK="…" node --import tsx tests/e2e/observe.mjs   # real model
+//   (with .env holding OPENWEBUI_URL/KEY/MODEL, pass USE_ENV=1 to use it as the backend)
+//
+// Writes tests/e2e/artifacts/: run.md (canonical), transcript.txt, events.json, step-<n>.png, final.png.
+
+import { register } from "node:module";
+register("../css-null.mjs", import.meta.url);   // export.ts imports a bundled .css → stub it for node
+const { serializeSession } = await import("../../sidebar/export.ts");
+
+import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
+import { startFakeLlm } from "./fake-llm.mjs";
+import { startPageServer } from "../../examples/cross-page/serve.mjs";
+import { mkdir, writeFile, readFile } from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+// One timestamped (or RUN_LABEL) subdir per run, so successive runs — e.g. before vs. after a fix — are
+// kept side by side to diff, not overwritten. `artifacts/latest.txt` records the newest for convenience.
+const RUN = process.env.RUN_LABEL || new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+const ARTROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "artifacts");
+const ART = path.join(ARTROOT, RUN);
+
+// Backend: E2E_BACKEND (explicit chatUrl) or USE_ENV=1 (read OPENWEBUI_* from .env), else the fake-LLM.
+async function resolveBackend() {
+    if (process.env.E2E_BACKEND) return { chatUrl: process.env.E2E_BACKEND, model: process.env.E2E_MODEL || "", key: process.env.E2E_KEY || "" };
+    if (process.env.USE_ENV) {
+        const env = Object.fromEntries((await readFile(path.resolve(".env"), "utf8")).split("\n")
+            .map((l) => l.trim()).filter((l) => l && !l.startsWith("#")).map((l) => { const i = l.indexOf("="); return [l.slice(0, i), l.slice(i + 1)]; }));
+        const base = (env.OPENWEBUI_URL || "").replace(/\/$/, "");
+        return { chatUrl: `${base}/api/chat/completions`, model: process.env.E2E_MODEL || env.OPENWEBUI_MODEL || "", key: env.OPENWEBUI_KEY || "",
+            utilityModel: env.OPENWEBUI_UTILITY_MODEL || "", visionModel: env.OPENWEBUI_VISION_MODEL || "" };
+    }
+    return null;   // → fake-LLM
+}
+
+const TASK = process.env.TASK || "What code is shown on this page? Use findByText to locate it, then answer with just the code.";
+const START = process.env.START || "/step3";
+// TOOLS=findByText,answer → run the agent with only that subset of the default domTools (shrinks the
+// system prompt + schemas; useful under a tight free-tier token/min limit). Unset → the full default kit.
+const TOOLS = process.env.TOOLS ? process.env.TOOLS.split(",").map((s) => s.trim()).filter(Boolean) : null;
+
+// Warm the model(s) into VRAM BEFORE the timed run, so timings measure inference, not the cold ~20GB load.
+// A single 1-token completion forces the load; we report how long it took. Skip with WARM=0. By default we
+// warm only the MAIN model (multiple large models rarely co-resident — warming all would just thrash the
+// last one out on the first real call); WARM_ALL=1 also warms utility + vision (for a run that uses them).
+async function warmUp(chatUrl, key, models) {
+    const headers = { "content-type": "application/json", ...(key ? { authorization: `Bearer ${key}` } : {}) };
+    for (const m of models.filter(Boolean)) {
+        const t0 = Date.now();
+        try {
+            const res = await fetch(chatUrl, { method: "POST", headers, body: JSON.stringify({ model: m, messages: [{ role: "user", content: "ok" }], max_tokens: 1, stream: false }) });
+            await res.text();
+            console.log(`  warmed ${m} in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+        } catch (e) { console.log(`  warm ${m} failed: ${String(e).slice(0, 80)}`); }
+    }
+}
+
+// Scripted turns for the fake-LLM (ignored with a real backend): read the code, then answer it.
+const SCRIPT = [
+    { tool: "findByText", args: { text: "CROSSPAGE" } },
+    (req) => {
+        const seen = req.messages.map((m) => (typeof m.content === "string" ? m.content : "")).join(" ");
+        const m = seen.match(/CROSSPAGE-\d+/);
+        return { content: m ? `The code is ${m[0]}.` : "I couldn't find a code on this page." };
+    },
+];
+
+// Rebuild a sidebar Session from the raw debug events (the agent branches of app.tsx onDebug), so
+// serializeSession produces the exact markdown the "Export log" button would.
+function buildSession(events) {
+    const map = new Map();
+    const maxStep = (s) => Math.max(0, ...(s.steps || []).map((x) => x.step || 0));
+    for (const ev of events) {
+        const s = map.get(ev.session?.hash);
+        if (ev.kind === "agent") {
+            map.set(ev.session.hash, {
+                hash: ev.session.hash, model: ev.model, tag: "session", kind: "agent",
+                createdTs: ev.ts, lastTs: ev.ts, status: "pending", turns: [], steps: [], task: ev.task,
+                taskImages: ev.images, maxSteps: ev.maxSteps, agentConfig: ev.config,
+                config: { system: null, model: ev.model, think: null, schema: false, toolIds: null, maxTokens: null, save: false },
+            });
+        } else if (ev.kind === "agent-step" && s) {
+            const step = { step: ev.step, localStep: ev.localStep, seq: ev.seq, pending: ev.pending, awaitingApproval: ev.awaitingApproval, thought: ev.thought, reasoning: ev.reasoning, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: ev.elements, renderIn: ev.renderIn, renderOut: ev.renderOut, feedback: ev.feedback, argIssues: ev.argIssues, approval: ev.approval, usage: ev.usage, subUsage: ev.subUsage };
+            const steps = s.steps || [];
+            const i = ev.seq != null ? steps.findIndex((x) => x.seq === ev.seq) : -1;
+            const merged = i >= 0 ? { ...step, renderIn: step.renderIn ?? steps[i].renderIn, renderOut: step.renderOut ?? steps[i].renderOut } : step;
+            s.steps = i >= 0 ? steps.map((x, k) => (k === i ? merged : x)) : [...steps, step];
+            if (!s.ended || (ev.step || 0) > (s.endedStep ?? -1)) { s.status = "pending"; s.ended = false; }
+            s.lastTs = ev.ts;
+        } else if (ev.kind === "agent-result" && s) {
+            const status = (ev.error || ev.hitCap || ev.cancelled) ? "err" : "ok";
+            s.answers = [...(s.answers || []), { text: ev.summary, ts: ev.ts, atStep: maxStep(s), status, hitCap: ev.hitCap, cancelled: !!ev.cancelled, error: ev.error || undefined }];
+            s.summary = ev.summary; s.hitCap = ev.hitCap; s.error = ev.error || undefined; s.cancelled = !!ev.cancelled; s.status = status; s.lastTs = ev.ts; s.ended = true; s.endedStep = maxStep(s);
+        } else if (ev.kind === "agent-say" && s) {
+            s.says = [...(s.says || []), { text: ev.text, ts: ev.ts, atStep: maxStep(s), images: ev.images }]; s.status = "pending"; s.ended = false; s.lastTs = ev.ts;
+        } else if (ev.kind === "agent-cap" && s) {
+            s.maxSteps = ev.maxSteps; s.lastTs = ev.ts;
+        }
+    }
+    return [...map.values()].find((s) => s.kind === "agent") || null;
+}
+
+const main = async () => {
+    await mkdir(ART, { recursive: true });   // never rm the root — keep prior runs to diff
+
+    const backend = await resolveBackend();
+    const fake = backend ? null : await startFakeLlm({ model: "fake-model" });
+    const site = await startPageServer({});
+    const ext = await launchExtension();
+    await configureExtension(ext.sw, {
+        chatUrl: backend ? backend.chatUrl : fake.url,
+        apiKey: backend?.key || "",
+        apiFormat: "openai",
+        model: backend ? backend.model : "fake-model",
+        utilityModel: backend?.utilityModel || "",
+        ocrModel: backend?.visionModel || "",
+        modelFilter: "",
+        debugMode: "overlay",   // so injected emitDebug posts the event stream to the page window
+    });
+    if (fake) fake.setScript(SCRIPT);
+
+    // Warm the model(s) into VRAM before timing, so the slow one-time ~20GB load doesn't pollute the run
+    // measurement. Only meaningful for a real backend; the fake needs none. (Ollama's keep-alive TTL means
+    // successive runs within the window are already warm — only the first after an eviction pays the load.)
+    if (backend && process.env.WARM !== "0") {
+        const warm = [backend.model];
+        if (process.env.WARM_ALL) warm.push(backend.utilityModel, backend.visionModel);
+        console.log("  warming up…");
+        await warmUp(backend.chatUrl, backend.key, warm);
+    }
+
+    const page = await ext.context.newPage();
+    const transcript = [];
+    page.on("console", (m) => transcript.push({ kind: "console", type: m.type(), text: m.text() }));
+    page.on("pageerror", (e) => transcript.push({ kind: "pageerror", text: String(e) }));
+
+    let n = 0;
+    await page.exposeFunction("__obsStep", async (step) => {
+        n += 1;
+        const url = page.url();
+        transcript.push({ kind: "step", n, url, ...step });
+        try { await page.screenshot({ path: path.join(ART, `step-${n}.png`) }); } catch { /* mid-nav */ }
+        console.log(`  step ${n}: ${step.tool ? `tool ${step.tool}` : "thought"}${step.result ? ` → ${String(step.result).slice(0, 70)}` : ""}  @ ${url}`);
+    });
+
+    console.log(`\n  observing: "${TASK}"\n  start: ${site.url}${START}   backend: ${backend ? backend.chatUrl + ` (model ${backend.model})` : "fake-LLM"}\n`);
+    await page.goto(site.url + START);
+    await waitForMl(page);
+    // Capture the extension's own debug event stream (posted on the page window by emitDebug).
+    await page.evaluate(() => { window.__mlEvents = []; window.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) window.__mlEvents.push(e.data.__mlDebug); }); });
+
+    let result, error;
+    const t0 = Date.now();
+    try {
+        result = await page.evaluate(({ task, toolNames }) => {
+            const opts = {
+                onStep: (s) => window.__obsStep({
+                    tool: s.tool || null, thought: s.thought || null,
+                    args: s.arguments ? JSON.parse(JSON.stringify(s.arguments)) : null,
+                    result: typeof s.result === "string" ? s.result : (s.result != null ? JSON.stringify(s.result) : null),
+                    approval: s.approval || null,
+                }),
+            };
+            // TOOLS=findByText,answer → limit to a subset of the default domTools (a smaller system prompt +
+            // fewer schemas = far fewer tokens/turn, so a rate-limited free tier fits). vision:false stops
+            // look/locate from auto-wiring back in.
+            if (toolNames && toolNames.length) {
+                opts.tools = (window.ml.domTools || []).filter((t) => toolNames.includes(t.name));
+                opts.vision = false;
+            }
+            return window.ml.agent(task, opts);
+        }, { task: TASK, toolNames: TOOLS });
+    } catch (e) { error = String(e); }
+    const runMs = Date.now() - t0;   // wall time of the agent run only (warm-up excluded)
+
+    try { await page.screenshot({ path: path.join(ART, "final.png") }); } catch { /* */ }
+    const events = await page.evaluate(() => window.__mlEvents || []);
+    await writeFile(path.join(ART, "events.json"), JSON.stringify(events, null, 2));
+
+    // The canonical markdown transcript — exactly what the sidebar "Export log → Markdown" produces.
+    try {
+        const session = buildSession(events);
+        if (session) {
+            const { md, images } = serializeSession(session);
+            await writeFile(path.join(ART, "run.md"), md);
+            // Write the screenshot sidecars the markdown references (images/step-N.png) so look/locate
+            // shots are viewable — this is what the model actually SAW.
+            for (const img of images) {
+                await mkdir(path.dirname(path.join(ART, img.name)), { recursive: true });
+                await writeFile(path.join(ART, img.name), img.bytes);
+            }
+        } else await writeFile(path.join(ART, "run.md"), "_(no agent events captured — is debugMode emitting?)_\n");
+    } catch (e) { await writeFile(path.join(ART, "run.md"), `_(serializeSession failed: ${e})_\n`); }
+
+    transcript.push({ kind: "result", task: TASK, finalUrl: page.url(), steps: n, runMs, error: error || null, result: result ?? null });
+    await writeFile(path.join(ART, "transcript.txt"),
+        transcript.map((t) => t.kind === "step" ? `STEP ${t.n} @ ${t.url}\n  ${t.tool ? `tool ${t.tool}(${JSON.stringify(t.args)})` : `thought: ${t.thought}`}${t.result ? `\n  → ${t.result}` : ""}`
+            : t.kind === "result" ? `\nRESULT (${t.steps} steps, final ${t.finalUrl})\n  ${t.error ? `ERROR: ${t.error}` : JSON.stringify(t.result)}`
+                : `[${t.kind}${t.type ? ":" + t.type : ""}] ${t.text}`).join("\n"));
+
+    await writeFile(path.join(ARTROOT, "latest.txt"), RUN);   // pointer to the newest run dir
+    console.log(`\n  → ${error ? `ERROR: ${error}` : "done"} in ${(runMs / 1000).toFixed(1)}s (run only). final url: ${page.url()}, ${n} steps, ${events.length} events.`);
+    console.log(`  artifacts: ${path.relative(process.cwd(), ART)}/  (run.md, transcript.txt, events.json, step-*.png)\n`);
+
+    await ext.close(); await fake?.stop(); await site.stop();
+};
+
+main().catch((e) => { console.error(e); process.exit(1); });
