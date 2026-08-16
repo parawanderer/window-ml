@@ -7,6 +7,7 @@ import { DEFAULT_CONFIG, modelFilterAllows } from "./contract";   // single sour
 import { runBackgroundAgent } from "./agent-host";   // design A: the background-hosted agent loop
 import type { ToolMeta } from "./agent-loop";
 import { externalSheetIds, googleSheetId } from "./dom";   // track approved external sheets across a run + the choke-point grants
+import { createNavBarrier } from "./nav-barrier";   // cross-page persistence: hold delegated tools while a run's tab navigates
 
 // The wire body we assemble for a chat request (grows per format/options).
 interface ChatBody {
@@ -824,6 +825,43 @@ const bgRuns = new Map<string, { p: StartRunPayload; tabId: number; messages: Ne
 // Present only while a run is live (set at start, deleted in finally).
 const runInboxes = new Map<string, { tabId: number; queue: string[] }>();
 
+// ---- Cross-page persistence (Variant A; design tmp/cross-page-agent.md) ----
+// A background-hosted run delegates each DOM tool to its tab by tabId. When the page NAVIGATES the old
+// document — and the toolset it registered — is destroyed and the new document loads a fresh, EMPTY toolset;
+// firing the next delegated tool into that gap hits "no active agent run on this page". The barrier holds a
+// delegated send while the tab is mid-navigation and releases when the new document RE-ADOPTS the run
+// (rebuilds + re-registers its toolset — the CONTENT_READY → adopt round-trip). `activeRuns` maps a tab to
+// the run ids it hosts so the webNavigation sensor knows which tabs to watch. See nav-barrier.ts.
+const navBarrier = createNavBarrier();
+const activeRuns = new Map<number, Set<string>>();   // tabId → runIds hosted in that tab
+const trackRun = (tabId: number, runId: string): void => {
+    const s = activeRuns.get(tabId) ?? new Set<string>();
+    s.add(runId); activeRuns.set(tabId, s);
+};
+const untrackRun = (tabId: number, runId: string): void => {
+    const s = activeRuns.get(tabId);
+    if (!s) return;
+    s.delete(runId);
+    if (!s.size) { activeRuns.delete(tabId); navBarrier.forget(tabId); }
+};
+// EVERY RUN_TOOL_IN_PAGE send goes through this: it waits out any in-flight navigation on the tab before
+// delegating. On a tab with no navigation pending, whenReady resolves immediately (zero cost) — so a
+// single-page run is unaffected.
+const delegateSend = (tabId: number, msg: unknown): Promise<any> =>
+    navBarrier.whenReady(tabId).then(() => chrome.tabs.sendMessage(tabId, msg));
+
+// The navigation SENSOR: a committed MAIN-frame navigation on a tab that hosts a live run means its document
+// (and registered toolset) is going away → engage the barrier so the next delegated tool waits for re-adopt.
+// Sub-frame navigations (frameId != 0) don't replace the run's document, so they're ignored.
+if (typeof chrome !== "undefined" && chrome.webNavigation?.onCommitted) {
+    chrome.webNavigation.onCommitted.addListener((d) => {
+        if (d.frameId === 0 && activeRuns.has(d.tabId)) navBarrier.noteNavigating(d.tabId);
+    });
+}
+if (typeof chrome !== "undefined" && chrome.tabs?.onRemoved) {
+    chrome.tabs.onRemoved.addListener((tabId) => { activeRuns.delete(tabId); navBarrier.forget(tabId); });
+}
+
 // ---- Choke-point consent (docs/spec/CHOKEPOINT_CONSENT_SPEC.md) ----
 // The boundary for the credentialed/unbounded ops lives HERE, not in the bypassable client-side approval.
 // A privileged call passes iff: a trusted surface (sender.tab == null), a whitelisted domain, or a per-call
@@ -1038,6 +1076,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         const abortCtl = new AbortController();   // CANCEL_RUN aborts this → the loop resolves { cancelled }
         runControllers.set(runId, abortCtl);
         runInboxes.set(runId, { tabId, queue: [] });   // a.say() steering lands here while the run is live
+        trackRun(tabId, runId);   // register the run against its tab so the navigation sensor watches it
         const toolMetas: ToolMeta[] = p.tools.map(t => ({ name: t.name, requiresApproval: t.requiresApproval, capabilities: t.capabilities }));
         const toolDefs = p.tools.map(t => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
         const approvedSheets = new Set<string>();   // external sheets approved this run (isSheetApproved)
@@ -1121,7 +1160,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                         if ((args as { mode?: string }).mode === "full") g.pyCode.add(String((args as { code?: unknown }).code ?? ""));
                     }
                     try {
-                        const env = await chrome.tabs.sendMessage(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name, args } })
+                        const env = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name, args } })
                             .catch((e: unknown) => ({ result: `Error: could not reach the page to run "${name}" (${(e as Error)?.message || e}).` })) as Partial<import("./contract").PageToolEnvelope>;
                         addSub(env?.subUsage);   // this tool's own delegated vision sub-call spend (look/locate)
                         // RESERVED-surface click: the page couldn't synth-click a cross-origin iframe / sealed
@@ -1139,7 +1178,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                             // image/description/feedback so the model gets the result in THIS step, not a stray look().
                             let vres = "", vimg: string | undefined, vimgLabel: string | undefined, vfeedback: import("./contract").ToolFeedback | undefined;
                             if (env.cdpClick.verify) {
-                                const venv = await chrome.tabs.sendMessage(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, verifyAt: { x: env.cdpClick.x, y: env.cdpClick.y } } })
+                                const venv = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, verifyAt: { x: env.cdpClick.x, y: env.cdpClick.y } } })
                                     .catch(() => null) as Partial<import("./contract").PageToolEnvelope> | null;
                                 if (venv) { vres = venv.result || ""; vimg = venv.image; vimgLabel = venv.imageLabel; vfeedback = venv.feedback; addSub(venv.subUsage); }
                             }
@@ -1160,7 +1199,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 // in-dialect it BOTH auto-approves AND returns the result, and the human gate is skipped.
                 tryReadonly: p.autoApproveReadonly ? async (name, args) => {
                     if (name !== "exec") return null;
-                    const env = await chrome.tabs.sendMessage(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name, args, readonlyTry: true } })
+                    const env = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name, args, readonlyTry: true } })
                         .catch(() => null) as Partial<import("./contract").PageToolEnvelope> | null;
                     return env && env.readonly ? { result: env.result || "", renderIn: env.renderIn, renderOut: env.renderOut } : null;
                 } : undefined,
@@ -1169,7 +1208,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 // that HAVE a precheck (avoids a useless round-trip on every gated call).
                 precheck: async (name, args) => {
                     if (!p.tools.some((t) => t.name === name && t.precheck)) return null;
-                    const env = await chrome.tabs.sendMessage(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name, args, precheck: true } })
+                    const env = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name, args, precheck: true } })
                         .catch(() => null) as Partial<import("./contract").PageToolEnvelope> | null;
                     return env && env.precheckFailed ? (env.result || "") : null;
                 },
@@ -1179,7 +1218,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     // raw args. Best-effort: raw args on any failure. (Out has nothing to render pre-run.)
                     let renderIn: unknown;
                     try {
-                        const env = await chrome.tabs.sendMessage(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name: tool, args, renderOnly: true } }) as { renderIn?: unknown };
+                        const env = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name: tool, args, renderOnly: true } }) as { renderIn?: unknown };
                         renderIn = env?.renderIn;
                     } catch { /* page gone → no preview, fall back to raw args */ }
                     // Key by the OFFSET seq — the same value the app sees on the emitted step (emitStep
@@ -1257,7 +1296,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 });
                 sendResponse({ error: err?.message || String(err) });
             })
-            .finally(() => { runControllers.delete(runId); runInboxes.delete(runId); });
+            .finally(() => { runControllers.delete(runId); runInboxes.delete(runId); untrackRun(tabId, runId); });
         return true;   // async: sendResponse fires when the whole run finishes
     }
     if (message.type === "PYTHON_EXEC") {
