@@ -98,6 +98,8 @@ function loadBackground({ config = {}, onFetch, onCaptureTab, onPyRun, onTabMess
         TextDecoder,
         TextEncoder,
         AbortController,   // FETCH_LLM registers one per request (for ABORT_TASK cancellation)
+        setTimeout, clearTimeout, DOMException,   // rate-limit backoff (abortableWait) uses timers + abort
+        Response,          // some paths construct/inspect Response
         fetch: async (url, opts = {}) => {
             const call = {
                 url: String(url),

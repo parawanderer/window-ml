@@ -90,6 +90,33 @@ test("FETCH_LLM: a response with NO choices container IS a clear format-mismatch
     assert.match(res.error, /did not match the "openai" format/);
 });
 
+test("FETCH_LLM: a 429 (rate limit) is backed off and retried, then succeeds", async () => {
+    let calls = 0;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => {
+            calls++;
+            // Free tiers advise a delay in the body ("try again in Xs"); 0s → a ~250ms backoff here.
+            if (calls === 1) return jsonResponse({ error: { message: "Rate limit reached. Please try again in 0s." } }, 429);
+            return jsonResponse({ choices: [{ message: { content: "recovered" } }] });
+        },
+    });
+    const res = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }] } });
+    assert.equal(calls, 2, "the 429 was retried once");
+    assert.equal(res.data, "recovered", "the retry's reply is returned");
+});
+
+test("FETCH_LLM: repeated 429s give up after the retry cap with a clear error (never hangs)", async () => {
+    let calls = 0;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => { calls++; return jsonResponse({ error: { message: "Rate limit. try again in 0s." } }, 429); },
+    });
+    const res = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }] } });
+    assert.ok(calls >= 5, `bounded retries then surfaces the error (was ${calls} attempts)`);
+    assert.match(res.error, /HTTP 429/, "the persistent rate limit is surfaced, not swallowed");
+});
+
 test("FETCH_LLM: an unreachable server → an actionable error, not a bare 'Failed to fetch'", async () => {
     const bg = loadBackground({
         config: baseConfig(),

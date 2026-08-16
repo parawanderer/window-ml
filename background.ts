@@ -298,6 +298,20 @@ async function modelSupportsVision(config: MlConfig, model: string): Promise<boo
     return caps === null ? null : caps.includes("vision");
 }
 
+// Rate-limit backoff tuning for `send`'s 429 handling: how many times to retry, and the per-wait ceiling.
+const RATE_LIMIT_RETRIES = 4;
+const RATE_LIMIT_MAX_WAIT_MS = 30_000;
+/** How long to pause before retrying a 429: the `Retry-After` header (seconds) if present, else a
+ *  "try again in Xs" hint in the body, else a default. +250ms slack so we clear the window; bounded by
+ *  RATE_LIMIT_MAX_WAIT_MS. Pure (header + body strings in) → unit-tested in tests/background.test.js. */
+function rateLimitWaitMs(retryAfter: string | null, body: string): number {
+    const cap = (ms: number) => Math.min(Math.max(ms, 0), RATE_LIMIT_MAX_WAIT_MS);
+    if (retryAfter) { const s = parseFloat(retryAfter); if (!isNaN(s)) return cap(s * 1000 + 250); }
+    const m = body.match(/try again in ([\d.]+)\s*s/i);
+    if (m) return cap(parseFloat(m[1]) * 1000 + 250);
+    return 3000;
+}
+
 // Shared setup for a chat request: resolves the model, runs the vision
 // fail-fast, builds the wire body, and returns a `send(body, stream)` that does
 // the privileged fetch (returning parsed JSON, or the raw Response when
@@ -427,36 +441,54 @@ async function prepareRequest(payload: FetchLlmPayload, signal?: AbortSignal) {
     // below (its label is version-dependent, so we probe SERVER_TOOL_MODES).
     if (payload.toolIds?.length) body.tool_ids = payload.toolIds;
 
+    // Wait ms, but reject early if the run is aborted mid-pause (so a cancel during a rate-limit backoff
+    // doesn't hang until the timer fires).
+    const abortableWait = (ms: number): Promise<void> => new Promise((resolve, reject) => {
+        const t = setTimeout(resolve, ms);
+        signal?.addEventListener("abort", () => { clearTimeout(t); reject(new DOMException("Aborted", "AbortError")); }, { once: true });
+    });
+
     const send = async (requestBody: ChatBody, stream = false): Promise<any> => {
-        let res: Response;
-        try {
-            res = await fetch(config.chatUrl, {
-                method: "POST",
-                headers,
-                body: JSON.stringify({ ...requestBody, stream }),
-                signal,   // ABORT_TASK → this fetch rejects with an AbortError (kills a slow generation)
-            });
-        } catch (e: any) {
-            if (e?.name === "AbortError") throw e;   // a real cancel — leave it for the loop to read as cancelled
-            // A network-level failure (server down, wrong host/port, DNS, refused connection, TLS/CORS) —
-            // fetch rejects with a bare "Failed to fetch". Translate it into an actionable message; the raw
-            // one is meaningless to a user and identical for every cause.
-            throw new Error(
-                `Couldn't reach the server at ${config.chatUrl} (${e?.message || e}). ` +
-                `Is OpenWebUI / Ollama running there? Check the Server URL, API key, and API format in the extension settings.`
-            );
-        }
-        if (!res.ok) {
-            const text = await res.text().catch(() => "");
-            let msg = `HTTP ${res.status} from ${config.chatUrl}: ${text.slice(0, 300)}`;
-            // Capability probe was inconclusive for this backend, so the images
-            // themselves are a plausible culprit — say so.
-            if (hasImages && !visionConfirmed) {
-                msg += " (request included images — the model may not support image input)";
+        // Rate-limit backoff: a free tier / shared backend answers 429 with a Retry-After (or a "try again in
+        // Xs" in the body). Rather than fail the whole run, pace ourselves — wait the advised delay and retry.
+        // Bounded (attempts + per-wait cap) so it can be slow but never hangs. Harmless on a local backend
+        // (Ollama never 429s). See RATE_LIMIT_* below.
+        for (let attempt = 0; ; attempt++) {
+            let res: Response;
+            try {
+                res = await fetch(config.chatUrl, {
+                    method: "POST",
+                    headers,
+                    body: JSON.stringify({ ...requestBody, stream }),
+                    signal,   // ABORT_TASK → this fetch rejects with an AbortError (kills a slow generation)
+                });
+            } catch (e: any) {
+                if (e?.name === "AbortError") throw e;   // a real cancel — leave it for the loop to read as cancelled
+                // A network-level failure (server down, wrong host/port, DNS, refused connection, TLS/CORS) —
+                // fetch rejects with a bare "Failed to fetch". Translate it into an actionable message; the raw
+                // one is meaningless to a user and identical for every cause.
+                throw new Error(
+                    `Couldn't reach the server at ${config.chatUrl} (${e?.message || e}). ` +
+                    `Is OpenWebUI / Ollama running there? Check the Server URL, API key, and API format in the extension settings.`
+                );
             }
-            throw new Error(msg);
+            if (res.status === 429 && attempt < RATE_LIMIT_RETRIES) {
+                const text = await res.text().catch(() => "");
+                await abortableWait(rateLimitWaitMs(res.headers?.get("retry-after") ?? null, text));
+                continue;   // retry the same request after the advised pause
+            }
+            if (!res.ok) {
+                const text = await res.text().catch(() => "");
+                let msg = `HTTP ${res.status} from ${config.chatUrl}: ${text.slice(0, 300)}`;
+                // Capability probe was inconclusive for this backend, so the images
+                // themselves are a plausible culprit — say so.
+                if (hasImages && !visionConfirmed) {
+                    msg += " (request included images — the model may not support image input)";
+                }
+                throw new Error(msg);
+            }
+            return stream ? res : res.json();
         }
-        return stream ? res : res.json();
     };
 
     return { config, format, body, send, model };
