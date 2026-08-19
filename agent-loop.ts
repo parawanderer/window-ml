@@ -216,7 +216,12 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             deps.pushAssistant(messages, { content: msg.content || "" });
             // Record the answer in the transcript too, so res.transcript is a complete turn (its actions
             // AND its reply) — otherwise a run reads as tool calls with no conclusion. Skip an empty answer.
-            const answer = (msg.content || "").trim();
+            // SALVAGE: a thinking model can put its whole conclusion in the reasoning/thinking channel and
+            // leave `content` empty (seen with gemma right after a vision step) — the loop would otherwise
+            // return a blank answer even though the model "knew" it. Fall back to the reasoning text so the
+            // caller gets the conclusion, not nothing.
+            const reasoningText = typeof msg.reasoning === "string" ? msg.reasoning.trim() : "";
+            const answer = (msg.content || "").trim() || reasoningText;
             if (answer) transcript.push({ assistant: answer });
             return { summary: answer, steps: step - 1, transcript, elements: [] };
         }

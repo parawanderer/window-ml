@@ -272,3 +272,25 @@ test("tryReadonly returning null → falls through to the normal gate", async ()
     assert.equal(calls.approve.length, 1, "out-of-dialect → the gate is consulted");
     assert.equal(calls.runTool.length, 1);
 });
+
+test("SALVAGE: empty content + reasoning → the reasoning becomes the answer (thinking model that never 'said' it)", async () => {
+    // gemma (esp. right after a vision step) sometimes puts its whole conclusion in the reasoning/thinking
+    // channel and returns EMPTY content + no tool call. The loop would otherwise return a BLANK summary even
+    // though the model clearly knew the answer — so we fall back to the reasoning text.
+    const { deps } = makeDeps({ turns: [{ content: "", tool_calls: [], reasoning: "The code is CROSSPAGE-9471." }] });
+    const res = await runAgentLoop("x", { tools: [] }, deps);
+    assert.equal(res.summary, "The code is CROSSPAGE-9471.", "reasoning is salvaged as the summary, not an empty string");
+    assert.deepEqual(res.transcript.at(-1), { assistant: "The code is CROSSPAGE-9471." }, "and recorded in the transcript");
+});
+
+test("SALVAGE: real content WINS over reasoning (salvage only fills a blank content)", async () => {
+    const { deps } = makeDeps({ turns: [{ content: "Done: the code is X.", tool_calls: [], reasoning: "internal musing" }] });
+    const res = await runAgentLoop("x", { tools: [] }, deps);
+    assert.equal(res.summary, "Done: the code is X.", "the model's actual reply is the answer; reasoning stays internal");
+});
+
+test("SALVAGE: empty content AND no reasoning → still an empty summary (no spurious salvage)", async () => {
+    const { deps } = makeDeps({ turns: [{ content: "", tool_calls: [] }] });
+    const res = await runAgentLoop("x", { tools: [] }, deps);
+    assert.equal(res.summary, "", "nothing to salvage → empty summary, behaviour unchanged");
+});
