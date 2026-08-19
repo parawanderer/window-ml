@@ -599,7 +599,7 @@ test("GET_CONFIG returns the model/ocrModel/apiFormat and withholds the URL and 
     const res = await bg.send({ type: "GET_CONFIG", payload: {} });
     assert.deepEqual(res.data, {
         model: "qwen3:235b", ocrModel: "qwen2.5vl", ocrNumCtx: 8192, apiFormat: "ollama", defaultModelVision: "",
-        utilityModel: "", utilityNumCtx: 4096, utilityForceCpu: false, autoApproveReadonly: false, autoApprovePython: false,
+        utilityModel: "", utilityNumCtx: 4096, utilityForceCpu: false, autoApproveReadonly: true, autoApprovePython: true,
         pierceClosedShadow: true,
         groundingEnabled: false, groundingModel: "", groundingRange: 1000, debugMode: "off",
         // Computed per-origin: no sender.tab in this harness call → not on the whitelist → false. The raw

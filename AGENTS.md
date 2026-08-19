@@ -145,7 +145,7 @@ page-side promise immediately so the loop's try/catch converts it to the same cl
 cancel — no waiting on a slow local generation.
 
 **Read-only `exec` auto-approve (experimental).** `exec` is `requiresApproval`,
-but the config flag `autoApproveReadonly` (off by default) lets a **read-only DOM
+but the config flag `autoApproveReadonly` (ON by default) lets a **read-only DOM
 survey** (`querySelectorAll → filter → map`, no mutation) run with **no prompt**
 via a mediated mini-interpreter — `readonly-exec.ts` (`evalReadonly`), a
 dependency-free tokenizer + Pratt parser + tree-walker bundled into
@@ -465,7 +465,7 @@ requires manual approval. Restored in
 (`tests/python.test.js`): a hardened run can't `import js`/`pyodide_js` or reach
 `pyodide.code.run_js`, a `full` run's cached `import js` is still purged, and `full` mode
 genuinely leaves the bridge open (why it needs approval). Config `autoApprovePython`
-(off by default, Advanced settings) auto-approves **readonly-mode** calls (badge provenance
+(ON by default, Advanced settings) auto-approves **readonly-mode** calls (badge provenance
 `sandbox`) — but a `full` mode, or code containing hidden/bidi characters (`suspiciousChars`,
 the same check the manual prompt shows), always falls through to the prompt. The background
 retries PY_RUN once if the offscreen doc was torn down (SW slept → "Receiving end does not
