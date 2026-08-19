@@ -1101,6 +1101,11 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             subTally.prompt += s.prompt; subTally.completion += s.completion; subTally.calls += s.calls;
         };
         const abortCtl = new AbortController();   // CANCEL_RUN aborts this → the loop resolves { cancelled }
+        // Set once this run's page navigates: the page-side caller that normally emits the lifecycle
+        // agent/agent-result (overlay/devtools) is then GONE (its context died with the old document), so the
+        // BACKGROUND must fan the terminal result to the destination page instead — else the run finishes but
+        // no surface ever learns it did (the observer/HUD sat on "running"). See emitLifecycle below.
+        let hasNavigated = false;
         runControllers.set(runId, abortCtl);
         runInboxes.set(runId, { tabId, queue: [] });   // a.say() steering lands here while the run is live
         // Register the run against its tab so the navigation sensor watches it — UNLESS the run opted out of
@@ -1154,7 +1159,10 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // OFF we emit the run's lifecycle (start + result) here too; overlay gets them from the page's bus
         // and devtools from the panel forward, so emitting them here as well would double up — off only.
         const emitLifecycle = (event: Record<string, unknown>): void => {
-            if (p.surface !== "off") return;
+            // "off": the page-side caller emits nothing, so the background always fans lifecycle events.
+            // overlay/devtools: the caller normally emits them page-side — EXCEPT once the run has navigated,
+            // when that caller's context is gone, so the background fans them to the destination page instead.
+            if (p.surface !== "off" && !hasNavigated) return;
             chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => {});
         };
         // Only a FRESH run announces the session start; a RESUME continues an existing sidebar/card
@@ -1197,7 +1205,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                         // webNavigation.onCommitted, which can lose the race to the loop's next (fast, local)
                         // model call + tool delegation, letting the next tool fire into the dying document.
                         // The next delegateSend then waits for the new page to re-adopt. Skip an errored nav.
-                        if (name === "navigate" && !String(env?.result || "").startsWith("Error")) navBarrier.noteNavigating(tabId);
+                        if (name === "navigate" && !String(env?.result || "").startsWith("Error")) { navBarrier.noteNavigating(tabId); hasNavigated = true; }
                         // RESERVED-surface click: the page couldn't synth-click a cross-origin iframe / sealed
                         // shadow target and handed back a CDP-click coordinate. The click was ALREADY approved
                         // above, and the trusted background performs the CDP click (the page can't). Gated on
