@@ -105,6 +105,29 @@ function buildSession(events) {
     return [...map.values()].find((s) => s.kind === "agent") || null;
 }
 
+// Write events.json + the canonical run.md (+ its image sidecars), OVERWRITING, from the events so far.
+// Called INCREMENTALLY on every event (chained so writes can't interleave) so a run that HANGS or DIES —
+// or one you interrupt — still leaves a readable partial transcript to debug, not an empty dir. Never throws
+// (a mid-run session may be partial). serializeSession is exactly the sidebar "Export log → Markdown" output.
+let dumpChain = Promise.resolve();
+function dumpArtifacts(events) {
+    const snap = events.slice();   // freeze this tick's events so a later push can't mutate mid-write
+    dumpChain = dumpChain.then(async () => {
+        try {
+            await writeFile(path.join(ART, "events.json"), JSON.stringify(snap, null, 2));
+            const session = buildSession(snap);
+            if (!session) { await writeFile(path.join(ART, "run.md"), "_(no agent events yet — is debugMode emitting?)_\n"); return; }
+            const { md, images } = serializeSession(session);
+            await writeFile(path.join(ART, "run.md"), md);
+            for (const img of images) {
+                await mkdir(path.dirname(path.join(ART, img.name)), { recursive: true });
+                await writeFile(path.join(ART, img.name), img.bytes);
+            }
+        } catch (e) { try { await writeFile(path.join(ART, "run.md"), `_(serializeSession failed mid-run: ${e})_\n`); } catch { /* disk gone */ } }
+    });
+    return dumpChain;
+}
+
 const main = async () => {
     await mkdir(ART, { recursive: true });   // never rm the root — keep prior runs to diff
 
@@ -139,6 +162,20 @@ const main = async () => {
     page.on("console", (m) => transcript.push({ kind: "console", type: m.type(), text: m.text() }));
     page.on("pageerror", (e) => transcript.push({ kind: "pageerror", text: String(e) }));
 
+    // Collect the extension's debug event stream NODE-side, via a bridge re-attached on EVERY document
+    // (addInitScript) so it survives a cross-page navigation — a page-context array would be wiped each
+    // reload, losing every event after the first nav.
+    const collected = [];
+    // Push + re-dump run.md/events.json on EVERY event, so an interrupted/hung/dead run still leaves a
+    // readable partial transcript (this was the gap: artifacts only wrote at the very end).
+    await page.exposeFunction("__obsEvent", (ev) => { collected.push(ev); dumpArtifacts(collected); });
+    await page.addInitScript(() => {
+        // TOP frame only: addInitScript runs in EVERY frame, and the overlay's sidebar iframe ALSO receives
+        // __mlDebug messages — capturing there too would double every event (same seq twice).
+        if (window.top !== window) return;
+        window.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) window.__obsEvent(e.data.__mlDebug); });
+    });
+
     let n = 0;
     await page.exposeFunction("__obsStep", async (step) => {
         n += 1;
@@ -151,8 +188,6 @@ const main = async () => {
     console.log(`\n  observing: "${TASK}"\n  start: ${site.url}${START}   backend: ${backend ? backend.chatUrl + ` (model ${backend.model})` : "fake-LLM"}\n`);
     await page.goto(site.url + START);
     await waitForMl(page);
-    // Capture the extension's own debug event stream (posted on the page window by emitDebug).
-    await page.evaluate(() => { window.__mlEvents = []; window.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) window.__mlEvents.push(e.data.__mlDebug); }); });
 
     let result, error;
     const t0 = Date.now();
@@ -176,26 +211,26 @@ const main = async () => {
             return window.ml.agent(task, opts);
         }, { task: TASK, toolNames: TOOLS });
     } catch (e) { error = String(e); }
+    // A cross-page / background run's ml.agent() promise dies with the navigated-away page context (that's
+    // the caught error), but the run carries on in the BACKGROUND. Wait for its terminal agent-result event
+    // (via the init-script bridge, which re-attaches each document) before we snapshot final state.
+    const hasResult = () => collected.some((e) => e.kind === "agent-result");
+    if (!hasResult()) {
+        const deadline = Date.now() + 120000;
+        while (Date.now() < deadline && !hasResult()) await new Promise((r) => setTimeout(r, 500));
+    }
     const runMs = Date.now() - t0;   // wall time of the agent run only (warm-up excluded)
+    // The expected nav teardown of the caller's context isn't a failure once the run finished — surface the
+    // model's summary (from the terminal event) instead of the "context destroyed" noise.
+    const done = collected.find((e) => e.kind === "agent-result");
+    if (done && error && /context was destroyed|Execution context/i.test(error)) error = null;
+    if (result == null && done) result = { summary: done.summary, steps: done.steps, cancelled: done.cancelled };
 
     try { await page.screenshot({ path: path.join(ART, "final.png") }); } catch { /* */ }
-    const events = await page.evaluate(() => window.__mlEvents || []);
-    await writeFile(path.join(ART, "events.json"), JSON.stringify(events, null, 2));
-
-    // The canonical markdown transcript — exactly what the sidebar "Export log → Markdown" produces.
-    try {
-        const session = buildSession(events);
-        if (session) {
-            const { md, images } = serializeSession(session);
-            await writeFile(path.join(ART, "run.md"), md);
-            // Write the screenshot sidecars the markdown references (images/step-N.png) so look/locate
-            // shots are viewable — this is what the model actually SAW.
-            for (const img of images) {
-                await mkdir(path.dirname(path.join(ART, img.name)), { recursive: true });
-                await writeFile(path.join(ART, img.name), img.bytes);
-            }
-        } else await writeFile(path.join(ART, "run.md"), "_(no agent events captured — is debugMode emitting?)_\n");
-    } catch (e) { await writeFile(path.join(ART, "run.md"), `_(serializeSession failed: ${e})_\n`); }
+    const events = collected;
+    // Final canonical write (the same incremental dump the collector ran on each event — the "Export log →
+    // Markdown" output). Awaited so the artifacts are on disk before we finish.
+    await dumpArtifacts(events);
 
     transcript.push({ kind: "result", task: TASK, finalUrl: page.url(), steps: n, runMs, error: error || null, result: result ?? null });
     await writeFile(path.join(ART, "transcript.txt"),
