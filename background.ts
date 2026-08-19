@@ -834,11 +834,16 @@ const runInboxes = new Map<string, { tabId: number; queue: string[] }>();
 // the run ids it hosts so the webNavigation sensor knows which tabs to watch. See nav-barrier.ts.
 const navBarrier = createNavBarrier();
 const activeRuns = new Map<number, Set<string>>();   // tabId → runIds hosted in that tab
-const trackRun = (tabId: number, runId: string): void => {
+// The rebuild-config for each LIVE cross-page run (runId → RebuildConfig), set at START and cleared in the
+// run's finally. bgRuns only stores a snapshot at run COMPLETION, so a MID-run navigation reads this instead.
+const runRebuilds = new Map<string, import("./contract").RebuildConfig>();
+const trackRun = (tabId: number, runId: string, rebuild?: import("./contract").RebuildConfig): void => {
     const s = activeRuns.get(tabId) ?? new Set<string>();
     s.add(runId); activeRuns.set(tabId, s);
+    if (rebuild) runRebuilds.set(runId, rebuild);
 };
 const untrackRun = (tabId: number, runId: string): void => {
+    runRebuilds.delete(runId);
     const s = activeRuns.get(tabId);
     if (!s) return;
     s.delete(runId);
@@ -980,6 +985,28 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         }
         return;   // fire-and-forget
     }
+    if (message.type === "CONTENT_READY") {
+        // Cross-page persistence: a fresh document loaded in a tab. If it still hosts live cross-page run(s),
+        // reply with each run's rebuild-config so the new page re-adopts (rebuilds + re-registers its
+        // toolset). A fresh content script on a tab with active runs MEANS the document was replaced (the old
+        // page is gone), so this fires the re-adopt regardless of the barrier's exact state. Empty otherwise.
+        const tabId = sender.tab?.id;
+        const ids = tabId != null ? activeRuns.get(tabId) : undefined;
+        const adopt: { runId: string; rebuild: import("./contract").RebuildConfig }[] = [];
+        if (ids) for (const runId of ids) {
+            const rebuild = runRebuilds.get(runId);
+            if (rebuild) adopt.push({ runId, rebuild });
+        }
+        sendResponse({ adopt });
+        return true;   // sendResponse already called synchronously
+    }
+    if (message.type === "RUN_READOPTED") {
+        // The fresh document re-registered a run's toolset → release the navigation barrier so the held
+        // delegated tool runs against the new page. Keyed by tab (the barrier is per-tab). Fire-and-forget.
+        const tabId = sender.tab?.id;
+        if (tabId != null) navBarrier.noteReadopted(tabId);
+        return;
+    }
     if (message.type === "CANCEL_RUN") {
         // The HUD's "Cancel agent run" (relayed by the trusted content-script shell). Abort the run's
         // controller → the loop stops at the next boundary and resolves { cancelled: true }; the model
@@ -1076,7 +1103,9 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         const abortCtl = new AbortController();   // CANCEL_RUN aborts this → the loop resolves { cancelled }
         runControllers.set(runId, abortCtl);
         runInboxes.set(runId, { tabId, queue: [] });   // a.say() steering lands here while the run is live
-        trackRun(tabId, runId);   // register the run against its tab so the navigation sensor watches it
+        // Register the run against its tab so the navigation sensor watches it — UNLESS the run opted out of
+        // cross-page persistence (navigate: false), in which case a nav simply ends it (no barrier, no adopt).
+        if (p.crossPage !== false) trackRun(tabId, runId, p.rebuild);
         const toolMetas: ToolMeta[] = p.tools.map(t => ({ name: t.name, requiresApproval: t.requiresApproval, capabilities: t.capabilities }));
         const toolDefs = p.tools.map(t => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
         const approvedSheets = new Set<string>();   // external sheets approved this run (isSheetApproved)
@@ -1163,6 +1192,12 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                         const env = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name, args } })
                             .catch((e: unknown) => ({ result: `Error: could not reach the page to run "${name}" (${(e as Error)?.message || e}).` })) as Partial<import("./contract").PageToolEnvelope>;
                         addSub(env?.subUsage);   // this tool's own delegated vision sub-call spend (look/locate)
+                        // Cross-page: the `navigate` tool DEFERS the real location change a tick, so its result
+                        // returns before the document unloads. Engage the barrier NOW — not only via the async
+                        // webNavigation.onCommitted, which can lose the race to the loop's next (fast, local)
+                        // model call + tool delegation, letting the next tool fire into the dying document.
+                        // The next delegateSend then waits for the new page to re-adopt. Skip an errored nav.
+                        if (name === "navigate" && !String(env?.result || "").startsWith("Error")) navBarrier.noteNavigating(tabId);
                         // RESERVED-surface click: the page couldn't synth-click a cross-origin iframe / sealed
                         // shadow target and handed back a CDP-click coordinate. The click was ALREADY approved
                         // above, and the trusted background performs the CDP click (the page can't). Gated on

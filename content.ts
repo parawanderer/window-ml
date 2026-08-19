@@ -144,6 +144,24 @@ window.addEventListener("message", (event: MessageEvent) => {
         chrome.runtime.sendMessage({ type: "CANCEL_RUN", payload: data.payload });
         return;
     }
+    if (data.type === "PAGE_ADOPT_HELLO") {
+        // Cross-page persistence: injected.js just went live on a fresh document. Ask the background whether
+        // this tab still hosts any background-run(s) mid-navigation; for each, relay the rebuild-config back
+        // to the main world as an ADOPT_RUN so injected re-registers the toolset. Empty on a normal page.
+        chrome.runtime.sendMessage({ type: "CONTENT_READY" }, (resp: { adopt?: { runId: string; rebuild: unknown }[] } | undefined) => {
+            void chrome.runtime.lastError;   // SW asleep / no active run → no adopt; swallow the "no response" noise
+            for (const a of (resp && resp.adopt) || []) {
+                window.postMessage({ type: "ADOPT_RUN", runId: a.runId, rebuild: a.rebuild }, "*");
+            }
+        });
+        return;
+    }
+    if (data.type === "RUN_READOPTED") {
+        // injected finished re-registering the run's toolset on the new document → tell the background to
+        // release the navigation barrier so the held delegated tool runs against this page. Fire-and-forget.
+        chrome.runtime.sendMessage({ type: "RUN_READOPTED", payload: { runId: (data as { runId?: string }).runId } });
+        return;
+    }
     if (data.type === "ABORT_REQUEST") {
         // Cancel the in-flight task for this requestId. Streaming rides a Port → disconnecting it is
         // what aborts the fetch (the background listens on onDisconnect). Non-streaming has no port →

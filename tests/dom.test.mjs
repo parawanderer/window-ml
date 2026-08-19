@@ -1,7 +1,28 @@
 // Pure dom.ts helpers.
 import { test } from "node:test";
 import assert from "node:assert";
-import { elementReference, classifyOverlay } from "../dom.ts";
+import { elementReference, classifyOverlay, navTarget } from "../dom.ts";
+
+test("navTarget: a same-origin relative URL resolves to an absolute destination", () => {
+    assert.deepEqual(navTarget("/step2", "https://site.example/step1"), { dest: "https://site.example/step2" });
+    assert.deepEqual(navTarget("page?q=1#h", "https://site.example/a/b"), { dest: "https://site.example/a/page?q=1#h" });
+    assert.deepEqual(navTarget("https://site.example/x", "https://site.example/y"), { dest: "https://site.example/x" });
+});
+
+test("navTarget: a cross-origin URL is refused (same-site only, v1)", () => {
+    const r = navTarget("https://evil.example/x", "https://site.example/step1");
+    assert.ok("error" in r, "cross-origin is an error, not a destination");
+    assert.match(r.error, /Cross-origin/, "the message says why");
+    // a different PORT is a different origin too
+    assert.ok("error" in navTarget("http://site.example:8081/", "http://site.example:8080/"));
+});
+
+test("navTarget: non-http(s) schemes and empty/invalid input are refused", () => {
+    assert.match(navTarget("javascript:alert(1)", "https://site.example/").error, /http\(s\)/);
+    assert.match(navTarget("mailto:a@b.com", "https://site.example/").error, /http\(s\)/);
+    assert.match(navTarget("", "https://site.example/").error, /non-empty/);
+    assert.match(navTarget("   ", "https://site.example/").error, /non-empty/);
+});
 
 test("elementReference: a plain path → document.querySelector('…')", () => {
     assert.equal(elementReference("body > div#main > button.foo"),

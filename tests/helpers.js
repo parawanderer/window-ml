@@ -294,6 +294,12 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps } = {}) {
                 sendMessage: (message, cb) => {
                     // The callback is OPTIONAL in the real API — fire-and-forget messages
                     // (e.g. ABORT_TASK) pass none, so never assume `cb` exists.
+                    // Cross-page housekeeping: injected posts PAGE_ADOPT_HELLO on load → content sends
+                    // CONTENT_READY on EVERY page. It carries no run to adopt in these node:vm tests, so
+                    // answer it empty and keep it OUT of runtimeCalls (like the config/caps probes) — else it
+                    // shifts every relay/agent test's message indices. (The handler itself is tested in
+                    // tests/background.test.js against the real background.)
+                    if (message && message.type === "CONTENT_READY") { queueMicrotask(() => cb && cb({ adopt: [] })); return; }
                     queueMicrotask(async () => {
                         let response = onRuntimeMessage ? await onRuntimeMessage(message) : undefined;
                         // Fall back to the default probe answer for the agent's

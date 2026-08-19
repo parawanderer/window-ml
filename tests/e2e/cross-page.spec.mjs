@@ -66,13 +66,19 @@ test("sanity: the agent reads a value off the page via a DOM tool and answers wi
     await page.close();
 });
 
-// The acceptance test for the feature under construction. Skipped until the navigate tool + nav barrier +
-// re-adopt land; flip to `test(...)` then. Script: navigate to /step2, then /step3, read the code, answer.
-test.skip("cross-page: a background run survives a same-origin navigation and reads the far page", async () => {
+// The acceptance test for cross-page persistence. The default toolset includes `exec` (an approval tool),
+// so under debugMode:"off" on a non-whitelisted origin the run is BACKGROUND-hosted — the durable spine that
+// survives the navigation. Script: navigate to /step2, then /step3, read the code, answer.
+//
+// We do NOT await ml.agent()'s return: the caller's page main-world context is DESTROYED by the navigation,
+// so its promise can never resolve back into page.evaluate (that's the whole reason the loop must live in
+// the background). Instead we observe the run through the STABLE fake-LLM, which sees every model turn.
+test("cross-page: a background run survives a same-origin navigation and reads the far page", async () => {
     const page = await ext.context.newPage();
     await page.goto(site.url + "/");
     await waitForMl(page);
 
+    const before = fake.calls().length;   // calls accumulate across tests → measure THIS run's tail
     fake.setScript([
         { tool: "navigate", args: { url: "/step2" } },
         { tool: "navigate", args: { url: "/step3" } },
@@ -84,10 +90,15 @@ test.skip("cross-page: a background run survives a same-origin navigation and re
             return { content: m ? `The code is ${m[0]}.` : "I could not find the code." };
         },
     ]);
-    const result = await page.evaluate(() =>
-        window.ml.agent("Go to step 2, then step 3, and tell me the code shown on step 3."));
-    expect(JSON.stringify(result)).toContain("CROSSPAGE-9471");
-    // …and the run really walked the pages, not stalled on page 1.
+    // Fire-and-forget: the promise dies with the page context; the background run carries on.
+    await page.evaluate(() => { window.ml.agent("Go to step 2, then step 3, and tell me the code shown on step 3."); return true; });
+
+    // All FOUR model turns fired → the loop kept stepping across BOTH navigations (re-adopting each new page).
+    await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(4);
+    // The real proof of re-adoption: the DOM tool ran on /step3 and the code it read reached the model's final
+    // turn. A FAILED adopt would feed the model a "no active run" error instead — so this string can't appear.
+    const seen = (fake.calls().at(-1).messages || []).map((m) => (typeof m.content === "string" ? m.content : "")).join(" ");
+    expect(seen).toContain("CROSSPAGE-9471");
     expect(page.url()).toContain("/step3");
     await page.close();
 });

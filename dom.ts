@@ -48,6 +48,21 @@ export const clipOut = (str: string, n: number): string => {
  */
 export const errText = (e: unknown): string => (e && (e as Error).message) ? (e as Error).message : String(e);
 
+/** Resolve a navigation target for the `navigate` tool: the absolute destination when `url` is a valid
+ *  http(s) SAME-ORIGIN target (relative URLs resolve against `currentHref`), else `{ error }` explaining the
+ *  refusal. Cross-origin is refused here (v1) — continuing a run on another origin is a trust escalation
+ *  (per-origin consent) that isn't wired yet, so the caller relays the message to the model rather than
+ *  silently failing. Pure, so it's unit-testable without a live document. */
+export const navTarget = (url: string, currentHref: string): { dest: string } | { error: string } => {
+    if (typeof url !== "string" || !url.trim()) return { error: "navigate needs a non-empty URL." };
+    let here: URL, dest: URL;
+    try { here = new URL(currentHref); } catch { return { error: "Could not read the current page URL." }; }
+    try { dest = new URL(url, currentHref); } catch { return { error: `"${url}" is not a valid URL.` }; }
+    if (dest.protocol !== "http:" && dest.protocol !== "https:") return { error: `navigate only supports http(s) URLs (got "${dest.protocol}").` };
+    if (dest.origin !== here.origin) return { error: `Cross-origin navigation (to ${dest.origin}) is not enabled for this session — same-site pages only. Tell the user you can't leave ${here.origin}.` };
+    return { dest: dest.href };
+};
+
 /**
  * Escape an id/class token so it's a VALID CSS identifier. Tailwind classes are
  * full of chars that are illegal unescaped in a selector — `/` (opacity, bg-black/5),

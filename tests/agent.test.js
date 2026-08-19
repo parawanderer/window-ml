@@ -1664,7 +1664,7 @@ async function agentDebugEvents(tool) {
     win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
     win.postMessage({ __mlSidebar: "ready" });
     await new Promise(r => setTimeout(r, 0));
-    const res = await world.ml.agent("x", { tools: [t], vision: false });
+    const res = await world.ml.agent("x", { tools: [t], vision: false, navigate: false });
     return { events, res, step: events.find(e => e.kind === "agent-step" && e.tool === tool.name && !e.pending) };
 }
 
@@ -1721,6 +1721,51 @@ test("python_exec in the toolset adds the computation-delegation clause to the s
     assert.match(sys, /python_exec/, "the clause names the tool");
     assert.match(sys, /do NOT calculate|NEVER|deterministic/i, "and tells the model to delegate computation");
     assert.ok(!/tool \(JavaScript\)/.test(sys), "python takes precedence — not doubled with the JS-compute clause");
+});
+
+test("navigate is auto-wired by default: the tool is in the toolset + config logs navigation ON, no nav-off clause", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("done")]) });
+    const win = world.context.window;
+    const events = [];
+    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    win.postMessage({ __mlSidebar: "ready" });
+    await new Promise(r => setTimeout(r, 0));
+    await world.ml.agent("x", { vision: false });   // default toolset, navigation defaults ON
+    const cfg = events.find(e => e.kind === "agent").config;
+    assert.ok(cfg.tools.some(t => t.name === "navigate"), "the navigate tool is auto-wired into the default toolset");
+    assert.equal(cfg.navigate, true, "the agent-options log records navigation ON");
+    assert.ok(!/CANNOT navigate/.test(cfg.system), "no nav-off clause when navigation is enabled");
+});
+
+test("navigate: false strips the navigate tool AND appends the nav-off clause to the system prompt", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("done")]) });
+    const win = world.context.window;
+    const events = [];
+    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    win.postMessage({ __mlSidebar: "ready" });
+    await new Promise(r => setTimeout(r, 0));
+    await world.ml.agent("x", { vision: false, navigate: false });
+    const cfg = events.find(e => e.kind === "agent").config;
+    assert.ok(!cfg.tools.some(t => t.name === "navigate"), "no navigate tool when navigation is off");
+    assert.equal(cfg.navigate, false, "the agent-options log records navigation OFF");
+    assert.match(cfg.system, /CANNOT navigate to other pages/, "the nav-off clause tells the model it can't navigate");
+});
+
+test("_rebuildToolset reconstructs the builtin toolset from names (cross-page re-adoption)", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("done")]) });
+    const ml = world.ml;
+    // A HUD-shaped kit: read-only DOM base + click + navigate + delegated look/locate (driverSees:false).
+    const rebuild = {
+        toolNames: ["findByText", "exec", "click", "navigate", "look", "locate"],
+        model: "m", driverSees: false, visionModel: "vm", groundingModel: null, groundingRange: 1000, pierceClosed: false,
+    };
+    const names = ml._rebuildToolset(rebuild).map(t => t.name).sort();
+    assert.deepEqual(names, ["click", "exec", "findByText", "locate", "look", "navigate"].sort(),
+        "every named builtin is rebuilt (and nothing else)");
+    // A name NOT in the run is not conjured; a native-vision run rebuilds the capture-only look.
+    const nativeLook = ml._rebuildToolset({ ...rebuild, toolNames: ["look"], driverSees: true });
+    assert.equal(nativeLook.length, 1);
+    assert.ok(nativeLook[0].capabilities && nativeLook[0].capabilities.includes("vision"), "native look keeps the vision capability");
 });
 
 test("exec without python_exec adds the JS-compute fallback clause", async () => {

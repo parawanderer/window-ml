@@ -118,6 +118,12 @@ export const WAIT_CLAUSE =
     "`wait` tool BEFORE you look/read again, and use it GENEROUSLY: prefer `wait({ selector })` " +
     "to wait until a specific element appears (the page has settled), or `wait({ ms })` for a " +
     "fixed pause. Reading a mid-update page gives stale results and wastes steps — waiting is cheap.";
+// Appended when ml.agent({ navigate: false }) — navigation is disabled for this run, so the model is told
+// upfront rather than wasting steps on a nav that would silently end the run.
+export const NAV_OFF_CLAUSE =
+    "\n\nThis session CANNOT navigate to other pages: there is no `navigate` tool, and clicking a link that " +
+    "loads a new page will NOT keep this run alive. If the task needs a different page or URL, do NOT attempt " +
+    "it — tell the user which page to open (and what to run there) instead of navigating.";
 export const EXEC_COMPUTE_CLAUSE =
     "\n\nYou are a language model: you predict tokens, you do NOT calculate. So NEVER work out " +
     "multi-step arithmetic, list/table totals, counts, averages, or data transformations in your " +

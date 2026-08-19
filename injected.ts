@@ -34,10 +34,10 @@ import type {
 } from "./contract";
 import { detectGroundingModel, DEFAULT_GROUNDING_RANGE } from "./contract";
 import { evalReadonly } from "./readonly-exec";
-import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement } from "./dom";
-import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_NOTE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_EXEC_NOTE, IFRAME_CLAUSE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, askAboutTask } from "./prompts";
+import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement, navTarget } from "./dom";
+import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_NOTE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_EXEC_NOTE, IFRAME_CLAUSE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, NAV_OFF_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, askAboutTask } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, markSeen, PT_LOOK_RADIUS, BOX_RE, resolveBox, agentState } from "./util";
-import type { ShotBox, ServerTool, VisionMemory } from "./contract";
+import type { ShotBox, ServerTool, VisionMemory, RebuildConfig } from "./contract";
 import { annotate, pickAccentColorForTarget } from "./locate";
 import { suspiciousArgsWarning, suspiciousChars } from "./security";
 import { emitDebug, debugId, shortHash, sessionRegistry, agentRegistry, handleRegistry, enterAgentRun, exitAgentRun, resetSubcallUsage, subcallUsage } from "./bus";
@@ -497,7 +497,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
          *   `elements` is the live DOM node(s) the model designated via an
          *   `answer`-capable tool (empty for tasks that just act on the page).
          */
-        agent: async function(task: string, { tools = null, extraTools = [], system = null, hints = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null, resume = null, silent = false, unattended = false, images = [], _control = null }: {
+        agent: async function(task: string, { tools = null, extraTools = [], system = null, hints = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null, resume = null, silent = false, unattended = false, navigate = true, images = [], _control = null }: {
             tools?: MlTool[] | null;
             extraTools?: MlTool[];
             system?: string | null;
@@ -514,6 +514,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             resume?: string | null;
             silent?: boolean;
             unattended?: boolean;
+            navigate?: boolean;   // may this run navigate to other pages (wires the `navigate` tool + cross-page persistence)? default true
             images?: (string | HTMLImageElement)[];   // attachments for THIS turn (composer paste/upload)
             _control?: AgentControl | null;   // internal: a handle's persistent session state (ml.createAgent). Absent → a throwaway per-call one.
         } = {}): Promise<AgentResult> {
@@ -540,6 +541,10 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             // delegated vision sub-call uses. Both stay at their defaults unless a vision model resolves.
             let driverSees = false;
             let runVisionModel: string | null = null;
+            // Grounding facts (opt-in) resolved in the vision block below — hoisted so the cross-page
+            // rebuild-config can carry them, letting a re-adopted page rebuild `locate` identically.
+            let runGroundingModel: string | null = null;
+            let runGroundingRange = DEFAULT_GROUNDING_RANGE;
             // Config, fetched once (used for vision resolution + the read-only exec
             // auto-approve fast-path below).
             const agentCfg = await this.config().catch(() => null);
@@ -599,10 +604,16 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                             groundingModel = cfg.groundingModel.trim() || detectGroundingModel(await this.models()) || null;
                         }
                     } catch { /* config/models unavailable → Set-of-Marks only */ }
+                    runGroundingModel = groundingModel; runGroundingRange = groundingRange;   // carried for cross-page rebuild
                     // driverSees rides the ToolContext (below), not a build opt; memory is the shared dedup registry.
                     toolset.push(this.locateTool({ model: visionModel, groundingModel, groundingRange, memory: visionMemory }));
                 }
             }
+            // Cross-page navigation (idea #1). Default ON: wire a `navigate(url)` tool so a background-hosted
+            // run can walk between same-site pages, surviving the full-page load (the barrier + re-adopt path
+            // below). `navigate: false` disables it entirely — no tool, no cross-page persistence (the run
+            // ends at a nav), and NAV_OFF_CLAUSE tells the model so instead of it wasting steps trying.
+            if (navigate && !toolset.some(t => t.name === "navigate")) toolset.push(this.navigateTool());
             // Composer attachments for THIS turn's first user message (a screenshot pasted/uploaded into the
             // HUD/sidebar). A vision-capable driver sees them natively; otherwise transcribe via the reader
             // (ml.read → the OCR model) and fold the text into the task, so a text-only agent still gets the
@@ -669,6 +680,9 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 // Headless run: tell the model upfront it's unattended (read-only only), so it doesn't
                 // waste steps attempting clicks/typing/mutations that the gate below will just refuse.
                 if (unattended) systemPrompt += UNATTENDED_CLAUSE;
+                // Navigation disabled: say so upfront (no navigate tool + a nav ends the run) so the model
+                // reports back instead of clicking a link and silently dying.
+                if (!navigate) systemPrompt += NAV_OFF_CLAUSE;
             }
             if (hints) systemPrompt += `\n\nTask-specific notes:\n${hints}`;
             if (env) {
@@ -707,6 +721,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 tools: toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval, vision: !!(t.capabilities && t.capabilities.includes("vision")), description: t.description, parameters: t.parameters, summary: t.summary })),
                 maxSteps, think: (think === true || think === false) ? think : null, env, vision: vision ?? null,
                 driverSees, visionModel: runVisionModel, hints: hints || null, silent: silent || undefined, unattended: unattended || undefined,
+                navigate,
             } });
             // A CONTINUATION (a handle's later run() with a task) shows the follow-up as a user message in the
             // conversation — the sidebar renders it exactly like the first task / a mid-run say (all "you").
@@ -785,6 +800,16 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                         // turn groups stay distinct on the background path too — otherwise turn N's step 1
                         // collides with turn 1's and the chat log scrambles).
                         stepBase: control.stepBase, seqBase: control.seqBase,
+                        // Cross-page persistence: whether to track this run against its tab (survive a nav) +
+                        // the serializable state a fresh document needs to rebuild the BUILTIN toolset on
+                        // re-adopt. `navigate: false` opts out of both.
+                        crossPage: navigate,
+                        rebuild: {
+                            toolNames: toolset.map(t => t.name),
+                            model: runModel, driverSees, visionModel: runVisionModel,
+                            groundingModel: runGroundingModel, groundingRange: runGroundingRange,
+                            pierceClosed,
+                        },
                     }, (result, data) => {
                         // Sync the run's final history back into the handle (page-authoritative). This is why
                         // a.messages populates + a follow-up run()/say() continues, on the background path too.
@@ -1389,6 +1414,78 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             return buildTypeTool(this);
         },
         /**
+         * Build the `navigate(url)` tool: navigate the tab to another SAME-SITE URL, continuing the run on
+         * the new page. Auto-wired into ml.agent unless `navigate: false`. Same-origin only in v1 — a
+         * cross-origin URL is refused (`navTarget`) pending per-origin consent. The nav is DEFERRED a tick so
+         * this tool's result posts back to the loop before the document unloads; the navigation barrier then
+         * holds the next delegated tool until the fresh page re-adopts the run.
+         *
+         * @returns {MlTool} A tool with `name: "navigate"` (no approval for same-site).
+         */
+        navigateTool: function(): MlTool {
+            const ml = this;
+            return ml.defineTool({
+                name: "navigate",
+                summary: "Navigates the tab to another same-site page.",
+                description: "Navigate the browser tab to another URL on the SAME site (absolute or " +
+                    "site-relative, e.g. \"/step2\" or \"https://this-site.example/page\"). The run CONTINUES " +
+                    "on the new page: after navigating, `wait` for it to settle, then read/act as usual. " +
+                    "Same-origin ONLY — a cross-site URL is refused (tell the user instead). Prefer this over " +
+                    "clicking a link when you already know the destination URL.",
+                parameters: {
+                    type: "object",
+                    properties: { url: { type: "string", description: "The URL to go to (absolute or site-relative, e.g. \"/dashboard\")." } },
+                    required: ["url"],
+                },
+                run: async ({ url }: { url?: unknown } = {}): Promise<string> => {
+                    const t = navTarget(typeof url === "string" ? url : "", location.href);
+                    if ("error" in t) return `Error: ${t.error}`;
+                    // Defer so the RESULT posts back to the (background) loop before the document unloads —
+                    // otherwise the delegated-tool round-trip is lost and the run can't record the nav.
+                    setTimeout(() => { try { location.href = t.dest; } catch { /* navigation blocked */ } }, 0);
+                    return `Navigating to ${t.dest} … wait for the new page to load, then continue.`;
+                },
+            });
+        },
+        /**
+         * Cross-page persistence: rebuild a run's BUILTIN toolset from a serializable {@link RebuildConfig}
+         * (tool names + carried vision facts) on a fresh document after a same-site navigation. Only builtin
+         * tools cross a nav — custom function tools (passed via `tools`/`extraTools`) don't serialize, so a
+         * cross-page run is limited to the default/HUD kit by design. Vision facts are CARRIED (not re-probed),
+         * so native-vs-delegated `look` on the new page matches the original run exactly.
+         */
+        _rebuildToolset: function(rebuild: RebuildConfig): MlTool[] {
+            const ml = this;
+            const want = new Set(rebuild.toolNames);
+            const out: MlTool[] = [];
+            // Read-only DOM base, filtered to the run's names.
+            for (const t of (ml.domTools || [])) if (want.has(t.name)) out.push(t);
+            // Builtin interaction/privileged tools (originally added via extraTools — e.g. the HUD kit).
+            if (want.has("click")) out.push(ml.clickTool());
+            if (want.has("type")) out.push(ml.typeTool());
+            if (want.has("python_exec")) out.push(ml.pythonTool());
+            if (want.has("chat_metadata")) out.push(ml.chatMetaTool());
+            if (want.has("navigate")) out.push(ml.navigateTool());
+            // Auto-wired vision tools, rebuilt from the carried facts (no re-probe) with a fresh near-area memory.
+            if (want.has("look") || want.has("locate")) {
+                const memory: VisionMemory = { seen: [], boundariesSeen: new Set() };
+                if (want.has("look")) out.push(rebuild.driverSees ? ml._nativeLookTool(memory) : ml.lookTool({ model: rebuild.visionModel, memory }));
+                if (want.has("locate")) out.push(ml.locateTool({ model: rebuild.visionModel, groundingModel: rebuild.groundingModel, groundingRange: rebuild.groundingRange, memory }));
+            }
+            return out;
+        },
+        /**
+         * Cross-page persistence: re-adopt a background-hosted run on a fresh document (after a same-site
+         * navigation). Rebuild the run's builtin toolset from the carried config + re-register it under the
+         * run id, so the background's held delegated tool can execute here. Re-applies the closed-shadow
+         * flag first (a module flag the new document reset). Called from the CONTENT_READY → adopt round-trip.
+         */
+        _adoptRun: function(runId: string, rebuild: RebuildConfig): void {
+            setPierceClosedShadow(!!rebuild.pierceClosed);
+            const toolset = this._rebuildToolset(rebuild);
+            registerRun(runId, toolset, rebuild.model ?? null, !!rebuild.driverSees, rebuild.visionModel ?? null);
+        },
+        /**
          * Run a sandboxed Python snippet (Pyodide/WASM in an offscreen doc) with numpy +
          * Pillow — for pixel/array/spatial work Python does better than JS. `image` (a CSS
          * selector, an `@pt:`/`@box:` token, or an Element) is screenshotted and injected as
@@ -1895,6 +1992,23 @@ class AgentHandle implements MlAgentHandle, AgentControl {
     // listen for the background loop's delegated tool-run requests (relayed by content.ts
     // as PAGE_TOOL_RUN). A no-op until an agent run registers a toolset via _registerRun.
     installToolDelegation();
+
+    // Cross-page persistence: a FRESH document (after a same-site navigation) must RE-ADOPT any
+    // background-hosted run its tab still hosts — rebuild + re-register the toolset so the loop's held
+    // delegated tool can run here. content.ts asks the background on our behalf (CONTENT_READY) and relays
+    // the rebuild-config back as an ADOPT_RUN window message; we rebuild, then post RUN_READOPTED so the
+    // background releases the navigation barrier. We DRIVE it (post PAGE_ADOPT_HELLO now that this listener
+    // exists) so content.ts only sends ADOPT_RUN after we're listening — avoiding a missed message on the
+    // async <script> injection.
+    window.addEventListener("message", (e: MessageEvent) => {
+        if (e.source !== window || !e.data || e.data.type !== "ADOPT_RUN") return;
+        const { runId, rebuild } = e.data as { runId?: string; rebuild?: RebuildConfig };
+        if (!runId || !rebuild) return;
+        try { (window.ml as unknown as MlApi)._adoptRun(runId, rebuild); }
+        catch { /* rebuild failed → the barrier times out and the loop gets a clear "no active run" error */ }
+        window.postMessage({ type: "RUN_READOPTED", runId }, "*");
+    });
+    window.postMessage({ type: "PAGE_ADOPT_HELLO" }, "*");
 
     // Sidebar hover-highlight for @pt/@box: the shell (a content script) can't read this main-world
     // point/box registry, so it asks us to resolve a token to viewport coords, then draws the overlay

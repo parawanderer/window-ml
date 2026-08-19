@@ -560,6 +560,12 @@ export interface AgentOptions {
     silent?: boolean;
     /** headless mode: no human to approve, so any approval-gated call is REFUSED with a steer to read-only. exec/python_exec are wired ONLY when their auto-approve config is on (read-only survey / sandbox), and told full/mutating use is disabled; otherwise dropped. Auto-approvable read-only ops still run. */
     unattended?: boolean;
+    /** may this run navigate to other pages? Default true: a `navigate(url)` tool is wired (same-origin
+     *  only in v1; cross-origin is refused pending per-origin consent), and a background-hosted run SURVIVES
+     *  a same-site full-page navigation (re-adopting the new document). false → no `navigate` tool AND no
+     *  cross-page persistence (a link/click that loads a new page ends the run), plus a system-prompt note
+     *  telling the model it can't navigate. */
+    navigate?: boolean;
 }
 
 /** A stateful ml.agent handle (what ml.createAgent returns) — the agent analogue of ml.createChat's
@@ -662,6 +668,8 @@ export type BackgroundMessageType =
     | "START_RUN"     // design A: run an ml.agent loop in the background (unforgeable gate); tools delegate to the page
     | "RESUME_RUN"    // design A: continue a stored background run (its history lives in the SW) with a follow-up task
     | "INJECT_MESSAGE"   // a.say() mid-run: push a user message into a RUNNING background run's inbox (steer it live)
+    | "CONTENT_READY"   // cross-page: a fresh document loaded — the SW replies with any rebuild-config for runs this tab hosts
+    | "RUN_READOPTED"   // cross-page: the fresh document re-registered a run's toolset → release the navigation barrier
     | "SET_APPROVAL"; // design A: the sidebar's approve/deny decision for a pending background-run gate (origin-authed)
 
 /* ------------------- design A: background → page tool delegation ------------------- */
@@ -717,6 +725,34 @@ export interface StartRunPayload {
      *  the page, where the content-script shell renders them in a lazily-mounted acrylic corner CARD (a
      *  curated view of the run). Every surface gates through the same origin-authed SET_APPROVAL. */
     surface: "overlay" | "devtools" | "off";
+    /** cross-page persistence: false → this run does NOT survive a navigation (the background skips tracking
+     *  it against its tab, so a nav ends it). Default (absent/true) → the navigation barrier holds delegated
+     *  tools across a same-site nav until the new document re-adopts the run. Set false by `navigate: false`. */
+    crossPage?: boolean;
+    /** Enough of the PAGE-resolved run state to rebuild its BUILTIN toolset on a fresh document after a
+     *  same-site navigation (cross-page persistence). The background stores it while the run is live and
+     *  sends it back on re-adopt; the new page's `_adoptRun` reconstructs + re-registers the toolset. Only
+     *  builtin tools cross a nav (custom function tools don't serialize), so this is names + vision facts. */
+    rebuild?: RebuildConfig;
+}
+
+/** The serializable state a fresh document needs to rebuild a background-hosted run's BUILTIN toolset after
+ *  a same-site navigation (see StartRunPayload.rebuild). Vision facts are CARRIED from the original build,
+ *  not re-probed, so native-vs-delegated `look` on the new page matches the original run exactly. */
+export interface RebuildConfig {
+    /** the run's builtin tool NAMES (custom function tools are excluded — they can't cross a nav) */
+    toolNames: string[];
+    /** the run's driver model (for the re-registered ToolContext) */
+    model: string | null;
+    /** does the driver's own model see pixels natively (native vs delegated look/locate feedback) */
+    driverSees: boolean;
+    /** the resolved vision reader a delegated sub-call uses (null = none) */
+    visionModel: string | null;
+    /** grounding model + coordinate range, for rebuilding `locate` (null model = Set-of-Marks only) */
+    groundingModel: string | null;
+    groundingRange: number;
+    /** re-apply the closed-shadow-piercing module flag on the new document */
+    pierceClosed: boolean;
 }
 
 /** SET_APPROVAL payload — the sidebar app's decision for a pending background-run approval, keyed by
@@ -966,6 +1002,8 @@ export interface DebugAgentConfig {
     silent?: boolean;
     /** headless run: approval-gated calls are refused (no human to approve) */
     unattended?: boolean;
+    /** may this run navigate to other pages (the `navigate` tool + cross-page persistence)? false = off */
+    navigate?: boolean;
 }
 export interface DebugAgentStart extends DebugBase { kind: "agent"; task: string; images?: string[]; model: string | null; maxSteps: number; config: DebugAgentConfig; }
 export interface DebugAgentStep extends DebugBase {
@@ -1092,6 +1130,9 @@ export interface MlApi {
     clickTool(): MlTool;
     /** Built-in type tool factory. */
     typeTool(): MlTool;
+    /** Built-in `navigate(url)` tool factory (auto-wired into ml.agent unless `navigate: false`): navigate
+     *  the tab to another SAME-SITE URL, continuing the run on the new page (cross-origin refused, v1). */
+    navigateTool(): MlTool;
     /** Run a sandboxed Python snippet (Pyodide/WASM, numpy + Pillow) with an optional
      *  screenshot injected as `img`/`img_np`. No network/filesystem/DOM. */
     pythonExec(code: string, opts?: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Element | Record<string, string | Element> | null }): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; resultTable?: { columns: string[]; rows: (string | number | null)[][] } }>;
@@ -1160,6 +1201,12 @@ export interface MlApi {
     _resolveVisionModel(agentModel: string | null, vision: boolean | string | null): Promise<string | null>;
     _modelSees(model: string | null): Promise<boolean>;
     _nativeLookTool(memory?: VisionMemory): MlTool;
+    /** Cross-page persistence: rebuild a run's BUILTIN toolset from a serializable RebuildConfig (tool names
+     *  + carried vision facts) on a fresh document after a same-site navigation. */
+    _rebuildToolset(rebuild: RebuildConfig): MlTool[];
+    /** Cross-page persistence: re-adopt a background-hosted run on a fresh document — rebuild + re-register
+     *  its toolset so the held delegated tool can run here (called from the CONTENT_READY → adopt round-trip). */
+    _adoptRun(runId: string, rebuild: RebuildConfig): void;
     /** The crop transform (viewport top-left + dpr) of a raw screenshot of `target` — so a python_exec
      *  image-pixel coordinate can be projected to the viewport for a clickable @pt/@box. */
     _shotBox(target: string | Element, margin?: number): ShotBox | null;

@@ -278,6 +278,31 @@ X {`, one member per line, JSDoc above) and **throws** rather than silently trun
 stops holding; `tests/api-docs.test.mjs` regenerates and diffs the checked-in output, so a
 contract.ts edit can't leave the shipped doc stale.
 
+**Cross-page persistence (`navigate` + re-adoption).** A BACKGROUND-hosted run (design A) survives a
+same-origin full-page navigation: the SW is the durable spine, the page an ephemeral limb, delegation keyed by
+the stable `tabId`. The seam is `nav-barrier.ts` — a per-tab barrier every `RUN_TOOL_IN_PAGE` goes through
+(`delegateSend` awaits `navBarrier.whenReady(tabId)`; instant on an idle tab, so single-page runs are
+unaffected). Flow: the `navigate(url)` tool (`ml.navigateTool()`; same-origin only via `navTarget` in dom.ts,
+pure/tested; **defers `location.href` a tick** so its result posts back before unload) fires → the background
+**engages the barrier the instant that result returns** (`delegateTool`, gated on a non-error result) — NOT
+only via `webNavigation.onCommitted`, because the loop's next fast local model call + tool delegation RACES
+ahead of that async event and would fire the next tool into the dying document (the hard-won bug;
+`onCommitted` is now just the backup for IMPLICIT link-click navs). The new document RE-ADOPTS: injected posts
+`PAGE_ADOPT_HELLO` on load → content.ts `CONTENT_READY` → the background replies with the run's
+`RebuildConfig` (tool names + carried vision facts) from a **live `runRebuilds` map** (set at START — `bgRuns`
+only snapshots at run END, too late for a mid-run nav) → content posts `ADOPT_RUN` → injected `_adoptRun`
+rebuilds the **BUILTIN** toolset (`_rebuildToolset`; custom function tools can't serialize, so cross-page is
+the default/HUD kit only) + `registerRun` → `RUN_READOPTED` → `navBarrier.noteReadopted` releases the held
+tool. The agent option **`navigate`** (default true) gates the tool + persistence: `false` → no tool, no
+`trackRun` (`StartRunPayload.crossPage`), a `NAV_OFF_CLAUSE` telling the model it can't navigate, and a
+`config.navigate` line in the "agent options" debug log. A page-hosted run (no debug surface + no approval
+tool) still dies at a nav — persistence needs the background spine (the HUD/off-with-approval/devtools cases).
+The `ml.agent()` PROMISE also dies with the caller's navigated-away context; the run continues in the
+background and its result surfaces in the HUD/debug stream, not as that call's return value. Verified e2e
+(`tests/e2e/cross-page.spec.mjs`, observing via the stable fake-LLM). Variant B (cross-domain, per-origin
+consent) + overlay-HUD replay-across-nav + durable storage-backed resume are still open. Plan +
+STATUS/HANDOFF: `tmp/cross-page-agent.md`.
+
 **Agent runs in the debug sidebar.** `ml.agent` emits its own debug-event kinds
 (not `chat`): `agent` (run start: task + model), `agent-step` (a thought OR a tool
 call with args/result; `elements` is a **count**, since real DOM nodes can't cross
