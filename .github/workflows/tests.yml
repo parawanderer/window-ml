@@ -13,7 +13,10 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node: [20, 22]
+        # 22 + 24 are the Active LTS lines; 26 is Current (catches forward-compat). Node 20 was
+        # dropped — it's EOL, and tsx loads a `.css` import via the CJS path there, which the
+        # ESM-only css-null test stub can't intercept (Node 22+ keeps it on the ESM loader).
+        node: [22, 24, 26]
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v6
