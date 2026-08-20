@@ -3,8 +3,7 @@
 // come out as PNG sidecars in the zip, referenced from run.md — the same treatment as look/step images.
 import { test } from "node:test";
 import assert from "node:assert";
-import { register } from "node:module";
-register("./css-null.mjs", import.meta.url);   // export.ts imports a bundled .css (hljs theme) — stub it for node
+import "./stub-css.mjs";   // export.ts imports a bundled .css (hljs theme) — stub it (both loader paths) BEFORE the import below
 const { serializeSession } = await import("../sidebar/export.ts");
 
 const PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";

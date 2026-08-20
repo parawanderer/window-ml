@@ -8,8 +8,7 @@
 //
 // Writes tests/e2e/artifacts/: run.md (canonical), transcript.txt, events.json, step-<n>.png, final.png.
 
-import { register } from "node:module";
-register("../css-null.mjs", import.meta.url);   // export.ts imports a bundled .css → stub it for node
+import "../stub-css.mjs";   // export.ts imports a bundled .css → stub it (both loader paths) before the import below
 const { serializeSession } = await import("../../sidebar/export.ts");
 
 import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
