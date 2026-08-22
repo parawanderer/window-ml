@@ -298,10 +298,15 @@ tool. The agent option **`navigate`** (default true) gates the tool + persistenc
 `config.navigate` line in the "agent options" debug log. A page-hosted run (no debug surface + no approval
 tool) still dies at a nav — persistence needs the background spine (the HUD/off-with-approval/devtools cases).
 The `ml.agent()` PROMISE also dies with the caller's navigated-away context; the run continues in the
-background and its result surfaces in the HUD/debug stream, not as that call's return value. Verified e2e
-(`tests/e2e/cross-page.spec.mjs`, observing via the stable fake-LLM). Variant B (cross-domain, per-origin
-consent) + overlay-HUD replay-across-nav + durable storage-backed resume are still open. Plan +
-STATUS/HANDOFF: `tmp/cross-page-agent.md`.
+background and its result surfaces in the HUD/debug stream, not as that call's return value.
+**HUD replay-across-nav:** the fresh page's card rebuilds MID-run with its history — the background buffers a
+cross-page run's whole debug-event stream per tab (`runReplayBuffer`, populated in `emitStep`/`emitLifecycle`
+so the `agent` start is included even when the page-side caller is what fans it live) and, on the
+`CONTENT_READY` re-adopt hook, replays it to the destination page; `resetDebug` is suppressed while a run is
+live on the tab so the shell's nav-remount doesn't wipe the history (this also keeps a DevTools panel's
+sessions across the nav). Verified e2e (`tests/e2e/cross-page.spec.mjs`, incl. a replay test + observing via
+the stable fake-LLM). Variant B (cross-domain, per-origin consent) + durable storage-backed resume are still
+open. Plan + STATUS/HANDOFF: `tmp/cross-page-agent.md`.
 
 **Approval-over-IPC (`__mlApprovals` + `approvalRouting`).** A background-hosted run's privileged gate can
 be resolved from OUTSIDE the browser, so an automated driver approves/denies exactly like a human click — the

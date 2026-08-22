@@ -878,6 +878,18 @@ const activeRuns = new Map<number, Set<string>>();   // tabId → runIds hosted 
 // The rebuild-config for each LIVE cross-page run (runId → RebuildConfig), set at START and cleared in the
 // run's finally. bgRuns only stores a snapshot at run COMPLETION, so a MID-run navigation reads this instead.
 const runRebuilds = new Map<string, import("./contract").RebuildConfig>();
+// Overlay/off REPLAY buffer (cross-page): a background-hosted, cross-page-capable run's FULL debug-event
+// stream per tab, so a FRESH page after a same-site navigation can rebuild the run's card MID-run (with its
+// history) instead of only catching the tail. Kept separate from the DevTools debugBuffer (further below) so
+// the two surfaces' replay don't entangle. Bounded ring; cleared when the tab's runs end (untrackRun).
+const runReplayBuffer = new Map<number, unknown[]>();
+const REPLAY_CAP = 400;   // drop-oldest (screenshots are big)
+const bufferReplay = (tabId: number, event: unknown): void => {
+    let buf = runReplayBuffer.get(tabId);
+    if (!buf) { buf = []; runReplayBuffer.set(tabId, buf); }
+    buf.push(event);
+    if (buf.length > REPLAY_CAP) buf.splice(0, buf.length - REPLAY_CAP);
+};
 const trackRun = (tabId: number, runId: string, rebuild?: import("./contract").RebuildConfig): void => {
     const s = activeRuns.get(tabId) ?? new Set<string>();
     s.add(runId); activeRuns.set(tabId, s);
@@ -888,7 +900,7 @@ const untrackRun = (tabId: number, runId: string): void => {
     const s = activeRuns.get(tabId);
     if (!s) return;
     s.delete(runId);
-    if (!s.size) { activeRuns.delete(tabId); navBarrier.forget(tabId); }
+    if (!s.size) { activeRuns.delete(tabId); navBarrier.forget(tabId); runReplayBuffer.delete(tabId); }
 };
 // EVERY RUN_TOOL_IN_PAGE send goes through this: it waits out any in-flight navigation on the tab before
 // delegating. On a tab with no navigation pending, whenReady resolves immediately (zero cost) — so a
@@ -1035,6 +1047,14 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             if (rebuild) adopt.push({ runId, rebuild });
         }
         sendResponse({ adopt });
+        // Overlay/off HUD replay-across-nav: this tab hosts a live run and just got a fresh document, so
+        // stream the run's buffered history to it — the fresh card/overlay rebuilds MID-run (start + every
+        // step so far) instead of only showing post-nav events. The shell buffers these __mlFromBg events
+        // while its iframe mounts, so a small ordering race against the shell handshake is absorbed.
+        if (tabId != null && ids && ids.size) {
+            const history = runReplayBuffer.get(tabId) || [];
+            for (const event of history) chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => {});
+        }
         return true;   // sendResponse already called synchronously
     }
     if (message.type === "RUN_READOPTED") {
@@ -1189,6 +1209,8 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             // shell drops the page copy when no card is mounted, and never loops it back to the panel.
             chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => { /* tab gone / no receiver */ });
             if (p.surface === "devtools") relayDebugEvent(tabId, event);
+            // Cross-page: remember this step so a fresh page after a nav can rebuild the card mid-run.
+            if (p.crossPage !== false) bufferReplay(tabId, event);
         };
         // OFF mode: the corner card is fed ENTIRELY by this background stream, because the page's own
         // debug bus (bus.ts) stays dormant in off mode — no `present` handshake, so its emitDebug is a
@@ -1196,6 +1218,10 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // OFF we emit the run's lifecycle (start + result) here too; overlay gets them from the page's bus
         // and devtools from the panel forward, so emitting them here as well would double up — off only.
         const emitLifecycle = (event: Record<string, unknown>): void => {
+            // Buffer FIRST (before any fan decision) so the replay stream includes the `agent` start + result
+            // even on an overlay run where the page-side caller — not this — is what fans them live. Without
+            // the start event a re-adopted card can't rebuild the session.
+            if (p.crossPage !== false) bufferReplay(tabId, event);
             // "off": the page-side caller emits nothing, so the background always fans lifecycle events.
             // overlay/devtools: the caller normally emits them page-side — EXCEPT once the run has navigated,
             // when that caller's context is gone, so the background fans them to the destination page instead.
@@ -1687,6 +1713,9 @@ function relayDebugEvent(tabId: number, event: unknown): void {
 // connected panel to drop its stale sessions — the panel's app outlives a page reload, so
 // without this it keeps the prior load's data while new events pile on under it.
 function resetDebug(tabId: number): void {
+    // A cross-page run's shell remounts on the new page and fires ML_DEBUG_RESET — but the run is STILL live,
+    // so keep its history: don't wipe the buffer or tell panels to drop sessions while the tab hosts a run.
+    if (activeRuns.has(tabId)) return;
     debugBuffer.delete(tabId);
     const ports = devtoolsPorts.get(tabId);
     if (ports) for (const p of ports) { try { p.postMessage({ reset: true }); } catch { /* port closing */ } }

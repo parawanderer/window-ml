@@ -102,3 +102,43 @@ test("cross-page: a background run survives a same-origin navigation and reads t
     expect(page.url()).toContain("/step3");
     await page.close();
 });
+
+// Overlay/off HUD replay-across-nav: the destination page must receive the run's PRE-nav history (start +
+// early steps), so a fresh card can rebuild mid-run instead of only showing the tail. We tag each debug
+// event with the URL it arrived on; a `kind:"agent"` / step-1 event landing on /step3 can ONLY be the
+// background replay (the fresh /step3 document never emits the run start itself — it's background-hosted).
+test("cross-page: the destination page replays the run's pre-nav history", async () => {
+    const page = await ext.context.newPage();
+    const events = [];
+    await page.exposeFunction("__cpEvent", (e) => events.push(e));
+    await page.addInitScript(() => {
+        if (window.top !== window) return;   // top frame only (avoid an overlay iframe double-capture)
+        window.addEventListener("message", (e) => {
+            if (e.data && e.data.__mlDebug) window.__cpEvent({ url: location.pathname, kind: e.data.__mlDebug.kind, step: e.data.__mlDebug.step ?? null, fromBg: !!e.data.__mlFromBg });
+        });
+    });
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+
+    const before = fake.calls().length;
+    fake.setScript([
+        { tool: "navigate", args: { url: "/step2" } },
+        { tool: "navigate", args: { url: "/step3" } },
+        { tool: "findByText", args: { text: "CROSSPAGE" } },
+        (req) => {
+            const seen = req.messages.map((m) => (typeof m.content === "string" ? m.content : "")).join(" ");
+            const m = seen.match(/CROSSPAGE-\d+/);
+            return { content: m ? `The code is ${m[0]}.` : "not found" };
+        },
+    ]);
+    await page.evaluate(() => { window.ml.agent("Go to step 2, then step 3, and read the code.", { env: false }); return true; });
+    await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(4);
+    await expect.poll(() => events.some((e) => e.url.includes("/step3") && e.kind === "agent-result"), { timeout: 10000 }).toBe(true);
+
+    const onStep3 = events.filter((e) => e.url.includes("/step3"));
+    // The run START replayed onto /step3 (fresh doc → could only come from the background buffer)…
+    expect(onStep3.some((e) => e.kind === "agent" && e.fromBg)).toBe(true);
+    // …and an EARLY step (the step-1 navigate, emitted while on "/") replayed too.
+    expect(onStep3.some((e) => e.kind === "agent-step" && e.step === 1)).toBe(true);
+    await page.close();
+});
