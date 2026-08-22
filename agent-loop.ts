@@ -15,7 +15,7 @@
 import type { AgentResult, AgentTranscriptEntry, ApprovalDecision, ToolCall, RenderDescriptor, ToolFeedback } from "./contract";
 import { UNATTENDED_REFUSAL } from "./prompts";
 
-export type Approval = "readonly" | "sandbox" | "user" | "denied" | "skipped" | "cancelled";
+export type Approval = "readonly" | "sandbox" | "same-origin" | "user" | "denied" | "skipped" | "cancelled";
 export interface ToolMeta { name: string; requiresApproval?: boolean; capabilities?: string[]; }
 // The tool's serializable result. `renderIn`/`renderOut` are the debug-render slots computed by the
 // executor's world (page-side for the delegated path) so the emitter can show a rendered In/Out.
@@ -36,7 +36,7 @@ export interface AgentLoopDeps {
     // Pure auto-approve decision, made in the TRUSTED world (python readonly / suspicious-char /
     // external-sheet). Returns the provenance to skip the gate, or null to require it. NEVER delegated —
     // a forged "it's auto-approved" is exactly the threat design A closes.
-    autoApprove?(name: string, args: Record<string, unknown>): "readonly" | "sandbox" | null;
+    autoApprove?(name: string, args: Record<string, unknown>): "readonly" | "sandbox" | "same-origin" | null;
     // Read-only try (exec only): attempt the call via the mediated read-only interpreter, which is
     // side-effect-free (it can't mutate) — so it BOTH decides "auto-approve" AND returns the result. A
     // non-null result skips the gate AND runTool (the interpreter already ran it). null → gate as normal.

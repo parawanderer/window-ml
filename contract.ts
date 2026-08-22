@@ -569,6 +569,11 @@ export interface AgentOptions {
      *  cross-page persistence (a link/click that loads a new page ends the run), plus a system-prompt note
      *  telling the model it can't navigate. */
     navigate?: boolean;
+    /** may this run navigate to OTHER SITES (different origins)? Default false — same-site only (a cross-site
+     *  URL is refused). true opts in: the `navigate` tool crosses origins and the background run re-adopts on
+     *  the new site. A scope escalation (history rides onto another origin), so it's off by default; needs
+     *  `navigate` (no effect when navigation is off). */
+    crossOrigin?: boolean;
     /** where a privileged approval gate is resolved (background-hosted runs only). `"ui"` (default) = the
      *  human approves in a browser surface, as always. `"both"` = the UI still shows AND an out-of-browser
      *  driver may resolve it via the SW-only `__mlApprovals` channel (Playwright / a desktop orchestrator).
@@ -738,6 +743,12 @@ export interface StartRunPayload {
      *  __mlApprovals IPC channel), or "external" (channel only — UI buttons suppressed). Opt-in: only
      *  "both"/"external" gates are listed/resolvable by the channel. */
     approvalRouting?: "ui" | "both" | "external";
+    /** the page's origin when the run started — seeds the run's consented-origins so a same-site nav needs no
+     *  prompt while a NEW cross-origin one does (the cross-origin consent gate). */
+    pageOrigin?: string;
+    /** may this run navigate to OTHER SITES? false → the `navigate` tool refuses cross-origin; true → a new
+     *  cross-origin nav gates for consent (see navNeedsConsent). */
+    crossOrigin?: boolean;
     /** cross-page persistence: false → this run does NOT survive a navigation (the background skips tracking
      *  it against its tab, so a nav ends it). Default (absent/true) → the navigation barrier holds delegated
      *  tools across a same-site nav until the new document re-adopts the run. Set false by `navigate: false`. */
@@ -766,6 +777,8 @@ export interface RebuildConfig {
     groundingRange: number;
     /** re-apply the closed-shadow-piercing module flag on the new document */
     pierceClosed: boolean;
+    /** may the rebuilt `navigate` tool cross origins? (carried so cross-site nav keeps working after a nav) */
+    crossOrigin: boolean;
 }
 
 /** SET_APPROVAL payload — the sidebar app's decision for a pending background-run approval, keyed by
@@ -1017,6 +1030,8 @@ export interface DebugAgentConfig {
     unattended?: boolean;
     /** may this run navigate to other pages (the `navigate` tool + cross-page persistence)? false = off */
     navigate?: boolean;
+    /** may this run navigate to OTHER SITES (different origins)? true only when opted in */
+    crossOrigin?: boolean;
     /** where privileged gates are resolved: "ui" (default) · "both" (UI + __mlApprovals IPC) · "external" (IPC only) */
     approvalRouting?: "ui" | "both" | "external";
 }
@@ -1049,7 +1064,7 @@ export interface DebugAgentStep extends DebugBase {
     /** How an approval-gated tool call was decided (undefined for tools that don't
      *  require approval). The sidebar renders it as a green/red provenance badge —
      *  and it's the slot a future interactive-approval control resolves into. */
-    approval?: "readonly" | "sandbox" | "user" | "denied" | "skipped" | "cancelled";
+    approval?: "readonly" | "sandbox" | "same-origin" | "user" | "denied" | "skipped" | "cancelled";
     /** Token counts for this step's driver call, when the server reports them. Each
      *  step re-sends the full growing history, so the LATEST step's usage is the run's
      *  current context occupancy (not a sum across steps — see TokenUsage). */
@@ -1146,8 +1161,8 @@ export interface MlApi {
     /** Built-in type tool factory. */
     typeTool(): MlTool;
     /** Built-in `navigate(url)` tool factory (auto-wired into ml.agent unless `navigate: false`): navigate
-     *  the tab to another SAME-SITE URL, continuing the run on the new page (cross-origin refused, v1). */
-    navigateTool(): MlTool;
+     *  the tab to another URL, continuing the run on the new page. Same-origin only unless `crossOrigin`. */
+    navigateTool(opts?: { crossOrigin?: boolean }): MlTool;
     /** Run a sandboxed Python snippet (Pyodide/WASM, numpy + Pillow) with an optional
      *  screenshot injected as `img`/`img_np`. No network/filesystem/DOM. */
     pythonExec(code: string, opts?: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Element | Record<string, string | Element> | null }): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; resultTable?: { columns: string[]; rows: (string | number | null)[][] } }>;

@@ -282,6 +282,10 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps } = {}) {
         setTimeout, clearTimeout,
         Event: class Event { constructor(type) { this.type = type; } },
         window: win,
+        // injected.js is a browser script — `location` is always present there (used for the run's
+        // pageOrigin + the navigate tool's same-origin check). Mock it for the vm.
+        location: { origin: "https://test.example", href: "https://test.example/", protocol: "https:" },
+        URL,
         HTMLImageElement: class HTMLImageElement {},
         document: {
             createElement: () => ({ remove() {} }),

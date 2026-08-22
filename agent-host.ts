@@ -56,6 +56,10 @@ export interface RunAgentHostDeps {
     // Whether an external Google spreadsheet was already approved this run (trusted, background-side) —
     // lets a repeat python_exec on the same sheet skip the re-prompt without re-escalating.
     isSheetApproved?(id: string): boolean;
+    // Cross-origin navigation consent: true → this `navigate` leaves the run's consented origins, so it must
+    // GATE (a page can't silently send the agent to another site); false → same-site (or an already-consented
+    // origin) → auto-approve. Trusted (background-decided from the tab's real origin), not page-forgeable.
+    navNeedsConsent?(url: string): boolean;
     // Debug fan-out (agent-step events: the pending START then the DONE).
     emit?: AgentLoopDeps["emit"];
     // Mid-run steering (a.say() → INJECT_MESSAGE): the run's SW-side inbox, drained at each step boundary.
@@ -114,9 +118,12 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
         approve: deps.approve,
         // Trusted auto-approve: only python_exec today; a tool not modelled here simply always asks
         // (friction, never less safety — see auto-approve.ts).
-        autoApprove: (name, args) => name === "python_exec"
-            ? autoApprovePython(args, { autoApprovePython: !!cfg.autoApprovePython }, deps.isSheetApproved || (() => false))
-            : null,
+        autoApprove: (name, args) => {
+            if (name === "python_exec") return autoApprovePython(args, { autoApprovePython: !!cfg.autoApprovePython }, deps.isSheetApproved || (() => false));
+            // navigate: a cross-origin nav that needs consent GATES; same-site (or already-consented) auto-approves.
+            if (name === "navigate") return deps.navNeedsConsent?.(String((args as { url?: unknown }).url ?? "")) ? null : "same-origin";
+            return null;
+        },
         buildMessages: buildMessages as AgentLoopDeps["buildMessages"],
         pushAssistant: pushAssistant as AgentLoopDeps["pushAssistant"],
         pushToolResult: pushToolResult as AgentLoopDeps["pushToolResult"],

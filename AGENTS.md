@@ -305,8 +305,21 @@ so the `agent` start is included even when the page-side caller is what fans it 
 `CONTENT_READY` re-adopt hook, replays it to the destination page; `resetDebug` is suppressed while a run is
 live on the tab so the shell's nav-remount doesn't wipe the history (this also keeps a DevTools panel's
 sessions across the nav). Verified e2e (`tests/e2e/cross-page.spec.mjs`, incl. a replay test + observing via
-the stable fake-LLM). Variant B (cross-domain, per-origin consent) + durable storage-backed resume are still
-open. Plan + STATUS/HANDOFF: `tmp/cross-page-agent.md`.
+the stable fake-LLM).
+**Variant B (cross-DOMAIN).** Two gates protect leaving the origin: (1) the run must OPT IN with
+**`crossOrigin: true`** (default false — `navTarget` refuses a cross-site URL otherwise), and (2) even then a
+NEW cross-origin nav must pass an **interactive consent gate** — a page can't silently send the agent to
+another site (prompt-injection exfil). Mechanism: `navigate` is `requiresApproval`, but **same-origin
+auto-approves** (`autoApprove` → `"same-origin"` provenance, no prompt) on BOTH loop paths — page-side via
+`sameOriginNav(location)`, background-side via `navNeedsConsent` — while a cross-origin nav to an origin NOT
+in the run's `consentedOrigins` (seeded with the start origin via `StartRunPayload.pageOrigin`; grown as the
+user approves) falls through to the gate. Approving an origin consents to it for the rest of the run (repeat
+navs skip). Once approved, it just works mechanically: the content script re-injects on the new site
+(`<all_urls>`), so re-adoption + delegation continue there; `crossOrigin` rides on `RebuildConfig` so the
+rebuilt tool keeps crossing after a nav, and it's logged in the "agent options" block with a data-carry
+caution in the tool description. (v2: an "allow / allow-for-this-run / deny" 3-way + "on-click"
+host-permission handling.) **Durable storage-backed resume** (survive SW eviction mid-run) is still open.
+Plan + STATUS/HANDOFF: `tmp/cross-page-agent.md`.
 
 **Approval-over-IPC (`__mlApprovals` + `approvalRouting`).** A background-hosted run's privileged gate can
 be resolved from OUTSIDE the browser, so an automated driver approves/denies exactly like a human click — the

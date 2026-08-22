@@ -53,14 +53,17 @@ export const errText = (e: unknown): string => (e && (e as Error).message) ? (e 
  *  refusal. Cross-origin is refused here (v1) — continuing a run on another origin is a trust escalation
  *  (per-origin consent) that isn't wired yet, so the caller relays the message to the model rather than
  *  silently failing. Pure, so it's unit-testable without a live document. */
-export const navTarget = (url: string, currentHref: string): { dest: string } | { error: string } => {
+export const navTarget = (url: string, currentHref: string, opts: { allowCrossOrigin?: boolean } = {}): { dest: string; crossOrigin: boolean } | { error: string } => {
     if (typeof url !== "string" || !url.trim()) return { error: "navigate needs a non-empty URL." };
     let here: URL, dest: URL;
     try { here = new URL(currentHref); } catch { return { error: "Could not read the current page URL." }; }
     try { dest = new URL(url, currentHref); } catch { return { error: `"${url}" is not a valid URL.` }; }
     if (dest.protocol !== "http:" && dest.protocol !== "https:") return { error: `navigate only supports http(s) URLs (got "${dest.protocol}").` };
-    if (dest.origin !== here.origin) return { error: `Cross-origin navigation (to ${dest.origin}) is not enabled for this session — same-site pages only. Tell the user you can't leave ${here.origin}.` };
-    return { dest: dest.href };
+    const crossOrigin = dest.origin !== here.origin;
+    // Cross-origin (a different SITE) is a scope escalation — the run carries its history onto another
+    // origin. Allowed only when the run opted in (`crossOrigin: true`); otherwise refused, same-site only.
+    if (crossOrigin && !opts.allowCrossOrigin) return { error: `Cross-origin navigation (to ${dest.origin}) is not enabled for this session — this run wasn't started with { crossOrigin: true }, so you can't leave ${here.origin}. Tell the user.` };
+    return { dest: dest.href, crossOrigin };
 };
 
 /**

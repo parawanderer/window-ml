@@ -1171,6 +1171,19 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         const toolMetas: ToolMeta[] = p.tools.map(t => ({ name: t.name, requiresApproval: t.requiresApproval, capabilities: t.capabilities }));
         const toolDefs = p.tools.map(t => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
         const approvedSheets = new Set<string>();   // external sheets approved this run (isSheetApproved)
+        // Cross-origin navigation consent: origins this run may navigate to WITHOUT re-prompting — seeded
+        // with the start origin, and each cross-origin nav the user approves is added (so repeat navs to it
+        // skip the gate). A run that didn't opt into crossOrigin never gates (its tool refuses cross-origin).
+        const consentedOrigins = new Set<string>();
+        if (p.pageOrigin) consentedOrigins.add(p.pageOrigin);
+        const navNeedsConsent = (url: string): boolean => {
+            if (!p.crossOrigin) return false;   // can't cross origins → tool refuses cross-origin; same-site fine → no gate
+            try {
+                if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(url) && !url.startsWith("//")) return false;   // relative → same-origin
+                const dest = new URL(url.startsWith("//") ? "https:" + url : url);
+                return !consentedOrigins.has(dest.origin);   // a NEW cross-origin → gate; an already-consented one → no
+            } catch { return false; }   // unparseable → the tool will error; no pointless gate
+        };
         // Debug fan-out for this run → the active surface.
         //  · overlay: re-post to the PAGE window (ML_DEBUG_TO_PAGE → content.js → the shell → the iframe
         //    app), where the overlay app is mounted.
@@ -1338,6 +1351,9 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                             resolve: (decision) => {
                                 const ok = decision === true || (typeof decision === "object" && !!decision && decision.approved);
                                 if (ok && tool === "python_exec") for (const id of externalSheetIds(args)) approvedSheets.add(id);
+                                // Approving a cross-origin nav consents to that ORIGIN for the rest of the run
+                                // (repeat navs to it then skip the gate).
+                                if (ok && tool === "navigate") { try { consentedOrigins.add(new URL(String((args as { url?: unknown }).url ?? "")).origin); } catch { /* relative/bad url — nothing to remember */ } }
                                 resolve(decision);
                             },
                             // What the external approver sees when it enumerates gates (the UI shows the same
@@ -1355,6 +1371,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     });
                 },
                 isSheetApproved: (id) => approvedSheets.has(id),
+                navNeedsConsent,   // cross-origin nav → gate; same-site / already-consented → auto (see consentedOrigins)
                 // This turn's delegated vision sub-call tally (accumulated from each delegated tool's envelope
                 // delta in delegateTool) — so chat_metadata reports the real number on the background path too.
                 subcallTokens: () => ({ ...subTally }),

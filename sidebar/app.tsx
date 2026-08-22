@@ -899,6 +899,7 @@ const toolFailed = (result?: string): boolean => !!result && /^(Error:|Denied)/.
 const APPROVAL = {
     readonly: { label: "auto-approved", tip: "Auto-approved by the read-only exec setting." },
     sandbox: { label: "auto-approved", tip: "Auto-approved by the python_exec setting — a readonly-mode run is isolated by construction (no network / JS scope / DOM / filesystem)." },
+    "same-origin": { label: "auto-approved", tip: "Same-site navigation (or a cross-site origin you already allowed this run) — not a new cross-origin escalation, so no prompt." },
     user: { label: "approved", tip: "Approved by you." },
     denied: { label: "denied", tip: "Denied by you." },
     skipped: { label: "skipped", tip: "No prompt needed — the target didn't resolve (no element / stale @pt / bad selector), so the action could only fail. It never ran." },

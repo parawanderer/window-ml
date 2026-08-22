@@ -69,6 +69,14 @@ interface AgentControl {
 import { installToolDelegation, registerRun, endRun } from "./run-delegation";
 import { descriptorFor } from "./render-descriptor";
 
+/** Is a `navigate(url)` target SAME-ORIGIN as the current page? Cross-origin navs need consent (the gate);
+ *  same-origin auto-approve. Reuses navTarget's origin logic; a bad URL counts as same-origin (the tool
+ *  errors on it anyway, so no pointless prompt). Used by the page loop's autoApprove. */
+const sameOriginNav = (url: string): boolean => {
+    const t = navTarget(url, location.href, { allowCrossOrigin: true });
+    return "error" in t ? true : !t.crossOrigin;
+};
+
 /** One resolved `python_exec` table source: its var name, provenance, and the payload the sandbox
  *  builds a DataFrame from (rows or read_html html). Internal to injected.ts. */
 type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; columns: string[]; rows: (string | number | null)[][] } | { kind: "html"; html: string } };
@@ -497,7 +505,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
          *   `elements` is the live DOM node(s) the model designated via an
          *   `answer`-capable tool (empty for tasks that just act on the page).
          */
-        agent: async function(task: string, { tools = null, extraTools = [], system = null, hints = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null, resume = null, silent = false, unattended = false, navigate = true, approvalRouting = "ui", images = [], _control = null }: {
+        agent: async function(task: string, { tools = null, extraTools = [], system = null, hints = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null, resume = null, silent = false, unattended = false, navigate = true, crossOrigin = false, approvalRouting = "ui", images = [], _control = null }: {
             tools?: MlTool[] | null;
             extraTools?: MlTool[];
             system?: string | null;
@@ -515,6 +523,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             silent?: boolean;
             unattended?: boolean;
             navigate?: boolean;   // may this run navigate to other pages (wires the `navigate` tool + cross-page persistence)? default true
+            crossOrigin?: boolean;   // may `navigate` cross to OTHER SITES (different origins)? default false — same-site only
             approvalRouting?: "ui" | "both" | "external";   // where privileged gates resolve (bg runs): human UI (default) · UI + IPC · IPC only
             images?: (string | HTMLImageElement)[];   // attachments for THIS turn (composer paste/upload)
             _control?: AgentControl | null;   // internal: a handle's persistent session state (ml.createAgent). Absent → a throwaway per-call one.
@@ -614,7 +623,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             // run can walk between same-site pages, surviving the full-page load (the barrier + re-adopt path
             // below). `navigate: false` disables it entirely — no tool, no cross-page persistence (the run
             // ends at a nav), and NAV_OFF_CLAUSE tells the model so instead of it wasting steps trying.
-            if (navigate && !toolset.some(t => t.name === "navigate")) toolset.push(this.navigateTool());
+            if (navigate && !toolset.some(t => t.name === "navigate")) toolset.push(this.navigateTool({ crossOrigin }));
             // Composer attachments for THIS turn's first user message (a screenshot pasted/uploaded into the
             // HUD/sidebar). A vision-capable driver sees them natively; otherwise transcribe via the reader
             // (ml.read → the OCR model) and fold the text into the task, so a text-only agent still gets the
@@ -722,7 +731,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 tools: toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval, vision: !!(t.capabilities && t.capabilities.includes("vision")), description: t.description, parameters: t.parameters, summary: t.summary })),
                 maxSteps, think: (think === true || think === false) ? think : null, env, vision: vision ?? null,
                 driverSees, visionModel: runVisionModel, hints: hints || null, silent: silent || undefined, unattended: unattended || undefined,
-                navigate, approvalRouting: approvalRouting !== "ui" ? approvalRouting : undefined,
+                navigate, crossOrigin: crossOrigin || undefined, approvalRouting: approvalRouting !== "ui" ? approvalRouting : undefined,
             } });
             // A CONTINUATION (a handle's later run() with a task) shows the follow-up as a user message in the
             // conversation — the sidebar renders it exactly like the first task / a mid-run say (all "you").
@@ -805,12 +814,14 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                         // the serializable state a fresh document needs to rebuild the BUILTIN toolset on
                         // re-adopt. `navigate: false` opts out of both.
                         crossPage: navigate,
+                        crossOrigin,   // may leave the origin (cross-origin nav gates for consent)
                         approvalRouting,   // where privileged gates resolve (idea #2): ui | both | external
+                        pageOrigin: location.origin,   // seeds the run's consented-origins (cross-origin nav consent)
                         rebuild: {
                             toolNames: toolset.map(t => t.name),
                             model: runModel, driverSees, visionModel: runVisionModel,
                             groundingModel: runGroundingModel, groundingRange: runGroundingRange,
-                            pierceClosed,
+                            pierceClosed, crossOrigin,
                         },
                     }, (result, data) => {
                         // Sync the run's final history back into the handle (page-authoritative). This is why
@@ -914,9 +925,13 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     if (d.approved) for (const id of externalSheetIds(d.arguments)) approvedSheets.add(id);
                     return { approved: d.approved, feedback: d.feedback || undefined, arguments: d.arguments };
                 },
-                autoApprove: (name, args) => name === "python_exec"
-                    ? autoApprovePython(args, { autoApprovePython: autoPy }, (id: string) => approvedSheets.has(id))
-                    : null,
+                autoApprove: (name, args) => {
+                    if (name === "python_exec") return autoApprovePython(args, { autoApprovePython: autoPy }, (id: string) => approvedSheets.has(id));
+                    // navigate: SAME-ORIGIN auto-approves (no escalation); a CROSS-ORIGIN nav falls through to
+                    // the gate (a page can't silently send the agent to another site). location is authoritative.
+                    if (name === "navigate") return sameOriginNav(String((args as { url?: unknown }).url ?? "")) ? "same-origin" : null;
+                    return null;
+                },
                 // Read-only exec fast-path: the mediated interpreter is side-effect-free, so trying it is safe
                 // and (in-dialect) BOTH auto-approves AND returns the result — no eval (clears Trusted Types).
                 // `this` is window.ml; the interpreter reduces it to a facade of ML_READONLY_METHODS, so the
@@ -1424,28 +1439,34 @@ class AgentHandle implements MlAgentHandle, AgentControl {
          *
          * @returns {MlTool} A tool with `name: "navigate"` (no approval for same-site).
          */
-        navigateTool: function(): MlTool {
+        navigateTool: function(opts: { crossOrigin?: boolean } = {}): MlTool {
             const ml = this;
+            const allowCrossOrigin = !!opts.crossOrigin;
             return ml.defineTool({
                 name: "navigate",
-                summary: "Navigates the tab to another same-site page.",
-                description: "Navigate the browser tab to another URL on the SAME site (absolute or " +
-                    "site-relative, e.g. \"/step2\" or \"https://this-site.example/page\"). The run CONTINUES " +
-                    "on the new page: after navigating, `wait` for it to settle, then read/act as usual. " +
-                    "Same-origin ONLY — a cross-site URL is refused (tell the user instead). Prefer this over " +
-                    "clicking a link when you already know the destination URL.",
+                // requiresApproval so a CROSS-ORIGIN nav hits the unforgeable gate (a page can't tell the agent
+                // to silently jump to another site). SAME-ORIGIN navs auto-approve (no prompt) via autoApprove.
+                requiresApproval: true,
+                summary: allowCrossOrigin ? "Navigates the tab to another page (any site)." : "Navigates the tab to another same-site page.",
+                description: "Navigate the browser tab to another URL (absolute or site-relative, e.g. " +
+                    "\"/step2\" or \"https://this-site.example/page\"). The run CONTINUES on the new page: after " +
+                    "navigating, `wait` for it to settle, then read/act as usual. " +
+                    (allowCrossOrigin
+                        ? "This run MAY cross to other SITES (different origins) — do so only when the task needs it, and never carry sensitive info from one site into another site's forms. "
+                        : "Same-origin ONLY — a cross-site URL is refused (tell the user instead). ") +
+                    "Prefer this over clicking a link when you already know the destination URL.",
                 parameters: {
                     type: "object",
                     properties: { url: { type: "string", description: "The URL to go to (absolute or site-relative, e.g. \"/dashboard\")." } },
                     required: ["url"],
                 },
                 run: async ({ url }: { url?: unknown } = {}): Promise<string> => {
-                    const t = navTarget(typeof url === "string" ? url : "", location.href);
+                    const t = navTarget(typeof url === "string" ? url : "", location.href, { allowCrossOrigin });
                     if ("error" in t) return `Error: ${t.error}`;
                     // Defer so the RESULT posts back to the (background) loop before the document unloads —
                     // otherwise the delegated-tool round-trip is lost and the run can't record the nav.
                     setTimeout(() => { try { location.href = t.dest; } catch { /* navigation blocked */ } }, 0);
-                    return `Navigating to ${t.dest} … wait for the new page to load, then continue.`;
+                    return `Navigating to ${t.dest} …${t.crossOrigin ? " (a DIFFERENT site — the run continues there)" : ""} wait for the new page to load, then continue.`;
                 },
             });
         },
@@ -1467,7 +1488,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             if (want.has("type")) out.push(ml.typeTool());
             if (want.has("python_exec")) out.push(ml.pythonTool());
             if (want.has("chat_metadata")) out.push(ml.chatMetaTool());
-            if (want.has("navigate")) out.push(ml.navigateTool());
+            if (want.has("navigate")) out.push(ml.navigateTool({ crossOrigin: rebuild.crossOrigin }));
             // Auto-wired vision tools, rebuilt from the carried facts (no re-probe) with a fresh near-area memory.
             if (want.has("look") || want.has("locate")) {
                 const memory: VisionMemory = { seen: [], boundariesSeen: new Set() };

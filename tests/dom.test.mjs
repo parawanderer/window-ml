@@ -4,17 +4,27 @@ import assert from "node:assert";
 import { elementReference, classifyOverlay, navTarget } from "../dom.ts";
 
 test("navTarget: a same-origin relative URL resolves to an absolute destination", () => {
-    assert.deepEqual(navTarget("/step2", "https://site.example/step1"), { dest: "https://site.example/step2" });
-    assert.deepEqual(navTarget("page?q=1#h", "https://site.example/a/b"), { dest: "https://site.example/a/page?q=1#h" });
-    assert.deepEqual(navTarget("https://site.example/x", "https://site.example/y"), { dest: "https://site.example/x" });
+    assert.deepEqual(navTarget("/step2", "https://site.example/step1"), { dest: "https://site.example/step2", crossOrigin: false });
+    assert.deepEqual(navTarget("page?q=1#h", "https://site.example/a/b"), { dest: "https://site.example/a/page?q=1#h", crossOrigin: false });
+    assert.deepEqual(navTarget("https://site.example/x", "https://site.example/y"), { dest: "https://site.example/x", crossOrigin: false });
 });
 
-test("navTarget: a cross-origin URL is refused (same-site only, v1)", () => {
+test("navTarget: a cross-origin URL is refused by default (opt-in only)", () => {
     const r = navTarget("https://evil.example/x", "https://site.example/step1");
     assert.ok("error" in r, "cross-origin is an error, not a destination");
     assert.match(r.error, /Cross-origin/, "the message says why");
     // a different PORT is a different origin too
     assert.ok("error" in navTarget("http://site.example:8081/", "http://site.example:8080/"));
+});
+
+test("navTarget: cross-origin is ALLOWED with { allowCrossOrigin: true } and flagged crossOrigin:true", () => {
+    assert.deepEqual(navTarget("https://other.example/x", "https://site.example/", { allowCrossOrigin: true }),
+        { dest: "https://other.example/x", crossOrigin: true });
+    // same-origin still reports crossOrigin:false even with the flag on
+    assert.deepEqual(navTarget("/y", "https://site.example/", { allowCrossOrigin: true }),
+        { dest: "https://site.example/y", crossOrigin: false });
+    // a non-http scheme is still refused regardless of the flag
+    assert.ok("error" in navTarget("javascript:alert(1)", "https://site.example/", { allowCrossOrigin: true }));
 });
 
 test("navTarget: non-http(s) schemes and empty/invalid input are refused", () => {

@@ -142,3 +142,72 @@ test("cross-page: the destination page replays the run's pre-nav history", async
     expect(onStep3.some((e) => e.kind === "agent-step" && e.step === 1)).toBe(true);
     await page.close();
 });
+
+// Variant B — cross-DOMAIN. Even WITH { crossOrigin: true }, leaving the origin is a scope escalation, so a
+// cross-origin nav must GATE for consent (a page can't silently send the agent to another site). We route
+// the gate to the IPC channel so the test can approve/deny it.
+test("cross-domain: a cross-origin nav GATES for consent; APPROVED → it proceeds and reads the other site", async () => {
+    const page = await ext.context.newPage();
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+    const before = fake.calls().length;
+    fake.setScript([
+        { tool: "navigate", args: { url: site.crossOrigin + "/" } },   // a DIFFERENT origin (different port)
+        { tool: "findByText", args: { text: "XDOMAIN" } },
+        (req) => {
+            const seen = req.messages.map((m) => (typeof m.content === "string" ? m.content : "")).join(" ");
+            const m = seen.match(/XDOMAIN-\d+/);
+            return { content: m ? `The code is ${m[0]}.` : "not found" };
+        },
+    ]);
+    await page.evaluate((cross) => { window.ml.agent(`Go to ${cross} and read the code shown there.`, { env: false, crossOrigin: true, approvalRouting: "external" }); return true; }, site.crossOrigin);
+    // The cross-origin nav must PROMPT — the security point.
+    await expect.poll(async () => (await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).length, { timeout: 15000 }).toBe(1);
+    const [gate] = await ext.sw.evaluate(() => globalThis.__mlApprovals.list());
+    expect(gate.tool).toBe("navigate");
+    expect(gate.arguments.url).toContain(new URL(site.crossOrigin).host);     // the human sees WHERE it wants to go
+    await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), gate.key);   // approve the crossing
+
+    await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(3);
+    const seen = (fake.calls().at(-1).messages || []).map((m) => (typeof m.content === "string" ? m.content : "")).join(" ");
+    expect(seen).toContain("XDOMAIN-2025");                                   // findByText ran on the OTHER origin
+    expect(new URL(page.url()).host).toBe(new URL(site.crossOrigin).host);    // really left the first origin
+    await page.close();
+});
+
+test("cross-domain: a cross-origin nav DENIED at the gate → the run stays on the original site", async () => {
+    const page = await ext.context.newPage();
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+    const before = fake.calls().length;
+    fake.setScript([
+        { tool: "navigate", args: { url: site.crossOrigin + "/" } },
+        { content: "Understood — I won't leave this site." },
+    ]);
+    await page.evaluate((cross) => { window.ml.agent(`Go to ${cross}.`, { env: false, crossOrigin: true, approvalRouting: "external" }); return true; }, site.crossOrigin);
+    await expect.poll(async () => (await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).length, { timeout: 15000 }).toBe(1);
+    const [gate] = await ext.sw.evaluate(() => globalThis.__mlApprovals.list());
+    await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, false), gate.key);   // DENY the crossing
+    await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(2);
+    const seen = (fake.calls().at(-1).messages || []).map((m) => (typeof m.content === "string" ? m.content : "")).join(" ");
+    expect(seen).toMatch(/[Dd]enied/);                                         // the refusal reached the model
+    expect(new URL(page.url()).host).toBe(new URL(site.url).host);            // never left the original origin
+    await page.close();
+});
+
+test("cross-domain: WITHOUT the flag, a cross-origin navigate is refused by the tool (no gate, stays put)", async () => {
+    const page = await ext.context.newPage();
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+    const before = fake.calls().length;
+    fake.setScript([
+        { tool: "navigate", args: { url: site.crossOrigin + "/" } },   // cross-origin, but no opt-in
+        { content: "Understood — I can't leave this site." },
+    ]);
+    await page.evaluate(() => { window.ml.agent("Go to the other domain.", { env: false }); return true; });   // default: crossOrigin off
+    await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(2);
+    const seen = (fake.calls().at(-1).messages || []).map((m) => (typeof m.content === "string" ? m.content : "")).join(" ");
+    expect(seen).toMatch(/not enabled|crossOrigin/i);                          // the refusal reached the model
+    expect(new URL(page.url()).host).toBe(new URL(site.url).host);             // never left the original origin
+    await page.close();
+});
