@@ -2091,7 +2091,10 @@ class AgentHandle implements MlAgentHandle, AgentControl {
         // HUD verbosity (passed by the shell): quiet → tell the model to stay silent between steps; progress
         // → keep between-step prose to one short live line. Defaults to progress.
         const proseClause = e.data.__mlStartAgent.hud === "quiet" ? HUD_PROSE_QUIET : HUD_PROSE_PROGRESS;
-        const opts: Record<string, unknown> = { extraTools: [ml.clickTool(), ml.typeTool(), ml.pythonTool(), ml.chatMetaTool()], hints: HUD_HINT + proseClause };
+        // Commander/HUD runs allow cross-origin navigation by default — a HUD user driving a real task often
+        // needs to cross sites, and each crossing still hits the consent gate (a new origin prompts), so it's
+        // safe. A scripted console `ml.agent()` still defaults to same-site only.
+        const opts: Record<string, unknown> = { extraTools: [ml.clickTool(), ml.typeTool(), ml.pythonTool(), ml.chatMetaTool()], hints: HUD_HINT + proseClause, crossOrigin: true };
         if (Number.isFinite(maxSteps) && maxSteps > 0) opts.maxSteps = maxSteps;   // the composer's step budget
         // The composer's per-call model pick (omitted ⇒ the configured default) + a per-call FORCE-NATIVE
         // vision override for a non-Ollama model (omitted ⇒ ml.agent's default vision routing). Same knobs a
