@@ -284,3 +284,43 @@ test("durable resume: an SW-evicted run rehydrates and continues when the page r
     expect((fake.calls().at(-1).messages || []).some((m) => typeof m.content === "string" && /step2|Go to/.test(m.content))).toBe(true);   // it carried the pre-eviction history
     await page.close();
 });
+
+// The debug SURFACE (inline sidebar / off card / devtools panel — same app) must show the run's FULL history
+// on the destination page after a nav, not just post-nav steps: the overlay shell mounts fresh per page and
+// gets the run's replayed history (runReplayBuffer) on re-adopt. Here we assert the rendered steps directly.
+test("cross-page: the inline sidebar renders the run's history (incl. pre-nav steps) on the destination page", async () => {
+    await configureExtension(ext.sw, { debugMode: "overlay" });   // inline sidebar surface
+    const page = await ext.context.newPage();
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+    fake.setScript([
+        { tool: "navigate", args: { url: "/step2" } },
+        { tool: "findByText", args: { text: "CROSSPAGE" } },
+        { content: "The code is CROSSPAGE-9471." },
+    ]);
+    const before = fake.calls().length;
+    await page.evaluate(() => { window.ml.agent("Go to step 2 and read the code shown there.", { env: false }); return true; });
+    await expect.poll(() => new URL(page.url()).pathname, { timeout: 20000 }).toBe("/step2");   // it navigated
+    await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(3);           // …and finished (3 turns)
+
+    // The overlay sidebar iframe on the DESTINATION page. Its rendered steps must include the PRE-NAV navigate
+    // step (emitted while on "/", replayed on re-adopt) AND the far-page findByText step — proving the fresh
+    // sidebar rebuilt the whole run, not just what happened after the navigation.
+    const sb = page.frames().find((f) => f.url().includes("sidebar.html"));
+    expect(sb, "the overlay sidebar iframe is present").toBeTruthy();
+    // The run's session appears in the sidebar list — its history reached the FRESH page's sidebar (via the
+    // replay-on-readopt, buffered until the iframe app handshakes; without that it showed "Sessions (0)").
+    await expect.poll(async () => await sb.locator(".row").count(), { timeout: 15000 }).toBeGreaterThanOrEqual(1);
+    // Open the collapsed overlay panel (its tab handle lives in the shell shadow root) so its content is
+    // interactable, then open the session → the detail shows the run's STEPS, including the PRE-NAV navigate
+    // step (emitted while on "/", replayed on re-adopt) AND the far-page findByText step — the whole run.
+    await page.locator("#ml-sb-tab").click();
+    await sb.locator(".row").first().click();
+    await expect.poll(async () => await sb.locator(".astep").count(), { timeout: 10000 }).toBeGreaterThanOrEqual(2);
+    const detail = ((await sb.locator("body").textContent()) || "").toLowerCase();
+    expect(detail).toContain("navigate");     // pre-nav step, replayed onto the destination page's sidebar
+    expect(detail).toContain("findbytext");   // the far-page step
+
+    await configureExtension(ext.sw, { debugMode: "off" });   // restore for any later run
+    await page.close();
+});

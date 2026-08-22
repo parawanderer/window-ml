@@ -229,6 +229,9 @@ let lightbox: HTMLElement | null = null;
 let cardHost: HTMLElement | null = null;    // separate shadow host for the corner card
 let cardWrap: HTMLElement | null = null;    // the acrylic container (its data-state drives size/reveal)
 let cardReady = false;                       // the card iframe app has handshaked (safe to post events)
+let overlayReady = false;                    // the OVERLAY iframe app has handshaked — until then, buffer debug
+                                             // events (bgRing) so a fresh page's REPLAYED history isn't lost
+                                             // to the app-still-loading race (why a re-adopted run showed empty)
 // Height: the card fits its CONTENT (a cross-origin iframe can't auto-size, so the app reports its
 // height → cardAutoH), capped at 72vh, UNLESS the user dragged the top edge (cardManualH, persisted).
 let cardAutoH = 200;
@@ -654,7 +657,11 @@ function onWindowMessage(e: MessageEvent): void {
         if (mode === "devtools" && !d.__mlFromBg) {
             try { void chrome.runtime.sendMessage({ type: "ML_DEBUG_EVENT", event: ev }).catch(() => {}); } catch { /* context gone */ }
         } else if (mode === "overlay") {
-            frame?.contentWindow?.postMessage(d, "*");
+            // Buffer until the iframe app handshakes (overlayReady) — a fresh page after a nav gets the run's
+            // REPLAYED history, which can arrive before the app is listening; posting to a not-ready app drops
+            // it (the "Sessions (0)" on a re-adopted run). Flushed in order on the app's `ready` (below).
+            if (overlayReady) frame?.contentWindow?.postMessage(d, "*");
+            else { bgRing.push(d); if (bgRing.length > CARD_RING_MAX) bgRing.shift(); }
         }
         return;
     }
@@ -825,6 +832,11 @@ function onWindowMessage(e: MessageEvent): void {
             return;
         }
         window.postMessage({ __mlSidebar: "ready" }, "*");
+        overlayReady = true;
+        // Flush debug events buffered while the overlay iframe loaded (the replayed history of a re-adopted
+        // run) — in order, so the fresh sidebar rebuilds the whole session, not an empty list.
+        for (const ev of bgRing) frame.contentWindow?.postMessage(ev, "*");
+        bgRing.length = 0;
         frame.contentWindow?.postMessage({ __mlSidebarOpen: panel?.classList.contains("open") ?? false }, "*");
     }
 }
