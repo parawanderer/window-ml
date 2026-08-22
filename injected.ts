@@ -497,7 +497,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
          *   `elements` is the live DOM node(s) the model designated via an
          *   `answer`-capable tool (empty for tasks that just act on the page).
          */
-        agent: async function(task: string, { tools = null, extraTools = [], system = null, hints = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null, resume = null, silent = false, unattended = false, navigate = true, images = [], _control = null }: {
+        agent: async function(task: string, { tools = null, extraTools = [], system = null, hints = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null, resume = null, silent = false, unattended = false, navigate = true, approvalRouting = "ui", images = [], _control = null }: {
             tools?: MlTool[] | null;
             extraTools?: MlTool[];
             system?: string | null;
@@ -515,6 +515,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             silent?: boolean;
             unattended?: boolean;
             navigate?: boolean;   // may this run navigate to other pages (wires the `navigate` tool + cross-page persistence)? default true
+            approvalRouting?: "ui" | "both" | "external";   // where privileged gates resolve (bg runs): human UI (default) · UI + IPC · IPC only
             images?: (string | HTMLImageElement)[];   // attachments for THIS turn (composer paste/upload)
             _control?: AgentControl | null;   // internal: a handle's persistent session state (ml.createAgent). Absent → a throwaway per-call one.
         } = {}): Promise<AgentResult> {
@@ -721,7 +722,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 tools: toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval, vision: !!(t.capabilities && t.capabilities.includes("vision")), description: t.description, parameters: t.parameters, summary: t.summary })),
                 maxSteps, think: (think === true || think === false) ? think : null, env, vision: vision ?? null,
                 driverSees, visionModel: runVisionModel, hints: hints || null, silent: silent || undefined, unattended: unattended || undefined,
-                navigate,
+                navigate, approvalRouting: approvalRouting !== "ui" ? approvalRouting : undefined,
             } });
             // A CONTINUATION (a handle's later run() with a task) shows the follow-up as a user message in the
             // conversation — the sidebar renders it exactly like the first task / a mid-run say (all "you").
@@ -804,6 +805,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                         // the serializable state a fresh document needs to rebuild the BUILTIN toolset on
                         // re-adopt. `navigate: false` opts out of both.
                         crossPage: navigate,
+                        approvalRouting,   // where privileged gates resolve (idea #2): ui | both | external
                         rebuild: {
                             toolNames: toolset.map(t => t.name),
                             model: runModel, driverSees, visionModel: runVisionModel,

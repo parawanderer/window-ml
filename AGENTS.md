@@ -303,6 +303,25 @@ background and its result surfaces in the HUD/debug stream, not as that call's r
 consent) + overlay-HUD replay-across-nav + durable storage-backed resume are still open. Plan +
 STATUS/HANDOFF: `tmp/cross-page-agent.md`.
 
+**Approval-over-IPC (`__mlApprovals` + `approvalRouting`).** A background-hosted run's privileged gate can
+be resolved from OUTSIDE the browser, so an automated driver approves/denies exactly like a human click — the
+Playwright harness today, a desktop orchestrator (over `onMessageExternal` / native messaging) later; this is
+the control channel for the "one wrapper driving a desktop with delegated subagents over IPC" goal.
+`pendingApprovals` (background.ts) stores `{ resolve, descriptor }` — the descriptor is the serializable
+"what's being approved" (`runId`/`seq`/`step`/`tool`/`arguments`/`routing`). Both the origin-authed
+`SET_APPROVAL` message and the external channel funnel through ONE `resolveApproval(key, decision)`, so a
+decision from either resolves the gate on every surface. The channel is
+`globalThis.__mlApprovals = { list(), resolve(key, decision) }`, defined on the **service worker** — reachable
+ONLY from the SW realm (`serviceWorker.evaluate` in Playwright; the page main world has no `chrome.runtime`
+and can't reach this realm), so it grants a hostile page NOTHING: it's the same unforgeable gate, opened by
+code instead of a click. **Opt-in via the `approvalRouting` agent option**: `"ui"` (default — human only; the
+channel neither lists nor resolves it), `"both"` (UI shows AND the channel can resolve), `"external"` (channel
+only — the UI approve/deny buttons are SUPPRESSED via `awaitingApproval:false`, the gate still blocks). A
+module-level `externallyResolvable` guards list/resolve to `"both"|"external"` gates, so a default run can't be
+silently approved by an orchestrator that never asked for it. Threaded page→background on
+`StartRunPayload.approvalRouting`; logged in the sidebar "agent options" block. Tested in
+`tests/e2e/approval.spec.mjs` (approve/deny with NO UI, the opt-in guarantee, and the page-realm boundary).
+
 **Agent runs in the debug sidebar.** `ml.agent` emits its own debug-event kinds
 (not `chat`): `agent` (run start: task + model), `agent-step` (a thought OR a tool
 call with args/result; `elements` is a **count**, since real DOM nodes can't cross

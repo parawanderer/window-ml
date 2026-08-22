@@ -566,6 +566,12 @@ export interface AgentOptions {
      *  cross-page persistence (a link/click that loads a new page ends the run), plus a system-prompt note
      *  telling the model it can't navigate. */
     navigate?: boolean;
+    /** where a privileged approval gate is resolved (background-hosted runs only). `"ui"` (default) = the
+     *  human approves in a browser surface, as always. `"both"` = the UI still shows AND an out-of-browser
+     *  driver may resolve it via the SW-only `__mlApprovals` channel (Playwright / a desktop orchestrator).
+     *  `"external"` = the UI buttons are SUPPRESSED and ONLY that channel resolves it (headless). A `"ui"`
+     *  run is never externally resolvable — the channel lists/decides only opted-in ("both"/"external") runs. */
+    approvalRouting?: "ui" | "both" | "external";
 }
 
 /** A stateful ml.agent handle (what ml.createAgent returns) — the agent analogue of ml.createChat's
@@ -725,6 +731,10 @@ export interface StartRunPayload {
      *  the page, where the content-script shell renders them in a lazily-mounted acrylic corner CARD (a
      *  curated view of the run). Every surface gates through the same origin-authed SET_APPROVAL. */
     surface: "overlay" | "devtools" | "off";
+    /** where privileged gates are resolved: "ui" (default, human clicks a surface), "both" (UI + the SW-only
+     *  __mlApprovals IPC channel), or "external" (channel only — UI buttons suppressed). Opt-in: only
+     *  "both"/"external" gates are listed/resolvable by the channel. */
+    approvalRouting?: "ui" | "both" | "external";
     /** cross-page persistence: false → this run does NOT survive a navigation (the background skips tracking
      *  it against its tab, so a nav ends it). Default (absent/true) → the navigation barrier holds delegated
      *  tools across a same-site nav until the new document re-adopts the run. Set false by `navigate: false`. */
@@ -1004,6 +1014,8 @@ export interface DebugAgentConfig {
     unattended?: boolean;
     /** may this run navigate to other pages (the `navigate` tool + cross-page persistence)? false = off */
     navigate?: boolean;
+    /** where privileged gates are resolved: "ui" (default) · "both" (UI + __mlApprovals IPC) · "external" (IPC only) */
+    approvalRouting?: "ui" | "both" | "external";
 }
 export interface DebugAgentStart extends DebugBase { kind: "agent"; task: string; images?: string[]; model: string | null; maxSteps: number; config: DebugAgentConfig; }
 export interface DebugAgentStep extends DebugBase {

@@ -806,7 +806,48 @@ const inflight = new Map<string, AbortController>();
 // Design A: pending background-run approvals, keyed by `${runId}:${seq}`, resolved by a SET_APPROVAL
 // message the sidebar app sends (origin-authed by the shell — it only forwards a decision from the real
 // extension iframe). The approve/deny decision is made here and never crosses the page: the point of A.
-const pendingApprovals = new Map<string, (d: ApprovalDecision) => void>();
+// Each entry keeps the resolver AND a serializable DESCRIPTOR (what's being approved) so an EXTERNAL
+// approver — the `__mlApprovals` IPC channel below — can enumerate and decide gates exactly like the UI.
+interface PendingApprovalDescriptor { key: string; runId: string; seq: number; step: number; tool: string; arguments: Record<string, unknown>; ts: number; routing: "ui" | "both" | "external"; }
+// A gate is reachable by the external channel ONLY if its run OPTED IN (approvalRouting "both"/"external").
+// A default "ui" run's gate can't be silently approved from outside — the driver must declare intent.
+const externallyResolvable = (d: PendingApprovalDescriptor): boolean => d.routing === "both" || d.routing === "external";
+interface PendingApproval { resolve: (d: ApprovalDecision) => void; descriptor: PendingApprovalDescriptor; }
+const pendingApprovals = new Map<string, PendingApproval>();
+
+// Resolve a pending gate by key — the SINGLE path both the origin-authed SET_APPROVAL message and the
+// external `__mlApprovals` channel funnel through, so a decision from either resolves the gate everywhere
+// (the same "one press resolves every surface" property, now extended to an out-of-browser approver).
+// Returns false if the key is unknown (already resolved / cancelled). The stored resolver applies any side
+// effects (e.g. remembering an approved sheet) and unblocks the loop.
+function resolveApproval(key: string, decision: ApprovalDecision): boolean {
+    const entry = pendingApprovals.get(key);
+    if (!entry) return false;
+    pendingApprovals.delete(key);
+    entry.resolve(decision);
+    return true;
+}
+
+// The EXTERNAL approval channel (idea #2). Reachable ONLY from the service-worker realm — Playwright's
+// `serviceWorker.evaluate(...)` today, a desktop orchestrator via onMessageExternal / native messaging
+// later — NEVER from the page main world (a web page has no chrome.runtime and can't reach this realm), so
+// it grants no new power to a hostile page: it's the same unforgeable gate, opened by an automated driver
+// instead of a human click. `list()` enumerates the pending gates (with what each is approving); `resolve()`
+// approves/denies one by key. A driver can therefore run the whole agent HEADLESS while the browser gate
+// still blocks until the driver decides. See docs / tests/e2e for the harness wiring.
+(globalThis as unknown as { __mlApprovals?: unknown }).__mlApprovals = {
+    // Only OPTED-IN gates (approvalRouting "both"/"external") are visible/resolvable here — a default "ui"
+    // run stays human-only, so an orchestrator can't approve a run that never asked to be driven externally.
+    list: (): PendingApprovalDescriptor[] => [...pendingApprovals.values()].map(v => v.descriptor).filter(externallyResolvable),
+    resolve: (key: string, decision: boolean | ApprovalDecision): boolean => {
+        const entry = pendingApprovals.get(key);
+        if (!entry || !externallyResolvable(entry.descriptor)) return false;   // unknown, or a UI-only gate
+        const norm: ApprovalDecision = (decision === true || (typeof decision === "object" && !!decision && (decision as { approved?: boolean }).approved))
+            ? { approved: true }
+            : { approved: false, feedback: (typeof decision === "object" && decision && (decision as { feedback?: string }).feedback) || undefined };
+        return resolveApproval(key, norm);
+    },
+};
 
 // Design A: the AbortController for each live background run, keyed by runId, so a CANCEL_RUN message
 // (the HUD's "Cancel agent run") stops the loop at the next boundary AND kills a slow in-flight model
@@ -978,11 +1019,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // not a content-relayed HANDLE_MAP type — so a page-set window.confirm / hostile approve() can't
         // reach here even though the page knows its own runId. Design A's crux.
         const p = message.payload as SetApprovalPayload;
-        const resolve = pendingApprovals.get(`${p.runId}:${p.seq}`);
-        if (resolve) {
-            pendingApprovals.delete(`${p.runId}:${p.seq}`);
-            resolve(p.decision ? { approved: true } : { approved: false, feedback: p.feedback });
-        }
+        resolveApproval(`${p.runId}:${p.seq}`, p.decision ? { approved: true } : { approved: false, feedback: p.feedback });
         return;   // fire-and-forget
     }
     if (message.type === "CONTENT_READY") {
@@ -1021,8 +1058,8 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // approve/deny buttons) — instead of hanging forever with frozen buttons on every surface. The decision
         // value is irrelevant (the loop treats an aborted signal as cancel); a later SET_APPROVAL click then
         // finds no entry — a harmless no-op.
-        for (const [key, resolve] of [...pendingApprovals]) {
-            if (key.startsWith(`${runId}:`)) { pendingApprovals.delete(key); resolve(false); }
+        for (const [key, entry] of [...pendingApprovals]) {
+            if (key.startsWith(`${runId}:`)) { pendingApprovals.delete(key); entry.resolve(false); }
         }
         return;   // fire-and-forget
     }
@@ -1269,18 +1306,26 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     // follow-up turn (seqBase>0) never matched → the gate hung forever ("stuck on Approve" on
                     // turn 2+). Turn 1 worked only because seqBase==0. (Mirror emitStep's null-guard exactly.)
                     const gateSeq = seq != null ? seqBase + seq : seq;
+                    const key = `${runId}:${gateSeq}`;
                     return new Promise<ApprovalDecision>((resolve) => {
-                        pendingApprovals.set(`${runId}:${gateSeq}`, (decision) => {
-                            const ok = decision === true || (typeof decision === "object" && !!decision && decision.approved);
-                            if (ok && tool === "python_exec") for (const id of externalSheetIds(args)) approvedSheets.add(id);
-                            resolve(decision);
+                        pendingApprovals.set(key, {
+                            resolve: (decision) => {
+                                const ok = decision === true || (typeof decision === "object" && !!decision && decision.approved);
+                                if (ok && tool === "python_exec") for (const id of externalSheetIds(args)) approvedSheets.add(id);
+                                resolve(decision);
+                            },
+                            // What the external approver sees when it enumerates gates (the UI shows the same
+                            // via the emitStep below). args are already sanitized page-side for the render.
+                            descriptor: { key, runId, seq: gateSeq ?? -1, step: step ?? -1, tool, arguments: args, ts: Date.now(), routing: p.approvalRouting || "ui" },
                         });
                         // Patch the pending step to show approve/deny (awaitingApproval) + the In preview. ALL
                         // three surfaces render it identically from this one step: overlay/off in the page
                         // iframe (slide-out panel vs corner card), devtools in the panel. The off-mode card
                         // reveals ITSELF on this step — no separate modal message — and the decision returns via
                         // the same origin-authed SET_APPROVAL, so the gate is unforgeable across every surface.
-                        emitStep({ step, seq, pending: true, awaitingApproval: true, tool, arguments: args, renderIn });
+                        // approvalRouting "external" SUPPRESSES the UI buttons (the gate still blocks — only the
+                        // __mlApprovals channel resolves it); "ui"/"both" show them as before.
+                        emitStep({ step, seq, pending: true, awaitingApproval: p.approvalRouting !== "external", approvalExternal: p.approvalRouting === "external" || undefined, tool, arguments: args, renderIn });
                     });
                 },
                 isSheetApproved: (id) => approvedSheets.has(id),
