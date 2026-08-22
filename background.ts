@@ -1073,9 +1073,17 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         const tabId = sender.tab?.id;
         const ids = tabId != null ? activeRuns.get(tabId) : undefined;
         const adopt: { runId: string; rebuild: import("./contract").RebuildConfig }[] = [];
+        const seen = new Set<string>();
         if (ids) for (const runId of ids) {
             const rebuild = runRebuilds.get(runId);
-            if (rebuild) adopt.push({ runId, rebuild });
+            if (rebuild && !seen.has(runId)) { seen.add(runId); adopt.push({ runId, rebuild }); }
+        }
+        // ALSO re-adopt recently-COMPLETED but still-resumable runs on this tab (bgRuns): a HUD run that
+        // navigated and then FINISHED (its fast final answer needs no delegation, so the loop never waits for
+        // the new page) would otherwise leave the destination page with no resume handle — and a composer
+        // follow-up would be dropped. Re-adopting registers the toolset + the by-hash resume handle.
+        if (tabId != null) for (const [runId, snap] of bgRuns) {
+            if (snap.tabId === tabId && snap.p.rebuild && !seen.has(runId)) { seen.add(runId); adopt.push({ runId, rebuild: snap.p.rebuild }); }
         }
         sendResponse({ adopt });
         // Overlay/off HUD replay-across-nav: this tab hosts a live run and just got a fresh document, so

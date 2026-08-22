@@ -211,3 +211,39 @@ test("cross-domain: WITHOUT the flag, a cross-origin navigate is refused by the 
     expect(new URL(page.url()).host).toBe(new URL(site.url).host);             // never left the original origin
     await page.close();
 });
+
+// A HUD-started run's handle lives PAGE-side; a navigation destroys it. A composer follow-up on the new page
+// must still reach the (background) run by hash — else the user types a follow-up into the void.
+test("cross-page: a HUD composer follow-up reaches the run after it navigated away", async () => {
+    const page = await ext.context.newPage();
+    const events = [];
+    await page.exposeFunction("__cpFollow", (e) => events.push(e));
+    await page.addInitScript(() => {
+        if (window.top !== window) return;
+        window.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) window.__cpFollow({ kind: e.data.__mlDebug.kind, id: e.data.__mlDebug.id }); });
+    });
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+
+    const before = fake.calls().length;
+    fake.setScript([
+        { tool: "navigate", args: { url: "/step2" } },
+        { content: "Done — I'm on step 2 now." },
+    ]);
+    // A handle-backed run (createAgent, like the HUD) that navigates → its page-side handle dies with the nav.
+    await page.evaluate(() => { window.ml.createAgent({ env: false }).run("Navigate to /step2."); return true; });
+    await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(2);
+    expect(page.url()).toContain("/step2");
+    const hash = events.find((e) => e.kind === "agent")?.id;
+    expect(hash).toBeTruthy();
+
+    // Follow up via the HUD composer on the NAVIGATED page (the __mlSessionSend the composer posts by hash).
+    fake.setScript([{ content: "My favourite is a sleepy tabby." }]);
+    const before2 = fake.calls().length;
+    await page.evaluate((h) => { window.postMessage({ __mlSessionSend: { hash: h, text: "What's your favourite cat pic?" } }, "*"); return true; }, hash);
+    // The follow-up must reach the run (a new model turn), carrying the follow-up text.
+    await expect.poll(() => fake.calls().length - before2, { timeout: 15000 }).toBeGreaterThanOrEqual(1);
+    const seen = (fake.calls().at(-1).messages || []).map((m) => (typeof m.content === "string" ? m.content : "")).join(" ");
+    expect(seen).toContain("favourite cat pic");
+    await page.close();
+});

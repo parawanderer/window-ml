@@ -1516,7 +1516,24 @@ class AgentHandle implements MlAgentHandle, AgentControl {
         _adoptRun: function(runId: string, rebuild: RebuildConfig): void {
             setPierceClosedShadow(!!rebuild.pierceClosed);
             const toolset = this._rebuildToolset(rebuild);
-            registerRun(runId, toolset, rebuild.model ?? null, !!rebuild.driverSees, rebuild.visionModel ?? null);
+            const model = rebuild.model ?? null, driverSees = !!rebuild.driverSees, visionModel = rebuild.visionModel ?? null;
+            registerRun(runId, toolset, model, driverSees, visionModel);
+            // Re-register a RESUME handle so a HUD composer follow-up (a run() turn) can continue this
+            // background run BY HASH — the original page's AgentHandle died with the navigation, so without
+            // this a follow-up typed on the new page falls through to the chat path and is silently dropped.
+            agentRegistry.set(runId, {
+                hash: runId,
+                resume: async (t: string): Promise<AgentResult> => {
+                    registerRun(runId, toolset, model, driverSees, visionModel);   // endRun clears the live tools each turn
+                    enterAgentRun();
+                    try {
+                        const res = await makeBackgroundTaskPromise<AgentResult>("RESUME_RUN_REQUEST", "RESUME_RUN_RESPONSE", { runId, task: t });
+                        const run = endRun(runId);
+                        emitDebug({ kind: "agent-result", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: res.steps }, summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled });
+                        return { ...res, elements: run ? run.answered : [], hash: runId };
+                    } finally { exitAgentRun(); }
+                },
+            });
         },
         /**
          * Run a sandboxed Python snippet (Pyodide/WASM in an offscreen doc) with numpy +
@@ -2153,6 +2170,15 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 // An AGENT handle holds live state: steer a RUNNING loop (say — text only, no image mid-steer),
                 // else a new turn (run, which carries this turn's images).
                 if (h) { if (h.running) h.say(text); else void h.run(text, images); return; }
+                // No local handle — e.g. a HUD run that NAVIGATED (its page-side handle died with the old
+                // document). If it re-adopted as a resumable BACKGROUND run (agentRegistry, keyed by hash),
+                // continue it with a follow-up TURN rather than dropping the message into the chat path.
+                const bg = agentRegistry.get(hash);
+                if (bg) {
+                    emitDebug({ kind: "agent-say", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text });
+                    void bg.resume(text);
+                    return;
+                }
                 // Otherwise it's a plain chat session — continue the conversation with another turn.
                 void continueChatSession(hash, text, images);
                 return;
