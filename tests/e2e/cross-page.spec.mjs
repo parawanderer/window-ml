@@ -247,3 +247,40 @@ test("cross-page: a HUD composer follow-up reaches the run after it navigated aw
     expect(seen).toContain("favourite cat pic");
     await page.close();
 });
+
+// Durable resume: a background run snapshots to storage each step, so an SW evicted mid-run rehydrates and
+// AUTO-CONTINUES when its page re-adopts. We pause the run at an approval gate, simulate eviction (drop
+// in-memory state + rehydrate, exactly what a respawn does), then reload → the run picks up from its
+// checkpoint. (A real MV3 eviction is ~30s of idle; __mlEvictForTest is the SW-realm-only test shortcut.)
+test("durable resume: an SW-evicted run rehydrates and continues when the page re-adopts", async () => {
+    const page = await ext.context.newPage();
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+    const before = fake.calls().length;
+    fake.setScript([
+        { tool: "navigate", args: { url: "/step2" } },                              // same-origin → auto-approved, checkpointed
+        { tool: "exec", args: { js: "document.title = 'X'; 'ok'" } },               // gates → the run PAUSES here
+        { content: "Continued after the eviction." },                              // what the RESUME turn returns
+    ]);
+    await page.evaluate(() => { window.ml.agent("Go to /step2, then set the title.", { env: false, approvalRouting: "external" }); return true; });
+    // It navigates (checkpointed) and pauses at the exec gate — 2 model calls so far.
+    await expect.poll(() => new URL(page.url()).pathname, { timeout: 20000 }).toBe("/step2");
+    await expect.poll(async () => (await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).length, { timeout: 15000 }).toBe(1);
+    expect(fake.calls().length - before).toBe(2);
+    // Its snapshot is on disk (durable).
+    const keys = await ext.sw.evaluate(async () => Object.keys(await chrome.storage.local.get(null)).filter((k) => k.startsWith("ml_bgrun_")));
+    expect(keys.length).toBe(1);
+
+    // Simulate the eviction: drop all in-memory run state + rehydrate from storage (the gate-suspended loop
+    // is orphaned, exactly as a real eviction leaves it — its finally never runs, so the snapshot survives).
+    await ext.sw.evaluate(() => globalThis.__mlEvictForTest());
+    expect(await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).toHaveLength(0);   // the gate is gone
+
+    // Reload → CONTENT_READY → re-adopt with resume:true → the run continues from its checkpoint (past the
+    // navigate) → the RESUME turn (3rd call) returns the final answer. No re-gate (the fake advanced past exec).
+    await page.reload();
+    await waitForMl(page);
+    await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(3);   // the run made a NEW model call → it resumed
+    expect((fake.calls().at(-1).messages || []).some((m) => typeof m.content === "string" && /step2|Go to/.test(m.content))).toBe(true);   // it carried the pre-eviction history
+    await page.close();
+});

@@ -877,6 +877,10 @@ const deleteRun = (runId: string): void => {
 // On SW startup: rehydrate any in-flight runs from storage into bgRuns + re-track them against their tab
 // (activeRuns/runRebuilds) so the nav sensor + re-adopt find them. A run then continues via the existing
 // resume path (page-driven today; auto-resume-on-readopt is the next slice). No-op on a first, clean spawn.
+// Runs loaded from storage on THIS SW spawn = INTERRUPTED (evicted mid-flight, never settled — their storage
+// snapshot outlived them). A fresh page re-adopt AUTO-RESUMES these (part 2); a run that merely COMPLETED
+// (its snapshot was deleted in the finally) is not here, so it's never re-driven.
+const hydratedRuns = new Set<string>();
 async function hydratePersistedRuns(): Promise<void> {
     try {
         const all = await chrome.storage.local.get(null);
@@ -886,11 +890,25 @@ async function hydratePersistedRuns(): Promise<void> {
             const runId = snap.p?.runId;
             if (!runId || typeof snap.tabId !== "number" || bgRuns.has(runId)) continue;
             bgRuns.set(runId, snap);
+            hydratedRuns.add(runId);
             if (snap.p.crossPage !== false) trackRun(snap.tabId, runId, snap.p.rebuild);
         }
     } catch { /* storage unavailable / empty */ }
 }
-if (typeof chrome !== "undefined" && chrome.storage?.local) void hydratePersistedRuns();
+// Resolves once the startup rehydrate is done — CONTENT_READY awaits it so a page loading right after an SW
+// respawn doesn't miss the in-flight run (the respawn race).
+const hydrationDone: Promise<void> = (typeof chrome !== "undefined" && chrome.storage?.local) ? hydratePersistedRuns() : Promise.resolve();
+
+// TEST-ONLY (reachable only from the SW realm via serviceWorker.evaluate, like __mlApprovals — no page can
+// reach it, and nothing in prod calls it): simulate an MV3 eviction by dropping all in-memory run state, then
+// re-hydrating from storage as a respawn would. An orphaned (gate-suspended) loop is left dangling exactly as
+// a real eviction leaves it — its finally never runs, so the storage snapshot survives. Lets an e2e exercise
+// durable resume without waiting ~30s for a real eviction.
+(globalThis as unknown as { __mlEvictForTest?: unknown }).__mlEvictForTest = async (): Promise<void> => {
+    runControllers.clear(); runInboxes.clear(); bgRuns.clear(); activeRuns.clear();
+    runRebuilds.clear(); runReplayBuffer.clear(); pendingApprovals.clear(); hydratedRuns.clear();
+    await hydratePersistedRuns();
+};
 
 // Per-run steering inbox (a.say() mid-run): the SW-side twin of the page loop's control.inbox. INJECT_MESSAGE
 // pushes here (only the owning tab may); the run's loop drains it at each step boundary (deps.drainInbox).
@@ -1071,30 +1089,39 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // toolset). A fresh content script on a tab with active runs MEANS the document was replaced (the old
         // page is gone), so this fires the re-adopt regardless of the barrier's exact state. Empty otherwise.
         const tabId = sender.tab?.id;
-        const ids = tabId != null ? activeRuns.get(tabId) : undefined;
-        const adopt: { runId: string; rebuild: import("./contract").RebuildConfig }[] = [];
-        const seen = new Set<string>();
-        if (ids) for (const runId of ids) {
-            const rebuild = runRebuilds.get(runId);
-            if (rebuild && !seen.has(runId)) { seen.add(runId); adopt.push({ runId, rebuild }); }
-        }
-        // ALSO re-adopt recently-COMPLETED but still-resumable runs on this tab (bgRuns): a HUD run that
-        // navigated and then FINISHED (its fast final answer needs no delegation, so the loop never waits for
-        // the new page) would otherwise leave the destination page with no resume handle — and a composer
-        // follow-up would be dropped. Re-adopting registers the toolset + the by-hash resume handle.
-        if (tabId != null) for (const [runId, snap] of bgRuns) {
-            if (snap.tabId === tabId && snap.p.rebuild && !seen.has(runId)) { seen.add(runId); adopt.push({ runId, rebuild: snap.p.rebuild }); }
-        }
-        sendResponse({ adopt });
-        // Overlay/off HUD replay-across-nav: this tab hosts a live run and just got a fresh document, so
-        // stream the run's buffered history to it — the fresh card/overlay rebuilds MID-run (start + every
-        // step so far) instead of only showing post-nav events. The shell buffers these __mlFromBg events
-        // while its iframe mounts, so a small ordering race against the shell handshake is absorbed.
-        if (tabId != null && ids && ids.size) {
-            const history = runReplayBuffer.get(tabId) || [];
-            for (const event of history) chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => {});
-        }
-        return true;   // sendResponse already called synchronously
+        // Await the startup rehydrate first — a page loading right after an SW respawn must see the in-flight
+        // runs storage restored, or it would miss the re-adopt + auto-resume.
+        void hydrationDone.then(() => {
+            const ids = tabId != null ? activeRuns.get(tabId) : undefined;
+            // `resume` marks an INTERRUPTED (evicted) run — the fresh page auto-continues it (durable resume).
+            const adopt: { runId: string; rebuild: import("./contract").RebuildConfig; resume?: boolean }[] = [];
+            const seen = new Set<string>();
+            const addAdopt = (runId: string, rebuild: import("./contract").RebuildConfig): void => {
+                if (seen.has(runId)) return;
+                seen.add(runId);
+                const resume = hydratedRuns.has(runId) && !runControllers.has(runId);   // evicted & not running → re-drive
+                if (resume) hydratedRuns.delete(runId);   // auto-resume ONCE
+                adopt.push({ runId, rebuild, resume: resume || undefined });
+            };
+            if (ids) for (const runId of ids) { const rebuild = runRebuilds.get(runId); if (rebuild) addAdopt(runId, rebuild); }
+            // ALSO re-adopt recently-COMPLETED-but-resumable runs on this tab (bgRuns): a HUD run that navigated
+            // and then FINISHED (its fast final answer needs no delegation, so the loop never waits for the new
+            // page) would otherwise leave the destination page with no resume handle — and a composer follow-up
+            // would be dropped. Re-adopting registers the toolset + the by-hash resume handle. (Not `resume`:
+            // a completed run isn't in hydratedRuns, so it re-adopts but doesn't auto-re-drive.)
+            if (tabId != null) for (const [runId, snap] of bgRuns) {
+                if (snap.tabId === tabId && snap.p.rebuild) addAdopt(runId, snap.p.rebuild);
+            }
+            sendResponse({ adopt });
+            // Overlay/off HUD replay-across-nav: stream the run's buffered history so the fresh card/overlay
+            // rebuilds MID-run (start + every step so far), not just post-nav events. The shell buffers these
+            // __mlFromBg events while its iframe mounts, absorbing an ordering race against the handshake.
+            if (tabId != null && ids && ids.size) {
+                const history = runReplayBuffer.get(tabId) || [];
+                for (const event of history) chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => {});
+            }
+        });
+        return true;   // async: sendResponse fires after hydration resolves
     }
     if (message.type === "RUN_READOPTED") {
         // The fresh document re-registered a run's toolset → release the navigation barrier so the held

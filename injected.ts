@@ -2052,11 +2052,17 @@ class AgentHandle implements MlAgentHandle, AgentControl {
     // async <script> injection.
     window.addEventListener("message", (e: MessageEvent) => {
         if (e.source !== window || !e.data || e.data.type !== "ADOPT_RUN") return;
-        const { runId, rebuild } = e.data as { runId?: string; rebuild?: RebuildConfig };
+        const { runId, rebuild, resume } = e.data as { runId?: string; rebuild?: RebuildConfig; resume?: boolean };
         if (!runId || !rebuild) return;
         try { (window.ml as unknown as MlApi)._adoptRun(runId, rebuild); }
         catch { /* rebuild failed → the barrier times out and the loop gets a clear "no active run" error */ }
         window.postMessage({ type: "RUN_READOPTED", runId }, "*");
+        // Durable resume: an INTERRUPTED (SW-evicted) run auto-CONTINUES from its checkpointed history — the
+        // resume handle _adoptRun just re-registered drives a RESUME_RUN (empty follow-up = "carry on").
+        if (resume) {
+            try { const bg = agentRegistry.get(runId); if (bg) void bg.resume(""); }
+            catch { /* resume unavailable → the run stays paused, no worse than before */ }
+        }
     });
     window.postMessage({ type: "PAGE_ADOPT_HELLO" }, "*");
 

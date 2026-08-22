@@ -318,8 +318,18 @@ navs skip). Once approved, it just works mechanically: the content script re-inj
 (`<all_urls>`), so re-adoption + delegation continue there; `crossOrigin` rides on `RebuildConfig` so the
 rebuilt tool keeps crossing after a nav, and it's logged in the "agent options" block with a data-carry
 caution in the tool description. (v2: an "allow / allow-for-this-run / deny" 3-way + "on-click"
-host-permission handling.) **Durable storage-backed resume** (survive SW eviction mid-run) is still open.
-Plan + STATUS/HANDOFF: `tmp/cross-page-agent.md`.
+host-permission handling.)
+**Durable storage-backed resume:** a background run mirrors its resumable snapshot (`{p, messages, tabId,
+sub}`) to `chrome.storage.local` at START and after each step (the host `checkpoint` dep), so an MV3-evicted
+run isn't lost. On SW respawn a top-level `hydratePersistedRuns()` reloads in-flight runs into
+`bgRuns`/`activeRuns` and marks them in `hydratedRuns` (= INTERRUPTED); `CONTENT_READY` awaits that hydrate,
+then a fresh page re-adopting an interrupted run gets `resume:true` on its adopt entry and AUTO-continues it
+from the last checkpoint (the `agentRegistry` by-hash resume handle → RESUME_RUN with an empty follow-up).
+Storage holds only RUNNING runs (deleted in the run's finally); a run that merely COMPLETED isn't in
+`hydratedRuns`, so it re-adopts (for a composer follow-up) but never re-drives. Tested via `__mlEvictForTest`
+(an SW-realm-only hook that drops in-memory state + rehydrates, simulating a respawn). Known gap: a run
+evicted while idle at an approval gate with NO subsequent page load has no re-adopt trigger, so it resumes
+only once the page next loads. Plan + STATUS/HANDOFF: `tmp/cross-page-agent.md`.
 
 **Approval-over-IPC (`__mlApprovals` + `approvalRouting`).** A background-hosted run's privileged gate can
 be resolved from OUTSIDE the browser, so an automated driver approves/denies exactly like a human click — the

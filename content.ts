@@ -148,10 +148,10 @@ window.addEventListener("message", (event: MessageEvent) => {
         // Cross-page persistence: injected.js just went live on a fresh document. Ask the background whether
         // this tab still hosts any background-run(s) mid-navigation; for each, relay the rebuild-config back
         // to the main world as an ADOPT_RUN so injected re-registers the toolset. Empty on a normal page.
-        chrome.runtime.sendMessage({ type: "CONTENT_READY" }, (resp: { adopt?: { runId: string; rebuild: unknown }[] } | undefined) => {
+        chrome.runtime.sendMessage({ type: "CONTENT_READY" }, (resp: { adopt?: { runId: string; rebuild: unknown; resume?: boolean }[] } | undefined) => {
             void chrome.runtime.lastError;   // SW asleep / no active run → no adopt; swallow the "no response" noise
             for (const a of (resp && resp.adopt) || []) {
-                window.postMessage({ type: "ADOPT_RUN", runId: a.runId, rebuild: a.rebuild }, "*");
+                window.postMessage({ type: "ADOPT_RUN", runId: a.runId, rebuild: a.rebuild, resume: a.resume }, "*");
             }
         });
         return;
