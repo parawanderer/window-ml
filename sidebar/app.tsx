@@ -2083,8 +2083,12 @@ function ApprovalBody({ st, hash, goal }: { st: AgentStep; hash: string; goal: s
                         {intent.crossOrigin ? <div class="action-xorigin"><IconWarn /><span><b>Privileged click into an embedded cross-origin frame</b> — <b class="xorigin-host">{intent.crossOrigin}</b>. It uses a real debugger click and your session on that site.</span></div> : null}
                       </div>
                     : <div class="action-card">
-                        {summary ? <div class="action-summary ml-reveal">{summary}</div>
-                            : <div class="action-body dim">Run <b>{st.tool}</b>{st.arguments && Object.keys(st.arguments).length ? <> with {inlineJson(st.arguments)}</> : null}</div>}
+                        {/* Utility-model gloss (if any) ABOVE the render — but it must NOT replace a
+                            deterministic render (e.g. navigate's destination URL); a consent card has to keep
+                            showing WHAT it's approving. Summary + render stack, like the code case does. */}
+                        {summary ? <div class="action-summary ml-reveal">{summary}</div> : null}
+                        {st.renderIn ? <RenderPanel d={st.renderIn} />
+                            : (summary ? null : <div class="action-body dim">Run <b>{st.tool}</b>{st.arguments && Object.keys(st.arguments).length ? <> with {inlineJson(st.arguments)}</> : null}</div>)}
                       </div>}
             {sheets.length
                 ? <div class="action-sheets"><IconWarn /><span>Grants this run access to {sheets.map((id, i) => <SheetChip key={i} id={id} />)} for the session.</span></div>
