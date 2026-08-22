@@ -1768,6 +1768,17 @@ test("_rebuildToolset reconstructs the builtin toolset from names (cross-page re
     assert.ok(nativeLook[0].capabilities && nativeLook[0].capabilities.includes("vision"), "native look keeps the vision capability");
 });
 
+test("navigate is approval-gated and its render shows the DESTINATION url (a consent card must show WHERE)", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("done")]) });
+    const nav = world.ml.navigateTool({ crossOrigin: true });
+    assert.equal(nav.requiresApproval, true, "navigate gates (so a cross-origin nav prompts)");
+    const d = nav.render(null, { url: "https://www.google.com/search?q=cats" });
+    assert.equal(d.type, "keyval");
+    assert.deepEqual(d.pairs, [["Navigate to", "https://www.google.com/search?q=cats"]], "the card shows the absolute URL");
+    // a relative URL resolves to absolute so the ORIGIN is always visible in the consent card
+    assert.equal(world.ml.navigateTool().render(null, { url: "/dashboard" }).pairs[0][1], "https://test.example/dashboard");
+});
+
 test("exec without python_exec adds the JS-compute fallback clause", async () => {
     const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("done")]) });
     const win = world.context.window;
