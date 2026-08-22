@@ -1773,10 +1773,10 @@ test("navigate is approval-gated and its render shows the DESTINATION url (a con
     const nav = world.ml.navigateTool({ crossOrigin: true });
     assert.equal(nav.requiresApproval, true, "navigate gates (so a cross-origin nav prompts)");
     const d = nav.render(null, { url: "https://www.google.com/search?q=cats" });
-    assert.equal(d.type, "keyval");
-    assert.deepEqual(d.pairs, [["Navigate to", "https://www.google.com/search?q=cats"]], "the card shows the absolute URL");
+    assert.equal(d.type, "action", "an action render → the sidebar's intent sentence");
+    assert.equal(d.target, "https://www.google.com/search?q=cats", "the card shows the absolute destination URL");
     // a relative URL resolves to absolute so the ORIGIN is always visible in the consent card
-    assert.equal(world.ml.navigateTool().render(null, { url: "/dashboard" }).pairs[0][1], "https://test.example/dashboard");
+    assert.equal(world.ml.navigateTool().render(null, { url: "/dashboard" }).target, "https://test.example/dashboard");
 });
 
 test("exec without python_exec adds the JS-compute fallback clause", async () => {

@@ -1461,12 +1461,14 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     required: ["url"],
                 },
                 // Show the DESTINATION in the approval card — a consent gate is meaningless without the URL the
-                // agent wants to leave for. Resolve relative → absolute so the origin is always visible.
+                // agent wants to leave for. An `action` render → the sidebar's intent sentence ("Agent wants to
+                // go to <url>", the url styled like a significant action). Resolve relative → absolute so the
+                // origin is always visible.
                 render: (_input: unknown, args?: Record<string, unknown>): RenderDescriptor => {
                     const raw = String((args as { url?: unknown } | undefined)?.url ?? "");
                     let shown = raw;
                     try { shown = new URL(raw, location.href).href; } catch { /* keep raw */ }
-                    return { type: "keyval", pairs: [["Navigate to", shown]] };
+                    return { type: "action", verb: "go to", target: shown };
                 },
                 run: async ({ url }: { url?: unknown } = {}): Promise<string> => {
                     const t = navTarget(typeof url === "string" ? url : "", location.href, { allowCrossOrigin });

@@ -2007,13 +2007,13 @@ function fetchUtilityLine(messages: { role: string; content: string }[], key: st
 // A pending call's INTENT: prefer the tool-provided `action` descriptor (deterministic; custom tools
 // too), else a name-based verb for built-ins, else nothing (→ utility-model description).
 const CODE_LANG: Record<string, string> = { exec: "javascript", python_exec: "python" };
-interface Intent { verb: string; kind?: string; target?: string; selector?: string; input?: string; note?: string; submit?: boolean; crossOrigin?: string; }
+interface Intent { verb: string; kind?: string; target?: string; selector?: string; input?: string; note?: string; submit?: boolean; crossOrigin?: string; link?: boolean; }
 function intentFor(st: AgentStep): Intent | null {
     // Whether a `type` will ALSO press Enter — a materially bigger action (it submits the form/search), so the
     // approval must call it out. Read from the raw args (the ground truth), regardless of the render path.
     const submit = st.tool === "type" ? !!st.arguments?.submit : undefined;
     const ri = st.renderIn;
-    if (ri && ri.type === "action") return { verb: ri.verb, kind: ri.kind, target: ri.target, selector: ri.selector, input: ri.input, note: ri.note, submit, crossOrigin: ri.crossOrigin };
+    if (ri && ri.type === "action") return { verb: ri.verb, kind: ri.kind, target: ri.target, selector: ri.selector, input: ri.input, note: ri.note, submit, crossOrigin: ri.crossOrigin, link: st.tool === "navigate" };
     if (ri && ri.type === "elements" && ri.items[0])   // an older/other target render still gives a target + selector
         return { verb: st.tool === "click" ? "Click" : st.tool === "type" ? "Type" : `Run ${st.tool}`, target: ri.items[0].text || ri.items[0].path, selector: ri.items[0].path, submit };
     const sel = typeof st.arguments?.selector === "string" ? (st.arguments.selector as string) : undefined;
@@ -2066,13 +2066,17 @@ function ApprovalBody({ st, hash, goal }: { st: AgentStep; hash: string; goal: s
                 : intent
                     ? <div class="action-card">
                         <div class="action-sentence">
-                            Agent wants to <span class="action-verb">{intent.verb.toLowerCase()}</span>
-                            {isType ? <> “<b class="action-target">{truncate(intent.input || "", 100)}</b>” into</> : null}
-                            {" the "}{intent.kind || "element"}
-                            {intent.target ? <> <b class="action-target">“{intent.target}”</b></> : null}
-                            {/* type + submit is a bigger action (presses Enter → sends the form). Call it out with a
-                                dotted underline so the human sees it's not just typing. */}
-                            {isType && intent.submit ? <> and <span class="action-submit">submit</span> it</> : null}
+                            {/* navigate: "Agent wants to go to <url>", the URL styled like a significant action
+                                (warm + dotted) — leaving for another page is worth calling out. */}
+                            {intent.link
+                                ? <>Agent wants to <span class="action-verb">{intent.verb.toLowerCase()}</span> <span class="action-link">{intent.target}</span></>
+                                : <>Agent wants to <span class="action-verb">{intent.verb.toLowerCase()}</span>
+                                    {isType ? <> “<b class="action-target">{truncate(intent.input || "", 100)}</b>” into</> : null}
+                                    {" the "}{intent.kind || "element"}
+                                    {intent.target ? <> <b class="action-target">“{intent.target}”</b></> : null}
+                                    {/* type + submit is a bigger action (presses Enter → sends the form). Call it out with a
+                                        dotted underline so the human sees it's not just typing. */}
+                                    {isType && intent.submit ? <> and <span class="action-submit">submit</span> it</> : null}</>}
                             {intent.note ? <span class="action-note"> · {intent.note}</span> : null}.
                         </div>
                         {intent.selector ? <div class="action-loc"><span class="loc-dot" aria-hidden="true" />Highlighted on the page{pos ? <> · <b>{pos}</b></> : null}</div> : null}
