@@ -294,3 +294,19 @@ test("SALVAGE: empty content AND no reasoning → still an empty summary (no spu
     const res = await runAgentLoop("x", { tools: [] }, deps);
     assert.equal(res.summary, "", "nothing to salvage → empty summary, behaviour unchanged");
 });
+
+test("denial attribution: an EXTERNAL approver's rejection reads 'Denied by an external approver', not 'the user'", async () => {
+    const danger2 = { name: "danger", requiresApproval: true };
+    // The gate returns the rich decision an IPC (__mlApprovals) reject produces: { approved:false, source:"external" }.
+    const { deps } = makeDeps({ turns: [toolCall("danger"), reply("ok")], approve: () => ({ approved: false, source: "external" }) });
+    const res = await runAgentLoop("x", { tools: [danger2] }, deps);
+    assert.match(res.transcript[0].result, /Denied by an external approver/);
+    assert.doesNotMatch(res.transcript[0].result, /by the user/);
+});
+
+test("denial attribution: a UI/user rejection (no source, or source:'user') still reads 'Denied by the user'", async () => {
+    const danger2 = { name: "danger", requiresApproval: true };
+    const { deps } = makeDeps({ turns: [toolCall("danger"), reply("ok")], approve: () => false });   // boolean → source defaults to user
+    const res = await runAgentLoop("x", { tools: [danger2] }, deps);
+    assert.match(res.transcript[0].result, /Denied by the user/);
+});

@@ -169,13 +169,14 @@ export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number | (() =
 
 // Normalize an approval gate's return (boolean OR the rich contract) into a decision. Inlined (not
 // imported from approval.ts) so this module stays DOM/chrome-free for the standalone build.
-const normalize = (d: ApprovalDecision, orig: Record<string, unknown>): { approved: boolean; feedback: string | null; arguments: Record<string, unknown> } => {
+const normalize = (d: ApprovalDecision, orig: Record<string, unknown>): { approved: boolean; feedback: string | null; arguments: Record<string, unknown>; source: "user" | "external" } => {
     if (d && typeof d === "object") return {
         approved: !!d.approved,
         feedback: typeof d.feedback === "string" && d.feedback.trim() ? d.feedback.trim() : null,
         arguments: d.approved && d.arguments && typeof d.arguments === "object" ? d.arguments : orig,
+        source: d.source === "external" ? "external" : "user",
     };
-    return { approved: !!d, feedback: null, arguments: orig };
+    return { approved: !!d, feedback: null, arguments: orig, source: "user" };
 };
 
 // Returns AgentResult WITHOUT `hash` — this loop is identity-agnostic; the page-side ml.agent
@@ -289,9 +290,12 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                         const d = normalize(rawDecision, args);
                         if (!d.approved) {
                             approval = "denied";
+                            // Attribute the denial accurately: a human in a browser surface, or an external
+                            // approver (the __mlApprovals IPC channel — an orchestrator / policy driver).
+                            const who = d.source === "external" ? "an external approver" : "the user";
                             result = d.feedback
-                                ? `Denied by the user: ${d.feedback}\nDo not retry this exact call unchanged; address the feedback or try another approach.`
-                                : "Denied by the user. Do not retry this exact call; try another approach.";
+                                ? `Denied by ${who}: ${d.feedback}\nDo not retry this exact call unchanged; address the feedback or try another approach.`
+                                : `Denied by ${who}. Do not retry this exact call; try another approach.`;
                             // NB: runTool is NOT called — the security invariant.
                         } else {
                             approval = "user";

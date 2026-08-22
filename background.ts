@@ -843,8 +843,8 @@ function resolveApproval(key: string, decision: ApprovalDecision): boolean {
         const entry = pendingApprovals.get(key);
         if (!entry || !externallyResolvable(entry.descriptor)) return false;   // unknown, or a UI-only gate
         const norm: ApprovalDecision = (decision === true || (typeof decision === "object" && !!decision && (decision as { approved?: boolean }).approved))
-            ? { approved: true }
-            : { approved: false, feedback: (typeof decision === "object" && decision && (decision as { feedback?: string }).feedback) || undefined };
+            ? { approved: true, source: "external" }
+            : { approved: false, feedback: (typeof decision === "object" && decision && (decision as { feedback?: string }).feedback) || undefined, source: "external" };
         return resolveApproval(key, norm);
     },
 };
@@ -1019,7 +1019,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // not a content-relayed HANDLE_MAP type — so a page-set window.confirm / hostile approve() can't
         // reach here even though the page knows its own runId. Design A's crux.
         const p = message.payload as SetApprovalPayload;
-        resolveApproval(`${p.runId}:${p.seq}`, p.decision ? { approved: true } : { approved: false, feedback: p.feedback });
+        resolveApproval(`${p.runId}:${p.seq}`, p.decision ? { approved: true, source: "user" } : { approved: false, feedback: p.feedback, source: "user" });
         return;   // fire-and-forget
     }
     if (message.type === "CONTENT_READY") {

@@ -482,10 +482,13 @@ export interface ApprovalRequest {
 }
 
 /** The approval-gate contract: a boolean, or a rich object that can feed a
- *  rejection comment back to the model and/or edit the args before running. */
+ *  rejection comment back to the model and/or edit the args before running.
+ *  `source` records WHO decided — "user" (a browser UI surface) or "external"
+ *  (the __mlApprovals IPC channel: an orchestrator / policy driver) — so a
+ *  denial reads back accurately to the model. Absent → treated as "user". */
 export type ApprovalDecision =
     | boolean
-    | { approved: boolean; feedback?: string; arguments?: Record<string, unknown> };
+    | { approved: boolean; feedback?: string; arguments?: Record<string, unknown>; source?: "user" | "external" };
 
 export interface AgentTranscriptEntry {
     thought?: string;
