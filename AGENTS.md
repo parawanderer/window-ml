@@ -686,6 +686,13 @@ thing. The parts:
   `ml.domTools` — a smaller system prompt + fewer schemas = far fewer tokens/turn), `WARM=0`
   (skip model warm-up), `RUN_LABEL`. This is how an agent debugs the extension itself: run →
   read `run.md` + screenshots → diff run dirs before/after a fix.
+- **`approval-demo.mjs`** — a **narrated demo, not a test**: `npm run build && node --import tsx
+  tests/e2e/approval-demo.mjs` opens a headful browser and walks the approval-over-IPC flow (idea #2)
+  three times — a manual APPROVE, a manual REJECT, and a POLICY driver that auto-approves read-only
+  `exec` and rejects writes — printing the pending-gate descriptor (`__mlApprovals.list()`) and each
+  decision (`resolve(key, …)`), all driven from the SW realm with the page walled off. Deterministic
+  (fake-LLM, no model/key). Pace it with `PACE`/`HOLD` (ms). The automated assertions of the same flow
+  are `approval.spec.mjs`.
 - **Real model:** point the extension at a real backend with `E2E_BACKEND=<chatUrl>
   E2E_MODEL=<id> E2E_KEY=<bearer>` (the observer also accepts `USE_ENV=1` to read
   `OPENWEBUI_URL/KEY/MODEL` + `OPENWEBUI_UTILITY_MODEL`/`OPENWEBUI_VISION_MODEL` from `.env`).
