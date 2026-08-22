@@ -62,6 +62,9 @@ export interface RunAgentHostDeps {
     navNeedsConsent?(url: string): boolean;
     // Debug fan-out (agent-step events: the pending START then the DONE).
     emit?: AgentLoopDeps["emit"];
+    // Durable resume: called with the run's live message array after each COMPLETED step, so the background
+    // can snapshot it to storage — a re-spawned SW (MV3 evicts ~30s idle) can then rehydrate an in-flight run.
+    checkpoint?(messages: NeutralMessage[]): void;
     // Mid-run steering (a.say() → INJECT_MESSAGE): the run's SW-side inbox, drained at each step boundary.
     drainInbox?: AgentLoopDeps["drainInbox"];
     signal?: AbortSignal | null;
@@ -131,7 +134,12 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
         // Mid-run steering: drain the SW-side inbox (a.say() → INJECT_MESSAGE) and inject as user turns.
         drainInbox: deps.drainInbox,
         pushUser: (messages, text) => (messages as NeutralMessage[]).push({ role: "user", content: text }),
-        emit: deps.emit,
+        // Wrap emit to checkpoint the live history after each COMPLETED step (the DONE emit, not the pending
+        // START) — so a snapshot for durable resume lands once a step's result is in `built`.
+        emit: (deps.emit || deps.checkpoint) ? ((ev) => {
+            deps.emit?.(ev);
+            if (deps.checkpoint && !ev.pending && ev.step != null) deps.checkpoint(built);
+        }) : undefined,
         chatMeta: deps.chatMeta,   // resolve model/caps/window SW-side (background provides the caches)
         subcallTokens: deps.subcallTokens,   // this turn's delegated vision sub-call tally (background-accumulated)
     };

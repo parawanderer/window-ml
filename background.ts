@@ -861,6 +861,37 @@ const runControllers = new Map<string, AbortController>();
 // finish-then-follow-up flow); an evicted run reports an actionable error and the caller starts fresh.
 const bgRuns = new Map<string, { p: StartRunPayload; tabId: number; messages: NeutralMessage[]; sub?: import("./contract").SubcallUsage }>();
 
+// ---- Durable resume ----
+// A LIVE run's resumable snapshot is also mirrored to chrome.storage.local, so a re-spawned SW (MV3 evicts
+// ~30s idle) can rehydrate an in-flight run instead of losing it. Storage holds ONLY running runs — deleted
+// the moment a run settles; the in-memory bgRuns above additionally keeps COMPLETED runs for a follow-up
+// RESUME (still eviction-bound, as before). Snapshot shape == a bgRuns entry.
+type BgRunSnap = { p: StartRunPayload; tabId: number; messages: NeutralMessage[]; sub?: import("./contract").SubcallUsage };
+const BGRUN_KEY = (runId: string): string => `ml_bgrun_${runId}`;
+const persistRun = (runId: string, snap: BgRunSnap): void => {
+    try { void chrome.storage?.local?.set({ [BGRUN_KEY(runId)]: snap }); } catch { /* storage unavailable */ }
+};
+const deleteRun = (runId: string): void => {
+    try { void chrome.storage?.local?.remove(BGRUN_KEY(runId)); } catch { /* storage unavailable */ }
+};
+// On SW startup: rehydrate any in-flight runs from storage into bgRuns + re-track them against their tab
+// (activeRuns/runRebuilds) so the nav sensor + re-adopt find them. A run then continues via the existing
+// resume path (page-driven today; auto-resume-on-readopt is the next slice). No-op on a first, clean spawn.
+async function hydratePersistedRuns(): Promise<void> {
+    try {
+        const all = await chrome.storage.local.get(null);
+        for (const [k, v] of Object.entries(all)) {
+            if (!k.startsWith("ml_bgrun_") || !v) continue;
+            const snap = v as BgRunSnap;
+            const runId = snap.p?.runId;
+            if (!runId || typeof snap.tabId !== "number" || bgRuns.has(runId)) continue;
+            bgRuns.set(runId, snap);
+            if (snap.p.crossPage !== false) trackRun(snap.tabId, runId, snap.p.rebuild);
+        }
+    } catch { /* storage unavailable / empty */ }
+}
+if (typeof chrome !== "undefined" && chrome.storage?.local) void hydratePersistedRuns();
+
 // Per-run steering inbox (a.say() mid-run): the SW-side twin of the page loop's control.inbox. INJECT_MESSAGE
 // pushes here (only the owning tab may); the run's loop drains it at each step boundary (deps.drainInbox).
 // Present only while a run is live (set at start, deleted in finally).
@@ -1168,6 +1199,9 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // Register the run against its tab so the navigation sensor watches it — UNLESS the run opted out of
         // cross-page persistence (navigate: false), in which case a nav simply ends it (no barrier, no adopt).
         if (p.crossPage !== false) trackRun(tabId, runId, p.rebuild);
+        // Durable resume: snapshot the run NOW (before the first step) + after each step (the checkpoint dep),
+        // so an SW evicted mid-run rehydrates from storage. Cleared when the run settles (finally).
+        persistRun(runId, { p, tabId, messages: resumeMessages || [], sub: { ...subTally } });
         const toolMetas: ToolMeta[] = p.tools.map(t => ({ name: t.name, requiresApproval: t.requiresApproval, capabilities: t.capabilities }));
         const toolDefs = p.tools.map(t => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
         const approvedSheets = new Set<string>();   // external sheets approved this run (isSheetApproved)
@@ -1372,6 +1406,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 },
                 isSheetApproved: (id) => approvedSheets.has(id),
                 navNeedsConsent,   // cross-origin nav → gate; same-site / already-consented → auto (see consentedOrigins)
+                checkpoint: (messages) => persistRun(runId, { p, tabId, messages, sub: { ...subTally } }),   // durable resume snapshot per step
                 // This turn's delegated vision sub-call tally (accumulated from each delegated tool's envelope
                 // delta in delegateTool) — so chat_metadata reports the real number on the background path too.
                 subcallTokens: () => ({ ...subTally }),
@@ -1427,7 +1462,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 });
                 sendResponse({ error: err?.message || String(err) });
             })
-            .finally(() => { runControllers.delete(runId); runInboxes.delete(runId); untrackRun(tabId, runId); });
+            .finally(() => { runControllers.delete(runId); runInboxes.delete(runId); untrackRun(tabId, runId); deleteRun(runId); });
         return true;   // async: sendResponse fires when the whole run finishes
     }
     if (message.type === "PYTHON_EXEC") {
