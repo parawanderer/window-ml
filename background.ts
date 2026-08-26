@@ -1505,7 +1505,14 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 // RESUME_RUN can continue it. Overwrites the prior turn's snapshot (same runId). SW-eviction
                 // may drop this — resume then reports an actionable error (see bgRuns). `sub` carries the
                 // cumulative sub-call tally so a resumed turn's chat_metadata keeps reporting the session total.
-                bgRuns.set(runId, { p, tabId, messages, sub: { ...subTally } });
+                // ADVANCE the stored step/seq base past THIS turn's extents: a follow-up that routes through
+                // RESUME_RUN (a HUD composer follow-up AFTER the run navigated — the page handle died, so it goes
+                // agentRegistry.resume → RESUME_RUN, not the page's control.stepBase path) must continue AFTER the
+                // prior turns. Without this it reused base 0 and the new turn's steps collided at step/seq 1 with
+                // turn 1's — the reducer patches by seq, so the follow-up's tool steps OVERWROTE turn 1's and
+                // vanished from the sidebar/panel (and scrambled the export's chat-log order).
+                const resumeP = { ...p, stepBase: stepBase + runMaxStep, seqBase: seqBase + runMaxSeq };
+                bgRuns.set(runId, { p: resumeP, tabId, messages, sub: { ...subTally } });
                 emitLifecycle({
                     kind: "agent-result", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: res.steps },
                     summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled,

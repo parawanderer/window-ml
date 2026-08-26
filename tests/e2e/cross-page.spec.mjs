@@ -248,6 +248,65 @@ test("cross-page: a HUD composer follow-up reaches the run after it navigated aw
     await page.close();
 });
 
+// A HUD follow-up AFTER a nav routes through RESUME_RUN (the page handle died at the nav). RESUME_RUN must
+// CONTINUE the step/seq numbering past the prior turns — it reused base 0, so the follow-up turn's tool steps
+// collided with turn 1's at seq 1, and the reducer (which patches a step by seq) OVERWROTE turn 1's steps
+// instead of appending: the follow-up's tool call (e.g. the user's approved exec) vanished from the sidebar/
+// panel and the export's chat log scrambled. This asserts the follow-up's steps land AFTER turn 1's.
+test("cross-page: a HUD composer follow-up after a nav offsets its steps past the prior turn (no seq collision)", async () => {
+    const page = await ext.context.newPage();
+    const evs = [];   // {agentId?} | {step, seq, tool}
+    await page.exposeFunction("__cpBase", (e) => evs.push(e));
+    await page.addInitScript(() => {
+        if (window.top !== window) return;
+        window.addEventListener("message", (e) => {
+            const d = e.data && e.data.__mlDebug;
+            if (!d) return;
+            if (d.kind === "agent") window.__cpBase({ agentId: d.id });
+            else if (d.kind === "agent-step") window.__cpBase({ step: d.step, seq: d.seq ?? null, tool: d.tool || null });
+        });
+    });
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+
+    const before = fake.calls().length;
+    fake.setScript([
+        { tool: "navigate", args: { url: "/step2" } },      // turn 1: nav (a tool step, seq'd)
+        { tool: "findByText", args: { text: "CROSSPAGE" } },// turn 1: another tool step
+        { content: "Turn 1 done." },
+    ]);
+    // A handle-backed run (createAgent, like the HUD) that navigates → its page handle dies; follow-ups resume.
+    await page.evaluate(() => { window.ml.createAgent({ env: false }).run("Go to step 2 and read the code."); return true; });
+    await expect.poll(() => new URL(page.url()).pathname, { timeout: 20000 }).toBe("/step2");
+    await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(3);
+    const hash = evs.find((e) => e.agentId)?.agentId;
+    expect(hash, "captured the run hash").toBeTruthy();
+
+    // The boundary turn 1 reached — the follow-up must continue PAST it, not collide.
+    const turn1Max = Math.max(...evs.filter((e) => e.step != null).map((e) => e.step));
+    const turn1Seqs = new Set(evs.filter((e) => e.seq != null).map((e) => e.seq));
+    const mark = evs.length;
+
+    // Follow up via the HUD composer (RESUME_RUN). It runs ANOTHER tool — the step that used to collide.
+    fake.setScript([
+        { tool: "findByText", args: { text: "CROSSPAGE" } },
+        { content: "Follow-up done." },
+    ]);
+    const before2 = fake.calls().length;
+    await page.evaluate((h) => { window.postMessage({ __mlSessionSend: { hash: h, text: "read it again" } }, "*"); return true; }, hash);
+    await expect.poll(() => fake.calls().length - before2, { timeout: 15000 }).toBeGreaterThanOrEqual(2);
+    await expect.poll(() => evs.slice(mark).some((e) => e.tool === "findByText"), { timeout: 10000 }).toBe(true);
+
+    // The follow-up's tool steps CONTINUE past turn 1: a higher step number AND seqs that don't collide — so the
+    // reducer APPENDS them (they're visible) instead of PATCHING over turn 1's (which made them vanish).
+    const followSteps = evs.slice(mark).filter((e) => e.step != null);
+    expect(Math.max(...followSteps.map((e) => e.step)), "follow-up steps continue past turn 1").toBeGreaterThan(turn1Max);
+    const followSeqs = evs.slice(mark).filter((e) => e.seq != null).map((e) => e.seq);
+    expect(followSeqs.length, "the follow-up made a seq'd tool step").toBeGreaterThan(0);
+    expect(followSeqs.every((sq) => !turn1Seqs.has(sq)), "follow-up seqs don't collide with turn 1's").toBe(true);
+    await page.close();
+});
+
 // Durable resume: a background run snapshots to storage each step, so an SW evicted mid-run rehydrates and
 // AUTO-CONTINUES when its page re-adopts. We pause the run at an approval gate, simulate eviction (drop
 // in-memory state + rehydrate, exactly what a respawn does), then reload → the run picks up from its
