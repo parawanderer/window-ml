@@ -936,6 +936,9 @@ const REPLAY_CAP = 400;   // drop-oldest (screenshots are big)
 // The destination page's pageInfo, captured on re-adopt (RUN_READOPTED) and consumed ONCE by the navigate
 // tool call awaiting it — so a nav's result carries the new page's context (orient-on-nav). Keyed by tab.
 const readoptPageInfo = new Map<number, string>();
+// captureVisibleTab quota backoff: retry a rate-limited screenshot (~2/sec cap) rather than failing the step.
+const CAPTURE_RETRIES = 5;       // ~5 tries…
+const CAPTURE_RETRY_MS = 550;    // …spaced just over the 1s/2-call window → clears the transient quota
 const bufferReplay = (tabId: number, event: unknown): void => {
     let buf = runReplayBuffer.get(tabId);
     if (!buf) { buf = []; runReplayBuffer.set(tabId, buf); }
@@ -1357,8 +1360,31 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                         if ((args as { mode?: string }).mode === "full") g.pyCode.add(String((args as { code?: unknown }).code ?? ""));
                     }
                     try {
-                        const env = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name, args } })
-                            .catch((e: unknown) => ({ result: `Error: could not reach the page to run "${name}" (${(e as Error)?.message || e}).` })) as Partial<import("./contract").PageToolEnvelope>;
+                        // A delegated call can race a NAVIGATION — the tool's own action submits a form / follows a
+                        // link, or the page redirects mid-call (common after an approval gate holds the call: e.g.
+                        // google.com settling while `type` waited to be approved). The content script's channel then
+                        // closes and Chrome's raw "message channel closed…" error is useless to the model. RECOGNISE
+                        // it as a navigation: wait for the new document to settle (re-adopt) and hand back the new
+                        // page's context — actionable, and safe (no blind retry that could double-submit a form).
+                        const CHANNEL_GONE = /message channel closed|Receiving end does not exist|No tab with id/i;
+                        let env: Partial<import("./contract").PageToolEnvelope>;
+                        try {
+                            env = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name, args } }) as Partial<import("./contract").PageToolEnvelope>;
+                        } catch (e) {
+                            const emsg = (e as Error)?.message || String(e);
+                            if (!CHANNEL_GONE.test(emsg)) {
+                                env = { result: `Error: could not reach the page to run "${name}" (${emsg}).` };
+                            } else {
+                                // The page navigated out from under the call. Its pageInfo may already be here (a fast
+                                // re-adopt beat us); else engage the barrier and wait for it (bounded by the barrier's
+                                // own timeout, then a generic "still loading" note).
+                                let info = readoptPageInfo.get(tabId);
+                                if (!info) { navBarrier.noteNavigating(tabId); await navBarrier.whenReady(tabId); info = readoptPageInfo.get(tabId); }
+                                readoptPageInfo.delete(tabId);
+                                hasNavigated = true;   // the run moved pages → the terminal result must fan to the new page
+                                env = { result: `The page navigated while running "${name}" — the action triggered a navigation, or the page redirected mid-call.${info ? `\n\nYou are now on the new page:\n${info}` : " The new page is still loading — wait, then look."}\n\nNOTE: "${name}" may NOT have taken effect on the previous page. Verify the CURRENT page (look / findByText) and re-run "${name}" here if the change didn't happen.` };
+                            }
+                        }
                         addSub(env?.subUsage);   // this tool's own delegated vision sub-call spend (look/locate)
                         // Cross-page: the `navigate` tool DEFERS the real location change a tick, so its result
                         // returns before the document unloads. Engage the barrier NOW — not only via the async
@@ -1763,12 +1789,25 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // Privileged: pages can't capture pixels, and a cross-origin canvas would
         // taint — same escalation the FETCH_IMAGE_B64 fetch already grants. For a
         // page-relayed message sender.tab is set; its windowId targets the tab.
-        const capture = sender.tab
+        const doCapture = () => sender.tab
             ? chrome.tabs.captureVisibleTab(sender.tab.windowId, { format: "png" })
             : chrome.tabs.captureVisibleTab({ format: "png" });
-        capture
-            .then(dataUrl => sendResponse({ data: dataUrl }))
-            .catch(err => sendResponse({ error: err.message }));
+        // Chrome RATE-LIMITS captureVisibleTab (~2/sec — MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND). A burst of
+        // look()/locate() calls trips it with a TRANSIENT quota error; the model can't act on "exceeds quota" and
+        // just wastes a turn. So wait out the ~1s window and retry a few times before giving up — the error is
+        // never surfaced unless the limit stays blocked (a real problem, not a burst).
+        (async () => {
+            for (let attempt = 0; ; attempt++) {
+                try { sendResponse({ data: await doCapture() }); return; }
+                catch (err) {
+                    const emsg = (err as Error)?.message || String(err);
+                    if (/MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND/i.test(emsg) && attempt < CAPTURE_RETRIES) {
+                        await new Promise(r => setTimeout(r, CAPTURE_RETRY_MS)); continue;
+                    }
+                    sendResponse({ error: emsg }); return;
+                }
+            }
+        })();
         return true;
 
     } else if (message.type === "SAVE_SESSION") {

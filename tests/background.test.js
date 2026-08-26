@@ -1417,6 +1417,60 @@ test("START_RUN (devtools) after a NAVIGATION fans the agent-result to the PANEL
     assert.ok(navSteps.some(s => /You are now on the new page[\s\S]*\/step2/.test(s.__mlDebug.result || "")), "the enriched navigate result reached the panel");
 });
 
+test("delegated tool: a mid-call navigation (channel closed) yields an ACTIONABLE new-page result, not an opaque error", async () => {
+    // Real qwen run: `type` (with submit), or ANY tool whose action navigates — or a page that redirects while
+    // the call waits for approval — closes the content-script channel. Chrome's raw "message channel closed"
+    // reached the model as "could not reach the page", which it can't act on. Now the background recognises it
+    // as a navigation, waits for re-adopt, and hands back the NEW page's context.
+    let capturedTurn2 = null;
+    let fetches = 0;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            fetches++;
+            if (fetches === 1) return jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "type", arguments: JSON.stringify({ selector: "input", text: "hi", submit: true }) } }] }, finish_reason: "tool_calls" }] });
+            capturedTurn2 = call.body.messages;
+            return jsonResponse({ choices: [{ message: { content: "done" } }] });
+        },
+        onTabMessage: async (_tabId, msg) => {
+            if (msg && msg.type === "RUN_TOOL_IN_PAGE" && msg.payload && msg.payload.name === "type") {
+                // The page navigates out from under the call: schedule the re-adopt (pageInfo), then close the channel.
+                setTimeout(() => { void bg.send({ type: "RUN_READOPTED", payload: { runId: "navt", pageInfo: "URL: https://example.test/results\nTitle: Results" } }, { tab: { id: 3 } }); }, 0);
+                throw new Error("A listener indicated an asynchronous response by returning true, but the message channel closed before a response was received.");
+            }
+            return undefined;
+        },
+    });
+    await bg.send({ type: "START_RUN", payload: {
+        runId: "navt", task: "type it", systemPrompt: "sys",
+        tools: [{ name: "type", description: "type text", parameters: { type: "object", properties: { selector: { type: "string" }, text: { type: "string" }, submit: { type: "boolean" } }, required: ["selector", "text"] }, requiresApproval: false, capabilities: [] }],
+        model: "m", think: null, maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "off",
+    } }, { tab: { id: 3 } });
+
+    const joined = (capturedTurn2 || []).map(m => (typeof m.content === "string" ? m.content : "")).join("\n");
+    assert.match(joined, /The page navigated while running "type"/, "the tool result names the navigation");
+    assert.match(joined, /example\.test\/results/, "…and carries the new page's context (the URL)");
+    assert.doesNotMatch(joined, /could not reach the page/, "the opaque channel-closed error is gone");
+});
+
+test("CAPTURE_TAB waits out a transient rate-limit quota and retries (a screenshot burst)", async () => {
+    // Chrome caps captureVisibleTab at ~2/sec; a burst of look()/locate() trips MAX_CAPTURE_VISIBLE_TAB_CALLS_
+    // PER_SECOND. That's transient — wait out the window and retry instead of failing the step with an error the
+    // model can't act on.
+    let n = 0;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onCaptureTab: () => {
+            n++;
+            if (n < 3) throw new Error("Failed to execute 'captureVisibleTab': MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND quota exceeded.");
+            return "data:image/png;base64,SHOT";
+        },
+    });
+    const res = await bg.send({ type: "CAPTURE_TAB", payload: {} }, { tab: { id: 4, windowId: 1 } });
+    assert.equal(n, 3, "retried past the transient quota (2 blocked, then success)");
+    assert.equal(res.data, "data:image/png;base64,SHOT", "returned the screenshot after the wait");
+});
+
 test("CANCEL_RUN aborts a background run's in-flight model call → the run resolves cancelled", async () => {
     // The HUD's "Cancel agent run": abort the run's controller mid-generation. The loop threads the
     // signal into fetchLLM (kills the slow call) and converts the AbortError to a clean { cancelled }.

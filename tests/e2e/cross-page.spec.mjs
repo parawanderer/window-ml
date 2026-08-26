@@ -365,18 +365,23 @@ test("cross-page: the inline sidebar renders the run's history (incl. pre-nav st
     // The overlay sidebar iframe on the DESTINATION page. Its rendered steps must include the PRE-NAV navigate
     // step (emitted while on "/", replayed on re-adopt) AND the far-page findByText step — proving the fresh
     // sidebar rebuilt the whole run, not just what happened after the navigation.
-    const sb = page.frames().find((f) => f.url().includes("sidebar.html"));
-    expect(sb, "the overlay sidebar iframe is present").toBeTruthy();
+    // Re-find the LIVE sidebar iframe each poll — a same-origin nav detaches the old origin's iframe, so a
+    // fixed reference reads a stale/empty frame (the brittle `find()` that made this flake).
+    const liveSidebar = () => page.frames().filter((f) => f.url().includes("sidebar.html") && !f.isDetached()).pop();
     // The run's session appears in the sidebar list — its history reached the FRESH page's sidebar (via the
     // replay-on-readopt, buffered until the iframe app handshakes; without that it showed "Sessions (0)").
-    await expect.poll(async () => await sb.locator(".row").count(), { timeout: 15000 }).toBeGreaterThanOrEqual(1);
-    // Open the collapsed overlay panel (its tab handle lives in the shell shadow root) so its content is
-    // interactable, then open the session → the detail shows the run's STEPS, including the PRE-NAV navigate
-    // step (emitted while on "/", replayed on re-adopt) AND the far-page findByText step — the whole run.
+    await expect.poll(async () => { const f = liveSidebar(); return f ? await f.locator(".row").count() : 0; }, { timeout: 15000 }).toBeGreaterThanOrEqual(1);
+    // Open the collapsed overlay panel (its tab handle lives in the shell shadow root), then open the session
+    // row from INSIDE the poll (the fresh iframe can miss an early click while it's still handshaking) → the
+    // detail shows the STEPS, incl. the PRE-NAV navigate step (replayed) AND the far-page findByText step.
     await page.locator("#ml-sb-tab").click();
-    await sb.locator(".row").first().click();
-    await expect.poll(async () => await sb.locator(".astep").count(), { timeout: 10000 }).toBeGreaterThanOrEqual(2);
-    const detail = ((await sb.locator("body").textContent()) || "").toLowerCase();
+    await expect.poll(async () => {
+        const f = liveSidebar();
+        if (!f) return 0;
+        try { const rows = f.locator(".row"); if (await rows.count()) await rows.first().click().catch(() => {}); return await f.locator(".astep").count(); }
+        catch { return 0; }
+    }, { timeout: 12000 }).toBeGreaterThanOrEqual(2);
+    const detail = ((await liveSidebar().locator("body").textContent()) || "").toLowerCase();
     expect(detail).toContain("navigate");     // pre-nav step, replayed onto the destination page's sidebar
     expect(detail).toContain("findbytext");   // the far-page step
 
