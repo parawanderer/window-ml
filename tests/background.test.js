@@ -1453,6 +1453,44 @@ test("delegated tool: a mid-call navigation (channel closed) yields an ACTIONABL
     assert.doesNotMatch(joined, /could not reach the page/, "the opaque channel-closed error is gone");
 });
 
+test("navigate({ verify: true }) folds a screenshot of the destination page into the result", async () => {
+    // Like the click/type verify: after the destination re-adopts, the background rings back for a WHOLE-VIEWPORT
+    // capture on the new page and merges the image (+ note) into the navigate result — so the model SEES where it
+    // landed inline, no wait+look turn. Here onTabMessage mocks both the navigate and the verifyViewport calls.
+    let capturedTurn2 = null;
+    let fetches = 0;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            fetches++;
+            if (fetches === 1) return jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "navigate", arguments: JSON.stringify({ url: "/x", verify: true }) } }] }, finish_reason: "tool_calls" }] });
+            capturedTurn2 = call.body.messages;
+            return jsonResponse({ choices: [{ message: { content: "done" } }] });
+        },
+        onTabMessage: async (_tabId, msg) => {
+            if (!msg || msg.type !== "RUN_TOOL_IN_PAGE" || !msg.payload) return undefined;
+            if (msg.payload.name === "navigate") {
+                setTimeout(() => { void bg.send({ type: "RUN_READOPTED", payload: { runId: "nv", pageInfo: "URL: https://ex.test/x\nTitle: X" } }, { tab: { id: 6 } }); }, 0);
+                return { result: "Navigating to /x … wait for the new page, then continue." };
+            }
+            if (msg.payload.verifyViewport) {   // the background's post-re-adopt verify capture
+                return { result: "\n\nThe page settled — here's the current viewport.", image: "data:image/png;base64,SHOTPNG", imageLabel: "after wait", feedback: { reason: "after wait", via: "image", image: "data:image/png;base64,SHOTPNG" } };
+            }
+            return undefined;
+        },
+    });
+    await bg.send({ type: "START_RUN", payload: {
+        runId: "nv", task: "go to x", systemPrompt: "sys",
+        tools: [{ name: "navigate", description: "go", parameters: { type: "object", properties: { url: { type: "string" }, verify: { type: "boolean" } }, required: ["url"] }, requiresApproval: false, capabilities: [] }],
+        model: "m", think: null, maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "off",
+    } }, { tab: { id: 6 } });
+
+    const joined = (capturedTurn2 || []).map((m) => (typeof m.content === "string" ? m.content : JSON.stringify(m.content))).join("\n");
+    assert.match(joined, /You are now on the new page/, "orient-on-nav pageInfo is folded in");
+    assert.match(joined, /current viewport/, "the verify note is folded into the navigate result");
+    assert.match(JSON.stringify(capturedTurn2), /SHOTPNG/, "the destination screenshot reached the model as an inline image");
+});
+
 test("CAPTURE_TAB waits out a transient rate-limit quota and retries (a screenshot burst)", async () => {
     // Chrome caps captureVisibleTab at ~2/sec; a burst of look()/locate() trips MAX_CAPTURE_VISIBLE_TAB_CALLS_
     // PER_SECOND. That's transient — wait out the window and retry instead of failing the step with an error the

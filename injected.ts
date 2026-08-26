@@ -1457,7 +1457,10 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     "Prefer this over clicking a link when you already know the destination URL.",
                 parameters: {
                     type: "object",
-                    properties: { url: { type: "string", description: "The URL to go to (absolute or site-relative, e.g. \"/dashboard\")." } },
+                    properties: {
+                        url: { type: "string", description: "The URL to go to (absolute or site-relative, e.g. \"/dashboard\")." },
+                        verify: { type: "boolean", description: "Set true to fold a SCREENSHOT of the destination page into the result (an inline look — saves a `wait`+`look` turn to see where you landed). Like the verify on click/type." },
+                    },
                     required: ["url"],
                 },
                 // Show the DESTINATION in the approval card — a consent gate is meaningless without the URL the

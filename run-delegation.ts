@@ -63,9 +63,21 @@ export function getRun(runId: string): PageRun | undefined { return runs.get(run
 /** Run ONE delegated tool call for a background-hosted run → a serializable envelope for the bus.
  *  executeTool already validates args + catches errors (never throws), so this only reduces the
  *  envelope: real nodes → a count, and an answer-capable tool's nodes are stashed page-side. */
-export async function runDelegatedTool(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number } } = {}): Promise<PageToolEnvelope> {
+export async function runDelegatedTool(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean } = {}): Promise<PageToolEnvelope> {
     const run = runs.get(runId);
     if (!run) return { result: `Error: no active agent run "${runId}" on this page (it may have ended).` };
+    // navigate({ verify: true }): after the destination page re-adopts, the background rings back HERE to
+    // capture a WHOLE-VIEWPORT screenshot of the new page (captureVerify, center null) — a vision driver gets
+    // it inline, a text-only driver a delegated description. Merged into the navigate result background-side.
+    if (opts.verifyViewport) {
+        const ctx = toolContext(run.byName, run.model ?? null, null, run.driverSees ?? false, run.visionModel ?? null);
+        const ml = (typeof window !== "undefined" ? window.ml : null) as unknown as import("./contract").MlApi;
+        if (!ml) return { result: "" };
+        return withSubUsage(async () => {
+            const v = await captureVerify(ml, ctx, null, "navigated");
+            return { result: v.content || "", image: v.image, imageLabel: v.imageLabel, feedback: v.feedback };
+        });
+    }
     // Post-CDP `verify`: the reserved-surface click was done BACKGROUND-side (CDP), so the page-side verify
     // couldn't run inline — the background rings back HERE, after the click, to capture the general-area crop
     // at the click point (captureVerify, with this run's driver-sees/reader ctx). Merged into the click result.
@@ -136,8 +148,8 @@ export async function runDelegatedTool(runId: string, name: string, args: Record
 export function installToolDelegation(): void {
     window.addEventListener("message", async (event: MessageEvent) => {
         if (event.source !== window || !event.data || event.data.type !== "PAGE_TOOL_RUN") return;
-        const { callId, runId, name, args, renderOnly, readonlyTry, precheck, verifyAt } = event.data as { callId: string; runId: string; name: string; args: Record<string, unknown>; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number } };
-        const envelope = await runDelegatedTool(runId, name, args || {}, { renderOnly: !!renderOnly, readonlyTry: !!readonlyTry, precheck: !!precheck, verifyAt });
+        const { callId, runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport } = event.data as { callId: string; runId: string; name: string; args: Record<string, unknown>; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean };
+        const envelope = await runDelegatedTool(runId, name, args || {}, { renderOnly: !!renderOnly, readonlyTry: !!readonlyTry, precheck: !!precheck, verifyAt, verifyViewport: !!verifyViewport });
         window.postMessage({ type: "PAGE_TOOL_RESULT", callId, envelope }, "*");
     });
 }

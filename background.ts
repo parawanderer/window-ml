@@ -1401,6 +1401,18 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                                 await navBarrier.whenReady(tabId);
                                 const info = readoptPageInfo.get(tabId); readoptPageInfo.delete(tabId);
                                 if (info) env.result = `${env.result || ""}\n\nYou are now on the new page:\n${info}`;
+                                // verify:true → fold a SCREENSHOT of the destination page into the result (like the
+                                // click/type verify), captured on the NEW page after re-adopt. A vision driver gets it
+                                // inline; a text-only driver a delegated description. Best-effort — a failed capture
+                                // just omits it, and the page must have re-adopted (else there's nothing to shoot).
+                                if ((args as { verify?: boolean })?.verify && !navBarrier.isNavigating(tabId)) {
+                                    const v = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, verifyViewport: true } }).catch(() => null) as Partial<import("./contract").PageToolEnvelope> | null;
+                                    if (v && (v.image || v.feedback || v.result)) {
+                                        if (v.result) env.result = `${env.result || ""}\n${v.result}`;
+                                        env.image = v.image; env.imageLabel = v.imageLabel; env.feedback = v.feedback;
+                                        addSub(v.subUsage);
+                                    }
+                                }
                             }
                         }
                         // RESERVED-surface click: the page couldn't synth-click a cross-origin iframe / sealed
