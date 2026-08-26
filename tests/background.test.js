@@ -1352,6 +1352,45 @@ test("START_RUN (surface 'devtools') fans a background run's step events to the 
     assert.ok(steps.some(s => s.__mlDebug.usage && s.__mlDebug.usage.totalTokens === 12), "the usage step fanned to the panel");
 });
 
+test("START_RUN (devtools) after a NAVIGATION fans the agent-result to the PANEL (not just the dead page)", async () => {
+    // The bug: a background run in devtools mode that NAVIGATED stuck the panel on "running" with no answer —
+    // the HUD (page-fed) had it, the panel didn't. After a nav the page-side caller that normally feeds the
+    // panel its lifecycle events (via the shell forwarder) is GONE, and the shell drops the background's
+    // __mlFromBg copy for the panel (dedup). So emitLifecycle must fan the terminal agent-result to the panel
+    // PORT itself (relayDebugEvent), mirroring emitStep. This proves it does.
+    let fetches = 0;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => {
+            fetches++;
+            return fetches === 1
+                ? jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "navigate", arguments: JSON.stringify({ url: "/step2" }) } }] }, finish_reason: "tool_calls" }] })
+                : jsonResponse({ choices: [{ message: { content: "arrived and finished" } }] });
+        },
+        // Mock the page delegation: the navigate tool "succeeds", and — since the navigate branch then WAITS for
+        // re-adoption — schedule the RUN_READOPTED that releases the barrier (fired right after noteNavigating).
+        onTabMessage: async (msg) => {
+            if (msg && msg.type === "RUN_TOOL_IN_PAGE" && msg.payload && msg.payload.name === "navigate") {
+                setTimeout(() => { void bg.send({ type: "RUN_READOPTED", payload: { runId: "navrun", pageInfo: "URL: /step2\nTitle: Step 2" } }, { tab: { id: 7 } }); }, 0);
+                return { result: "Navigating to /step2 …" };
+            }
+            return undefined;
+        },
+    });
+    const panel = bg.connect("ml-devtools");
+    panel.send({ type: "ml-devtools-init", tabId: 7 });
+    const res = await bg.send({ type: "START_RUN", payload: {
+        runId: "navrun", task: "go to step 2", systemPrompt: "sys",
+        tools: [{ name: "navigate", description: "go", parameters: { type: "object", properties: { url: { type: "string" } }, required: ["url"] }, requiresApproval: false, capabilities: [] }],
+        model: "m", think: null, maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools",
+    } }, { tab: { id: 7 } });
+
+    assert.equal(res.data.summary, "arrived and finished", "the run completed with its answer");
+    const results = panel.messages.filter(m => m.__mlDebug && m.__mlDebug.kind === "agent-result");
+    assert.ok(results.length >= 1, "the navigated run's agent-result reached the PANEL port (not stuck 'running')");
+    assert.equal(results.at(-1).__mlDebug.summary, "arrived and finished", "…carrying the final answer");
+});
+
 test("CANCEL_RUN aborts a background run's in-flight model call → the run resolves cancelled", async () => {
     // The HUD's "Cancel agent run": abort the run's controller mid-generation. The loop threads the
     // signal into fetchLLM (kills the slow call) and converts the AbortError to a clean { cancelled }.

@@ -1318,6 +1318,12 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             // when that caller's context is gone, so the background fans them to the destination page instead.
             if (p.surface !== "off" && !hasNavigated) return;
             chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => {});
+            // DEVTOOLS after a nav: the page-side caller that normally feeds the panel (via the shell forwarder)
+            // is GONE, and the shell drops __mlFromBg events for the panel (dedup) — so fan lifecycle straight to
+            // the panel port too, mirroring emitStep. Without this a navigated devtools run never gets its
+            // agent-result → the panel sticks on "running" with no answer (the HUD, page-fed, had it). Only fires
+            // when we actually fan (off, or overlay/devtools post-nav), so a pre-nav result can't double up.
+            if (p.surface === "devtools") relayDebugEvent(tabId, event);
         };
         // Only a FRESH run announces the session start; a RESUME continues an existing sidebar/card
         // session (re-emitting `agent` would wipe its accumulated steps), so it streams new steps + a
