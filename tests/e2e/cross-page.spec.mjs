@@ -325,6 +325,28 @@ test("cross-page: the inline sidebar renders the run's history (incl. pre-nav st
     await page.close();
 });
 
+// Orient-on-nav: the `navigate` tool's RESULT carries the DESTINATION page's pageInfo, so the model's next
+// turn already knows where it landed (no wasted look()/pageInfo turn). The fake sees every message, so we
+// assert the navigate tool result the model receives is enriched with the new page's URL/title.
+test("orient-on-nav: the navigate tool result carries the destination page's context to the model", async () => {
+    const page = await ext.context.newPage();
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+    const before = fake.calls().length;
+    fake.setScript([
+        { tool: "navigate", args: { url: "/step2" } },
+        { content: "done" },
+    ]);
+    await page.evaluate(() => { window.ml.agent("Go to step 2.", { env: false }); return true; });
+    await expect.poll(() => new URL(page.url()).pathname, { timeout: 20000 }).toBe("/step2");
+    await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(2);   // it navigated, then answered
+    // The 2nd model turn's history holds the navigate tool result — enriched with /step2's pageInfo (URL/title).
+    const joined = (fake.calls().at(-1).messages || []).map((m) => (typeof m.content === "string" ? m.content : "")).join("\n");
+    expect(joined).toContain("You are now on the new page");   // the orient-on-nav preamble
+    expect(joined).toMatch(/\/step2/);                          // pageContext's `URL:` line for the destination
+    await page.close();
+});
+
 // The destination-page sidebar must reflect COMPLETION: when a background run finishes after a nav, the
 // detail shows the ANSWER and clears the "running" footer. (Bug: after a cross-DOMAIN nav the run completed —
 // the HUD card showed the answer — but the overlay detail on the new origin stayed "running · N steps" with

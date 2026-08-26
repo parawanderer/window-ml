@@ -906,7 +906,7 @@ const hydrationDone: Promise<void> = (typeof chrome !== "undefined" && chrome.st
 // durable resume without waiting ~30s for a real eviction.
 (globalThis as unknown as { __mlEvictForTest?: unknown }).__mlEvictForTest = async (): Promise<void> => {
     runControllers.clear(); runInboxes.clear(); bgRuns.clear(); activeRuns.clear();
-    runRebuilds.clear(); runReplayBuffer.clear(); pendingApprovals.clear(); hydratedRuns.clear();
+    runRebuilds.clear(); runReplayBuffer.clear(); pendingApprovals.clear(); hydratedRuns.clear(); readoptPageInfo.clear();
     await hydratePersistedRuns();
 };
 
@@ -933,6 +933,9 @@ const runRebuilds = new Map<string, import("./contract").RebuildConfig>();
 // the two surfaces' replay don't entangle. Bounded ring; cleared when the tab's runs end (untrackRun).
 const runReplayBuffer = new Map<number, unknown[]>();
 const REPLAY_CAP = 400;   // drop-oldest (screenshots are big)
+// The destination page's pageInfo, captured on re-adopt (RUN_READOPTED) and consumed ONCE by the navigate
+// tool call awaiting it — so a nav's result carries the new page's context (orient-on-nav). Keyed by tab.
+const readoptPageInfo = new Map<number, string>();
 const bufferReplay = (tabId: number, event: unknown): void => {
     let buf = runReplayBuffer.get(tabId);
     if (!buf) { buf = []; runReplayBuffer.set(tabId, buf); }
@@ -949,7 +952,7 @@ const untrackRun = (tabId: number, runId: string): void => {
     const s = activeRuns.get(tabId);
     if (!s) return;
     s.delete(runId);
-    if (!s.size) { activeRuns.delete(tabId); navBarrier.forget(tabId); runReplayBuffer.delete(tabId); }
+    if (!s.size) { activeRuns.delete(tabId); navBarrier.forget(tabId); runReplayBuffer.delete(tabId); readoptPageInfo.delete(tabId); }
 };
 // EVERY RUN_TOOL_IN_PAGE send goes through this: it waits out any in-flight navigation on the tab before
 // delegating. On a tab with no navigation pending, whenReady resolves immediately (zero cost) — so a
@@ -966,7 +969,7 @@ if (typeof chrome !== "undefined" && chrome.webNavigation?.onCommitted) {
     });
 }
 if (typeof chrome !== "undefined" && chrome.tabs?.onRemoved) {
-    chrome.tabs.onRemoved.addListener((tabId) => { activeRuns.delete(tabId); navBarrier.forget(tabId); });
+    chrome.tabs.onRemoved.addListener((tabId) => { activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); });
 }
 
 // ---- Choke-point consent (docs/spec/CHOKEPOINT_CONSENT_SPEC.md) ----
@@ -1127,7 +1130,13 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // The fresh document re-registered a run's toolset → release the navigation barrier so the held
         // delegated tool runs against the new page. Keyed by tab (the barrier is per-tab). Fire-and-forget.
         const tabId = sender.tab?.id;
-        if (tabId != null) navBarrier.noteReadopted(tabId);
+        const pageInfo = (message.payload as { pageInfo?: string })?.pageInfo;
+        if (tabId != null) {
+            // Stash the new page's context BEFORE releasing the barrier, so the `navigate` tool call awaiting
+            // re-adoption reads it and folds it into its result (orient-on-nav — see the navigate branch below).
+            if (pageInfo) readoptPageInfo.set(tabId, pageInfo);
+            navBarrier.noteReadopted(tabId);
+        }
         return;
     }
     if (message.type === "CANCEL_RUN") {
@@ -1350,7 +1359,18 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                         // webNavigation.onCommitted, which can lose the race to the loop's next (fast, local)
                         // model call + tool delegation, letting the next tool fire into the dying document.
                         // The next delegateSend then waits for the new page to re-adopt. Skip an errored nav.
-                        if (name === "navigate" && !String(env?.result || "").startsWith("Error")) { navBarrier.noteNavigating(tabId); hasNavigated = true; }
+                        if (name === "navigate" && !String(env?.result || "").startsWith("Error")) {
+                            navBarrier.noteNavigating(tabId); hasNavigated = true;
+                            // Orient-on-nav: WAIT for the new document to re-adopt, then fold its pageInfo into
+                            // THIS tool's result — so the model's next turn already knows where it landed instead
+                            // of spending a look()/pageInfo turn to find out. The barrier's own timeout is the
+                            // fallback (a nav that never re-adopts → whenReady resolves, no pageInfo → plain result).
+                            if (env) {
+                                await navBarrier.whenReady(tabId);
+                                const info = readoptPageInfo.get(tabId); readoptPageInfo.delete(tabId);
+                                if (info) env.result = `${env.result || ""}\n\nYou are now on the new page:\n${info}`;
+                            }
+                        }
                         // RESERVED-surface click: the page couldn't synth-click a cross-origin iframe / sealed
                         // shadow target and handed back a CDP-click coordinate. The click was ALREADY approved
                         // above, and the trusted background performs the CDP click (the page can't). Gated on

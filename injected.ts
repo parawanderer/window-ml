@@ -2056,7 +2056,9 @@ class AgentHandle implements MlAgentHandle, AgentControl {
         if (!runId || !rebuild) return;
         try { (window.ml as unknown as MlApi)._adoptRun(runId, rebuild); }
         catch { /* rebuild failed → the barrier times out and the loop gets a clear "no active run" error */ }
-        window.postMessage({ type: "RUN_READOPTED", runId }, "*");
+        // Carry the DESTINATION page's context back: the background folds it into the `navigate` tool's
+        // result, so the model's next turn is oriented on the new page without a wasted look()/pageInfo turn.
+        window.postMessage({ type: "RUN_READOPTED", runId, pageInfo: pageContext() }, "*");
         // Durable resume: an INTERRUPTED (SW-evicted) run auto-CONTINUES from its checkpointed history — the
         // resume handle _adoptRun just re-registered drives a RESUME_RUN (empty follow-up = "carry on").
         if (resume) {

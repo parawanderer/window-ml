@@ -159,7 +159,7 @@ window.addEventListener("message", (event: MessageEvent) => {
     if (data.type === "RUN_READOPTED") {
         // injected finished re-registering the run's toolset on the new document → tell the background to
         // release the navigation barrier so the held delegated tool runs against this page. Fire-and-forget.
-        chrome.runtime.sendMessage({ type: "RUN_READOPTED", payload: { runId: (data as { runId?: string }).runId } });
+        chrome.runtime.sendMessage({ type: "RUN_READOPTED", payload: { runId: (data as { runId?: string }).runId, pageInfo: (data as { pageInfo?: string }).pageInfo } });
         return;
     }
     if (data.type === "ABORT_REQUEST") {
