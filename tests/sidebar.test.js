@@ -375,6 +375,37 @@ test("agent run: a straggler pending step (late in-flight START after the result
     assert.match(w.shadow.querySelector(".msg.asst").textContent, /All done/, "the final answer still shows");
 });
 
+// Cross-page re-adoption REPLAYS the run's start + steps while the live agent-result fans separately, with no
+// ordering guarantee. onDebug must converge to the SAME finished state for every interleaving — otherwise a
+// completed cross-domain run shows "running" with no answer (the exact bug). These pin the two nasty orders.
+test("agent run: agent-result arriving BEFORE the (replayed) start is not dropped — the answer survives", async () => {
+    const w = await loadSidebarWorld();
+    // The result wins the race onto the fresh page (no `agent` start yet). It must create a stub, not vanish.
+    await w.dispatch(agentResult("race1", "The code is XDOMAIN-2025.", 2));
+    await w.dispatch(agentStart("race1", "go read the code"));                    // replayed start lands AFTER
+    await w.dispatch(agentStep("race1", 1, { seq: 1, tool: "navigate", arguments: { url: "/x" }, result: "ok" }));
+    await w.dispatch(agentStep("race1", 2, { seq: 2, tool: "findByText", arguments: { text: "X" }, result: "found" }));
+    await w.tick();
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    assert.match(w.shadow.querySelector(".msg.asst").textContent, /XDOMAIN-2025/, "the answer survived the result-first race");
+    assert.ok(!w.shadow.querySelector(".pending-note"), "and the run reads DONE, not running");
+});
+
+test("agent run: a REPLAYED start event does not wipe steps/answer already applied from live events", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("race2", "do it"));
+    await w.dispatch(agentStep("race2", 1, { seq: 1, tool: "navigate", arguments: { url: "/x" }, result: "ok" }));
+    await w.dispatch(agentResult("race2", "All finished.", 1));                   // completes
+    // The re-adopt replay re-sends the SAME start event. It must NOT recreate the session (wiping the answer).
+    await w.dispatch(agentStart("race2", "do it"));
+    await w.tick();
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    assert.match(w.shadow.querySelector(".msg.asst").textContent, /All finished/, "the answer wasn't wiped by the replayed start");
+    assert.ok(!w.shadow.querySelector(".pending-note"), "and the run stays DONE");
+});
+
 // A GENUINE resumed off-mode turn (no agent-say bridge) still unseals: its first NON-pending step re-opens
 // "running". Guards the fix above from over-blocking (only a bare pending START is inert on a sealed run).
 test("agent run: a real resumed turn (a non-pending step past the sealed turn) DOES re-show running", async () => {

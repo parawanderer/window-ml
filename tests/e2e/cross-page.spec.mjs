@@ -325,6 +325,56 @@ test("cross-page: the inline sidebar renders the run's history (incl. pre-nav st
     await page.close();
 });
 
+// The destination-page sidebar must reflect COMPLETION: when a background run finishes after a nav, the
+// detail shows the ANSWER and clears the "running" footer. (Bug: after a cross-DOMAIN nav the run completed —
+// the HUD card showed the answer — but the overlay detail on the new origin stayed "running · N steps" with
+// no answer, i.e. agent-result never landed on the destination page's sidebar.)
+test("cross-domain: the destination-origin sidebar shows the ANSWER and clears 'running' when the run completes", async () => {
+    await configureExtension(ext.sw, { debugMode: "overlay" });
+    const page = await ext.context.newPage();
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+    fake.setScript([
+        { tool: "navigate", args: { url: site.crossOrigin + "/" } },   // a DIFFERENT origin (different port)
+        { tool: "findByText", args: { text: "XDOMAIN" } },
+        (req) => {
+            const seen = req.messages.map((m) => (typeof m.content === "string" ? m.content : "")).join(" ");
+            const m = seen.match(/XDOMAIN-\d+/);
+            return { content: m ? `The code is ${m[0]}.` : "not found" };
+        },
+    ]);
+    const before = fake.calls().length;
+    await page.evaluate((cross) => { window.ml.agent(`Go to ${cross} and read the code shown there.`, { env: false, crossOrigin: true, approvalRouting: "external" }); return true; }, site.crossOrigin);
+    // Approve the cross-origin consent gate so it actually crosses.
+    await expect.poll(async () => (await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).length, { timeout: 15000 }).toBe(1);
+    const [gate] = await ext.sw.evaluate(() => globalThis.__mlApprovals.list());
+    await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), gate.key);
+    await expect.poll(() => new URL(page.url()).host, { timeout: 20000 }).toBe(new URL(site.crossOrigin).host);   // it crossed
+    await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(3);                             // …and finished (3 turns)
+
+    // The overlay sidebar iframe on the DESTINATION ORIGIN. After a cross-origin nav the old origin's iframe
+    // detaches, so re-find the LIVE one each poll (a stale reference reads an empty body → false failures).
+    const liveSidebar = () => page.frames().filter((f) => f.url().includes("sidebar.html") && !f.isDetached()).pop();
+    await page.locator("#ml-sb-tab").click();   // open the collapsed overlay panel
+    // The finished run's ANSWER shows on the destination origin. Open the session row from INSIDE the poll: the
+    // freshly-mounted cross-origin app can miss a single early click (it's still handshaking/replaying), so keep
+    // clicking the row until the detail (with the answer) is up — idempotent once we're in the detail (no .row).
+    await expect.poll(async () => {
+        const f = liveSidebar();
+        if (!f) return "";
+        try {
+            const rows = f.locator(".row");
+            if (await rows.count()) await rows.first().click().catch(() => {});
+            return (await f.locator("body").textContent()) || "";
+        } catch { return ""; }
+    }, { timeout: 15000 }).toContain("XDOMAIN-2025");
+    // …and the "running" footer is gone (it completed, it isn't still working).
+    expect(await liveSidebar().locator(".pending-note").count(), "no 'running' footer on a completed run").toBe(0);
+
+    await configureExtension(ext.sw, { debugMode: "off" });
+    await page.close();
+});
+
 // The composer's Stop button must CANCEL a background-hosted run cross-page. After a nav the run's page-side
 // AgentHandle is dead (the run re-adopted as an agentRegistry entry keyed by hash), so a Stop that only
 // consulted handleRegistry was inert — the run stayed stuck "waiting for your approval…" with no way out.

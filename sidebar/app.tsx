@@ -28,19 +28,47 @@ import { Settings } from "./settings";
 // so the chat log interleaves user messages + answers with the turn step-groups in order.
 const maxSessionStep = (s: Session): number => Math.max(0, ...(s.steps || []).map(x => x.step || 0));
 
+// Get the agent session for a hash, creating a MINIMAL stub if a step/result raced AHEAD of the (replayed)
+// `agent` start on a re-adopted cross-page document — so the event is never dropped (it used to `if (!s)
+// return`, losing a finished run's answer when agent-result won the race). The real start event later fills
+// task/config WITHOUT wiping this (see the `agent` handler's merge). Kept as an agent-kind session.
+function ensureAgentSession(hash: string, model: string | null, ts: number): Session {
+    let s = sessionMap.get(hash);
+    if (!s) {
+        s = {
+            hash, model, tag: "session", kind: "agent",
+            createdTs: ts, lastTs: ts, status: "pending", turns: [], steps: [],
+            config: { system: null, model, think: null, schema: false, toolIds: null, maxTokens: null, save: false },
+        };
+        sessionMap.set(hash, s);
+    }
+    return s;
+}
+
 function onDebug(ev: MlDebugEvent): void {
     // --- ml.agent runs (own session kind) ---
     if (ev.kind === "agent") {
-        sessionMap.set(ev.session.hash, {
-            hash: ev.session.hash, model: ev.model, tag: "session", kind: "agent",
-            createdTs: ev.ts, lastTs: ev.ts, status: "pending", turns: [], steps: [], task: ev.task, taskImages: ev.images, maxSteps: ev.maxSteps, agentConfig: ev.config,
-            config: { system: null, model: ev.model, think: null, schema: false, toolIds: null, maxTokens: null, save: false },
-        });
+        const prev = sessionMap.get(ev.session.hash);
+        // A cross-page re-adopt REPLAYS this start event. If the session already exists — from the run's first
+        // life, OR because a live agent-step/agent-result raced ahead of the replay onto the fresh document —
+        // do NOT recreate it: that would wipe the steps/answer/ended state the live events populated, leaving a
+        // finished run stuck "running" with no answer (the cross-DOMAIN "completed but still running" bug).
+        // Refresh identity fields only; never clear steps/answers/status.
+        if (prev && prev.kind === "agent") {
+            prev.model = ev.model ?? prev.model;
+            prev.task = prev.task ?? ev.task;
+            prev.taskImages = prev.taskImages ?? ev.images;
+            prev.maxSteps = ev.maxSteps ?? prev.maxSteps;
+            prev.agentConfig = ev.config ?? prev.agentConfig;
+            prev.lastTs = Math.max(prev.lastTs, ev.ts);
+            rev.value++; return;
+        }
+        const s = ensureAgentSession(ev.session.hash, ev.model, ev.ts);
+        s.task = ev.task; s.taskImages = ev.images; s.maxSteps = ev.maxSteps; s.agentConfig = ev.config;
         rev.value++; return;
     }
     if (ev.kind === "agent-step") {
-        const s = sessionMap.get(ev.session.hash);
-        if (!s) return;
+        const s = ensureAgentSession(ev.session.hash, null, ev.ts);
         const step = { step: ev.step, localStep: ev.localStep, seq: ev.seq, pending: ev.pending, awaitingApproval: ev.awaitingApproval, thought: ev.thought, reasoning: ev.reasoning, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: ev.elements, renderIn: ev.renderIn, renderOut: ev.renderOut, feedback: ev.feedback, argIssues: ev.argIssues, approval: ev.approval, usage: ev.usage, subUsage: ev.subUsage };
         const steps = s.steps || [];
         // In-flight: a tool step arrives twice — a pending START then the DONE, sharing a `seq`.
@@ -73,20 +101,28 @@ function onDebug(ev: MlDebugEvent): void {
         s.lastTs = ev.ts; rev.value++; return;
     }
     if (ev.kind === "agent-result") {
-        const s = sessionMap.get(ev.session.hash);
-        if (!s) return;
+        // Create-if-absent: on a re-adopted page the result can land BEFORE the replayed `agent` start; don't
+        // drop it (that was half of the "completed but stuck running, no answer" bug — the other half being the
+        // start event then recreating the session as pending, now guarded above).
+        const s = ensureAgentSession(ev.session.hash, null, ev.ts);
         const status: Status = (ev.error || ev.hitCap || ev.cancelled) ? "err" : "ok";
+        // Seal against the run's OWN final step count (ev.steps), not just the steps that have ARRIVED. On a
+        // re-adopted page the result can beat the replayed steps here, so maxSessionStep is 0 — sealing at that
+        // would let the later steps (step > 0) re-open "running". ev.steps is the authoritative end (turn 1's
+        // step numbers run 1..N with no base offset; a multi-turn handle's live order already has the steps in
+        // hand, so maxSessionStep dominates there). Also positions the answer AFTER the steps in the chat log.
+        const endStep = Math.max(maxSessionStep(s), ev.steps || 0);
         // Append this turn's answer (chat log) — do NOT overwrite prior turns. `summary`/`status` still
         // track the LATEST for the title + row dot.
-        s.answers = [...(s.answers || []), { text: ev.summary, ts: ev.ts, atStep: maxSessionStep(s), status, hitCap: ev.hitCap, cancelled: !!ev.cancelled, error: ev.error || undefined }];
+        s.answers = [...(s.answers || []), { text: ev.summary, ts: ev.ts, atStep: endStep, status, hitCap: ev.hitCap, cancelled: !!ev.cancelled, error: ev.error || undefined }];
         s.summary = ev.summary; s.hitCap = ev.hitCap; s.error = ev.error || undefined; s.cancelled = !!ev.cancelled;
         s.status = status; s.lastTs = ev.ts;
         // A finished run has no in-flight step: clear any lingering pending/awaiting flags so a straggler START
         // that arrived BEFORE this result (a background run's late tool fan) doesn't render a phantom "running…"
         // row under a completed run. (The after-result ordering is handled by the seal in agent-step.)
         if ((s.steps || []).some(st => st.pending)) s.steps = (s.steps || []).map(st => st.pending ? { ...st, pending: false, awaitingApproval: false } : st);
-        // Seal the turn (see agent-step): a background run's late straggler step can't re-open "running".
-        s.ended = true; s.endedStep = maxSessionStep(s);
+        // Seal the turn (see agent-step): a later straggler/replayed step ≤ endStep can't re-open "running".
+        s.ended = true; s.endedStep = endStep;
         rev.value++; return;
     }
     // A handle raised the step cap mid-run (a.maxSteps = N) → the "STEP x/N" display re-renders live.
