@@ -28,21 +28,23 @@ import { Settings } from "./settings";
 // so the chat log interleaves user messages + answers with the turn step-groups in order.
 const maxSessionStep = (s: Session): number => Math.max(0, ...(s.steps || []).map(x => x.step || 0));
 
-// Get the agent session for a hash, creating a MINIMAL stub if a step/result raced AHEAD of the (replayed)
-// `agent` start on a re-adopted cross-page document — so the event is never dropped (it used to `if (!s)
-// return`, losing a finished run's answer when agent-result won the race). The real start event later fills
-// task/config WITHOUT wiping this (see the `agent` handler's merge). Kept as an agent-kind session.
-function ensureAgentSession(hash: string, model: string | null, ts: number): Session {
-    let s = sessionMap.get(hash);
-    if (!s) {
-        s = {
-            hash, model, tag: "session", kind: "agent",
-            createdTs: ts, lastTs: ts, status: "pending", turns: [], steps: [],
-            config: { system: null, model, think: null, schema: false, toolIds: null, maxTokens: null, save: false },
-        };
-        sessionMap.set(hash, s);
-    }
-    return s;
+// Agent step/result events whose `agent` START hasn't arrived yet. On a cross-page re-adopt the REPLAY sends
+// the start first, but a live agent-result can momentarily beat it onto the fresh document — dropping it lost a
+// finished run's answer. We QUEUE such orphans by hash and drain them when the start lands. Crucially we do NOT
+// manufacture a session from an orphan: a truly stray event (e.g. a DevTools ring-buffer that evicted an old
+// run's start) would otherwise leave a headless "(no prompt)" phantom stuck on screen forever.
+const orphanAgentEvents = new Map<string, MlDebugEvent[]>();
+const ORPHAN_CAP = 400;   // per-hash bound so a stray hash spamming events can't grow unbounded
+function queueOrphan(hash: string, ev: MlDebugEvent): void {
+    let q = orphanAgentEvents.get(hash);
+    if (!q) { q = []; orphanAgentEvents.set(hash, q); }
+    if (q.length < ORPHAN_CAP) q.push(ev);
+}
+function drainOrphans(hash: string): void {
+    const q = orphanAgentEvents.get(hash);
+    if (!q) return;
+    orphanAgentEvents.delete(hash);   // delete BEFORE replaying so the drained events find the session, not re-queue
+    for (const oev of q) onDebug(oev);
 }
 
 function onDebug(ev: MlDebugEvent): void {
@@ -61,14 +63,20 @@ function onDebug(ev: MlDebugEvent): void {
             prev.maxSteps = ev.maxSteps ?? prev.maxSteps;
             prev.agentConfig = ev.config ?? prev.agentConfig;
             prev.lastTs = Math.max(prev.lastTs, ev.ts);
+            drainOrphans(ev.session.hash);
             rev.value++; return;
         }
-        const s = ensureAgentSession(ev.session.hash, ev.model, ev.ts);
-        s.task = ev.task; s.taskImages = ev.images; s.maxSteps = ev.maxSteps; s.agentConfig = ev.config;
+        sessionMap.set(ev.session.hash, {
+            hash: ev.session.hash, model: ev.model, tag: "session", kind: "agent",
+            createdTs: ev.ts, lastTs: ev.ts, status: "pending", turns: [], steps: [], task: ev.task, taskImages: ev.images, maxSteps: ev.maxSteps, agentConfig: ev.config,
+            config: { system: null, model: ev.model, think: null, schema: false, toolIds: null, maxTokens: null, save: false },
+        });
+        drainOrphans(ev.session.hash);   // apply any step/result that raced ahead of this start (cross-page replay)
         rev.value++; return;
     }
     if (ev.kind === "agent-step") {
-        const s = ensureAgentSession(ev.session.hash, null, ev.ts);
+        const s = sessionMap.get(ev.session.hash);
+        if (!s) { queueOrphan(ev.session.hash, ev); return; }   // no start yet → hold it, don't manufacture a phantom
         const step = { step: ev.step, localStep: ev.localStep, seq: ev.seq, pending: ev.pending, awaitingApproval: ev.awaitingApproval, thought: ev.thought, reasoning: ev.reasoning, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: ev.elements, renderIn: ev.renderIn, renderOut: ev.renderOut, feedback: ev.feedback, argIssues: ev.argIssues, approval: ev.approval, usage: ev.usage, subUsage: ev.subUsage };
         const steps = s.steps || [];
         // In-flight: a tool step arrives twice — a pending START then the DONE, sharing a `seq`.
@@ -101,10 +109,10 @@ function onDebug(ev: MlDebugEvent): void {
         s.lastTs = ev.ts; rev.value++; return;
     }
     if (ev.kind === "agent-result") {
-        // Create-if-absent: on a re-adopted page the result can land BEFORE the replayed `agent` start; don't
-        // drop it (that was half of the "completed but stuck running, no answer" bug — the other half being the
-        // start event then recreating the session as pending, now guarded above).
-        const s = ensureAgentSession(ev.session.hash, null, ev.ts);
+        // On a re-adopted page the result can land BEFORE the replayed `agent` start; queue it (don't drop —
+        // that was half of the "completed but stuck running, no answer" bug) and apply it when the start drains.
+        const s = sessionMap.get(ev.session.hash);
+        if (!s) { queueOrphan(ev.session.hash, ev); return; }
         const status: Status = (ev.error || ev.hitCap || ev.cancelled) ? "err" : "ok";
         // Seal against the run's OWN final step count (ev.steps), not just the steps that have ARRIVED. On a
         // re-adopted page the result can beat the replayed steps here, so maxSessionStep is 0 — sealing at that

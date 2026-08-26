@@ -378,6 +378,26 @@ test("agent run: a straggler pending step (late in-flight START after the result
 // Cross-page re-adoption REPLAYS the run's start + steps while the live agent-result fans separately, with no
 // ordering guarantee. onDebug must converge to the SAME finished state for every interleaving — otherwise a
 // completed cross-domain run shows "running" with no answer (the exact bug). These pin the two nasty orders.
+test("agent run: an ORPHAN step/result (no `agent` start) does NOT manufacture a phantom '(no prompt)' session", async () => {
+    const w = await loadSidebarWorld();
+    // A stray step for a hash we never saw a start for (a DevTools ring-buffer that evicted the start, or a
+    // mis-tagged event). It must NOT create a headless "(no prompt)" session stuck "In flight" (the multi-run
+    // ghost-session bug). The event is HELD, not dropped.
+    await w.dispatch(agentStep("orphan", 1, { seq: 1, tool: "look", arguments: {}, result: "saw the page" }));
+    await w.dispatch(agentResult("orphan", "some answer", 1));
+    await w.tick();
+    assert.ok(w.shadow.querySelector(".empty"), "no phantom session — the list is still empty");
+    assert.equal(w.shadow.querySelectorAll(".row").length, 0);
+    // …but if the START later arrives (the cross-page replay race), the queued events are applied in order.
+    await w.dispatch(agentStart("orphan", "look at the page and answer"));
+    await w.tick();
+    assert.equal(w.shadow.querySelectorAll(".row").length, 1, "the start materialises the real session");
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    assert.match(w.shadow.querySelector(".msg.asst").textContent, /some answer/, "the queued result was applied");
+    assert.ok(!w.shadow.querySelector(".pending-note"), "and it reads DONE (the queued result sealed it)");
+});
+
 test("agent run: agent-result arriving BEFORE the (replayed) start is not dropped — the answer survives", async () => {
     const w = await loadSidebarWorld();
     // The result wins the race onto the fresh page (no `agent` start yet). It must create a stub, not vanish.
