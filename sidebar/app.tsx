@@ -63,7 +63,13 @@ function onDebug(ev: MlDebugEvent): void {
         // cancel, and it lands AFTER the page's cancelled result — which would wrongly re-show "running"
         // with no result ever coming to clear it. A straggler's step is ≤ the sealed turn's last step; a
         // real new/continuing turn always advances past it (and unseals).
-        if (!s.ended || (ev.step || 0) > (s.endedStep ?? -1)) { s.status = "pending"; s.ended = false; }
+        // Unseal (re-show "running") only for a NON-pending step past the sealed turn — a resumed off-mode
+        // turn's thought/DONE, which agent-say can't announce there (the page-side bridge is dormant). A bare
+        // PENDING START must NOT unseal a sealed, answered run: after a nav (or a cancel), the background loop's
+        // in-flight tool can fan a late START for the NEXT step (step > endedStep) whose DONE never arrives (the
+        // run already ended), which used to flip the finished run back to "running" forever — the "task's done
+        // but the sidebar still says running" bug. A real resumed turn always follows with a DONE that unseals.
+        if (!s.ended || (!ev.pending && (ev.step || 0) > (s.endedStep ?? -1))) { s.status = "pending"; s.ended = false; }
         s.lastTs = ev.ts; rev.value++; return;
     }
     if (ev.kind === "agent-result") {
@@ -75,6 +81,10 @@ function onDebug(ev: MlDebugEvent): void {
         s.answers = [...(s.answers || []), { text: ev.summary, ts: ev.ts, atStep: maxSessionStep(s), status, hitCap: ev.hitCap, cancelled: !!ev.cancelled, error: ev.error || undefined }];
         s.summary = ev.summary; s.hitCap = ev.hitCap; s.error = ev.error || undefined; s.cancelled = !!ev.cancelled;
         s.status = status; s.lastTs = ev.ts;
+        // A finished run has no in-flight step: clear any lingering pending/awaiting flags so a straggler START
+        // that arrived BEFORE this result (a background run's late tool fan) doesn't render a phantom "running…"
+        // row under a completed run. (The after-result ordering is handled by the seal in agent-step.)
+        if ((s.steps || []).some(st => st.pending)) s.steps = (s.steps || []).map(st => st.pending ? { ...st, pending: false, awaitingApproval: false } : st);
         // Seal the turn (see agent-step): a background run's late straggler step can't re-open "running".
         s.ended = true; s.endedStep = maxSessionStep(s);
         rev.value++; return;

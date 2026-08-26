@@ -2192,7 +2192,13 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             if (d.__mlCancelSession) {
                 const hash = String(d.__mlCancelSession.hash);
                 const h = handleRegistry.get(hash);
-                if (h) { h.cancel(); return; }   // agent loop
+                if (h) { h.cancel(); return; }   // agent loop hosted on THIS page
+                // No local handle — a HUD/cross-page run that NAVIGATED (its page-side handle died with the old
+                // document) and re-adopted as a resumable BACKGROUND run (agentRegistry). Relay CANCEL_RUN so the
+                // background aborts the run's OWN controller AND resolves any open approval gate (mirrors the
+                // __mlSessionSend agentRegistry fallback). Without this, the composer's Stop button was inert
+                // cross-page — the run stayed stuck "waiting for your approval…" with no way to cancel it.
+                if (agentRegistry.has(hash)) { window.postMessage({ type: "CANCEL_RUN_REQUEST", payload: { runId: hash } }, "*"); return; }
                 chatInflight.get(hash)?.abort();  // chat turn started from the composer
                 return;
             }

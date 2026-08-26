@@ -324,3 +324,45 @@ test("cross-page: the inline sidebar renders the run's history (incl. pre-nav st
     await configureExtension(ext.sw, { debugMode: "off" });   // restore for any later run
     await page.close();
 });
+
+// The composer's Stop button must CANCEL a background-hosted run cross-page. After a nav the run's page-side
+// AgentHandle is dead (the run re-adopted as an agentRegistry entry keyed by hash), so a Stop that only
+// consulted handleRegistry was inert — the run stayed stuck "waiting for your approval…" with no way out.
+// The fix: with no local handle but a re-adopted background run present, relay CANCEL_RUN.
+test("cross-page: the composer Stop cancels a background run blocked on an approval gate after a nav", async () => {
+    await configureExtension(ext.sw, { debugMode: "overlay" });   // background-hosted + an in-page approval surface
+    const page = await ext.context.newPage();
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+    fake.setScript([
+        { tool: "navigate", args: { url: "/step2" } },
+        // A WRITE (assignment) — NOT a read-only survey, so it can't auto-approve; it blocks the run on the gate.
+        { tool: "exec", args: { js: "document.title = 'changed'; 1" } },
+        { content: "should never be reached — the run is cancelled at the gate" },
+    ]);
+    const before = fake.calls().length;
+    await page.evaluate(() => { window.ml.agent("Go to step 2, then run some code.", { env: false }); return true; });
+    await expect.poll(() => new URL(page.url()).pathname, { timeout: 20000 }).toBe("/step2");   // it navigated
+    await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(2);            // …and reached the exec turn, then blocked
+
+    const sb = page.frames().find((f) => f.url().includes("sidebar.html"));
+    expect(sb, "the overlay sidebar iframe is present on the destination page").toBeTruthy();
+    await expect.poll(async () => await sb.locator(".row").count(), { timeout: 15000 }).toBeGreaterThanOrEqual(1);
+    await page.locator("#ml-sb-tab").click();     // open the collapsed overlay panel
+    await sb.locator(".row").first().click();     // open the run's detail
+    // Blocked on the gate → the composer shows Stop (running + empty box), and the run says it's waiting.
+    await expect.poll(async () => await sb.locator(".cbtn.cstop").count(), { timeout: 10000 }).toBe(1);
+    await expect.poll(async () => ((await sb.locator("body").textContent()) || "").toLowerCase(), { timeout: 10000 })
+        .toContain("waiting for your approval");
+
+    // Click Stop → __mlCancelSession → (fix) CANCEL_RUN → the background aborts the run's controller AND resolves
+    // the open gate → the loop resolves { cancelled } and the destination-page sidebar clears to "cancelled".
+    await sb.locator(".cbtn.cstop").click();
+    await expect.poll(async () => ((await sb.locator("body").textContent()) || "").toLowerCase(), { timeout: 10000 })
+        .toContain("cancelled");
+    expect(((await sb.locator("body").textContent()) || "").toLowerCase()).not.toContain("waiting for your approval");
+    expect(fake.calls().length - before, "the gated exec never ran, so no 3rd model turn fired").toBe(2);
+
+    await configureExtension(ext.sw, { debugMode: "off" });   // restore for any later run
+    await page.close();
+});

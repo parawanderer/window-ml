@@ -1202,9 +1202,10 @@ export const buildTypeTool = (ml: MlApi): MlTool => {
             required: ["selector", "text"]
         },
         // In: a tool-provided INTENT — "Type «…» into «Search»" + highlight the field, like click.
+        // No `note: "then submit"` here — the approval sentence renders submit itself, as a styled
+        // "and submit it" clause (read from args.submit); a note would duplicate it ("…submit it · then submit").
         render: (_input, args) => actionRender("Type", args, {
             input: typeof args.text === "string" ? args.text : undefined,
-            note: args.submit ? "then submit" : undefined,
         }),
         run: async ({ selector, text = "", index = 0, append = false, submit = false, verify = false }: { selector: string; text?: string; index?: number; append?: boolean; submit?: boolean; verify?: boolean }, ctx?: ToolContext): Promise<string | ToolResult> => {
             const doomed = typePrecheck({ selector, index });

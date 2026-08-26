@@ -355,6 +355,42 @@ test("a result arriving while the detail view is OPEN re-renders it live (no sta
     assert.match(w.shadow.querySelector(".msg.asst .md").innerHTML, /the answer/);
 });
 
+test("agent run: a straggler pending step (late in-flight START after the result) can't re-show a finished run as running", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("bg1", "do the thing"));
+    await w.dispatch(agentStep("bg1", 1, { seq: 1, tool: "findByText", arguments: { text: "x" }, result: "found: x" }));
+    await w.dispatch(agentResult("bg1", "All done — found x.", 1));   // seals the turn → status ok
+
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    assert.ok(!w.shadow.querySelector(".pending-note"), "finished run: no running footer");
+    assert.match(w.shadow.querySelector(".msg.asst").textContent, /All done/, "the final answer shows");
+
+    // A background-hosted run's in-flight tool fans a LATE pending START for the NEXT step AFTER the result —
+    // the cross-page / cancel straggler. Its DONE never comes (the run already ended). It must NOT flip the
+    // finished run back to "running" (the "task's done but the sidebar still says running" bug).
+    await w.dispatch(agentStep("bg1", 2, { seq: 2, pending: true, tool: "look", arguments: {} }));
+    await w.tick();
+    assert.ok(!w.shadow.querySelector(".pending-note"), "a straggler pending START does NOT re-open the finished run");
+    assert.match(w.shadow.querySelector(".msg.asst").textContent, /All done/, "the final answer still shows");
+});
+
+// A GENUINE resumed off-mode turn (no agent-say bridge) still unseals: its first NON-pending step re-opens
+// "running". Guards the fix above from over-blocking (only a bare pending START is inert on a sealed run).
+test("agent run: a real resumed turn (a non-pending step past the sealed turn) DOES re-show running", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("bg2", "do it"));
+    await w.dispatch(agentStep("bg2", 1, { seq: 1, tool: "findByText", arguments: { text: "x" }, result: "ok" }));
+    await w.dispatch(agentResult("bg2", "done", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    assert.ok(!w.shadow.querySelector(".pending-note"), "sealed after the result");
+    // A follow-up turn resumes; off-mode has no agent-say, so its first real step is the signal it's working.
+    await w.dispatch(agentStep("bg2", 2, { thought: "let me continue" }));
+    await w.tick();
+    assert.ok(w.shadow.querySelector(".pending-note"), "a resumed turn's real step re-opens running");
+});
+
 test("status dot goes pending → ok, and a save:true call is tagged saved", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(chatStart("ccc", 0, "hi", { save: true }));
