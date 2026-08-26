@@ -422,6 +422,30 @@ test("agent run: a real resumed turn (a non-pending step past the sealed turn) D
     assert.ok(w.shadow.querySelector(".pending-note"), "a resumed turn's real step re-opens running");
 });
 
+test("agent run: a successful navigate step renders a page-transition divider in the log", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("nav1", "go to example and read it"));
+    await w.dispatch(agentStep("nav1", 1, { seq: 1, tool: "navigate", arguments: { url: "https://example.com/page" }, result: "Navigating to https://example.com/page …" }));
+    await w.dispatch(agentStep("nav1", 2, { seq: 2, tool: "findByText", arguments: { text: "hi" }, result: "found" }));
+    await w.dispatch(agentResult("nav1", "Done.", 2));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const div = w.shadow.querySelector(".nav-divider");
+    assert.ok(div, "a page-transition divider renders after the navigate step");
+    assert.match(div.textContent, /navigated to/);
+    assert.match(div.querySelector(".nav-url").textContent, /example\.com\/page/);
+});
+
+test("agent run: a DENIED navigate does NOT render a transition divider (the page didn't change)", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("nav2", "try to leave"));
+    await w.dispatch(agentStep("nav2", 1, { seq: 1, tool: "navigate", approval: "denied", arguments: { url: "https://evil.example/" }, result: "Denied by the user." }));
+    await w.dispatch(agentResult("nav2", "Stayed put.", 1));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    assert.ok(!w.shadow.querySelector(".nav-divider"), "no divider for a nav that didn't happen");
+});
+
 test("status dot goes pending → ok, and a save:true call is tagged saved", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(chatStart("ccc", 0, "hi", { save: true }));
@@ -1827,6 +1851,20 @@ test("export: an image-free agent run downloads a plain markdown log", async () 
     assert.match(text, /items\.forEach\(i => i\.remove\(\)\)/, "exec JS is beautified in the log");
     assert.match(text, /Hidden 38 items\./, "tool result captured");
     assert.match(text, /## Answer\n\nI hid all slow items\./);
+});
+
+test("export: a navigate step writes a page-transition divider into the markdown log", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("expn", "go read the other site", "m", 60));
+    await w.dispatch(agentStep("expn", 1, { seq: 1, tool: "navigate", arguments: { url: "https://example.com/page" }, result: "Navigating to https://example.com/page …", renderIn: { type: "action", verb: "go to", target: "https://example.com/page" } }));
+    await w.dispatch(agentStep("expn", 2, { seq: 2, tool: "findByText", arguments: { text: "hi" }, result: "found" }));
+    await w.dispatch(agentResult("expn", "Read it.", 2));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+
+    const { blob } = await captureExport(w);
+    const text = await blob.text();
+    assert.match(text, /→ navigated to https:\/\/example\.com\/page · session resumed/, "the transition divider is in the export, mirroring the sidebar");
 });
 
 test("export: Steps counts TURNS, not events (a turn emits a thought + one event per tool)", async () => {

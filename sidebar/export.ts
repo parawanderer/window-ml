@@ -35,6 +35,7 @@ interface Sink {
     image(src: string, base: string, alt: string): void;       // `base` names the sidecar
     details(summary: string, body: () => void): void;          // collapsed disclosure
     table(columns: string[], rows: (string | number | null)[][]): void;   // a real data table (df preview)
+    divider(text: string): void;                     // a labelled section break (a page-transition marker)
 }
 
 // A fenced block whose fence is longer than any backtick run inside it.
@@ -93,6 +94,7 @@ function mdSink() {
             const line = (cells: unknown[]) => `| ${cells.map(esc).join(" | ")} |`;
             o.push(line(cols), `| ${cols.map(() => "---").join(" | ")} |`, ...rows.map(r => line(cols.map((_, j) => r[j]))), "");
         },
+        divider: (t) => o.push("---", "", `**→ ${t}**`, ""),
     };
     return { sink, done: () => ({ md: o.join("\n"), images }) };
 }
@@ -128,6 +130,7 @@ function htmlSink() {
             const tds = (r: (string | number | null)[]) => cols.map((_, j) => { const c = r[j]; return `<td class="${typeof c === "number" ? "num" : (c == null ? "nan" : "")}">${c == null ? "NaN" : escapeHtml(String(c))}</td>`; }).join("");
             o.push(`<table class="dftable"><thead>${th}</thead><tbody>${rows.map((r, i) => `<tr><td class="idx">${i}</td>${tds(r)}</tr>`).join("")}</tbody></table>`);
         },
+        divider: (t) => o.push(`<div class="nav-divider"><span>→ ${escapeHtml(t)}</span></div>`),
     };
     return { sink, done: () => o.join("\n") };
 }
@@ -287,6 +290,12 @@ function writeAgent(s: Session, d: Sink): void {
             if (st.feedback.via === "text" && st.feedback.prompt) d.details("prompt sent", () => d.prose(st.feedback!.prompt as string));
             if (st.feedback.via === "text" && st.feedback.text) d.block("Description sent to the model", st.feedback.text);
         }
+        // A page-transition marker after a SUCCESSFUL navigate step — the same run-log divider the sidebar
+        // draws, so a run spanning pages reads the same in the export (skip a denied/errored nav — no change).
+        if (st.tool === "navigate" && st.approval !== "denied" && st.result && !st.result.startsWith("Error")) {
+            const url = (st.renderIn && st.renderIn.type === "action" && st.renderIn.target) || (typeof st.arguments?.url === "string" ? st.arguments.url : "");
+            if (url) d.divider(`navigated to ${url} · session resumed`);
+        }
     }
     flush(Infinity);   // trailing answer(s) + any follow-up prompt that landed after the last step
     // No per-turn answers recorded (a run still in flight, or an older session) → the single-answer tail.
@@ -339,6 +348,9 @@ body { margin: 0; color: #18181b; background: #fff;
 .doc { max-width: 190mm; margin: 0 auto; padding: 8mm 0; }
 h1 { font-size: 1.5em; margin: 0 0 .5em; }
 h2 { font-size: 1.15em; margin: 1.5em 0 .4em; padding-top: .35em; border-top: 1px solid #d4d4d8; }
+.nav-divider { display: flex; align-items: center; gap: 10px; margin: 14px 0; color: #71717a; font-size: .85em; break-inside: avoid; }
+.nav-divider::before, .nav-divider::after { content: ""; flex: 1; height: 1px; background: #d4d4d8; }
+.nav-divider span { flex: 0 0 auto; }
 h3 { font-size: 1em; margin: 1.1em 0 .3em; color: #3f3f46; }
 h1, h2, h3, .lbl, summary { break-after: avoid; }
 p { margin: 0 0 .5em; }

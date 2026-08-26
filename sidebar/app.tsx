@@ -1276,6 +1276,33 @@ const UserBubble = ({ text, ts, images }: { text: string; ts: number; images?: s
     </div>
 );
 
+// The absolute destination of a `navigate` step (the resolved URL the action render carries, else the raw arg).
+const navTargetOf = (st: AgentStep): string => {
+    const ri = st.renderIn;
+    if (ri && ri.type === "action" && typeof ri.target === "string" && ri.target) return ri.target;
+    const u = st.arguments?.url;
+    return typeof u === "string" ? u : "";
+};
+// host + path for a compact label; the full URL rides the title tooltip.
+const prettyUrl = (url: string): string => {
+    try { const u = new URL(url); return u.host + (u.pathname !== "/" ? u.pathname : "") + u.search; } catch { return url; }
+};
+// A page-transition marker in the run log — the moment the agent left this document and the run RE-ADOPTED the
+// new one (a cross-page/-domain nav). Like Claude Code's context-compaction rule: a horizontal divider that
+// makes the seam legible when reading a run that spans pages, distinct from the `navigate` tool call above it.
+function NavDivider({ url }: { url: string }) {
+    return (
+        <div class="nav-divider" title={url}>
+            <span class="nav-rule" aria-hidden="true" />
+            <span class="nav-label">
+                <svg class="nav-ico" viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M4 12h13M13 6l6 6-6 6" /></svg>
+                navigated to <b class="nav-url">{prettyUrl(url)}</b> · session resumed
+            </span>
+            <span class="nav-rule" aria-hidden="true" />
+        </div>
+    );
+}
+
 function AgentRunView({ s }: { s: Session }) {
     // Skip an empty step group — one carrying only a usage sample (final-answer token counts), no
     // thought/reasoning/tool. KEEP a reasoning-only turn (the final-answer turn shows its thinking here).
@@ -1295,6 +1322,10 @@ function AgentRunView({ s }: { s: Session }) {
     const items: { pos: number; ts: number; el: preact.JSX.Element }[] = [
         { pos: -1, ts: s.createdTs, el: <UserBubble key="task" text={s.task || ""} ts={s.createdTs} images={s.taskImages} /> },
         ...groups.map(g => ({ pos: g.step, ts: 0, el: <AgentTurn key={`t${g.step}`} turn={g} max={s.maxSteps} hash={s.hash} /> })),
+        // A page-transition divider right after each SUCCESSFUL navigate turn (skip a denied/errored one — the
+        // page didn't actually change). Sits at step+0.3: after the navigate group, before its next turn/answer.
+        ...(s.steps || []).filter(st => st.tool === "navigate" && st.approval !== "denied" && !!st.result && !st.result.startsWith("Error") && !!navTargetOf(st))
+            .map((st, i) => ({ pos: (st.step || 0) + 0.3, ts: 0, el: <NavDivider key={`nav${i}-${st.seq ?? st.step}`} url={navTargetOf(st)} /> })),
         ...(s.answers || []).map((a, i) => ({ pos: a.atStep + 0.5, ts: a.ts, el: answer(a, `a${i}`) })),
         ...(s.says || []).map((sy, i) => ({ pos: sy.atStep + 0.5, ts: sy.ts, el: <UserBubble key={`s${i}`} text={sy.text} ts={sy.ts} images={sy.images} /> })),
     ].sort((a, b) => a.pos - b.pos || a.ts - b.ts);
