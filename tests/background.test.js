@@ -1332,6 +1332,28 @@ test("ML_HL_REMOTE: the panel's hover-highlight is relayed to the inspected tab'
     assert.equal(bg.tabMessages.length, 2, "no tabId → not relayed");
 });
 
+test("ML_SESSION_REMOTE: the panel's composer Send/Stop is relayed to the inspected tab (parity with the overlay)", () => {
+    // Panel parity for the composer. The overlay app posts sessionSend/sessionCancel to its shell parent,
+    // which reaches __mlSessionSend/__mlCancelSession directly. The DevTools panel can't touch the inspected
+    // page, so panel.ts posts ML_SESSION_REMOTE{tabId, action} to the background, which forwards
+    // ML_SESSION_TO_PAGE to that tab's shell → the SAME page handlers (incl. the cross-page CANCEL_RUN fix).
+    // Different backend mechanism, same behaviour. Fire-and-forget (no sendResponse) → don't await.
+    const bg = loadBackground({ config: baseConfig() });
+    bg.send({ type: "ML_SESSION_REMOTE", tabId: 5, action: "send", hash: "abc", text: "steer left", images: [] });
+    assert.equal(bg.tabMessages.length, 1, "one relay to the tab");
+    assert.equal(bg.tabMessages[0][0], 5, "addressed to the inspected tab");
+    assert.deepEqual(bg.tabMessages[0][1], { type: "ML_SESSION_TO_PAGE", action: "send", hash: "abc", text: "steer left", images: [] }, "Send is forwarded verbatim");
+    // Stop (cancel) forwards too — this is the reverse-channel half of the composer Stop button on the panel.
+    bg.send({ type: "ML_SESSION_REMOTE", tabId: 5, action: "cancel", hash: "abc" });
+    const cancelMsg = bg.tabMessages[1][1];
+    assert.equal(cancelMsg.type, "ML_SESSION_TO_PAGE");
+    assert.equal(cancelMsg.action, "cancel");
+    assert.equal(cancelMsg.hash, "abc");
+    // A non-numeric tabId is ignored (no throw, no relay) — mirrors ML_HL_REMOTE.
+    bg.send({ type: "ML_SESSION_REMOTE", action: "cancel", hash: "abc" });
+    assert.equal(bg.tabMessages.length, 2, "no tabId → not relayed");
+});
+
 test("START_RUN (surface 'devtools') fans a background run's step events to the PANEL port, not the page", async () => {
     // DevTools parity: a background-hosted run in devtools mode streams its agent-step events to the
     // panel via relayDebugEvent (the ml-devtools ports), NOT chrome.tabs.sendMessage (which the harness
@@ -1369,7 +1391,7 @@ test("START_RUN (devtools) after a NAVIGATION fans the agent-result to the PANEL
         },
         // Mock the page delegation: the navigate tool "succeeds", and — since the navigate branch then WAITS for
         // re-adoption — schedule the RUN_READOPTED that releases the barrier (fired right after noteNavigating).
-        onTabMessage: async (msg) => {
+        onTabMessage: async (_tabId, msg) => {
             if (msg && msg.type === "RUN_TOOL_IN_PAGE" && msg.payload && msg.payload.name === "navigate") {
                 setTimeout(() => { void bg.send({ type: "RUN_READOPTED", payload: { runId: "navrun", pageInfo: "URL: /step2\nTitle: Step 2" } }, { tab: { id: 7 } }); }, 0);
                 return { result: "Navigating to /step2 …" };
@@ -1389,6 +1411,10 @@ test("START_RUN (devtools) after a NAVIGATION fans the agent-result to the PANEL
     const results = panel.messages.filter(m => m.__mlDebug && m.__mlDebug.kind === "agent-result");
     assert.ok(results.length >= 1, "the navigated run's agent-result reached the PANEL port (not stuck 'running')");
     assert.equal(results.at(-1).__mlDebug.summary, "arrived and finished", "…carrying the final answer");
+    // Orient-on-nav parity: the navigate step's result — enriched with the destination pageInfo — also reached
+    // the panel (same relayDebugEvent path as the overlay's ML_DEBUG_TO_PAGE), so the panel shows it too.
+    const navSteps = panel.messages.filter(m => m.__mlDebug && m.__mlDebug.kind === "agent-step" && m.__mlDebug.tool === "navigate");
+    assert.ok(navSteps.some(s => /You are now on the new page[\s\S]*\/step2/.test(s.__mlDebug.result || "")), "the enriched navigate result reached the panel");
 });
 
 test("CANCEL_RUN aborts a background run's in-flight model call → the run resolves cancelled", async () => {
