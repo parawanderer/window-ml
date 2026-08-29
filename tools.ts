@@ -411,8 +411,10 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 "AUTO-RUN vs APPROVAL: code that is read-only BY CONSTRUCTION — only queries/reads + pure " +
                 "computation (`.map`/`.filter`/`.reduce`, `ml.range`, the read-only `ml.*` reads; NO mutation, " +
                 "effectful calls, `for`/`while` loops, or reassignment like `x += …`) — runs in a mediated " +
-                "\"safe\" interpreter with NO approval prompt; anything else falls back to real `eval`, which " +
-                "asks the user first. So iterate with `.map`/`.forEach`/`.reduce` + `ml.range(n)`, not raw loops. " +
+                "\"safe\" interpreter with NO approval prompt; anything else (a `for`/`while` loop, `x += …`, a " +
+                "click/fetch/write) is still allowed but falls back to real `eval` and asks the user first. So " +
+                "for a read-only survey prefer `.map`/`.filter`/`.reduce` + `ml.range(n)` to stay on the no-prompt " +
+                "path — reach for a loop/mutation only when the task actually needs it. " +
                 "SHADOW DOM / IFRAMES: use `ml.queryAll('host >>> inner')` — a shadow/iframe-piercing " +
                 "querySelectorAll that returns an Array and understands the same selector dialect the DOM " +
                 "tools use (`>>>` crosses each OPEN shadow root / same-origin iframe; a trailing " +

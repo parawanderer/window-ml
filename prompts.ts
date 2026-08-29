@@ -133,14 +133,17 @@ export const EXEC_COMPUTE_CLAUSE =
     "with the `exec` tool (JavaScript): gather the values and run `Array`/`.map`/`.filter`/" +
     "`.reduce`/`Math.*` to get the EXACT result before you answer. It's clunkier than a dedicated " +
     "calculator, but infinitely better than guessing — the final number must come from code, not your head.";
-// Appended whenever `exec` is present. Steers the model to the functional idioms exec supports well
-// (map/filter/reduce, ml.range) instead of `for`/`while` loops + variable mutation — which is also what
-// keeps a survey on the auto-approved read-only fast path, without spelling that mechanism out here.
+// Appended whenever `exec` is present. `for`/`while` + reassignment are NOT forbidden — they just aren't
+// read-only, so they fall to the approval path. The steer is: for EXPLORATION keep it functional so it
+// auto-runs; reach for a real loop only when the task genuinely needs stateful iteration. (Don't let the
+// model conclude loops are "unavailable" — the earlier "isn't available" phrasing caused exactly that.)
 export const EXEC_RANGE_CLAUSE =
-    "\n\nIn `exec`, prefer a functional style over loops: build results with `.map`/`.filter`/`.reduce` " +
-    "over arrays, not a `for`/`while` loop or a `forEach` that mutates an accumulator (reassignment like " +
-    "`s += …` isn't available). For a counter loop use `ml.range(n)` — like Python's `range`: " +
-    "`ml.range(8).map(i => …)`, or `ml.range(start, stop, step)`. It's bounded, so it can't run away.";
+    "\n\nWhen EXPLORING or surveying the page in `exec`, keep the code read-only so it auto-runs without an " +
+    "approval prompt: build results with `.map`/`.filter`/`.reduce` and use `ml.range(n)` for a counter loop " +
+    "(`ml.range(8).map(i => …)`, or `ml.range(start, stop, step)`) instead of a `for`/`while` loop or `+=` " +
+    "accumulation. `for`/`while` and reassignment are still ALLOWED — they simply require approval (they " +
+    "COULD mutate or act), so use them only when the task genuinely needs stateful iteration, not for a " +
+    "read-only read of the page.";
 export const PYTHON_CLAUSE =
     "\n\nYou have `python_exec` — a REAL sandboxed Python (its tool description lists the available " +
     "libraries). You are a language " +
