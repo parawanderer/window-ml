@@ -216,6 +216,55 @@ function genTitle(hash: string, prompt: string): void {
     );
 }
 
+// ---- Run-block segmentation + lazy per-block summaries (HUD "Show work" ONLY) ----
+// A multi-turn HUD run is a chain of TASKS, each ending when the agent answers. In Show-work we group the
+// trace into per-task BLOCKS, collapse the priors, and — lazily, once Show-work is opened — summarise each
+// with the UTILITY model (cached). The user's own prompt is the instant fallback until/unless a summary lands.
+const blockSummaries = new Map<string, string>();   // `${hash}:${blockIndex}` → the one-line summary
+const blockSummaryTried = new Set<string>();
+const blockKey = (hash: string, i: number): string => `${hash}:${i}`;
+function ensureBlockSummary(hash: string, i: number, prompt: string, result: string): void {
+    if (!config.value.utilityModel.trim()) return;   // no utility model → the prompt fallback simply stays
+    const key = blockKey(hash, i);
+    if (blockSummaries.has(key) || blockSummaryTried.has(key)) return;
+    blockSummaryTried.add(key);
+    const messages = [
+        { role: "system", content: "You write a terse one-line summary (≤ 16 words) of one task within an agent session — what the user asked and what the agent did/produced. Reply with ONLY the summary: no quotes, no preamble." },
+        { role: "user", content: `Request:\n${truncate(prompt || "(none)", 400)}\n\nResult:\n${truncate(result || "(no result)", 400)}` },
+    ];
+    chrome.runtime.sendMessage(
+        { type: "FETCH_LLM", payload: { messages, extend: "utility", maxTokens: 48, think: false } },
+        (resp: { data?: unknown; error?: string } | undefined) => {
+            if (chrome.runtime.lastError || !resp || resp.error) { blockSummaryTried.delete(key); return; }   // retry next open
+            const line = String(resp.data || "").trim().split("\n").map(x => x.trim()).filter(Boolean)[0] || "";
+            const s = truncate(line.replace(/^["'`*]+|["'`*.]+$/g, "").trim(), 120);
+            if (s) { blockSummaries.set(key, s); rev.value++; }
+        },
+    );
+}
+interface RunTaskBlock { prompt: string; promptImages?: string[]; turns: AgentTurnGroup[]; answer: NonNullable<Session["answers"]>[number] | null; }
+// Segment a run into per-task blocks (a prompt → its turns → its answer). null when there's ≤1 task — nothing
+// to segment, so Show-work renders its flat trace as before.
+function buildRunBlocks(run: Session): RunTaskBlock[] | null {
+    const answers = run.answers || [];
+    if (answers.length <= 1) return null;
+    const says = run.says || [];
+    const turns = groupTurns(run.steps || []).filter(t => t.thought || t.reasoning || t.tools.length);
+    const blocks: RunTaskBlock[] = [];
+    let prev = -Infinity;
+    for (let i = 0; i < answers.length; i++) {
+        const boundary = answers[i].atStep;
+        blocks.push({
+            prompt: i === 0 ? (run.task || "") : (says[i - 1]?.text || ""),
+            promptImages: i === 0 ? run.taskImages : says[i - 1]?.images,
+            turns: turns.filter(t => t.step > prev && t.step <= boundary),
+            answer: answers[i],
+        });
+        prev = boundary;
+    }
+    return blocks;
+}
+
 // Scan for sessions still needing a title and kick off generation. Called from
 // App's effect on every session change / open transition.
 function maybeGenerateTitles(): void {
@@ -2388,6 +2437,8 @@ function ShowWork({ run }: { run: Session }) {
     // "N steps" = the number of loop iterations actually shown (turn-groups across ALL turns), not just the
     // tool calls — a thinking-only step is still a step, and the old tool-only count undercounted multi-turn runs.
     const n = turns.length;
+    // Multi-TASK run (>1 answer) → segment into collapsible per-task blocks; else null → the flat trace below.
+    const blocks = buildRunBlocks(run);
     // Interleave the CONVERSATION into the trace — your prompts (task + follow-ups → "you asked") and PAST
     // answers, positioned with the step-groups by cumulative step (same scheme as the panel's AgentRunView:
     // task at -1, an answer just after its turn's steps, a following prompt just after that). The LATEST
@@ -2438,7 +2489,13 @@ function ShowWork({ run }: { run: Session }) {
                     </div>
                 ) : null}
             </div>
-            {open ? <div class="card-work-trace">{traceItems.map(it => it.el)}</div> : null}
+            {open ? <div class="card-work-trace">
+                {/* Multi-task run → per-task BLOCKS (collapse priors, expand the latest); single task → the
+                    flat interleaved trace as before. */}
+                {blocks
+                    ? blocks.map((b, i) => <RunTaskBlockView key={i} run={run} block={b} index={i} last={i === blocks.length - 1} />)
+                    : traceItems.map(it => it.el)}
+            </div> : null}
         </div>
     );
 }
@@ -2458,6 +2515,36 @@ function CardTraceMsg({ label, text, cls, images }: { label: string; text: strin
             </button>
             {images?.length ? <div class="thumbs">{images.map((src, i) => <ClickableImg key={i} src={src} />)}</div> : null}
             {open && text ? <div class="md astep-body" dangerouslySetInnerHTML={{ __html: markdown(text || "", { math: true }) }} /> : null}
+        </div>
+    );
+}
+
+// One TASK block in the HUD Show-work (a multi-task run only). Collapsed → a one-line summary (utility-model,
+// lazy + cached) or the prompt fallback, + a step-count chip. Expanded → the prompt, its turns, and (for a
+// PRIOR block) its answer — the LATEST block's answer is the card body, so it's not repeated here. The latest
+// block is expanded by default; priors collapse. Card-only (the debug sidebar shows the full flat trace).
+function RunTaskBlockView({ run, block, index, last }: { run: Session; block: RunTaskBlock; index: number; last: boolean }) {
+    const rv = rev.value;   // subscribe → re-render when the lazy summary lands (retained via data-rev)
+    const [open, setOpen] = useState(last);   // latest expanded, priors collapsed
+    // This component only MOUNTS when Show-work is open, so firing here = fire-on-open (lazy). Cached by key.
+    useEffect(() => { ensureBlockSummary(run.hash, index, block.prompt, block.answer?.text || ""); }, [run.hash, index]);
+    const summary = blockSummaries.get(blockKey(run.hash, index));
+    const header = summary || inlineText(block.prompt) || "(task)";
+    return (
+        <div class="run-block" data-rev={rv}>
+            <button class="run-block-head" onClick={() => setOpen(v => !v)}>
+                <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
+                <span class={`run-block-sum${summary ? " ml-reveal" : ""}`} title={block.prompt}>{header}</span>
+                <span class="sp" />
+                <span class="run-block-n">{block.turns.length} {block.turns.length === 1 ? "step" : "steps"}</span>
+            </button>
+            {open ? (
+                <div class="run-block-body">
+                    <CardTraceMsg label="you asked" text={block.prompt} cls="acard-you" images={block.promptImages} />
+                    {block.turns.map(t => <AgentTurn key={t.step} turn={t} max={run.maxSteps} hash={run.hash} />)}
+                    {block.answer && !last ? <CardTraceMsg label={block.answer.cancelled ? "cancelled" : block.answer.hitCap ? "stopped early" : "answered"} text={block.answer.text || "(no reply)"} cls="acard-ans" /> : null}
+                </div>
+            ) : null}
         </div>
     );
 }

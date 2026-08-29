@@ -2562,6 +2562,75 @@ test("the DEBUG DETAIL does NOT render answer media (that's HUD-only, the sideba
     assert.doesNotMatch(w.shadow.querySelector(".msg.asst").innerHTML, /CATPIC/, "the crop isn't leaked into the debug detail");
 });
 
+// Dispatch a 2-TASK run (task → answer, then a follow-up say → answer) so Show-work has >1 block to segment.
+async function twoTaskRun(w, hash) {
+    await w.dispatch(agentStart(hash, "find cats", "m"));
+    await w.dispatch(agentStep(hash, 1, { seq: 1, tool: "findByText", arguments: { text: "cat" }, result: "found cats" }));
+    await w.dispatch(agentResult(hash, "Found the cats.", 1));
+    await w.dispatch({ kind: "agent-say", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text: "now find dogs" });
+    await w.dispatch(agentStep(hash, 2, { seq: 2, tool: "findByText", arguments: { text: "dog" }, result: "found dogs" }));
+    await w.dispatch(agentResult(hash, "Found the dogs.", 2));
+    await w.flush();
+}
+
+test("card Show-work: a multi-TASK run segments into collapsible blocks (priors collapsed, latest expanded)", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });   // no utilityModel → prompt fallback
+    w.window.postMessage = () => {};
+    await w.raw({ __mlSidebarSurface: "card" });
+    await twoTaskRun(w, "multitask");
+    w.window.document.querySelector(".card-work-toggle").click();   // open Show work
+    await w.tick();
+    const blocks = w.window.document.querySelectorAll(".run-block");
+    assert.equal(blocks.length, 2, "two task blocks");
+    assert.ok(!blocks[0].querySelector(".run-block-body"), "the prior block is collapsed");
+    assert.ok(blocks[1].querySelector(".run-block-body"), "the latest block is expanded");
+    assert.match(blocks[0].querySelector(".run-block-sum").textContent, /find cats/, "prompt fallback in the collapsed header");
+    assert.match(blocks[0].querySelector(".run-block-n").textContent, /1 step/, "step-count chip");
+});
+
+test("card Show-work: a single-task run is NOT segmented (flat trace, no blocks)", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    w.window.postMessage = () => {};
+    await w.raw({ __mlSidebarSurface: "card" });
+    await w.dispatch(agentStart("single", "find cats", "m"));
+    await w.dispatch(agentStep("single", 1, { seq: 1, tool: "findByText", arguments: { text: "cat" }, result: "found" }));
+    await w.dispatch(agentResult("single", "Found them.", 1));
+    await w.flush();
+    w.window.document.querySelector(".card-work-toggle").click();
+    await w.tick();
+    assert.equal(w.window.document.querySelectorAll(".run-block").length, 0, "no per-task blocks for a single task");
+    assert.ok(w.window.document.querySelector(".card-work-trace"), "the flat trace still renders");
+});
+
+test("card Show-work: the utility model summarises each block (lazy on open, replaces the prompt, cached)", async () => {
+    let calls = 0;
+    const w = await loadSidebarWorld({
+        sync: { debugMode: "off", utilityModel: "gemma4:e2b" },
+        // Count only BLOCK-summary calls (payload starts "Request:") — genTitle also fires a utility call.
+        fetchLlm: (payload) => {
+            const isBlock = payload.extend === "utility" && (payload.messages || []).some(m => typeof m.content === "string" && m.content.startsWith("Request:"));
+            if (isBlock) { calls++; return { data: `Block summary ${calls}` }; }
+            return { data: "a title" };
+        },
+    });
+    w.window.postMessage = () => {};
+    await w.raw({ __mlSidebarSurface: "card" });
+    await twoTaskRun(w, "sum");
+    assert.equal(calls, 0, "not fired until Show work is opened (lazy)");
+    w.window.document.querySelector(".card-work-toggle").click();
+    await w.flush(); await w.tick();
+    const blocks = w.window.document.querySelectorAll(".run-block");
+    assert.match(blocks[0].querySelector(".run-block-sum").textContent, /Block summary/, "the utility summary replaces the prompt");
+    assert.ok(blocks[0].querySelector(".run-block-sum.ml-reveal"), "the summary fades in");
+    assert.equal(calls, 2, "the utility model fired once per block");
+    // Re-open → cached, no refire.
+    w.window.document.querySelector(".card-work-toggle").click();   // close
+    await w.tick();
+    w.window.document.querySelector(".card-work-toggle").click();   // reopen
+    await w.tick();
+    assert.equal(calls, 2, "cached — no refire on reopen");
+});
+
 test("card surface: a finished run has an inline reply that continues the SAME session", async () => {
     const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
     const posted = [];
