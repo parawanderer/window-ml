@@ -219,6 +219,19 @@ test("[...Array(n).keys()] resolves — Array(n) is a callable root now", async 
     assert.deepEqual((await run(`[...Array(4).keys()]`)).value, [0, 1, 2, 3]);
     assert.deepEqual((await run(`[...Array(3).keys()].map(i => i + 1)`)).value, [1, 2, 3]);
 });
+
+test("a SYNC ml read (queryAll/range) runs INSIDE a .map/.filter callback; an ASYNC one still can't", async () => {
+    const doc = world();
+    const ml = { queryAll: (s) => [...doc.querySelectorAll(s)], range: (n) => Array.from({ length: n }, (_, i) => i), getModel: async () => "m" };
+    // The reported case: counting several selectors with ml.queryAll INSIDE a map. Sync ml reads no longer
+    // auto-await, so this runs instead of falling out of dialect ("await not supported inside a callback").
+    assert.deepEqual((await run(`['input', 'textarea'].map(s => s + '=' + ml.queryAll(s).length)`, doc, ml)).value, ["input=2", "textarea=1"]);
+    assert.deepEqual((await run(`[2, 3].map(n => ml.range(n).length)`, doc, ml)).value, [2, 3]);
+    // An ASYNC ml read (a background round-trip) inside a callback STILL falls back — the sync driver can't await.
+    await assert.rejects(run(`[1].map(x => ml.getModel())`, doc, ml), outOfDialect);
+    // …but at the top level it still auto-awaits (a forgotten `await` still reads the value).
+    assert.equal((await run(`ml.getModel()`, doc, ml)).value, "m");
+});
 test("a regex literal is DENIED nothing extra — it can't reach an effectful method", async () => {
     // The regex is pure; the escape battery elsewhere still holds. A malformed regex just falls back.
     await assert.rejects(run(`/[/`), outOfDialect);   // invalid pattern → NotInDialect (approval), never a crash

@@ -739,9 +739,12 @@ class Evaluator {
             // while genuine denials (Denied / method-not-allowed NotInDialect) still bypass catch.
             if (typeof fn !== "function") throw new TypeError(`${obj == null ? String(obj) : "value"} has no callable '${key}'`);
             const out = fn.apply(obj, yield* this.evalArgs(node.args, scope));
-            // Every ml method is async, so await it here too: a forgotten `await` then still reads the
-            // value instead of a Promise the model can't do anything with.
-            if (onMl) return yield out;
+            // Auto-await an ml call ONLY when it actually returns a promise (getModel/config/… round-trip),
+            // so a forgotten `await` still reads the value. The SYNC ml reads (queryAll, range) return a plain
+            // value — pass it straight through WITHOUT yielding, so they work inside a `.map`/`.filter` callback
+            // (the sync driver can't honour a yield). Yielding those unconditionally was why `cs.map(s =>
+            // ml.queryAll(s).length)` fell out of dialect.
+            if (onMl) return (out != null && typeof (out as { then?: unknown }).then === "function") ? yield out : out;
             // Accommodate a common model mistake: querySelectorAll / getElementsBy* return a NodeList /
             // HTMLCollection, which have no .map/.filter, so `querySelectorAll('x').map(…)` throws (the
             // model forgets to spread). In this read-only dialect it's safe to just hand back a real
