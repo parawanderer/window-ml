@@ -79,7 +79,7 @@ function streamResponse(lines, { status = 200 } = {}) {
 // `commandShortcut` is what chrome.commands reports as CURRENTLY bound for the HUD
 // (null = the API is unavailable, "" = the user cleared the binding); `manifestPermissions`
 // lets a test declare contextMenus, which GET_INVOCATION reads as "the right-click entry exists".
-function loadBackground({ config = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true }) {
+function loadBackground({ config = {}, local = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9" }) {
     const calls = [];
     const captures = [];        // captureVisibleTab arg lists, for screenshot tests
     const tabMessages = [];     // chrome.tabs.sendMessage arg lists, for reverse-channel tests
@@ -89,7 +89,7 @@ function loadBackground({ config = {}, onFetch, onCaptureTab, onPyRun, onTabMess
     const listeners = [];
     const connectListeners = [];
     const stored = { ...config };
-    const localStore = {};
+    const localStore = { ...local };   // seed chrome.storage.local (e.g. ml_bgrun_* snapshots for durable-resume tests)
     let offscreenDoc = false;
 
     const context = {
@@ -117,12 +117,14 @@ function loadBackground({ config = {}, onFetch, onCaptureTab, onPyRun, onTabMess
                 },
                 local: {
                     get: async (key) => {
+                        if (key == null) return { ...localStore };   // get(null) → ALL keys (hydratePersistedRuns/purgeAllBgRuns)
                         const keys = typeof key === "string" ? [key] : Array.isArray(key) ? key : Object.keys(key || {});
                         const out = {};
                         for (const k of keys) if (k in localStore) out[k] = localStore[k];
                         return out;
                     },
-                    set: async (obj) => { Object.assign(localStore, obj); }
+                    set: async (obj) => { Object.assign(localStore, obj); },
+                    remove: async (keys) => { for (const k of (Array.isArray(keys) ? keys : [keys])) delete localStore[k]; },
                 }
             },
             // GET_INVOCATION reads the manifest's suggested key + the contextMenus permission.
@@ -132,6 +134,7 @@ function loadBackground({ config = {}, onFetch, onCaptureTab, onPyRun, onTabMess
             },
             runtime: {
                 getManifest: () => ({
+                    version: manifestVersion,
                     permissions: manifestPermissions,
                     commands: { "open-composer": { suggested_key: { default: "Alt+Space", mac: "Alt+Space" } } },
                 }),
@@ -190,6 +193,7 @@ function loadBackground({ config = {}, onFetch, onCaptureTab, onPyRun, onTabMess
         pyRuns,
         debuggerCalls,
         stored,
+        localStore,   // chrome.storage.local contents — tests assert a snapshot was kept/removed
         // Simulates chrome.runtime.sendMessage hitting the listener.
         send: (message, sender = {}) =>
             new Promise((resolve) => listeners[0](message, sender, resolve)),

@@ -1759,6 +1759,58 @@ test("INJECT_MESSAGE with a sayId fans an agent-say-seen when the loop DRAINS it
     assert.equal(seen.id, "seenrun", "carries the run hash so the sidebar can find the session");
 });
 
+// --- Durable resume: invalidate zombies (version/freshness), and re-emit a legit resurrection (fix C) ---
+
+const bgSnap = (runId, tabId, over = {}) => ({
+    version: "9.9.9", ts: Date.now(), tabId, messages: [{ role: "user", content: "read the page" }],
+    p: {
+        runId, task: "read the page", tools: [{ name: "noop", requiresApproval: false, description: "", parameters: {}, capabilities: [] }],
+        model: "m", think: null, maxSteps: 5, systemPrompt: "s", surface: "devtools",
+        autoApprovePython: false, autoApproveReadonly: false, rebuild: { tools: ["noop"] }, crossPage: true,
+    },
+    ...over,
+});
+
+test("hydrate INVALIDATES a cross-version / stale snapshot on startup (never resumes an old-version zombie)", async () => {
+    const bg = loadBackground({
+        config: baseConfig(), manifestVersion: "9.9.9",
+        onFetch: () => jsonResponse({ choices: [{ message: { content: "ok" } }] }),
+        local: {
+            ml_bgrun_cur: bgSnap("cur", 5),                                   // current version, fresh → resumable
+            ml_bgrun_old: bgSnap("old", 5, { version: "1.0.0" }),            // a PREVIOUS extension version → zombie
+            ml_bgrun_stale: bgSnap("stale", 5, { ts: Date.now() - 30 * 60 * 1000 }),   // 30 min old → zombie
+            ml_bgrun_legacy: bgSnap("legacy", 5, { version: undefined }),   // un-stamped legacy → zombie
+        },
+    });
+    // A page load drives CONTENT_READY, which awaits the startup hydrate.
+    const res = await bg.send({ type: "CONTENT_READY", payload: {} }, { tab: { id: 5 } });
+    const ids = (res.adopt || []).map(a => a.runId);
+    assert.deepEqual(ids.sort(), ["cur"], "only the current, fresh run is offered for adopt/resume");
+    assert.ok("ml_bgrun_cur" in bg.localStore, "the current snapshot survives");
+    for (const k of ["ml_bgrun_old", "ml_bgrun_stale", "ml_bgrun_legacy"])
+        assert.ok(!(k in bg.localStore), `${k} (a zombie) was deleted from storage`);
+});
+
+test("fix C: a RESURRECTED resume re-emits its agent start (visible + stoppable), with the ORIGINAL task", async () => {
+    const events = [];
+    const bg = loadBackground({
+        config: baseConfig(), manifestVersion: "9.9.9",
+        onFetch: () => jsonResponse({ choices: [{ message: { content: "resumed and finished" } }] }),
+        onTabMessage: (_t, msg) => { if (msg?.type === "ML_DEBUG_TO_PAGE") events.push(msg.event); },
+        local: { ml_bgrun_res1: bgSnap("res1", 7) },
+    });
+    // Page loads → CONTENT_READY offers the interrupted run for auto-resume.
+    const ready = await bg.send({ type: "CONTENT_READY", payload: {} }, { tab: { id: 7 } });
+    assert.ok((ready.adopt || []).some(a => a.runId === "res1" && a.resume), "the interrupted run is offered with resume:true");
+    // The page then RESUME_RUNs it with an EMPTY follow-up (what _adoptRun does on an auto-resume).
+    await bg.send({ type: "RESUME_RUN", payload: { runId: "res1", task: "" } }, { tab: { id: 7 } });
+    // Before fix C this resume was INVISIBLE (no agent start) — a ghost with no Stop button. Now it re-announces.
+    const start = events.find(e => e?.kind === "agent" && e.id === "res1");
+    assert.ok(start, "the resurrected resume RE-EMITS an agent start (materialises a row + Stop button)");
+    assert.equal(start.task, "read the page", "with the ORIGINAL task, not the empty auto-resume follow-up");
+    assert.equal(start.resumed, true, "flagged resumed-after-interruption");
+});
+
 test("START_RUN offsets emitted step/seq by stepBase/seqBase and returns the run's extents (multi-turn sidebar)", async () => {
     // A createAgent handle's later turns send stepBase/seqBase so the background's emitted step/seq continue
     // past prior turns — otherwise turn N's step 1 collides with turn 1's and the sidebar chat log scrambles.

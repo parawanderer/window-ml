@@ -48,6 +48,7 @@ export interface Session {
 
     maxSteps?: number;
     agentConfig?: DebugAgentConfig;
+    resumed?: boolean;   // this run was RESURRECTED from storage after an SW eviction/respawn (visible + stoppable)
     // A turn's terminal agent-result SEALS the session so a STRAGGLER step — the in-flight tool's late DONE
     // that a background-hosted (design A) run keeps fanning after a cancel, arriving AFTER the page-emitted
     // cancelled result — can't resurrect it to "running". A genuine new turn (agent-say, or a step past

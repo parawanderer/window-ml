@@ -1068,7 +1068,7 @@ export interface DebugAgentConfig {
     /** where privileged gates are resolved: "ui" (default) · "both" (UI + __mlApprovals IPC) · "external" (IPC only) */
     approvalRouting?: "ui" | "both" | "external";
 }
-export interface DebugAgentStart extends DebugBase { kind: "agent"; task: string; images?: string[]; model: string | null; maxSteps: number; config: DebugAgentConfig; }
+export interface DebugAgentStart extends DebugBase { kind: "agent"; task: string; images?: string[]; model: string | null; maxSteps: number; config: DebugAgentConfig; resumed?: boolean; }
 export interface DebugAgentStep extends DebugBase {
     kind: "agent-step"; step: number;
     /** The PER-TURN step number (1-based, resets each run()), for the "STEP x/maxSteps" display — `step`

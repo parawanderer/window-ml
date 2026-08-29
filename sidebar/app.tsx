@@ -68,13 +68,14 @@ function onDebug(ev: MlDebugEvent): void {
             prev.taskImages = prev.taskImages ?? ev.images;
             prev.maxSteps = ev.maxSteps ?? prev.maxSteps;
             prev.agentConfig = ev.config ?? prev.agentConfig;
+            if (ev.resumed) prev.resumed = true;
             prev.lastTs = Math.max(prev.lastTs, ev.ts);
             drainOrphans(ev.session.hash);
             rev.value++; return;
         }
         sessionMap.set(ev.session.hash, {
             hash: ev.session.hash, model: ev.model, tag: "session", kind: "agent",
-            createdTs: ev.ts, lastTs: ev.ts, status: "pending", turns: [], steps: [], task: ev.task, taskImages: ev.images, maxSteps: ev.maxSteps, agentConfig: ev.config,
+            createdTs: ev.ts, lastTs: ev.ts, status: "pending", turns: [], steps: [], task: ev.task, taskImages: ev.images, maxSteps: ev.maxSteps, agentConfig: ev.config, resumed: ev.resumed,
             config: { system: null, model: ev.model, think: null, schema: false, toolIds: null, maxTokens: null, save: false },
         });
         drainOrphans(ev.session.hash);   // apply any step/result that raced ahead of this start (cross-page replay)
@@ -2971,7 +2972,7 @@ function CardApp() {
     if (!run) return <div class="card-app" data-rev={r} />;
 
     const title = run.title || truncate(run.task || "Agent run", 80);
-    const headline = pending ? "Approval needed" : run.error ? "Run failed" : run.cancelled ? "Cancelled" : done ? (run.hitCap ? "Stopped" : "Task complete") : "Working…";
+    const headline = pending ? "Approval needed" : run.error ? "Run failed" : run.cancelled ? "Cancelled" : done ? (run.hitCap ? "Stopped" : "Task complete") : run.resumed ? "Resumed…" : "Working…";
     // Multi-run EXPANDED head: name the selected run (its title, ellipsized in CSS) rather than the generic
     // "Task complete" — the status is already carried by the tab's glyph. Keep the status word for the
     // states that matter more than a name (approval / failure / cancel).

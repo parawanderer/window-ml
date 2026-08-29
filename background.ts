@@ -894,6 +894,7 @@ async function purgeAllBgRuns(): Promise<void> {
         if (snap) untrackRun(snap.tabId, runId);
         bgRuns.delete(runId); hydratedRuns.delete(runId);
     }
+    resurrectedRuns.clear();
 }
 // On SW startup: rehydrate any in-flight runs from storage into bgRuns + re-track them against their tab
 // (activeRuns/runRebuilds) so the nav sensor + re-adopt find them. A run then continues via the existing
@@ -902,6 +903,11 @@ async function purgeAllBgRuns(): Promise<void> {
 // snapshot outlived them). A fresh page re-adopt AUTO-RESUMES these (part 2); a run that merely COMPLETED
 // (its snapshot was deleted in the finally) is not here, so it's never re-driven.
 const hydratedRuns = new Set<string>();
+// Runs RESURRECTED from storage after an SW respawn (hydrated → auto-resumed). CONTENT_READY moves a runId
+// here as it marks the adopt `resume:true` (and clears it from hydratedRuns). RESUME_RUN reads it to know
+// the surface LOST this run's session (the respawn wiped in-memory + the replay buffer), so it must RE-EMIT
+// the `agent` start — a visible, Stoppable row — instead of silently resuming into a ghost.
+const resurrectedRuns = new Set<string>();
 async function hydratePersistedRuns(): Promise<void> {
     try {
         const all = await chrome.storage.local.get(null);
@@ -931,7 +937,7 @@ const hydrationDone: Promise<void> = (typeof chrome !== "undefined" && chrome.st
 // durable resume without waiting ~30s for a real eviction.
 (globalThis as unknown as { __mlEvictForTest?: unknown }).__mlEvictForTest = async (): Promise<void> => {
     runControllers.clear(); runInboxes.clear(); bgRuns.clear(); activeRuns.clear();
-    runRebuilds.clear(); runReplayBuffer.clear(); pendingApprovals.clear(); hydratedRuns.clear(); readoptPageInfo.clear();
+    runRebuilds.clear(); runReplayBuffer.clear(); pendingApprovals.clear(); hydratedRuns.clear(); resurrectedRuns.clear(); readoptPageInfo.clear();
     await hydratePersistedRuns();
 };
 
@@ -1131,7 +1137,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 if (seen.has(runId)) return;
                 seen.add(runId);
                 const resume = hydratedRuns.has(runId) && !runControllers.has(runId);   // evicted & not running → re-drive
-                if (resume) hydratedRuns.delete(runId);   // auto-resume ONCE
+                if (resume) { hydratedRuns.delete(runId); resurrectedRuns.add(runId); }   // auto-resume ONCE; RESUME_RUN re-emits its `agent` start
                 adopt.push({ runId, rebuild, resume: resume || undefined });
             };
             if (ids) for (const runId of ids) { const rebuild = runRebuilds.get(runId); if (rebuild) addAdopt(runId, rebuild); }
@@ -1239,12 +1245,14 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         let p: StartRunPayload;
         let resumeMessages: NeutralMessage[] | undefined;
         let priorSub: import("./contract").SubcallUsage | undefined;   // a resumed session's accumulated sub-call spend
+        let resumeOriginalTask: string | undefined;   // the run's ORIGINAL task (rp.task is the follow-up; empty on an auto-resume)
         if (message.type === "RESUME_RUN") {
             const rp = message.payload as ResumeRunPayload;
             const stored = bgRuns.get(rp.runId);
             if (!stored) { sendResponse({ error: `No resumable run "${rp.runId}" in the background — it may have been evicted; start a new run.` }); return true; }
             if (stored.tabId !== tabId) { sendResponse({ error: `Run "${rp.runId}" belongs to another tab.` }); return true; }
             p = { ...stored.p, task: rp.task };
+            resumeOriginalTask = stored.p.task;
             resumeMessages = stored.messages;
             priorSub = stored.sub;
         } else {
@@ -1391,16 +1399,26 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         };
         // Only a FRESH run announces the session start; a RESUME continues an existing sidebar/card
         // session (re-emitting `agent` would wipe its accumulated steps), so it streams new steps + a
-        // fresh agent-result under the same hash instead.
-        if (!resumeMessages) emitLifecycle({
+        // fresh agent-result under the same hash instead. EXCEPTION (fix C): a run RESURRECTED from storage
+        // after an SW respawn has NO surface session anymore (memory + replay buffer were wiped), so it must
+        // re-announce — else it drives INVISIBLY with no Stop button (the runaway-run bug). Use the ORIGINAL
+        // task (rp.task is the empty auto-resume follow-up), and fanEvent (not emitLifecycle, whose overlay/
+        // devtools gate would suppress it) so the row appears on every surface. The reducer's don't-wipe merge
+        // makes this safe if a stray session somehow survived.
+        const resurrected = resurrectedRuns.has(runId);
+        resurrectedRuns.delete(runId);
+        const startEvent = {
             kind: "agent", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 },
-            task: p.task, model: p.model, maxSteps: p.maxSteps,
+            task: resurrected ? (resumeOriginalTask ?? p.task) : p.task, model: p.model, maxSteps: p.maxSteps,
+            resumed: resurrected || undefined,   // the sidebar can mark it "resumed after interruption"
             config: {
                 system: p.systemPrompt, customSystem: false,
                 tools: p.tools.map(t => ({ name: t.name, requiresApproval: t.requiresApproval, vision: t.capabilities.includes("vision"), description: t.description, parameters: t.parameters, summary: t.summary })),
                 maxSteps: p.maxSteps, think: p.think, env: true, vision: null, hints: null, unattended: p.unattended, silent: p.silent,
             },
-        });
+        };
+        if (!resumeMessages) emitLifecycle(startEvent);
+        else if (resurrected) fanEvent(startEvent);   // resurrected: no page-side caller emitted a start → fan it ourselves
         runBackgroundAgent(
             { task: p.task, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, unattended: p.unattended, resumeMessages, images: p.images },
             {
