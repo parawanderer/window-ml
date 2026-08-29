@@ -986,6 +986,31 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
 .card-reply-send:hover { background: var(--accent-strong); }
 .card-reply-send svg { width: 15px; height: 15px; }
 @media (prefers-reduced-motion: reduce) { .card-reply-send { transition: none; } }
+/* The inline STEER box on a live card (orb → "Steer this run…"). Like .card-reply but always-open and
+   tinted with the accent (a distinct affordance: you're nudging a RUNNING agent, not replying to a result). */
+.card-steer { flex: 0 0 auto; padding: 8px 10px; border-top: 1px solid var(--border);
+    background: color-mix(in srgb, var(--accent) 7%, transparent); }
+.card-steer-field { position: relative; display: flex; align-items: center; gap: 6px; }
+.card-steer-ic { flex: 0 0 auto; font-size: 1em; line-height: 1; opacity: .9; }
+.card-steer-in { flex: 1; min-width: 0;
+    background: var(--panel); color: var(--fg); border: 1px solid color-mix(in srgb, var(--accent) 40%, var(--border));
+    border-radius: 8px; padding: 6px 62px 6px 10px; font: inherit; font-size: 0.95em; transition: border-color .16s ease; }
+.card-steer-in::placeholder { color: var(--fg-faint); }
+.card-steer-in:focus { outline: none; border-color: color-mix(in srgb, var(--accent) 65%, transparent); }
+.card-steer-send { position: absolute; right: 32px; top: 50%; z-index: 2;
+    display: flex; align-items: center; justify-content: center; width: 26px; height: 26px;
+    border: none; border-radius: 7px; color: var(--accent-fg); background: var(--accent); cursor: pointer;
+    opacity: 0; transform: translateY(-50%) scale(.6); pointer-events: none;
+    transition: opacity .17s ease, transform .17s cubic-bezier(.2, .85, .3, 1.2), background .15s ease; }
+.card-steer-send.show { opacity: 1; transform: translateY(-50%) scale(1); pointer-events: auto; }
+.card-steer-send:hover { background: var(--accent-strong); }
+.card-steer-send svg { width: 15px; height: 15px; }
+.card-steer-x { position: absolute; right: 5px; top: 50%; transform: translateY(-50%);
+    display: flex; align-items: center; justify-content: center; width: 22px; height: 22px;
+    background: transparent; border: none; border-radius: 6px; color: var(--fg-faint); cursor: pointer; font-size: .95em; line-height: 1; }
+.card-steer-x:hover { background: var(--panel-2); color: var(--fg); }
+@media (prefers-reduced-motion: reduce) { .card-steer-send { transition: none; } }
+
 .card-task { color: var(--fg-dim); font-size: .96em; margin-bottom: 8px; line-height: 1.4; }
 .card-body::-webkit-scrollbar { width: 10px; }
 .card-body::-webkit-scrollbar-track { background: transparent; }

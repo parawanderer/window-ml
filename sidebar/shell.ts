@@ -439,6 +439,10 @@ function showCornerMenu(px: number, py: number, hash?: string, live?: boolean): 
     // Run actions (need the live run's hash from the app): copy the id to resume/append later; cancel it.
     if (hash) {
         const div = document.createElement("div"); div.className = "menu-div"; menu.append(div);
+        // Steer a LIVE run from the orb: opens an inline steer box on the card (the app reveals + focuses it).
+        // This is the compact HUD's twin of the full panel's always-there composer — the one surface that,
+        // mid-run, otherwise has no way to add a message (it's just the wobbling orb).
+        if (live) menu.append(item("Steer this run…", () => frame?.contentWindow?.postMessage({ __mlSteerRun: { hash } }, "*")));
         menu.append(item("Copy run id", () => copyText(hash)));
         if (live) menu.append(item("Cancel agent run", () => {
             try { void chrome.runtime.sendMessage({ type: "CANCEL_RUN", payload: { runId: hash } }).catch(() => {}); } catch { /* context gone */ }

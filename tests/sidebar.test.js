@@ -2593,6 +2593,57 @@ test("card surface: a steer's SEEN indicator renders in the HUD Show-work too (s
     assert.ok(badges.some(b => b.classList.contains("wait")), "the undrained steer stays QUEUED in the card");
 });
 
+test("card surface: orb-steer opens an inline steer box on a LIVE run and sends via say()", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    await w.raw({ __mlSidebarSurface: "card" });
+    const hash = "orbsteer";
+    // A LIVE run (started + one tool step, no result) → the compact card is just the working orb, no input.
+    await w.dispatch(agentStart(hash, "keep working", "m"));
+    await w.dispatch(agentStep(hash, 1, { seq: 1, tool: "findByText", arguments: { text: "x" }, result: "ok" }));
+    await w.flush();
+    assert.ok(!w.window.document.querySelector(".card-steer-in"), "no steer box until you ask for it");
+
+    // The shell's orb corner-menu "Steer this run…" posts this into the app.
+    await w.raw({ __mlSteerRun: { hash } });
+    await w.flush();
+    const input = w.window.document.querySelector(".card-steer-in");
+    assert.ok(input, "the steer box opens on the live card");
+
+    // Type + Enter → a sessionSend for THIS run (the page routes it to say() while the run is live).
+    input.value = "focus on the pricing table";
+    input.dispatchEvent(new w.window.Event("input", { bubbles: true }));
+    await w.tick();   // let Preact re-render so the keydown handler closes over the new text
+    w.window.document.querySelector(".card-steer-in").dispatchEvent(new w.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await w.tick();
+    assert.ok(posted.some(m => m.__mlSidebarApp === "sessionSend" && m.hash === hash && m.text === "focus on the pricing table"), "Enter sends the steer via sessionSend");
+    // Stays OPEN after a send (you may steer again), and the field cleared.
+    assert.ok(w.window.document.querySelector(".card-steer-in"), "the steer box stays open after sending");
+    assert.equal(w.window.document.querySelector(".card-steer-in").value, "", "the field cleared for the next nudge");
+
+    // × closes it → back to the working orb (no steer box).
+    w.window.document.querySelector(".card-steer-x").click();
+    await w.flush();
+    assert.ok(!w.window.document.querySelector(".card-steer-in"), "closing returns to the orb");
+});
+
+test("card surface: the steer box auto-closes when the run finishes", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    w.window.postMessage = () => {};
+    await w.raw({ __mlSidebarSurface: "card" });
+    const hash = "steerclose";
+    await w.dispatch(agentStart(hash, "work", "m"));
+    await w.dispatch(agentStep(hash, 1, { seq: 1, tool: "findByText", arguments: { text: "x" }, result: "ok" }));
+    await w.raw({ __mlSteerRun: { hash } });
+    await w.flush();
+    assert.ok(w.window.document.querySelector(".card-steer-in"), "steer box is open mid-run");
+    await w.dispatch(agentResult(hash, "all done", 1));   // run completes
+    await w.flush();
+    assert.ok(!w.window.document.querySelector(".card-steer-in"), "the steer box is gone once the run finished");
+    assert.ok(w.window.document.querySelector(".card-reply, .card-answer"), "the finished card shows its answer/reply instead");
+});
+
 test("card surface: a NEW round with no answer CLEARS the prior answer media (reset to 0)", async () => {
     const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
     const posted = [];

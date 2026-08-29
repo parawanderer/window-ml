@@ -2055,6 +2055,7 @@ const cardSelectedHash = signal<string>("");        // which run's card is showi
 const cardDetail = signal(true);                    // multi-run: tabbed DETAIL (true) ⇄ calm summary toast (false)
 const cardCollapsedSet = signal<Set<string>>(new Set());   // run hashes collapsed to a toast (finished cards)
 const cardDismissedSet = signal<Set<string>>(new Set());   // run hashes the user dismissed (× on a card)
+const cardSteerHash = signal<string>("");   // a LIVE run whose HUD card is showing the inline steer box (orb → "Steer this run…")
 const isCardCollapsed = (h: string): boolean => cardCollapsedSet.value.has(h);
 const isCardDismissed = (h: string): boolean => cardDismissedSet.value.has(h);
 const setCardCollapsed = (h: string, v: boolean): void => {
@@ -2835,7 +2836,11 @@ function CardApp() {
     // mode it auto-expands the orb into a caption pill so you see what it's doing without hovering; QUIET
     // suppresses it (the run is already !showOrb there). Not for the "Starting…" bridge (no run steps yet).
     const liveProse = (showOrb && !starting) ? liveProseFor(run!) : null;
+    // Orb-steer: while a run is LIVE and its steer box is open, force the card OPEN (out of the orb) so the
+    // input is reachable. Only meaningful for a running run — it self-clears the instant the run finishes.
+    const steering = !!run && running && cardSteerHash.value === run.hash;
     const state = composing ? "composer"                       // the composer takes over — centered Spotlight bar
+        : steering ? "expanded"                                // steering a live run: open the card for the inline steer box
         : pending ? "expanded"                                 // an approval: show the action directly (even for a silent run)
             : (tabs && anyContent) ? (cardDetail.value ? "expanded" : "toast")   // multi-run with content: tabbed detail ⇄ calm summary toast (one card-level toggle)
                 : showOrb ? (liveProse ? "orbprose" : hovering ? "orblabel" : "orb")   // in flight → orb; caption when narrating; capsule on hover (single run, or several all merely working)
@@ -2847,6 +2852,9 @@ function CardApp() {
     // reopen the capsule (orblabel) when the orb next appears (e.g. the "Starting…" bridge). So a fresh
     // orb always starts circular until a real pointerenter.
     useEffect(() => { if (state !== "orb" && state !== "orblabel" && state !== "orbprose") orbHover.value = false; }, [state]);
+    // Close the steer box once the run is no longer live (it finished / failed / was cancelled) — the box is
+    // meaningless without a running loop, and this snaps the card to its finished-answer form cleanly.
+    useEffect(() => { if (!running && cardSteerHash.value === run?.hash) cardSteerHash.value = ""; }, [running]);
     // An approval opens the tabbed DETAIL (a multi-run summary would hide the action), and stays open through
     // the decision so the outcome is visible instead of snapping back to the calm summary.
     useEffect(() => { if (pending) cardDetail.value = true; }, [pending]);
@@ -3066,7 +3074,43 @@ function CardApp() {
                     <button class="appr-btn no" onClick={() => decide(false)}>Deny <kbd class="kb">esc</kbd></button>
                     <button class="appr-btn yes" onClick={() => decide(true)}>Approve <kbd class="kb">⏎</kbd></button>
                   </div>
-                : done ? <CardReply hash={run.hash} /> : null}
+                : done ? <CardReply hash={run.hash} />
+                    : steering ? <CardSteer hash={run.hash} onClose={() => { cardSteerHash.value = ""; }} />
+                        : null}
+        </div>
+    );
+}
+
+// The inline STEER box on a LIVE card (orb → right-click → "Steer this run…"). Text-only: a mid-run steer
+// routes to the handle's say(), which is text-only (no images mid-flight), so offering an attach would only
+// drop it. Sends via the SAME sessionSend channel as the reply; while the run is live the page routes it to
+// say() → the message is queued and shows as an agent-say bubble with the "seen" indicator. Stays OPEN after
+// a send so you can steer again; Escape or × closes back to the orb.
+function CardSteer({ hash, onClose }: { hash: string; onClose: () => void }) {
+    const [text, setText] = useState("");
+    const inputRef = useRef<HTMLInputElement>(null);
+    useEffect(() => { inputRef.current?.focus(); }, []);
+    const send = () => {
+        const t = text.trim();
+        if (!t) return;
+        window.parent.postMessage({ __mlSidebarApp: "sessionSend", hash, text: t }, "*");
+        setText(""); inputRef.current?.focus();   // keep steering — a run often needs more than one nudge
+    };
+    const onKey = (e: KeyboardEvent) => {
+        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+        else if (e.key === "Escape") { e.preventDefault(); onClose(); }
+    };
+    const has = !!text.trim();
+    return (
+        <div class="card-steer">
+            <div class="card-steer-field">
+                <span class="card-steer-ic" aria-hidden="true" title="Steer — delivered at the agent's next step">🧭</span>
+                <input ref={inputRef} class="card-steer-in" type="text" value={text} placeholder="Steer the agent — added at its next step…"
+                    onInput={e => setText((e.target as HTMLInputElement).value)} onKeyDown={onKey} />
+                <button class={`card-steer-send${has ? " show" : ""}`} aria-label="Send steer" tabIndex={has ? 0 : -1}
+                    onMouseDown={e => e.preventDefault()} onClick={send} disabled={!has}><IconSend /></button>
+                <button class="card-steer-x" aria-label="Close steer" title="Close (Esc)" onMouseDown={e => e.preventDefault()} onClick={onClose}>✕</button>
+            </div>
         </div>
     );
 }
@@ -3282,6 +3326,13 @@ function onMessage(e: MessageEvent): void {
     else if (typeof d.__mlSidebarComposer === "string") { composerOpen.value = d.__mlSidebarComposer === "open"; if (d.__mlSidebarComposer !== "open") composerElement.value = null; }   // Spotlight bar
     else if (d.__mlComposerElement) composerElement.value = d.__mlComposerElement as ElementContext;   // right-click "ask about this" → element pill
     else if (d.__mlSidebarCardEndDrag) endActiveCardDrag?.();   // shell's safety net force-ended a stuck drag → clean up our listeners
+    else if (d.__mlSteerRun && typeof d.__mlSteerRun.hash === "string") {
+        // Orb right-click → "Steer this run…": open the inline steer box on this run's card. Uncollapse it
+        // (a collapsed toast can't hold the input) and ask the shell to focus the frame so typing lands.
+        cardSteerHash.value = d.__mlSteerRun.hash;
+        setCardCollapsed(d.__mlSteerRun.hash, false);
+        window.parent.postMessage({ __mlSidebarCardFocus: true }, "*");
+    }
 }
 
 function mount(): void {
