@@ -18,6 +18,7 @@ import { ML_READONLY_METHODS } from "./readonly-exec";
 // Generated from contract.ts at build time (scripts/gen-api-docs.mjs) — the public MlApi
 // surface, so the doc the model reads can never drift from the interface it describes.
 import { ML_API_DOCS } from "./api-docs.gen";
+import { BUILD_INFO } from "./build-info.gen";
 
 // A single-element tool (describeElement/ancestors) uses the FIRST of N matches — say so, so
 // a loose selector's wrong pick doesn't silently mislead the run (the model can narrow it).
@@ -97,6 +98,25 @@ const selfIntrospectionSection = async (): Promise<string> => {
         `\`${ML_READONLY_METHODS.map(m => `ml.${m}()`).join("`, `")}\` are read-only, so calling them ` +
         "from `exec` runs with NO approval prompt — that's how to answer \"which model am I?\" and the like. " +
         "Every other `ml` method still asks the user first."].join("\n");
+};
+
+/**
+ * The "here's my source" section of agent_api_docs: the public repo, the exact commit this harness was
+ * built from + when that commit was made, and the build time. Lets the agent READ ITS OWN CODE (e.g. clone
+ * or browse the repo at this commit) instead of guessing how it works. Build-time git provenance (the
+ * extension can't run git live); fields it doesn't have are simply omitted, so a git-less build says less.
+ * @returns {string} A markdown section, or "" when no provenance was captured.
+ */
+const sourceSection = (): string => {
+    const b = BUILD_INFO;
+    const lines: string[] = [];
+    if (b.repoUrl) lines.push(`- Public repository: ${b.repoUrl}`);
+    if (b.shortCommit) lines.push(`- This harness is built from commit \`${b.shortCommit}\`${b.commitDate ? ` (committed ${b.commitDate})` : ""}${b.commitUrl ? ` — ${b.commitUrl}` : ""}`);
+    if (b.buildTime) lines.push(`- Built: ${b.buildTime}`);
+    if (!lines.length) return "";
+    return ["## My source", "",
+        "You are open source — you can read your own implementation to answer questions about how you work:",
+        ...lines].join("\n");
 };
 
 const firstOfNote = (selector: string, count: number): string =>
@@ -386,8 +406,13 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 "The returned value AND the console output are EACH truncated to ~500 chars, so " +
                 "don't dump whole elements/pages — return a compact, filtered summary (counts, a " +
                 "handful of fields, the few items you actually need), not a full outerHTML dump. " +
-                // this guarantees loops stay in the readonly-exec dialect and actually terminate:
-                "ITERATING ELEMENTS: always prefer to write a `.forEach()` or `.map()` over raw for/while loops." +
+                // Define "read-only" so the model writes qualifying code instead of guessing why some
+                // exec calls run instantly and others prompt (the auto-run is the autoApproveReadonly flag):
+                "AUTO-RUN vs APPROVAL: code that is read-only BY CONSTRUCTION — only queries/reads + pure " +
+                "computation (`.map`/`.filter`/`.reduce`, `ml.range`, the read-only `ml.*` reads; NO mutation, " +
+                "effectful calls, `for`/`while` loops, or reassignment like `x += …`) — runs in a mediated " +
+                "\"safe\" interpreter with NO approval prompt; anything else falls back to real `eval`, which " +
+                "asks the user first. So iterate with `.map`/`.forEach`/`.reduce` + `ml.range(n)`, not raw loops. " +
                 "SHADOW DOM / IFRAMES: use `ml.queryAll('host >>> inner')` — a shadow/iframe-piercing " +
                 "querySelectorAll that returns an Array and understands the same selector dialect the DOM " +
                 "tools use (`>>>` crosses each OPEN shadow root / same-origin iframe; a trailing " +
@@ -520,12 +545,14 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
             // prompt's SELF_CLAUSE is what tells the model the tool is worth reaching for.
             description: "Your own implementation details: the public API of window.ml, the browser " +
                 "extension you run inside, and how a user invokes you — the devtools console, or the " +
-                "in-page HUD and the keyboard shortcut currently bound to it. Call it when asked about " +
-                "yourself, how to reach you, or the API, instead of guessing. Takes no arguments.",
+                "in-page HUD and the keyboard shortcut currently bound to it. Also gives the public repo " +
+                "link + the exact commit this build is on (with its date), so you can read your own source. " +
+                "Call it when asked about yourself, how to reach you, or the API, instead of guessing. " +
+                "Takes no arguments.",
             parameters: { type: "object", properties: {} },
-            // The generated reference is build-time; the HUD shortcut and the read-only-exec flag are
-            // runtime state the user owns, so they're appended live rather than frozen into the doc.
-            run: async (): Promise<string> => [ML_API_DOCS, await invocationSection(), await selfIntrospectionSection()]
+            // The generated reference is build-time; the source provenance (repo/commit) is build-time too;
+            // the HUD shortcut and the read-only-exec flag are runtime state the user owns, appended live.
+            run: async (): Promise<string> => [ML_API_DOCS, sourceSection(), await invocationSection(), await selfIntrospectionSection()]
                 .filter(Boolean).join("\n\n")
         }),
         T({

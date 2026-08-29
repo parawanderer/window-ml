@@ -6,6 +6,7 @@ __pycache__
 dist/
 tmp/
 api-docs.gen.ts
+build-info.gen.ts
 tools/annotate-preview.html
 tools/legend-notebook.html
 pyodide-wheels/
