@@ -58,7 +58,7 @@ export interface Session {
     // run()'s task, and a mid-run say() — is a `say` (all rendered identically as "you"); every turn's final
     // answer is an `answer`. `atStep` is the cumulative step count when it arrived, so the render interleaves
     // them with the turn step-groups in order. (`summary` still holds the LATEST answer for the title/status.)
-    says?: { text: string; ts: number; atStep: number; images?: string[] }[];
+    says?: { text: string; ts: number; atStep: number; images?: string[]; id?: string; seen?: boolean }[];
     answers?: { text: string; ts: number; atStep: number; status: Status; hitCap?: boolean; cancelled?: boolean; error?: string }[];
 }
 

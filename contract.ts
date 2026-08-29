@@ -824,6 +824,9 @@ export interface ResumeRunPayload {
 export interface InjectMessagePayload {
     runId: string;
     text: string;
+    /** A stable id for this steer message, minted page-side, so the SW can fan an `agent-say-seen`
+     *  event (the "seen" indicator) keyed to the same bubble when the loop actually drains it. */
+    sayId?: string;
 }
 
 /** RUN_TOOL_IN_PAGE payload — run a named tool from an active agent run's page-side toolset. The
@@ -1098,11 +1101,15 @@ export interface DebugAgentResult extends DebugBase { kind: "agent-result"; summ
 export interface DebugAgentCap extends DebugBase { kind: "agent-cap"; maxSteps: number; }
 /** A handle inserted a user message into a RUNNING loop (a.say(text)) — shown immediately (pending), even
  *  though the model only sees it at the next step boundary. */
-export interface DebugAgentSay extends DebugBase { kind: "agent-say"; text: string; images?: string[]; }
+export interface DebugAgentSay extends DebugBase { kind: "agent-say"; text: string; images?: string[]; sayId?: string; }
+/** The agent's loop DRAINED a queued steer at a step boundary — flips the bubble's "seen" indicator.
+ *  Keyed by `sayId` to the originating `agent-say`; may arrive before OR after it (cross-page replay
+ *  reorders), so the reducer converges either way. */
+export interface DebugAgentSaySeen extends DebugBase { kind: "agent-say-seen"; sayId: string; }
 
 /** The event stream injected.js emits over window.postMessage for the sidebar. */
 export type MlDebugEvent = DebugChatStart | DebugChatResult | DebugChatError
-    | DebugAgentStart | DebugAgentStep | DebugAgentResult | DebugAgentCap | DebugAgentSay;
+    | DebugAgentStart | DebugAgentStep | DebugAgentResult | DebugAgentCap | DebugAgentSay | DebugAgentSaySeen;
 
 /** Window-bus envelopes between the core (main world) and the sidebar. */
 export interface MlDebugMessage { __mlDebug: MlDebugEvent; }

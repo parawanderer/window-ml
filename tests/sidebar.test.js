@@ -442,6 +442,43 @@ test("agent run: a real resumed turn (a non-pending step past the sealed turn) D
     assert.ok(w.shadow.querySelector(".pending-note"), "a resumed turn's real step re-opens running");
 });
 
+// The "seen" indicator: a mid-run steer is LETTERBOXED (queued, delivered only at the agent's next step
+// boundary), so a bubble alone doesn't tell you whether the agent got it. agent-say shows it QUEUED;
+// agent-say-seen (fanned when the loop drains it) flips it to SEEN. Cross-UI + order-independent.
+const agentSay = (hash, text, sayId, ts = Date.now()) => ({ kind: "agent-say", id: hash, ts, save: false, session: { hash, turn: 0 }, text, sayId });
+const agentSaySeen = (hash, sayId, ts = Date.now()) => ({ kind: "agent-say-seen", id: hash, ts, save: false, session: { hash, turn: 0 }, sayId });
+
+test("agent run: a mid-run steer shows QUEUED, then flips to SEEN when the agent drains it", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("steer1", "do a thing"));
+    await w.dispatch(agentStep("steer1", 1, { seq: 1, tool: "findByText", arguments: { text: "x" }, result: "ok" }));
+    await w.dispatch(agentSay("steer1", "actually focus on the header", "sy_1"));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    let badge = w.shadow.querySelector(".steer-seen");
+    assert.ok(badge, "the steer bubble carries a delivery indicator");
+    assert.ok(badge.classList.contains("wait"), "it starts QUEUED (not yet picked up)");
+    // The loop drains it at the next boundary → seen.
+    await w.dispatch(agentSaySeen("steer1", "sy_1"));
+    await w.tick();
+    badge = w.shadow.querySelector(".steer-seen");
+    assert.ok(badge.classList.contains("on"), "after the drain it flips to SEEN");
+    // The initial task bubble is NOT a steer → no indicator on it.
+    assert.equal(w.shadow.querySelectorAll(".steer-seen").length, 1, "only the steer carries the indicator, not the task");
+});
+
+test("agent run: an agent-say-seen that races AHEAD of its bubble still marks it seen (order-independent)", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("steer2", "do a thing"));
+    // The SEEN event wins the race onto the fresh page (cross-page replay reorder) — arriving before the bubble.
+    await w.dispatch(agentSaySeen("steer2", "sy_9"));
+    await w.dispatch(agentSay("steer2", "steer arriving late", "sy_9"));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const badge = w.shadow.querySelector(".steer-seen");
+    assert.ok(badge && badge.classList.contains("on"), "the bubble renders already SEEN (the earlier seen was remembered)");
+});
+
 test("agent run: a successful navigate step renders a page-transition divider in the log", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("nav1", "go to example and read it"));
@@ -2528,6 +2565,32 @@ test("card surface: answer media renders inline vs highlight-chip, and hover-hig
     assert.ok(posted.some(m => m.__mlHighlight && m.__mlHighlight.selector === "img.cat"), "hover posts a highlight for the element");
     gallery.querySelector(".am-inline").dispatchEvent(new w.window.MouseEvent("pointerleave", { bubbles: true }));
     assert.ok(posted.some(m => m.__mlHighlight === null), "leaving clears the highlight");
+});
+
+test("card surface: a steer's SEEN indicator renders in the HUD Show-work too (surface parity)", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    await w.raw({ __mlSidebarSurface: "card" });
+    const hash = "cardsteer";
+    // The live QUEUED→SEEN transition is proven by the DevTools reducer tests (same reducer + SteerSeen
+    // component); here we just confirm the indicator ALSO renders on the HUD surface. The compact card only
+    // exposes the trace once revealed (after completion), so drive a full run: one steer SEEN, one left QUEUED.
+    await w.dispatch(agentStart(hash, "do the task", "m"));
+    await w.dispatch(agentStep(hash, 1, { seq: 1, tool: "findByText", arguments: { text: "x" }, result: "ok" }));
+    await w.dispatch(agentSay(hash, "focus on the header", "sy_c1"));
+    await w.dispatch(agentSaySeen(hash, "sy_c1"));                      // the agent drained this one
+    await w.dispatch(agentSay(hash, "and the footer", "sy_c2"));        // this one never got picked up
+    await w.dispatch(agentResult(hash, "done", 2));
+    await w.flush();
+    // Open "Show work" — the trace (and its steer bubbles) live there in the card.
+    const toggle = w.window.document.querySelector(".card-work-toggle");
+    assert.ok(toggle, "the completed card exposes a Show-work toggle");
+    toggle.click();
+    await w.tick();
+    const badges = [...w.window.document.querySelectorAll(".card-body .steer-seen")];
+    assert.ok(badges.some(b => b.classList.contains("on")), "the drained steer shows SEEN in the card");
+    assert.ok(badges.some(b => b.classList.contains("wait")), "the undrained steer stays QUEUED in the card");
 });
 
 test("card surface: a NEW round with no answer CLEARS the prior answer media (reset to 0)", async () => {

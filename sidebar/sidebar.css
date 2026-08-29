@@ -318,6 +318,13 @@ html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
 .astep-head:hover .tri { color: var(--fg); }
 .astep-head .dot { flex: 0 0 auto; }
 .astep-head .tt { flex: 0 0 auto; }   /* the badge/dot tooltip wrappers must not shrink (they'd clip under the preview) */
+/* Mid-run steer "seen" indicator — did the letterboxed message reach the agent yet? A small badge beside
+   the "you" label: WAIT = a pulsing amber dot (queued, not picked up); ON = a green check (drained → seen). */
+.steer-seen { display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto; width: 15px; height: 15px; border-radius: 50%; }
+.steer-seen.wait { color: var(--warn); }
+.steer-seen.on { color: var(--ok); background: color-mix(in srgb, var(--ok) 16%, transparent); }
+.steer-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: pulse 1.1s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) { .steer-dot { animation: none; } }
 .astep .tool-name { font-weight: 700; color: var(--accent); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; flex: 0 0 auto; }
 .astep .el-count { color: var(--fg-faint); font-size: 0.8em; border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; flex: 0 0 auto; }
 .astep-preview { color: var(--fg-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }

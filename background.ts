@@ -913,7 +913,7 @@ const hydrationDone: Promise<void> = (typeof chrome !== "undefined" && chrome.st
 // Per-run steering inbox (a.say() mid-run): the SW-side twin of the page loop's control.inbox. INJECT_MESSAGE
 // pushes here (only the owning tab may); the run's loop drains it at each step boundary (deps.drainInbox).
 // Present only while a run is live (set at start, deleted in finally).
-const runInboxes = new Map<string, { tabId: number; queue: string[] }>();
+const runInboxes = new Map<string, { tabId: number; queue: { id?: string; text: string }[] }>();
 
 // ---- Cross-page persistence (Variant A; design tmp/cross-page-agent.md) ----
 // A background-hosted run delegates each DOM tool to its tab by tabId. When the page NAVIGATES the old
@@ -1187,7 +1187,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         const p = message.payload as InjectMessagePayload;
         const inbox = runInboxes.get(p.runId);
         const injected = !!(inbox && inbox.tabId === sender.tab?.id && typeof p.text === "string");
-        if (injected) inbox!.queue.push(p.text);
+        if (injected) inbox!.queue.push({ id: p.sayId, text: p.text });
         sendResponse({ data: injected });
         return true;
     }
@@ -1321,6 +1321,14 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => { /* tab gone / no receiver */ });
             if (p.surface === "devtools") relayDebugEvent(tabId, event);
             // Cross-page: remember this step so a fresh page after a nav can rebuild the card mid-run.
+            if (p.crossPage !== false) bufferReplay(tabId, event);
+        };
+        // Fan a lightweight run event verbatim (no step/seq offset) to every surface — used for the
+        // "seen" indicator (agent-say-seen), which keys off its own id, not a step position.
+        const fanEvent = (event: Record<string, unknown>): void => {
+            if (abortCtl.signal.aborted) return;
+            chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => {});
+            if (p.surface === "devtools") relayDebugEvent(tabId, event);
             if (p.crossPage !== false) bufferReplay(tabId, event);
         };
         // OFF mode: the corner card is fed ENTIRELY by this background stream, because the page's own
@@ -1528,7 +1536,11 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 // delta in delegateTool) — so chat_metadata reports the real number on the background path too.
                 subcallTokens: () => snapSub(),
                 emit: (ev) => emitStep(ev as Record<string, unknown>),
-                drainInbox: () => (runInboxes.get(runId)?.queue || []).splice(0),   // a.say() steering (INJECT_MESSAGE)
+                drainInbox: () => {   // a.say() steering (INJECT_MESSAGE); draining flips the "seen" indicator
+                    const items = (runInboxes.get(runId)?.queue || []).splice(0);
+                    for (const it of items) if (it.id) fanEvent({ kind: "agent-say-seen", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 }, sayId: it.id });
+                    return items.map(it => it.text);
+                },
                 signal: abortCtl.signal,
                 // chat_metadata: the run's model FACTS from the SW's caches (the loop supplies the live
                 // token/message counts). The SW can also read the URL → name the backend. Degrades to null.

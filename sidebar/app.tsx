@@ -35,6 +35,12 @@ const maxSessionStep = (s: Session): number => Math.max(0, ...(s.steps || []).ma
 // run's start) would otherwise leave a headless "(no prompt)" phantom stuck on screen forever.
 const orphanAgentEvents = new Map<string, MlDebugEvent[]>();
 const ORPHAN_CAP = 400;   // per-hash bound so a stray hash spamming events can't grow unbounded
+// Steer ids the agent has DRAINED ("seen"). Its agent-say-seen may arrive BEFORE the agent-say bubble
+// (cross-page replay reorders), so remembering the id here lets a later bubble render pre-marked — the
+// same order-independence the orphan queue gives steps. Bounded so a rogue stream can't grow it forever.
+const steerSeen = new Set<string>();
+const STEER_SEEN_CAP = 2000;
+function markSteerSeen(id: string): void { if (steerSeen.size < STEER_SEEN_CAP) steerSeen.add(id); }
 function queueOrphan(hash: string, ev: MlDebugEvent): void {
     let q = orphanAgentEvents.get(hash);
     if (!q) { q = []; orphanAgentEvents.set(hash, q); }
@@ -146,9 +152,25 @@ function onDebug(ev: MlDebugEvent): void {
     // bubbles, interleaved with the turns by step position (atStep = the step count when they arrived).
     if (ev.kind === "agent-say") {
         const s = sessionMap.get(ev.session.hash);
+        if (!s) { queueOrphan(ev.session.hash, ev); return; }   // start not here yet → hold, don't drop the bubble
         // A new user message means the agent is (about to be) working → back to pending, so the live footer
-        // shows during a follow-up run (harmless for a mid-run steer, which is already pending).
-        if (s) { s.says = [...(s.says || []), { text: ev.text, ts: ev.ts, atStep: maxSessionStep(s), images: ev.images }]; s.status = "pending"; s.ended = false; s.lastTs = ev.ts; rev.value++; }
+        // shows during a follow-up run (harmless for a mid-run steer, which is already pending). `seen` starts
+        // from the drained-id set, so a "seen" event that raced ahead of this bubble already counts.
+        const seen = !!(ev.sayId && steerSeen.has(ev.sayId));
+        s.says = [...(s.says || []), { text: ev.text, ts: ev.ts, atStep: maxSessionStep(s), images: ev.images, id: ev.sayId, seen }];
+        s.status = "pending"; s.ended = false; s.lastTs = ev.ts; rev.value++;
+        return;
+    }
+    // The agent drained a queued steer at a step boundary → flip its bubble's "seen" indicator. Keyed by
+    // sayId, and order-independent: if the bubble isn't here yet (replay reorder), remember the id so the
+    // bubble renders pre-marked when it lands.
+    if (ev.kind === "agent-say-seen") {
+        markSteerSeen(ev.sayId);
+        const s = sessionMap.get(ev.session.hash);
+        if (s && s.says?.some(x => x.id === ev.sayId && !x.seen)) {
+            s.says = s.says.map(x => x.id === ev.sayId ? { ...x, seen: true } : x);
+            s.lastTs = Math.max(s.lastTs, ev.ts); rev.value++;
+        }
         return;
     }
     if (ev.kind === "chat") {
@@ -1354,11 +1376,25 @@ function AgentOptionsBlock({ s }: { s: Session }) {
     );
 }
 
+// A mid-run steer's delivery indicator: a small badge on the bubble telling you whether the LETTERBOXED
+// message has actually reached the agent yet. `undefined` = not a steer (initial task / follow-up), render
+// nothing. Queued pulses; seen is a solid check. Same markup in both surfaces (DevTools + HUD).
+function SteerSeen({ seen }: { seen: boolean }) {
+    return (
+        <span class={`steer-seen tt ${seen ? "on" : "wait"}`} aria-label={seen ? "Seen by the agent" : "Queued — not picked up yet"}>
+            {seen
+                ? <svg viewBox="0 0 24 24" width="11" height="11" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" d="M20 6 9 17l-5-5" /></svg>
+                : <span class="steer-dot" aria-hidden="true" />}
+            <span class="tt-pop left" role="tooltip">{seen ? "Seen — the agent picked this up" : "Queued — the agent hasn't picked this up yet (delivered at its next step)"}</span>
+        </span>
+    );
+}
+
 // A user message in the conversation — the initial task, a follow-up run()'s task, or a mid-run say().
-// All identical: from the chat's point of view there's nothing to distinguish them (they're all "you").
-const UserBubble = ({ text, ts, images }: { text: string; ts: number; images?: string[] }) => (
+// All render as "you"; a mid-run steer additionally carries a `steer` delivery indicator (queued/seen).
+const UserBubble = ({ text, ts, images, steer }: { text: string; ts: number; images?: string[]; steer?: { seen?: boolean } }) => (
     <div class="msg user">
-        <div class="mrow"><span class="who">you</span><span class="sp" /><Stamp ts={ts} /></div>
+        <div class="mrow"><span class="who">you</span>{steer ? <SteerSeen seen={!!steer.seen} /> : null}<span class="sp" /><Stamp ts={ts} /></div>
         {images?.length ? <div class="thumbs">{images.map((src, i) => <ClickableImg key={i} src={src} />)}</div> : null}
         {text ? <div class="utext">{text}</div> : null}
     </div>
@@ -1415,7 +1451,7 @@ function AgentRunView({ s }: { s: Session }) {
         ...(s.steps || []).filter(st => st.tool === "navigate" && st.approval !== "denied" && !!st.result && !st.result.startsWith("Error") && !!navTargetOf(st))
             .map((st, i) => ({ pos: (st.step || 0) + 0.3, ts: 0, el: <NavDivider key={`nav${i}-${st.seq ?? st.step}`} url={navTargetOf(st)} /> })),
         ...(s.answers || []).map((a, i) => ({ pos: a.atStep + 0.5, ts: a.ts, el: answer(a, `a${i}`) })),
-        ...(s.says || []).map((sy, i) => ({ pos: sy.atStep + 0.5, ts: sy.ts, el: <UserBubble key={`s${i}`} text={sy.text} ts={sy.ts} images={sy.images} /> })),
+        ...(s.says || []).map((sy, i) => ({ pos: sy.atStep + 0.5, ts: sy.ts, el: <UserBubble key={`s${i}`} text={sy.text} ts={sy.ts} images={sy.images} steer={{ seen: sy.seen }} /> })),
     ].sort((a, b) => a.pos - b.pos || a.ts - b.ts);
     return (
         <>
@@ -2450,7 +2486,7 @@ function ShowWork({ run }: { run: Session }) {
     // why a fixed answer-before-say fraction mis-orders a chat-style turn that ran no tool steps.
     const traceItems: { pos: number; ts: number; el: preact.JSX.Element }[] = [
         ...(run.task || run.taskImages?.length ? [{ pos: -1, ts: run.createdTs || 0, el: <CardTraceMsg key="task" label="you asked" text={run.task || ""} cls="acard-you" images={run.taskImages} /> }] : []),
-        ...(run.says || []).map((s, i) => ({ pos: s.atStep + 0.5, ts: s.ts, el: <CardTraceMsg key={`say${i}`} label="you asked" text={s.text} cls="acard-you" images={s.images} /> })),
+        ...(run.says || []).map((s, i) => ({ pos: s.atStep + 0.5, ts: s.ts, el: <CardTraceMsg key={`say${i}`} label="you asked" text={s.text} cls="acard-you" images={s.images} steer={{ seen: s.seen }} /> })),
         ...pastAnswers.map((a, i) => ({ pos: a.atStep + 0.5, ts: a.ts, el: <CardTraceMsg key={`ans${i}`} label={a.cancelled ? "cancelled" : a.hitCap ? "stopped early" : "answered"} text={a.text || "(no reply)"} cls="acard-ans" /> })),
         ...turns.map(t => ({ pos: t.step, ts: 0, el: <AgentTurn key={`t${t.step}`} turn={t} max={run.maxSteps} hash={run.hash} /> })),
     ].sort((a, b) => a.pos - b.pos || a.ts - b.ts);
@@ -2504,13 +2540,14 @@ function ShowWork({ run }: { run: Session }) {
 // styled like the thinking block, so Show-work reads as a scannable conversation SHAPE (ask → work → answer
 // → ask → …). Collapsed with a one-line preview; expand for the full text. This is how a multi-turn HUD run
 // stays legible: you can tell which steps belonged to which of your prompts.
-function CardTraceMsg({ label, text, cls, images }: { label: string; text: string; cls: string; images?: string[] }) {
+function CardTraceMsg({ label, text, cls, images, steer }: { label: string; text: string; cls: string; images?: string[]; steer?: { seen?: boolean } }) {
     const [open, setOpen] = useState(false);
     return (
         <div class={`athought ${cls}`}>
             <button class="astep-head" onClick={() => setOpen(v => !v)}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
                 <span class="who">{label}</span>
+                {steer ? <SteerSeen seen={!!steer.seen} /> : null}
                 {!open ? <span class="astep-preview">{inlineText(text || "")}</span> : null}
             </button>
             {images?.length ? <div class="thumbs">{images.map((src, i) => <ClickableImg key={i} src={src} />)}</div> : null}

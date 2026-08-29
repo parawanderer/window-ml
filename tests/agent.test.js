@@ -1171,7 +1171,7 @@ test("createAgent: run() flushes a leftover inbox steer into the history (never 
     // into the history so it's processed — otherwise the steer vanishes (the reported bug).
     const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("ok")]) });
     const a = world.ml.createAgent({ vision: false });
-    a.inbox.push("a steer that got stuck");   // simulate a bg mid-run say() that arrived too late to drain
+    a.inbox.push({ id: "sy_stuck", text: "a steer that got stuck" });   // simulate a bg mid-run say() that arrived too late to drain
     await a.run("proceed");
     assert.equal(a.inbox.length, 0, "run() drained the leftover inbox");
     const msgs = world.runtimeCalls.filter(c => c.payload && c.payload.messages).at(-1).payload.messages;

@@ -59,7 +59,7 @@ import type { AgentLoopDeps } from "./agent-loop";
 interface AgentControl {
     hash: string | null;          // the session hash (minted on the first turn, then stable)
     messages: NeutralMessage[];   // the live history — the source of truth; the loop mutates it in place
-    inbox: string[];              // say()'d messages waiting to be injected at the next step boundary
+    inbox: { id: string; text: string }[];   // say()'d messages waiting to be injected at the next step boundary (id = "seen"-indicator key)
     maxSteps: number;             // the step cap, read live so a handle can raise it mid-run
     running: boolean;             // is a loop in flight?
     seqBase: number;              // monotonic step-seq base so seqs stay session-unique across turns
@@ -68,6 +68,11 @@ interface AgentControl {
 }
 import { installToolDelegation, registerRun, endRun } from "./run-delegation";
 import { descriptorFor } from "./render-descriptor";
+
+// Monotonic id per mid-run steer (a.say()), so the "seen" indicator can key an `agent-say-seen` event
+// back to its `agent-say` bubble. Globally unique across handles/turns — a plain counter suffices.
+let steerSeq = 0;
+const nextSteerId = (): string => `sy_${++steerSeq}`;
 
 /** Is a `navigate(url)` target SAME-ORIGIN as the current page? Cross-origin navs need consent (the gate);
  *  same-origin auto-approve. Reuses navTarget's origin logic; a bad URL counts as same-origin (the tool
@@ -89,7 +94,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
 class AgentHandle implements MlAgentHandle, AgentControl {
     hash: string | null = null;
     messages: NeutralMessage[] = [];
-    inbox: string[] = [];
+    inbox: { id: string; text: string }[] = [];
     running = false;
     seqBase = 0;
     stepBase = 0;
@@ -113,7 +118,11 @@ class AgentHandle implements MlAgentHandle, AgentControl {
         if (this.running) throw new Error("ml.createAgent: a run is already in flight — use say() to add to it, or cancel() first.");
         // Flush any leftover steering into the history so it's never lost: a mid-run say() that a background
         // loop couldn't drain live (arrived after its last step) sits in the inbox — pick it up this run.
-        for (const t of this.inbox.splice(0)) this.messages.push({ role: "user", content: t });
+        // Processing it now IS the agent seeing it, so flip the "seen" indicator on each flushed bubble.
+        for (const { id, text } of this.inbox.splice(0)) {
+            this.messages.push({ role: "user", content: text });
+            if (this.hash) emitDebug({ kind: "agent-say-seen", id: this.hash, ts: Date.now(), save: false, session: { hash: this.hash, turn: 0 }, sayId: id });
+        }
         // Fresh controller PER RUN: a prior cancel() aborted the previous one for good, so reusing it would
         // insta-cancel this turn. (A caller-supplied signal still governs — cancel() then only aborts ours.)
         this._ctrl = new AbortController();
@@ -132,11 +141,14 @@ class AgentHandle implements MlAgentHandle, AgentControl {
      *  the UI immediately); idle → append to history for the next run(), with a console note. Never throws. */
     say(text: string): void {
         if (this.running) {
+            // A stable id ties this steer's bubble to its later "seen" flip (page loop drains → agent-say-seen;
+            // a bg loop fans the same event from the SW, keyed by this same id via INJECT_MESSAGE.sayId).
+            const sayId = nextSteerId();
             // Steer the live loop. A BACKGROUND run's loop is in the service worker, so route the message
             // there (INJECT_MESSAGE, drained at its next step); a PAGE-loop run drains the local inbox.
-            if (this.bg && this.hash) makeBackgroundTaskPromise("INJECT_MESSAGE_REQUEST", "INJECT_MESSAGE_RESPONSE", { runId: this.hash, text }).catch(() => { /* run finished first → the next run()'s flush catches it */ });
-            this.inbox.push(text);   // page loop drains this; for a bg run it's the run()-flush safety net
-            if (this.hash) emitDebug({ kind: "agent-say", id: this.hash, ts: Date.now(), save: false, session: { hash: this.hash, turn: 0 }, text });
+            if (this.bg && this.hash) makeBackgroundTaskPromise("INJECT_MESSAGE_REQUEST", "INJECT_MESSAGE_RESPONSE", { runId: this.hash, text, sayId }).catch(() => { /* run finished first → the next run()'s flush catches it */ });
+            this.inbox.push({ id: sayId, text });   // page loop drains this; for a bg run it's the run()-flush safety net
+            if (this.hash) emitDebug({ kind: "agent-say", id: this.hash, ts: Date.now(), save: false, session: { hash: this.hash, turn: 0 }, text, sayId });
         } else {
             this.messages.push({ role: "user", content: text });
             console.info("ml.agent: no run in flight — say() queued the message into history; call run() to have the agent process it.");
@@ -969,7 +981,12 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 pushAssistant: (messages, msg) => (messages as NeutralMessage[]).push({ role: "assistant", content: msg.content || "", tool_calls: msg.tool_calls }),
                 pushToolResult: (messages, call, result) => (messages as NeutralMessage[]).push({ role: "tool", tool_call_id: call.id, content: result }),
                 // Mid-run steering (a.say()): drain the inbox at each step boundary and inject as user turns.
-                drainInbox: () => control.inbox.splice(0),
+                // Draining IS the agent seeing each steer, so fan an `agent-say-seen` per bubble (the indicator).
+                drainInbox: () => {
+                    const items = control.inbox.splice(0);
+                    if (control.hash) for (const it of items) emitDebug({ kind: "agent-say-seen", id: control.hash, ts: Date.now(), save: false, session: { hash: control.hash, turn: 0 }, sayId: it.id });
+                    return items.map(it => it.text);
+                },
                 pushUser: (messages, text) => (messages as NeutralMessage[]).push({ role: "user", content: text }),
                 // #3 inline vision: a tool result can't carry an image, so hand any screenshots this step
                 // captured to the (vision-capable) driver as a user turn for its NEXT call.

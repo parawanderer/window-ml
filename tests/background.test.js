@@ -1704,6 +1704,36 @@ test("INJECT_MESSAGE steers a RUNNING background run (drained at the next step b
     assert.equal(ghost.data, false, "injecting into a finished/unknown run is a harmless no-op");
 });
 
+test("INJECT_MESSAGE with a sayId fans an agent-say-seen when the loop DRAINS it (the 'seen' indicator)", async () => {
+    const events = [];
+    let n = 0;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => (++n === 1
+            ? jsonResponse({ choices: [{ message: { content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "noop", arguments: "{}" } }] } }] })
+            : jsonResponse({ choices: [{ message: { content: "done" } }] })),
+        onTabMessage: async (_t, msg) => {
+            if (msg?.type === "ML_DEBUG_TO_PAGE") events.push(msg.event);
+            if (msg?.type === "RUN_TOOL_IN_PAGE" && !msg.payload?.renderOnly && !msg.payload?.readonlyTry && !msg.payload?.precheck) {
+                // Steer mid-run WITH a sayId — the drain at the next boundary should fan a seen event for it.
+                await bg.send({ type: "INJECT_MESSAGE", payload: { runId: "seenrun", text: "steer me", sayId: "sy_bg1" } }, { tab: { id: 7 } });
+                return { result: "noop ok" };
+            }
+            return undefined;
+        },
+    });
+    await bg.send({ type: "START_RUN", payload: {
+        runId: "seenrun", task: "go", systemPrompt: "S",
+        tools: [{ name: "noop", requiresApproval: false, description: "", parameters: {}, capabilities: [] }],
+        model: "m", think: null, maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools",
+    } }, { tab: { id: 7 } });
+
+    const seen = events.find(e => e?.kind === "agent-say-seen");
+    assert.ok(seen, "the drain fanned an agent-say-seen event");
+    assert.equal(seen.sayId, "sy_bg1", "keyed to the same sayId the page minted");
+    assert.equal(seen.id, "seenrun", "carries the run hash so the sidebar can find the session");
+});
+
 test("START_RUN offsets emitted step/seq by stepBase/seqBase and returns the run's extents (multi-turn sidebar)", async () => {
     // A createAgent handle's later turns send stepBase/seqBase so the background's emitted step/seq continue
     // past prior turns — otherwise turn N's step 1 collides with turn 1's and the sidebar chat log scrambles.
