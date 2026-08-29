@@ -1163,7 +1163,7 @@ html[data-surface="card"] .appr-btn.no:hover {
 .card-work-trace { margin-top: 6px; animation: work-in .32s cubic-bezier(.2, .8, .2, 1); }
 /* Per-task BLOCKS in a multi-task run's Show-work — each a collapsible task ("you asked → work → answered"),
    summarised in one line (utility model, lazy) with a step-count chip. */
-.run-block { border: 1px solid var(--border); border-radius: 8px; margin: 6px 0; overflow: hidden; background: color-mix(in oklab, var(--panel-2) 40%, transparent); }
+.run-block { border: 1px solid var(--border); border-radius: 8px; margin: 6px 0; overflow: hidden; }
 .run-block-head { display: flex; align-items: center; gap: 7px; width: 100%; padding: 7px 9px; background: transparent;
     border: none; color: var(--fg); cursor: pointer; font: inherit; text-align: left; }
 .run-block-head:hover { background: var(--panel-2); }

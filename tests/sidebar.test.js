@@ -479,6 +479,25 @@ test("agent run: an agent-say-seen that races AHEAD of its bubble still marks it
     assert.ok(badge && badge.classList.contains("on"), "the bubble renders already SEEN (the earlier seen was remembered)");
 });
 
+// REGRESSION: `agent-say` is overloaded — it also carries a follow-up run()'s TASK (a continuation), which
+// has NO sayId and is processed immediately, NOT letterboxed. That must NOT get the queued/seen badge (it was
+// showing a permanent amber "queued" dot that never flipped — the DevTools-panel status bug). Reducer-level,
+// so this guards BOTH surfaces (the panel is the same app, per the parity rule).
+test("devtools/panel: a follow-up run() task (continuation agent-say, no sayId) shows NO steer indicator", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("cont1", "first question"));
+    await w.dispatch(agentStep("cont1", 1, { seq: 1, tool: "findByText", arguments: { text: "x" }, result: "ok" }));
+    await w.dispatch(agentResult("cont1", "first answer", 1));
+    // The follow-up: an agent-say WITHOUT a sayId (a new turn's task, not a mid-run steer).
+    await w.dispatch({ kind: "agent-say", id: "cont1", ts: Date.now() + 5, save: false, session: { hash: "cont1", turn: 0 }, text: "and what else?" });
+    await w.dispatch(agentResult("cont1", "second answer", 2));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const userTexts = [...w.shadow.querySelectorAll(".msg.user .utext")].map(e => e.textContent);
+    assert.ok(userTexts.includes("and what else?"), "the follow-up still renders as a you bubble");
+    assert.equal(w.shadow.querySelectorAll(".steer-seen").length, 0, "no steer badge on the task or a continuation — only genuine mid-run steers get it");
+});
+
 test("agent run: a successful navigate step renders a page-transition divider in the log", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("nav1", "go to example and read it"));
@@ -2723,7 +2742,8 @@ test("card Show-work: the utility model summarises each block (lazy on open, rep
         // Count only BLOCK-summary calls (payload starts "Request:") — genTitle also fires a utility call.
         fetchLlm: (payload) => {
             const isBlock = payload.extend === "utility" && (payload.messages || []).some(m => typeof m.content === "string" && m.content.startsWith("Request:"));
-            if (isBlock) { calls++; return { data: `Block summary ${calls}` }; }
+            // Prefix "Summary:" the way a real model does despite the "no preamble" instruction — the app must strip it.
+            if (isBlock) { calls++; return { data: `Summary: Block summary ${calls}` }; }
             return { data: "a title" };
         },
     });
@@ -2734,8 +2754,15 @@ test("card Show-work: the utility model summarises each block (lazy on open, rep
     w.window.document.querySelector(".card-work-toggle").click();
     await w.flush(); await w.tick();
     const blocks = w.window.document.querySelectorAll(".run-block");
-    assert.match(blocks[0].querySelector(".run-block-sum").textContent, /Block summary/, "the utility summary replaces the prompt");
+    const sum0 = blocks[0].querySelector(".run-block-sum");
+    assert.match(sum0.textContent, /Block summary/, "the utility summary replaces the prompt");
+    assert.ok(!/^summary:/i.test(sum0.textContent.trim()), "the model's 'Summary:' preamble is stripped");
     assert.ok(blocks[0].querySelector(".run-block-sum.ml-reveal"), "the summary fades in");
+    // The tooltip UPDATES to reflect the summary now shown (was stale, pinned to the prompt), and still keeps
+    // the original request for reference.
+    const tip = sum0.getAttribute("title");
+    assert.match(tip, /Block summary/, "the tooltip shows the (untruncated) summary now displayed");
+    assert.match(tip, /Request:/, "…and still carries the original request");
     assert.equal(calls, 2, "the utility model fired once per block");
     // Re-open → cached, no refire.
     w.window.document.querySelector(".card-work-toggle").click();   // close

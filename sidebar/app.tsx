@@ -259,7 +259,9 @@ function ensureBlockSummary(hash: string, i: number, prompt: string, result: str
         (resp: { data?: unknown; error?: string } | undefined) => {
             if (chrome.runtime.lastError || !resp || resp.error) { blockSummaryTried.delete(key); return; }   // retry next open
             const line = String(resp.data || "").trim().split("\n").map(x => x.trim()).filter(Boolean)[0] || "";
-            const s = truncate(line.replace(/^["'`*]+|["'`*.]+$/g, "").trim(), 120);
+            // Strip surrounding quotes/marks AND a leading "Summary:"/"Task -" label the model adds despite
+            // the "no preamble" instruction (it was showing literally as "Summary: …" in the block header).
+            const s = truncate(line.replace(/^["'`*]+|["'`*.]+$/g, "").trim().replace(/^(summary|task)\s*[:\-–]\s*/i, "").trim(), 120);
             if (s) { blockSummaries.set(key, s); rev.value++; }
         },
     );
@@ -1451,7 +1453,7 @@ function AgentRunView({ s }: { s: Session }) {
         ...(s.steps || []).filter(st => st.tool === "navigate" && st.approval !== "denied" && !!st.result && !st.result.startsWith("Error") && !!navTargetOf(st))
             .map((st, i) => ({ pos: (st.step || 0) + 0.3, ts: 0, el: <NavDivider key={`nav${i}-${st.seq ?? st.step}`} url={navTargetOf(st)} /> })),
         ...(s.answers || []).map((a, i) => ({ pos: a.atStep + 0.5, ts: a.ts, el: answer(a, `a${i}`) })),
-        ...(s.says || []).map((sy, i) => ({ pos: sy.atStep + 0.5, ts: sy.ts, el: <UserBubble key={`s${i}`} text={sy.text} ts={sy.ts} images={sy.images} steer={{ seen: sy.seen }} /> })),
+        ...(s.says || []).map((sy, i) => ({ pos: sy.atStep + 0.5, ts: sy.ts, el: <UserBubble key={`s${i}`} text={sy.text} ts={sy.ts} images={sy.images} steer={sy.id ? { seen: sy.seen } : undefined} /> })),
     ].sort((a, b) => a.pos - b.pos || a.ts - b.ts);
     return (
         <>
@@ -2487,7 +2489,7 @@ function ShowWork({ run }: { run: Session }) {
     // why a fixed answer-before-say fraction mis-orders a chat-style turn that ran no tool steps.
     const traceItems: { pos: number; ts: number; el: preact.JSX.Element }[] = [
         ...(run.task || run.taskImages?.length ? [{ pos: -1, ts: run.createdTs || 0, el: <CardTraceMsg key="task" label="you asked" text={run.task || ""} cls="acard-you" images={run.taskImages} /> }] : []),
-        ...(run.says || []).map((s, i) => ({ pos: s.atStep + 0.5, ts: s.ts, el: <CardTraceMsg key={`say${i}`} label="you asked" text={s.text} cls="acard-you" images={s.images} steer={{ seen: s.seen }} /> })),
+        ...(run.says || []).map((s, i) => ({ pos: s.atStep + 0.5, ts: s.ts, el: <CardTraceMsg key={`say${i}`} label="you asked" text={s.text} cls="acard-you" images={s.images} steer={s.id ? { seen: s.seen } : undefined} /> })),
         ...pastAnswers.map((a, i) => ({ pos: a.atStep + 0.5, ts: a.ts, el: <CardTraceMsg key={`ans${i}`} label={a.cancelled ? "cancelled" : a.hitCap ? "stopped early" : "answered"} text={a.text || "(no reply)"} cls="acard-ans" /> })),
         ...turns.map(t => ({ pos: t.step, ts: 0, el: <AgentTurn key={`t${t.step}`} turn={t} max={run.maxSteps} hash={run.hash} /> })),
     ].sort((a, b) => a.pos - b.pos || a.ts - b.ts);
@@ -2572,7 +2574,8 @@ function RunTaskBlockView({ run, block, index, last }: { run: Session; block: Ru
         <div class="run-block" data-rev={rv}>
             <button class="run-block-head" onClick={() => setOpen(v => !v)}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
-                <span class={`run-block-sum${summary ? " ml-reveal" : ""}`} title={block.prompt}>{header}</span>
+                <span class={`run-block-sum${summary ? " ml-reveal" : ""}`}
+                    title={summary ? `${summary}\n\nRequest: ${block.prompt}` : block.prompt}>{header}</span>
                 <span class="sp" />
                 <span class="run-block-n">{block.turns.length} {block.turns.length === 1 ? "step" : "steps"}</span>
             </button>
