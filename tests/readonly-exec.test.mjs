@@ -166,7 +166,9 @@ test("if-statement guard clauses run in-dialect (a very common survey shape)", a
 
 // --- out-of-dialect syntax must throw NotInDialect (fail closed, not crash) ---
 const OUT = {
-    "for loop": `for (const x of []) { x }`,
+    // `for…of` is now IN-dialect (see below); a C-style `for(;;)` and `for…in` stay OUT.
+    "C-style for": `for (let i = 0; i < 3; i++) { i }`,
+    "for...in": `for (const k in {a: 1}) { k }`,
     "assignment": `let x = 1; x = 2; x`,
     "new": `new Object()`,
     "tagged template": "tag`hi ${1}`",   // a plain template is supported; a TAGGED one (a call) is not
@@ -218,6 +220,28 @@ test("ml.range() is a bounded counter loop on the read-only facade (range(n) / s
 test("[...Array(n).keys()] resolves — Array(n) is a callable root now", async () => {
     assert.deepEqual((await run(`[...Array(4).keys()]`)).value, [0, 1, 2, 3]);
     assert.deepEqual((await run(`[...Array(3).keys()].map(i => i + 1)`)).value, [1, 2, 3]);
+});
+
+// --- for…of: LLMs write it constantly; it's as safe/terminating as spread (no infinite iterable reachable) ---
+
+test("for…of iterates + reads + logs (block and single-statement bodies)", async () => {
+    assert.deepEqual((await run(`for (const x of [10, 20, 30]) console.log(x)`)).logs, ["10", "20", "30"]);
+    assert.deepEqual((await run(`for (const el of document.querySelectorAll('input')) console.log(el.id)`)).logs, ["a", "d"]);
+    assert.deepEqual((await run(`for (const n of [1, 2]) { const sq = n * n; console.log(sq) }`)).logs, ["1", "4"]);
+});
+test("for…of supports early return and iterating Object.entries (the for…in replacement) by index", async () => {
+    assert.equal((await run(`for (const x of ['a', 'b', 'c']) { if (x === 'b') return x + '!' }`)).value, "b!");
+    assert.deepEqual((await run(`for (const e of Object.entries({ a: 1, b: 2 })) console.log(e[0] + '=' + e[1])`)).logs, ["a=1", "b=2"]);
+    // A destructuring loop var falls back — the dialect has no destructuring anywhere; index the pair instead.
+    await assert.rejects(run(`for (const [k, v] of Object.entries({ a: 1 })) console.log(k)`), outOfDialect);
+});
+test("for…of still can't ACCUMULATE — push/reassignment stay out, so it never mutates", async () => {
+    // The safety line holds: iterate + read + log, but not build-by-mutation. Use .map/.reduce for a result.
+    await assert.rejects(run(`const r = []; for (const x of [1, 2]) r.push(x); r`), outOfDialect);
+    await assert.rejects(run(`let s = ''; for (const x of ['a', 'b']) s += x; s`), outOfDialect);
+});
+test("for…of over a non-iterable throws a catchable TypeError (not a guard escalation)", async () => {
+    await assert.rejects(run(`for (const x of 5) console.log(x)`), e => e instanceof TypeError);
 });
 
 test("a SYNC ml read (queryAll/range) runs INSIDE a .map/.filter callback; an ASYNC one still can't", async () => {

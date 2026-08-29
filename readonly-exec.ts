@@ -190,6 +190,26 @@ class Parser {
             if (this.peek().t === "name" && this.peek().v === "else") { this.next(); alt = this.parseStatement(); }
             return { type: "If", test, cons, alt };
         }
+        // `for (const x of iterable) …` ONLY. LLMs reach for this constantly and it's as safe/terminating as
+        // spread (which already iterates any iterable): no infinite iterable is reachable in the dialect (no
+        // `function*`, `Symbol` isn't in scope → no custom iterator). A C-style `for(;;)` (unbounded) and
+        // `for…in` (prototype-chain enumeration — a read bypass; use `Object.keys`) are intentionally OUT.
+        if (t.t === "name" && t.v === "for") {
+            this.next(); this.eat("(");
+            const kw = this.peek();
+            if (!(kw.t === "name" && (kw.v === "const" || kw.v === "let" || kw.v === "var")))
+                throw new NotInDialect("only `for (const x of iterable)` is supported — no C-style `for(;;)`");
+            this.next();
+            const id = this.next();
+            if (id.t !== "name") throw new NotInDialect("expected loop variable name");
+            const kwd = this.next();
+            if (!(kwd.t === "name" && kwd.v === "of"))
+                throw new NotInDialect(kwd.v === "in" ? "`for…in` is not supported — use `for (const x of Object.keys(o))` or `.map`" : "expected `of` in a for-loop");
+            const iter = this.parseExpression();
+            this.eat(")");
+            const body = this.parseStatement();
+            return { type: "ForOf", name: id.v, iter, body };
+        }
         if (t.t === "name" && (t.v === "const" || t.v === "let" || t.v === "var")) {
             this.next();
             const id = this.next();
@@ -586,6 +606,22 @@ class Evaluator {
                 return undefined;
             }
             case "VarDecl": { scope[node.name] = yield* this.eval(node.init, scope); return undefined; }
+            case "ForOf": {
+                const iterable = yield* this.eval(node.iter, scope);
+                // Must be iterable — a non-iterable throws a catchable TypeError, not a guard error. Every
+                // iterable reachable here is FINITE (arrays, NodeLists, strings, Array(n).keys()…): no
+                // generator syntax, and `Symbol` isn't in scope, so no infinite iterator can be built — the
+                // same termination property spread already relies on. The body is mediated like any code.
+                if (iterable == null || typeof (iterable as { [Symbol.iterator]?: unknown })[Symbol.iterator] !== "function")
+                    throw new TypeError("for…of over a non-iterable value");
+                for (const item of iterable as Iterable<unknown>) {
+                    const child = Object.create(scope);   // fresh per-iteration binding (const semantics)
+                    child[node.name] = item;
+                    const v = yield* this.eval(node.body, child);
+                    if (v && typeof v === "object" && RETURN in (v as object)) return v;   // a `return` breaks out + propagates
+                }
+                return undefined;
+            }
             case "Return": return { [RETURN]: yield* this.eval(node.arg, scope) };
             // `await X` — hand X to the driver, which awaits it (identity on a non-promise). The sync
             // driver has no way to, so an await inside a host callback (.map/.filter) falls out of dialect.

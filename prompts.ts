@@ -139,11 +139,12 @@ export const EXEC_COMPUTE_CLAUSE =
 // model conclude loops are "unavailable" — the earlier "isn't available" phrasing caused exactly that.)
 export const EXEC_RANGE_CLAUSE =
     "\n\nWhen EXPLORING or surveying the page in `exec`, keep the code read-only so it auto-runs without an " +
-    "approval prompt: build results with `.map`/`.filter`/`.reduce` and use `ml.range(n)` for a counter loop " +
-    "(`ml.range(8).map(i => …)`, or `ml.range(start, stop, step)`) instead of a `for`/`while` loop or `+=` " +
-    "accumulation. `for`/`while` and reassignment are still ALLOWED — they simply require approval (they " +
-    "COULD mutate or act), so use them only when the task genuinely needs stateful iteration, not for a " +
-    "read-only read of the page.";
+    "approval prompt: build values with `.map`/`.filter`/`.reduce` and a counter loop with `ml.range(n)` " +
+    "(`ml.range(8).map(i => …)`, or `ml.range(start, stop, step)`). A `for (const x of iterable)` loop is " +
+    "fine too (read/inspect/`console.log` each item) — but it CANNOT accumulate (no `+=`, no `.push`), so " +
+    "reach for `.map`/`.reduce` when you need to build a result. A C-style `for(;;)`, `for…in`, `while`, or " +
+    "any reassignment/mutation is still ALLOWED but requires approval (it could mutate or act) — use those " +
+    "only when the task genuinely needs stateful iteration, not for a read-only read of the page.";
 export const PYTHON_CLAUSE =
     "\n\nYou have `python_exec` — a REAL sandboxed Python (its tool description lists the available " +
     "libraries). You are a language " +

@@ -409,12 +409,12 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 // Define "read-only" so the model writes qualifying code instead of guessing why some
                 // exec calls run instantly and others prompt (the auto-run is the autoApproveReadonly flag):
                 "AUTO-RUN vs APPROVAL: code that is read-only BY CONSTRUCTION — only queries/reads + pure " +
-                "computation (`.map`/`.filter`/`.reduce`, `ml.range`, the read-only `ml.*` reads; NO mutation, " +
-                "effectful calls, `for`/`while` loops, or reassignment like `x += …`) — runs in a mediated " +
-                "\"safe\" interpreter with NO approval prompt; anything else (a `for`/`while` loop, `x += …`, a " +
-                "click/fetch/write) is still allowed but falls back to real `eval` and asks the user first. So " +
-                "for a read-only survey prefer `.map`/`.filter`/`.reduce` + `ml.range(n)` to stay on the no-prompt " +
-                "path — reach for a loop/mutation only when the task actually needs it. " +
+                "computation (`.map`/`.filter`/`.reduce`, `for (const x of …)`, `ml.range`, the read-only " +
+                "`ml.*` reads; NO mutation, effectful calls, reassignment (`x += …`), `.push`, a C-style " +
+                "`for(;;)`/`while`, or `for…in`) — runs in a mediated \"safe\" interpreter with NO approval " +
+                "prompt; anything else is still allowed but falls back to real `eval` and asks the user first. " +
+                "So for a read-only survey prefer `.map`/`.filter`/`.reduce`/`for…of` + `ml.range(n)` — reach " +
+                "for mutation or a while-loop only when the task actually needs it. " +
                 "SHADOW DOM / IFRAMES: use `ml.queryAll('host >>> inner')` — a shadow/iframe-piercing " +
                 "querySelectorAll that returns an Array and understands the same selector dialect the DOM " +
                 "tools use (`>>>` crosses each OPEN shadow root / same-origin iframe; a trailing " +
