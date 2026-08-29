@@ -4,9 +4,18 @@
 import type { PageRequestType, BackgroundMessageType } from "./contract";
 
 // 1. Inject injected.js into the main world.
+// `injectedBlocked` flips true when the page's CSP refuses the main-world script (a `error` event on the
+// element) — e.g. raw.githubusercontent.com serves everything with `Content-Security-Policy: sandbox`,
+// which disables injected scripts. Then window.ml never exists, so a delegated agent tool would post into
+// the void and HANG forever (the round-trip below has no answerer). We detect it and fail the tool fast.
+let injectedBlocked = false;
+// Backstop bound for a delegated tool's page round-trip. Generous — longer than any realistic tool (a long
+// `wait`, a heavy `python_exec`) — so it only ever catches a genuine hang, never a slow-but-live tool.
+const TOOL_RELAY_TIMEOUT_MS = 120_000;
 const s = document.createElement("script");
 s.src = chrome.runtime.getURL("injected.js");
 s.onload = () => s.remove();
+s.onerror = () => { injectedBlocked = true; s.remove(); };
 (document.head || document.documentElement).appendChild(s);
 
 interface RelayEntry { type: BackgroundMessageType; responseType: string; }
@@ -114,12 +123,29 @@ chrome.runtime.onMessage.addListener((message: PageMessage & { event?: unknown }
     }
     if (!message || message.type !== "RUN_TOOL_IN_PAGE") return undefined;
     const { runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport } = (message.payload || {}) as { runId: string; name: string; args: unknown; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean };
+    // The page's main-world script (window.ml) was refused by CSP — nothing will ever answer, so don't post
+    // into the void. Fail the tool with an actionable message the agent can act on (navigate off this page).
+    if (injectedBlocked) {
+        sendResponse({ result: `Error: this page blocks the extension's page script, so "${name}" can't run here. Its Content-Security-Policy disables injected scripts — raw.githubusercontent.com does this (it serves files with a "sandbox" CSP). Navigate to a normal page instead: for a repo file use the github.com "…/blob/…" VIEW (not the raw.githubusercontent.com host), or another site.` });
+        return true;
+    }
     const callId = Math.random().toString(36).slice(2);
+    // Backstop: a delegated tool must never wedge the whole run forever. If the main world doesn't answer in
+    // TOOL_RELAY_TIMEOUT_MS (a lost result, a mid-call teardown, or an injected script that loaded but stalled),
+    // fail the tool with an actionable error instead of leaving the step "running…" indefinitely. Generous, so
+    // a legitimately slow tool (a long `wait`, a heavy python_exec) still completes.
+    let done = false;
     const onResult = (event: MessageEvent) => {
         if (event.source !== window || !event.data || event.data.type !== "PAGE_TOOL_RESULT" || event.data.callId !== callId) return;
+        done = true; clearTimeout(timer);
         window.removeEventListener("message", onResult);
         sendResponse(event.data.envelope);
     };
+    const timer = setTimeout(() => {
+        if (done) return;
+        window.removeEventListener("message", onResult);
+        sendResponse({ result: `Error: the page didn't respond while running "${name}" (timed out). It may be mid-navigation, or blocking the extension. Re-check the page (look / pageInfo) and retry, or navigate to a different page.` });
+    }, TOOL_RELAY_TIMEOUT_MS);
     window.addEventListener("message", onResult);
     window.postMessage({ type: "PAGE_TOOL_RUN", callId, runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport }, "*");
     return true;   // async sendResponse (the window round-trip completes later)
