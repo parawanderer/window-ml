@@ -1111,7 +1111,10 @@ html[data-surface="card"] .appr-btn.no:hover {
 }
 
 /* "Show work" — the audit trail under a finished card (the full step trace, reusing the sidebar rows). */
-.card-work { margin-top: 12px; border-top: 1px solid var(--border); padding-top: 8px; }
+/* "Show work" sits at the TOP now (audit-trail header). Snug under the card header (the card-body's own
+   10px top padding is the only gap) with a single hairline BELOW it separating the toggle from the answer —
+   not floating in a box between two rules. Its OPEN trace keeps the top margin so the expanded work breathes. */
+.card-work { border-bottom: 1px solid var(--border); padding-bottom: 8px; margin: 0 0 12px; }
 .card-work-head { position: relative; }
 /* Right-click "Show work" → export this run (reuses .menu-item/.menu-hint). Anchored under the toggle. */
 .card-export-menu { position: absolute; top: 34px; left: 2px; z-index: 6;
@@ -1160,10 +1163,24 @@ html[data-surface="card"] .appr-btn.no:hover {
 .card-answer { line-height: 1.5; }
 /* answer-designated element visuals — the HUD completion deliverable. A small responsive gallery of the
    captured crops; click any to lightbox (ClickableImg). One image fills the width; several wrap. */
-.card-answer-media { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-.card-answer-media img { max-width: 100%; max-height: 320px; flex: 0 1 auto; border-radius: 8px;
-    border: 1px solid var(--border); cursor: zoom-in; object-fit: contain; background: var(--panel-2); }
-.card-answer-media:has(img:only-child) img { width: 100%; }
+.card-answer-media { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; align-items: flex-start; }
+/* inline mode — the picture is the payoff (an <img>'s full-res src, or an element crop). Hover → highlight. */
+.card-answer-media .am-inline { flex: 0 1 auto; max-width: 100%; }
+.card-answer-media .am-inline.am-hoverable { cursor: pointer; }
+.card-answer-media .am-inline img { max-width: 100%; max-height: 320px; border-radius: 8px;
+    border: 1px solid var(--border); cursor: zoom-in; object-fit: contain; background: var(--panel-2); display: block; }
+.card-answer-media:has(.am-inline:only-child) .am-inline, .card-answer-media:has(.am-inline:only-child) .am-inline img { width: 100%; }
+/* highlight mode — a compact chip that POINTS at the live element (hover to spotlight it on the page). */
+.am-chip { display: inline-flex; align-items: center; gap: 8px; padding: 5px 10px 5px 5px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--panel-2); color: var(--fg); cursor: pointer;
+    font: inherit; text-align: left; max-width: 100%; }
+.am-chip:hover { border-color: var(--accent); }
+.am-chip .am-thumb { width: 34px; height: 34px; border-radius: 50%; object-fit: cover; flex: 0 0 auto; }
+.am-chip .am-chip-ic { width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center;
+    border-radius: 50%; background: color-mix(in oklab, var(--accent) 18%, transparent); color: var(--accent); flex: 0 0 auto; }
+.am-chip .am-chip-text { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
+.am-chip .am-chip-text > :first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.am-chip .am-chip-hint { font-size: .8em; color: var(--fg-faint); }
 .action { display: flex; flex-direction: column; gap: 11px; }
 .action-goal { color: var(--fg-dim); font-size: .95em; line-height: 1.4; }
 .action-card { border: 1px solid var(--border); border-radius: 10px; padding: 11px 12px;

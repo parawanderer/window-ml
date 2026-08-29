@@ -2043,15 +2043,21 @@ class AgentHandle implements MlAgentHandle, AgentControl {
     // domTools stay ml-free; they just receive this function. center=null → a viewport shot (wait is area-first).
     window.ml.domTools = makeDomTools(window.ml.defineTool,
         (ctx, center, verb, mutated) => captureVerify(window.ml as unknown as MlApi, ctx, center, verb, mutated),
-        // captureAnswer: serialize a screenshot-crop of each element an `answer` designates, for the HUD
-        // completion card (user-facing output — NOT the debug sidebar). ml-backed (screenshot), so the domTools
-        // stay ml-free. Capped + per-element failures swallowed; the answer still stands without the media.
-        async (els: Element[], note?: string): Promise<AnswerMedia[]> => {
-            const ml = window.ml as unknown as MlApi;
+        // captureAnswer: serialize each element an `answer` designates, for the HUD completion card (user-facing
+        // output — NOT the debug sidebar). ml-backed, so the domTools stay ml-free. Capped + per-element failures
+        // swallowed; the answer still stands without the media. An <img> → its FULL-RES src (crop fallback); any
+        // other element → a screenshot crop. `mode` = show ?? (image → inline, element → highlight).
+        async (els: Element[], note?: string, show?: "inline" | "highlight"): Promise<AnswerMedia[]> => {
+            const ml = window.ml as unknown as MlApi & { _imageToDataUrl: (el: HTMLImageElement) => Promise<string> };
             const out: AnswerMedia[] = [];
             for (const el of els.slice(0, 6)) {
-                try { out.push({ image: await ml.screenshot(el, { noOverlay: true }), label: note, selector: elPath(el) }); }
-                catch { /* skip this element's crop */ }
+                const isImg = el instanceof HTMLImageElement;
+                const kind: AnswerMedia["kind"] = isImg ? "image" : "element";
+                const mode: AnswerMedia["mode"] = show || (isImg ? "inline" : "highlight");
+                let image = "";
+                try { image = isImg ? await ml._imageToDataUrl(el as HTMLImageElement) : await ml.screenshot(el, { noOverlay: true }); }
+                catch { try { image = await ml.screenshot(el, { noOverlay: true }); } catch { /* no visual — keep the chip via selector */ image = ""; } }
+                out.push({ image, label: note, selector: elPath(el), kind, mode });
             }
             return out;
         });

@@ -311,8 +311,11 @@ export interface ToolFeedback {
 
 /** A serialized VISUAL of an element designated via `answer` — rendered in the HUD "Task complete" card
  *  (user-facing output), NOT the debug sidebar. Data URLs so it crosses the window bus (real nodes can't).
- *  `selector` is kept for a future "show on page" highlight affordance. */
-export interface AnswerMedia { image: string; label?: string; selector?: string }
+ *  `kind` "image" = an <img>'s own full-res picture; "element" = a screenshot crop of any other element.
+ *  `mode` = how the card PRESENTS it: "inline" shows the picture; "highlight" is a compact chip that points
+ *  at the live element on the page. Hovering EITHER highlights the element on the page (via `selector`, the
+ *  same debug highlighter the sidebar uses). Default per kind: image→inline, element→highlight. */
+export interface AnswerMedia { image: string; label?: string; selector?: string; kind?: "image" | "element"; mode?: "inline" | "highlight" }
 
 export interface ToolResult {
     content: string;

@@ -8,7 +8,7 @@ import { render } from "preact";
 import type { ComponentChildren } from "preact";
 import { useState, useEffect, useRef } from "preact/hooks";
 import { signal } from "@preact/signals";
-import type { MlDebugEvent, DebugSessionConfig, DebugAgentConfig, NeutralMessage, MlConfig, ApiFormat, Theme, LoadedModel, ExtendProfile, RenderDescriptor, ToolFeedback, LocateSubstep, TokenUsage, TableSource, ElementContext } from "../contract";
+import type { MlDebugEvent, DebugSessionConfig, DebugAgentConfig, NeutralMessage, MlConfig, ApiFormat, Theme, LoadedModel, ExtendProfile, RenderDescriptor, ToolFeedback, LocateSubstep, TokenUsage, TableSource, ElementContext, AnswerMedia } from "../contract";
 import { DEFAULT_CONFIG, fmtCtx } from "../contract";
 import { elementReference, externalSheetIds } from "../dom";
 import {
@@ -375,6 +375,34 @@ const stepKey = (hash: string, seq: number) => `${hash}:${seq}`;
 // renders stack several) would land far from the pointer and just add noise.
 const ClickableImg = ({ src, alt }: { src: string; alt?: string }) =>
     <img class="zoomable" src={src} alt={alt} onClick={() => openLightbox(src)} />;
+
+// The HUD completion card's answer-media gallery — the user-facing deliverable. Each item HOVER-HIGHLIGHTS
+// the live element on the page (the same debug highlighter the sidebar uses), via its captured `selector`.
+// `mode` "inline" shows the picture (an <img>'s full-res src, or an element crop); "highlight" is a compact
+// chip that points at the element (for a control/region where the visual isn't the payoff). HUD-only — the
+// debug detail (AgentRunView) never renders this.
+function AnswerMediaGallery({ media }: { media: AnswerMedia[] }) {
+    return (
+        <div class="card-answer-media">
+            {media.map((m, i) => {
+                const hover = m.selector ? { onPointerEnter: () => highlightEl(m.selector!), onPointerLeave: clearHighlight } : {};
+                if (m.mode === "highlight" || !m.image) {
+                    return (
+                        <button key={i} class="am-chip" title={m.selector} {...hover}>
+                            {m.image ? <img class="am-thumb" src={m.image} alt={m.label || "element"} /> : <span class="am-chip-ic" aria-hidden="true">⌖</span>}
+                            <span class="am-chip-text">{m.label || "element"}<span class="am-chip-hint">hover to locate on page</span></span>
+                        </button>
+                    );
+                }
+                return (
+                    <div key={i} class={`am-inline${m.selector ? " am-hoverable" : ""}`} {...hover}>
+                        <ClickableImg src={m.image} alt={m.label || "answer element"} />
+                    </div>
+                );
+            })}
+        </div>
+    );
+}
 
 // A short hash rendered as click-to-copy, with a tooltip. `stop` swallows the
 // click so copying a hash inside a session row doesn't also open the session.
@@ -2897,9 +2925,7 @@ function CardApp() {
                                     : <div class="card-answer dim card-answer-empty">{run.cancelled ? "Run cancelled — the agent returned no text." : "The run finished without a text reply."}</div>}
                             {/* answer-designated element visuals — the user-facing deliverable (HUD-only; the debug
                                 sidebar deliberately doesn't render these). Click to lightbox. */}
-                            {run.answerMedia && run.answerMedia.length
-                                ? <div class="card-answer-media">{run.answerMedia.map((m, i) => <ClickableImg key={i} src={m.image} alt={m.label || "answer element"} />)}</div>
-                                : null}
+                            {run.answerMedia && run.answerMedia.length ? <AnswerMediaGallery media={run.answerMedia} /> : null}
                           </>}
             </div>
             {/* Deny/Approve as a FIXED footer — outside the scroll area, so it's always visible (a

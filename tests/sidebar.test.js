@@ -2504,6 +2504,32 @@ test("card surface: answer element visuals render in the HUD card (user-facing d
     if (work && answer) assert.ok(body.innerHTML.indexOf("card-work") < body.innerHTML.indexOf("card-answer"), "Show work is above the answer");
 });
 
+test("card surface: answer media renders inline vs highlight-chip, and hover-highlights the page element", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    await w.raw({ __mlSidebarSurface: "card" });
+    const hash = "ansmode";
+    const media = [
+        { image: "data:image/png;base64,IMG", label: "the cat", selector: "img.cat", kind: "image", mode: "inline" },
+        { image: "", label: "the buy button", selector: "button.buy", kind: "element", mode: "highlight" },
+    ];
+    await w.dispatch(agentStart(hash, "find things", "m"));
+    await w.dispatch({ ...agentResult(hash, "found them", 1), answerMedia: media });
+    await w.flush();
+    const gallery = w.window.document.querySelector(".card-answer-media");
+    assert.ok(gallery.querySelector(".am-inline img"), "inline mode shows the image");
+    assert.ok(gallery.querySelector(".am-chip"), "highlight mode shows a compact chip");
+    assert.match(gallery.querySelector(".am-chip").textContent, /buy button|locate on page/, "the chip labels the element");
+
+    // Hovering the inline item highlights the corresponding element on the page (the debug highlighter).
+    posted.length = 0;
+    gallery.querySelector(".am-inline").dispatchEvent(new w.window.MouseEvent("pointerenter", { bubbles: true }));
+    assert.ok(posted.some(m => m.__mlHighlight && m.__mlHighlight.selector === "img.cat"), "hover posts a highlight for the element");
+    gallery.querySelector(".am-inline").dispatchEvent(new w.window.MouseEvent("pointerleave", { bubbles: true }));
+    assert.ok(posted.some(m => m.__mlHighlight === null), "leaving clears the highlight");
+});
+
 test("card surface: a NEW round with no answer CLEARS the prior answer media (reset to 0)", async () => {
     const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
     const posted = [];

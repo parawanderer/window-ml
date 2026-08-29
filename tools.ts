@@ -8,7 +8,7 @@ import type { MlTool, ToolResult, ToolContext, AnswerMedia } from "./contract";
 import type { VerifyArea } from "./builtin-tools";
 /** Serialize a screenshot-crop of each designated `answer` element for the HUD completion card. ml-backed
  *  (built in injected.ts), so the pure domTools stay pure — the answer tool just calls it when present. */
-export type CaptureAnswer = (els: Element[], note?: string) => Promise<AnswerMedia[]>;
+export type CaptureAnswer = (els: Element[], note?: string, show?: "inline" | "highlight") => Promise<AnswerMedia[]>;
 import { truncate, clipOut, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, deepQueryAll, closedShadowHosts, frameHostOf, selectorError } from "./dom";
 import { INTERACTIVE_SEL, roleOf, accessibleName, placeholderText, ariaState, hasLayout, styleHidden, isFaded } from "./a11y";
 import { pageContext, browserInfo, agentState } from "./util";
@@ -634,11 +634,12 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 properties: {
                     selector: { type: "string", description: "CSS selector for the answer element(s)." },
                     index: { type: "integer", description: "Designate one specific match (0-based); omit to return all matches." },
-                    note: { type: "string", description: "Optional note about what these are." }
+                    note: { type: "string", description: "Optional note about what these are." },
+                    show: { type: "string", enum: ["inline", "highlight"], description: "How the HUD shows it to the user: 'inline' renders the image/screenshot in the card; 'highlight' shows a compact chip that spotlights the live element on the page. Default: an <img> → inline (show the picture), any other element → highlight (point at it). Hovering either highlights it on the page." }
                 },
                 required: ["selector"]
             },
-            run: async ({ selector, index, note }: { selector: string; index?: number; note?: string }): Promise<string | ToolResult> => {
+            run: async ({ selector, index, note, show }: { selector: string; index?: number; note?: string; show?: "inline" | "highlight" }): Promise<string | ToolResult> => {
                 let els: Element[];
                 try { els = queryAll(selector); }
                 catch (e) { return selectorError(selector, e as Error); }
@@ -653,7 +654,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 // Serialize a screenshot-crop of each designated element for the HUD completion card (user-facing
                 // output). Best-effort — a failed capture just omits the media; the answer still stands.
                 let answerMedia: AnswerMedia[] | undefined;
-                if (captureAnswer) { try { answerMedia = await captureAnswer(kept, note); } catch { /* no media */ } }
+                if (captureAnswer) { try { answerMedia = await captureAnswer(kept, note, show); } catch { /* no media */ } }
                 return {
                     content: `Answer: ${els.length} element(s)${note ? ` — ${note}` : ""}: ${preview}`,
                     elements: kept,
