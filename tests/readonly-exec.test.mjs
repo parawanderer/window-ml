@@ -167,10 +167,6 @@ const OUT = {
     "assignment": `let x = 1; x = 2; x`,
     "new": `new Object()`,
     "tagged template": "tag`hi ${1}`",   // a plain template is supported; a TAGGED one (a call) is not
-    // A REGEX LITERAL isn't lexed (the tokenizer has no regex path — `/` is only comment/division), so a
-    // survey that normalizes whitespace with `.replace(/\s+/g, ' ')` falls back to approval. The whole
-    // parse fails on the regex even though spread / `?.` / block-body arrows / `||` are all in-dialect.
-    "regex literal": `'a  b'.replace(/\\s+/g, ' ')`,
 };
 for (const [name, js] of Object.entries(OUT)) {
     test(`falls back (NotInDialect): ${name}`, async () => {
@@ -191,6 +187,49 @@ test("a collection PROPERTY (.children) reads as an Array too — uniform with q
 
 test("the coerced Array chains filter → map (all allowed) like a normal array", async () => {
     assert.deepEqual((await run(`document.querySelectorAll('input').filter(el => el.id === 'd').map(el => el.placeholder)`)).value, ["other"]);
+});
+
+// --- regex literals: pure matching, in-dialect (a whitespace-collapse survey shouldn't need approval) ---
+
+test("regex literal + String.replace runs in-dialect (the common whitespace-normalize survey)", async () => {
+    assert.equal((await run(`'a   b\\tc'.replace(/\\s+/g, ' ')`)).value, "a b c");
+});
+test("regex methods run: match / split / test / a RegExp.exec", async () => {
+    assert.deepEqual((await run(`'a1 b2 c3'.match(/\\d/g)`)).value, ["1", "2", "3"]);
+    assert.deepEqual((await run(`'a,b;c'.split(/[,;]/)`)).value, ["a", "b", "c"]);
+    assert.equal((await run(`/^\\d+$/.test('12345')`)).value, true);
+    assert.equal((await run(`/(\\w)(\\d)/.exec('x9')[2]`)).value, "9");
+});
+test("division still lexes as division (not a regex) after a value token", async () => {
+    assert.equal((await run(`12 / 2 / 3`)).value, 2);
+    assert.equal((await run(`[1,2,3,4].length / 2`)).value, 2);
+});
+test("a regex literal is DENIED nothing extra — it can't reach an effectful method", async () => {
+    // The regex is pure; the escape battery elsewhere still holds. A malformed regex just falls back.
+    await assert.rejects(run(`/[/`), outOfDialect);   // invalid pattern → NotInDialect (approval), never a crash
+});
+
+// --- optional chaining short-circuits the WHOLE chain (a?.b.c() with null a → undefined, not a throw) ---
+
+test("optional chaining short-circuits the rest of the chain when the head is null", async () => {
+    // The motivating YouTube-style survey uses `el?.textContent.trim()` defensively — a missing element must
+    // yield undefined, not throw "undefined has no callable 'trim'".
+    assert.equal((await run(`document.querySelector('#nope')?.textContent.trim()`)).value, undefined);
+    assert.equal((await run(`document.querySelector('#nope')?.a.b.c()`)).value, undefined);
+    // …but when the head EXISTS the chain runs to completion.
+    assert.equal((await run(`document.querySelector('#a')?.getAttribute('id').toUpperCase()`)).value, "A");
+});
+
+test("the full defensive survey (spread + regex + optional-chain + block arrow) auto-runs", async () => {
+    const dom = world();
+    dom.body.innerHTML = `<article><h3 class="t">  Hello   World </h3><span class="m">10   pts</span></article>
+                          <article><h3 class="t">Bare</h3></article>`;
+    const js = `[...document.querySelectorAll('article')].slice(0, 8).map(a => {
+        const t = a.querySelector('.t')?.textContent.replace(/\\s+/g, ' ').trim();
+        const m = a.querySelector('.m')?.textContent.trim();
+        return (t || '') + ' | ' + (m || '')
+    }).join('\\n')`;
+    assert.equal((await run(js, dom)).value, "Hello World | 10   pts\nBare | ");
 });
 
 // --- the read-only `ml` slice: self-introspection with NO approval prompt ---

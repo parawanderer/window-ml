@@ -27,7 +27,20 @@ export class Denied extends Error {}
 
 // ---------------------------------------------------------------- tokenizer ---
 
-interface Tok { t: "num" | "str" | "name" | "punct" | "eof" | "template"; v: string; quasis?: string[]; exprs?: string[]; }
+interface Tok { t: "num" | "str" | "name" | "punct" | "eof" | "template" | "regex"; v: string; quasis?: string[]; exprs?: string[]; flags?: string; }
+
+// After these tokens a `/` begins a REGEX (an expression is expected); after a value-producing token
+// (a number/string/template, an identifier, or a closing `)`/`]`/`}`) a `/` is DIVISION. The keyword
+// identifiers below are the value-EXCEPTIONS: a regex may follow them (`return /re/`, `typeof /re/`).
+// A regex is pure (no side effect, no realm walk-back), so this only decides division-vs-regex, never safety.
+const REGEX_PRECEDING_KEYWORDS = new Set(["return", "typeof", "instanceof", "in", "of", "void", "delete", "case", "do", "else", "yield", "await"]);
+function regexAllowed(prev: Tok | undefined): boolean {
+    if (!prev) return true;                                                  // start of input
+    if (prev.t === "num" || prev.t === "str" || prev.t === "template" || prev.t === "regex") return false;
+    if (prev.t === "name") return REGEX_PRECEDING_KEYWORDS.has(prev.v);
+    if (prev.t === "punct") return !(prev.v === ")" || prev.v === "]" || prev.v === "}");
+    return true;
+}
 
 // --- template literals (`a${x}b`) ---------------------------------------------------------------
 // Pure string concatenation with interpolated expressions — no new capability (each ${expr} runs
@@ -90,6 +103,27 @@ function tokenize(src: string): Tok[] {
         // Line & block comments — the model sometimes annotates its surveys.
         if (c === "/" && src[i + 1] === "/") { while (i < src.length && src[i] !== "\n") i++; continue; }
         if (c === "/" && src[i + 1] === "*") { i += 2; while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++; i += 2; continue; }
+        // A REGEX LITERAL — only where an expression is expected (else `/` is division, handled by PUNCT
+        // below). Scan the body honouring `\`-escapes and `[...]` char classes (where `/` is literal), then
+        // the flags. The pattern is compiled to a real RegExp at eval time; a regex is a pure value, so this
+        // grants no new capability — it just lets the common `.replace(/…/g, …)` / `.match(/…/)` survey run.
+        if (c === "/" && regexAllowed(toks[toks.length - 1])) {
+            let j = i + 1, inClass = false, body = "";
+            while (j < src.length) {
+                const ch = src[j];
+                if (ch === "\n") throw new NotInDialect("unterminated regex");
+                if (ch === "\\") { body += ch + (src[j + 1] ?? ""); j += 2; continue; }
+                if (ch === "[") { inClass = true; body += ch; j++; continue; }
+                if (ch === "]") { inClass = false; body += ch; j++; continue; }
+                if (ch === "/" && !inClass) break;
+                body += ch; j++;
+            }
+            if (j >= src.length || src[j] !== "/") throw new NotInDialect("unterminated regex");
+            j++;   // past the closing `/`
+            let flags = "";
+            while (j < src.length && /[a-z]/i.test(src[j])) { flags += src[j]; j++; }
+            toks.push({ t: "regex", v: body, flags }); i = j; continue;
+        }
         if (c === "`") { const { quasis, exprs, end } = scanTemplate(src, i); toks.push({ t: "template", v: "", quasis, exprs }); i = end; continue; }
         if (c >= "0" && c <= "9") {
             let j = i + 1;
@@ -293,6 +327,7 @@ class Parser {
         }
         if (t.t === "num") { this.i++; return { type: "Lit", value: parseFloat(t.v) }; }
         if (t.t === "str") { this.i++; return { type: "Lit", value: t.v }; }
+        if (t.t === "regex") { this.i++; return { type: "Regex", pattern: t.v, flags: t.flags || "" }; }
         if (t.t === "template") {
             this.i++;
             // Re-parse each interpolation's raw source; require it to fully consume (a stray `;`/statement
@@ -417,6 +452,9 @@ const ALLOWED_METHODS = new Set([
     "substring", "substr", "toLowerCase", "toUpperCase", "trim", "trimStart", "trimEnd",
     "split", "startsWith", "endsWith", "replace", "replaceAll", "padStart", "padEnd",
     "repeat", "charAt", "charCodeAt", "codePointAt", "normalize", "localeCompare",
+    // String↔RegExp (pure matching — a regex literal is now in-dialect): the string-side readers plus the
+    // RegExp-side `test`/`exec`. All side-effect-free; `exec`/matchAll return match arrays, not the realm.
+    "match", "matchAll", "search", "test", "exec",
     // Object / JSON / Math / Number
     "keys", "values", "entries", "fromEntries", "stringify", "parse", "assign",
     // Promise combinators + `then` — models batch and chain the async ml reads
@@ -463,6 +501,10 @@ function mlFacade(ml: unknown): Record<string, unknown> | null {
 }
 
 const RETURN = Symbol("return");   // sentinel wrapper for a `return` value
+// Sentinel: an optional chain (`a?.b.c()`) short-circuited. It propagates through the rest of the chain
+// (evalChain/readMember/evalCall) and is unwrapped to `undefined` the moment the chain result is CONSUMED
+// (the `eval` dispatch for Member/Call), so it never leaks into arithmetic, args, or comparisons.
+const SHORT = Symbol("optional-short-circuit");
 // Inert stand-in returned when code reads a method as a value (existence guards).
 // Truthy + typeof "function", but calling it throws → the real method never leaks.
 const METHOD_REF = function (): never { throw new NotInDialect("a method reference cannot be called indirectly"); };
@@ -490,9 +532,20 @@ class Evaluator {
     // truthy, typeof "function"), while a method still can't be pulled off and
     // invoked past the call gate: calling the sentinel (directly or via .map)
     // throws, dropping the whole survey back to approval.
+    // Evaluate a node that is a LINK in a member/call chain WITHOUT unwrapping the short-circuit sentinel,
+    // so an optional access (`a?.b`) that hit nullish propagates SHORT through the rest of the chain
+    // (`.c.d()`), exactly like JS: the whole chain after `?.` is skipped, not evaluated onto `undefined`.
+    // A non-chain node goes through the normal eval (which never yields SHORT).
+    private *evalChain(node: Node, scope: any): Ev {
+        if (node.type === "Member") return yield* this.readMember(node, scope);
+        if (node.type === "Call") return yield* this.evalCall(node, scope);
+        return yield* this.eval(node, scope);
+    }
+
     private *readMember(node: Node, scope: any): Ev {
-        const obj = yield* this.eval(node.obj, scope);
-        if (node.optional && obj == null) return undefined;
+        const obj = yield* this.evalChain(node.obj, scope);
+        if (obj === SHORT) return SHORT;                       // an earlier `?.` short-circuited → keep skipping
+        if (node.optional && obj == null) return SHORT;        // this `?.` short-circuits the rest of the chain
         const key = node.computed ? this.guardKey(yield* this.eval(node.prop, scope)) : this.guardKey(node.prop);
         const v = (obj as any)?.[key];
         if (typeof v === "function") return METHOD_REF;
@@ -534,6 +587,10 @@ class Evaluator {
             // driver has no way to, so an await inside a host callback (.map/.filter) falls out of dialect.
             case "Await": return yield yield* this.eval(node.arg, scope);
             case "Lit": return node.value;
+            // A regex literal → a real RegExp. Pure value: no realm walk-back (its props are source/flags/
+            // lastIndex — none in DENIED_PROPS is needed), and it can only be USED via allowlisted methods
+            // (String.match/replace/split or RegExp.test/exec). An invalid pattern throws → falls back to approval.
+            case "Regex": try { return new RegExp(node.pattern, node.flags); } catch { throw new NotInDialect("invalid regex"); }
             case "Ident": {
                 if (node.name in scope) return scope[node.name];
                 throw new Denied(`'${node.name}' is not available`);
@@ -585,8 +642,9 @@ class Evaluator {
                 throw new NotInDialect(`operator ${node.op}`);
             }
             case "Cond": return (yield* this.eval(node.cond, scope)) ? yield* this.eval(node.cons, scope) : yield* this.eval(node.alt, scope);
-            case "Member": return yield* this.readMember(node, scope);
-            case "Call": return yield* this.evalCall(node, scope);
+            // The chain result is CONSUMED here (not another chain link) → unwrap a short-circuit to undefined.
+            case "Member": { const v = yield* this.readMember(node, scope); return v === SHORT ? undefined : v; }
+            case "Call": { const v = yield* this.evalCall(node, scope); return v === SHORT ? undefined : v; }
             case "Template": {
                 // Concatenate quasi[0] expr[0] quasi[1] … — String() coercion, exactly like JS.
                 let out = node.quasis[0];
@@ -648,8 +706,9 @@ class Evaluator {
         const callee = node.callee;
         // obj.method(args) — the common case. Allowlisted method names only.
         if (callee.type === "Member") {
-            const obj: any = yield* this.eval(callee.obj, scope);
-            if (callee.optional && obj == null) return undefined;
+            const obj: any = yield* this.evalChain(callee.obj, scope);
+            if (obj === SHORT) return SHORT;                    // the receiver chain short-circuited → skip the call
+            if (callee.optional && obj == null) return SHORT;
             const key = callee.computed ? this.guardKey(yield* this.eval(callee.prop, scope)) : this.guardKey(callee.prop);
             // The `ml` facade carries its OWN allowlist — it holds nothing but the read-only API methods,
             // so "is it on the facade" is the whole check. Their names deliberately never join
