@@ -526,3 +526,34 @@ test("answer → HUD: designated elements' screenshots render in the completion 
     for (let i = 0; i < n; i++) expect(await imgs.nth(i).getAttribute("src"), "each is a real captured crop").toMatch(/^data:image\//);
     await page.close();
 });
+
+// HUD maximise (#2b): a button on the completion card grows it into a near-full-page CORNER WINDOW (a margin
+// left so the page shows through — NOT a full-page override), and back. The button lives in the card iframe;
+// the shell sizes the container (#ml-sb-card-wrap, in an OPEN shadow root Playwright pierces).
+test("HUD maximise: the completion card grows to a near-full-page corner window and back", async () => {
+    const page = await ext.context.newPage();
+    await page.goto(site.url + "/step3");
+    await waitForMl(page);
+    fake.setScript([{ content: "Done." }]);
+    await page.evaluate(() => { window.ml.agent("Say done.", { env: false }); return true; });
+
+    // The off-mode HUD card iframe. The Maximise button appears once the run is done + expanded.
+    const card = () => page.frames().filter((f) => f.url().includes("sidebar.html") && !f.isDetached()).pop();
+    await expect.poll(async () => { const f = card(); try { return f ? await f.locator('.card-icon[aria-label="Maximise"]').count() : 0; } catch { return 0; } }, { timeout: 20000 }).toBe(1);
+
+    const wrap = page.locator("#ml-sb-card-wrap");
+    await expect.poll(async () => await wrap.getAttribute("data-state"), { timeout: 5000 }).toBe("expanded");
+    const vw = await page.evaluate(() => window.innerWidth);
+
+    // Maximise → a corner window ~90% of the viewport width (wide, but a margin remains — not full-page).
+    await card().locator('.card-icon[aria-label="Maximise"]').click();
+    await expect.poll(async () => await wrap.getAttribute("data-state"), { timeout: 5000 }).toBe("maximized");
+    await expect.poll(async () => await wrap.evaluate((el) => el.getBoundingClientRect().width), { timeout: 3000 }).toBeGreaterThan(vw * 0.8);
+    const w = await wrap.evaluate((el) => el.getBoundingClientRect().width);
+    expect(w, "a corner window, not a full-page override").toBeLessThan(vw);
+
+    // Minimise → back to the compact expanded card.
+    await card().locator('.card-icon[aria-label="Minimise"]').click();
+    await expect.poll(async () => await wrap.getAttribute("data-state"), { timeout: 5000 }).toBe("expanded");
+    await page.close();
+});

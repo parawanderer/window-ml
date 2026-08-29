@@ -116,7 +116,16 @@ const CARD_CSS = `
 #${SB_CARD}-wrap[data-state="hidden"] { opacity: 0; pointer-events: none; transform: translateX(18px) scale(.98); }
 #${SB_CARD}-wrap[data-corner$="left"][data-state="hidden"] { transform: translateX(-18px) scale(.98); }
 #${SB_CARD}-wrap[data-state="orb"], #${SB_CARD}-wrap[data-state="orblabel"], #${SB_CARD}-wrap[data-state="orbprose"],
-#${SB_CARD}-wrap[data-state="toast"], #${SB_CARD}-wrap[data-state="expanded"], #${SB_CARD}-wrap[data-state="composer"] { opacity: 1; transform: none; }
+#${SB_CARD}-wrap[data-state="toast"], #${SB_CARD}-wrap[data-state="expanded"], #${SB_CARD}-wrap[data-state="composer"], #${SB_CARD}-wrap[data-state="maximized"] { opacity: 1; transform: none; }
+/* MAXIMISED — a corner WINDOW (near-full-page, anchored to the card's corner, a margin left so the page
+   shows through). Unlike expanded/toast it DOES transition WIDTH: the grow/shrink is the point, and its
+   height is FIXED (0.9vh, not content-chased), so an animating width can't make the height overshoot. */
+#${SB_CARD}-wrap[data-state="expanded"], #${SB_CARD}-wrap[data-state="maximized"] {
+  transition: left .40s cubic-bezier(.3,.85,.3,1), top .40s cubic-bezier(.3,.85,.3,1),
+              width .40s cubic-bezier(.3,.85,.3,1), height .40s cubic-bezier(.3,.85,.3,1),
+              border-radius .44s cubic-bezier(.5,-0.3,.2,1.5),
+              opacity .24s ease, transform .34s cubic-bezier(.34,1.2,.5,1);
+}
 /* Both pill states — the hover capsule (orblabel, spelling out the current tool) and the live-caption pill
    (orbprose, the model's between-step narration) — are the same computing stage, just stretched. Both stay
    ALIVE, wobbling their cap radii on both axes like the orb (border-radius only, so it can't move the box /
@@ -303,9 +312,13 @@ const cardW = (state: string): number => {
     if (state === "orbprose" && cardProseW != null) {
         return Math.min(Math.max(cardProseW, PROSE_MIN_W), CARD_W.orbprose, window.innerWidth - 2 * CARD_MARGIN);
     }
+    // MAXIMISED: a corner window ~90% of the viewport width (leaves a margin so the page shows through).
+    if (state === "maximized") return Math.min(Math.round(window.innerWidth * 0.9), window.innerWidth - 2 * CARD_MARGIN);
     return Math.min(CARD_W[state] ?? 340, window.innerWidth - 2 * CARD_MARGIN);
 };
 const cardH = (state: string): number => {
+    // MAXIMISED: a FIXED ~90% of the viewport height (the window is a big fixed size; its content scrolls).
+    if (state === "maximized") return Math.min(Math.round(window.innerHeight * 0.9), window.innerHeight - 2 * CARD_MARGIN);
     if (state === "orb" || state === "orblabel" || state === "orbprose") return ORB_SIZE;   // circle / capsule /
                                                                     // caption — SAME height (a vertical shift would flicker the pointerenter/leave)
     const cap = Math.max(120, window.innerHeight - 2 * CARD_MARGIN);   // never past the fold; body scrolls

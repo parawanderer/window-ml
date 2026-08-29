@@ -1984,6 +1984,7 @@ const dismissCardRun = (h: string): void => {
 // first painted with the PREVIOUS run's trace expanded (tall) then collapsed (the "opens huge then shrinks"
 // glitch). "" = nothing open. Also naturally scopes to the active run once the card has tabs.
 const cardShowWorkHash = signal<string>("");
+const cardMaximizedHash = signal<string>("");   // the run whose card is MAXIMISED (a near-full-page corner window)
 const composerOpen = signal(false);          // the Spotlight composer — the HUD morphs into a task input
 const composerElement = signal<ElementContext | null>(null);   // right-click "ask about this" → the element pill's context
 const composerMaxSteps = signal(20);         // step budget for a UI-started run (persists across opens)
@@ -2714,7 +2715,7 @@ function CardApp() {
         : pending ? "expanded"                                 // an approval: show the action directly (even for a silent run)
             : (tabs && anyContent) ? (cardDetail.value ? "expanded" : "toast")   // multi-run with content: tabbed detail ⇄ calm summary toast (one card-level toggle)
                 : showOrb ? (liveProse ? "orbprose" : hovering ? "orblabel" : "orb")   // in flight → orb; caption when narrating; capsule on hover (single run, or several all merely working)
-                    : (done && !silent) ? (isCardCollapsed(run!.hash) ? "toast" : "expanded")   // single finished run: the answer (selected run is never dismissed — it'd leave cardRuns)
+                    : (done && !silent) ? (isCardCollapsed(run!.hash) ? "toast" : (cardMaximizedHash.value === run!.hash ? "maximized" : "expanded"))   // single finished run: the answer — MAXIMISED into a corner window when toggled
                         : "hidden";
 
     // Clear a STALE hover whenever we're not showing the orb — the orb can unmount while hovered (the
@@ -2901,8 +2902,14 @@ function CardApp() {
                 {tabs ? null : <span class="card-bot" aria-hidden="true">🤖</span>}   {/* multi-run: the tab strip already IDs the run — drop the 🤖 to de-clutter */}
                 <span class={`card-head-txt${pending ? " pending" : ""}`} title={tabs ? headText : undefined}>{headText}</span>
                 <span class="sp" />
-                {pending ? null : <button class="card-icon" aria-label="Collapse" title="Collapse" onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); tabs ? (cardDetail.value = false) : setCardCollapsed(run.hash, true); }}>▾</button>}
-                <button class="card-x" aria-label={pending ? "Deny" : "Dismiss"} onPointerDown={onCloseDown} onClick={e => e.stopPropagation()}>✕</button>
+                {/* Maximise the finished-answer card into a near-full-page corner window (animated); toggles back.
+                    Only for a single finished run (an approval/working card stays compact). */}
+                {done && !pending && !tabs
+                    ? <button class="card-icon" aria-label={cardMaximizedHash.value === run.hash ? "Minimise" : "Maximise"} title={cardMaximizedHash.value === run.hash ? "Minimise" : "Maximise"}
+                        onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); cardMaximizedHash.value = cardMaximizedHash.value === run.hash ? "" : run.hash; }}>{cardMaximizedHash.value === run.hash ? "⤡" : "⤢"}</button>
+                    : null}
+                {pending ? null : <button class="card-icon" aria-label="Collapse" title="Collapse" onPointerDown={e => e.stopPropagation()} onClick={e => { e.stopPropagation(); cardMaximizedHash.value = ""; tabs ? (cardDetail.value = false) : setCardCollapsed(run.hash, true); }}>▾</button>}
+                <button class="card-x" aria-label={pending ? "Deny" : "Dismiss"} onPointerDown={onCloseDown} onClick={e => { e.stopPropagation(); cardMaximizedHash.value = ""; }}>✕</button>
             </div>
             <div class="card-body">
                 {pending && pendingStep
