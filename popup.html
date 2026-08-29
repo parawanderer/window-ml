@@ -208,6 +208,14 @@
         <label class="check" for="agentHudInDevtools"><input type="checkbox" id="agentHudInDevtools"> Also show the HUD alongside DevTools</label>
     </details>
 
+    <div class="panel">
+        <label class="panel-h">Agent runs</label>
+        <div class="free-row">
+            <div class="hint">Stops every background agent run and clears any that would auto-resume — the panic button for a run you can't reach.</div>
+            <button id="stopAllRuns" title="Abort all in-flight agent runs and clear their saved state">Stop all</button>
+        </div>
+    </div>
+
     <div id="vramSection" class="panel" style="display:none">
         <label class="panel-h">VRAM</label>
         <div class="free-row">

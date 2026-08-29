@@ -133,6 +133,22 @@ export function modelFilterAllows(model: string, filter: string): boolean {
     try { return new RegExp(filter).test(model); } catch { return true; }
 }
 
+/** How stale a persisted background-run snapshot may be and still auto-resume. A real MV3 eviction respawns
+ *  within seconds and each step re-stamps the snapshot, so a live run's snapshot is always fresh; anything
+ *  older than this is a zombie (the SW died and never came back for it) and must NOT be silently resumed. */
+export const STALE_BGRUN_MS = 5 * 60 * 1000;
+/** Decide whether a persisted background-run snapshot may be RESUMED on SW startup, or must be invalidated.
+ *  A snapshot from a DIFFERENT extension version (a reload/update happened between writing and reading it —
+ *  its code may be incompatible, and a reload is often how you kill a runaway) or a STALE one (older than a
+ *  live eviction-respawn would ever be) is dropped, never resumed. An un-stamped legacy snapshot (no version)
+ *  fails the version check and is purged — the self-heal for zombies written before this guard shipped.
+ *  Pure — unit-tested (`tests/bgrun.test.mjs`); the SW deletes the storage key when this returns false. */
+export function bgRunResumable(snap: { version?: string; ts?: number }, currentVersion: string, now: number): boolean {
+    if ((snap.version || "") !== currentVersion) return false;              // cross-version → a reload/update invalidates it
+    if (snap.ts != null && now - snap.ts > STALE_BGRUN_MS) return false;    // stale → no live respawn is ever this old
+    return true;
+}
+
 /** Sanitize composer image attachments relayed from the sidebar app (a pasted/uploaded screenshot):
  *  keep only `data:image/*` strings, size-capped so a runaway paste can't bloat a postMessage, max 8 per
  *  turn. Returns undefined when there's nothing valid (keeps the relayed message clean). Pure; shared by

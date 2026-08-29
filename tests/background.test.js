@@ -1610,6 +1610,31 @@ test("CANCEL_RUN for an unknown run id is a harmless no-op", async () => {
     assert.equal(res.data, "ok", "a later request is unaffected");
 });
 
+test("CANCEL_ALL_RUNS (the popup panic button) aborts every live run and reports the count", async () => {
+    // Two runs both parked at their in-flight model call. The panic button aborts all controllers → each
+    // resolves { cancelled: true }; the response reports how many were live.
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => new Promise((_, reject) => {
+            const abort = () => { const e = new Error("aborted"); e.name = "AbortError"; reject(e); };
+            if (call.opts.signal?.aborted) return abort();
+            call.opts.signal?.addEventListener("abort", abort);
+        }),
+    });
+    const base = { systemPrompt: "s", tools: [], model: "m", think: null, maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools" };
+    const p1 = bg.send({ type: "START_RUN", payload: { ...base, runId: "all1", task: "a" } }, { tab: { id: 1 } });
+    const p2 = bg.send({ type: "START_RUN", payload: { ...base, runId: "all2", task: "b" } }, { tab: { id: 2 } });
+    await new Promise(r => setTimeout(r, 0));   // let both reach their in-flight model call
+    const res = await bg.send({ type: "CANCEL_ALL_RUNS", payload: {} });
+    assert.equal(res.data.cancelled, 2, "both live runs were counted + aborted");
+    assert.ok((await p1).data?.cancelled, "run 1 resolved cancelled");
+    assert.ok((await p2).data?.cancelled, "run 2 resolved cancelled");
+    await new Promise(r => setTimeout(r, 0));   // let each run's .finally() clear its controller
+    // Idempotent: nothing live now → 0.
+    const again = await bg.send({ type: "CANCEL_ALL_RUNS", payload: {} });
+    assert.equal(again.data.cancelled, 0, "a second call finds nothing to stop");
+});
+
 test("RESUME_RUN continues a stored background run with its accumulated history (+ tab-ownership guard)", async () => {
     // Phase 2: after a background run settles, its history + payload are kept (bgRuns). A RESUME_RUN from
     // the SAME tab re-enters the loop from that history with a follow-up task; another tab can't, and an

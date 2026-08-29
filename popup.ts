@@ -156,6 +156,17 @@ async function freeVram() {
     });
 }
 
+// The panic button: abort every in-flight background agent run and purge any persisted snapshot, so a
+// runaway with no visible surface (e.g. a resumed run whose card never mounted) can always be killed.
+function stopAllRuns() {
+    setStatus("Stopping agent runs…", "busy");
+    chrome.runtime.sendMessage({ type: "CANCEL_ALL_RUNS" }, (response: any) => {
+        if (chrome.runtime.lastError) { setStatus(`Failed: ${chrome.runtime.lastError.message}`, "err"); return; }
+        const n = (response && response.data && response.data.cancelled) || 0;
+        setStatus(n ? `Stopped ${n} agent run${n === 1 ? "" : "s"}.` : "No agent runs were active.", "ok");
+    });
+}
+
 // ---- Google Sheets host access (python_exec `sheet`) ----
 // The background CSV fetch needs docs.google.com host permission, which "On click" site
 // access withholds (activeTab covers content scripts, not the SW fetch). Request it — plus
@@ -286,6 +297,7 @@ $("agentHudInDevtools").addEventListener("change", () => chrome.storage.sync.set
 $("chatUrl").addEventListener("input", updateConnSummary);
 $("save").addEventListener("click", save);
 $("unload").addEventListener("click", freeVram);
+$("stopAllRuns").addEventListener("click", stopAllRuns);
 $("test").addEventListener("click", saveAndTest);
 $("refreshVram").addEventListener("click", refreshVram);
 $("sheetsAccess").addEventListener("click", enableSheetsAccess);

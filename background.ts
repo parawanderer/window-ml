@@ -3,7 +3,7 @@
 // server JSON is genuinely opaque, so it's typed `any`; our own data uses the
 // shared contract types.
 import type { MlConfig, ApiFormat, NeutralMessage, ToolCall, FetchLlmPayload, LlmResult, LoadedModel, ServerTool, JsonSchema, TokenUsage, StartRunPayload, SetApprovalPayload, CancelRunPayload, ResumeRunPayload, InjectMessagePayload, ApprovalDecision } from "./contract";
-import { DEFAULT_CONFIG, modelFilterAllows } from "./contract";   // single source of truth (see contract.ts)
+import { DEFAULT_CONFIG, modelFilterAllows, bgRunResumable } from "./contract";   // single source of truth (see contract.ts)
 import { runBackgroundAgent } from "./agent-host";   // design A: the background-hosted agent loop
 import type { ToolMeta } from "./agent-loop";
 import { externalSheetIds, googleSheetId } from "./dom";   // track approved external sheets across a run + the choke-point grants
@@ -866,14 +866,35 @@ const bgRuns = new Map<string, { p: StartRunPayload; tabId: number; messages: Ne
 // ~30s idle) can rehydrate an in-flight run instead of losing it. Storage holds ONLY running runs — deleted
 // the moment a run settles; the in-memory bgRuns above additionally keeps COMPLETED runs for a follow-up
 // RESUME (still eviction-bound, as before). Snapshot shape == a bgRuns entry.
-type BgRunSnap = { p: StartRunPayload; tabId: number; messages: NeutralMessage[]; sub?: import("./contract").SubcallUsage };
+type BgRunSnap = { p: StartRunPayload; tabId: number; messages: NeutralMessage[]; sub?: import("./contract").SubcallUsage; version?: string; ts?: number };
 const BGRUN_KEY = (runId: string): string => `ml_bgrun_${runId}`;
+// This extension build's version — stamped on every snapshot so a snapshot written by a PREVIOUS version
+// (a reload/update happened) is recognised and invalidated on hydrate rather than silently resumed.
+const EXT_VERSION: string = (() => { try { return chrome.runtime?.getManifest?.().version || ""; } catch { return ""; } })();
 const persistRun = (runId: string, snap: BgRunSnap): void => {
-    try { void chrome.storage?.local?.set({ [BGRUN_KEY(runId)]: snap }); } catch { /* storage unavailable */ }
+    // Stamp version + a fresh timestamp on every write so hydrate can tell a live (evicted-seconds-ago) run
+    // from a zombie (bgRunResumable), and reject a cross-version snapshot outright.
+    try { void chrome.storage?.local?.set({ [BGRUN_KEY(runId)]: { ...snap, version: EXT_VERSION, ts: Date.now() } }); } catch { /* storage unavailable */ }
 };
 const deleteRun = (runId: string): void => {
     try { void chrome.storage?.local?.remove(BGRUN_KEY(runId)); } catch { /* storage unavailable */ }
 };
+// Purge EVERY persisted background run (storage + any already-hydrated in-memory state). Called on an
+// extension install/update (a deliberate reload / a version bump): in-flight runs must NOT survive it — their
+// snapshot may be from old code, and a reload is often exactly how you try to kill a runaway.
+async function purgeAllBgRuns(): Promise<void> {
+    try {
+        const all = await chrome.storage.local.get(null);
+        const keys = Object.keys(all || {}).filter(k => k.startsWith("ml_bgrun_"));
+        if (keys.length) await chrome.storage.local.remove(keys);
+    } catch { /* storage unavailable */ }
+    // Drop anything hydrate already loaded this spawn so a page load can't re-adopt + resume it.
+    for (const runId of [...hydratedRuns]) {
+        const snap = bgRuns.get(runId);
+        if (snap) untrackRun(snap.tabId, runId);
+        bgRuns.delete(runId); hydratedRuns.delete(runId);
+    }
+}
 // On SW startup: rehydrate any in-flight runs from storage into bgRuns + re-track them against their tab
 // (activeRuns/runRebuilds) so the nav sensor + re-adopt find them. A run then continues via the existing
 // resume path (page-driven today; auto-resume-on-readopt is the next slice). No-op on a first, clean spawn.
@@ -889,6 +910,10 @@ async function hydratePersistedRuns(): Promise<void> {
             const snap = v as BgRunSnap;
             const runId = snap.p?.runId;
             if (!runId || typeof snap.tabId !== "number" || bgRuns.has(runId)) continue;
+            // Invalidate a snapshot from a different extension version (reload/update) or a stale one (zombie):
+            // delete the storage key and never resume it. Un-stamped legacy snapshots fail the version check
+            // here too — the self-heal for zombies written before this guard existed.
+            if (!bgRunResumable(snap, EXT_VERSION, Date.now())) { deleteRun(runId); continue; }
             bgRuns.set(runId, snap);
             hydratedRuns.add(runId);
             if (snap.p.crossPage !== false) trackRun(snap.tabId, runId, snap.p.rebuild);
@@ -1160,6 +1185,17 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             if (key.startsWith(`${runId}:`)) { pendingApprovals.delete(key); entry.resolve(false); }
         }
         return;   // fire-and-forget
+    }
+    if (message.type === "CANCEL_ALL_RUNS") {
+        // The popup's "Stop all agent runs" panic button — the guaranteed kill switch for a runaway that has
+        // no visible surface (e.g. a resumed run whose card never mounted). Abort every live controller,
+        // resolve every open approval gate, and purge all persisted snapshots so nothing re-adopts + resumes.
+        const n = runControllers.size;
+        for (const [, ctl] of [...runControllers]) { try { ctl.abort(); } catch { /* already gone */ } }
+        for (const [key, entry] of [...pendingApprovals]) { pendingApprovals.delete(key); try { entry.resolve(false); } catch { /* gone */ } }
+        void purgeAllBgRuns();
+        sendResponse({ data: { cancelled: n } });
+        return true;
     }
     if (message.type === "CDP_CLICK") {
         // Click a RESERVED surface (cross-origin iframe / declarative-or-native closed shadow) at a viewport
@@ -1956,7 +1992,12 @@ chrome.commands?.onCommand.addListener((command, tab) => {
 // Right-click "Ask window.ml about this" — the content-script shell resolves the clicked element's
 // semantic container + clean context and opens the Commander pre-loaded with it (see shell.ts). Created on
 // install (persists); re-created defensively in case the item was cleared. contextMenus may be absent in tests.
-chrome.runtime.onInstalled?.addListener(() => {
+chrome.runtime.onInstalled?.addListener((details) => {
+    // A deliberate reload or an update (NOT an idle SW respawn — that never fires onInstalled): invalidate any
+    // in-flight background run. Its snapshot may be from OLD code, and this is often how you kill a runaway —
+    // it must never silently resume across the reload. hydrate() may have loaded old snapshots into memory a
+    // moment ago on this same spawn; purge those too.
+    if (details?.reason === "install" || details?.reason === "update") void purgeAllBgRuns();
     try { chrome.contextMenus?.removeAll?.(() => chrome.contextMenus?.create({ id: "ml-ask-about-this", title: "Ask window.ml about this…", contexts: ["all"] })); } catch { /* not available */ }
 });
 chrome.contextMenus?.onClicked.addListener((info, tab) => {
