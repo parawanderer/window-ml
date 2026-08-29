@@ -62,8 +62,14 @@ export const exitAgentRun = (): void => { inAgentRun = Math.max(0, inAgentRun - 
 // so we tally them HERE, at the exact point we throw the event away, and the agent's meta tool + the UI
 // report the otherwise-invisible cost. Per-turn (reset by injected.ts's drive), matching `genTotal`.
 let subUsage = { prompt: 0, completion: 0, calls: 0 };
-export const resetSubcallUsage = (): void => { subUsage = { prompt: 0, completion: 0, calls: 0 }; };
-export const subcallUsage = (): { prompt: number; completion: number; calls: number } => ({ ...subUsage });
+// Per-vision-model breakdown of that spend (chat_metadata's "which model cost what"). The suppressed
+// chat-result events carry the resolved model, so keying by it is free at the point we already tally.
+const subByModel = new Map<string, { prompt: number; completion: number; calls: number }>();
+export const resetSubcallUsage = (): void => { subUsage = { prompt: 0, completion: 0, calls: 0 }; subByModel.clear(); };
+export const subcallUsage = (): import("./contract").SubcallUsage => ({
+    ...subUsage,
+    ...(subByModel.size ? { byModel: [...subByModel.entries()].map(([model, u]) => ({ model, ...u })) } : {}),
+});
 
 /** Emit a debug event to the sidebar via postMessage. No-op when there's no
  *  sidebar; buffered (not live) until the app handshakes; catches non-cloneable. */
@@ -74,9 +80,11 @@ export const emitDebug = (event: MlDebugEvent): void => {
         // place they can be counted). `chat-result` carries the resolved usage; a `chat`/`chat-error` doesn't.
         const u = (event as { usage?: { promptTokens?: number; completionTokens?: number } | null }).usage;
         if (event.kind === "chat-result" && u) {
-            subUsage.prompt += u.promptTokens || 0;
-            subUsage.completion += u.completionTokens || 0;
-            subUsage.calls += 1;
+            const p = u.promptTokens || 0, c = u.completionTokens || 0;
+            subUsage.prompt += p; subUsage.completion += c; subUsage.calls += 1;
+            const model = (event as { model?: string | null }).model || "(unknown)";
+            const m = subByModel.get(model) || { prompt: 0, completion: 0, calls: 0 };
+            m.prompt += p; m.completion += c; m.calls += 1; subByModel.set(model, m);
         }
         return;   // never buffer/emit orphan internal chats
     }

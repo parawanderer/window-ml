@@ -1491,6 +1491,46 @@ test("navigate({ verify: true }) folds a screenshot of the destination page into
     assert.match(JSON.stringify(capturedTurn2), /SHOTPNG/, "the destination screenshot reached the model as an inline image");
 });
 
+test("chat_metadata: reports a PER-MODEL breakdown of delegated vision sub-calls (which model cost what)", async () => {
+    // "the slop": chat_metadata already reports the AGGREGATE delegated spend; now it breaks it down by vision
+    // model. A delegated tool reports its byModel delta on the envelope → the background subTally merges it →
+    // chat_metadata (answered by the loop) renders per-model lines. Gated inherently on the tool being present.
+    let metaMessages = null;
+    let fetches = 0;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            fetches++;
+            if (fetches === 1) return jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "look", arguments: "{}" } }] }, finish_reason: "tool_calls" }] });
+            if (fetches === 2) return jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: "c2", type: "function", function: { name: "chat_metadata", arguments: "{}" } }] }, finish_reason: "tool_calls" }] });
+            metaMessages = call.body.messages;   // turn 3: the chat_metadata answer is now in the history
+            return jsonResponse({ choices: [{ message: { content: "done" } }] });
+        },
+        onTabMessage: async (_tabId, msg) => {
+            if (msg && msg.type === "RUN_TOOL_IN_PAGE" && msg.payload && msg.payload.name === "look") {
+                // Two vision sub-calls to DIFFERENT models on this one delegated look (e.g. reader + a re-look).
+                return { result: "looked", subUsage: { prompt: 1800, completion: 400, calls: 2, byModel: [{ model: "qwen3-vl:30b", prompt: 1000, completion: 200, calls: 1 }, { model: "gemma4:31b", prompt: 800, completion: 200, calls: 1 }] } };
+            }
+            return undefined;
+        },
+    });
+    await bg.send({ type: "START_RUN", payload: {
+        runId: "meta1", task: "look then report", systemPrompt: "sys",
+        tools: [
+            { name: "look", description: "see the screen", parameters: { type: "object", properties: {} }, requiresApproval: false, capabilities: ["vision"] },
+            { name: "chat_metadata", description: "run metadata", parameters: { type: "object", properties: {} }, requiresApproval: false, capabilities: ["meta"] },
+        ],
+        model: "m", think: null, maxSteps: 6, autoApprovePython: false, autoApproveReadonly: false, surface: "off",
+    } }, { tab: { id: 11 } });
+
+    const joined = (metaMessages || []).map((m) => (typeof m.content === "string" ? m.content : "")).join("\n");
+    assert.match(joined, /delegated vision sub-calls this session: 2200 tokens over 2 calls/, "the aggregate line");
+    assert.match(joined, /qwen3-vl:30b — 1 call, ~1200 tokens/, "per-model line: the bigger spender");
+    assert.match(joined, /gemma4:31b — 1 call, ~1000 tokens/, "per-model line: the smaller spender");
+    // Biggest spender first.
+    assert.ok(joined.indexOf("qwen3-vl:30b") < joined.indexOf("gemma4:31b"), "ordered by spend, descending");
+});
+
 test("CAPTURE_TAB waits out a transient rate-limit quota and retries (a screenshot burst)", async () => {
     // Chrome caps captureVisibleTab at ~2/sec; a burst of look()/locate() trips MAX_CAPTURE_VISIBLE_TAB_CALLS_
     // PER_SECOND. That's transient — wait out the window and retry instead of failing the step with an error the

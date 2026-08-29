@@ -12,7 +12,7 @@
 // No chrome, no DOM → builds standalone (dist/agent-loop.js) and is unit-tested against a mocked
 // model / executor / gate in tests/agent-loop.test.js.
 
-import type { AgentResult, AgentTranscriptEntry, ApprovalDecision, ToolCall, RenderDescriptor, ToolFeedback } from "./contract";
+import type { AgentResult, AgentTranscriptEntry, ApprovalDecision, ToolCall, RenderDescriptor, ToolFeedback, SubcallUsage } from "./contract";
 import { UNATTENDED_REFUSAL } from "./prompts";
 
 export type Approval = "readonly" | "sandbox" | "same-origin" | "user" | "denied" | "skipped" | "cancelled";
@@ -73,7 +73,7 @@ export interface AgentLoopDeps {
     chatMeta?(): Promise<ChatMeta | null>;
     // This turn's DELEGATED-sub-call token tally (look/locate/verify's own vision calls) — spend the loop
     // never sees directly, metered where those events are suppressed (bus.ts). Omit → no delegated calls.
-    subcallTokens?(): { prompt: number; completion: number; calls: number };
+    subcallTokens?(): SubcallUsage;
 }
 
 /** Model facts for chat_metadata, resolved per-world. `local`: true = Ollama-resident, false = cloud/remote,
@@ -110,7 +110,7 @@ function usageTokens(u: unknown): { prompt: number; completion: number } {
  *  conversation stats the loop tracks. Deliberately plain text — the model relays it. */
 function formatChatMeta(
     cm: ChatMeta | null,
-    stats: { promptLast: number; genTotal: number; calls: number; sub?: { prompt: number; completion: number; calls: number } },
+    stats: { promptLast: number; genTotal: number; calls: number; sub?: SubcallUsage },
     messages: unknown[],
     tools: ToolMeta[],
 ): string {
@@ -148,6 +148,10 @@ function formatChatMeta(
     const sub = stats.sub;
     if (sub && sub.calls) {
         L.push(`delegated vision sub-calls this session: ${sub.prompt + sub.completion} tokens over ${sub.calls} call${sub.calls === 1 ? "" : "s"} (locate/look/verify — a SEPARATE context each, not part of the occupancy above)`);
+        // Per-model breakdown — which vision model handled how many + at what cost (the "slop" the user wants
+        // visible). Biggest spender first; only when more than one model, else the aggregate line already says it.
+        const bm = (sub.byModel || []).slice().sort((a, b) => (b.prompt + b.completion) - (a.prompt + a.completion));
+        if (bm.length > 1) for (const m of bm) L.push(`  · ${m.model} — ${m.calls} call${m.calls === 1 ? "" : "s"}, ~${m.prompt + m.completion} tokens`);
     } else {
         const delegated: string[] = [];
         if (tools.some(t => t.name === "locate")) delegated.push("`locate`");

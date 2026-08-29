@@ -26,6 +26,14 @@ async function withSubUsage<T extends PageToolEnvelope>(fn: () => Promise<T>): P
     const env = await fn();
     const after = subcallUsage();
     const sub: SubcallUsage = { prompt: after.prompt - before.prompt, completion: after.completion - before.completion, calls: after.calls - before.calls };
+    // Per-model DELTA too, so the background tally can attribute the spend (chat_metadata "which model cost
+    // what") on the delegated path — not just the page loop. after minus before, per model, calls>0 only.
+    const b = new Map((before.byModel || []).map(x => [x.model, x]));
+    const byModel = (after.byModel || []).map(a => {
+        const prev = b.get(a.model);
+        return { model: a.model, prompt: a.prompt - (prev?.prompt || 0), completion: a.completion - (prev?.completion || 0), calls: a.calls - (prev?.calls || 0) };
+    }).filter(d => d.calls > 0);
+    if (byModel.length) sub.byModel = byModel;
     if (sub.calls > 0) env.subUsage = sub;
     return env;
 }

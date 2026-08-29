@@ -1231,10 +1231,24 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // seeded from the resumed run's stored tally (a per-turn reset would make chat_metadata report "none"
         // on a turn that hadn't yet made a sub-call, even after prior turns spent thousands), persisted below.
         const subTally = { prompt: priorSub?.prompt || 0, completion: priorSub?.completion || 0, calls: priorSub?.calls || 0 };
+        // Per-vision-model breakdown of the tally (chat_metadata "which model cost what"), seeded from the
+        // resumed run's stored breakdown and merged from each delegated tool's byModel delta. A Map for O(1)
+        // merge; snapSub() flattens it to a plain SubcallUsage for events/storage (deep — no shared refs).
+        const subByModel = new Map<string, { prompt: number; completion: number; calls: number }>();
+        for (const bm of priorSub?.byModel || []) subByModel.set(bm.model, { prompt: bm.prompt, completion: bm.completion, calls: bm.calls });
         const addSub = (s: import("./contract").SubcallUsage | undefined): void => {
             if (!s || !s.calls) return;
             subTally.prompt += s.prompt; subTally.completion += s.completion; subTally.calls += s.calls;
+            for (const bm of s.byModel || []) {
+                const cur = subByModel.get(bm.model) || { prompt: 0, completion: 0, calls: 0 };
+                cur.prompt += bm.prompt; cur.completion += bm.completion; cur.calls += bm.calls; subByModel.set(bm.model, cur);
+            }
         };
+        // Flatten the tally to a serializable SubcallUsage (fresh objects → safe to store/emit repeatedly).
+        const snapSub = (): import("./contract").SubcallUsage => ({
+            ...subTally,
+            ...(subByModel.size ? { byModel: [...subByModel.entries()].map(([model, u]) => ({ model, ...u })) } : {}),
+        });
         const abortCtl = new AbortController();   // CANCEL_RUN aborts this → the loop resolves { cancelled }
         // Set once this run's page navigates: the page-side caller that normally emits the lifecycle
         // agent/agent-result (overlay/devtools) is then GONE (its context died with the old document), so the
@@ -1248,7 +1262,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         if (p.crossPage !== false) trackRun(tabId, runId, p.rebuild);
         // Durable resume: snapshot the run NOW (before the first step) + after each step (the checkpoint dep),
         // so an SW evicted mid-run rehydrates from storage. Cleared when the run settles (finally).
-        persistRun(runId, { p, tabId, messages: resumeMessages || [], sub: { ...subTally } });
+        persistRun(runId, { p, tabId, messages: resumeMessages || [], sub: snapSub() });
         const toolMetas: ToolMeta[] = p.tools.map(t => ({ name: t.name, requiresApproval: t.requiresApproval, capabilities: t.capabilities }));
         const toolDefs = p.tools.map(t => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
         const approvedSheets = new Set<string>();   // external sheets approved this run (isSheetApproved)
@@ -1296,7 +1310,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 session: { hash: runId, turn: step }, ...ev, step, localStep: rawStep, seq,
                 // Running per-turn delegated-sub-call tally so the UI "+N sub" chip works on the background
                 // path too (the page path attaches subcallUsage() the same way). Omit when nothing delegated.
-                ...(subTally.calls ? { subUsage: { ...subTally } } : {}),
+                ...(subTally.calls ? { subUsage: snapSub() } : {}),
             };
             // Always fan to the PAGE (overlay / off card). For devtools ALSO fan to the panel — and the
             // page fan lets the optional corner card coexist with the panel (agentHudInDevtools); the
@@ -1505,10 +1519,10 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 },
                 isSheetApproved: (id) => approvedSheets.has(id),
                 navNeedsConsent,   // cross-origin nav → gate; same-site / already-consented → auto (see consentedOrigins)
-                checkpoint: (messages) => persistRun(runId, { p, tabId, messages, sub: { ...subTally } }),   // durable resume snapshot per step
+                checkpoint: (messages) => persistRun(runId, { p, tabId, messages, sub: snapSub() }),   // durable resume snapshot per step
                 // This turn's delegated vision sub-call tally (accumulated from each delegated tool's envelope
                 // delta in delegateTool) — so chat_metadata reports the real number on the background path too.
-                subcallTokens: () => ({ ...subTally }),
+                subcallTokens: () => snapSub(),
                 emit: (ev) => emitStep(ev as Record<string, unknown>),
                 drainInbox: () => (runInboxes.get(runId)?.queue || []).splice(0),   // a.say() steering (INJECT_MESSAGE)
                 signal: abortCtl.signal,
@@ -1550,7 +1564,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 // turn 1's — the reducer patches by seq, so the follow-up's tool steps OVERWROTE turn 1's and
                 // vanished from the sidebar/panel (and scrambled the export's chat-log order).
                 const resumeP = { ...p, stepBase: stepBase + runMaxStep, seqBase: seqBase + runMaxSeq };
-                bgRuns.set(runId, { p: resumeP, tabId, messages, sub: { ...subTally } });
+                bgRuns.set(runId, { p: resumeP, tabId, messages, sub: snapSub() });
                 emitLifecycle({
                     kind: "agent-result", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: res.steps },
                     summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled,
