@@ -2075,6 +2075,9 @@ const cardShowWorkHash = signal<string>("");
 const cardMaximizedHash = signal<string>("");   // the run whose card is MAXIMISED (a near-full-page corner window)
 const composerOpen = signal(false);          // the Spotlight composer — the HUD morphs into a task input
 const composerElement = signal<ElementContext | null>(null);   // right-click "ask about this" → the element pill's context
+// Where the composer's send goes: a NEW run (default, Spotlight/"ask about this") or APPENDED to an already-
+// open run (right-click "add to current run" → steer if it's running, follow-up if idle).
+const composerTarget = signal<{ mode: "new" } | { mode: "append"; hash: string }>({ mode: "new" });
 const composerMaxSteps = signal(20);         // step budget for a UI-started run (persists across opens)
 const STEP_BUDGETS = [10, 20, 50];           // the segmented presets in the composer
 const composerStarting = signal(0);          // timestamp: a UI run was sent, awaiting its first event (bridge pill)
@@ -2683,10 +2686,22 @@ function ComposerCard() {
     // Focus after a frame so the container's morph (and the shell's frame.focus) has landed.
     useEffect(() => { const id = requestAnimationFrame(() => ref.current?.focus()); return () => cancelAnimationFrame(id); }, []);
     const el = composerElement.value;   // right-click "ask about this" context, if any
-    const close = () => { composerOpen.value = false; composerElement.value = null; };
+    const target = composerTarget.value;   // NEW run (default) vs APPEND to the open run
+    const appendRun = target.mode === "append" ? sessionMap.get(target.hash) : undefined;
+    const close = () => { composerOpen.value = false; composerElement.value = null; composerTarget.value = { mode: "new" }; };
     const send = () => {
         const t = text.trim();
         if (!t && !att.imgs.length && !el) return;   // allow an image-only OR element-only task
+        // APPEND mode ("add to current run"): route to the open session — the page steers a running loop
+        // (say) or starts a follow-up turn (run), and folds any element context into the message. No model
+        // pre-flight (the run already resolved one). Optimistically flip it to working so the card morphs now.
+        if (target.mode === "append") {
+            window.parent.postMessage({ __mlSidebarApp: "sessionSend", hash: target.hash, text: t, images: att.imgs, elementContext: el || undefined }, "*");
+            const s = sessionMap.get(target.hash);
+            if (s) { s.status = "pending"; s.ended = false; s.lastTs = Date.now(); rev.value++; }
+            close();
+            return;
+        }
         // Pre-flight: a HUD run with no model at all would flash the orb, then fail at the background's
         // prepareRequest with "No model configured". Catch it HERE instead — an inline nudge, so a fresh
         // install that hasn't picked a model gets an actionable message, not a cryptic failure. A per-call
@@ -2710,9 +2725,11 @@ function ComposerCard() {
         <div class="card-app" data-rev={rev.value}>
             <div class="card-head">
                 <span class="card-bot" aria-hidden="true">🤖</span>
-                <span class="card-head-txt">New task</span>
+                <span class="card-head-txt" title={appendRun ? (appendRun.title || appendRun.task || "") : undefined}>
+                    {target.mode === "append" ? (appendRun?.status === "pending" ? "Steer this run" : "Add to run") : "New task"}
+                </span>
                 <span class="sp" />
-                <ComposerModelBar />
+                {target.mode === "append" ? null : <ComposerModelBar />}
                 <button class="card-x" aria-label="Cancel" title="Cancel" onClick={close}>✕</button>
             </div>
             <div class="card-body">
@@ -3328,6 +3345,15 @@ function onMessage(e: MessageEvent): void {
     }
     else if (typeof d.__mlSidebarComposer === "string") { composerOpen.value = d.__mlSidebarComposer === "open"; if (d.__mlSidebarComposer !== "open") composerElement.value = null; }   // Spotlight bar
     else if (d.__mlComposerElement) composerElement.value = d.__mlComposerElement as ElementContext;   // right-click "ask about this" → element pill
+    else if (d.__mlAddToCurrentRun) {
+        // Right-click "Add to current run": open the composer targeting the OPEN run (append) instead of a
+        // fresh one. If nothing's open, degrade to a normal new-run composer so the entry is never a dead-end.
+        const cur = selectedRun();
+        const ctx = d.__mlAddToCurrentRun.ctx;
+        composerElement.value = (ctx && typeof ctx.selector === "string") ? ctx as ElementContext : null;
+        composerTarget.value = cur ? { mode: "append", hash: cur.hash } : { mode: "new" };
+        composerOpen.value = true;
+    }
     else if (d.__mlSidebarCardEndDrag) endActiveCardDrag?.();   // shell's safety net force-ended a stuck drag → clean up our listeners
     else if (d.__mlSteerRun && typeof d.__mlSteerRun.hash === "string") {
         // Orb right-click → "Steer this run…": open the inline steer box on this run's card. Uncollapse it

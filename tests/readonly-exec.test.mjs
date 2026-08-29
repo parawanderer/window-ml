@@ -167,6 +167,10 @@ const OUT = {
     "assignment": `let x = 1; x = 2; x`,
     "new": `new Object()`,
     "tagged template": "tag`hi ${1}`",   // a plain template is supported; a TAGGED one (a call) is not
+    // A REGEX LITERAL isn't lexed (the tokenizer has no regex path — `/` is only comment/division), so a
+    // survey that normalizes whitespace with `.replace(/\s+/g, ' ')` falls back to approval. The whole
+    // parse fails on the regex even though spread / `?.` / block-body arrows / `||` are all in-dialect.
+    "regex literal": `'a  b'.replace(/\\s+/g, ' ')`,
 };
 for (const [name, js] of Object.entries(OUT)) {
     test(`falls back (NotInDialect): ${name}`, async () => {

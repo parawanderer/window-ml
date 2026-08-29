@@ -717,8 +717,12 @@ function onWindowMessage(e: MessageEvent): void {
     // from the handle's live state whether to STEER (say) or start a new turn (run), or cancels the run.
     // Origin-checked (real iframe); reaches only this page's own handle registry — nothing cross-origin.
     // Allow an IMAGE-ONLY send (a pasted screenshot with no text) — not just non-empty text.
-    if (d.__mlSidebarApp === "sessionSend" && frame && e.source === frame.contentWindow && typeof d.hash === "string" && typeof d.text === "string" && (d.text.trim() || cleanImages(d.images))) {
-        window.postMessage({ __mlSessionSend: { hash: d.hash, text: d.text, images: cleanImages(d.images) } }, "*");
+    if (d.__mlSidebarApp === "sessionSend" && frame && e.source === frame.contentWindow && typeof d.hash === "string" && typeof d.text === "string") {
+        // An `elementContext` (from the right-click "Add to current run") lets an image-less/text-less send
+        // through — the element reference IS the payload; the page folds it into the appended message.
+        const elementContext = (d.elementContext && typeof d.elementContext.selector === "string") ? d.elementContext : undefined;
+        if (d.text.trim() || cleanImages(d.images) || elementContext)
+            window.postMessage({ __mlSessionSend: { hash: d.hash, text: d.text, images: cleanImages(d.images), elementContext } }, "*");
         return;
     }
     if (d.__mlSidebarApp === "sessionCancel" && frame && e.source === frame.contentWindow && typeof d.hash === "string") {
@@ -846,6 +850,7 @@ function onWindowMessage(e: MessageEvent): void {
             for (const ev of bgRing) frame.contentWindow?.postMessage(ev, "*");
             bgRing.length = 0;
             if (composerPendingOpen) { composerPendingOpen = false; frame.contentWindow?.postMessage({ __mlSidebarComposer: "open" }, "*"); if (composerPendingCtx) { frame.contentWindow?.postMessage({ __mlComposerElement: composerPendingCtx }, "*"); composerPendingCtx = null; } try { frame.focus(); } catch { /* ignore */ } }
+            if (addToRunPending !== undefined) { frame.contentWindow?.postMessage({ __mlAddToCurrentRun: { ctx: addToRunPending } }, "*"); addToRunPending = undefined; try { frame.focus(); } catch { /* ignore */ } }
             return;
         }
         window.postMessage({ __mlSidebar: "ready" }, "*");
@@ -1007,6 +1012,7 @@ addEventListener("contextmenu", e => { const t = e.target; if (t instanceof Elem
 // handshakes. Only where the HUD lives (off / devtools-coexist) — overlay has its own surface (a follow-up).
 let composerPendingOpen = false;
 let composerPendingCtx: ElementContext | null = null;   // a right-click's resolved context, if any
+let addToRunPending: ElementContext | null | undefined = undefined;   // "Add to current run" ctx awaiting the app's ready
 function openComposer(ctx: ElementContext | null = null): void {
     if (!hudActive()) return;
     if (!cardHost) mountCard();
@@ -1105,6 +1111,19 @@ chrome.runtime.onMessage.addListener((msg) => {
             try { ctx = domToContext(resolveContextContainer(lastAskEl), lastAskEl); } catch { /* fall back to a plain composer */ }
         }
         openComposer(ctx);
+    }
+    // Right-click "Add this to the current run": resolve the element the SAME way, but hand it to the app to
+    // APPEND to whichever run is open (the app knows its selected/current session; the shell doesn't). The
+    // app opens the composer in "append" mode, or falls back to a fresh one if nothing's open.
+    else if (msg?.type === "ML_ADD_TO_CURRENT_RUN") {
+        let ctx: ElementContext | null = null;
+        if (lastAskEl && lastAskEl.isConnected) {
+            try { ctx = domToContext(resolveContextContainer(lastAskEl), lastAskEl); } catch { /* fall back to a plain composer */ }
+        }
+        if (!hudActive()) return;
+        if (!cardHost) mountCard();
+        if (cardReady && frame) { frame.contentWindow?.postMessage({ __mlAddToCurrentRun: { ctx } }, "*"); try { frame.focus(); } catch { /* ignore */ } }
+        else { addToRunPending = ctx; }   // flushed on the app's ready
     }
     // DevTools session composer (panel → background → here): relay to the PAGE, which drives the handle
     // by hash (steer/run/cancel). Any mode — the page's handle registry is what acts, not this shell.

@@ -1998,11 +1998,22 @@ chrome.runtime.onInstalled?.addListener((details) => {
     // it must never silently resume across the reload. hydrate() may have loaded old snapshots into memory a
     // moment ago on this same spawn; purge those too.
     if (details?.reason === "install" || details?.reason === "update") void purgeAllBgRuns();
-    try { chrome.contextMenus?.removeAll?.(() => chrome.contextMenus?.create({ id: "ml-ask-about-this", title: "Ask window.ml about this…", contexts: ["all"] })); } catch { /* not available */ }
+    try {
+        chrome.contextMenus?.removeAll?.(() => {
+            // Fresh run.
+            chrome.contextMenus?.create({ id: "ml-ask-about-this", title: "Ask window.ml about this…", contexts: ["all"] });
+            // Append to the run already open in the HUD (steer if running, follow-up if idle). Falls back to a
+            // fresh composer page-side when nothing's open, so it's never a dead entry.
+            chrome.contextMenus?.create({ id: "ml-add-to-run", title: "Add this to the current window.ml run…", contexts: ["all"] });
+        });
+    } catch { /* not available */ }
 });
 chrome.contextMenus?.onClicked.addListener((info, tab) => {
-    if (info.menuItemId === "ml-ask-about-this" && tab?.id != null)
+    if (tab?.id == null) return;
+    if (info.menuItemId === "ml-ask-about-this")
         chrome.tabs.sendMessage(tab.id, { type: "ML_ASK_ABOUT_THIS" }).catch(() => { /* no content script on this tab */ });
+    else if (info.menuItemId === "ml-add-to-run")
+        chrome.tabs.sendMessage(tab.id, { type: "ML_ADD_TO_CURRENT_RUN" }).catch(() => { /* no content script on this tab */ });
 });
 
 // ---- Google Sheets CSV fetch (python_exec `sheet`) ----

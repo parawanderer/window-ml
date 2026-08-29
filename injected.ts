@@ -2207,12 +2207,17 @@ class AgentHandle implements MlAgentHandle, AgentControl {
 
     window.addEventListener("message", (e: MessageEvent) => {
         if (e.source !== window || !e.data) return;
-        const d = e.data as { __mlSessionSend?: { hash: string; text: string; images?: string[] }; __mlCancelSession?: { hash: string } };
+        const d = e.data as { __mlSessionSend?: { hash: string; text: string; images?: string[]; elementContext?: import("./contract").ElementContext }; __mlCancelSession?: { hash: string } };
         try {
             if (d.__mlSessionSend) {
                 const hash = String(d.__mlSessionSend.hash);
-                const text = String(d.__mlSessionSend.text || "");
+                const rawText = String(d.__mlSessionSend.text || "");
                 const images = Array.isArray(d.__mlSessionSend.images) ? d.__mlSessionSend.images : undefined;
+                // Right-click "Add to current run" carries an element context — fold it into the message the
+                // same way a fresh "ask about this" run does (askAboutTask), so an appended turn/steer gets the
+                // element's clean content + selector. An element-only send (no typed text) is then non-empty.
+                const ec = d.__mlSessionSend.elementContext;
+                const text = (ec && typeof ec.selector === "string") ? askAboutTask(rawText, ec) : rawText;
                 if (!text && !(images && images.length)) return;   // allow an image-only follow-up
                 const h = handleRegistry.get(hash);
                 // An AGENT handle holds live state: steer a RUNNING loop (say — text only, no image mid-steer),

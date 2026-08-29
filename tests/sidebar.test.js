@@ -2663,6 +2663,60 @@ test("card surface: the steer box auto-closes when the run finishes", async () =
     assert.ok(w.window.document.querySelector(".card-reply, .card-answer"), "the finished card shows its answer/reply instead");
 });
 
+test("card surface: 'Add to current run' opens the composer in APPEND mode and sends to the open session", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    await w.raw({ __mlSidebarSurface: "card" });
+    const hash = "addrun";
+    // A live run is open in the HUD.
+    await w.dispatch(agentStart(hash, "work on the page", "m"));
+    await w.dispatch(agentStep(hash, 1, { seq: 1, tool: "findByText", arguments: { text: "x" }, result: "ok" }));
+    await w.flush();
+
+    // Right-click "Add this to the current run" → the shell resolves the element and posts this in.
+    const ctx = { selector: "div#price", role: "region", anchorText: "Pricing", text: "Pro plan $20/mo" };
+    await w.raw({ __mlAddToCurrentRun: { ctx } });
+    await w.flush();
+    // The composer opens in APPEND mode: the element pill shows, and the head names the target (not "New task").
+    assert.ok(w.window.document.querySelector(".card-cmp-input"), "the composer opened");
+    assert.ok(w.window.document.querySelector(".el-pill"), "the element context rides along as a pill");
+    assert.match(w.window.document.querySelector(".card-head-txt").textContent, /Steer|Add to run/, "the head shows it's appending, not a new task");
+
+    // Type + send → routes to sessionSend for the OPEN run (with the element context), NOT a fresh startRun.
+    const ta = w.window.document.querySelector(".card-cmp-input");
+    ta.value = "what does this cost?";
+    ta.dispatchEvent(new w.window.Event("input", { bubbles: true }));
+    await w.tick();
+    w.window.document.querySelector(".appr-btn.yes").click();
+    await w.tick();
+    const sent = posted.find(m => m.__mlSidebarApp === "sessionSend");
+    assert.ok(sent, "it posts a sessionSend, not a startRun");
+    assert.ok(!posted.some(m => m.__mlSidebarApp === "startRun"), "no fresh run was started");
+    assert.equal(sent.hash, hash, "targets the open run's hash");
+    assert.equal(sent.text, "what does this cost?", "carries the typed text");
+    assert.equal(sent.elementContext.selector, "div#price", "carries the element context to fold in page-side");
+});
+
+test("card surface: 'Add to current run' with NO open run falls back to a fresh composer (never a dead entry)", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off", model: "m" } });   // a model is set so the new-run path isn't blocked by the preflight
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    await w.raw({ __mlSidebarSurface: "card" });
+    // Nothing running/open.
+    await w.raw({ __mlAddToCurrentRun: { ctx: { selector: "p#x", role: "paragraph", text: "hi" } } });
+    await w.flush();
+    assert.ok(w.window.document.querySelector(".card-cmp-input"), "the composer still opens");
+    const ta = w.window.document.querySelector(".card-cmp-input");
+    ta.value = "summarise this";
+    ta.dispatchEvent(new w.window.Event("input", { bubbles: true }));
+    await w.tick();
+    w.window.document.querySelector(".appr-btn.yes").click();
+    await w.tick();
+    assert.ok(posted.some(m => m.__mlSidebarApp === "startRun"), "with no open run it starts a FRESH run");
+    assert.ok(!posted.some(m => m.__mlSidebarApp === "sessionSend"), "…not an append");
+});
+
 test("card surface: a NEW round with no answer CLEARS the prior answer media (reset to 0)", async () => {
     const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
     const posted = [];
