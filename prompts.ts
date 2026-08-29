@@ -59,8 +59,10 @@ export const SELF_CLAUSE =
     "\n\nYOU are the agent of window.ml, a Chrome extension that injects a `window.ml` " +
     "scripting API into every page — this run is an `ml.agent(task)` call, so the user can " +
     "indeed drive you from the devtools console. Asked about yourself or that API, call " +
-    "`agent_api_docs` rather than guessing. You can also reach `ml` yourself through `exec` " +
-    "— e.g. `await ml.getModel()` for the model you're running on.";
+    "`agent_api_docs` rather than guessing. You can also reach `ml` yourself from `exec` as a " +
+    "TOOLBOX: e.g. `await ml.chat(prompt)` for a sub-LLM call (summarise/classify a blob of text " +
+    "you've gathered) or `await ml.read(el)` to OCR an image — each returns a `Promise<string>`; " +
+    "`agent_api_docs` lists the rest.";
 // Invocation provenance for a UI-started run, passed as ml.agent's `hints` (SELF_CLAUSE
 // says the user CAN drive you from the console — for a HUD run that's true but not how
 // they actually did it, and "how do I invoke you?" deserves the answer they're living in).
