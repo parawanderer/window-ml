@@ -36,6 +36,9 @@ const ML = {
     read: async () => { throw new Error("RAN: read"); },
     screenshot: async () => { throw new Error("RAN: screenshot"); },
     pythonExec: async () => { throw new Error("RAN: pythonExec"); },
+    // A pure, SYNC helper (the bounded counter loop) — on the read-only facade so `ml.range(n).map(…)` runs
+    // without approval. Kept trivial here; util.mlRange is unit-tested separately.
+    range: (a, b, step = 1) => { const start = b === undefined ? 0 : a, stop = b === undefined ? a : b; const out = []; for (let i = 0, v = start; i < Math.max(0, Math.ceil((stop - start) / step)); i++, v += step) out.push(v); return out; },
 };
 const run = (js, doc = world(), ml = ML) => evalReadonly(js, doc, ml);
 const outOfDialect = e => e instanceof NotInDialect || e instanceof Denied;
@@ -203,6 +206,18 @@ test("regex methods run: match / split / test / a RegExp.exec", async () => {
 test("division still lexes as division (not a regex) after a value token", async () => {
     assert.equal((await run(`12 / 2 / 3`)).value, 2);
     assert.equal((await run(`[1,2,3,4].length / 2`)).value, 2);
+});
+
+// --- bounded counter loops: ml.range() (facade) + the [...Array(n).keys()] idiom, no for/while needed ---
+
+test("ml.range() is a bounded counter loop on the read-only facade (range(n) / start,stop / step)", async () => {
+    assert.deepEqual((await run(`ml.range(5).map(i => i * 10)`)).value, [0, 10, 20, 30, 40]);
+    assert.deepEqual((await run(`ml.range(2, 6)`)).value, [2, 3, 4, 5]);
+    assert.deepEqual((await run(`ml.range(10, 0, -2)`)).value, [10, 8, 6, 4, 2]);
+});
+test("[...Array(n).keys()] resolves — Array(n) is a callable root now", async () => {
+    assert.deepEqual((await run(`[...Array(4).keys()]`)).value, [0, 1, 2, 3]);
+    assert.deepEqual((await run(`[...Array(3).keys()].map(i => i + 1)`)).value, [1, 2, 3]);
 });
 test("a regex literal is DENIED nothing extra — it can't reach an effectful method", async () => {
     // The regex is pure; the escape battery elsewhere still holds. A malformed regex just falls back.

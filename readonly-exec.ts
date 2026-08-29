@@ -476,7 +476,11 @@ const ALLOWED_METHODS = new Set([
 // same-origin read; bound to the view in evalReadonly so it never hands back `window`, and its result's
 // walk-back to window is cut by DENIED_PROPS). Historic :visited history-sniffing is dead — every modern
 // browser returns the UNVISITED style through getComputedStyle.
-const CALLABLE_ROOTS = new Set(["String", "Number", "Boolean", "parseInt", "parseFloat", "isNaN", "isFinite", "getComputedStyle"]);
+// `Array(n)` is included so the idiomatic bounded counter loop `[...Array(n).keys()].map(…)` resolves —
+// pure (a holey array of length n), and its only new failure mode (a huge spread) is the same unbounded
+// allocation `Array.from({length:n}, …)` already permits, not a new capability. `Array.from`/`Array.isArray`
+// stay reachable as member calls regardless.
+const CALLABLE_ROOTS = new Set(["String", "Number", "Boolean", "Array", "parseInt", "parseFloat", "isNaN", "isFinite", "getComputedStyle"]);
 
 // The `window.ml` methods this dialect may call — side-effect-free reads: no privilege, no page
 // mutation, no tokens/VRAM. Everything else is simply ABSENT from the facade we build, so it can't
@@ -485,7 +489,7 @@ const CALLABLE_ROOTS = new Set(["String", "Number", "Boolean", "parseInt", "pars
 // already the non-secret MlPublicConfig subset — no URL, no API key. `queryAll` returns live Elements
 // (not plain data), but those flow through the SAME read-mediation as document.querySelectorAll's —
 // a pure shadow/iframe-piercing query, no new capability over what the dialect already reaches.
-export const ML_READONLY_METHODS = ["getModel", "config", "models", "capabilities", "ps", "serverTools", "queryAll"] as const;
+export const ML_READONLY_METHODS = ["getModel", "config", "models", "capabilities", "ps", "serverTools", "queryAll", "range"] as const;
 
 /** Build the `ml` object the dialect sees: ONLY {@link ML_READONLY_METHODS}, bound to the real API.
  *  A purpose-built facade rather than `window.ml` itself, so the free set is enforced by what exists,

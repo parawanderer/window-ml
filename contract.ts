@@ -1235,6 +1235,10 @@ export interface MlApi {
     capabilities(model?: string | null): Promise<string[] | null>;
     /** Gets the `default` model the user has configured for tasks */
     getModel(): Promise<string | null>;
+    /** A bounded integer range, like Python's `range()` — a terminating counter loop for `exec` (no
+     *  `for`/`while`): `ml.range(8).map(i => …)`. `range(stop)` / `range(start, stop)` / `range(start,
+     *  stop, step)`. Returns a real array capped at 100k (over → throws), so it can never run away. */
+    range(a: number, b?: number, step?: number): number[];
     config(): Promise<MlPublicConfig>;
     setModel(model: string): Promise<string>;
     ps(): Promise<LoadedModel[]>;

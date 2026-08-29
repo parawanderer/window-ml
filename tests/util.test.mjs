@@ -4,7 +4,23 @@
 // in the VIEWPORT.
 import { test } from "node:test";
 import assert from "node:assert";
-import { projectShotPoint, projectShotBox, browserInfo } from "../util.ts";
+import { projectShotPoint, projectShotBox, browserInfo, mlRange, RANGE_MAX } from "../util.ts";
+
+// ---- mlRange: the bounded counter loop (ml.range) ----
+test("mlRange: the three forms (stop / start,stop / start,stop,step) incl. a descending range", () => {
+    assert.deepEqual(mlRange(5), [0, 1, 2, 3, 4]);
+    assert.deepEqual(mlRange(2, 6), [2, 3, 4, 5]);
+    assert.deepEqual(mlRange(0, 10, 3), [0, 3, 6, 9]);
+    assert.deepEqual(mlRange(5, 0, -1), [5, 4, 3, 2, 1]);
+    assert.deepEqual(mlRange(3, 3), []);              // empty range
+    assert.deepEqual(mlRange(0), []);
+});
+test("mlRange: throws on a length over the cap, a zero step, or non-finite args (never runs away)", () => {
+    assert.throws(() => mlRange(RANGE_MAX + 1), /too large/);
+    assert.throws(() => mlRange(0, 10, 0), /non-zero/);
+    assert.throws(() => mlRange(Infinity), /finite/);
+    assert.throws(() => mlRange(0, NaN), /finite/);
+});
 
 // ---- browserInfo: which Chromium are we in? ----
 // It decides the URL scheme we hand the user for their settings pages — `chrome://extensions/

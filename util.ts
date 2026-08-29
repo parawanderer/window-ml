@@ -127,6 +127,33 @@ export const pageContext = (): string => {
  */
 export const settle = (ms: number): Promise<void> => new Promise(r => (typeof setTimeout === "function" ? setTimeout(r, ms) : r()));
 
+// The largest array `ml.range` will build. A range is a FINITE list you then `.map`/`.reduce` over — the
+// terminate-by-construction counter loop for read-only `exec` (no `for`/`while` needed). The cap extends
+// that guarantee to allocation: `range(1e12)` can't OOM the page — over the cap it throws instead.
+export const RANGE_MAX = 100_000;
+/**
+ * A bounded integer range, like Python's `range()`. Forms: `range(stop)`, `range(start, stop)`,
+ * `range(start, stop, step)`. Returns a real array (so `.map`/`.filter`/`.reduce` iterate a finite list —
+ * no unbounded loop). Throws a RangeError on non-finite args, a zero step, or a length over {@link RANGE_MAX}.
+ * Pure; unit-tested. Prefer this over a hand-rolled loop in `exec` — it can't run away.
+ * @param {number} a `stop` (one-arg form) or `start`.
+ * @param {number} [b] `stop` when `a` is `start`.
+ * @param {number} [step=1] Increment; may be negative for a descending range.
+ * @returns {number[]} The integer sequence.
+ */
+export function mlRange(a: number, b?: number, step: number = 1): number[] {
+    const start = b === undefined ? 0 : Number(a);
+    const stop = b === undefined ? Number(a) : Number(b);
+    const s = Number(step);
+    if (!Number.isFinite(start) || !Number.isFinite(stop) || !Number.isFinite(s) || s === 0)
+        throw new RangeError("ml.range: start/stop/step must be finite and step must be non-zero");
+    const n = Math.max(0, Math.ceil((stop - start) / s));
+    if (n > RANGE_MAX) throw new RangeError(`ml.range: too large (${n} > ${RANGE_MAX})`);
+    const out: number[] = [];
+    for (let i = 0, v = start; i < n; i++, v += s) out.push(v);
+    return out;
+}
+
 // Smallest CSS-px width/height an element may have and still be worth
 // screenshotting. Below this (a 1px spacer, a collapsed box) the crop is a
 // useless sliver; ml.screenshot rejects instead of sending it. Kept tiny so

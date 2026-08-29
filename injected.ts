@@ -35,8 +35,8 @@ import type {
 import { detectGroundingModel, DEFAULT_GROUNDING_RANGE } from "./contract";
 import { evalReadonly } from "./readonly-exec";
 import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement, navTarget } from "./dom";
-import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_NOTE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_EXEC_NOTE, IFRAME_CLAUSE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, NAV_OFF_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, askAboutTask } from "./prompts";
-import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, markSeen, PT_LOOK_RADIUS, BOX_RE, resolveBox, agentState } from "./util";
+import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_NOTE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_EXEC_NOTE, IFRAME_CLAUSE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, EXEC_RANGE_CLAUSE, NAV_OFF_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, askAboutTask } from "./prompts";
+import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, markSeen, PT_LOOK_RADIUS, BOX_RE, resolveBox, agentState, mlRange } from "./util";
 import type { ShotBox, ServerTool, VisionMemory, RebuildConfig, AnswerMedia } from "./contract";
 import { annotate, pickAccentColorForTarget } from "./locate";
 import { suspiciousArgsWarning, suspiciousChars } from "./security";
@@ -699,6 +699,9 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 // model must compute, never guess. Mutually exclusive so the prompt isn't doubled.
                 if (toolset.some(t => t.name === "python_exec")) systemPrompt += PYTHON_CLAUSE;
                 else if (toolset.some(t => t.name === "exec")) systemPrompt += EXEC_COMPUTE_CLAUSE;
+                // exec (JS) style: functional idioms + ml.range instead of loops/mutation. Independent of the
+                // compute clause above (applies even alongside python_exec, since it's about exec JS specifically).
+                if (toolset.some(t => t.name === "exec")) systemPrompt += EXEC_RANGE_CLAUSE;
                 // Headless run: tell the model upfront it's unattended (read-only only), so it doesn't
                 // waste steps attempting clicks/typing/mutations that the gate below will just refuse.
                 if (unattended) systemPrompt += UNATTENDED_CLAUSE;
@@ -1991,6 +1994,18 @@ class AgentHandle implements MlAgentHandle, AgentControl {
         getModel: async function(): Promise<string | null> {
             return makeBackgroundTaskPromise("GET_MODEL_REQUEST", "GET_MODEL_RESPONSE", {});
         },
+        /**
+         * A bounded integer range, like Python's `range()` — the terminating counter loop for `exec`
+         * (no `for`/`while` needed): `ml.range(8).map(i => …)`. Forms: `range(stop)`, `range(start, stop)`,
+         * `range(start, stop, step)`. Returns a real array capped at 100k elements (over → throws), so it
+         * can never run away or blow up memory.
+         *
+         * @param {number} a `stop`, or `start` when `b` is given.
+         * @param {number} [b] `stop`.
+         * @param {number} [step=1] Increment (may be negative).
+         * @returns {number[]} The integer sequence.
+         */
+        range: mlRange,
         /**
          * Get the non-secret saved config the page is allowed to read:
          * { model, ocrModel, apiFormat }. The server URL and API key are never
