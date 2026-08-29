@@ -1005,7 +1005,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             // buildMessages continues the live history, and maxSteps is read fresh each step (handle can
             // raise it mid-run). answered resets per turn; the seq base advances so steps stay session-unique.
             const drive = async (t: string): Promise<AgentResult> => {
-                answered.length = 0;
+                answered.length = 0; answerMedia.length = 0;   // both reflect THIS turn's answers only (mirror each other)
                 enterAgentRun();   // suppress orphan chat sessions from a tool's internal ml.chat; finally-decremented
                 try {
                     const r = await runAgentLoop(t, { tools: toolMetas, maxSteps: () => control.maxSteps, signal, unattended }, deps);

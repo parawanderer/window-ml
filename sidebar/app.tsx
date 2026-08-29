@@ -124,7 +124,9 @@ function onDebug(ev: MlDebugEvent): void {
         // track the LATEST for the title + row dot.
         s.answers = [...(s.answers || []), { text: ev.summary, ts: ev.ts, atStep: endStep, status, hitCap: ev.hitCap, cancelled: !!ev.cancelled, error: ev.error || undefined }];
         s.summary = ev.summary; s.hitCap = ev.hitCap; s.error = ev.error || undefined; s.cancelled = !!ev.cancelled;
-        if (ev.answerMedia && ev.answerMedia.length) s.answerMedia = ev.answerMedia;   // for the HUD card (not the debug detail)
+        // REPLACE (not merge): each turn's result carries THIS turn's answer media, so a new round that
+        // designates nothing CLEARS the old answer (resets to 0) — the card never shows a stale prior answer.
+        s.answerMedia = (ev.answerMedia && ev.answerMedia.length) ? ev.answerMedia : undefined;   // HUD card only
         s.status = status; s.lastTs = ev.ts;
         // A finished run has no in-flight step: clear any lingering pending/awaiting flags so a straggler START
         // that arrived BEFORE this result (a background run's late tool fan) doesn't render a phantom "running…"

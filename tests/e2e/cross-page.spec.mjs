@@ -502,3 +502,27 @@ test("cross-page: the composer Stop cancels a background run blocked on an appro
     await configureExtension(ext.sw, { debugMode: "off" });   // restore for any later run
     await page.close();
 });
+
+// answer → HUD: a designated element's SCREENSHOT renders in the "Task complete" card (the user-facing
+// deliverable). off mode → the corner HUD card is that surface; the debug sidebar deliberately shows none of
+// it. This proves the real capture → HUD-render pipeline end-to-end in a browser (single + MULTIPLE elements).
+test("answer → HUD: designated elements' screenshots render in the completion card (multiple)", async () => {
+    const page = await ext.context.newPage();
+    await page.goto(site.url + "/step3");   // a page with several visible <p> elements
+    await waitForMl(page);
+    fake.setScript([
+        { tool: "answer", args: { selector: "p", note: "the paragraphs" } },   // a selector matching MULTIPLE → a gallery
+        { content: "Returned the paragraphs." },
+    ]);
+    // A background-hosted run (off mode + the default toolset's exec ⚠) → the corner HUD card surfaces it.
+    await page.evaluate(() => { window.ml.agent("Return the paragraphs as the answer.", { env: false }); return true; });
+
+    // The HUD card iframe (sidebar.html) shows the answer-media gallery with REAL screenshot crops (data URLs).
+    const card = () => page.frames().filter((f) => f.url().includes("sidebar.html") && !f.isDetached()).pop();
+    await expect.poll(async () => { const f = card(); try { return f ? await f.locator(".card-answer-media img").count() : 0; } catch { return 0; } }, { timeout: 25000 }).toBeGreaterThanOrEqual(2);
+    const imgs = card().locator(".card-answer-media img");
+    const n = await imgs.count();
+    expect(n, "the answer-media gallery is capped").toBeLessThanOrEqual(6);
+    for (let i = 0; i < n; i++) expect(await imgs.nth(i).getAttribute("src"), "each is a real captured crop").toMatch(/^data:image\//);
+    await page.close();
+});

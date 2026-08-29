@@ -2504,6 +2504,26 @@ test("card surface: answer element visuals render in the HUD card (user-facing d
     if (work && answer) assert.ok(body.innerHTML.indexOf("card-work") < body.innerHTML.indexOf("card-answer"), "Show work is above the answer");
 });
 
+test("card surface: a NEW round with no answer CLEARS the prior answer media (reset to 0)", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    await w.raw({ __mlSidebarSurface: "card" });
+    const hash = "ansreset";
+    await w.dispatch(agentStart(hash, "find the cat", "m"));
+    await w.dispatch(agentStep(hash, 1, { seq: 0, tool: "answer", arguments: { selector: "img.cat" }, result: "Answer: 1 element(s)" }));
+    await w.dispatch({ ...agentResult(hash, "here it is", 1), answerMedia: [{ image: "data:image/png;base64,CATPIC", label: "cat" }] });
+    await w.flush();
+    assert.ok(w.window.document.querySelector(".card-answer-media"), "media shows after the answer");
+
+    // A NEW round (a follow-up turn) that designates NOTHING → the prior answer media clears.
+    await w.dispatch({ kind: "agent-say", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text: "and now?" });
+    await w.dispatch(agentStep(hash, 2, { thought: "nothing to return" }));
+    await w.dispatch(agentResult(hash, "nothing to return this time", 2));   // no answerMedia on this turn
+    await w.flush();
+    assert.ok(!w.window.document.querySelector(".card-answer-media"), "the prior answer media is cleared on the new round");
+});
+
 test("the DEBUG DETAIL does NOT render answer media (that's HUD-only, the sidebar is a trace)", async () => {
     const w = await loadSidebarWorld();
     const hash = "ansmedia2";
