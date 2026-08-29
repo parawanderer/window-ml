@@ -772,16 +772,18 @@ test("selector tools accept end-position :contains/:has-text and explain mid-sel
     assert.match(run(ml, "countMatches", { selector: "((" }), /Invalid selector: /);
 });
 
-test("answer tool returns the designated element(s) as the result", () => {
+test("answer tool returns the designated element(s) as the result", async () => {
+    // `answer` is async now (it screenshots each designated element for the HUD completion card; the crop is
+    // best-effort and absent in jsdom, so only content/elements are asserted here).
     const { ml } = loadDomWorld('<div id="banner">Ad</div><p class="x">a</p><p class="x">b</p>');
-    const one = run(ml, "answer", { selector: "#banner", note: "the banner" });
+    const one = await run(ml, "answer", { selector: "#banner", note: "the banner" });
     assert.match(one.content, /Answer: 1 element.*the banner/);
     assert.equal(one.elements[0].id, "banner");
-    assert.equal(run(ml, "answer", { selector: "p.x" }).elements.length, 2);
-    assert.match(run(ml, "answer", { selector: ".nope" }), /No element matches/);
+    assert.equal((await run(ml, "answer", { selector: "p.x" })).elements.length, 2);
+    assert.match(await run(ml, "answer", { selector: ".nope" }), /No element matches/);
     // index designates one specific match (call repeatedly to collect several)
-    assert.equal(run(ml, "answer", { selector: "p.x", index: 1 }).elements[0].textContent, "b");
-    assert.match(run(ml, "answer", { selector: "p.x", index: 9 }), /No element at index 9/);
+    assert.equal((await run(ml, "answer", { selector: "p.x", index: 1 })).elements[0].textContent, "b");
+    assert.match(await run(ml, "answer", { selector: "p.x", index: 9 }), /No element at index 9/);
 });
 
 test("pageInfo grounds time/locale for time-relative tasks", () => {

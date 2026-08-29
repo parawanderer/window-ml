@@ -309,9 +309,16 @@ export interface ToolFeedback {
     label?: string;
 }
 
+/** A serialized VISUAL of an element designated via `answer` — rendered in the HUD "Task complete" card
+ *  (user-facing output), NOT the debug sidebar. Data URLs so it crosses the window bus (real nodes can't).
+ *  `selector` is kept for a future "show on page" highlight affordance. */
+export interface AnswerMedia { image: string; label?: string; selector?: string }
+
 export interface ToolResult {
     content: string;
     elements?: Node[];
+    /** answer's serialized element visuals → the HUD completion card (see AnswerMedia). */
+    answerMedia?: AnswerMedia[];
     image?: string;
     imageLabel?: string;
     /** MULTIPLE inline-vision images from ONE tool call, injected as separate images on the driver's next
@@ -507,6 +514,8 @@ export interface AgentResult {
     transcript: AgentTranscriptEntry[];
     /** nodes designated via an answer-capable tool */
     elements: Node[];
+    /** serialized visuals of the designated elements — for the HUD completion card (see AnswerMedia). */
+    answerMedia?: AnswerMedia[];
     hitCap?: boolean;
     /** the caller aborted via opts.signal (partial transcript preserved) */
     cancelled?: boolean;
@@ -845,6 +854,8 @@ export interface PageToolEnvelope {
     result: string;
     /** real nodes stay page-side; the background only learns how many */
     elementCount?: number;
+    /** answer's serialized element visuals (data URLs) — cross the bus to the background → the HUD card */
+    answerMedia?: AnswerMedia[];
     /** screenshot data-URL (inline vision — reserved for the parity work) */
     image?: string;
     imageLabel?: string;
@@ -1078,7 +1089,7 @@ export interface DebugAgentStep extends DebugBase {
  *  `byModel` breaks the aggregate down per vision model, for chat_metadata's "which model cost what". */
 export interface SubcallUsageByModel { model: string; prompt: number; completion: number; calls: number; }
 export interface SubcallUsage { prompt: number; completion: number; calls: number; byModel?: SubcallUsageByModel[]; }
-export interface DebugAgentResult extends DebugBase { kind: "agent-result"; summary: string; steps: number; hitCap: boolean; cancelled?: boolean; error?: string | null; }
+export interface DebugAgentResult extends DebugBase { kind: "agent-result"; summary: string; steps: number; hitCap: boolean; cancelled?: boolean; error?: string | null; answerMedia?: AnswerMedia[]; }
 
 /** A handle raised the step cap mid-run (a.maxSteps = N) — the sidebar/HUD updates its "STEP x/N" display. */
 export interface DebugAgentCap extends DebugBase { kind: "agent-cap"; maxSteps: number; }

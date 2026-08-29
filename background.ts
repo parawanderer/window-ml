@@ -1244,6 +1244,9 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 cur.prompt += bm.prompt; cur.completion += bm.completion; cur.calls += bm.calls; subByModel.set(bm.model, cur);
             }
         };
+        // Serialized visuals of `answer`-designated elements (data URLs), accumulated from each delegated
+        // answer envelope → attached to the run's result + agent-result for the HUD completion card.
+        const runAnswerMedia: import("./contract").AnswerMedia[] = [];
         // Flatten the tally to a serializable SubcallUsage (fresh objects → safe to store/emit repeatedly).
         const snapSub = (): import("./contract").SubcallUsage => ({
             ...subTally,
@@ -1400,6 +1403,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                             }
                         }
                         addSub(env?.subUsage);   // this tool's own delegated vision sub-call spend (look/locate)
+                        if (env?.answerMedia?.length) runAnswerMedia.push(...env.answerMedia);   // answer's element visuals → HUD card
                         // Cross-page: the `navigate` tool DEFERS the real location change a tick, so its result
                         // returns before the document unloads. Engage the barrier NOW — not only via the async
                         // webNavigation.onCommitted, which can lose the race to the loop's next (fast, local)
@@ -1565,13 +1569,15 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 // vanished from the sidebar/panel (and scrambled the export's chat-log order).
                 const resumeP = { ...p, stepBase: stepBase + runMaxStep, seqBase: seqBase + runMaxSeq };
                 bgRuns.set(runId, { p: resumeP, tabId, messages, sub: snapSub() });
+                const answerMedia = runAnswerMedia.length ? runAnswerMedia : undefined;
                 emitLifecycle({
                     kind: "agent-result", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: res.steps },
-                    summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled,
+                    summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled, answerMedia,
                 });
                 // Sync the run's final history back so a createAgent handle's control.messages stays live,
-                // + this run's step/seq extents so the page advances its bases for the NEXT turn's offset.
-                sendResponse({ data: res, messages, stepCount: runMaxStep, seqCount: runMaxSeq });
+                // + this run's step/seq extents so the page advances its bases for the NEXT turn's offset. The
+                // answer element visuals ride on `res` too, so the page-side caller's own agent-result carries them.
+                sendResponse({ data: { ...res, answerMedia }, messages, stepCount: runMaxStep, seqCount: runMaxSeq });
             })
             .catch((err) => {
                 // A fatal loop error — surface it to the off-mode card (the page's bus is dormant there,

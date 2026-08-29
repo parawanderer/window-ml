@@ -2480,6 +2480,42 @@ test("card surface: the final answer shows; debug steps/thinking don't leak", as
     assert.match(body.textContent, /three sections/, "the final answer shows");
 });
 
+test("card surface: answer element visuals render in the HUD card (user-facing deliverable)", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    await w.raw({ __mlSidebarSurface: "card" });
+
+    const hash = "ansmedia";
+    const media = [{ image: "data:image/png;base64,CATPIC", label: "the best cat", selector: "img.cat" }];
+    await w.dispatch(agentStart(hash, "find the best cat", "m"));
+    await w.dispatch(agentStep(hash, 1, { seq: 0, tool: "answer", arguments: { selector: "img.cat" }, result: "Answer: 1 element(s)" }));
+    await w.dispatch({ ...agentResult(hash, "Here's the best cat.", 1), answerMedia: media });
+    await w.flush();
+
+    const body = w.window.document.querySelector(".card-body");
+    const gallery = body.querySelector(".card-answer-media");
+    assert.ok(gallery, "the HUD card renders the answer-media gallery");
+    assert.equal(gallery.querySelectorAll("img").length, 1, "one answer image");
+    assert.match(gallery.querySelector("img").getAttribute("src"), /CATPIC/, "the captured crop is the src");
+    // "Show work" moved ABOVE the answer.
+    const work = body.querySelector(".card-work-toggle, [class*=card-work]");
+    const answer = body.querySelector(".card-answer");
+    if (work && answer) assert.ok(body.innerHTML.indexOf("card-work") < body.innerHTML.indexOf("card-answer"), "Show work is above the answer");
+});
+
+test("the DEBUG DETAIL does NOT render answer media (that's HUD-only, the sidebar is a trace)", async () => {
+    const w = await loadSidebarWorld();
+    const hash = "ansmedia2";
+    await w.dispatch(agentStart(hash, "find it", "m"));
+    await w.dispatch(agentStep(hash, 1, { seq: 0, tool: "answer", arguments: { selector: "img.cat" }, result: "Answer: 1 element(s)" }));
+    await w.dispatch({ ...agentResult(hash, "done", 1), answerMedia: [{ image: "data:image/png;base64,CATPIC", label: "x", selector: "img.cat" }] });
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    assert.ok(!w.shadow.querySelector(".card-answer-media"), "no answer-media gallery in the debug detail");
+    assert.doesNotMatch(w.shadow.querySelector(".msg.asst").innerHTML, /CATPIC/, "the crop isn't leaked into the debug detail");
+});
+
 test("card surface: a finished run has an inline reply that continues the SAME session", async () => {
     const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
     const posted = [];

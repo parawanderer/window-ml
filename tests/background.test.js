@@ -1531,6 +1531,36 @@ test("chat_metadata: reports a PER-MODEL breakdown of delegated vision sub-calls
     assert.ok(joined.indexOf("qwen3-vl:30b") < joined.indexOf("gemma4:31b"), "ordered by spend, descending");
 });
 
+test("answer element visuals ride the run result + agent-result (HUD completion media)", async () => {
+    // A background-hosted run's `answer` returns serialized element crops on its envelope → the background
+    // accumulates them → they ride BOTH the run's result (res.answerMedia, for a createAgent handle) and the
+    // agent-result event (for the HUD card). onTabMessage mocks the delegated answer envelope.
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            const answered = (call.body.messages || []).some((m) => typeof m.content === "string" && m.content.includes("Answer:"));
+            return answered
+                ? jsonResponse({ choices: [{ message: { content: "Here's the best cat." } }] })
+                : jsonResponse({ choices: [{ message: { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "answer", arguments: JSON.stringify({ selector: "img.cat", note: "the best cat" }) } }] }, finish_reason: "tool_calls" }] });
+        },
+        onTabMessage: async (_tabId, msg) => {
+            if (msg && msg.type === "RUN_TOOL_IN_PAGE" && msg.payload && msg.payload.name === "answer") {
+                return { result: "Answer: 1 element(s) — the best cat: img.cat", elementCount: 1, answerMedia: [{ image: "data:image/png;base64,CATPIC", label: "the best cat", selector: "img.cat" }] };
+            }
+            return undefined;
+        },
+    });
+    const res = await bg.send({ type: "START_RUN", payload: {
+        runId: "ans1", task: "find the best cat", systemPrompt: "sys",
+        tools: [{ name: "answer", description: "return element", parameters: { type: "object", properties: { selector: { type: "string" }, note: { type: "string" } }, required: ["selector"] }, requiresApproval: false, capabilities: ["answer"] }],
+        model: "m", think: null, maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "off",
+    } }, { tab: { id: 21 } });
+
+    assert.ok(Array.isArray(res.data.answerMedia) && res.data.answerMedia.length === 1, "answerMedia rides the run result");
+    assert.equal(res.data.answerMedia[0].image, "data:image/png;base64,CATPIC", "…carrying the serialized crop");
+    assert.equal(res.data.answerMedia[0].label, "the best cat");
+});
+
 test("CAPTURE_TAB waits out a transient rate-limit quota and retries (a screenshot burst)", async () => {
     // Chrome caps captureVisibleTab at ~2/sec; a burst of look()/locate() trips MAX_CAPTURE_VISIBLE_TAB_CALLS_
     // PER_SECOND. That's transient — wait out the window and retry instead of failing the step with an error the

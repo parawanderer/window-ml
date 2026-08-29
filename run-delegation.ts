@@ -142,6 +142,7 @@ export async function runDelegatedTool(runId: string, name: string, args: Record
         return {
             result: env.result,
             elementCount: env.elements ? env.elements.length : undefined,
+            answerMedia: env.answerMedia,   // serialized answer-element visuals (data URLs) → cross to the background → HUD card
             image: env.image, imageLabel: env.imageLabel, images: env.images,
             renderIn, renderOut,
             feedback: env.feedback,   // what locate fed into the model's context → surfaced in the debug render + export

@@ -4,8 +4,11 @@
 // `ml`/bus state), so the whole set lifts out cleanly. `makeDomTools` takes the
 // (detached, `this`-free) `defineTool` and returns the array.
 
-import type { MlTool, ToolResult, ToolContext } from "./contract";
+import type { MlTool, ToolResult, ToolContext, AnswerMedia } from "./contract";
 import type { VerifyArea } from "./builtin-tools";
+/** Serialize a screenshot-crop of each designated `answer` element for the HUD completion card. ml-backed
+ *  (built in injected.ts), so the pure domTools stay pure — the answer tool just calls it when present. */
+export type CaptureAnswer = (els: Element[], note?: string) => Promise<AnswerMedia[]>;
 import { truncate, clipOut, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, deepQueryAll, closedShadowHosts, frameHostOf, selectorError } from "./dom";
 import { INTERACTIVE_SEL, roleOf, accessibleName, placeholderText, ariaState, hasLayout, styleHidden, isFaded } from "./a11y";
 import { pageContext, browserInfo, agentState } from "./util";
@@ -113,7 +116,7 @@ const shadowScanNote = (ctx?: ToolContext): string => {
 
 // Pass this array (or a superset — `[...ml.domTools, myTool]`) to ml.agent. Each
 // tool returns a short string; observations never balloon into raw HTML.
-export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, verifyArea?: VerifyArea): MlTool[] => {
+export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, verifyArea?: VerifyArea, captureAnswer?: CaptureAnswer): MlTool[] => {
     const T = defineTool;
     return [
         T({
@@ -635,7 +638,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 },
                 required: ["selector"]
             },
-            run: ({ selector, index, note }: { selector: string; index?: number; note?: string }): string | ToolResult => {
+            run: async ({ selector, index, note }: { selector: string; index?: number; note?: string }): Promise<string | ToolResult> => {
                 let els: Element[];
                 try { els = queryAll(selector); }
                 catch (e) { return selectorError(selector, e as Error); }
@@ -645,10 +648,16 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                     els = [el];
                 }
                 if (!els.length) return `No element matches "${selector}".`;
-                const preview = els.slice(0, 5).map(elLine).join("; ");
+                const kept = els.slice(0, 50);
+                const preview = kept.slice(0, 5).map(elLine).join("; ");
+                // Serialize a screenshot-crop of each designated element for the HUD completion card (user-facing
+                // output). Best-effort — a failed capture just omits the media; the answer still stands.
+                let answerMedia: AnswerMedia[] | undefined;
+                if (captureAnswer) { try { answerMedia = await captureAnswer(kept, note); } catch { /* no media */ } }
                 return {
                     content: `Answer: ${els.length} element(s)${note ? ` — ${note}` : ""}: ${preview}`,
-                    elements: els.slice(0, 50)
+                    elements: kept,
+                    ...(answerMedia && answerMedia.length ? { answerMedia } : {}),
                 };
             }
         })

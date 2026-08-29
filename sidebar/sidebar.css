@@ -1158,6 +1158,12 @@ html[data-surface="card"] .appr-btn.no:hover {
    + human target (or the code, for code tools) → Deny/Approve. The final answer renders as plain
    markdown (.card-answer). */
 .card-answer { line-height: 1.5; }
+/* answer-designated element visuals — the HUD completion deliverable. A small responsive gallery of the
+   captured crops; click any to lightbox (ClickableImg). One image fills the width; several wrap. */
+.card-answer-media { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.card-answer-media img { max-width: 100%; max-height: 320px; flex: 0 1 auto; border-radius: 8px;
+    border: 1px solid var(--border); cursor: zoom-in; object-fit: contain; background: var(--panel-2); }
+.card-answer-media:has(img:only-child) img { width: 100%; }
 .action { display: flex; flex-direction: column; gap: 11px; }
 .action-goal { color: var(--fg-dim); font-size: .95em; line-height: 1.4; }
 .action-card { border: 1px solid var(--border); border-radius: 10px; padding: 11px 12px;

@@ -37,7 +37,7 @@ import { evalReadonly } from "./readonly-exec";
 import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement, navTarget } from "./dom";
 import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_NOTE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_EXEC_NOTE, IFRAME_CLAUSE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, NAV_OFF_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, askAboutTask } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, markSeen, PT_LOOK_RADIUS, BOX_RE, resolveBox, agentState } from "./util";
-import type { ShotBox, ServerTool, VisionMemory, RebuildConfig } from "./contract";
+import type { ShotBox, ServerTool, VisionMemory, RebuildConfig, AnswerMedia } from "./contract";
 import { annotate, pickAccentColorForTarget } from "./locate";
 import { suspiciousArgsWarning, suspiciousChars } from "./security";
 import { emitDebug, debugId, shortHash, sessionRegistry, agentRegistry, handleRegistry, enterAgentRun, exitAgentRun, resetSubcallUsage, subcallUsage } from "./bus";
@@ -700,6 +700,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 if (ctx) systemPrompt += `\n\nCurrent page context:\n${ctx}`;
             }
             const answered: Node[] = [];   // element(s) an `answer`-capable tool designated (returned as AgentResult.elements)
+            const answerMedia: AnswerMedia[] = [];   // their serialized visuals → the HUD completion card (page loop)
             // Debug sidebar: announce the run + each step. Its own session hash
             // (an agent run isn't a createChat). elements can't cross the window
             // bus — send a count; real nodes still reach onStep/the console.
@@ -773,7 +774,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                         try {
                             const res = await makeBackgroundTaskPromise<AgentResult>("RESUME_RUN_REQUEST", "RESUME_RUN_RESPONSE", { runId: runHash, task: t }, undefined, signal);
                             const run = endRun(runHash);
-                            emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: res.steps }, summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled });
+                            emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: res.steps }, summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled, ...(res.answerMedia ? { answerMedia: res.answerMedia } : {}) });
                             return { ...res, elements: run ? run.answered : [], hash: runHash };
                         } catch (e) {
                             // Mirror the START path: an aborted resume resolves as a clean cancel; any other failure
@@ -836,7 +837,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     // the bus) — assemble AgentResult.elements from the page-side run record here.
                     const run = endRun(runHash);
                     const full: AgentResult = { ...res, elements: run ? run.answered : [], hash: runHash };
-                    emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: res.steps }, summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled });
+                    emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: res.steps }, summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled, ...(res.answerMedia ? { answerMedia: res.answerMedia } : {}) });
                     return full;
                 } catch (e) {
                     const run = endRun(runHash);
@@ -912,6 +913,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 const env = await executeTool(tool, args, toolCtx);
                 const { in: renderIn, out: renderOut } = descriptorFor(tool, env, args);
                 if (tool && tool.capabilities && tool.capabilities.includes("answer") && env.elements && env.elements.length) answered.push(...env.elements as Node[]);
+                if (env.answerMedia && env.answerMedia.length) answerMedia.push(...env.answerMedia);
                 return { result: String(env.result), elements: env.elements, renderIn, renderOut, image: env.image, imageLabel: env.imageLabel, images: env.images, feedback: env.feedback };
             };
 
@@ -1009,8 +1011,8 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     const r = await runAgentLoop(t, { tools: toolMetas, maxSteps: () => control.maxSteps, signal, unattended }, deps);
                     control.seqBase += turnMaxSeq; turnMaxSeq = 0;   // next turn's step seqs continue past this turn's
                     control.stepBase += turnMaxStep; turnMaxStep = 0;   // …and its step numbers, so turn groups stay distinct
-                    emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: r.steps }, summary: r.summary, steps: r.steps, hitCap: !!r.hitCap, cancelled: !!r.cancelled });
-                    return { ...r, elements: answered, hash: runHash };
+                    emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: r.steps }, summary: r.summary, steps: r.steps, hitCap: !!r.hitCap, cancelled: !!r.cancelled, ...(answerMedia.length ? { answerMedia } : {}) });
+                    return { ...r, elements: answered, ...(answerMedia.length ? { answerMedia } : {}), hash: runHash };
                 } catch (e) {
                     // A FATAL error escaped the loop — surface it so the sidebar doesn't hang as "running",
                     // then re-throw so ml.agent() still rejects. (An abort already resolved cleanly inside.)
@@ -1532,7 +1534,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     try {
                         const res = await makeBackgroundTaskPromise<AgentResult>("RESUME_RUN_REQUEST", "RESUME_RUN_RESPONSE", { runId, task: t });
                         const run = endRun(runId);
-                        emitDebug({ kind: "agent-result", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: res.steps }, summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled });
+                        emitDebug({ kind: "agent-result", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: res.steps }, summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled, ...(res.answerMedia ? { answerMedia: res.answerMedia } : {}) });
                         return { ...res, elements: run ? run.answered : [], hash: runId };
                     } finally { exitAgentRun(); }
                 },
@@ -2040,7 +2042,19 @@ class AgentHandle implements MlAgentHandle, AgentControl {
     // Pass a `verifyArea` capability (closes over ml) so the pure `wait` domTool can `verify` too — the
     // domTools stay ml-free; they just receive this function. center=null → a viewport shot (wait is area-first).
     window.ml.domTools = makeDomTools(window.ml.defineTool,
-        (ctx, center, verb, mutated) => captureVerify(window.ml as unknown as MlApi, ctx, center, verb, mutated));
+        (ctx, center, verb, mutated) => captureVerify(window.ml as unknown as MlApi, ctx, center, verb, mutated),
+        // captureAnswer: serialize a screenshot-crop of each element an `answer` designates, for the HUD
+        // completion card (user-facing output — NOT the debug sidebar). ml-backed (screenshot), so the domTools
+        // stay ml-free. Capped + per-element failures swallowed; the answer still stands without the media.
+        async (els: Element[], note?: string): Promise<AnswerMedia[]> => {
+            const ml = window.ml as unknown as MlApi;
+            const out: AnswerMedia[] = [];
+            for (const el of els.slice(0, 6)) {
+                try { out.push({ image: await ml.screenshot(el, { noOverlay: true }), label: note, selector: elPath(el) }); }
+                catch { /* skip this element's crop */ }
+            }
+            return out;
+        });
 
     // listen for the background loop's delegated tool-run requests (relayed by content.ts
     // as PAGE_TOOL_RUN). A no-op until an agent run registers a toolset via _registerRun.

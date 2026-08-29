@@ -3,7 +3,7 @@
 // view module imports from here — extracted from app.tsx so the components can
 // live in their own files while still reading one source of truth.
 import { signal } from "@preact/signals";
-import type { DebugSessionConfig, DebugAgentConfig, MlConfig, LoadedModel, ExtendProfile, RenderDescriptor, ToolFeedback, TokenUsage, SubcallUsage } from "../contract";
+import type { DebugSessionConfig, DebugAgentConfig, MlConfig, LoadedModel, ExtendProfile, RenderDescriptor, ToolFeedback, TokenUsage, SubcallUsage, AnswerMedia } from "../contract";
 import { DEFAULT_CONFIG } from "../contract";
 
 export const FONT_KEY = "ml_debug_fontscale";
@@ -41,6 +41,7 @@ export interface Session {
     taskImages?: string[];   // composer attachments the user pasted with the initial task (data URLs)
     steps?: AgentStep[];
     summary?: string;
+    answerMedia?: AnswerMedia[];   // serialized visuals of `answer`-designated elements → the HUD completion card (NOT the debug sidebar)
     error?: string;   // a FATAL run error (model call failed / unexpected throw) — distinct from a tool's Error result
     hitCap?: boolean;
     cancelled?: boolean;   // the run was aborted (HUD "Cancel agent run" / opts.signal) — partial transcript kept

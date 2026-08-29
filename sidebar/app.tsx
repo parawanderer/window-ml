@@ -124,6 +124,7 @@ function onDebug(ev: MlDebugEvent): void {
         // track the LATEST for the title + row dot.
         s.answers = [...(s.answers || []), { text: ev.summary, ts: ev.ts, atStep: endStep, status, hitCap: ev.hitCap, cancelled: !!ev.cancelled, error: ev.error || undefined }];
         s.summary = ev.summary; s.hitCap = ev.hitCap; s.error = ev.error || undefined; s.cancelled = !!ev.cancelled;
+        if (ev.answerMedia && ev.answerMedia.length) s.answerMedia = ev.answerMedia;   // for the HUD card (not the debug detail)
         s.status = status; s.lastTs = ev.ts;
         // A finished run has no in-flight step: clear any lingering pending/awaiting flags so a straggler START
         // that arrived BEFORE this result (a background run's late tool fan) doesn't render a phantom "running…"
@@ -2884,14 +2885,19 @@ function CardApp() {
                             {(run.steps || []).some(s => s.tool) ? <ShowWork run={run} /> : null}
                           </>
                         : <>
+                            {/* "Show work" sits ABOVE the answer now — the audit trail is the header, the answer
+                                the payoff. Only when there's actual WORK (≥1 tool step); a pure chat answer has none. */}
+                            {(run.steps || []).some(s => s.tool) ? <ShowWork run={run} /> : null}
                             {run.error
                                 ? <div class="card-error">{run.error}</div>
                                 : (run.summary || "").trim()
                                     ? <div class="card-answer md" dangerouslySetInnerHTML={{ __html: markdown(run.summary || "", { math: true }) }} />
                                     : <div class="card-answer dim card-answer-empty">{run.cancelled ? "Run cancelled — the agent returned no text." : "The run finished without a text reply."}</div>}
-                            {/* Only when there's actual WORK — at least one tool step. A pure chat answer (0 tool
-                                steps) has nothing to show, so no "Show work · 0 steps". */}
-                            {(run.steps || []).some(s => s.tool) ? <ShowWork run={run} /> : null}
+                            {/* answer-designated element visuals — the user-facing deliverable (HUD-only; the debug
+                                sidebar deliberately doesn't render these). Click to lightbox. */}
+                            {run.answerMedia && run.answerMedia.length
+                                ? <div class="card-answer-media">{run.answerMedia.map((m, i) => <ClickableImg key={i} src={m.image} alt={m.label || "answer element"} />)}</div>
+                                : null}
                           </>}
             </div>
             {/* Deny/Approve as a FIXED footer — outside the scroll area, so it's always visible (a
