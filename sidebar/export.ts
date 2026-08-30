@@ -227,6 +227,14 @@ function writeAgent(s: Session, d: Sink): void {
         } else if (st.renderIn && st.renderIn.type === "code") {
             d.block("In", st.renderIn.format ? beautifyJs(st.renderIn.text) : st.renderIn.text, st.renderIn.lang || "javascript");
             renderedIn = true;
+        } else if (st.renderIn && st.renderIn.type === "action" && st.renderIn.ask) {
+            // fetch `ask` mode: a clean In — the URL, the FULL question, and who answered it + the tokens spent
+            // (a static export can't hover the raw toggle, so it shows the distilled meta inline; render-in-both).
+            const ri = st.renderIn;
+            const lines = [`${ri.verb}${ri.target ? " " + ri.target : ""}${ri.note ? " · " + ri.note : ""}`, `Asked: ${ri.ask}`];
+            if (ri.answeredBy) lines.push(`Answered by ${ri.answeredBy}${ri.tokens ? ` · ${ri.tokens.toLocaleString()} tokens` : ""}`);
+            d.block("In", lines.join("\n"));
+            renderedIn = true;
         } else if (!st.renderIn && st.tool === "exec" && typeof st.arguments?.js === "string") {
             d.block("In", beautifyJs(st.arguments.js), "javascript");
             renderedIn = true;

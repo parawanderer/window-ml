@@ -91,9 +91,12 @@ test("fetch_url tool: `ask` distills the body via a reader model and returns the
     const big = { widgets: Array.from({ length: 40 }, (_, i) => ({ id: i, price: i * 3 })) };
     const { tool, seen } = askWorld(jsonResult(big), "The cheapest widget costs 0.");
     const out = await tool.run({ url: "https://x.test/a.json", ask: "What is the cheapest widget price?" });
-    assert.match(out, /Answer:/);
-    assert.match(out, /cheapest widget costs 0/, "the reader's answer is returned");
-    assert.doesNotMatch(out, /"price": 117/, "the raw body is NOT dumped into the driver's context");
+    assert.match(out.content, /Answer:/);
+    assert.match(out.content, /cheapest widget costs 0/, "the reader's answer is returned");
+    assert.doesNotMatch(out.content, /"price": 117/, "the raw body is NOT dumped into the driver's context");
+    // The rendered In carries the FULL question on its own field (not squeezed into the note, not truncated).
+    assert.equal(out.renderIn.type, "action");
+    assert.equal(out.renderIn.ask, "What is the cheapest widget price?");
     // The reader sub-call saw the fetched content AND the question.
     const prompt = seen.llm.messages[seen.llm.messages.length - 1].content;
     assert.match(prompt, /What is the cheapest widget price\?/, "the question reached the reader");
@@ -104,24 +107,30 @@ test("fetch_url tool: `ask` distills the body via a reader model and returns the
 test("fetch_url tool: `ask` takes precedence over `schema`", async () => {
     const { tool } = askWorld(jsonResult({ a: 1 }, { schema: "{ a: number }" }), "It has one field, a.");
     const out = await tool.run({ url: "https://x.test/a.json", schema: true, ask: "How many fields?" });
-    assert.match(out, /Answer:/, "ask wins");
-    assert.doesNotMatch(out, /JSON schema:/, "the schema branch didn't run");
+    assert.match(out.content, /Answer:/, "ask wins");
+    assert.doesNotMatch(out.content, /JSON schema:/, "the schema branch didn't run");
 });
 
 test("fetch_url tool: `ask` on an oversized body clips the content and FLAGS that the answer may be incomplete", async () => {
     const huge = { blob: "x".repeat(50000) };
     const { tool, seen } = askWorld(jsonResult(huge), "ok");
     const out = await tool.run({ url: "https://x.test/a.json", ask: "anything?" });
-    assert.match(out, /truncated before reading/i, "the driver is told the read was partial");
+    assert.match(out.content, /truncated before reading/i, "the driver is told the read was partial");
     const prompt = seen.llm.messages[seen.llm.messages.length - 1].content;
     assert.ok(prompt.length < 30000, "the content handed to the reader was clipped to the budget");
 });
 
-test("fetch_url tool: the render note shows the ASK question (approval card + In render transparency)", () => {
+test("fetch_url tool: the render puts the ASK on its own field, FULL (never truncated) and NOT in the inline note", () => {
     const { tool } = askWorld(jsonResult({ a: 1 }), "x");
-    const r = tool.render(undefined, { url: "https://x.test/a.json", ask: "who is the author?" });
-    assert.match(r.note, /ask: who is the author\?/);
+    const long = "List only the file paths (type: blob) that plausibly hold a system prompt, and nothing else at all please";
+    const r = tool.render(undefined, { url: "https://x.test/a.json", ask: long });
+    assert.equal(r.ask, long, "the whole question is carried, untruncated");
+    assert.ok(!/ask:/.test(r.note || ""), "the ask is NOT crammed into the inline note");
     assert.equal(r.verb, "fetch");
+    // A credentialed ask still shows the cookies note AND the ask field.
+    const cred = tool.render(undefined, { url: "https://x.test/a.json", ask: "who?", credentials: true });
+    assert.match(cred.note, /sends your cookies/);
+    assert.equal(cred.ask, "who?");
 });
 
 test("ml.fetch travels the relay, returns the FetchResult, and CACHES it for readonly reuse", async () => {

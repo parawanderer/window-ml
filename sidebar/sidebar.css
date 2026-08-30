@@ -562,6 +562,11 @@ details.io[open] > summary .io-preview { display: none; }
 .r-action-target { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; color: var(--fg); word-break: break-all; cursor: context-menu; text-decoration: underline; text-decoration-color: var(--border); text-underline-offset: 2px; }
 .r-action-target:hover { text-decoration-color: var(--fg); }
 .r-action-note { color: var(--fg-dim); }
+/* fetch `ask` mode: the question on its own line, then a dim "Answered by … · N tokens" meta line. */
+.r-action-ask { margin-top: 5px; color: var(--fg); }
+.r-action-ask b { font-weight: 700; }
+.r-action-meta { margin-top: 3px; font-size: 0.88em; color: var(--fg-dim); }
+.r-action-model { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .dim { color: var(--fg-faint); font-style: italic; }
 
 /* The agent's final answer reuses the chat reply bubble (.msg.asst). A step-cap

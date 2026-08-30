@@ -629,6 +629,32 @@ test("fetch_url step: the rendered In shows a clean verb + URL line, NOT a raw J
     assert.equal(opened, url, "clicking it opens the URL in a new tab");
 });
 
+test("fetch_url `ask` step: the In shows the FULL question on its own line + who answered it and the tokens", async () => {
+    const w = await loadSidebarWorld();
+    const url = "https://api.github.com/repos/o/r/git/trees/abc?recursive=1";
+    const ask = "List only the file paths (type: blob) that plausibly hold a system prompt";
+    await w.dispatch(agentStart("ask1", "find the prompt file"));
+    await w.dispatch(agentStep("ask1", 1, {
+        seq: 1, tool: "fetch_url", arguments: { url, ask }, result: "Fetched …\n\nAnswer:\nREADME.md",
+        renderIn: { type: "action", verb: "fetch", target: url, ask, answeredBy: "qwen3:4b", tokens: 5231 },
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const head = [...w.shadow.querySelectorAll(".astep.tool .astep-head")].find(h => /fetch_url/.test(h.textContent));
+    head.click();
+    await w.tick();
+
+    const askLine = w.shadow.querySelector(".r-action-ask");
+    assert.ok(askLine, "the question renders on its own line");
+    assert.match(askLine.textContent, /Asked:/, "with a bold Asked: label");
+    assert.ok(askLine.textContent.includes(ask), "the FULL question is shown (not truncated)");
+    const meta = w.shadow.querySelector(".r-action-meta");
+    assert.ok(meta, "the answered-by/tokens meta line renders");
+    assert.match(meta.textContent, /Answered by:/);
+    assert.match(meta.textContent, /qwen3:4b/, "names the reader model");
+    assert.match(meta.textContent, /5,231 tokens/, "and the tokens the answer used");
+});
+
 test("approval card: a fetch_url gate styles the URL like navigate/submit (action-link: warm + dotted), not 'the element'", async () => {
     const w = await loadSidebarWorld({ sync: { chatUrl: "http://x" }, listModels: () => ({ data: ["m"] }) });
     await w.raw({ __mlSidebarSurface: "card" });

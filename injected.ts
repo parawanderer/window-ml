@@ -1575,14 +1575,12 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 // note flags the SCHEMA-only ask, and — importantly for consent — a CREDENTIALED (as-you) fetch.
                 render: (_input: unknown, args?: Record<string, unknown>): RenderDescriptor => {
                     const a = args as { url?: unknown; schema?: unknown; credentials?: unknown; ask?: unknown } | undefined;
-                    // Compose the note so a credentialed AND an asked fetch both show (consent + what's being asked).
-                    const parts: string[] = [];
-                    if (a?.credentials) parts.push("as you (sends your cookies)");
-                    else if (a?.schema) parts.push("schema only");
-                    if (typeof a?.ask === "string" && a.ask.trim()) parts.push(`ask: ${truncate(a.ask.trim(), 50)}`);
-                    return { type: "action", verb: "fetch", target: String(a?.url ?? ""), note: parts.length ? parts.join(" · ") : "full page" };
+                    const note = a?.credentials ? "as you (sends your cookies)" : a?.schema ? "schema only" : a?.ask ? undefined : "full page";
+                    // The ASK gets its OWN line (full text, never truncated), not squeezed into the inline note.
+                    const ask = (typeof a?.ask === "string" && a.ask.trim()) ? a.ask.trim() : undefined;
+                    return { type: "action", verb: "fetch", target: String(a?.url ?? ""), ...(note ? { note } : {}), ...(ask ? { ask } : {}) };
                 },
-                run: async ({ url, schema = false, credentials = false, ask = null }: { url?: unknown; schema?: boolean; credentials?: boolean; ask?: unknown } = {}): Promise<string> => {
+                run: async ({ url, schema = false, credentials = false, ask = null }: { url?: unknown; schema?: boolean; credentials?: boolean; ask?: unknown } = {}): Promise<string | ToolResult> => {
                     if (typeof url !== "string" || !url.trim()) return "Error: fetch_url needs a `url`.";
                     let r: import("./contract").FetchResult;
                     try { r = await ml.fetch(url, { credentials }); }
@@ -1593,17 +1591,31 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     // it — a large page/API answers a question without ever entering the driver's context (the
                     // look/read delegate-and-distill pattern, for text). Metered as a sub-call (runs under inAgentRun).
                     if (typeof ask === "string" && ask.trim()) {
+                        const question = ask.trim();
                         const body = r.json !== undefined ? JSON.stringify(r.json, null, 2) : r.text;
                         const clipped = clipOut(body, FETCH_ASK_MAX);
                         const cut = clipped.length < body.length;
+                        const beforeU = subcallUsage();   // the reader sub-call's cost (model + tokens) for the render
                         let answer: string;
                         try {
                             answer = await ml.chat(
-                                `Content fetched from ${r.url} (${r.type}, HTTP ${r.status}${cut ? ", truncated" : ""}):\n\n${clipped}\n\n---\nUsing ONLY the content above, answer concisely. If the answer isn't present in it, say so plainly.\n\nQuestion: ${ask.trim()}`,
+                                `Content fetched from ${r.url} (${r.type}, HTTP ${r.status}${cut ? ", truncated" : ""}):\n\n${clipped}\n\n---\nUsing ONLY the content above, answer concisely. If the answer isn't present in it, say so plainly.\n\nQuestion: ${question}`,
                                 { extend: "utility" },
                             ) as string;
                         } catch (e) { return `${head}\n\nError reading the content to answer: ${errText(e)}`; }
-                        return `${head}\n\nAnswer${cut ? " (the content was truncated before reading — it may be incomplete)" : ""}:\n${answer}`;
+                        // Which model answered + how many tokens it spent — the subcallUsage DELTA around the chat
+                        // (metered in bus.ts while inAgentRun). Best-effort: 0/unknown just omits that render line.
+                        const afterU = subcallUsage();
+                        const tokens = (afterU.prompt - beforeU.prompt) + (afterU.completion - beforeU.completion);
+                        const prevCalls = new Map((beforeU.byModel || []).map(m => [m.model, m.calls]));
+                        const answeredBy = (afterU.byModel || []).find(m => (m.calls - (prevCalls.get(m.model) || 0)) > 0)?.model || null;
+                        const content = `${head}\n\nAnswer${cut ? " (the content was truncated before reading — it may be incomplete)" : ""}:\n${answer}`;
+                        const renderIn: RenderDescriptor = {
+                            type: "action", verb: "fetch", target: r.url, ask: question,
+                            ...(credentials ? { note: "as you (sends your cookies)" } : {}),
+                            ...(answeredBy ? { answeredBy } : {}), ...(tokens > 0 ? { tokens } : {}),
+                        };
+                        return { content, renderIn };
                     }
                     // `schema: true` — the caller wants the JSON's STRUCTURE, not the body.
                     if (schema) {

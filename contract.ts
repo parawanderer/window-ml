@@ -505,7 +505,7 @@ export type RenderDescriptor = (
     // label (accessible name/text), `selector` the page target to HIGHLIGHT (CSS or @pt/@box), `input`
     // any value being entered (type), `note` an extra clause ("then submit"). Rendered in the debug In
     // slot too (as a hoverable line), so both surfaces agree.
-    | { type: "action"; verb: string; kind?: string; target?: string; selector?: string; input?: string; note?: string; crossOrigin?: string }
+    | { type: "action"; verb: string; kind?: string; target?: string; selector?: string; input?: string; note?: string; crossOrigin?: string; ask?: string; answeredBy?: string; tokens?: number }
 );
 // The slot a descriptor fills is decided by which hook produced it (a tool's `render()`
 // method / run()-returned `renderIn` → the In slot; a run()-returned `render` / an

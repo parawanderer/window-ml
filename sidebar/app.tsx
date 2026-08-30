@@ -990,14 +990,20 @@ function RenderPanel({ d }: { d: RenderDescriptor }) {
                 const target = d.target;
                 return (
                     <div class="r-action">
-                        <span class="r-action-verb">{d.verb}</span>{" "}
-                        {d.input ? <><b class="r-action-input">“{truncate(d.input, 120)}”</b>{" "}</> : null}
-                        <span class="r-action-target" title="right-click to open or copy"
-                            onContextMenu={e => openCtxMenu(e, [
-                                { label: "Open in new tab", run: () => { try { window.open(target, "_blank", "noopener"); } catch { /* popup blocked */ } } },
-                                { label: "Copy URL", run: () => { try { void navigator.clipboard?.writeText(target); } catch { /* no clipboard */ } } },
-                            ])}>{target}</span>
-                        {d.note ? <span class="r-action-note"> · {d.note}</span> : null}
+                        <div>
+                            <span class="r-action-verb">{d.verb}</span>{" "}
+                            {d.input ? <><b class="r-action-input">“{truncate(d.input, 120)}”</b>{" "}</> : null}
+                            <span class="r-action-target" title="right-click to open or copy"
+                                onContextMenu={e => openCtxMenu(e, [
+                                    { label: "Open in new tab", run: () => { try { window.open(target, "_blank", "noopener"); } catch { /* popup blocked */ } } },
+                                    { label: "Copy URL", run: () => { try { void navigator.clipboard?.writeText(target); } catch { /* no clipboard */ } } },
+                                ])}>{target}</span>
+                            {d.note ? <span class="r-action-note"> · {d.note}</span> : null}
+                        </div>
+                        {/* fetch `ask` mode: the question gets its own line (FULL, never truncated), then who answered
+                            it + the tokens that reader sub-call spent — so the distill is legible, not a squeezed note. */}
+                        {d.ask ? <div class="r-action-ask"><b>Asked:</b> {d.ask}</div> : null}
+                        {d.answeredBy ? <div class="r-action-meta">Answered by: <span class="r-action-model">{d.answeredBy}</span>{d.tokens ? <> · {d.tokens.toLocaleString()} tokens</> : null}</div> : null}
                     </div>
                 );
             }
