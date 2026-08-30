@@ -993,15 +993,28 @@ const bufferReplay = (tabId: number, event: unknown): void => {
 };
 const trackRun = (tabId: number, runId: string, rebuild?: import("./contract").RebuildConfig): void => {
     const s = activeRuns.get(tabId) ?? new Set<string>();
+    // A fresh run on an IDLE tab starts a clean replay buffer — drop a prior COMPLETED run's retained history
+    // (see untrackRun) so a new run's replay isn't polluted by the last one's.
+    if (!s.size) runReplayBuffer.delete(tabId);
     s.add(runId); activeRuns.set(tabId, s);
     if (rebuild) runRebuilds.set(runId, rebuild);
 };
+// True if a COMPLETED-but-resumable run still lives on this tab (bgRuns keeps a snapshot at completion for a
+// follow-up resume). Such a run's HUD replay buffer must survive untrackRun so a page that loads LATE (on-click
+// site access, or a reload after the run finished) can still rebuild its corner card. Dropped on tab close /
+// after a one-time completed replay / when a fresh run starts.
+const tabHasBgRun = (tabId: number): boolean => { for (const r of bgRuns.values()) if (r.tabId === tabId) return true; return false; };
 const untrackRun = (tabId: number, runId: string): void => {
     runRebuilds.delete(runId);
     const s = activeRuns.get(tabId);
     if (!s) return;
     s.delete(runId);
-    if (!s.size) { activeRuns.delete(tabId); navBarrier.forget(tabId); runReplayBuffer.delete(tabId); readoptPageInfo.delete(tabId); }
+    if (!s.size) {
+        activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId);
+        // Keep the replay buffer if a just-completed run is still resumable on this tab (bgRuns.set ran in the
+        // run's .then, before this .finally) — a late/reloaded page replays it once (CONTENT_READY). Else drop it.
+        if (!tabHasBgRun(tabId)) runReplayBuffer.delete(tabId);
+    }
 };
 // EVERY RUN_TOOL_IN_PAGE send goes through this: it waits out any in-flight navigation on the tab before
 // delegating. On a tab with no navigation pending, whenReady resolves immediately (zero cost) — so a
@@ -1018,7 +1031,7 @@ if (typeof chrome !== "undefined" && chrome.webNavigation?.onCommitted) {
     });
 }
 if (typeof chrome !== "undefined" && chrome.tabs?.onRemoved) {
-    chrome.tabs.onRemoved.addListener((tabId) => { activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); fetchConsent.delete(tabId); credFetchGrants.delete(tabId); });
+    chrome.tabs.onRemoved.addListener((tabId) => { activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); fetchConsent.delete(tabId); credFetchGrants.delete(tabId); runReplayBuffer.delete(tabId); });
 }
 
 // ---- Choke-point consent (docs/spec/CHOKEPOINT_CONSENT_SPEC.md) ----
@@ -1208,9 +1221,18 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             // Overlay/off HUD replay-across-nav: stream the run's buffered history so the fresh card/overlay
             // rebuilds MID-run (start + every step so far), not just post-nav events. The shell buffers these
             // __mlFromBg events while its iframe mounts, absorbing an ordering race against the handshake.
-            if (tabId != null && ids && ids.size) {
+            // Fires for a LIVE run (every nav) AND — the on-click/late-injection fix — for a page that loads
+            // AFTER the run finished: a completed run re-adopted from bgRuns replays its history ONCE so the
+            // destination page still gets its card + final answer (else the corner card is blank there).
+            const hasActive = !!(ids && ids.size);
+            if (tabId != null && adopt.length) {
                 const history = runReplayBuffer.get(tabId) || [];
-                for (const event of history) chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => {});
+                if (history.length) {
+                    for (const event of history) chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => {});
+                    // A COMPLETED-only re-adopt (no live run) has served its purpose — drop the buffer so a later
+                    // reload doesn't re-show a finished card. A live run keeps its buffer for the next nav.
+                    if (!hasActive) runReplayBuffer.delete(tabId);
+                }
             }
         });
         return true;   // async: sendResponse fires after hydration resolves

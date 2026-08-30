@@ -179,6 +179,45 @@ test("cross-page: the destination page replays the run's pre-nav history", async
     await page.close();
 });
 
+// HUD-after-nav bug: a cross-page run that FINISHES before the destination page's content script injects
+// (Chrome "on click" site access withholds the <all_urls> CS) showed NO corner card / final answer there —
+// its replay buffer was dropped on completion and the CONTENT_READY replay was gated on LIVE runs only. We
+// reproduce the mechanic with a RELOAD after completion (a fresh document on the tab whose only run is DONE —
+// identical to a late injection from the background's view): the fresh page must still replay the run's
+// history (start + result) so the card can rebuild. Before the fix this replays nothing.
+test("cross-page: a page loading AFTER the run finished still replays its HUD history (on-click / late-injection)", async () => {
+    const page = await ext.context.newPage();
+    const events = [];
+    await page.exposeFunction("__cpLate", (e) => events.push(e));
+    await page.addInitScript(() => {
+        if (window.top !== window) return;
+        window.addEventListener("message", (e) => {
+            if (e.data && e.data.__mlDebug) window.__cpLate({ url: location.pathname, kind: e.data.__mlDebug.kind, fromBg: !!e.data.__mlFromBg });
+        });
+    });
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+
+    const before = fake.calls().length;
+    // Navigate to /step2, then ANSWER — the run FINISHES on the destination WITHOUT a page tool (the reported
+    // repro: a fast final answer needs no delegation, so the loop never waits for the new page's CS).
+    fake.setScript([
+        { tool: "navigate", args: { url: "/step2" } },
+        { content: "All done — the answer is 42." },
+    ]);
+    await page.evaluate(() => { window.ml.agent("Go to step 2 and finish.", { env: false }); return true; });
+    await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(2);
+    await expect.poll(() => events.some((e) => e.kind === "agent-result"), { timeout: 10000 }).toBe(true);
+
+    // A FRESH page loads on the tab AFTER the run completed → it must still get the run's history replayed.
+    events.length = 0;
+    await page.reload();
+    await waitForMl(page);
+    await expect.poll(() => events.some((e) => e.kind === "agent" && e.fromBg), { timeout: 10000 }).toBe(true);
+    expect(events.some((e) => e.kind === "agent-result" && e.fromBg)).toBe(true);
+    await page.close();
+});
+
 // A page served with a `sandbox` CSP (exactly like raw.githubusercontent.com) BLOCKS the extension's injected
 // main-world script, so window.ml never comes up there and a delegated tool has NO answerer. The extension
 // must fail that tool FAST with an actionable error, not wedge the run forever (the reported raw.github
