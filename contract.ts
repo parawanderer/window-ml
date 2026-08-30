@@ -77,11 +77,13 @@ export interface MlConfig {
      *  steering those to visual `locate`/@pt. */
     pierceClosedShadow: boolean;
     /** experimental: let the agent CLICK "reserved" surfaces — cross-origin iframes and declarative/native
-     *  closed shadow roots — that no selector or synthetic click can reach, via chrome.debugger (CDP)
-     *  Input.dispatchMouseEvent (a real, trusted, hit-tested click). Off by default; also needs the runtime
-     *  `debugger` permission and the per-click approval. Attaching flashes Chrome's "is debugging" banner —
-     *  only for these reserved clicks, so the flash marks the risk. Spec: docs/spec/CDP_CLICK.md. */
-    cdpClick: boolean;
+     *  closed shadow roots — that no selector or synthetic click can reach, AND run imperative `exec` on
+     *  strict-CSP / Trusted-Types pages where main-world eval is blocked — via chrome.debugger (CDP)
+     *  Input.dispatchMouseEvent / Runtime.evaluate (real, trusted, CSP-exempt). Off by default; also needs
+     *  the runtime `debugger` permission (requested when you enable this) and the per-action approval.
+     *  Attaching flashes Chrome's "is debugging" banner — only for these reserved actions, so the flash marks
+     *  the risk. Specs: docs/spec/CDP_CLICK.md, docs/spec/EXEC_STRICT_CSP.md. */
+    cdp: boolean;
     /** Hostnames the USER has trusted to supply their OWN ml.agent approval gate (a page's
      *  `approve` callback / the page-loop confirm). Empty by default: EVERY other origin's
      *  privileged tool calls route through the unforgeable background gate + trusted surface,
@@ -290,7 +292,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     autoApproveReadonly: true,
     autoApprovePython: true,
     pierceClosedShadow: true,
-    cdpClick: false,
+    cdp: false,
     pageApprovalDomains: [],
     groundingEnabled: false,
     groundingModel: "",

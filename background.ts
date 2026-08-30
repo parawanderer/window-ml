@@ -1359,7 +1359,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // OWN tab (sender.tab.id); a surface passes the inspected tabId in the payload.
         (async () => {
             const cfg = await getConfig();
-            if (!cfg.cdpClick) { sendResponse({ error: "Reserved-element clicking is off — enable it in window.ml Settings → Advanced." }); return; }
+            if (!cfg.cdp) { sendResponse({ error: "Debugger-based actions (CDP) are off — enable them in window.ml Settings → Advanced." }); return; }
             if (await senderTrust(sender) === "untrusted") { sendResponse({ error: "Refused: a reserved-element (CDP) click can't be initiated by this page." }); return; }
             const p = (message.payload || {}) as { x?: number; y?: number; tabId?: number };
             const tabId = sender.tab?.id ?? p.tabId;   // a page → its own tab; a trusted surface → the payload's
@@ -1668,7 +1668,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                         // the off-by-default `cdpClick` flag (cdpClick() itself checks the debugger permission).
                         if (env?.cdpClick) {
                             const cfg = await getConfig();
-                            if (!cfg.cdpClick) return { result: `${env.result || ""}\n\nThis needs a debugger (CDP) click, which is OFF — enable "reserved-element clicking" in window.ml Settings → Advanced (cross-origin iframes / sealed shadow roots).`, renderIn: env.renderIn, renderOut: env.renderOut };
+                            if (!cfg.cdp) return { result: `${env.result || ""}\n\nThis needs a debugger (CDP) click, which is OFF — enable "Debugger-based actions (CDP)" in window.ml Settings → Advanced (cross-origin iframes / sealed shadow roots).`, renderIn: env.renderIn, renderOut: env.renderOut };
                             const r = await cdpClick(tabId, env.cdpClick.x, env.cdpClick.y);
                             const ok = "ok" in r;
                             if (!ok) return { result: (r as { error: string }).error, renderIn: env.renderIn, renderOut: env.renderOut };

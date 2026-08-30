@@ -619,6 +619,47 @@ test("Settings → Site access: 'On all sites' (<all_urls>) shows the note inste
     assert.equal(sect.querySelector(".perm-add"), null, "no add form when everything is already allowed");
 });
 
+// The CDP master toggle (Settings → Advanced). `debugger` is an OPTIONAL permission, so enabling REQUESTS it.
+const cdpToggle = (w) => [...w.shadow.querySelectorAll(".set-check")].find(l => /debugger-based actions/i.test(l.textContent))?.querySelector('input[type=checkbox]');
+test("Settings CDP toggle: enabling REQUESTS the debugger permission; granting persists it ON", async () => {
+    const w = await loadSidebarWorld();
+    const reqs = [];
+    w.window.chrome.permissions = { contains: (_q, cb) => cb(false), request: (q, cb) => { reqs.push(q); cb(true); } };   // user GRANTS
+    await openSettings(w, "Advanced");
+    const cb = cdpToggle(w);
+    assert.ok(cb, "the CDP toggle renders under Advanced");
+    assert.equal(cb.checked, false, "off by default");
+    cb.checked = true; cb.dispatchEvent(new w.window.Event("change", { bubbles: true }));
+    await w.flush();
+    assert.deepEqual(reqs[0], { permissions: ["debugger"] }, "enabling requests the runtime debugger permission (not held ambiently)");
+    assert.equal(w.syncStore.cdp, true, "granted → the flag persists ON");
+});
+
+test("Settings CDP toggle: DENYING the debugger permission reverts the toggle to OFF + a note", async () => {
+    const w = await loadSidebarWorld();
+    w.window.chrome.permissions = { contains: (_q, cb) => cb(false), request: (_q, cb) => cb(false) };   // user DENIES the Chrome prompt
+    await openSettings(w, "Advanced");
+    const cb = cdpToggle(w);
+    cb.checked = true; cb.dispatchEvent(new w.window.Event("change", { bubbles: true }));
+    await w.flush();
+    assert.notEqual(w.syncStore.cdp, true, "denied → the flag does NOT turn on (the feature can't work without it)");
+    assert.equal(cdpToggle(w).checked, false, "the checkbox reverts to unchecked");
+    assert.match([...w.shadow.querySelectorAll(".set-err")].map(e => e.textContent).join(" "), /required|not granted/i, "a note explains why it stayed off");
+});
+
+test("Settings CDP toggle: flag ON but permission MISSING → a re-grant affordance (never silently inert)", async () => {
+    const w = await loadSidebarWorld({ sync: { cdp: true } });
+    const reqs = [];
+    w.window.chrome.permissions = { contains: (_q, cb) => cb(false), request: (q, cb) => { reqs.push(q); cb(true); } };
+    await openSettings(w, "Advanced");
+    await w.flush();
+    const grantBtn = [...w.shadow.querySelectorAll("button")].find(b => /grant debugger access/i.test(b.textContent));
+    assert.ok(grantBtn, "with the flag on but the permission gone, a 'Grant debugger access' button appears");
+    grantBtn.click();
+    await w.flush();
+    assert.deepEqual(reqs[0], { permissions: ["debugger"] }, "clicking it re-requests the permission");
+});
+
 test("output-cap raise: the approval card calls out the raised limit + the model's justification", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("orc", "big dump"));

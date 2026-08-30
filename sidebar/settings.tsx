@@ -80,7 +80,7 @@ const TIP = {
     autoTitles: "Let the utility model write short summaries for you: debug session titles, and the plain-English gloss above a code approval / the description of a custom tool call in the off-mode card. Off = titles fall back to the first prompt and the card shows no summary. Only runs when a utility model is set.",
     autoApproveReadonly: "Experimental. Run read-only exec surveys (querySelectorAll → filter → map, no mutation) without an approval prompt, via a mediated interpreter that can't reach window/fetch and never eval()s a string. Anything that mutates or isn't recognised still asks. Also lets these surveys run on Trusted-Types pages where eval is blocked. The agent can likewise read its own setup without asking — ml.getModel/config/models/capabilities/ps/serverTools, the same non-secret values any page can read; every other ml method still prompts.",
     autoApprovePython: "Experimental. Run readonly-mode python_exec calls without an approval prompt. A readonly run is isolated by construction — the WASM sandbox has no DOM, no filesystem, and (in this mode) no network or JS/extension scope — so it's a pure function over the injected data and can't affect the page or exfiltrate. A `mode:'full'` call (which the agent must explicitly request to get network) ALWAYS asks. Code with hidden/bidi characters also still asks.",
-    cdpClick: "Experimental. Let the agent CLICK surfaces a normal click can't reach — cross-origin iframes and declarative/native closed shadow roots — via chrome.debugger (a real, hit-tested, TRUSTED click). It's the only way to reach those: a synthetic click doesn't cross the boundary, and pierce can't capture a declarative/native closed root. Still gated by the per-click approval. Attaching flashes Chrome's \"is debugging this browser\" banner — ONLY for these reserved clicks, so the flash marks the risk. The debugger permission is declared at install (Chrome forbids it as a runtime-optional grant); this toggle is the on/off, and it stays inert until on.",
+    cdp: "Experimental. Use chrome.debugger (CDP) for two things a normal page context can't do: (1) CLICK surfaces a synthetic click can't reach — cross-origin iframes and declarative/native closed shadow roots; (2) run imperative `exec` on strict-CSP / Trusted-Types pages (GitHub, Google apps) where main-world eval is blocked. The debugger is exempt from the page's CSP/TT, so it's the only mechanism that works. Enabling this REQUESTS the runtime `debugger` permission (a Chrome prompt) — deny it and this stays off. Still gated by the per-action approval. Attaching flashes Chrome's \"is debugging this browser\" banner — only for these reserved actions, so the flash marks the risk. Off by default; while off, a reserved click / a blocked exec just reports an actionable error and the agent falls back to read-only / ml.fetch.",
     pierceClosedShadow: "Let the DOM tools reach inside CLOSED shadow roots too (normally selector-invisible). A tiny script captures each closed root as the page builds it — the tools then treat it like an open root (same `host >>> inner` syntax). Closed shadow DOM is encapsulation, not a security boundary, so this doesn't cross any origin. On by default: the capture script wraps attachShadow on every page regardless of this setting (capture only — page behaviour is unchanged), so this just gates whether the tools use it. Turn it off to keep the tools' selector reach limited to open roots. Declarative/native closed roots still can't be captured; the agent falls back to visual locate/@pt for those.",
     groundingEnabled: "Experimental. When on, ml.agent's `locate` tool asks a grounding VLM for bounding-box coordinates. This loads an extra model into VRAM — leave off if memory is tight. Off = locate still works via the Set-of-Marks screenshot tool, which needs no extra model.",
     groundingModel: "A vision model that outputs coordinates (recommended qwen2.5vl:7b, or :3b for lower latency). Blank auto-detects a qwen2.5vl on your server. Real-world grounding accuracy is unproven.",
@@ -462,6 +462,43 @@ function HostAccess() {
     );
 }
 
+// The CDP master toggle. `debugger` is an OPTIONAL permission (not held ambiently), so enabling this REQUESTS
+// it in the click gesture. Deny → the toggle reverts to off (the feature can't work without it). If the flag
+// is on but the permission is missing (revoked, or synced-on from another device), show a re-grant affordance
+// — never leave it silently inert. Mirrors the SheetsGrant / Site-access grant pattern.
+function CdpToggle() {
+    const on = config.value.cdp;
+    const [granted, setGranted] = useState<boolean | null>(null);
+    const [err, setErr] = useState("");
+    const refresh = () => { try { chrome.permissions.contains({ permissions: ["debugger"] }, (g: boolean) => setGranted(!!g)); } catch { setGranted(null); } };
+    useEffect(() => { refresh(); }, [on]);
+    const request = (thenSet: boolean) => {
+        setErr("");
+        try {
+            chrome.permissions.request({ permissions: ["debugger"] }, (ok: boolean) => {
+                setGranted(!!ok);
+                if (ok) { if (thenSet) setField("cdp", true); }
+                else { setField("cdp", false); setErr("Debugger access is required for CDP actions — not granted, so this stays off."); }
+            });
+        } catch (e: any) { setField("cdp", false); setErr(`Couldn't request debugger access: ${e?.message || e}.`); }
+    };
+    const toggle = (next: boolean) => { setErr(""); if (next) request(true); else setField("cdp", false); };
+    return (
+        <>
+            <label class="set-check">
+                <input type="checkbox" checked={on} onChange={(e: any) => toggle(e.target.checked)} />
+                <Lbl tip={TIP.cdp}>Enable debugger-based actions (CDP)</Lbl>
+            </label>
+            {/* On but the permission is gone → the feature is inert; offer a one-click re-grant. */}
+            {on && granted === false
+                ? <div class="set-hint"><span class="perm-warn">Debugger access isn't granted</span> — CDP actions won't run. <button class="test-btn" onClick={() => request(false)}>Grant debugger access</button></div>
+                : on && granted ? <div class="set-hint"><span class="perm-ok">Granted.</span> A reserved click / strict-page exec will use the debugger (with the banner).</div>
+                : null}
+            {err ? <div class="set-err">{err}</div> : null}
+        </>
+    );
+}
+
 function PermissionsView() {
     const c = config.value;
     const domains = c.pageApprovalDomains || [];
@@ -822,14 +859,9 @@ export function Settings() {
                 </label>
                 </Section>
 
-                <Section id="reserved-click" title="Reserved-element clicking (experimental)">
-                <div class="set-note">Let the agent CLICK surfaces a normal click can't reach — <b>cross-origin iframes</b> and <b>declarative/native closed shadow roots</b> — via <code>chrome.debugger</code> (a real, hit-tested, trusted click). It's the only way in: a synthetic click doesn't cross the boundary, and pierce can't capture a declarative/native closed root. Still gated by the per-click approval. Attaching flashes Chrome's <b>“is debugging this browser” banner</b> — only for these reserved clicks, so the flash marks the risk. <b>Off by default</b>; a reserved click just reports "needs CDP" until you enable it.</div>
-                <div class="set-hint">The extension declares the <code>debugger</code> permission at <b>install time</b> — Chrome doesn't allow it as a runtime-optional grant, so there's no per-use prompt. This toggle is the on/off; the API stays unused until it's on <em>and</em> the model actually hits a reserved surface.</div>
-                <label class="set-check">
-                    <input type="checkbox" checked={c.cdpClick}
-                        onChange={(e: any) => setField("cdpClick", e.target.checked)} />
-                    <Lbl tip={TIP.cdpClick}>Allow reserved-element clicks (CDP)</Lbl>
-                </label>
+                <Section id="cdp" title="Debugger-based actions (experimental)">
+                <div class="set-note">Use <code>chrome.debugger</code> (CDP) for what a normal page context can't: <b>click</b> cross-origin iframes / declarative-closed shadow roots, and run imperative <code>exec</code> on <b>strict-CSP / Trusted-Types</b> pages (GitHub, Google apps) where main-world eval is blocked. The debugger is exempt from the page's CSP/TT — the only mechanism that works. Still gated by the per-action approval. Attaching flashes Chrome's <b>“is debugging this browser” banner</b> — only for these reserved actions, so the flash marks the risk.</div>
+                <CdpToggle />
                 </Section>
 
             </> : null}

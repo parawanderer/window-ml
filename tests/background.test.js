@@ -635,7 +635,7 @@ test("GET_CONFIG returns the model/ocrModel/apiFormat and withholds the URL and 
 });
 
 test("CDP_CLICK dispatches a trusted press+release via the debugger and always detaches", async () => {
-    const bg = loadBackground({ config: baseConfig({ cdpClick: true }) });
+    const bg = loadBackground({ config: baseConfig({ cdp: true }) });
     // A trusted surface (no sender.tab — e.g. the approval UI) passes the inspected tabId in the payload.
     const res = await bg.send({ type: "CDP_CLICK", payload: { x: 120, y: 340, tabId: 9 } }, {});
     assert.deepEqual(res, { ok: true });
@@ -651,15 +651,15 @@ test("CDP_CLICK dispatches a trusted press+release via the debugger and always d
     assert.deepEqual(bg.debuggerCalls[3][1], { tabId: 9 }, "detached the same target");
 });
 
-test("CDP_CLICK is refused when the cdpClick flag is off (never attaches)", async () => {
-    const bg = loadBackground({ config: baseConfig({ cdpClick: false }) });
+test("CDP_CLICK is refused when the cdp flag is off (never attaches)", async () => {
+    const bg = loadBackground({ config: baseConfig({ cdp: false }) });
     const res = await bg.send({ type: "CDP_CLICK", payload: { x: 1, y: 2, tabId: 9 } }, {});
-    assert.match(res.error, /off — enable it/i);
+    assert.match(res.error, /off — enable/i);
     assert.equal(bg.debuggerCalls.length, 0, "never attached the debugger");
 });
 
 test("CDP_CLICK from an UNTRUSTED page is refused (choke-point, no attach)", async () => {
-    const bg = loadBackground({ config: baseConfig({ cdpClick: true }) });
+    const bg = loadBackground({ config: baseConfig({ cdp: true }) });
     // sender.tab set + host not on pageApprovalDomains → untrusted → a page can't self-initiate a CDP click.
     const res = await bg.send({ type: "CDP_CLICK", payload: { x: 1, y: 2 } }, { tab: { id: 4, url: "https://evil.example/" } });
     assert.match(res.error, /can't be initiated by this page/i);
@@ -667,7 +667,7 @@ test("CDP_CLICK from an UNTRUSTED page is refused (choke-point, no attach)", asy
 });
 
 test("CDP_CLICK reports the missing debugger permission (never attaches)", async () => {
-    const bg = loadBackground({ config: baseConfig({ cdpClick: true }), debuggerPermission: false });
+    const bg = loadBackground({ config: baseConfig({ cdp: true }), debuggerPermission: false });
     const res = await bg.send({ type: "CDP_CLICK", payload: { x: 1, y: 2, tabId: 9 } }, {});
     assert.ok(res.needsPermission, "flags that the permission is needed");
     assert.match(res.error, /`debugger` permission is missing/i);
