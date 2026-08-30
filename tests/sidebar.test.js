@@ -1000,6 +1000,21 @@ test("step-cap stop (HUD card): the corner card offers 'Continue (+N steps)' →
 
 const streamConfig = (over = {}) => ({ system: "s", customSystem: false, tools: [], maxSteps: 20, think: null, env: true, vision: null, hints: null, ...over });
 
+test("HUD card: a streaming answer renders as CLEAN text — no DevTools activity line or model chip", async () => {
+    const w = await loadSidebarWorld();
+    await w.raw({ __mlSidebarSurface: "card" });   // off-mode corner card
+    await w.dispatch(agentStart("cs", "how many servers?", "m", 20, streamConfig({ stream: true })));
+    // The answer streams in (liveStream.content) → the card expands to show it live.
+    await w.dispatch({ kind: "agent-stream", id: "cs", ts: Date.now(), save: false, session: { hash: "cs", turn: 1 }, step: 1, localStep: 1, content: "Fourteen servers, one on http." });
+    await w.flush();
+    const body = w.shadow.querySelector(".card-body");
+    const answer = body.querySelector(".card-answer.md");
+    assert.ok(answer, "the streaming answer is a clean markdown block (like the finished answer)");
+    assert.match(answer.textContent, /Fourteen servers/, "the streamed content shows");
+    assert.equal(body.querySelector(".card-working"), null, "no 'Running JavaScript…' activity line in the HUD");
+    assert.equal(body.querySelector(".model-name"), null, "no model chip (that's DevTools/sidebar chrome)");
+});
+
 test("HUD card: a streaming follow-up collapses an open 'Show work' and keeps it ABOVE the answer (no reflow spam)", async () => {
     const w = await loadSidebarWorld();
     await w.raw({ __mlSidebarSurface: "card" });   // off-mode corner card
