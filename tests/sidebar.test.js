@@ -1156,6 +1156,100 @@ test("thinking: a reply with reasoning shows a collapsed thinking block; without
     assert.equal(w.shadow.querySelector(".msg.asst details.thinking"), null, "no thinking block without reasoning");
 });
 
+// --- backend unreachable: a dead box reads at a glance in BOTH surfaces (panel banner + HUD card) ---
+
+const agentFail = (hash, error, steps = 0) => ({ kind: "agent-result", id: hash, ts: Date.now() + 100, save: false, session: { hash, turn: steps }, summary: "", steps, hitCap: false, error });
+const UNREACHABLE = "Couldn't reach the server at http://gpubox:11434 (Failed to fetch). Is OpenWebUI / Ollama running there?";
+
+test("backend offline (panel): an unreachable run failure shows a top banner; a later success clears it", async () => {
+    const w = await loadSidebarWorld({ sync: { chatUrl: "http://gpubox:11434" } });
+    await w.dispatch(agentStart("bo1", "do a thing"));
+    await w.dispatch(agentFail("bo1", UNREACHABLE));
+    await w.tick();
+    const banner = w.shadow.querySelector(".backend-offline");
+    assert.ok(banner, "the offline banner appears in the panel");
+    assert.match(banner.textContent, /Backend unreachable/);
+    assert.match(banner.textContent, /gpubox/, "shows the configured server URL");
+    // A subsequent successful run means the box answered → clear it.
+    await w.dispatch(agentStart("bo2", "another"));
+    await w.dispatch(agentResult("bo2", "done", 1));
+    await w.tick();
+    assert.equal(w.shadow.querySelector(".backend-offline"), null, "a successful run clears the banner");
+});
+
+test("backend offline (panel): an HTTP-status failure does NOT show the banner (the box answered)", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("bo3", "x"));
+    await w.dispatch(agentFail("bo3", "HTTP 500 from http://x: boom"));
+    await w.tick();
+    assert.equal(w.shadow.querySelector(".backend-offline"), null, "an HTTP error is not 'unreachable'");
+});
+
+test("backend offline (HUD card): an unreachable failure shows a distinct 'Backend unreachable' card", async () => {
+    const w = await loadSidebarWorld({ sync: { chatUrl: "http://gpubox:11434" }, listModels: () => ({ data: ["m"] }) });
+    await w.raw({ __mlSidebarSurface: "card" });
+    await w.dispatch(agentStart("boc", "do a thing"));
+    await w.dispatch(agentFail("boc", UNREACHABLE));
+    await w.tick();
+    assert.ok(w.shadow.querySelector(".card-error-offline"), "the HUD card uses the offline error variant");
+    assert.match(w.shadow.querySelector(".card-app, .card-body, body").textContent, /Backend unreachable/, "the card headline says the box is unreachable");
+});
+
+// The PROACTIVE path: the health probe (LIST_MODELS) flags a dead box even when NO run runs (or a run hangs
+// silently with no error event — the reported "stuck on Starting…" bug). This is what makes the offline state
+// appear without drilling into a failed run.
+test("backend offline (proactive): the health probe flags an unreachable backend with NO run at all", async () => {
+    const w = await loadSidebarWorld({ sync: { chatUrl: "http://gpubox:11434" }, listModels: () => ({ error: "/api/models: Failed to fetch" }) });
+    await w.flush();   // let the on-mount health probe run
+    const banner = w.shadow.querySelector(".backend-offline");
+    assert.ok(banner, "the banner appears from the probe — no run needed");
+    assert.match(banner.textContent, /Backend unreachable/);
+    assert.match(banner.textContent, /gpubox/);
+});
+
+test("backend offline (proactive): an HTTP / 'no models installed' probe error is NOT flagged (the box answered)", async () => {
+    const w = await loadSidebarWorld({ listModels: () => ({ error: "The server is reachable but has no models installed." }) });
+    await w.flush();
+    assert.equal(w.shadow.querySelector(".backend-offline"), null, "a reachable-but-empty server is not 'offline'");
+});
+
+test("backend offline (proactive): a healthy probe leaves no banner", async () => {
+    const w = await loadSidebarWorld({ listModels: () => ({ data: ["m1", "m2"] }) });
+    await w.flush();
+    assert.equal(w.shadow.querySelector(".backend-offline"), null);
+});
+
+test("backend offline (HUD card, proactive): a dead box shows an offline card even with no run event", async () => {
+    const w = await loadSidebarWorld({ sync: { chatUrl: "http://gpubox:11434" }, listModels: () => ({ error: "Failed to fetch" }) });
+    await w.raw({ __mlSidebarSurface: "card" });
+    await w.flush();
+    assert.match(w.shadow.querySelector("body").textContent, /Backend (unreachable|down)/i, "the HUD reflects the dead box instead of a silent/stuck card");
+});
+
+test("backend offline (mid-run): a server that dies MID-run flags offline AND keeps the completed steps", async () => {
+    const w = await loadSidebarWorld({ sync: { chatUrl: "http://gpubox:11434" }, listModels: () => ({ data: ["m"] }) });
+    await w.dispatch(agentStart("mid", "a multi-step task"));
+    await w.dispatch(agentStep("mid", 1, { seq: 1, tool: "findByText", arguments: { text: "x" }, result: "found: x" }));
+    // …the box dies on the NEXT model call → the loop errors with an unreachable message.
+    await w.dispatch(agentFail("mid", UNREACHABLE, 1));
+    await w.tick();
+    assert.ok(w.shadow.querySelector(".backend-offline"), "a mid-run death raises the offline banner");
+    // The progress so far is NOT lost — the completed step is still in the run's detail.
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    assert.match(w.shadow.querySelector(".view").textContent, /found: x/, "the step that completed before the death survives");
+});
+
+test("backend offline (mid-run, HUD card): a mid-run death shows the offline card, not a stuck 'Working…'", async () => {
+    const w = await loadSidebarWorld({ sync: { chatUrl: "http://gpubox:11434" }, listModels: () => ({ data: ["m"] }) });
+    await w.raw({ __mlSidebarSurface: "card" });
+    await w.dispatch(agentStart("midc", "a multi-step task"));
+    await w.dispatch(agentStep("midc", 1, { seq: 1, tool: "findByText", arguments: { text: "x" }, result: "found: x" }));
+    await w.dispatch(agentFail("midc", UNREACHABLE, 1));
+    await w.tick();
+    assert.ok(w.shadow.querySelector(".card-error-offline"), "the HUD card flags the mid-run death as unreachable");
+});
+
 test("agent run: its session auto-titles via the utility model, from the task (parity with chat)", async () => {
     const w = await loadSidebarWorld({
         sync: { utilityModel: "u", autoTitles: true },

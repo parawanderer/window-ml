@@ -416,7 +416,7 @@ function closeSidebarWorlds() {
 // document (sidebar.html): renders into #root, no shadow root. In the real
 // extension the content-script shell relays __mlDebug in from the parent window;
 // in jsdom window.parent === window, so dispatch posts with source: win.
-async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaModels = null, fetchLlm = () => ({ data: "OK" }), vram = [], psError = null, caps = null, pythonExec = null } = {}) {
+async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaModels = null, fetchLlm = () => ({ data: "OK" }), vram = [], psError = null, caps = null, pythonExec = null, listModels = null } = {}) {
     const unloadCalls = [];
     const pyCalls = [];   // PYTHON_EXEC payloads the app sent (the bench)
     let psVram = vram;   // mutable so a test can change the resident set mid-run (setVram)
@@ -441,7 +441,7 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaMode
             sendMessage: (msg, cb) => {
                 if (!cb) return;
                 const type = msg && msg.type;
-                if (type === "LIST_MODELS") cb({ data: models, ollamaModels });
+                if (type === "LIST_MODELS") cb(listModels ? listModels(msg.payload) : { data: models, ollamaModels });
                 else if (type === "FETCH_LLM") cb(fetchLlm(msg.payload));
                 else if (type === "MODEL_CAPS") cb({ data: typeof caps === "function" ? caps(msg.payload && msg.payload.model) : caps });
                 else if (type === "OLLAMA_PS") cb(psError ? { error: psError } : { data: psVram });

@@ -75,5 +75,9 @@ export const models = signal<string[]>([]);               // server model ids (f
 export const ollamaIds = signal<string[] | null>(null);   // subset that's Ollama-backed (null = can't tell → skip cloud detection)
 export const vramOpen = signal(false);                    // VRAM monitor panel toggled on?
 export const sidebarOpen = signal(false);                 // is the shell slid open? (gates polling)
+// The last BACKEND-UNREACHABLE error message (empty = the backend is reachable / unknown). Set when a run or
+// chat fails to reach the server, cleared on any successful call. Drives the devtools-panel offline banner +
+// the HUD card's distinct "backend unreachable" treatment, so a dead box reads at a glance in both surfaces.
+export const backendError = signal("");
 export const loadedModels = signal<LoadedModel[] | null>(null);   // OLLAMA_PS resident set (null until first poll)
 export const psError = signal<string | null>(null);               // OLLAMA_PS failure (no Ollama backend)

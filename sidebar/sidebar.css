@@ -1037,6 +1037,19 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
 /* A fatal run error, shown in the card (red, verbatim-ish message). */
 .card-error { color: var(--err); line-height: 1.45; white-space: pre-wrap; word-break: break-word;
     border-left: 3px solid var(--err); padding-left: 10px; }
+/* backend-unreachable card: warm/amber (a config/infra problem to fix, not a run bug) + an inline warn icon. */
+.card-error-offline { color: var(--warn); border-left-color: var(--warn); }
+.card-error-offline svg { width: 14px; height: 14px; vertical-align: -2px; }
+
+/* Backend-unreachable banner — top of the devtools panel / overlay, persistent until the box answers again. */
+.backend-offline { display: flex; align-items: flex-start; gap: 8px; padding: 8px 12px;
+    background: color-mix(in srgb, var(--warn) 14%, transparent);
+    border-bottom: 1px solid color-mix(in srgb, var(--warn) 45%, transparent); }
+.backend-offline > svg { flex: none; width: 15px; height: 15px; margin-top: 1px; color: var(--warn); }
+.backend-offline .bo-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.backend-offline .bo-title { color: var(--warn); font-size: 0.9em; }
+.backend-offline .bo-detail { color: var(--fg-dim); font-size: 0.8em; line-height: 1.4; }
+.backend-offline .bo-detail code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
 
 /* Staggered content entrance — the shell morphs the FRAME first, then the card's content slides up +
    fades in staggered, so a pill↔approval↔answer swap never snaps (the Jarvis feel). Runs once on mount

@@ -5,9 +5,45 @@
 // (then the scripted turns are ignored and the real model drives — slower, non-deterministic).
 
 import { test, expect } from "@playwright/test";
+import { createServer } from "node:http";
 import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
+
+// Bind an ephemeral port then CLOSE it → a definitely-CONNECTION-REFUSED URL, for the dead-backend tests
+// (simulating "the box is offline"). More reliable than guessing an unused port.
+async function deadBackendUrl() {
+    const srv = createServer();
+    await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+    const port = srv.address().port;
+    await new Promise((r) => srv.close(r));
+    return `http://127.0.0.1:${port}/api/chat/completions`;
+}
+
+// A backend that serves the FIRST chat turn (a tool call), then DIES — so a run makes real progress and THEN
+// the box vanishes mid-run (the "server randomly dies during a run" case). /api/models answers healthy while
+// alive (so the health probe doesn't false-flag before the death). Returns { url, stop }.
+async function startDyingBackend() {
+    const srv = createServer((req, res) => {
+        const isChat = /\/chat\/completions|\/api\/chat/.test(req.url || "");
+        let body = "";
+        req.on("data", (c) => (body += c));
+        req.on("end", () => {
+            if (!isChat) {   // model-list / health probe → healthy while the box is up
+                res.writeHead(200, { "content-type": "application/json" });
+                res.end(JSON.stringify({ data: [{ id: "fake-model" }] }));
+                return;
+            }
+            // First (and only) chat turn: a DOM tool call, then close the server so the NEXT turn — and the
+            // health probe — hit a refused port. res 'finish' guarantees the response flushed before we die.
+            res.writeHead(200, { "content-type": "application/json" });
+            res.end(JSON.stringify({ choices: [{ index: 0, finish_reason: "tool_calls", message: { role: "assistant", content: "", tool_calls: [{ id: "call_1", type: "function", function: { name: "findByText", arguments: JSON.stringify({ text: "Step" }) } }] } }] }));
+            res.on("finish", () => srv.close());
+        });
+    });
+    await new Promise((r) => srv.listen(0, "127.0.0.1", r));
+    return { url: `http://127.0.0.1:${srv.address().port}/api/chat/completions`, stop: () => new Promise((r) => srv.close(r)) };
+}
 
 const BACKEND = process.env.E2E_BACKEND;   // real-backend override (skips the fake)
 let ext, fake, site;
@@ -586,6 +622,68 @@ test("button #3 (overlay UI): clicking 'Approve + remember' persists the URL —
     expect(((await sb.locator("body").textContent()) || "").toLowerCase(), "no second gate — the repeat fetch auto-approved").not.toContain("waiting for your approval");
 
     await configureExtension(ext.sw, { debugMode: "off" });   // restore for later tests
+    await page.close();
+});
+
+// Backend unreachable — a DEAD BOX must read at a glance in BOTH surfaces. Point the extension at a
+// connection-refused URL, start a run (it fails on the first model call), and assert the offline treatment.
+// (Skipped under a real backend, which by definition is reachable.)
+test("backend offline (HUD card): a dead backend surfaces a 'Backend unreachable' card", async () => {
+    test.skip(!!BACKEND, "real-backend mode: the backend is up, nothing is unreachable");
+    const dead = await deadBackendUrl();
+    await configureExtension(ext.sw, { chatUrl: dead, debugMode: "off" });   // off mode → the corner HUD card
+    const page = await ext.context.newPage();
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+    await page.evaluate(() => { window.ml.agent("Say hi.", { env: false }).catch(() => {}); return true; });
+
+    const card = () => page.frames().filter((f) => f.url().includes("sidebar.html") && !f.isDetached()).pop();
+    // The dead box surfaces as the offline card ("Backend unreachable") or, while collapsed, the offline orb
+    // ("Backend down") — either is the fix (vs the old silent "Starting…" that hung forever).
+    await expect.poll(async () => { const f = card(); try { return f ? ((await f.locator("body").textContent()) || "") : ""; } catch { return ""; } }, { timeout: 25000 }).toMatch(/Backend (unreachable|down)/i);
+
+    await configureExtension(ext.sw, { chatUrl: fake.url, debugMode: "off" });   // restore for later tests
+    await page.close();
+});
+
+test("backend offline (overlay panel): a dead backend surfaces the top offline banner", async () => {
+    test.skip(!!BACKEND, "real-backend mode: nothing is unreachable");
+    const dead = await deadBackendUrl();
+    await configureExtension(ext.sw, { chatUrl: dead, debugMode: "overlay" });
+    const page = await ext.context.newPage();
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+    await page.evaluate(() => { window.ml.agent("Say hi.", { env: false }).catch(() => {}); return true; });
+
+    const sb = () => page.frames().filter((f) => f.url().includes("sidebar.html") && !f.isDetached()).pop();
+    await page.locator("#ml-sb-tab").click();   // open the overlay panel (banner is in the app body regardless)
+    await expect.poll(async () => { const f = sb(); try { return f ? await f.locator(".backend-offline").count() : 0; } catch { return 0; } }, { timeout: 25000 }).toBeGreaterThanOrEqual(1);
+    await expect(sb().locator(".backend-offline")).toContainText("Backend unreachable");
+
+    await configureExtension(ext.sw, { chatUrl: fake.url, debugMode: "off" });   // restore
+    await page.close();
+});
+
+// The server dies MID-run: a step completes, THEN the box vanishes. The run must surface offline (not hang or
+// vanish) and keep the completed step. Covers the "what if the server randomly dies during a run" case.
+test("backend offline (mid-run): a server that dies after a step surfaces offline and keeps the progress", async () => {
+    test.skip(!!BACKEND, "real-backend mode: the backend stays up");
+    const dying = await startDyingBackend();
+    await configureExtension(ext.sw, { chatUrl: dying.url, debugMode: "overlay" });
+    const page = await ext.context.newPage();
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+    await page.evaluate(() => { window.ml.agent("Find the Step text, then summarise.", { env: false }).catch(() => {}); return true; });
+
+    const sb = () => page.frames().filter((f) => f.url().includes("sidebar.html") && !f.isDetached()).pop();
+    // The run started (a session materialised) and then the box died → the offline state surfaces instead of
+    // the run hanging silently. (Step-level preservation is covered deterministically by the jsdom mid-run test.)
+    await page.locator("#ml-sb-tab").click().catch(() => {});
+    await expect.poll(async () => { const f = sb(); try { return f ? await f.locator(".row").count() : 0; } catch { return 0; } }, { timeout: 25000 }).toBeGreaterThanOrEqual(1);
+    await expect.poll(async () => { const f = sb(); try { return f ? await f.locator(".backend-offline").count() : 0; } catch { return 0; } }, { timeout: 25000 }).toBeGreaterThanOrEqual(1);
+
+    await dying.stop().catch(() => {});
+    await configureExtension(ext.sw, { chatUrl: fake.url, debugMode: "off" });   // restore
     await page.close();
 });
 

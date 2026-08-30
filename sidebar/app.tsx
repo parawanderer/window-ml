@@ -14,8 +14,9 @@ import { elementReference, externalSheetIds } from "../dom";
 import {
     FONT_KEY, WRAP_KEY, LINES_KEY,
     sessionMap, rev, view, fontScale, codeWrap, codeLineNumbers, config, models,
-    ollamaIds, vramOpen, sidebarOpen, loadedModels, psError, turnsRun,
+    ollamaIds, vramOpen, sidebarOpen, loadedModels, psError, turnsRun, backendError,
 } from "./store";
+import { isBackendUnreachable } from "../contract";
 import type { Status, Turn, AgentStep, Session } from "./store";
 import { pretty, shortStamp, fullStamp, truncate, collapsedPreview, highlight, beautifyJs, htmlLines, markdown, stripFormatting, lastUser, rollupStatus } from "./format";
 import { annotatedConfig, turnProfile, shownModel, sessionProfile } from "./model";
@@ -131,6 +132,10 @@ function onDebug(ev: MlDebugEvent): void {
         // track the LATEST for the title + row dot.
         s.answers = [...(s.answers || []), { text: ev.summary, ts: ev.ts, atStep: endStep, status, hitCap: ev.hitCap, cancelled: !!ev.cancelled, error: ev.error || undefined }];
         s.summary = ev.summary; s.hitCap = ev.hitCap; s.error = ev.error || undefined; s.cancelled = !!ev.cancelled;
+        // Backend health: a run that couldn't reach the box flags the offline banner/card; any run that
+        // finished (or failed for another reason) means the box answered → clear it.
+        if (ev.error && isBackendUnreachable(ev.error)) backendError.value = ev.error;
+        else if (!ev.error) backendError.value = "";
         // REPLACE (not merge): each turn's result carries THIS turn's answer media, so a new round that
         // designates nothing CLEARS the old answer (resets to 0) — the card never shows a stale prior answer.
         s.answerMedia = (ev.answerMedia && ev.answerMedia.length) ? ev.answerMedia : undefined;   // HUD card only
@@ -201,6 +206,10 @@ function onDebug(ev: MlDebugEvent): void {
         const updated: Turn = ev.kind === "chat-result"
             ? { ...prev, assistant: ev.content, sources: ev.sources, structured: ev.structured, status: "ok", ts: ev.ts, model: ev.model, extend: ev.extend, reasoning: ev.reasoning, usage: ev.usage }
             : { ...prev, error: ev.error, status: "err", ts: ev.ts };
+        // Backend health (mirror the agent-result path): a chat that couldn't reach the box flags offline; a
+        // successful chat-result clears it.
+        if (ev.kind === "chat-error" && isBackendUnreachable(ev.error)) backendError.value = ev.error;
+        else if (ev.kind === "chat-result") backendError.value = "";
         s.turns = s.turns.map((x, idx) => idx === i ? updated : x);
         s.lastTs = ev.ts; s.status = rollupStatus(s);
     }
@@ -1592,6 +1601,38 @@ function pollPs(): void {
         for (const m of loaded) if (typeof m.contextLength === "number") seenContext.set(normModel(m.model), m.contextLength);
         loadedModels.value = loaded;
     });
+}
+
+// --- proactive backend-health probe (drives the offline banner + the HUD card's offline state) ---
+// A run/chat failure isn't the only way to learn the box is down — probe the CHAT backend DIRECTLY so a dead
+// box surfaces even before/without a run, and AUTO-RECOVERS when it's back. LIST_MODELS hits the configured
+// chatUrl (backend-agnostic; it throws a network error when unreachable, an HTTP/"no models" error when it's
+// up). A HANGING box (packets dropped, not refused) never calls back — so a no-RESPONSE within the window
+// ALSO counts as unreachable (the "stuck on Starting…" case the user hit). Sets/clears `backendError`.
+const BACKEND_HEALTH_MS = 6000;          // probe cadence while the app is mounted
+const BACKEND_HEALTH_TIMEOUT_MS = 6000;  // no response by here → treat as unreachable (a hanging box)
+let healthInFlight = false;
+function pollBackendHealth(): void {
+    if (healthInFlight) return;   // one in flight at a time; the timeout guarantees it always settles
+    healthInFlight = true;
+    let settled = false;
+    const finish = (unreachable: string | null): void => {
+        if (settled) return;
+        settled = true; healthInFlight = false;
+        backendError.value = unreachable || "";
+    };
+    const timer = setTimeout(
+        () => finish(`Couldn't reach the server at ${config.value.chatUrl || "the configured URL"} — no response. Is it running?`),
+        BACKEND_HEALTH_TIMEOUT_MS);
+    try {
+        chrome.runtime.sendMessage({ type: "LIST_MODELS", payload: {} }, (resp: { error?: string } | undefined) => {
+            clearTimeout(timer);
+            const err = chrome.runtime.lastError?.message || resp?.error || "";
+            // Only a NETWORK-level failure means "the box is gone". An HTTP / "no models installed" error means
+            // the server ANSWERED → reachable (clear). Any data likewise → reachable.
+            finish(err && isBackendUnreachable(err) ? err : null);
+        });
+    } catch { clearTimeout(timer); finish(null); }   // extension context gone → don't nag
 }
 
 // "expires in Xs/Xm" from an /api/ps expires_at ISO stamp (Ollama's TTL).
@@ -3007,17 +3048,35 @@ function CardApp() {
     }, [pending, pendingStep?.seq]);
 
     if (composing) return <ComposerCard />;   // the blob reshapes into the task input (container morphs shell-side)
+    // Backend GONE: a run that's still "starting"/"working" against a dead box would otherwise hang on the
+    // "Starting…" orb with no signal (the reported bug). The proactive health probe set backendError → show it
+    // plainly. A finished run keeps its own card (a completed run's error already shows via card-error-offline);
+    // an approval gate stays visible too. `boDown` is exactly the in-between: not done, not gated.
+    const boDown = !!backendError.value && !done && !pending;
+    if (boDown) {
+        if (state === "orb" || state === "orblabel") return <Orb icon="⚠" label="Backend down" wide />;
+        return (
+            <div class="card-app offline" data-rev={r}>
+                <div class="card-head"><span class="card-head-txt">Backend unreachable</span></div>
+                <div class="card-body"><div class="card-error card-error-offline"><IconWarn /> {backendError.value}</div></div>
+            </div>
+        );
+    }
     // The just-sent "Starting…" bridge orb (before the run's first event) — the composer balled up and flew
     // back to the corner, already working. Ignores any older run underneath.
     if ((state === "orb" || state === "orblabel") && starting) return <Orb icon="💭" label="Starting…" wide={state === "orblabel"} />;
     if (!run) return <div class="card-app" data-rev={r} />;
 
     const title = run.title || truncate(run.task || "Agent run", 80);
-    const headline = pending ? "Approval needed" : run.error ? "Run failed" : run.cancelled ? "Cancelled" : done ? (run.hitCap ? "Stopped" : "Task complete") : run.resumed ? "Resumed…" : "Working…";
+    // A backend-UNREACHABLE failure gets its own headline ("Backend unreachable") so a dead box is unmistakable,
+    // distinct from a generic run failure (a reachable box that errored).
+    const offline = !!run.error && isBackendUnreachable(run.error);
+    const failWord = offline ? "Backend unreachable" : "Run failed";
+    const headline = pending ? "Approval needed" : run.error ? failWord : run.cancelled ? "Cancelled" : done ? (run.hitCap ? "Stopped" : "Task complete") : run.resumed ? "Resumed…" : "Working…";
     // Multi-run EXPANDED head: name the selected run (its title, ellipsized in CSS) rather than the generic
     // "Task complete" — the status is already carried by the tab's glyph. Keep the status word for the
     // states that matter more than a name (approval / failure / cancel).
-    const headText = tabs ? (pending ? "Approval needed" : run.error ? "Run failed" : run.cancelled ? "Cancelled" : title) : headline;
+    const headText = tabs ? (pending ? "Approval needed" : run.error ? failWord : run.cancelled ? "Cancelled" : title) : headline;
     // Multi-run COLLAPSED summary: a calm overview, not per-run detail — a generic status + a count badge,
     // no title subtitle, no tab strip. (A pending run would force the EXPANDED state, so it isn't seen here.)
     const doneN = runs.filter(runIsDone).length;
@@ -3120,7 +3179,7 @@ function CardApp() {
                                 the payoff. Only when there's actual WORK (≥1 tool step); a pure chat answer has none. */}
                             {(run.steps || []).some(s => s.tool) ? <ShowWork run={run} /> : null}
                             {run.error
-                                ? <div class="card-error">{run.error}</div>
+                                ? <div class={`card-error${offline ? " card-error-offline" : ""}`}>{offline ? <><IconWarn /> </> : null}{run.error}</div>
                                 : (run.summary || "").trim()
                                     ? <div class="card-answer md" dangerouslySetInnerHTML={{ __html: markdown(run.summary || "", { math: true }) }} />
                                     : <div class="card-answer dim card-answer-empty">{run.cancelled ? "Run cancelled — the agent returned no text." : "The run finished without a text reply."}</div>}
@@ -3247,12 +3306,39 @@ function CardReply({ hash }: { hash: string }) {
 // App) so App's hooks/effects — the ps polling, stick-to-bottom, title backfill — never run for the
 // card, which needs none of them.
 function Root() {
+    // Proactive backend health, in BOTH surfaces: a dead box must surface even when a run fails silently or
+    // HANGS (no error event). The panel is mounted whenever devtools/overlay is up; the off-mode card is
+    // mounted while a run is active — exactly when a stuck "Starting…" would otherwise hang with no signal.
+    useEffect(() => {
+        pollBackendHealth();
+        const id = setInterval(pollBackendHealth, BACKEND_HEALTH_MS);
+        return () => clearInterval(id);
+    }, []);
     return surface.value === "card" ? <CardApp /> : <App />;
 }
 
 // Whether the detail log is scrolled to the bottom (stick-to-bottom intent). Module-level so the
 // per-step approval reveal (ToolStep) and App's scroll logic share ONE truth — a single App instance.
 const atBottom = { v: true };
+
+// A persistent, top-of-panel banner shown when the backend is UNREACHABLE (server down / wrong host /
+// refused) — so a dead box reads at a glance in the devtools panel + overlay, without drilling into the
+// failed run. Set/cleared in onDebug (backendError); the URL comes from the (cached) config so it shows even
+// while nothing on the backend answers.
+function BackendOfflineBanner() {
+    const msg = backendError.value;
+    if (!msg) return null;
+    const url = config.value.chatUrl || "";
+    return (
+        <div class="backend-offline" role="alert">
+            <IconWarn />
+            <div class="bo-body">
+                <b class="bo-title">Backend unreachable</b>
+                <span class="bo-detail">Couldn't reach your server{url ? <> at <code>{url}</code></> : null}. Is it running? Check the Server URL / API format in Settings.</span>
+            </div>
+        </div>
+    );
+}
 
 function App() {
     const v = view.value;
@@ -3343,6 +3429,7 @@ function App() {
                 {!inSettings && !inBench ? <button class="tt hbtn" aria-label="Python bench" onClick={() => (view.value = { name: "bench" })}><IconBench /><span class="tt-pop" role="tooltip">Python bench — run scripts in the sandbox</span></button> : null}
                 {!inSettings && !inBench ? <button class="tt hbtn" aria-label="Settings" onClick={() => { fetchModels(); view.value = { name: "settings" }; }}><IconGear /><span class="tt-pop" role="tooltip">Settings</span></button> : null}
             </div>
+            <BackendOfflineBanner />
             {vramOpen.value && !inSettings && !inBench ? <VramPanel /> : null}
             <div class="view" data-rev={r} ref={viewRef} onScroll={onViewScroll} onWheel={endPin} onTouchMove={endPin}>
                 <div ref={contentRef}>

@@ -133,6 +133,18 @@ export function modelFilterAllows(model: string, filter: string): boolean {
     try { return new RegExp(filter).test(model); } catch { return true; }
 }
 
+/** Is this error message a BACKEND-UNREACHABLE failure (server down / wrong host / refused / DNS / TLS) —
+ *  as opposed to an HTTP status error (a reachable server that rejected the request)? The background
+ *  translates a bare fetch reject into "Couldn't reach the server at …"; this also catches the raw forms
+ *  in case one slips through (Failed to fetch / NetworkError / ERR_CONNECTION_* / ECONNREFUSED / Could not
+ *  reach). Pure; shared by the HUD card + the devtools panel banner so both flag the same condition. An
+ *  HTTP 4xx/5xx is NOT unreachable — the box answered. */
+export function isBackendUnreachable(msg?: string | null): boolean {
+    if (!msg) return false;
+    if (/^HTTP\s\d/i.test(msg)) return false;   // "HTTP 500 from …" = reachable, it answered
+    return /couldn't reach the server|could not reach|failed to fetch|networkerror|err_connection|err_name_not_resolved|econnrefused|enotfound|net::err/i.test(msg);
+}
+
 /** `FETCH_URL` payload — a plain uncredentialed GET the background performs on the agent's behalf (bypassing
  *  CORS via host permissions). No headers/body/method knobs by design: a locked, low-surface read primitive. */
 export interface FetchUrlPayload { url: string; }
