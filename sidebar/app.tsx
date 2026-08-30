@@ -288,22 +288,29 @@ function ensureBlockSummary(hash: string, i: number, prompt: string, result: str
         },
     );
 }
-interface RunTaskBlock { prompt: string; promptImages?: string[]; turns: AgentTurnGroup[]; answer: NonNullable<Session["answers"]>[number] | null; }
+type SayItem = NonNullable<Session["says"]>[number];
+interface RunTaskBlock { prompt: string; promptImages?: string[]; turns: AgentTurnGroup[]; steers: SayItem[]; answer: NonNullable<Session["answers"]>[number] | null; }
 // Segment a run into per-task blocks (a prompt → its turns → its answer). null when there's ≤1 task — nothing
 // to segment, so Show-work renders its flat trace as before.
 function buildRunBlocks(run: Session): RunTaskBlock[] | null {
     const answers = run.answers || [];
     if (answers.length <= 1) return null;
     const says = run.says || [];
+    // `run.says` is OVERLOADED: a new-turn follow-up (a continuation — NO sayId) AND a mid-run STEER (has a
+    // sayId, injected into the running turn, no answer of its own). Only continuations map 1:1 to answers, so
+    // the block PROMPT must index the CONTINUATIONS — indexing all says shifts every message into the wrong
+    // (previous) block the moment a steer exists. Steers render INLINE with the turns, at their step.
+    const continuations = says.filter(s => !s.id);
     const turns = groupTurns(run.steps || []).filter(t => t.thought || t.reasoning || t.tools.length);
     const blocks: RunTaskBlock[] = [];
     let prev = -Infinity;
     for (let i = 0; i < answers.length; i++) {
         const boundary = answers[i].atStep;
         blocks.push({
-            prompt: i === 0 ? (run.task || "") : (says[i - 1]?.text || ""),
-            promptImages: i === 0 ? run.taskImages : says[i - 1]?.images,
+            prompt: i === 0 ? (run.task || "") : (continuations[i - 1]?.text || ""),
+            promptImages: i === 0 ? run.taskImages : continuations[i - 1]?.images,
             turns: turns.filter(t => t.step > prev && t.step <= boundary),
+            steers: says.filter(s => s.id && s.atStep > prev && s.atStep <= boundary),   // mid-run messages IN this block
             answer: answers[i],
         });
         prev = boundary;
@@ -2855,7 +2862,12 @@ function RunTaskBlockView({ run, block, index, last }: { run: Session; block: Ru
             {open ? (
                 <div class="run-block-body">
                     <CardTraceMsg label="you asked" text={block.prompt} cls="acard-you" images={block.promptImages} />
-                    {block.turns.map(t => <AgentTurn key={t.step} turn={t} max={run.maxSteps} hash={run.hash} />)}
+                    {/* Turns + any MID-RUN steers, interleaved by step so a steer sits where it was sent, not
+                        appended after all the work (and never mis-nested into a different block). */}
+                    {[
+                        ...block.turns.map(t => ({ pos: t.step, el: <AgentTurn key={`t${t.step}`} turn={t} max={run.maxSteps} hash={run.hash} /> })),
+                        ...block.steers.map((s, k) => ({ pos: s.atStep + 0.5, el: <CardTraceMsg key={`st${k}`} label="you asked" text={s.text} cls="acard-you" images={s.images} steer={s.id ? { seen: s.seen } : undefined} /> })),
+                    ].sort((a, b) => a.pos - b.pos).map(x => x.el)}
                     {block.answer && !last ? <CardTraceMsg label={block.answer.cancelled ? "cancelled" : block.answer.hitCap ? "stopped early" : "answered"} text={block.answer.text || "(no reply)"} cls="acard-ans" /> : null}
                 </div>
             ) : null}

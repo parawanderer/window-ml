@@ -1856,6 +1856,42 @@ test("agent runs render as their own session with steps + a final answer", async
     assert.ok(w.shadow.querySelector(".msg.asst .raw-btn"), "answer has a raw toggle");
 });
 
+test("HUD 'Show work' blocks: a mid-run STEER doesn't shift a follow-up message into the previous block", async () => {
+    // `run.says` is overloaded — a new-turn follow-up (a continuation, NO sayId) AND a mid-run steer (HAS a
+    // sayId). buildRunBlocks used to index says[i-1] by answer, so a steer shifted every later message: the
+    // steer became a block's prompt and the real follow-up (the LATEST message) vanished. Continuations must
+    // index the prompts; steers render inline in the block they were sent in.
+    const w = await loadSidebarWorld();
+    await w.raw({ __mlSidebarSurface: "card" });
+    const H = "steerblk";
+    let t = Date.now();
+    await w.dispatch(agentStart(H, "task one", "m", 20));
+    await w.dispatch(agentStep(H, 1, { tool: "exec", arguments: { js: "1" }, result: "r1" }));
+    await w.dispatch(agentResult(H, "answer one", 1));
+    await w.dispatch(agentSay(H, "question two", undefined, ++t));       // continuation (new turn), no sayId
+    await w.dispatch(agentStep(H, 2, { tool: "exec", arguments: { js: "2" }, result: "r2" }));
+    await w.dispatch(agentSay(H, "STEERED note", "steer1", ++t));        // MID-RUN steer, has a sayId
+    await w.dispatch(agentStep(H, 3, { tool: "exec", arguments: { js: "3" }, result: "r3" }));
+    await w.dispatch(agentResult(H, "answer two", 3));
+    await w.dispatch(agentSay(H, "question three", undefined, ++t));     // the LATEST follow-up (was getting lost)
+    await w.dispatch(agentStep(H, 4, { tool: "exec", arguments: { js: "4" }, result: "r4" }));
+    await w.dispatch(agentResult(H, "answer three", 4));
+    await w.tick();
+    w.shadow.querySelector(".card-work-toggle").click(); await w.tick();   // open Show work
+    const heads = [...w.shadow.querySelectorAll(".run-block-sum")].map(s => s.textContent);
+    assert.equal(heads.length, 3, "three blocks (task + two follow-ups)");
+    // No utility model in the test → the block header falls back to the prompt text.
+    assert.match(heads[1], /question two/, "block 2's prompt is the continuation Q2");
+    assert.match(heads[2], /question three/, "block 3's prompt is Q3 — the latest message is NOT lost / shifted");
+    assert.ok(!heads.some(h => /STEERED note/.test(h)), "the steer is NOT promoted to a block prompt");
+    // Expand block 2 (Q2's turn) — the steer sent during it renders INLINE there, and Q3 is NOT swallowed in.
+    const blocks = [...w.shadow.querySelectorAll(".run-block")];
+    blocks[1].querySelector(".run-block-head").click(); await w.tick();
+    const b1 = blocks[1].textContent;
+    assert.match(b1, /STEERED note/, "the mid-run steer renders inline in the block it was sent in");
+    assert.doesNotMatch(b1, /question three/, "the latest follow-up did NOT get injected into the previous block");
+});
+
 test("agent session renders as a multi-turn CHAT LOG: user messages + BOTH answers, no overwrite; live cap", async () => {
     const w = await loadSidebarWorld();
     const H = "ag-multi";
