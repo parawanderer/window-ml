@@ -1816,6 +1816,21 @@ test("FETCH_URL: a trusted surface fetches UNCREDENTIALED and classifies the bod
     assert.deepEqual(res.data.json, { ok: true }, "JSON is pre-parsed");
 });
 
+test("FETCH_URL: sends browser-IDENTITY headers (UA + Accept-Language) so it isn't blocked as a bare bot — but NO cookies", async () => {
+    let headers, creds;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => { headers = call.opts?.headers; creds = call.opts?.credentials; return fetchResponse("<html>ok</html>", { contentType: "text/html", url: call.url }); },
+    });
+    await bg.send({ type: "FETCH_URL", payload: { url: "https://github.com/o/r/blob/main/servers.json" } });
+    assert.match(headers["User-Agent"], /Chrome\/\d/, "sends the browser's real User-Agent (public identity)");
+    assert.equal(headers["Accept-Language"], "en-US,en;q=0.9", "sends a browser-style Accept-Language from navigator.languages");
+    assert.match(headers["Accept"], /text\/html/, "sends a browser-like Accept");
+    // The identity is PUBLIC — the private data (cookies) is NOT sent on the uncredentialed path.
+    assert.equal(creds, "omit", "still no cookies — browser info only, not the user's authenticated session");
+    assert.ok(!("Cookie" in headers) && !("cookie" in headers), "never sets a Cookie header here");
+});
+
 test("FETCH_URL: a JSON body gets a `schema` (TS-like shape); a non-JSON body does not", async () => {
     const bg = loadBackground({
         config: baseConfig(),

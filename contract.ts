@@ -133,6 +133,16 @@ export function modelFilterAllows(model: string, filter: string): boolean {
     try { return new RegExp(filter).test(model); } catch { return true; }
 }
 
+/** Build an `Accept-Language` header value from the browser's language list (navigator.languages), the way a
+ *  real browser sends it: the first language at q=1.0, each later one at a descending q-weight (floored at
+ *  0.1). ["en-US","en","fr"] → "en-US,en;q=0.9,fr;q=0.8". Dedupes, trims, drops empties. Pure (unit-tested);
+ *  used to make an ml.fetch request look like it came from the user's own browser. Empty list → "". */
+export function acceptLanguageFrom(langs: string[]): string {
+    const seen = new Set<string>();
+    const clean = (langs || []).map(l => (l || "").trim()).filter(l => l !== "" && !seen.has(l) && (seen.add(l), true));
+    return clean.map((l, i) => i === 0 ? l : `${l};q=${Math.max(0.1, 1 - i * 0.1).toFixed(1)}`).join(",");
+}
+
 /** Is this error message a BACKEND-UNREACHABLE failure (server down / wrong host / refused / DNS / TLS) —
  *  as opposed to an HTTP status error (a reachable server that rejected the request)? The background
  *  translates a bare fetch reject into "Couldn't reach the server at …"; this also catches the raw forms

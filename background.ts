@@ -3,7 +3,7 @@
 // server JSON is genuinely opaque, so it's typed `any`; our own data uses the
 // shared contract types.
 import type { MlConfig, ApiFormat, NeutralMessage, ToolCall, FetchLlmPayload, LlmResult, LoadedModel, ServerTool, JsonSchema, TokenUsage, StartRunPayload, SetApprovalPayload, CancelRunPayload, ResumeRunPayload, InjectMessagePayload, ApprovalDecision } from "./contract";
-import { DEFAULT_CONFIG, modelFilterAllows, bgRunResumable } from "./contract";   // single source of truth (see contract.ts)
+import { DEFAULT_CONFIG, modelFilterAllows, bgRunResumable, acceptLanguageFrom } from "./contract";   // single source of truth (see contract.ts)
 import { runBackgroundAgent } from "./agent-host";   // design A: the background-hosted agent loop
 import type { ToolMeta } from "./agent-loop";
 import { externalSheetIds, googleSheetId, classifyContent, jsonShape } from "./dom";   // track approved external sheets across a run + the choke-point grants; classify a fetched body + summarise its JSON shape
@@ -2317,13 +2317,33 @@ function sheetNameFromDisposition(cd: string | null): string | null {
 // is clipped separately (the fetch_url tool's clipOut, and exec/python's own output clip), so this bound is
 // only a memory/message-channel safety net for a pathologically huge response, set well above realistic files.
 const FETCH_URL_MAX = 8_000_000;
+/** Browser-IDENTITY request headers for ml.fetch, so a fetch acts like the user's own browser rather than a
+ *  bare programmatic request — many sites (GitHub's "Whoa there!" abuse page) block the latter's tell-tale
+ *  missing headers. This sends the browser's PUBLIC identity (its real User-Agent + Accept-Language), NOT the
+ *  user's private data: no cookies here (those ride only the gated `credentials:"include"` path). We set only
+ *  headers `fetch` actually lets us override — `Sec-Fetch-*`/`Origin`/`Referer`/`Cookie` are browser-controlled
+ *  (forbidden header names) and left untouched; `Accept`/`Accept-Language` are CORS-safelisted, and modern
+ *  Chrome allows overriding `User-Agent`. */
+function browserFetchHeaders(): Record<string, string> {
+    // HTML/XML first like a browser, but welcome JSON/anything — ml.fetch reads APIs too.
+    const h: Record<string, string> = { "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.9,*/*;q=0.8" };
+    try { if (typeof navigator !== "undefined" && navigator.userAgent) h["User-Agent"] = navigator.userAgent; } catch { /* no navigator → skip */ }
+    try {
+        const langs = typeof navigator !== "undefined"
+            ? (navigator.languages && navigator.languages.length ? [...navigator.languages] : [navigator.language])
+            : [];
+        const al = acceptLanguageFrom(langs.filter(Boolean) as string[]);
+        if (al) h["Accept-Language"] = al;
+    } catch { /* skip */ }
+    return h;
+}
 /** Perform the actual uncredentialed GET for ml.fetch (host permissions bypass CORS; NO cookies). Classifies
  *  the body by header AND content (a server can mislabel), pre-parses JSON, and caps the size. Throws on a
  *  network/permission failure (the handler turns that into an actionable message). */
 async function fetchUrlContent(url: string, credentials = false): Promise<FetchResult> {
     // `credentials:"include"` sends the user's cookies (authenticated fetch — gated + one-time upstream);
-    // default `"omit"` reads only public bytes.
-    const res = await fetch(url, { method: "GET", credentials: credentials ? "include" : "omit", redirect: "follow" });
+    // default `"omit"` reads only public bytes. Browser-identity headers either way (see browserFetchHeaders).
+    const res = await fetch(url, { method: "GET", credentials: credentials ? "include" : "omit", redirect: "follow", headers: browserFetchHeaders() });
     const contentType = res.headers.get("content-type") || "";
     let text = await res.text();
     const truncated = text.length > FETCH_URL_MAX;

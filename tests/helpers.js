@@ -97,6 +97,9 @@ function loadBackground({ config = {}, local = {}, onFetch, onCaptureTab, onPyRu
         URL,
         TextDecoder,
         TextEncoder,
+        // SW-realm navigator: ml.fetch's browser-identity headers read userAgent/languages; the HUD-invocation
+        // doc reads userAgent for the Cmd/Alt hint. A non-Mac UA keeps that path's isMac false (as when absent).
+        navigator: { userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36", languages: ["en-US", "en"], language: "en-US" },
         AbortController,   // FETCH_LLM registers one per request (for ABORT_TASK cancellation)
         __ML_NET_RETRY_WAIT_MS: 0,   // network-retry backoff → instant in tests (no 24s of real waits per down-backend test)
         setTimeout, clearTimeout, DOMException,   // rate-limit backoff (abortableWait) uses timers + abort
