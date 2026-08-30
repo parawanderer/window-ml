@@ -1132,19 +1132,28 @@ const StepPill = ({ step, max }: { step: number; max?: number }) =>
 // The turn's separate reasoning channel (reasoning_content) — how the model THINKS, distinct from
 // what it says (the prose). Dim, COLLAPSED by default (its text is mostly noise); the preview is just
 // a ~token estimate (the server reports reasoning_tokens:0). No status dot — it's not a step that fails.
-function ThoughtBlock({ thought }: { thought: string }) {
+function ThoughtBlock({ thought, live }: { thought: string; live?: boolean }) {
     const [open, setOpen] = useState(false);
+    const bodyRef = useRef<HTMLDivElement>(null);
+    // While LIVE (streaming), keep the expanded body scrolled to the newest text.
+    useEffect(() => { if (live && open && bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight; });
     const tokEst = Math.max(1, Math.round(thought.length / 4));   // ~chars/4 (no real reasoning_tokens)
     return (
-        <div class="athought athinking">
+        <div class={`athought athinking${live ? " live" : ""}`}>
             <button class="astep-head" onClick={() => setOpen(v => !v)}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
+                {live ? <span class="live-dot" aria-hidden="true" /> : null}
                 <span class="who">thinking</span>
-                {/* The ~token estimate is a debug detail — hidden in the user-facing HUD card, kept in the
-                    DevTools panel / overlay. */}
-                {!open && surface.value !== "card" ? <span class="astep-preview">~{tokEst} tokens</span> : null}
+                {/* The ~token estimate is a debug detail — hidden in the user-facing HUD card, EXCEPT while live,
+                    where the ticking count IS the "it's working" signal the card wants. */}
+                {!open && (surface.value !== "card" || live) ? <span class="astep-preview">~{tokEst} tokens{live ? "…" : ""}</span> : null}
             </button>
-            {open ? <div class="md astep-body" dangerouslySetInnerHTML={{ __html: markdown(thought, { math: true }) }} /> : null}
+            {/* Live: plain text (partial markdown mid-stream renders ugly); finished: markdown. */}
+            {open
+                ? (live
+                    ? <div class="astep-body live-scroll" ref={bodyRef}>{thought}</div>
+                    : <div class="md astep-body" dangerouslySetInnerHTML={{ __html: markdown(thought, { math: true }) }} />)
+                : null}
         </div>
     );
 }
@@ -1650,23 +1659,28 @@ function AgentRunView({ s }: { s: Session }) {
     );
 }
 
-// The model's LIVE output while the current step streams (opt-in stream:true) — the reasoning (and any reply
-// text) as it generates, so a long "thinking" phase shows its words instead of a frozen token count. Cleared
-// the instant the step's real events land (the reducer nulls liveStream on agent-step/agent-result). The body
-// auto-scrolls to the tail as text arrives.
+// The model's LIVE output while the current step streams (opt-in stream:true) — fed into the SAME container
+// shapes the finished run uses, not a bespoke block: the reasoning into a live `ThoughtBlock` (ticking token
+// count, expand to watch the text append), the reply into a live answer bubble. Cleared the instant the step's
+// real events land (the reducer nulls liveStream on agent-step/agent-result).
 function LiveStream({ ls }: { ls: NonNullable<Session["liveStream"]> }) {
-    const thinkRef = useRef<HTMLDivElement>(null);
-    const bodyRef = useRef<HTMLDivElement>(null);
-    useEffect(() => {
-        if (thinkRef.current) thinkRef.current.scrollTop = thinkRef.current.scrollHeight;
-        if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
-    });
     if (!ls.reasoning && !ls.content) return null;
     return (
-        <div class="live-stream">
-            <div class="live-stream-head"><span class="live-dot" aria-hidden="true" /> streaming live</div>
-            {ls.reasoning ? <div class="live-stream-seg"><span class="live-stream-lbl">thinking</span><div class="live-stream-body think" ref={thinkRef}>{ls.reasoning}</div></div> : null}
-            {ls.content ? <div class="live-stream-seg"><span class="live-stream-lbl">reply</span><div class="live-stream-body" ref={bodyRef}>{ls.content}</div></div> : null}
+        <>
+            {ls.reasoning ? <ThoughtBlock thought={ls.reasoning} live /> : null}
+            {ls.content ? <LiveReply content={ls.content} /> : null}
+        </>
+    );
+}
+// The final answer as it streams — styled like the finished reply bubble (markdown), with a live pulse, so
+// the answer fills in the SAME container it'll settle into rather than a separate preview. Auto-scrolls.
+function LiveReply({ content }: { content: string }) {
+    const ref = useRef<HTMLDivElement>(null);
+    useEffect(() => { if (ref.current) ref.current.scrollTop = ref.current.scrollHeight; });
+    return (
+        <div class="msg asst live-reply">
+            <div class="mrow"><span class="live-dot" aria-hidden="true" /><span class="who">replying</span></div>
+            <div class="md live-reply-body" ref={ref} dangerouslySetInnerHTML={{ __html: markdown(content, { math: true }) }} />
         </div>
     );
 }

@@ -872,19 +872,32 @@ test("step-cap stop (HUD card): the corner card offers 'Continue (+N steps)' →
 
 const streamConfig = (over = {}) => ({ system: "s", customSystem: false, tools: [], maxSteps: 20, think: null, env: true, vision: null, hints: null, ...over });
 
-test("stream:true: an agent-stream event shows the LIVE thinking; a real step then clears it", async () => {
+test("stream:true: live reasoning fills a live thinking block (ticking count); a real step then clears it", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("st1", "read the diff", "m", 20, streamConfig({ stream: true })));
     await w.dispatch({ kind: "agent-stream", id: "st1", ts: Date.now(), save: false, session: { hash: "st1", turn: 1 }, step: 1, reasoning: "Let me look at the routes file section…" });
     w.shadow.querySelector(".row").click();
     await w.tick();
-    const ls = w.shadow.querySelector(".live-stream");
-    assert.ok(ls, "the live-stream block renders while the step streams");
-    assert.match(ls.textContent, /routes file section/, "the accumulated thinking shows live");
+    // Streams into a LIVE thinking block (the same ThoughtBlock shape as a finished thought), not a bespoke box.
+    const think = w.shadow.querySelector(".athinking.live");
+    assert.ok(think, "a live thinking block renders while the step streams");
+    assert.match(think.textContent, /~\d+ tokens/, "the ticking token estimate shows");
+    think.querySelector(".astep-head").click(); await w.tick();   // expand to watch the text
+    assert.match(w.shadow.querySelector(".athinking.live .astep-body").textContent, /routes file section/, "the accumulated thinking text is there");
     // A real step landing supersedes the live preview.
     await w.dispatch(agentStep("st1", 1, { seq: 1, tool: "exec", arguments: { js: "1" }, result: "1", approval: "readonly" }));
     await w.tick();
-    assert.equal(w.shadow.querySelector(".live-stream"), null, "the live stream clears when the step's real events land");
+    assert.equal(w.shadow.querySelector(".athinking.live"), null, "the live thinking clears when the step's real events land");
+});
+
+test("stream:true: live reply CONTENT streams into an answer bubble", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("st2", "answer me", "m", 20, streamConfig({ stream: true })));
+    await w.dispatch({ kind: "agent-stream", id: "st2", ts: Date.now(), save: false, session: { hash: "st2", turn: 1 }, step: 1, content: "The file loads fine and lists 14 servers." });
+    w.shadow.querySelector(".row").click(); await w.tick();
+    const reply = w.shadow.querySelector(".live-reply");
+    assert.ok(reply, "the live reply bubble renders");
+    assert.match(reply.textContent, /14 servers/, "the streaming answer text shows");
 });
 
 test("agent options: shows 'streaming: on' when the run streamed, 'off' otherwise", async () => {

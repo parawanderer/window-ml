@@ -310,15 +310,17 @@ html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
 .athinking .astep-preview { font-style: italic; }
 /* The thinking text itself reads dim/secondary — it's how the model thinks, not what it says. */
 .athinking .astep-body, .athinking .astep-body.md, .athinking .astep-body.md p, .athinking .astep-body.md li { color: var(--fg-dim); }
-/* Live model stream (opt-in stream:true): the reasoning/reply as it generates, so a long think isn't frozen. */
-.live-stream { margin: 6px 0 4px; border-left: 2px solid var(--accent); padding: 4px 0 4px 8px; }
-.live-stream-head { display: flex; align-items: center; gap: 6px; font-size: 0.78em; letter-spacing: .03em; text-transform: uppercase; color: var(--accent); }
-.live-stream-head .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: livepulse 1s ease-in-out infinite; }
+/* Live model stream (opt-in stream:true): fed into the SAME containers the finished run uses. A pulsing dot
+   marks the live ones; a scrollable body shows the streaming text tail. */
 @keyframes livepulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
-.live-stream-seg { margin-top: 4px; }
-.live-stream-lbl { display: block; font-size: 0.72em; text-transform: uppercase; letter-spacing: .04em; color: var(--fg-faint); margin-bottom: 1px; }
-.live-stream-body { font-size: 0.9em; line-height: 1.4; white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow-y: auto; }
-.live-stream-body.think { color: var(--fg-dim); font-style: italic; }
+.live-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: livepulse 1s ease-in-out infinite; }
+.athinking.live .who { color: var(--accent); }
+.athinking.live .astep-preview { color: var(--accent); }
+.live-scroll { white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow-y: auto; }
+/* Live reply — the answer streaming into a bubble like the finished reply. */
+.live-reply .mrow { display: flex; align-items: center; gap: 6px; }
+.live-reply .mrow .who { color: var(--accent); font-size: .82em; text-transform: uppercase; letter-spacing: .03em; }
+.live-reply-body { max-height: 260px; overflow-y: auto; }
 /* Conversation blocks in the card trace: your prompts ("you asked") and past answers ("answered") — same
    disclosure shape as thinking. The card is the MINIMAL/monochrome surface (DevTools is the colourful one),
    so these read white + bold (the conversation anchors), set apart from the dim italic "thinking" by weight,
