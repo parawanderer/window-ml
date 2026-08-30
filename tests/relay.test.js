@@ -87,6 +87,16 @@ test("ml.fetch travels the relay, returns the FetchResult, and CACHES it for rea
     assert.equal(world.ml._fetchCached("https://x.test/never"), undefined, "an unfetched URL is a cache miss");
 });
 
+test("ml.fetch: a CREDENTIALED (as-the-user) result is NEVER cached — authenticated bytes must not leak via the readonly cache", async () => {
+    const result = { url: "https://x.test/me", status: 200, ok: true, type: "json", text: '{"me":1}', json: { me: 1 }, typeByHeader: "json", typeByContent: "json", typeByExtension: null, contentType: "application/json" };
+    let sawCreds;
+    const world = loadPageWorld({ onRuntimeMessage: (m) => (m.type === "FETCH_URL" ? (sawCreds = m.payload.credentials, { data: result }) : undefined) });
+    const got = await world.ml.fetch("https://x.test/me", { credentials: true });
+    assert.deepEqual(got, result, "the credentialed result comes back to the caller");
+    assert.equal(sawCreds, true, "the credentials flag reached the background");
+    assert.equal(world.ml._fetchCached("https://x.test/me"), undefined, "…but it's NOT cached (no free readonly re-read of authenticated data)");
+});
+
 test("ml.fetch: a FAILED (non-2xx) fetch is NOT cached — a retry re-fetches after the server recovers", async () => {
     const bad = { url: "https://x.test/down", status: 503, ok: false, type: "text", text: "Service Unavailable", typeByHeader: "text", typeByContent: "text", typeByExtension: null, contentType: "text/plain" };
     const world = loadPageWorld({ onRuntimeMessage: (m) => (m.type === "FETCH_URL" ? { data: bad } : undefined) });

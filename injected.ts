@@ -1550,25 +1550,30 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     "the user, then remembered for the session. Prefer this over `navigate` when you only need to READ a URL. " +
                     "Set `schema: true` when you KNOW it returns JSON and only need the STRUCTURE — you get a compact " +
                     "TS-like shape (`{ id: number, items: { name: string }[] }`) instead of the whole payload (and a " +
-                    "clear error, saying what it actually was, if it isn't JSON).",
+                    "clear error, saying what it actually was, if it isn't JSON). " +
+                    "Set `credentials: true` to fetch AS THE USER (sends their cookies) — for AUTHENTICATED data (a " +
+                    "private gist, a logged-in dashboard's API). It ALWAYS asks the user (never remembered) and is " +
+                    "never cached; use it ONLY when public access won't do.",
                 parameters: {
                     type: "object",
                     properties: {
                         url: { type: "string", description: "The absolute http(s) URL to fetch." },
                         schema: { type: "boolean", description: "If true, return a compact TS-like SHAPE of the JSON (not the body). Errors if the URL isn't JSON." },
+                        credentials: { type: "boolean", description: "If true, fetch AS THE USER (send their cookies) for authenticated data. Always prompts; never cached/remembered." },
                     },
                     required: ["url"],
                 },
                 // Show the URL in the approval card + the In render (an `action` render → "fetch <url>"). The
-                // note flags whether the agent asked for the SCHEMA (structure only) vs the full page/body.
+                // note flags the SCHEMA-only ask, and — importantly for consent — a CREDENTIALED (as-you) fetch.
                 render: (_input: unknown, args?: Record<string, unknown>): RenderDescriptor => {
-                    const a = args as { url?: unknown; schema?: unknown } | undefined;
-                    return { type: "action", verb: "fetch", target: String(a?.url ?? ""), note: a?.schema ? "schema only" : "full page" };
+                    const a = args as { url?: unknown; schema?: unknown; credentials?: unknown } | undefined;
+                    const note = a?.credentials ? "as you (sends your cookies)" : a?.schema ? "schema only" : "full page";
+                    return { type: "action", verb: "fetch", target: String(a?.url ?? ""), note };
                 },
-                run: async ({ url, schema = false }: { url?: unknown; schema?: boolean } = {}): Promise<string> => {
+                run: async ({ url, schema = false, credentials = false }: { url?: unknown; schema?: boolean; credentials?: boolean } = {}): Promise<string> => {
                     if (typeof url !== "string" || !url.trim()) return "Error: fetch_url needs a `url`.";
                     let r: import("./contract").FetchResult;
-                    try { r = await ml.fetch(url); }
+                    try { r = await ml.fetch(url, { credentials }); }
                     catch (e) { return `Error: ${errText(e)}`; }
                     const mislabel = r.typeByHeader && r.typeByHeader !== r.type ? ` (header said "${r.typeByHeader}")` : "";
                     const head = `Fetched ${r.url} — HTTP ${r.status}, type: ${r.type}${r.language ? ` (${r.language})` : ""}${mislabel}${r.truncated ? " · body truncated" : ""}.`;
@@ -2116,18 +2121,24 @@ class AgentHandle implements MlAgentHandle, AgentControl {
          * (non-2xx) are NOT cached, so a retry after the server recovers re-fetches. Pass `{ fresh: true }` to
          * SKIP the cache and force a fresh fetch (a real fetch → needs approval even for a cached url).
          *
+         * `{ credentials: true }` fetches AS THE USER (sends their cookies) — for authenticated data (a private
+         * gist, a logged-in dashboard's API). It's a powerful, gated primitive: it ALWAYS prompts (never
+         * auto-approved, never remembered), is NEVER cached, and works only via the `fetch_url` tool (an
+         * explicit, human-approved URL) — an inline credentialed `ml.fetch` in `exec` is refused.
+         *
          * When the body is JSON, `.json` is the parsed value and `.schema` is a compact TS-like SHAPE of it
          * (`{ id: number, items: { name: string }[] }`) — the structure to write code against without holding
          * the whole payload.
          *
          * @param {string} url An absolute http(s) URL.
-         * @param {{ fresh?: boolean }} [opts] `fresh: true` bypasses the read cache (forces a live fetch).
+         * @param {{ fresh?: boolean; credentials?: boolean }} [opts] `fresh` bypasses the read cache; `credentials` fetches with the user's cookies (gated, uncached).
          * @returns {Promise<FetchResult>} { url, status, ok, type, language?, text, json?, schema?, typeBy*, truncated? }.
          */
-        fetch: function(url: string, _opts?: { fresh?: boolean }): Promise<import("./contract").FetchResult> {
+        fetch: function(url: string, opts?: { fresh?: boolean; credentials?: boolean }): Promise<import("./contract").FetchResult> {
             const key = String(url);   // the real method always fetches live; `fresh` only matters for the read-only cache path
-            return makeBackgroundTaskPromise<import("./contract").FetchResult>("FETCH_URL_REQUEST", "FETCH_URL_RESPONSE", { url: key })
-                .then(r => { if (r && r.ok) mlFetchCache.set(key, r); return r; });   // cache ONLY a successful (2xx) fetch for readonly reuse
+            const credentials = !!opts?.credentials;
+            return makeBackgroundTaskPromise<import("./contract").FetchResult>("FETCH_URL_REQUEST", "FETCH_URL_RESPONSE", { url: key, credentials })
+                .then(r => { if (r && r.ok && !credentials) mlFetchCache.set(key, r); return r; });   // cache ONLY a successful UNCREDENTIALED fetch (credentialed bytes are authenticated — never cache)
         },
         /**
          * Internal: the CACHE-ONLY read the read-only dialect's `ml.fetch` is bound to. Returns a prior

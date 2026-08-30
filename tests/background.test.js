@@ -1861,6 +1861,55 @@ test("SECURITY (FETCH_URL): the SAME addresses become reachable once approved vi
     assert.ok(bg.calls.some(c => c.url === target), "the localhost URL WAS fetched after approval (consent is the sole gate)");
 });
 
+test("SECURITY (FETCH_URL credentialed): an untrusted page can't fetch AS THE USER without a grant", async () => {
+    // Credentialed = a "read any URL as you" primitive → an untrusted page needs a one-time grant (minted by an
+    // approved fetch_url). No grant → REFUSED before any network, and execOpen/consent don't shortcut it.
+    let fetched = false;
+    const bg = loadBackground({ config: baseConfig(), onFetch: () => { fetched = true; return fetchResponse("secret"); } });
+    const r = await bg.send({ type: "FETCH_URL", payload: { url: "https://private.example/me", credentials: true } }, { tab: { id: 9, url: "https://evil.example/" } });
+    assert.ok(r.error && /wasn't approved/i.test(r.error), "refused: no credentialed grant");
+    assert.equal(fetched, false, "no credentialed fetch was made (gate is BEFORE the network)");
+});
+
+test("SECURITY (FETCH_URL credentialed): a fetch_url{credentials} ALWAYS gates, sends cookies once approved, and the grant is ONE-TIME", async () => {
+    let n = 0, approvals = 0, credsUsed;
+    const target = "https://private.example/me.json";
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            if (call.url === baseConfig().chatUrl) {
+                return (++n === 1)
+                    ? jsonResponse({ choices: [{ message: { content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "fetch_url", arguments: JSON.stringify({ url: target, credentials: true }) } }] } }] })
+                    : jsonResponse({ choices: [{ message: { content: "done" } }] });
+            }
+            credsUsed = call.opts?.credentials;
+            return fetchResponse('{"me":"you"}', { contentType: "application/json", url: call.url });
+        },
+        onTabMessage: async (tabId, msg) => {
+            if (msg?.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) {
+                approvals++;
+                await bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
+            }
+            if (msg?.type === "RUN_TOOL_IN_PAGE" && msg.payload?.name === "fetch_url" && !msg.payload?.renderOnly && !msg.payload?.readonlyTry && !msg.payload?.precheck) {
+                const r = await bg.send({ type: "FETCH_URL", payload: { url: target, credentials: true } }, { tab: { id: tabId, url: "https://evil.example/" } });
+                return { result: r.error ? `Error: ${r.error}` : `ok ${JSON.stringify(r.data.json)}` };
+            }
+            return undefined;
+        },
+    });
+    const res = await bg.send({ type: "START_RUN", payload: {
+        runId: "cf1", task: "read my private data", systemPrompt: "S",
+        tools: [{ name: "fetch_url", requiresApproval: true, description: "", parameters: {}, capabilities: [] }],
+        model: "m", think: null, maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools",
+    } }, { tab: { id: 8 } });
+    assert.ok(res.data, "the run finished");
+    assert.equal(approvals, 1, "a credentialed fetch ALWAYS gates (never auto-approved)");
+    assert.equal(credsUsed, "include", "the approved fetch sent the user's cookies (credentials: include)");
+    // ONE-TIME: the grant was consumed by that fetch → a repeat credentialed fetch of the SAME url re-prompts.
+    const again = await bg.send({ type: "FETCH_URL", payload: { url: target, credentials: true } }, { tab: { id: 8, url: "https://evil.example/" } });
+    assert.ok(again.error && /wasn't approved/i.test(again.error), "the credentialed grant is one-time — never remembered");
+});
+
 test("background-hosted reused-grant parity: a delegated readonly-try forwards `reused` onto the step", async () => {
     // A background run's readonly exec (delegated to the page) that re-read a CACHED ml.fetch URL must carry
     // the `reused` note onto its emitted step, same as the page-hosted path — the reported gap.

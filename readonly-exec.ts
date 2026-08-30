@@ -578,8 +578,10 @@ function mlFacade(ml: unknown, reused?: string[]): Record<string, unknown> | nul
     const cachedFetch = (ml as Record<string, unknown>)["_fetchCached"];
     if (typeof cachedFetch === "function") {
         out.fetch = (url: unknown, opts?: unknown): unknown => {
-            // `fetch(url, { fresh: true })` explicitly SKIPS the cache → force a real (egress) fetch → approval.
-            if (opts && typeof opts === "object" && (opts as { fresh?: unknown }).fresh) throw new Denied("fetch({ fresh: true }) skips the cache — a fresh fetch needs approval");
+            // `{ fresh: true }` skips the cache; `{ credentials: true }` fetches AS THE USER — both are egress
+            // that ALWAYS needs approval, so they can't run in the read-only (no-approval) dialect.
+            if (opts && typeof opts === "object" && ((opts as { fresh?: unknown }).fresh || (opts as { credentials?: unknown }).credentials))
+                throw new Denied("fetch({ fresh | credentials }) is a live/authenticated fetch — it needs approval");
             const r = (cachedFetch as (u: unknown) => unknown).call(ml, url);
             if (r === undefined) throw new Denied(`fetch(${JSON.stringify(String(url))}) isn't cached — approve it once, then re-reads are free`);
             reused?.push(String(url));   // a cache HIT = this survey re-read a URL you already approved (transparency)

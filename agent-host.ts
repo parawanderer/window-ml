@@ -128,8 +128,12 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
             if (name === "python_exec") return autoApprovePython(args, { autoApprovePython: !!cfg.autoApprovePython }, deps.isSheetApproved || (() => false));
             // navigate: a cross-origin nav that needs consent GATES; same-site (or already-consented) auto-approves.
             if (name === "navigate") return deps.navNeedsConsent?.(String((args as { url?: unknown }).url ?? "")) ? null : "same-origin";
-            // fetch_url: a URL already approved this session auto-approves; a new one gates (the human sees it).
-            if (name === "fetch_url") return deps.fetchNeedsConsent?.(String((args as { url?: unknown }).url ?? "")) ? null : "consented";
+            // fetch_url: a CREDENTIALED (fetch-as-the-user) call ALWAYS gates — never auto-approved, never
+            // remembered. An uncredentialed URL already approved this session auto-approves; a new one gates.
+            if (name === "fetch_url") {
+                if ((args as { credentials?: unknown }).credentials) return null;
+                return deps.fetchNeedsConsent?.(String((args as { url?: unknown }).url ?? "")) ? null : "consented";
+            }
             return null;
         },
         buildMessages: buildMessages as AgentLoopDeps["buildMessages"],

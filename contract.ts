@@ -147,7 +147,7 @@ export function isBackendUnreachable(msg?: string | null): boolean {
 
 /** `FETCH_URL` payload — a plain uncredentialed GET the background performs on the agent's behalf (bypassing
  *  CORS via host permissions). No headers/body/method knobs by design: a locked, low-surface read primitive. */
-export interface FetchUrlPayload { url: string; }
+export interface FetchUrlPayload { url: string; credentials?: boolean; }
 /** The result of `ml.fetch(url)`. Content type is resolved BOTH ways so a mislabel is visible: `type` is the
  *  final pick (header when specific, else the content sniff), `typeByHeader`/`typeByContent` are the raw
  *  signals. `json` is pre-parsed when `type === "json"`. `text` is the raw body (size-capped → `truncated`). */
@@ -1320,7 +1320,7 @@ export interface MlApi {
      *  of navigating there. Returns a {@link FetchResult}: `.type` classifies the body (json/csv/html/text) so
      *  you can chain (`.json` is pre-parsed; hand `.text` of a CSV to `python_exec`). Each new URL requires the
      *  user's one-time approval (then it's remembered for the session). GET only — no headers, body, or auth. */
-    fetch(url: string, opts?: { fresh?: boolean }): Promise<FetchResult>;
+    fetch(url: string, opts?: { fresh?: boolean; credentials?: boolean }): Promise<FetchResult>;
     /** Internal: CACHE-ONLY read of a prior `ml.fetch(url)` result (or undefined on a miss). The read-only
      *  `exec` dialect binds its `ml.fetch` to this, so re-reading an already-fetched URL is free (no egress).
      *  Not part of the stable public API. */

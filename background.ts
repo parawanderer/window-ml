@@ -1018,7 +1018,7 @@ if (typeof chrome !== "undefined" && chrome.webNavigation?.onCommitted) {
     });
 }
 if (typeof chrome !== "undefined" && chrome.tabs?.onRemoved) {
-    chrome.tabs.onRemoved.addListener((tabId) => { activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); fetchConsent.delete(tabId); });
+    chrome.tabs.onRemoved.addListener((tabId) => { activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); fetchConsent.delete(tabId); credFetchGrants.delete(tabId); });
 }
 
 // ---- Choke-point consent (docs/spec/CHOKEPOINT_CONSENT_SPEC.md) ----
@@ -1040,6 +1040,24 @@ const consentFetch = (tabId: number, url: string): void => {
     let s = fetchConsent.get(tabId);
     if (!s) { s = new Set(); fetchConsent.set(tabId, s); }
     s.add(url);
+};
+// ONE-TIME per-URL grants for a CREDENTIALED ml.fetch (fetch-as-the-user). Minted ONLY when a `fetch_url`
+// call with credentials is APPROVED, and CONSUMED on the fetch — never persisted (unlike fetchConsent), so a
+// credentialed fetch ALWAYS re-prompts. `execOpen`/`fetchConsent` deliberately do NOT authorize credentialed
+// (it spends the user's cookies — too sensitive for the broad exec grant or a remembered consent).
+const credFetchGrants = new Map<number, Set<string>>();
+const grantCredFetch = (tabId: number, url: string): void => {
+    let s = credFetchGrants.get(tabId);
+    if (!s) { s = new Set(); credFetchGrants.set(tabId, s); }
+    s.add(url);
+};
+/** Consume a one-time credentialed grant for (tabId, url): true if it existed (and is now spent), else false. */
+const takeCredFetch = (tabId: number | undefined, url: string): boolean => {
+    if (tabId == null) return false;
+    const s = credFetchGrants.get(tabId);
+    if (!s?.has(url)) return false;
+    s.delete(url);
+    return true;
 };
 // button #3 ("Approve + remember"): persist a gated call's static egress grants for the session. Keyed by
 // `kind` so a new egress kind is one case here + one extractor in grant-extract.ts + one UI branch. Called
@@ -1611,10 +1629,14 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                                 // Approving a cross-origin nav consents to that ORIGIN for the rest of the run
                                 // (repeat navs to it then skip the gate).
                                 if (ok && tool === "navigate") { try { consentedOrigins.add(new URL(String((args as { url?: unknown }).url ?? "")).origin); } catch { /* relative/bad url — nothing to remember */ } }
-                                // Approving a fetch_url consents to that EXACT url for the rest of the session
-                                // (per-URL — the human saw + approved it); repeat fetches of it then auto-approve,
-                                // and the FETCH_URL handler authorises the page's uncredentialed GET of it.
-                                if (ok && tool === "fetch_url") { const u = String((args as { url?: unknown }).url ?? ""); if (u) consentFetch(tabId, u); }
+                                // Approving a fetch_url: an UNCREDENTIALED one consents to that EXACT url for the
+                                // session (repeat fetches auto-approve). A CREDENTIALED one (fetch-as-the-user)
+                                // instead mints a ONE-TIME grant for this url — NEVER persisted, so it always
+                                // re-prompts; consumed by the FETCH_URL handler's credentialed GET.
+                                if (ok && tool === "fetch_url") {
+                                    const u = String((args as { url?: unknown }).url ?? "");
+                                    if (u) { if ((args as { credentials?: unknown }).credentials) grantCredFetch(tabId, u); else consentFetch(tabId, u); }
+                                }
                                 // button #3: "Approve + remember" — also persist the exec's static ml.fetch
                                 // literals for the session (a positive `persist` decision only).
                                 if (ok && typeof decision === "object" && decision.persist) persistGrants(tabId, grants);
@@ -1770,20 +1792,33 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // unforgeable). A trusted surface / whitelisted domain is unrestricted. Only http(s) targets.
         (async () => {
             const url = String((message.payload as { url?: unknown })?.url || "");
+            const credentials = !!(message.payload as { credentials?: unknown })?.credentials;
             let scheme = "";
             try { scheme = new URL(url).protocol; } catch { sendResponse({ error: `Refused: "${url}" is not a valid URL.` }); return; }
             if (scheme !== "http:" && scheme !== "https:") { sendResponse({ error: `Refused: ml.fetch supports only http(s) URLs (got "${scheme}").` }); return; }
             const tabId = sender.tab?.id;
             const untrusted = await senderTrust(sender) === "untrusted";
-            // fetchOpen = an approved exec is running (its inline fetches are OK for the run — redirects included,
-            // it's the code the human approved). Per-URL consent = the human approved EXACTLY this url.
-            const execOpen = tabId != null && !!pendingGrants.get(tabId)?.fetchOpen;
-            if (untrusted && !execOpen && !(tabId != null && fetchConsent.get(tabId)?.has(url))) {
-                sendResponse({ error: `Refused: "${url}" hasn't been approved for fetching on this page. Use the fetch_url tool (each new URL is approved once, then remembered for the session), or call ml.fetch inside an approved exec.` });
-                return;
+            // CREDENTIALED (fetch-as-the-user): sends the user's cookies → a "read any URL as you" primitive, so
+            // an untrusted page needs a ONE-TIME per-URL grant (minted by an approved fetch_url, consumed here).
+            // execOpen/consent deliberately DON'T authorize it, so an inline `ml.fetch(url,{credentials:true})`
+            // in exec is refused (no per-URL grant) — directs the model to the explicit, human-approved tool.
+            if (credentials) {
+                if (untrusted && !takeCredFetch(tabId, url)) {
+                    sendResponse({ error: `Refused: a credentialed fetch of "${url}" wasn't approved. A fetch AS THE USER (cookies) must be approved per-URL via the fetch_url tool ({ credentials: true }); it can't run inline in exec or reuse a prior grant.` });
+                    return;
+                }
+            } else {
+                // UNCREDENTIALED: fetchOpen = an approved exec is running (its inline fetches are the human-approved
+                // code); per-URL consent = the human approved EXACTLY this url (and it's remembered).
+                const execOpen = tabId != null && !!pendingGrants.get(tabId)?.fetchOpen;
+                if (untrusted && !execOpen && !(tabId != null && fetchConsent.get(tabId)?.has(url))) {
+                    sendResponse({ error: `Refused: "${url}" hasn't been approved for fetching on this page. Use the fetch_url tool (each new URL is approved once, then remembered for the session), or call ml.fetch inside an approved exec.` });
+                    return;
+                }
             }
+            const execOpen = tabId != null && !!pendingGrants.get(tabId)?.fetchOpen;
             try {
-                const data = await fetchUrlContent(url);
+                const data = await fetchUrlContent(url, credentials);
                 // Redirect guard: a per-URL-consented fetch (NOT a surface/whitelisted/exec one) that ends on a
                 // DIFFERENT, un-consented origin followed a redirect off the approved resource — withhold the body
                 // (a consented public URL could redirect to a private/other target). The GET already happened but
@@ -2170,8 +2205,10 @@ const FETCH_URL_MAX = 8_000_000;
 /** Perform the actual uncredentialed GET for ml.fetch (host permissions bypass CORS; NO cookies). Classifies
  *  the body by header AND content (a server can mislabel), pre-parses JSON, and caps the size. Throws on a
  *  network/permission failure (the handler turns that into an actionable message). */
-async function fetchUrlContent(url: string): Promise<FetchResult> {
-    const res = await fetch(url, { method: "GET", credentials: "omit", redirect: "follow" });
+async function fetchUrlContent(url: string, credentials = false): Promise<FetchResult> {
+    // `credentials:"include"` sends the user's cookies (authenticated fetch — gated + one-time upstream);
+    // default `"omit"` reads only public bytes.
+    const res = await fetch(url, { method: "GET", credentials: credentials ? "include" : "omit", redirect: "follow" });
     const contentType = res.headers.get("content-type") || "";
     let text = await res.text();
     const truncated = text.length > FETCH_URL_MAX;
