@@ -315,7 +315,7 @@ html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
    so these read white + bold (the conversation anchors), set apart from the dim italic "thinking" by weight,
    not hue. */
 .acard-you .who, .acard-ans .who { color: var(--fg); font-weight: 700; white-space: nowrap; flex: 0 0 auto; }
-.astep.tool { border-left: 2px solid var(--accent); padding-left: 8px; margin: 4px 0; }
+.astep.tool { border-left: 2px solid var(--border); padding-left: 8px; margin: 4px 0; }
 .astep-head { display: flex; align-items: center; gap: 6px; width: 100%; background: none; border: none; padding: 3px 0; cursor: pointer; text-align: left; color: inherit; }
 .astep-head:hover .tri { color: var(--fg); }
 .astep-head .dot { flex: 0 0 auto; }
@@ -367,10 +367,9 @@ html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
 .astep-reused .reused-list code { font-size: 0.9em; word-break: break-all; color: var(--fg-dim); }
 .astep-feedback .feedback-desc { color: var(--fg-faint); font-size: 0.78em; }
 .astep-feedback .feedback-desc-text { margin-top: 3px; color: var(--fg-dim); font-size: 0.88em; line-height: 1.45; white-space: pre-wrap; }
-/* approval provenance — reuse the step's left border as a green/red outline + a pill. */
-.astep.tool.appr-yes { border-left-color: var(--ok); }
-.astep.tool.appr-no { border-left-color: var(--err); }
-.astep.tool.appr-skip { border-left-color: var(--fg-faint); }
+/* Approval provenance lives in the BADGE, not the bar (badge-only — the green/red/blue bars read as
+   "too busy" and collided with the badge). A settled step keeps the neutral bar regardless of provenance;
+   only the transient LIVE states below tint it, since the badge can't show "running"/"awaiting". */
 /* in-flight: a yellow edge matching the pulsing pending dot, until the DONE patches it in. */
 .astep.tool.pending { border-left-color: var(--warn); }
 .appr { font-size: 0.72em; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; padding: 0 6px; border-radius: 999px; border: 1px solid; flex: 0 0 auto; line-height: 1.6; }

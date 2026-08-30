@@ -2143,13 +2143,13 @@ test("agent tool steps carry an approval provenance badge (auto/user green, deni
     const steps = [...w.shadow.querySelectorAll(".astep.tool")];
     assert.equal(steps.length, 4, "four tool steps");
     assert.match(steps[0].querySelector(".appr.yes").textContent, /auto-approved/);
-    assert.ok(steps[0].classList.contains("appr-yes"), "auto-approved step gets the green outline");
+    assert.ok(steps[0].classList.contains("appr-yes"), "auto-approved step marks provenance (badge-only: the BADGE is the cue, the bar stays neutral)");
     assert.match(steps[1].querySelector(".appr.yes").textContent, /approved/);
     assert.match(steps[2].querySelector(".appr.no").textContent, /denied/);
-    assert.ok(steps[2].classList.contains("appr-no"), "denied step gets the red outline");
+    assert.ok(steps[2].classList.contains("appr-no"), "denied step marks provenance (visual status is the red DENIED badge, not the bar)");
     // A doomed (precheck-skipped) action gets a neutral grey "skipped" badge — not yes/no.
     assert.match(steps[3].querySelector(".appr.skip").textContent, /skipped/);
-    assert.ok(steps[3].classList.contains("appr-skip"), "skipped step gets the grey outline");
+    assert.ok(steps[3].classList.contains("appr-skip"), "skipped step marks provenance (badge carries it)");
     assert.equal(steps[3].querySelector(".appr.yes, .appr.no"), null, "skipped is neither approved nor denied");
 });
 
