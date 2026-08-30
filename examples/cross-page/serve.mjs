@@ -56,6 +56,19 @@ const send = (res, body, code = 200) => {
     res.end(body);
 };
 
+// A page that BLOCKS the extension's injected main-world script — served with the SAME Content-Security-Policy
+// raw.githubusercontent.com uses (`default-src 'none'; sandbox`). window.ml can't come up here, so a delegated
+// agent tool has no answerer: the extension must fail it FAST, not wedge the run. Text lives in a <pre> like a
+// raw file. (default-src 'none' also blocks the page's own styles/scripts — fine, it's just readable text.)
+const BLOCKED_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>Sandboxed file</title></head>
+<body><pre>SANDBOXED-FILE-CONTENT-9999
+Served with a "sandbox" CSP (like raw.githubusercontent.com). The extension's injected main-world
+script is blocked here, so window.ml never initialises on this page.</pre></body></html>`;
+const sendBlocked = (res) => {
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8", "content-security-policy": "default-src 'none'; sandbox", "cache-control": "no-store" });
+    res.end(BLOCKED_PAGE);
+};
+
 // --- Same-origin 3-step chain — the Variant A case ----------------------------------------------------
 const routes = (crossOrigin) => ({
     "/": page({
@@ -105,6 +118,7 @@ export function startPageServer({ port = 0, crossPort = 0, host = "127.0.0.1" } 
             const crossOrigin = `http://${host}:${crossPortActual}`;
             const outer = createServer((req, res) => {
                 const p = (req.url || "/").split("?")[0];
+                if (p === "/blocked") return sendBlocked(res);   // a CSP-sandboxed page (blocks injected.js)
                 const r = routes(crossOrigin);
                 if (r[p]) return send(res, r[p]);
                 send(res, page({ badge: "404", title: "No such page", body: `<p>Try <a class="x" href="/">the start</a>.</p>`, next: null }), 404);

@@ -4,14 +4,21 @@
 import type { PageRequestType, BackgroundMessageType } from "./contract";
 
 // 1. Inject injected.js into the main world.
-// `injectedBlocked` flips true when the page's CSP refuses the main-world script (a `error` event on the
-// element) — e.g. raw.githubusercontent.com serves everything with `Content-Security-Policy: sandbox`,
-// which disables injected scripts. Then window.ml never exists, so a delegated agent tool would post into
-// the void and HANG forever (the round-trip below has no answerer). We detect it and fail the tool fast.
+// If the page's Content-Security-Policy refuses the main-world script — e.g. raw.githubusercontent.com serves
+// everything with `default-src 'none'; sandbox`, which disables injected scripts — then window.ml never comes
+// up, so a delegated agent tool would post into the void and HANG (the round-trip below has no answerer). Two
+// signals catch it: `injectedBlocked` (an `error` event on the element — fires when the fetch is refused, e.g.
+// script-src 'none') and `injectedAlive` (set when injected posts its load-time PAGE_ADOPT_HELLO — the
+// reliable positive signal, since a `sandbox` CSP LOADS the script but blocks EXECUTION, firing neither error).
 let injectedBlocked = false;
-// Backstop bound for a delegated tool's page round-trip. Generous — longer than any realistic tool (a long
-// `wait`, a heavy `python_exec`) — so it only ever catches a genuine hang, never a slow-but-live tool.
+let injectedAlive = false;
+// How long to wait for injected to prove it's alive before declaring a delegated tool dead on a page that
+// blocks it. Short — injected posts its hello the instant it runs; if it hasn't by now, it never will here.
+const INJECTED_ABSENT_GRACE_MS = 4_000;
+// Backstop bound once injected IS alive but a tool doesn't answer: generous — longer than any realistic tool
+// (a long `wait`, a heavy `python_exec`) — so it only ever catches a genuine hang, not a slow-but-live tool.
 const TOOL_RELAY_TIMEOUT_MS = 120_000;
+const CSP_BLOCK_MSG = (name: string): string => `Error: this page blocks the extension's page script, so "${name}" can't run here. Its Content-Security-Policy disables injected scripts — raw.githubusercontent.com does this (it serves files with a "sandbox" CSP). Navigate to a normal page instead: for a repo file use the github.com "…/blob/…" VIEW (not the raw.githubusercontent.com host), or another site.`;
 const s = document.createElement("script");
 s.src = chrome.runtime.getURL("injected.js");
 s.onload = () => s.remove();
@@ -123,28 +130,36 @@ chrome.runtime.onMessage.addListener((message: PageMessage & { event?: unknown }
     }
     if (!message || message.type !== "RUN_TOOL_IN_PAGE") return undefined;
     const { runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport } = (message.payload || {}) as { runId: string; name: string; args: unknown; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean };
-    // The page's main-world script (window.ml) was refused by CSP — nothing will ever answer, so don't post
-    // into the void. Fail the tool with an actionable message the agent can act on (navigate off this page).
-    if (injectedBlocked) {
-        sendResponse({ result: `Error: this page blocks the extension's page script, so "${name}" can't run here. Its Content-Security-Policy disables injected scripts — raw.githubusercontent.com does this (it serves files with a "sandbox" CSP). Navigate to a normal page instead: for a repo file use the github.com "…/blob/…" VIEW (not the raw.githubusercontent.com host), or another site.` });
-        return true;
-    }
+    // window.ml's script was fetch-refused by CSP (script-src 'none') — nothing will ever answer. Fail fast.
+    if (injectedBlocked) { sendResponse({ result: CSP_BLOCK_MSG(name) }); return true; }
     const callId = Math.random().toString(36).slice(2);
-    // Backstop: a delegated tool must never wedge the whole run forever. If the main world doesn't answer in
-    // TOOL_RELAY_TIMEOUT_MS (a lost result, a mid-call teardown, or an injected script that loaded but stalled),
-    // fail the tool with an actionable error instead of leaving the step "running…" indefinitely. Generous, so
-    // a legitimately slow tool (a long `wait`, a heavy python_exec) still completes.
     let done = false;
+    const finish = (envelope: unknown, clearAll = true) => {
+        if (done) return;
+        done = true;
+        if (clearAll) { clearTimeout(graceTimer); clearTimeout(backstop); }
+        window.removeEventListener("message", onResult);
+        sendResponse(envelope);
+    };
     const onResult = (event: MessageEvent) => {
         if (event.source !== window || !event.data || event.data.type !== "PAGE_TOOL_RESULT" || event.data.callId !== callId) return;
-        done = true; clearTimeout(timer);
-        window.removeEventListener("message", onResult);
-        sendResponse(event.data.envelope);
+        finish(event.data.envelope);
     };
-    const timer = setTimeout(() => {
+    // GRACE: if injected still hasn't proven it's alive (no PAGE_ADOPT_HELLO) by now, window.ml isn't coming up
+    // on this page — a `sandbox` CSP LOADS the script but blocks EXECUTION (no error event), so this positive
+    // signal is what catches it. Fail the tool fast + actionable instead of wedging the run. If injected IS
+    // alive (just slow), let the long backstop govern. A stray race (result already in flight) is guarded by `done`.
+    const graceTimer = setTimeout(() => {
+        if (done || injectedAlive) return;   // alive-but-slow → the backstop below owns it
+        clearTimeout(backstop);
+        finish({ result: CSP_BLOCK_MSG(name) }, false);
+    }, INJECTED_ABSENT_GRACE_MS);
+    // BACKSTOP: injected is alive but a tool never answered (a lost result, a mid-call teardown, a stalled tool).
+    // Never wedge the run forever; generous so a legitimately slow tool still completes.
+    const backstop = setTimeout(() => {
         if (done) return;
-        window.removeEventListener("message", onResult);
-        sendResponse({ result: `Error: the page didn't respond while running "${name}" (timed out). It may be mid-navigation, or blocking the extension. Re-check the page (look / pageInfo) and retry, or navigate to a different page.` });
+        clearTimeout(graceTimer);
+        finish({ result: `Error: the page didn't respond while running "${name}" (timed out). It may be mid-navigation. Re-check the page (look / pageInfo) and retry, or navigate to a different page.` }, false);
     }, TOOL_RELAY_TIMEOUT_MS);
     window.addEventListener("message", onResult);
     window.postMessage({ type: "PAGE_TOOL_RUN", callId, runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport }, "*");
@@ -171,6 +186,7 @@ window.addEventListener("message", (event: MessageEvent) => {
         return;
     }
     if (data.type === "PAGE_ADOPT_HELLO") {
+        injectedAlive = true;   // injected ran → window.ml is up on this page (the signal the delegation grace checks)
         // Cross-page persistence: injected.js just went live on a fresh document. Ask the background whether
         // this tab still hosts any background-run(s) mid-navigation; for each, relay the rebuild-config back
         // to the main world as an ADOPT_RUN so injected re-registers the toolset. Empty on a normal page.

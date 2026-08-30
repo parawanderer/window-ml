@@ -143,6 +143,40 @@ test("cross-page: the destination page replays the run's pre-nav history", async
     await page.close();
 });
 
+// A page served with a `sandbox` CSP (exactly like raw.githubusercontent.com) BLOCKS the extension's injected
+// main-world script, so window.ml never comes up there and a delegated tool has NO answerer. The extension
+// must fail that tool FAST with an actionable error, not wedge the run forever (the reported raw.github
+// stuck-run bug). We navigate the run onto the blocked page and assert the next tool's result carries the CSP
+// message — and that all turns fire within the window, which is only possible via the fast-fail (the script
+// `onerror` flag), never the 120s backstop or an outright hang.
+test("csp-sandbox: a delegated tool on a script-blocking page FAILS FAST with an actionable error (no hang)", async () => {
+    const page = await ext.context.newPage();
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+
+    const before = fake.calls().length;
+    fake.setScript([
+        { tool: "navigate", args: { url: "/blocked" } },            // same-origin → auto-approved; injected is blocked there
+        { tool: "findByText", args: { text: "SANDBOXED-FILE" } },   // delegated to the blocked page → must fail fast
+        (req) => {
+            const seen = req.messages.map((m) => (typeof m.content === "string" ? m.content : "")).join(" ");
+            return { content: /blocks the extension|Content-Security-Policy/i.test(seen) ? "GOT-CSP-ERROR" : "no-error-seen" };
+        },
+    ]);
+    // Fire-and-forget (the page context dies at the nav); the background run carries on.
+    await page.evaluate(() => { window.ml.agent("Read the file on the next page."); return true; });
+
+    // All THREE turns fire → the delegated findByText RETURNED (fast-fail) instead of wedging the run. Without
+    // the fix it would post into the void on the CSP-blocked page and never answer, so the 3rd turn never fires
+    // and this poll times out. (~15s for the nav re-adopt timeout, then the tool fails instantly — well under
+    // the 120s backstop, so completing in this window proves the onerror fast-path, not the timeout.)
+    await expect.poll(() => fake.calls().length - before, { timeout: 45000 }).toBe(3);
+    // The delegated tool's result — fed to the final turn — carries the actionable CSP message.
+    const seen = (fake.calls().at(-1).messages || []).map((m) => (typeof m.content === "string" ? m.content : "")).join(" ");
+    expect(seen).toMatch(/blocks the extension|Content-Security-Policy/i);
+    await page.close();
+});
+
 // Variant B — cross-DOMAIN. Even WITH { crossOrigin: true }, leaving the origin is a scope escalation, so a
 // cross-origin nav must GATE for consent (a page can't silently send the agent to another site). We route
 // the gate to the IPC channel so the test can approve/deny it.
