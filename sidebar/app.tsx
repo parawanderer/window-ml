@@ -299,10 +299,15 @@ function maybeGenerateTitles(): void {
     if (!sidebarOpen.value || !config.value.autoTitles || !config.value.utilityModel.trim()) return;
     for (const s of sessionMap.values()) {
         if (s.title || titleTried.has(s.hash)) continue;
+        // A CHAT session titles off its first completed turn; an AGENT run has no chat turns, so it titles off
+        // its `task` (known from agent-start) — same utility-model summariser, so both surfaces read alike.
         const first = s.turns[0];
-        if (!first || first.status !== "ok" || !first.user.trim()) continue;
+        const prompt = first
+            ? (first.status === "ok" && first.user.trim() ? first.user : "")
+            : (s.task?.trim() ? s.task : "");
+        if (!prompt) continue;
         titleTried.add(s.hash);
-        genTitle(s.hash, first.user);
+        genTitle(s.hash, prompt);
     }
 }
 

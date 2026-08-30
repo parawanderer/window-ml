@@ -1156,6 +1156,29 @@ test("thinking: a reply with reasoning shows a collapsed thinking block; without
     assert.equal(w.shadow.querySelector(".msg.asst details.thinking"), null, "no thinking block without reasoning");
 });
 
+test("agent run: its session auto-titles via the utility model, from the task (parity with chat)", async () => {
+    const w = await loadSidebarWorld({
+        sync: { utilityModel: "u", autoTitles: true },
+        fetchLlm: (payload) => ({ data: payload && payload.extend === "utility" ? "Find Login Button" : "OK" }),
+    });
+    await w.raw({ __mlSidebarOpen: true });     // titles only generate while the panel is open (like chat)
+    await w.dispatch(agentStart("agt", "find the login button somewhere on this page", "m"));
+    await w.dispatch(agentResult("agt", "top-right", 1));
+    await w.flush();
+    assert.match(w.shadow.querySelector(".row .row-title").textContent, /Find Login Button/, "the agent session got a utility-model title, not the raw task");
+});
+
+test("agent run: no utility model → the session keeps the raw task as its title (no phantom call)", async () => {
+    let called = false;
+    const w = await loadSidebarWorld({ sync: { utilityModel: "", autoTitles: true }, fetchLlm: () => { called = true; return { data: "X" }; } });
+    await w.raw({ __mlSidebarOpen: true });
+    await w.dispatch(agentStart("agt2", "read the invoice total", "m"));
+    await w.dispatch(agentResult("agt2", "$42", 1));
+    await w.flush();
+    assert.match(w.shadow.querySelector(".row .row-title").textContent, /read the invoice total/, "falls back to the task");
+    assert.equal(called, false, "no utility model → no title request fired");
+});
+
 test("agent runs render as their own session with steps + a final answer", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("ag1", "find the login button", "qwen3:14b"));
