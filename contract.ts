@@ -708,6 +708,11 @@ export interface AgentOptions {
      *  `"external"` = the UI buttons are SUPPRESSED and ONLY that channel resolves it (headless). A `"ui"`
      *  run is never externally resolvable — the channel lists/decides only opted-in ("both"/"external") runs. */
     approvalRouting?: "ui" | "both" | "external";
+    /** STREAM the model's thinking/reply live (emits `agent-stream` deltas → a live "thinking" block in the
+     *  sidebar/HUD), so a long reasoning phase shows its words instead of a frozen token count. Default false —
+     *  the loop uses a single non-streamed call. Background-hosted runs only (design A); a page-hosted run
+     *  ignores it. Accumulates tool_calls from the stream, so the loop still gets its authoritative result. */
+    stream?: boolean;
 }
 
 /** A stateful ml.agent handle (what ml.createAgent returns) — the agent analogue of ml.createChat's
@@ -838,6 +843,9 @@ export interface StartRunPayload {
     model: string | null;
     think: boolean | null;
     maxSteps: number;
+    /** opt-in: STREAM the model's thinking/reply live (emits `agent-stream` deltas) so a long reasoning phase
+     *  shows its text instead of a frozen token count. Default false — the loop uses a single non-streamed call. */
+    stream?: boolean;
     /** trusted config flag → the background may auto-approve readonly python */
     autoApprovePython: boolean;
     /** trusted config flag → the background may auto-approve an in-dialect exec survey */
@@ -1173,7 +1181,14 @@ export interface DebugAgentConfig {
     crossOrigin?: boolean;
     /** where privileged gates are resolved: "ui" (default) · "both" (UI + __mlApprovals IPC) · "external" (IPC only) */
     approvalRouting?: "ui" | "both" | "external";
+    /** did this run STREAM the model's thinking/reply live (opt-in `stream:true`)? Shown in the agent-options
+     *  block so you can tell whether a step's "thinking" was live or only landed at the turn's end. */
+    stream?: boolean;
 }
+/** Live model output DURING a step, before the turn resolves — only when the run opted into `stream:true`.
+ *  Carries the ACCUMULATED-so-far reasoning/content (the UI REPLACES, not appends, so a dropped/duplicated
+ *  event still converges). Lets a long "thinking" phase show its text live instead of a frozen token count. */
+export interface DebugAgentStream extends DebugBase { kind: "agent-stream"; step: number; reasoning?: string; content?: string; }
 export interface DebugAgentStart extends DebugBase { kind: "agent"; task: string; images?: string[]; model: string | null; maxSteps: number; config: DebugAgentConfig; resumed?: boolean; }
 export interface DebugAgentStep extends DebugBase {
     kind: "agent-step"; step: number;
@@ -1239,7 +1254,7 @@ export interface DebugAgentSaySeen extends DebugBase { kind: "agent-say-seen"; s
 
 /** The event stream injected.js emits over window.postMessage for the sidebar. */
 export type MlDebugEvent = DebugChatStart | DebugChatResult | DebugChatError
-    | DebugAgentStart | DebugAgentStep | DebugAgentResult | DebugAgentCap | DebugAgentSay | DebugAgentSaySeen;
+    | DebugAgentStart | DebugAgentStep | DebugAgentResult | DebugAgentCap | DebugAgentSay | DebugAgentSaySeen | DebugAgentStream;
 
 /** Window-bus envelopes between the core (main world) and the sidebar. */
 export interface MlDebugMessage { __mlDebug: MlDebugEvent; }

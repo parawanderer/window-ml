@@ -310,6 +310,15 @@ html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
 .athinking .astep-preview { font-style: italic; }
 /* The thinking text itself reads dim/secondary — it's how the model thinks, not what it says. */
 .athinking .astep-body, .athinking .astep-body.md, .athinking .astep-body.md p, .athinking .astep-body.md li { color: var(--fg-dim); }
+/* Live model stream (opt-in stream:true): the reasoning/reply as it generates, so a long think isn't frozen. */
+.live-stream { margin: 6px 0 4px; border-left: 2px solid var(--accent); padding: 4px 0 4px 8px; }
+.live-stream-head { display: flex; align-items: center; gap: 6px; font-size: 0.78em; letter-spacing: .03em; text-transform: uppercase; color: var(--accent); }
+.live-stream-head .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: livepulse 1s ease-in-out infinite; }
+@keyframes livepulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+.live-stream-seg { margin-top: 4px; }
+.live-stream-lbl { display: block; font-size: 0.72em; text-transform: uppercase; letter-spacing: .04em; color: var(--fg-faint); margin-bottom: 1px; }
+.live-stream-body { font-size: 0.9em; line-height: 1.4; white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow-y: auto; }
+.live-stream-body.think { color: var(--fg-dim); font-style: italic; }
 /* Conversation blocks in the card trace: your prompts ("you asked") and past answers ("answered") — same
    disclosure shape as thinking. The card is the MINIMAL/monochrome surface (DevTools is the colourful one),
    so these read white + bold (the conversation anchors), set apart from the dim italic "thinking" by weight,
@@ -1133,6 +1142,12 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
 /* Step-budget segmented control — a pretty pill selector (macOS-style raised selected), NOT a bare select. */
 .card-cmp-budget { display: flex; align-items: center; gap: 8px; }
 .card-cmp-budget-label { color: var(--fg-faint); font-size: .82em; }
+/* "◊ live" — stream the thinking for a UI-started run. Off = quiet outline; on = accent-filled. */
+.card-cmp-stream { font-size: .8em; font-weight: 600; padding: 2px 9px; border-radius: 999px; cursor: pointer;
+    color: var(--fg-faint); border: 1px solid var(--border); background: transparent; }
+.card-cmp-stream:hover { color: var(--fg); border-color: var(--fg-faint); }
+.card-cmp-stream.on { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+    background: color-mix(in srgb, var(--accent) 14%, transparent); }
 .seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: 9px; background: var(--panel-2); border: 1px solid var(--border); }
 .seg .seg-opt {
     border: none; background: transparent; color: var(--fg-dim);

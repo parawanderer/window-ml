@@ -524,7 +524,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
          *   `elements` is the live DOM node(s) the model designated via an
          *   `answer`-capable tool (empty for tasks that just act on the page).
          */
-        agent: async function(task: string, { tools = null, extraTools = [], system = null, hints = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null, resume = null, silent = false, unattended = false, navigate = true, crossOrigin = false, approvalRouting = "ui", images = [], _control = null }: {
+        agent: async function(task: string, { tools = null, extraTools = [], system = null, hints = null, maxSteps = 10, model = null, think = null, approve = defaultApprove, onStep = null, env = true, vision = null, logDebug = false, signal = null, resume = null, silent = false, unattended = false, navigate = true, crossOrigin = false, approvalRouting = "ui", stream = false, images = [], _control = null }: {
             tools?: MlTool[] | null;
             extraTools?: MlTool[];
             system?: string | null;
@@ -544,6 +544,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             navigate?: boolean;   // may this run navigate to other pages (wires the `navigate` tool + cross-page persistence)? default true
             crossOrigin?: boolean;   // may `navigate` cross to OTHER SITES (different origins)? default false — same-site only
             approvalRouting?: "ui" | "both" | "external";   // where privileged gates resolve (bg runs): human UI (default) · UI + IPC · IPC only
+            stream?: boolean;   // STREAM the model's thinking/reply live (agent-stream deltas) so a long reasoning phase isn't a frozen token count. Default false.
             images?: (string | HTMLImageElement)[];   // attachments for THIS turn (composer paste/upload)
             _control?: AgentControl | null;   // internal: a handle's persistent session state (ml.createAgent). Absent → a throwaway per-call one.
         } = {}): Promise<AgentResult> {
@@ -761,6 +762,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 maxSteps, think: (think === true || think === false) ? think : null, env, vision: vision ?? null,
                 driverSees, visionModel: runVisionModel, hints: hints || null, silent: silent || undefined, unattended: unattended || undefined,
                 navigate, crossOrigin: crossOrigin || undefined, approvalRouting: approvalRouting !== "ui" ? approvalRouting : undefined,
+                stream: stream || undefined,
             } });
             // A CONTINUATION (a handle's later run() with a task) shows the follow-up as a user message in the
             // conversation — the sidebar renders it exactly like the first task / a mid-run say (all "you").
@@ -828,7 +830,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     const res = await makeBackgroundTaskPromise<AgentResult>("START_RUN_REQUEST", "START_RUN_RESPONSE", {
                         runId: runHash, task, systemPrompt, tools: descriptors,
                         model: runModel, think: (think === true || think === false) ? think : null,
-                        maxSteps, autoApprovePython: autoPy, autoApproveReadonly: autoRO, surface: bgSurface,
+                        maxSteps, autoApprovePython: autoPy, autoApproveReadonly: autoRO, surface: bgSurface, stream: stream || undefined,
                         images: pendingImages,   // native-vision composer attachments for this turn's user message
                         // (OCR fallback for a text-only driver is already folded into `task` above)
                         unattended: unattended || undefined, silent: silent || undefined,
@@ -2376,6 +2378,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
         const startModel = e.data.__mlStartAgent.model;
         if (typeof startModel === "string" && startModel.trim()) opts.model = startModel.trim();
         if (e.data.__mlStartAgent.vision === true) opts.vision = true;
+        if (e.data.__mlStartAgent.stream === true) opts.stream = true;   // the composer's "live" toggle → stream the thinking
         // createAgent (not ml.agent) so the run registers a HANDLE the sidebar/HUD composer can drive —
         // follow-up run()s + say() steering from the "Send a message to this session…" box.
         try { void ml.createAgent(opts).run(task, images); }

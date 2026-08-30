@@ -49,6 +49,10 @@ export interface Session {
     maxSteps?: number;
     agentConfig?: DebugAgentConfig;
     resumed?: boolean;   // this run was RESURRECTED from storage after an SW eviction/respawn (visible + stoppable)
+    // Live model output for the CURRENT step while it streams (opt-in stream:true) — the accumulated
+    // reasoning/content so far, shown as a live "thinking" block until the step's real events land (which
+    // clear it). Transient; not persisted in the transcript. See the agent-stream reducer + LiveStream UI.
+    liveStream?: { step: number; reasoning?: string; content?: string };
     // A turn's terminal agent-result SEALS the session so a STRAGGLER step — the in-flight tool's late DONE
     // that a background-hosted (design A) run keeps fanning after a cancel, arriving AFTER the page-emitted
     // cancelled result — can't resurrect it to "running". A genuine new turn (agent-say, or a step past

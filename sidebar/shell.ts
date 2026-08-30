@@ -707,6 +707,7 @@ function onWindowMessage(e: MessageEvent): void {
             maxSteps: typeof d.maxSteps === "number" ? d.maxSteps : undefined,
             model: typeof d.model === "string" && d.model.trim() ? d.model.trim() : undefined,
             vision: d.vision === true ? true : undefined,
+            stream: d.stream === true ? true : undefined,
             images: cleanImages(d.images),
             elementContext: (d.elementContext && typeof d.elementContext.selector === "string") ? d.elementContext : undefined,
             hud: agentHud,

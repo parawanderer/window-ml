@@ -115,6 +115,7 @@ function onDebug(ev: MlDebugEvent): void {
         // run already ended), which used to flip the finished run back to "running" forever — the "task's done
         // but the sidebar still says running" bug. A real resumed turn always follows with a DONE that unseals.
         if (!s.ended || (!ev.pending && (ev.step || 0) > (s.endedStep ?? -1))) { s.status = "pending"; s.ended = false; }
+        s.liveStream = undefined;   // a real step landed → the live-stream preview is superseded by it
         s.lastTs = ev.ts; rev.value++; return;
     }
     if (ev.kind === "agent-result") {
@@ -146,7 +147,7 @@ function onDebug(ev: MlDebugEvent): void {
         // row under a completed run. (The after-result ordering is handled by the seal in agent-step.)
         if ((s.steps || []).some(st => st.pending)) s.steps = (s.steps || []).map(st => st.pending ? { ...st, pending: false, awaitingApproval: false } : st);
         // Seal the turn (see agent-step): a later straggler/replayed step ≤ endStep can't re-open "running".
-        s.ended = true; s.endedStep = endStep;
+        s.ended = true; s.endedStep = endStep; s.liveStream = undefined;
         rev.value++; return;
     }
     // A handle raised the step cap mid-run (a.maxSteps = N) → the "STEP x/N" display re-renders live.
@@ -178,6 +179,16 @@ function onDebug(ev: MlDebugEvent): void {
             s.says = s.says.map(x => x.id === ev.sayId ? { ...x, seen: true } : x);
             s.lastTs = Math.max(s.lastTs, ev.ts); rev.value++;
         }
+        return;
+    }
+    // Live model output DURING a step (opt-in stream:true): show the accumulated thinking/reply as it
+    // generates, so a long reasoning phase isn't a frozen token count. Superseded when the step's real
+    // events land (agent-step / agent-result clear liveStream). Transient — no start yet → just drop it.
+    if (ev.kind === "agent-stream") {
+        const s = sessionMap.get(ev.session.hash);
+        if (!s) return;
+        s.liveStream = { step: ev.step, reasoning: ev.reasoning, content: ev.content };
+        s.status = "pending"; s.ended = false; s.lastTs = ev.ts; rev.value++;
         return;
     }
     if (ev.kind === "chat") {
@@ -1499,7 +1510,7 @@ function AgentOptionsBlock({ s }: { s: Session }) {
     // The full defs (description + parameter schema) are only in newer events; older ones carry names
     // only, so the "show tool defs" viewer would just repeat the summary line — hide it then.
     const hasToolDefs = c.tools.some(t => t.description || t.parameters);
-    const lines = [`model: ${s.model || "default"}`, `maxSteps: ${c.maxSteps}`];
+    const lines = [`model: ${s.model || "default"}`, `maxSteps: ${c.maxSteps}`, `streaming: ${c.stream ? "on" : "off"}`];
     if (c.think != null) lines.push(`think: ${c.think}`);
     if (!c.env) lines.push("env: false");
     // Vision: what was PASSED + what RESOLVED — the debug line for "native / delegated / no-vision run".
@@ -1633,8 +1644,30 @@ function AgentRunView({ s }: { s: Session }) {
         <>
             <AgentOptionsBlock s={s} />
             {items.map(it => it.el)}
+            {s.liveStream ? <LiveStream ls={s.liveStream} /> : null}
             {s.status === "pending" ? <PendingNote s={s} /> : null}
         </>
+    );
+}
+
+// The model's LIVE output while the current step streams (opt-in stream:true) — the reasoning (and any reply
+// text) as it generates, so a long "thinking" phase shows its words instead of a frozen token count. Cleared
+// the instant the step's real events land (the reducer nulls liveStream on agent-step/agent-result). The body
+// auto-scrolls to the tail as text arrives.
+function LiveStream({ ls }: { ls: NonNullable<Session["liveStream"]> }) {
+    const thinkRef = useRef<HTMLDivElement>(null);
+    const bodyRef = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        if (thinkRef.current) thinkRef.current.scrollTop = thinkRef.current.scrollHeight;
+        if (bodyRef.current) bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
+    });
+    if (!ls.reasoning && !ls.content) return null;
+    return (
+        <div class="live-stream">
+            <div class="live-stream-head"><span class="live-dot" aria-hidden="true" /> streaming live</div>
+            {ls.reasoning ? <div class="live-stream-seg"><span class="live-stream-lbl">thinking</span><div class="live-stream-body think" ref={thinkRef}>{ls.reasoning}</div></div> : null}
+            {ls.content ? <div class="live-stream-seg"><span class="live-stream-lbl">reply</span><div class="live-stream-body" ref={bodyRef}>{ls.content}</div></div> : null}
+        </div>
     );
 }
 
@@ -2286,6 +2319,7 @@ const composerElement = signal<ElementContext | null>(null);   // right-click "a
 const composerTarget = signal<{ mode: "new" } | { mode: "append"; hash: string }>({ mode: "new" });
 const composerMaxSteps = signal(20);         // step budget for a UI-started run (persists across opens)
 const STEP_BUDGETS = [10, 20, 50];           // the segmented presets in the composer
+const composerStream = signal(false);        // stream the model's thinking live for a UI-started run (persists across opens)
 const composerStarting = signal(0);          // timestamp: a UI run was sent, awaiting its first event (bridge pill)
 // Per-call model pick for a UI-started run. "" = follow the configured default (so switching the default
 // from the dropdown just keeps this on it). A non-"" value overrides the model FOR THIS RUN ONLY — the
@@ -2935,7 +2969,7 @@ function ComposerCard() {
         const t0 = Date.now();
         composerStarting.value = t0;
         setTimeout(() => { if (composerStarting.value === t0) composerStarting.value = 0; }, 10000);
-        window.parent.postMessage({ __mlSidebarApp: "startRun", task: t, maxSteps: composerMaxSteps.value, model: model || undefined, vision, images: att.imgs, elementContext: el || undefined }, "*");
+        window.parent.postMessage({ __mlSidebarApp: "startRun", task: t, maxSteps: composerMaxSteps.value, model: model || undefined, vision, stream: composerStream.value || undefined, images: att.imgs, elementContext: el || undefined }, "*");
         close();
     };
     return (
@@ -2971,6 +3005,10 @@ function ComposerCard() {
                 <button class="tt cbtn" onClick={() => att.fileRef.current?.click()} aria-label="Attach an image">＋<span class="tt-pop left above" role="tooltip">Attach an image (or paste a screenshot)</span></button>
                 <span class="card-cmp-hint"><kbd class="kb">↵</kbd> send · <kbd class="kb">esc</kbd> cancel</span>
                 <span class="sp" />
+                {/* Stream the model's thinking live — so a long reasoning phase shows its words, not a frozen count. */}
+                <button class={`card-cmp-stream${composerStream.value ? " on" : ""}`} aria-pressed={composerStream.value}
+                    title="Stream the model's thinking live (see what it's doing during a long reasoning phase)"
+                    onClick={() => (composerStream.value = !composerStream.value)}>◊ live</button>
                 {/* Step budget — a pretty segmented control (not a bare <select>); caps the agent loop. */}
                 <div class="card-cmp-budget" title="How many tool steps the agent may take">
                     <span class="card-cmp-budget-label">Steps</span>
@@ -3313,6 +3351,7 @@ function CardApp() {
                         // trace, not the finished-answer branch (which would render an empty "no reply yet").
                         ? <>
                             <div class="card-answer dim card-working"><span class="card-work-ic" aria-hidden="true">{activityFor(run).icon}</span>{liveProseFor(run) || activityFor(run).label}<span class="pill-dots"><i /><i /><i /></span></div>
+                            {run.liveStream ? <LiveStream ls={run.liveStream} /> : null}
                             {(run.steps || []).some(s => s.tool) ? <ShowWork run={run} /> : null}
                           </>
                         : <>

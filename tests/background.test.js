@@ -1398,6 +1398,47 @@ test("START_RUN (surface 'devtools') fans a background run's step events to the 
     assert.ok(steps.some(s => s.__mlDebug.usage && s.__mlDebug.usage.totalTokens === 12), "the usage step fanned to the panel");
 });
 
+test("START_RUN (stream:true) streams reasoning LIVE and accumulates fragmented tool_calls from the stream", async () => {
+    // Opt-in streaming: the model call uses streamAgentTurn — it fans reasoning deltas (agent-stream) so a long
+    // think shows live, AND accumulates the OpenAI-style fragmented tool_call (id + name + arguments-string
+    // pieces across chunks) so the loop still gets an authoritative { tool_calls } to delegate.
+    let call = 0, delegatedArgs = null;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onTabMessage: (_tabId, msg) => {
+            if (msg?.type === "RUN_TOOL_IN_PAGE" && msg.payload?.name === "findByText") { delegatedArgs = msg.payload.args; return { result: "found: Step 1" }; }
+            return undefined;
+        },
+        onFetch: () => {
+            call++;
+            if (call === 1) return streamResponse([
+                'data: {"choices":[{"delta":{"reasoning_content":"Let me "}}]}\n',
+                'data: {"choices":[{"delta":{"reasoning_content":"find the step."}}]}\n',
+                'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"findByText","arguments":"{\\"text\\":"}}]}}]}\n',
+                'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\"Step\\"}"}}]}}]}\n',
+                'data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}\n',
+                'data: [DONE]\n',
+            ]);
+            return streamResponse(['data: {"choices":[{"delta":{"content":"All done."}}]}\n', 'data: [DONE]\n']);
+        },
+    });
+    const panel = bg.connect("ml-devtools");
+    panel.send({ type: "ml-devtools-init", tabId: 7 });
+    const res = await bg.send({ type: "START_RUN", payload: {
+        runId: "sr", task: "find step 1", systemPrompt: "s",
+        tools: [{ name: "findByText", description: "", parameters: { type: "object", properties: { text: { type: "string" } } }, requiresApproval: false, capabilities: [] }],
+        model: "m", think: null, maxSteps: 3, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools", stream: true,
+    } }, { tab: { id: 7 } });
+    // Reasoning streamed live to the panel (agent-stream deltas carry the ACCUMULATED text).
+    const streams = panel.messages.filter(m => m.__mlDebug && m.__mlDebug.kind === "agent-stream");
+    assert.ok(streams.length >= 1, "agent-stream deltas fanned to the panel");
+    assert.ok(streams.some(s => /find the step/.test(s.__mlDebug.reasoning || "")), "the accumulated reasoning streamed live");
+    assert.ok(streams.some(s => /All done/.test(s.__mlDebug.content || "")), "the final answer's content streamed live too");
+    // The FRAGMENTED tool_call was reassembled across chunks and delegated with the full arguments.
+    assert.deepEqual(delegatedArgs, { text: "Step" }, "tool_call arguments accumulated from the stream fragments");
+    assert.equal(res.data.summary, "All done.");
+});
+
 test("START_RUN (devtools) after a NAVIGATION fans the agent-result to the PANEL (not just the dead page)", async () => {
     // The bug: a background run in devtools mode that NAVIGATED stuck the panel on "running" with no answer —
     // the HUD (page-fed) had it, the panel didn't. After a nav the page-side caller that normally feeds the

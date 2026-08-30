@@ -870,6 +870,39 @@ test("step-cap stop (HUD card): the corner card offers 'Continue (+N steps)' →
     assert.ok(msg && msg.hash === "capC", "the card posts continueRun for its run");
 });
 
+const streamConfig = (over = {}) => ({ system: "s", customSystem: false, tools: [], maxSteps: 20, think: null, env: true, vision: null, hints: null, ...over });
+
+test("stream:true: an agent-stream event shows the LIVE thinking; a real step then clears it", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("st1", "read the diff", "m", 20, streamConfig({ stream: true })));
+    await w.dispatch({ kind: "agent-stream", id: "st1", ts: Date.now(), save: false, session: { hash: "st1", turn: 1 }, step: 1, reasoning: "Let me look at the routes file section…" });
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const ls = w.shadow.querySelector(".live-stream");
+    assert.ok(ls, "the live-stream block renders while the step streams");
+    assert.match(ls.textContent, /routes file section/, "the accumulated thinking shows live");
+    // A real step landing supersedes the live preview.
+    await w.dispatch(agentStep("st1", 1, { seq: 1, tool: "exec", arguments: { js: "1" }, result: "1", approval: "readonly" }));
+    await w.tick();
+    assert.equal(w.shadow.querySelector(".live-stream"), null, "the live stream clears when the step's real events land");
+});
+
+test("agent options: shows 'streaming: on' when the run streamed, 'off' otherwise", async () => {
+    const on = await loadSidebarWorld();
+    await on.dispatch(agentStart("so1", "t", "m", 20, streamConfig({ stream: true })));
+    await on.dispatch(agentResult("so1", "done", 1));
+    on.shadow.querySelector(".row").click(); await on.tick();
+    on.shadow.querySelector(".agent-opts .block-head").click(); await on.tick();
+    assert.match(on.shadow.querySelector(".agent-opts .opts").textContent, /streaming: on/);
+
+    const off = await loadSidebarWorld();
+    await off.dispatch(agentStart("so2", "t", "m", 20, streamConfig()));   // no stream flag
+    await off.dispatch(agentResult("so2", "done", 1));
+    off.shadow.querySelector(".row").click(); await off.tick();
+    off.shadow.querySelector(".agent-opts .block-head").click(); await off.tick();
+    assert.match(off.shadow.querySelector(".agent-opts .opts").textContent, /streaming: off/);
+});
+
 test("agent run: a successful navigate step renders a page-transition divider in the log", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("nav1", "go to example and read it"));

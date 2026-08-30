@@ -48,7 +48,7 @@ interface ApiFormatHandler {
     // OpenAI route reads it from `params` (same channel as num_ctx) — a top-level
     // `think` there is dropped, so `think:false` silently fails to disable it.
     applyThink(body: ChatBody, think: boolean): void;
-    streamChunk(line: string): { delta: string; reasoning?: string; toolCall: boolean; sources?: unknown[] | null; usage?: TokenUsage | null } | null;
+    streamChunk(line: string): { delta: string; reasoning?: string; toolCall: boolean; toolCallDelta?: unknown[] | null; sources?: unknown[] | null; usage?: TokenUsage | null } | null;
 }
 
 /** Normalize a server's token counts into TokenUsage, or null when absent.
@@ -167,6 +167,9 @@ const API_FORMATS: Record<ApiFormat, ApiFormatHandler> = {
                 delta: choice.delta?.content || "",
                 reasoning: choice.delta?.reasoning_content || "",
                 toolCall: choice.finish_reason === "tool_calls" || !!choice.delta?.tool_calls,
+                // The raw tool_call FRAGMENTS (OpenAI streams them incrementally, keyed by `index`: id + name +
+                // arguments-string pieces across chunks). streamAgentTurn accumulates them by index.
+                toolCallDelta: Array.isArray(choice.delta?.tool_calls) ? choice.delta.tool_calls : null,
                 // OpenWebUI emits tool/RAG provenance on its own line: { sources: [...] }.
                 sources: Array.isArray(obj.sources) ? obj.sources : null,
                 // Usage rides the final SSE chunk (stream_options.include_usage / OpenWebUI).
@@ -220,7 +223,10 @@ const API_FORMATS: Record<ApiFormat, ApiFormatHandler> = {
             let obj: any;
             try { obj = JSON.parse(line); } catch { return null; }
             // Ollama puts prompt_eval_count/eval_count on the FINAL object (done:true).
-            return { delta: obj.message?.content || "", reasoning: obj.message?.thinking || "", toolCall: !!obj.message?.tool_calls, usage: obj.done ? normalizeUsage(obj) : null };
+            return { delta: obj.message?.content || "", reasoning: obj.message?.thinking || "", toolCall: !!obj.message?.tool_calls,
+                // Ollama sends tool_calls WHOLE in a chunk (object args, no index/id) — not fragmented like OpenAI.
+                toolCallDelta: Array.isArray(obj.message?.tool_calls) ? obj.message.tool_calls : null,
+                usage: obj.done ? normalizeUsage(obj) : null };
         },
     },
 };
@@ -626,6 +632,67 @@ async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: string) => v
     return { content, sources, model, reasoning, usage };
 }
 
+/** Streaming variant for the AGENT loop (opt-in `stream:true`). Unlike streamLLM (text-only), it ACCUMULATES
+ *  tool_calls from the stream too — the loop needs them — while calling `onDelta({reasoning, content})` with the
+ *  running accumulation so a long "thinking" phase shows live. Returns the same shape as fetchLLM `raw`. The
+ *  agent loop uses client-side `tools` (not `tool_ids`), so no SERVER_TOOL_MODES probe is needed here. */
+async function streamAgentTurn(
+    payload: FetchLlmPayload,
+    onDelta: (acc: { reasoning: string; content: string }) => void,
+    signal?: AbortSignal,
+): Promise<{ content: string | null; tool_calls: ToolCall[]; reasoning: string | null; usage: TokenUsage | null }> {
+    const { format, body, send } = await prepareRequest(payload, signal);
+    let content = "", reasoning = "";
+    // OpenAI streams tool_calls as FRAGMENTS keyed by `index` (id + name + arguments-string pieces); Ollama
+    // sends them WHOLE in a chunk. Accumulate both, then normalize via the format's own extractToolCalls.
+    const byIndex = new Map<number, { id?: string; name?: string; args: string }>();
+    let ollamaCalls: unknown[] | null = null;
+    let usage: TokenUsage | null = null;
+    const reader = (await send(body, true)).body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const handleLine = (line: string) => {
+        const chunk = format.streamChunk(line);
+        if (!chunk) return;
+        let changed = false;
+        if (chunk.delta) { content += chunk.delta; changed = true; }
+        if (chunk.reasoning) { reasoning += chunk.reasoning; changed = true; }
+        if (chunk.usage) usage = chunk.usage;
+        if (Array.isArray(chunk.toolCallDelta)) {
+            for (const tc of chunk.toolCallDelta as any[]) {
+                if (typeof tc?.index === "number") {   // OpenAI fragment
+                    const cur = byIndex.get(tc.index) || { args: "" };
+                    if (tc.id) cur.id = tc.id;
+                    if (tc.function?.name) cur.name = tc.function.name;
+                    if (typeof tc.function?.arguments === "string") cur.args += tc.function.arguments;
+                    byIndex.set(tc.index, cur);
+                } else { ollamaCalls = chunk.toolCallDelta; }   // Ollama whole array
+            }
+        }
+        if (changed) onDelta({ reasoning, content });
+    };
+    for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let nl: number;
+        while ((nl = buffer.indexOf("\n")) >= 0) {
+            const line = buffer.slice(0, nl).trim();
+            buffer = buffer.slice(nl + 1);
+            if (line) handleLine(line);
+        }
+    }
+    if (buffer.trim()) handleLine(buffer.trim());
+    // Reconstruct a non-streaming-shaped object so the SAME format.extractToolCalls normalizes it → {id,name,arguments}.
+    let tool_calls: ToolCall[] = [];
+    if (ollamaCalls) tool_calls = format.extractToolCalls({ message: { tool_calls: ollamaCalls } } as any);
+    else if (byIndex.size) {
+        const arr = [...byIndex.entries()].sort((a, b) => a[0] - b[0]).map(([, v]) => ({ id: v.id, type: "function", function: { name: v.name, arguments: v.args } }));
+        tool_calls = format.extractToolCalls({ choices: [{ message: { tool_calls: arr } }] } as any);
+    }
+    return { content: content || null, tool_calls, reasoning: reasoning || null, usage };
+}
+
 function authHeaders(config: MlConfig): Record<string, string> {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
     if (config.apiKey) headers["Authorization"] = `Bearer ${config.apiKey}`;
@@ -979,6 +1046,7 @@ const runRebuilds = new Map<string, import("./contract").RebuildConfig>();
 // the two surfaces' replay don't entangle. Bounded ring; cleared when the tab's runs end (untrackRun).
 const runReplayBuffer = new Map<number, unknown[]>();
 const REPLAY_CAP = 400;   // drop-oldest (screenshots are big)
+const STREAM_EMIT_MS = 90;   // min gap between live `agent-stream` deltas — smooth enough to read, not a flood
 // The destination page's pageInfo, captured on re-adopt (RUN_READOPTED) and consumed ONCE by the navigate
 // tool call awaiting it — so a nav's result carries the new page's context (orient-on-nav). Keyed by tab.
 const readoptPageInfo = new Map<number, string>();
@@ -1492,6 +1560,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 system: p.systemPrompt, customSystem: false,
                 tools: p.tools.map(t => ({ name: t.name, requiresApproval: t.requiresApproval, vision: t.capabilities.includes("vision"), description: t.description, parameters: t.parameters, summary: t.summary })),
                 maxSteps: p.maxSteps, think: p.think, env: true, vision: null, hints: null, unattended: p.unattended, silent: p.silent,
+                stream: p.stream,
             },
         };
         if (!resumeMessages) emitLifecycle(startEvent);
@@ -1499,9 +1568,26 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         runBackgroundAgent(
             { task: p.task, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, unattended: p.unattended, resumeMessages, images: p.images },
             {
-                callModel: async (messages) => {
+                callModel: async (messages, opts) => {
                     // Thread the run's abort signal so a CANCEL_RUN kills a slow in-flight generation, not
                     // just stops at the next step boundary.
+                    if (p.stream) {
+                        // Opt-in streaming: emit the thinking/reply LIVE (throttled) so a long reasoning phase
+                        // shows its text instead of a frozen token count. streamAgentTurn accumulates tool_calls
+                        // too, so the loop still gets its authoritative { content, tool_calls } at the end.
+                        const rawStep = (opts?.step as number) || 0, step = stepBase + rawStep;
+                        let last = 0;
+                        const flush = (acc: { reasoning: string; content: string }): void => {
+                            if (abortCtl.signal.aborted) return;
+                            last = Date.now();
+                            fanEvent({ kind: "agent-stream", id: runId, ts: last, save: false, session: { hash: runId, turn: step }, step,
+                                ...(acc.reasoning ? { reasoning: acc.reasoning } : {}), ...(acc.content ? { content: acc.content } : {}) });
+                        };
+                        const r = await streamAgentTurn({ messages, tools: toolDefs, model: p.model, think: p.think },
+                            (acc) => { if (Date.now() - last >= STREAM_EMIT_MS) flush(acc); }, abortCtl.signal);
+                        flush({ reasoning: r.reasoning || "", content: r.content || "" });   // final: land the last delta even if throttled
+                        return { content: r.content, tool_calls: r.tool_calls, reasoning: r.reasoning, usage: r.usage };
+                    }
                     const r = await fetchLLM({ messages, tools: toolDefs, model: p.model, think: p.think, raw: true }, abortCtl.signal) as { content: string | null; tool_calls: ToolCall[]; reasoning: string | null; usage: TokenUsage | null };
                     return { content: r.content, tool_calls: r.tool_calls, reasoning: r.reasoning, usage: r.usage };
                 },
