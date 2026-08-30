@@ -39,6 +39,19 @@ export const clipOut = (str: string, n: number): string => {
     return str.length > n ? `${str.slice(0, n)}… [+${str.length - n} chars truncated]` : str;
 };
 
+/** Context window (num_ctx) for the fetch_url `ask` reader sub-call — a SUMMARISER over a possibly-large
+ *  fetched page, so it needs a window sized to the CONTENT, not the tiny utility default (tuned for titles,
+ *  e.g. 4096). Sized to the clipped body (~3 chars/token, JSON/code-safe) plus headroom for the prompt
+ *  wrapper and the answer, floored at a sane summariser minimum and rounded to a 2K boundary. The background's
+ *  residency guard then REUSES an already-loaded bigger model for free (no reload) — this only bounds a
+ *  genuinely fresh load, and forces a reload only when the content truly needs more than what's resident.
+ *  Pure/tested. */
+export function askReaderNumCtx(contentChars: number): number {
+    const MIN = 8192;
+    const est = Math.ceil(Math.max(0, contentChars) / 3) + 1024;   // content tokens + wrapper/answer headroom
+    return Math.max(MIN, Math.ceil(est / 2048) * 2048);
+}
+
 /**
  * Extract error text from a caught throw. Background tasks reject with a plain
  * STRING (not an Error), so `e.message` would be undefined — fall back to String.

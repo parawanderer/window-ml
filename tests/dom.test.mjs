@@ -1,7 +1,7 @@
 // Pure dom.ts helpers.
 import { test } from "node:test";
 import assert from "node:assert";
-import { elementReference, classifyOverlay, navTarget, typeFromHeader, typeFromContent, typeFromExtension, classifyContent, jsonShape } from "../dom.ts";
+import { elementReference, classifyOverlay, navTarget, typeFromHeader, typeFromContent, typeFromExtension, classifyContent, jsonShape, askReaderNumCtx } from "../dom.ts";
 
 // --- ml.fetch content classification (header / content / extension → a HEURISTIC type for chaining) ---
 test("typeFromHeader: specific content-types map; generic ones return null (defer to content/extension)", () => {
@@ -166,4 +166,20 @@ test("classifyOverlay: an element that MOVES with the scroll is NOT pinned (in-f
     assert.equal(classifyOverlay({ top: 500, height: 40 }, { top: -300 }, vh).pinned, false);
     // Exactly on the 2px threshold boundary is NOT pinned (strict <2).
     assert.equal(classifyOverlay({ top: 100, height: 20 }, { top: 102 }, vh).pinned, false);
+});
+
+test("askReaderNumCtx: a small page → the 8K summariser floor (bigger than the utility default)", () => {
+    assert.equal(askReaderNumCtx(1247), 8192, "a 1.2K-char page still gets the summariser minimum");
+    assert.equal(askReaderNumCtx(0), 8192);
+});
+
+test("askReaderNumCtx: a large page grows the window to fit the content (2K-rounded)", () => {
+    // 24000 chars ≈ 8000 tokens + 1024 headroom = 9024 → rounds up to 10240.
+    assert.equal(askReaderNumCtx(24000), 10240);
+    // Monotonic and always a multiple of 2048.
+    for (const n of [5000, 12000, 18000, 24000]) {
+        const c = askReaderNumCtx(n);
+        assert.equal(c % 2048, 0, `${n} → a 2K-aligned window`);
+        assert.ok(c >= 8192, "never below the floor");
+    }
 });
