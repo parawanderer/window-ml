@@ -274,7 +274,12 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps } = {}) {
     const dispatchedEvents = []; // event types dispatched (for assertions)
     const runtimeMsgListeners = []; // chrome.runtime.onMessage listeners (content.js's reverse channel)
 
+    // A real (jsdom) DOMParser so page-world code that parses HTML strings works in the sandbox — e.g. the
+    // fetch_url tool's HTML→Markdown conversion (turndown reads `DOMParser` off the global `window`). The stub
+    // `document` below is enough for injected.js's own boot; parsing a fetched HTML page needs the real thing.
+    const domParser = new JSDOM("").window.DOMParser;
     const win = {
+        DOMParser: domParser,
         addEventListener: (type, fn) => {
             (listeners[type] ??= []).push(fn);
         },
@@ -303,6 +308,7 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps } = {}) {
         Date,
         Intl,
         structuredClone,
+        DOMParser: domParser,   // real HTML parsing for turndown (fetch_url HTML→Markdown); see win.DOMParser above
         AbortController,   // a standard web global injected.js uses (e.g. ml.createAgent's cancel())
         // Real timers: injected.js uses them for waits and for bounding background lookups. Without
         // these, that code hit a ReferenceError swallowed by its own catch — a silently degraded path

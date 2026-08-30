@@ -1944,6 +1944,52 @@ test("cached ml.fetch: fetch_url prompts + caches once, then a readonly exec re-
     assert.deepEqual(execStep.reused, [{ kind: "fetch-url", detail: url }], "the reused cached URL is reported on the step");
 });
 
+test("fetch_url: an HTML page is auto-converted to Markdown (+ a note); raw:true returns the original HTML", async () => {
+    const url = "https://x.test/page.html";
+    let fetchResult;
+    const world = loadPageWorld({
+        config: { model: "m", ocrModel: "" },
+        onRuntimeMessage: (m) => (m.type === "FETCH_URL" ? { data: fetchResult } : undefined),
+    });
+    await new Promise(r => setTimeout(r, 0));
+    const tool = world.ml.fetchTool();
+    const html = `<!doctype html><html><head><title>PAGETITLE</title><script>track()</script></head><body><nav>Menu Home</nav><h1>Hello</h1><p>World <a href="https://x.test">link</a>.</p><footer>JUNKFOOTER</footer></body></html>`;
+
+    // Default: converted to Markdown, chrome/scripts stripped, with the "converted" note.
+    fetchResult = { url, status: 200, ok: true, type: "html", contentType: "text/html", text: html };
+    const out = await tool.run({ url });
+    const md = typeof out === "string" ? out : out.content;
+    assert.match(md, /# Hello/, "converted to a Markdown heading");
+    assert.match(md, /\[link\]\(https:\/\/x\.test\)/, "link preserved");
+    assert.doesNotMatch(md, /<h1>|track\(\)|JUNKFOOTER|Menu Home|PAGETITLE/, "tags + script + chrome stripped");
+    assert.match(md, /converted it to Markdown/, "the conversion note is present");
+
+    // raw:true → the ORIGINAL HTML, no conversion, no note (same URL → served from ml.fetch's cache).
+    const rawOut = await tool.run({ url, raw: true });
+    const rawMd = typeof rawOut === "string" ? rawOut : rawOut.content;
+    assert.match(rawMd, /<h1>Hello<\/h1>/, "raw HTML preserved verbatim");
+    assert.doesNotMatch(rawMd, /converted it to Markdown/, "no conversion note on a raw fetch");
+
+    // The distillation is exposed on ml.fetch's OWN result too — any caller (exec, a read-only survey) can
+    // read r.markdown without re-converting; r.text still holds the raw HTML.
+    const fr = await world.ml.fetch(url);
+    assert.match(fr.markdown, /# Hello/, "ml.fetch attaches .markdown for HTML");
+    assert.match(fr.text, /<h1>Hello<\/h1>/, ".text keeps the raw HTML");
+});
+
+test("fetch_url: non-HTML content (JSON) is never converted or note-tagged", async () => {
+    const url = "https://x.test/data.json";
+    const world = loadPageWorld({
+        config: { model: "m", ocrModel: "" },
+        onRuntimeMessage: (m) => (m.type === "FETCH_URL" ? { data: { url, status: 200, ok: true, type: "json", text: '{"n":7}', json: { n: 7 } } } : undefined),
+    });
+    await new Promise(r => setTimeout(r, 0));
+    const out = await world.ml.fetchTool().run({ url });
+    const s = typeof out === "string" ? out : out.content;
+    assert.doesNotMatch(s, /converted it to Markdown/, "JSON isn't HTML → no conversion");
+    assert.match(s, /"n": 7/, "the JSON body is returned as-is");
+});
+
 test("autoApproveReadonly: a MUTATING ml call (setModel) still goes through the approval gate", async () => {
     const world = loadPageWorld({
         config: { model: "gemma4:31b", ocrModel: "", autoApproveReadonly: true },

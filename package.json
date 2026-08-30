@@ -24,10 +24,13 @@
     },
     "dependencies": {
         "@preact/signals": "^2.9.3",
+        "@types/turndown": "^5.0.6",
         "acorn": "^8.18.0",
         "highlight.js": "^11.11.1",
         "js-beautify": "^2.0.3",
         "katex": "^0.18.1",
-        "preact": "^10.29.7"
+        "preact": "^10.29.7",
+        "turndown": "^7.2.4",
+        "turndown-plugin-gfm": "^1.0.2"
     }
 }

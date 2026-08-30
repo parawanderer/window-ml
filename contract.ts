@@ -216,6 +216,8 @@ export interface FetchResult {
     typeByExtension: { type: ContentKind; language?: string } | null;   // the URL-extension cue
     contentType: string;      // the raw Content-Type header
     text: string;             // the body, raw (capped)
+    markdown?: string;        // for type === "html": a clean Markdown distillation (scripts/nav/chrome stripped),
+                              // attached by ml.fetch so any caller reads the content without re-converting; `.text` is still the raw HTML
     json?: unknown;           // parsed JSON when type === "json" and it parsed
     schema?: string;          // a compact TS-like SHAPE of `json` (see dom.ts jsonShape) — the structure to
                               // write code against without the whole payload; present iff `json` is set

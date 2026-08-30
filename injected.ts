@@ -34,6 +34,7 @@ import type {
 } from "./contract";
 import { detectGroundingModel, DEFAULT_GROUNDING_RANGE, outputCapEscalated } from "./contract";
 import { evalReadonly } from "./readonly-exec";
+import { htmlToMarkdown } from "./html-to-md";
 import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement, navTarget, clipOut, askReaderNumCtx, jsonShape } from "./dom";
 import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_NOTE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_EXEC_NOTE, IFRAME_CLAUSE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, EXEC_RANGE_CLAUSE, NAV_OFF_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, askAboutTask } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, markSeen, PT_LOOK_RADIUS, BOX_RE, resolveBox, agentState, mlRange } from "./util";
@@ -1562,7 +1563,9 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     "never cached; use it ONLY when public access won't do. " +
                     "Set `ask: \"<question>\"` to have a fast reader model READ the fetched content and answer that " +
                     "question — you get back the ANSWER, not the (possibly huge) body, so a big page/API never floods " +
-                    "your context. Use it when you need a FACT out of the content, not the raw bytes to process further.",
+                    "your context. Use it when you need a FACT out of the content, not the raw bytes to process further. " +
+                    "An HTML page is auto-converted to clean Markdown (scripts/nav/chrome stripped) so you get the " +
+                    "readable content, not tag soup; set `raw: true` if you specifically need the original HTML.",
                 parameters: {
                     type: "object",
                     properties: {
@@ -1570,6 +1573,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                         schema: { type: "boolean", description: "If true, return a compact TS-like SHAPE of the JSON (not the body). Errors if the URL isn't JSON." },
                         credentials: { type: "boolean", description: "If true, fetch AS THE USER (send their cookies) for authenticated data. Always prompts; never cached/remembered." },
                         ask: { type: "string", description: "If set, a fast reader model reads the fetched content and answers THIS question; you get the answer, not the body (keeps a large page out of your context). Takes precedence over `schema`." },
+                        raw: { type: "boolean", description: "If true, return an HTML page's ORIGINAL raw HTML instead of the auto-converted Markdown (HTML is converted to clean Markdown by default for readability; non-HTML is unaffected)." },
                     },
                     required: ["url"],
                 },
@@ -1582,19 +1586,29 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     const ask = (typeof a?.ask === "string" && a.ask.trim()) ? a.ask.trim() : undefined;
                     return { type: "action", verb: "fetch", target: String(a?.url ?? ""), ...(note ? { note } : {}), ...(ask ? { ask } : {}) };
                 },
-                run: async ({ url, schema = false, credentials = false, ask = null }: { url?: unknown; schema?: boolean; credentials?: boolean; ask?: unknown } = {}): Promise<string | ToolResult> => {
+                run: async ({ url, schema = false, credentials = false, ask = null, raw = false }: { url?: unknown; schema?: boolean; credentials?: boolean; ask?: unknown; raw?: boolean } = {}): Promise<string | ToolResult> => {
                     if (typeof url !== "string" || !url.trim()) return "Error: fetch_url needs a `url`.";
                     let r: import("./contract").FetchResult;
                     try { r = await ml.fetch(url, { credentials }); }
                     catch (e) { return `Error: ${errText(e)}`; }
                     const mislabel = r.typeByHeader && r.typeByHeader !== r.type ? ` (header said "${r.typeByHeader}")` : "";
                     const head = `Fetched ${r.url} — HTTP ${r.status}, type: ${r.type}${r.language ? ` (${r.language})` : ""}${mislabel}${r.truncated ? " · body truncated" : ""}.`;
+                    // HTML → Markdown by DEFAULT (readability): an HTML page is mostly slop (scripts/nav/chrome) to a
+                    // reading model, so distil it unless `raw` is set. Only HTML — json/csv/code/text/markdown are
+                    // already clean. Applies to BOTH the normal view and the ask-mode reader input.
+                    const converted = r.type === "html" && !raw && !schema && r.json === undefined;
+                    const mdNote = converted
+                        ? "\n\n(This page was raw HTML; the tool converted it to Markdown automatically for readability. Re-run fetch_url with \"raw\": true to get the original HTML.)"
+                        : "";
+                    // The body to read/return: converted Markdown for HTML (unless raw), else the JSON/raw text.
+                    // ml.fetch already attached `.markdown` for HTML; reuse it (fall back to a fresh conversion).
+                    const bodyText = (): string => r.json !== undefined ? JSON.stringify(r.json, null, 2) : (converted ? (r.markdown ?? htmlToMarkdown(r.text)) : r.text);
                     // ASK mode: distill the body through a fast reader model (extend:"utility") instead of returning
                     // it — a large page/API answers a question without ever entering the driver's context (the
                     // look/read delegate-and-distill pattern, for text). Metered as a sub-call (runs under inAgentRun).
                     if (typeof ask === "string" && ask.trim()) {
                         const question = ask.trim();
-                        const body = r.json !== undefined ? JSON.stringify(r.json, null, 2) : r.text;
+                        const body = bodyText();
                         const clipped = clipOut(body, FETCH_ASK_MAX);
                         const cut = clipped.length < body.length;
                         const beforeU = subcallUsage();   // the reader sub-call's cost (model + tokens) for the render
@@ -1614,14 +1628,15 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                         const tokens = (afterU.prompt - beforeU.prompt) + (afterU.completion - beforeU.completion);
                         const prevCalls = new Map((beforeU.byModel || []).map(m => [m.model, m.calls]));
                         const answeredBy = (afterU.byModel || []).find(m => (m.calls - (prevCalls.get(m.model) || 0)) > 0)?.model || null;
-                        const content = `${head}\n\nAnswer${cut ? " (the content was truncated before reading — it may be incomplete)" : ""}:\n${answer}`;
+                        const content = `${head}\n\nAnswer${cut ? " (the content was truncated before reading — it may be incomplete)" : ""}:\n${answer}${mdNote}`;
                         const renderIn: RenderDescriptor = {
                             type: "action", verb: "fetch", target: r.url, ask: question,
                             ...(credentials ? { note: "as you (sends your cookies)" } : {}),
                             ...(answeredBy ? { answeredBy } : {}), ...(tokens > 0 ? { tokens } : {}),
-                            // The raw content handed to the reader — the in-the-middle step, so the distill is
-                            // auditable (like locate's per-substep prompt). JSON gets syntax highlighting.
-                            askBody: clipped, askBodyLang: r.json !== undefined ? "json" : "text",
+                            // The content handed to the reader — the in-the-middle step, so the distill is auditable
+                            // (like locate's per-substep prompt). JSON is highlighted; a converted HTML page shows as
+                            // the Markdown the reader actually saw, not the original tag soup.
+                            askBody: clipped, askBodyLang: r.json !== undefined ? "json" : converted ? "markdown" : "text",
                             ...(cut ? { askBodyTruncated: true } : {}),
                         };
                         return { content, renderIn };
@@ -1638,12 +1653,12 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                         if (sig.length >= raw.length) return `${head}\n\n${clipOut(raw, 4000)}\n\n(raw JSON shown — its schema would be larger than the object itself.)`;
                         return `${head}\n\nJSON schema:\n${clipOut(sig, 4000)}`;
                     }
-                    // Default: the body. For a LARGE json, prepend the shape so the structure survives the clip — but
-                    // only when the shape is actually SMALLER than the payload (else it's noise, not a summary).
-                    const body = r.json !== undefined ? JSON.stringify(r.json, null, 2) : r.text;
+                    // Default: the body (HTML → Markdown unless raw). For a LARGE json, prepend the shape so the
+                    // structure survives the clip — but only when the shape is actually SMALLER than the payload.
+                    const body = bodyText();
                     const shapeLine = (r.json !== undefined && r.schema && (r.truncated || body.length > 600) && r.schema.length < body.length)
                         ? `JSON schema: ${r.schema}\n\n` : "";
-                    return `${head}\n\n${shapeLine}${clipOut(body, 4000)}`;
+                    return `${head}${mdNote}\n\n${shapeLine}${clipOut(body, 4000)}`;
                 },
             });
         },
@@ -2177,7 +2192,8 @@ class AgentHandle implements MlAgentHandle, AgentControl {
          *
          * When the body is JSON, `.json` is the parsed value and `.schema` is a compact TS-like SHAPE of it
          * (`{ id: number, items: { name: string }[] }`) — the structure to write code against without holding
-         * the whole payload.
+         * the whole payload. When the body is HTML, `.markdown` is a clean Markdown distillation (scripts, nav,
+         * and page chrome stripped) — read that for the content; `.text` still holds the original raw HTML.
          *
          * @param {string} url An absolute http(s) URL.
          * @param {{ fresh?: boolean; credentials?: boolean }} [opts] `fresh` bypasses the read cache; `credentials` fetches with the user's cookies (gated, uncached).
@@ -2187,7 +2203,17 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             const key = String(url);   // the real method always fetches live; `fresh` only matters for the read-only cache path
             const credentials = !!opts?.credentials;
             return makeBackgroundTaskPromise<import("./contract").FetchResult>("FETCH_URL_REQUEST", "FETCH_URL_RESPONSE", { url: key, credentials })
-                .then(r => { if (r && r.ok && !credentials) mlFetchCache.set(key, r); return r; });   // cache ONLY a successful UNCREDENTIALED fetch (credentialed bytes are authenticated — never cache)
+                .then(r => {
+                    // For an HTML body, attach a `.markdown` distillation (scripts/nav/chrome stripped) so ANY
+                    // caller — exec, a read-only survey (`ml.fetch(url).markdown`), the fetch_url tool — gets the
+                    // readable content without re-converting. Computed here in the page main world (has a DOM);
+                    // the cost is negligible and the cached copy carries it. `.text` still holds the raw HTML.
+                    if (r && r.type === "html" && typeof r.text === "string" && r.markdown === undefined) {
+                        try { r.markdown = htmlToMarkdown(r.text); } catch { /* leave undefined — callers fall back to .text */ }
+                    }
+                    if (r && r.ok && !credentials) mlFetchCache.set(key, r);   // cache ONLY a successful UNCREDENTIALED fetch (credentialed bytes are authenticated — never cache)
+                    return r;
+                });
         },
         /**
          * Internal: the CACHE-ONLY read the read-only dialect's `ml.fetch` is bound to. Returns a prior
