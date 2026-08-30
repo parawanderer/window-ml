@@ -169,8 +169,10 @@ const OUT = {
     // `for…of` is now IN-dialect (see below); a C-style `for(;;)` and `for…in` stay OUT.
     "C-style for": `for (let i = 0; i < 3; i++) { i }`,
     "for...in": `for (const k in {a: 1}) { k }`,
-    "assignment": `let x = 1; x = 2; x`,
-    "new": `new Object()`,
+    // Member assignment on an object YOU built is now IN-dialect; a bare-VARIABLE assignment is not (it could
+    // rebind the environment) — it escalates.
+    "bare-variable assignment": `const x = 1; x = 2; x`,
+    "compound assignment": `const o = {}; o.n = 0; o.n += 1; o.n`,   // only plain `=`, no `+=`
     "tagged template": "tag`hi ${1}`",   // a plain template is supported; a TAGGED one (a call) is not
 };
 for (const [name, js] of Object.entries(OUT)) {
@@ -235,13 +237,115 @@ test("for…of supports early return and iterating Object.entries (the for…in 
     // A destructuring loop var falls back — the dialect has no destructuring anywhere; index the pair instead.
     await assert.rejects(run(`for (const [k, v] of Object.entries({ a: 1 })) console.log(k)`), outOfDialect);
 });
-test("for…of still can't ACCUMULATE — push/reassignment stay out, so it never mutates", async () => {
-    // The safety line holds: iterate + read + log, but not build-by-mutation. Use .map/.reduce for a result.
-    await assert.rejects(run(`const r = []; for (const x of [1, 2]) r.push(x); r`), outOfDialect);
+test("for…of CAN now accumulate into an array YOU built (push) — but not via variable reassignment", async () => {
+    // Building a local accumulator is in-dialect: `.push()` onto a script-created array mutates only that
+    // local container (never the page — see the adversarial block). Variable reassignment (`s += x`) stays out.
+    assert.deepEqual((await run(`const r = []; for (const x of [1, 2, 3]) r.push(x * 2); return r;`)).value, [2, 4, 6]);
+    assert.deepEqual((await run(`const g = {}; for (const n of ['a:1','b:2','a:3']) { const k = n.split(':')[0]; (g[k] = g[k] || []).push(n); } return g;`)).value,
+        { a: ["a:1", "a:3"], b: ["b:2"] });
+    // A string accumulator via `s += x` needs a bare-variable reassignment → still out of dialect.
     await assert.rejects(run(`let s = ''; for (const x of ['a', 'b']) s += x; s`), outOfDialect);
 });
 test("for…of over a non-iterable throws a catchable TypeError (not a guard escalation)", async () => {
     await assert.rejects(run(`for (const x of 5) console.log(x)`), e => e instanceof TypeError);
+});
+
+// --- the model-family grouping surveys Shane actually ran — assignment-accumulator, .reduce, and
+//     new Set + spread + sort. All pure LOCAL computation, now in-dialect (they used to escalate). ---
+const MODELS_ML = { models: async () => ["gemma4:31b", "qwen3.8:27b", "litellm.gpt-4o", "gemma4:e2b", "qwen2.5vl:7b"] };
+test("survey: group local models by family via (o[k] = o[k] || []).push(n) — runs", async () => {
+    const { value } = await run(`const m = await ml.models();
+const local = m.filter(x => !x.startsWith('litellm.'));
+const families = {};
+for (const n of local) { const key = n.split(/[:.]/)[0].toLowerCase(); (families[key] = families[key] || []).push(n); }
+const order = Object.entries(families).map(([k, v]) => v.length ? \`\${k} (\${v.length})\` : k);
+return { totalLocal: local.length, byFamily: order, allLocal: local };`, world(), MODELS_ML);
+    assert.equal(value.totalLocal, 4);
+    assert.deepEqual(value.byFamily.slice().sort(), ["gemma4 (2)", "qwen2 (1)", "qwen3 (1)"]);
+});
+test("survey: the SAME grouping via .reduce + Object.entries + a destructured ([k,v]) arrow — runs", async () => {
+    const { value } = await run(`const m = await ml.models();
+const local = m.filter(x => !x.startsWith('litellm.'));
+const families = local.reduce((acc, n) => { const key = n.split(/[:.]/)[0].toLowerCase(); (acc[key] = acc[key] || []).push(n); return acc; }, {});
+return { totalLocal: local.length, byFamily: Object.entries(families).map(([k, v]) => \`\${k} (\${v.length})\`) };`, world(), MODELS_ML);
+    assert.equal(value.totalLocal, 4);
+    assert.deepEqual(value.byFamily.slice().sort(), ["gemma4 (2)", "qwen2 (1)", "qwen3 (1)"]);
+});
+test("survey: families via [...new Set(...)].sort() (spread + new Set + in-place sort on an owned array) — runs", async () => {
+    const { value } = await run(`const m = await ml.models();
+const local = m.filter(x => !x.startsWith('litellm.'));
+const byFamily = [...new Set(local.map(n => n.split(/[:.]/)[0].toLowerCase()))].sort();
+return { families: byFamily, cloud: m.filter(x => x.startsWith('litellm.')) };`, world(), MODELS_ML);
+    assert.deepEqual(value.families, ["gemma4", "qwen2", "qwen3"]);
+    assert.deepEqual(value.cloud, ["litellm.gpt-4o"]);
+});
+
+// --- ADVERSARIAL: the new constructs (member assignment · `new` · destructuring · in-place mutators) must
+//     never become an escape or a page-mutation vector. Every bypass attempt is REJECTED or rendered inert. ---
+test("adversarial (assignment): cannot mutate the PAGE — a DOM node or its properties", async () => {
+    const doc = world();
+    await assert.rejects(run(`document.body.textContent = 'hacked'; 1`, doc), outOfDialect);
+    await assert.rejects(run(`document.querySelector('#a').value = 'x'; 1`, doc), outOfDialect);
+    await assert.rejects(run(`document.title = 'x'; 1`, doc), outOfDialect);
+    await assert.rejects(run(`document.querySelector('#a').onclick = 1; 1`, doc), outOfDialect);
+    assert.equal(doc.title, "");                       // the page is untouched
+    assert.equal(doc.querySelector("#a").value, "");
+});
+test("adversarial (assignment): cannot rebind a bare variable (window/document/globals) — no env corruption", async () => {
+    await assert.rejects(run(`window = new Map(); 1`), outOfDialect);                       // the user's exact worry
+    await assert.rejects(run(`document = new Map(); document.querySelectorAll('x')`), outOfDialect);
+    await assert.rejects(run(`Object = { entries: () => [] }; Object.entries({})`), outOfDialect);
+    await assert.rejects(run(`const x = 1; x = 2; x`), outOfDialect);
+});
+test("adversarial (assignment): cannot poison the prototype or reach the realm via a WRITE", async () => {
+    await assert.rejects(run(`const o = {}; o.__proto__ = { pwned: 1 }; o`), outOfDialect);
+    await assert.rejects(run(`const o = {}; o['__proto__'] = {}; o`), outOfDialect);
+    await assert.rejects(run(`const o = {}; o.constructor = 1; o`), outOfDialect);
+    await assert.rejects(run(`const a = []; a['constructor'] = 1; a`), outOfDialect);
+    assert.equal(({}).pwned, undefined);               // Object.prototype stayed clean
+});
+test("adversarial (assignment): cannot LAUNDER a live method by storing it under an allowlisted name", async () => {
+    const doc = world();
+    // Reading a method as a value gives the inert METHOD_REF; stored under 'map' and called, it still throws.
+    await assert.rejects(run(`const o = {}; o.map = document.querySelector; o.map('#a')`, doc), outOfDialect);
+    await assert.rejects(run(`const o = {}; o.c = [].constructor; o.c`, doc), outOfDialect);   // .constructor read is denied
+});
+test("adversarial (mutators): push/sort/… only touch an array YOU built — never one reached off the page", async () => {
+    const doc = world();
+    doc.appData = [3, 1, 2];   // a live array on a page object → reached via a property read → NOT owned
+    await assert.rejects(run(`document.appData.push(9); document.appData`, doc), outOfDialect);
+    await assert.rejects(run(`document.appData.sort(); document.appData`, doc), outOfDialect);
+    await assert.rejects(run(`document.appData.reverse(); 1`, doc), outOfDialect);
+    assert.deepEqual(doc.appData, [3, 1, 2]);           // untouched
+    // A fresh COPY (spread / slice) is owned → mutable.
+    assert.deepEqual((await run(`[...document.appData].sort()`, doc)).value, [1, 2, 3]);
+    assert.deepEqual((await run(`document.appData.slice().reverse()`, doc)).value, [2, 1, 3]);
+    assert.deepEqual(doc.appData, [3, 1, 2]);           // still untouched
+});
+test("adversarial (new): only pure builtins — code gen / network / host constructors are Denied", async () => {
+    await assert.rejects(run(`new Function('return 1')()`), outOfDialect);
+    await assert.rejects(run(`new Function('return this')().constructor`), outOfDialect);
+    await assert.rejects(run(`new Image()`), outOfDialect);
+    await assert.rejects(run(`new XMLHttpRequest()`), outOfDialect);
+    await assert.rejects(run(`new WebSocket('ws://x')`), outOfDialect);
+    await assert.rejects(run(`new (document.defaultView.Function)('code')`), outOfDialect);   // defaultView denied + `new (expr)` unsupported
+    // The pure ones build fine.
+    assert.deepEqual((await run(`[...new Set([1, 1, 2, 3])]`)).value, [1, 2, 3]);
+    assert.equal((await run(`new Set([1, 2, 2]).size`)).value, 2);
+    assert.equal((await run(`new Array(3).length`)).value, 3);
+    assert.equal((await run(`new Map([['a', 1], ['b', 2]]).size`)).value, 2);
+});
+test("adversarial (destructuring): you can GET a data property but not a DENIED one or a usable live method", async () => {
+    const doc = world();
+    await assert.rejects(run(`const { constructor } = {}; constructor('return 1')`), outOfDialect);
+    await assert.rejects(run(`document.querySelectorAll('input').map(({ constructor }) => constructor)`, doc), outOfDialect);
+    // A destructured METHOD is the inert sentinel — calling it throws.
+    await assert.rejects(run(`const [f] = [document.querySelector]; f('#a')`, doc), outOfDialect);
+    await assert.rejects(run(`document.querySelectorAll('input').map(el => { const { getAttribute } = el; return getAttribute('id'); })`, doc), outOfDialect);
+    // Benign DATA destructuring works (params + declarations).
+    assert.deepEqual((await run(`const { a, b } = { a: 1, b: 2 }; return [a, b];`)).value, [1, 2]);
+    assert.deepEqual((await run(`const [x, y] = [10, 20]; return x + y;`)).value, 30);
+    assert.deepEqual((await run(`[{ a: 1 }, { a: 2 }].map(({ a }) => a * 10)`)).value, [10, 20]);
 });
 
 test("a SYNC ml read (queryAll/range) runs INSIDE a .map/.filter callback; an ASYNC one still can't", async () => {

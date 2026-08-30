@@ -257,7 +257,16 @@ class Parser {
         if (this.is(";")) this.i++;
         return { type: "ExprStmt", expr: e };
     }
-    parseExpression(): Node { return this.parseTernary(); }
+    parseExpression(): Node { return this.parseAssignment(); }
+    // Assignment is the LOWEST-precedence, right-associative level. Only a simple `=` (no compound `+=`/`||=`)
+    // — the get-or-create-and-push idiom `(o[k] = o[k] || []).push(x)` and building a local accumulator. The
+    // EVALUATOR mediates the target hard: a member write lands ONLY on a script-local plain object/array,
+    // never a DOM node / host object / the realm — so this stays read-only w.r.t. the PAGE.
+    parseAssignment(): Node {
+        const left = this.parseTernary();
+        if (this.is("=")) { this.eat("="); return { type: "Assign", target: left, value: this.parseAssignment() }; }
+        return left;
+    }
     parseTernary(): Node {
         const cond = this.parseBinary(0);
         if (this.is("?")) {
@@ -366,6 +375,24 @@ class Parser {
             const exprs = (t.exprs || []).map(s => { const p = new Parser(tokenize(s)); const n = p.parseExpression(); if (p.peek().t !== "eof") throw new NotInDialect("bad template expression"); return n; });
             return { type: "Template", quasis: t.quasis || [""], exprs };
         }
+        // `new Ctor(args)` — a bare-identifier constructor only (no `new a.b()`); the evaluator allowlists it
+        // to pure builtins (Set/Map/Array/…). Args are full expressions (incl. `...spread`).
+        if (t.t === "name" && t.v === "new") {
+            this.i++;
+            const id = this.next();
+            if (id.t !== "name") throw new NotInDialect("new expects a constructor name");
+            const args: Node[] = [];
+            if (this.is("(")) {
+                this.eat("(");
+                while (!this.is(")")) {
+                    if (this.is("...")) { this.i++; args.push({ type: "Spread", arg: this.parseExpression() }); }
+                    else args.push(this.parseExpression());
+                    if (this.is(",")) this.i++; else break;
+                }
+                this.eat(")");
+            }
+            return { type: "New", ctor: id.v, args };
+        }
         if (t.t === "name") {
             if (t.v === "true") { this.i++; return { type: "Lit", value: true }; }
             if (t.v === "false") { this.i++; return { type: "Lit", value: false }; }
@@ -398,11 +425,11 @@ class Parser {
         const save = this.i;
         try {
             this.eat("(");
-            const params: string[] = [];
+            const params: (string | Node)[] = [];   // a name, OR a destructuring pattern `[a,b]` / `{a,b}`
             while (!this.is(")")) {
-                const n = this.next();
-                if (n.t !== "name") throw new NotInDialect("param");
-                params.push(n.v);
+                if (this.is("[")) params.push(this.parseArrayPattern());
+                else if (this.is("{")) params.push(this.parseObjectPattern());
+                else { const n = this.next(); if (n.t !== "name") throw new NotInDialect("param"); params.push(n.v); }
                 if (this.is(",")) this.i++; else break;
             }
             this.eat(")");
@@ -513,10 +540,13 @@ const ALLOWED_METHODS = new Set([
     "querySelector", "querySelectorAll", "getElementById", "getElementsByClassName",
     "getElementsByTagName", "getElementsByName", "closest", "matches", "getAttribute",
     "getAttributeNames", "hasAttribute", "contains", "getBoundingClientRect", "getRootNode",
-    // Array
-    "from", "isArray", "of", "map", "filter", "forEach", "reduce", "find", "findIndex",
+    // Array — readers/pure PLUS the in-place builders (push/pop/…): array mutation is already tolerated
+    // (sort/reverse/fill mutate in place), and these operate on a SCRIPT-LOCAL computation array (models write
+    // `(o[k] = o[k] || []).push(x)` to build accumulators). Their returns are a length/element/removed-array —
+    // plain data, never the realm.
+    "from", "isArray", "of", "map", "filter", "forEach", "reduce", "reduceRight", "find", "findIndex", "findLast", "findLastIndex",
     "some", "every", "includes", "indexOf", "lastIndexOf", "slice", "concat", "join",
-    "flat", "flatMap", "sort", "reverse", "at", "fill",
+    "flat", "flatMap", "sort", "reverse", "at", "fill", "push", "pop", "shift", "unshift", "splice",
     // String
     "substring", "substr", "toLowerCase", "toUpperCase", "trim", "trimStart", "trimEnd",
     "split", "startsWith", "endsWith", "replace", "replaceAll", "padStart", "padEnd",
@@ -550,6 +580,31 @@ const ALLOWED_METHODS = new Set([
 // allocation `Array.from({length:n}, …)` already permits, not a new capability. `Array.from`/`Array.isArray`
 // stay reachable as member calls regardless.
 const CALLABLE_ROOTS = new Set(["String", "Number", "Boolean", "Array", "parseInt", "parseFloat", "isNaN", "isFinite", "getComputedStyle"]);
+
+// A target a member WRITE may land on: a SCRIPT-LOCAL computation container only — a plain object (`{}` /
+// `Object.create(null)` / a JSON.parse result / an `ml.config()` value) or an Array. A DOM node (proto is
+// HTMLElement.prototype), a NodeList, a Set/Map, `window`, the interpreter's scope — anything with a
+// non-plain prototype — is REFUSED, so `o[k] = v` can never mutate the PAGE or the realm. Combined with
+// guardKey (which denies __proto__/constructor/prototype), assignment stays read-only w.r.t. the page.
+function isWritableTarget(o: unknown): boolean {
+    if (Array.isArray(o)) return true;
+    if (o == null || typeof o !== "object") return false;
+    const proto = Object.getPrototypeOf(o);
+    return proto === Object.prototype || proto === null;
+}
+
+// The ONLY constructors `new X(…)` may build — pure, side-effect-free, realm-safe builtins. Everything else
+// is ABSENT → Denied: `new Function('code')` (code gen), `new Image`/`XMLHttpRequest`/`WebSocket`/`Worker`
+// (network / side effect), any host constructor. Resolved by NAME, not by a scope lookup, so it can't be
+// rebound. Their RESULTS are ordinary values that flow through the same read/call mediation as everything else.
+const SAFE_CONSTRUCTORS: Record<string, new (...a: any[]) => unknown> = {
+    Set, Map, WeakSet, WeakMap, Array, Object, Date, RegExp, Number, String, Boolean, Error,
+};
+
+// In-place array MUTATORS. Allowed ONLY on a container the SCRIPT created (tracked in `owned`) — never an
+// array reached off a page object. So `pageState.items.push(x)` / `.sort()` can't reorder/grow the page's
+// own data; only the survey's local accumulators (`(o[k] = o[k] || []).push(x)`, `[...set].sort()`) can.
+const MUTATING_METHODS = new Set(["push", "pop", "shift", "unshift", "splice", "sort", "reverse", "fill"]);
 
 // The `window.ml` methods this dialect may call — side-effect-free reads: no privilege, no page
 // mutation, no tokens/VRAM. Everything else is simply ABSENT from the facade we build, so it can't
@@ -609,6 +664,13 @@ class Evaluator {
     // while the bare wrapper a host method receives stays synchronous.
     private ourFns = new WeakMap<Function, { node: Node; scope: any }>();
     private depth = 0;
+    // Containers the SCRIPT created (plain object/array literals, `new`, and the fresh arrays/objects our
+    // allowlisted methods return — .map/.filter/.slice/Object.entries/JSON.parse/spread/…). ONLY these may be
+    // mutated (assignment + push/sort/…). An array/object reached by READING a property off a page value is
+    // NOT here, so page state can't be written. Page arrays are never RETURNED by an allowlisted method (those
+    // all build new ones), so marking method results owned can't launder a live page container.
+    private owned = new WeakSet<object>();
+    private own<T>(v: T): T { if (v !== null && typeof v === "object" && isWritableTarget(v)) this.owned.add(v as object); return v; }
     constructor(private ml: Record<string, unknown> | null) {}
 
     private guardKey(key: unknown): string {
@@ -655,6 +717,21 @@ class Evaluator {
         return isDomCollection(v) ? Array.from(v as ArrayLike<unknown>) : v;
     }
 
+    // Bind a destructuring pattern (`const {a,b} = …`, `([a,b]) => …`) MEDIATED: every extracted property goes
+    // through `this.prop` (a denied key like `constructor`/`__proto__` throws; a live method → the inert
+    // METHOD_REF sentinel), so you can GET a property but not USE it to escape. Shared by VarDecl + arrow params.
+    private bindPattern(scope: any, pattern: Node, val: unknown): void {
+        if (pattern.type === "ArrayPattern") {
+            const arr = Array.isArray(val) ? val
+                : (val != null && typeof (val as any)[Symbol.iterator] === "function") ? Array.from(val as Iterable<unknown>)
+                    : (() => { throw new TypeError("cannot destructure a non-iterable value"); })();
+            (pattern.elems as (string | null)[]).forEach((name, i) => { if (name) scope[name] = this.prop(arr, String(i)); });
+            if (pattern.rest) scope[pattern.rest] = this.own(arr.slice((pattern.elems as unknown[]).length));
+        } else {   // ObjectPattern — each key read through the member-read guard (denied → throw, method → inert)
+            for (const k of pattern.keys as string[]) scope[k] = this.prop(val, k);
+        }
+    }
+
     *eval(node: Node, scope: any): Ev {
         switch (node.type) {
             case "Program": {
@@ -684,20 +761,7 @@ class Evaluator {
             }
             case "VarDecl": {
                 const val = yield* this.eval(node.init, scope);
-                if (node.pattern) {
-                    const p = node.pattern;
-                    if (p.type === "ArrayPattern") {
-                        // Iterable → array (a non-iterable throws a catchable TypeError, like real destructuring).
-                        const arr = Array.isArray(val) ? val
-                            : (val != null && typeof (val as any)[Symbol.iterator] === "function") ? Array.from(val as Iterable<unknown>)
-                                : (() => { throw new TypeError("cannot destructure a non-iterable value"); })();
-                        (p.elems as (string | null)[]).forEach((name, i) => { if (name) scope[name] = arr[i]; });
-                        if (p.rest) scope[p.rest] = arr.slice(p.elems.length);
-                    } else {   // ObjectPattern — each key read through the member-read guard (methods → inert)
-                        for (const k of p.keys as string[]) scope[k] = this.prop(val, k);
-                    }
-                    return undefined;
-                }
+                if (node.pattern) { this.bindPattern(scope, node.pattern, val); return undefined; }
                 scope[node.name] = val;
                 return undefined;
             }
@@ -736,7 +800,7 @@ class Evaluator {
                     if (e.type === "Spread") { for (const v of (yield* this.eval(e.arg, scope)) as Iterable<unknown>) arr.push(v); }
                     else arr.push(yield* this.eval(e, scope));
                 }
-                return arr;
+                return this.own(arr);
             }
             case "Object": {
                 const o: Record<string, unknown> = {};
@@ -751,7 +815,7 @@ class Evaluator {
                         o[p.key] = yield* this.eval(p.value, scope);
                     }
                 }
-                return o;
+                return this.own(o);
             }
             case "Arrow": {
                 const self = this;
@@ -761,6 +825,26 @@ class Evaluator {
                 const fn = function (...args: unknown[]) { return runSync(self.callArrow(node, scope, args)); };
                 this.ourFns.set(fn, { node, scope });
                 return fn;
+            }
+            case "New": {
+                const ctor = SAFE_CONSTRUCTORS[node.ctor];
+                if (!ctor) throw new Denied(`new ${node.ctor}() is not allowed — only pure builtins (Set, Map, Array, Date, RegExp, …)`);
+                return this.own(new ctor(...(yield* this.evalArgs(node.args, scope))));
+            }
+            case "Assign": {
+                // MEMBER-only, and the target must be a container the SCRIPT CREATED (`owned`) with a non-denied
+                // key (guardKey). So a write can never touch a DOM node, a page array, a host object, `window`,
+                // the scope, or the realm (__proto__/constructor/prototype) — assignment stays read-only w.r.t.
+                // the page. A bare-name target (`window = …`, `x = …`) is refused outright (no env corruption).
+                if (node.target.type !== "Member")
+                    throw new NotInDialect("assignment is allowed only to a property of an object/array you built (o[k] = v), never a bare variable");
+                const obj: any = yield* this.eval(node.target.obj, scope);
+                const key = node.target.computed ? this.guardKey(yield* this.eval(node.target.prop, scope)) : this.guardKey(node.target.prop);
+                if (!this.owned.has(obj))
+                    throw new Denied("can only assign to an object or array you built — never a DOM node, a page object, or the environment");
+                const val = yield* this.eval(node.value, scope);
+                obj[key] = val;
+                return val;
             }
             case "Unary": {
                 const a = yield* this.eval(node.arg, scope);
@@ -841,7 +925,10 @@ class Evaluator {
         if (++this.depth > 5000) { this.depth--; throw new NotInDialect("recursion limit"); }
         try {
             const child = Object.create(scope);
-            node.params.forEach((p: string, idx: number) => { child[p] = args[idx]; });
+            (node.params as (string | Node)[]).forEach((p, idx) => {
+                if (typeof p === "string") child[p] = args[idx];
+                else this.bindPattern(child, p, args[idx]);   // a destructuring param `([a,b])` / `({a,b})` — mediated
+            });
             const r = yield* this.eval(node.body, child);
             return r && typeof r === "object" && RETURN in (r as object) ? (r as any)[RETURN] : r;
         } finally { this.depth--; }
@@ -862,6 +949,10 @@ class Evaluator {
             if (onMl ? !Object.prototype.hasOwnProperty.call(this.ml, key) : !ALLOWED_METHODS.has(key)) {
                 throw new NotInDialect(`method '${key}' not allowed`);
             }
+            // An in-place MUTATOR (push/sort/…) may run ONLY on a container the script itself created — never an
+            // array reached off a page value. So `pageState.items.push(x)` / `.sort()` can't mutate page data.
+            if (MUTATING_METHODS.has(key) && !this.owned.has(obj))
+                throw new Denied(`'${key}' can only mutate an array you created, not one reached from the page`);
             // `x.then(cb)` where x is NOT a thenable — the shape models write over the ml reads
             // (`ml.getModel().then(m => …)`), which auto-await left a plain value. Apply the callback
             // to it: Promise.resolve(x).then(cb) semantics, without minting a promise. Driven by OUR
@@ -885,12 +976,16 @@ class Evaluator {
             // value — pass it straight through WITHOUT yielding, so they work inside a `.map`/`.filter` callback
             // (the sync driver can't honour a yield). Yielding those unconditionally was why `cs.map(s =>
             // ml.queryAll(s).length)` fell out of dialect.
-            if (onMl) return (out != null && typeof (out as { then?: unknown }).then === "function") ? yield out : out;
+            // `this.own`: a FRESH plain array/object our allowlisted methods return (.map/.filter/.slice/
+            // Object.entries/JSON.parse/…) becomes mutable, so `arr.filter(…).push(x)` and the accumulator
+            // idioms work. Page arrays are never RETURNED by an allowlisted method (they all build new ones),
+            // so this can't launder a live page container — the mutator gate above still refuses page arrays.
+            if (onMl) return this.own((out != null && typeof (out as { then?: unknown }).then === "function") ? yield out : out);
             // Accommodate a common model mistake: querySelectorAll / getElementsBy* return a NodeList /
             // HTMLCollection, which have no .map/.filter, so `querySelectorAll('x').map(…)` throws (the
             // model forgets to spread). In this read-only dialect it's safe to just hand back a real
             // Array, so the survey runs instead of falling through to the manual gate.
-            return isDomCollection(out) ? Array.from(out as ArrayLike<unknown>) : out;
+            return this.own(isDomCollection(out) ? Array.from(out as ArrayLike<unknown>) : out);
         }
         // Ident(args) — only whitelisted coercion/parse builtins.
         if (callee.type === "Ident" && CALLABLE_ROOTS.has(callee.name) && callee.name in scope) {
