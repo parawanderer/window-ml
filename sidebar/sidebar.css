@@ -994,9 +994,9 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
 .card-foot-appr { flex-direction: column; }
 .card-foot-row { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 .card-foot .appr-btn { padding: 6px 18px; font-size: 1em; }
-/* 3-button approval footer (Deny · Approve · Keep): tighten padding so all three fit ONE line in the card. */
+/* 3-button approval footer (Deny · Approve · Keep): tighten padding so all three — WITH their kbd hints —
+   fit ONE line in the card. */
 .card-foot-appr .card-foot-row:has(.appr-btn.remember) .appr-btn { padding: 6px 12px; }
-.card-foot-appr .card-foot-row:has(.appr-btn.remember) .appr-btn .kb { display: none; }   /* drop kbd hints when 3 buttons share the line */
 /* the collapsed grant card in the HUD card foot sits above the buttons. */
 .card-foot .appr-grant { font-size: 0.95em; }
 /* Inline reply on the finished card. Two states: a quiet collapsed GHOST affordance (icon + "Reply…", does
