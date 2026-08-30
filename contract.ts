@@ -611,7 +611,12 @@ export type ApprovalDecision =
         /** button #3: ALSO persist this call's statically-known egress grants (its `ml.fetch` literal URLs)
          *  for the rest of the session, so a later call to the same URL auto-approves. Only ever set on a
          *  positive decision; the grants themselves are re-derived background-side (never trusted from here). */
-        persist?: boolean };
+        persist?: boolean;
+        /** The run is being CANCELLED (Stop), not denied — how CANCEL_RUN resolves an open gate. Distinct from
+         *  a plain `approved:false`: the loop must EXIT as cancelled, not treat it as a deny and step on. This is
+         *  the cancel channel that works even when the run's AbortController is gone (an evicted/re-adopted run),
+         *  where aborting the signal can't reach the loop — resolving the gate cancelled still stops it. */
+        cancelled?: boolean };
 
 /** A prior grant a tool call REUSED (so it ran without a fresh prompt) — the transparency counterpart of
  *  PersistGrant. `kind` keys the per-kind label/icon; `detail` is the human-readable thing reused (the URL,

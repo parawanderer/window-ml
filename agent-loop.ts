@@ -175,14 +175,15 @@ export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number | (() =
 
 // Normalize an approval gate's return (boolean OR the rich contract) into a decision. Inlined (not
 // imported from approval.ts) so this module stays DOM/chrome-free for the standalone build.
-const normalize = (d: ApprovalDecision, orig: Record<string, unknown>): { approved: boolean; feedback: string | null; arguments: Record<string, unknown>; source: "user" | "external" } => {
+const normalize = (d: ApprovalDecision, orig: Record<string, unknown>): { approved: boolean; feedback: string | null; arguments: Record<string, unknown>; source: "user" | "external"; cancelled: boolean } => {
     if (d && typeof d === "object") return {
         approved: !!d.approved,
         feedback: typeof d.feedback === "string" && d.feedback.trim() ? d.feedback.trim() : null,
         arguments: d.approved && d.arguments && typeof d.arguments === "object" ? d.arguments : orig,
         source: d.source === "external" ? "external" : "user",
+        cancelled: !!d.cancelled,
     };
-    return { approved: !!d, feedback: null, arguments: orig, source: "user" };
+    return { approved: !!d, feedback: null, arguments: orig, source: "user", cancelled: false };
 };
 
 // Returns AgentResult WITHOUT `hash` — this loop is identity-agnostic; the page-side ml.agent
@@ -244,6 +245,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         deps.pushAssistant(messages, msg);
 
         const pendingImages: { image: string; label: string }[] = [];   // inline vision — injected after the step
+        let stopRun = false;   // a gate resolved as CANCELLED (Stop) → exit after this step, even if the signal never aborted
         for (const call of msg.tool_calls) {
             const meta = byName.get(call.name);
             let args = (call.arguments || {}) as Record<string, unknown>;
@@ -286,17 +288,21 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                     result = UNATTENDED_REFUSAL;
                 } else {
                     const rawDecision = await deps.approve({ tool: call.name, arguments: args, seq: s, step });
-                    if (signal?.aborted) {
-                        // CANCELLED while the gate was open (Stop pressed) — the gate promise resolved because
-                        // cancel wakes it (background CANCEL_RUN resolves the pending gate). The tool never ran;
-                        // store a generic, non-accusatory result — NOT "denied" — so a follow-up turn sees a
-                        // coherent transcript, then the signal check at the top of the next step exits the run as
-                        // cancelled. This is also what CLEARS the approve/deny buttons: the DONE emit below patches
-                        // the step out of `awaitingApproval` (with a result), instead of leaving it hung.
+                    const d = normalize(rawDecision, args);
+                    // CANCELLED while the gate was open (Stop pressed) — two channels, either suffices:
+                    // `signal.aborted` (CANCEL_RUN aborted the run's controller) OR `d.cancelled` (CANCEL_RUN
+                    // resolved this gate with a cancellation decision). The SECOND is essential when the
+                    // controller is GONE (an evicted/re-adopted run): aborting can't reach the loop, so without
+                    // it the gate would resolve to a plain `false` → read as a DENY → the loop steps on forever
+                    // ("auto-denied + can't Stop", the reported bug). Store a generic, non-accusatory result —
+                    // NOT "denied" — and set `stopRun` so the loop EXITS after this step's DONE even if the
+                    // signal never aborted (the top-of-step signal check alone wouldn't catch the no-controller
+                    // case). The DONE emit below clears the approve/deny buttons on every surface.
+                    if (signal?.aborted || d.cancelled) {
                         approval = "cancelled";
                         result = "The user cancelled the run. Stop here and wait for their next instructions — do not retry this call.";
+                        stopRun = true;
                     } else {
-                        const d = normalize(rawDecision, args);
                         if (!d.approved) {
                             approval = "denied";
                             // Attribute the denial accurately: a human in a browser surface, or an external
@@ -328,6 +334,9 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             // Multiple images from one call (look's overlay + no-overlay) → each becomes its own inline image.
             if (tr?.images) for (const im of tr.images) pendingImages.push({ image: im.image, label: im.label || "screenshot" });
         }
+        // A gate was CANCELLED this step (Stop) — exit now as cancelled, even if the AbortSignal never fired
+        // (the no-controller case the top-of-step check can't catch). The cancelled step's DONE already emitted.
+        if (signal?.aborted || stopRun) return cancelled(step);
         // Inline vision: hand any screenshots this step captured to the model as a user turn, so the
         // next step reasons over the real pixels (the native `look` path; a text-only driver omits the dep).
         if (pendingImages.length) deps.pushToolImages?.(messages, pendingImages);

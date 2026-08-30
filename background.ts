@@ -1327,13 +1327,14 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         const ctl = runControllers.get(runId);
         if (ctl) ctl.abort();
         // If the run is BLOCKED on an OPEN approval gate, aborting the controller alone can't unblock it — the
-        // gate promise only resolves via SET_APPROVAL. So resolve any pending gate for this run now: the loop
-        // wakes, sees the aborted signal, and exits cleanly with a stored "cancelled" tool result (clearing the
-        // approve/deny buttons) — instead of hanging forever with frozen buttons on every surface. The decision
-        // value is irrelevant (the loop treats an aborted signal as cancel); a later SET_APPROVAL click then
-        // finds no entry — a harmless no-op.
+        // gate promise only resolves via SET_APPROVAL. So resolve any pending gate for this run now with an
+        // explicit CANCELLATION (`{ approved:false, cancelled:true }`), NOT a bare `false`: the loop then exits
+        // as cancelled even when the controller is GONE (an evicted/re-adopted run, where `ctl` above is
+        // undefined so the signal never aborts). A bare `false` there read as a DENY → the loop stepped on
+        // forever ("auto-denied + can't Stop", the reported bug). A later SET_APPROVAL click finds no entry — a
+        // harmless no-op.
         for (const [key, entry] of [...pendingApprovals]) {
-            if (key.startsWith(`${runId}:`)) { pendingApprovals.delete(key); entry.resolve(false); }
+            if (key.startsWith(`${runId}:`)) { pendingApprovals.delete(key); entry.resolve({ approved: false, cancelled: true }); }
         }
         return;   // fire-and-forget
     }
@@ -1754,7 +1755,11 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                                 // until the tool finished. This patches the pending step to non-awaiting on all
                                 // surfaces (same seq); the DONE later fills the result. Fired BEFORE resolve() so
                                 // it precedes the tool run.
-                                emitStep({ step, seq, pending: true, awaitingApproval: false, approval: ok ? "user" : "denied", tool, arguments: args });
+                                // A CANCEL (Stop) resolves the gate with `{ cancelled:true }` — show "cancelled",
+                                // not "denied", so a Stop doesn't flash a false accusation before the loop's own
+                                // cancelled DONE lands.
+                                const cancelledDecision = typeof decision === "object" && !!decision && !!decision.cancelled;
+                                emitStep({ step, seq, pending: true, awaitingApproval: false, approval: cancelledDecision ? "cancelled" : ok ? "user" : "denied", tool, arguments: args });
                                 resolve(decision);
                             },
                             // What the external approver sees when it enumerates gates (the UI shows the same

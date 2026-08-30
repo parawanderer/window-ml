@@ -59,6 +59,27 @@ test("CANCEL while awaiting approval → tool NOT run, a generic 'cancelled' res
     assert.ok(res.cancelled, "the run resolves as cancelled");
 });
 
+test("CANCEL with NO controller (evicted run): a { cancelled } gate decision still exits cancelled — not denied+continue", async () => {
+    // The reported bug: a background run whose AbortController is GONE (evicted then re-adopted) gets Stopped.
+    // CANCEL_RUN can't abort the signal (no controller), so it resolves the OPEN gate with an explicit
+    // cancellation `{ approved:false, cancelled:true }`. Signal is NOT aborted here — the loop must STILL read
+    // this as a cancel (exit), not a plain deny that steps on to the next turn (which auto-rejected the exec
+    // and left the run "stuck, can't Stop"). No `signal` passed → mirrors the no-live-controller path.
+    let approvals = 0;
+    const { deps, calls } = makeDeps({
+        turns: [toolCall("danger"), reply("SHOULD-NOT-REACH")],   // a 2nd turn exists; a deny would step INTO it
+        approve: () => { approvals++; return { approved: false, cancelled: true }; },
+    });
+    const res = await runAgentLoop("x", { tools: [danger] }, deps);
+    assert.equal(calls.runTool.length, 0, "the tool never ran (not approved)");
+    assert.equal(approvals, 1, "the gate was consulted exactly once — the loop did NOT continue to a 2nd turn");
+    const done = calls.emits.find(e => e.tool === "danger" && !e.pending);
+    assert.equal(done.approval, "cancelled", "provenance is 'cancelled', not 'denied' — even with no aborted signal");
+    assert.doesNotMatch(done.result, /denied/i, "it does NOT read as a denial");
+    assert.ok(res.cancelled, "the run resolves as cancelled");
+    assert.notEqual(res.summary, "SHOULD-NOT-REACH", "the loop stopped — it did NOT run the next model turn");
+});
+
 test("auto-approve (a TRUSTED-world decision) skips the gate but still executes", async () => {
     const { deps, calls } = makeDeps({ turns: [toolCall("exec", { js: "readonlySurvey()" }), reply("done")], autoApprove: () => "readonly" });
     await runAgentLoop("x", { tools: [{ name: "exec", requiresApproval: true }] }, deps);

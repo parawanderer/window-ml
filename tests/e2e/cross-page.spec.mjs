@@ -184,6 +184,53 @@ test("approval: resolving a gate clears the approve/deny box on other surfaces i
     await page.close();
 });
 
+// A background run blocked at an approval gate, then the page RELOADS, then Stop is pressed. The run must
+// CANCEL cleanly (not auto-"deny" the gate and step on — the reported "stuck, can't Stop" bug, whose loop-side
+// fix is unit-tested in agent-loop.test.mjs). This is the end-to-end wiring: CANCEL_RUN from a legit extension
+// page (as the panel/popup/shell do) → the background resolves the open gate as a CANCELLATION → the loop
+// exits `cancelled`, and no "denied" step is ever emitted.
+test("cancel-after-reload: a run blocked at a gate, reloaded, then Stopped exits cancelled (never auto-denied)", async () => {
+    if (BACKEND) return;
+    const page = await ext.context.newPage();
+    const ev = [];
+    await page.exposeFunction("__rr", (e) => ev.push(e));
+    await page.addInitScript(() => {
+        if (window.top !== window) return;
+        window.addEventListener("message", (e) => {
+            const d = e.data && e.data.__mlDebug;
+            if (!d) return;
+            if (d.kind === "agent-step") window.__rr({ k: "step", seq: d.seq, approval: d.approval || null });
+            else if (d.kind === "agent-result") window.__rr({ k: "result", cancelled: !!d.cancelled });
+        });
+    });
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+    const before = fake.calls().length;   // calls accumulate across tests → measure THIS run's tail
+    fake.setScript([
+        { tool: "exec", args: { js: "window.__gate = 1; 'mutated'" } },   // mutating → gates
+        { content: "this SECOND turn must never run — a cancel stops the loop, a deny would step into it" },
+    ]);
+    await page.evaluate(() => { window.ml.agent("mutate then finish", { env: false, approvalRouting: "both" }); return true; });
+    await expect.poll(async () => (await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).length, { timeout: 12000 }).toBe(1);
+    const gate = (await ext.sw.evaluate(() => globalThis.__mlApprovals.list()))[0];
+    // Reload while blocked — the new document re-adopts the still-open run.
+    await page.reload();
+    await waitForMl(page);
+    await page.waitForTimeout(1500);
+    // Stop, exactly as the panel/popup do: CANCEL_RUN from a legit extension page (the page main world can't).
+    const ctl = await ext.context.newPage();
+    await ctl.goto(`chrome-extension://${ext.extensionId}/popup.html`);
+    await ctl.evaluate((runId) => chrome.runtime.sendMessage({ type: "CANCEL_RUN", payload: { runId } }), gate.runId);
+    // The run resolves as CANCELLED, and the gate is gone.
+    await expect.poll(() => ev.some((e) => e.k === "result" && e.cancelled), { timeout: 8000 }).toBe(true);
+    expect(await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).toHaveLength(0);
+    // It was never auto-denied, and the second model turn never ran.
+    expect(ev.some((e) => e.k === "step" && e.approval === "denied")).toBe(false);
+    expect(fake.calls().length - before).toBe(1);   // exactly one model turn — the loop stopped, didn't step on
+    await ctl.close();
+    await page.close();
+});
+
 // A real-shape sanity check that ALSO runs in the non-blocking real-model job: the agent reads a value off
 // the page with a DOM tool and answers it. Deterministic under the fake (a hard gate); a genuine "can a
 // real OpenAI-shaped model actually drive a tool and answer" probe under E2E_BACKEND.
