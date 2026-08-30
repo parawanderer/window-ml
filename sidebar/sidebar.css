@@ -1324,6 +1324,9 @@ html[data-surface="card"] .appr-btn.no:hover {
 .action-codeblk .code { margin: 0; }
 .action-sheets { display: flex; gap: 6px; align-items: flex-start; color: var(--warn); font-size: .9em; margin-top: 1px; }
 .action-sheets svg { flex: 0 0 auto; margin-top: 2px; }
+/* Raised output cap on exec/python: a warm callout (like a significant action) with the model's justification. */
+.action-raise { display: flex; gap: 6px; align-items: flex-start; color: var(--warn); font-size: .88em; line-height: 1.35; margin-top: 8px; }
+.action-raise svg { flex: 0 0 auto; width: 14px; height: 14px; margin-top: 2px; }
 /* Cross-origin iframe = a privileged debugger click into embedded third-party content: an alarming red
    callout so it's obvious BEFORE approving (the browser's debug banner only shows after). */
 .action-xorigin { display: flex; gap: 7px; align-items: flex-start; margin-top: 8px; padding: 8px 10px;

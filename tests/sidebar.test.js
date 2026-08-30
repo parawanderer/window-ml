@@ -450,6 +450,51 @@ test("button #3 (sidebar step): plain Approve posts persist:false (one-off)", as
     assert.equal(msg.persist, false, "plain Approve does NOT persist");
 });
 
+test("output-cap raise: the approval card calls out the raised limit + the model's justification", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("orc", "big dump"));
+    await w.dispatch(agentStep("orc", 1, {
+        seq: 1, pending: true, awaitingApproval: true, tool: "exec",
+        arguments: { js: "return bigThing()", maxChars: 8000, maxCharsReason: "need the whole config file" },
+        renderIn: { type: "code", text: "return bigThing()", lang: "javascript", format: true },
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const raise = w.shadow.querySelector(".action-raise");
+    assert.ok(raise, "the raise note rendered on the approval card");
+    assert.match(raise.textContent, /8,?000 chars/, "shows the raised cap");
+    assert.match(raise.textContent, /default 500/, "and the default it's exceeding");
+    assert.match(raise.textContent, /need the whole config file/, "shows the model's justification");
+});
+
+test("output-cap raise (HUD card): the raised limit + justification appear on the corner card too (parity)", async () => {
+    const w = await loadSidebarWorld();
+    await w.raw({ __mlSidebarSurface: "card" });   // off-mode corner card
+    await w.dispatch(agentStart("orcC", "big dump"));
+    await w.dispatch(agentStep("orcC", 1, {
+        seq: 1, pending: true, awaitingApproval: true, tool: "python_exec",
+        arguments: { code: "df.to_string()", maxChars: 15000, maxCharsReason: "the whole frame" },
+        renderIn: { type: "python-in", mode: "script", code: "df.to_string()" },
+    }));
+    await w.tick();
+    const raise = w.shadow.querySelector(".action-raise");
+    assert.ok(raise, "the raise note rendered on the HUD card");
+    assert.match(raise.textContent, /15,?000 chars/);
+    assert.match(raise.textContent, /the whole frame/);
+});
+
+test("output-cap raise: an UNRAISED exec approval shows no raise note", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("orc2", "survey"));
+    await w.dispatch(agentStep("orc2", 1, {
+        seq: 1, pending: true, awaitingApproval: true, tool: "exec",
+        arguments: { js: "return x" }, renderIn: { type: "code", text: "return x", lang: "javascript", format: true },
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    assert.equal(w.shadow.querySelector(".action-raise"), null, "no note when the cap isn't raised");
+});
+
 test("button #3 (sidebar step): a gate with NO grants shows no remember button", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("b3s3", "click something"));

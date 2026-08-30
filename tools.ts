@@ -17,6 +17,7 @@ import type { InvocationInfo, MlPublicConfig } from "./contract";
 import { ML_READONLY_METHODS } from "./readonly-exec";
 // Generated from contract.ts at build time (scripts/gen-api-docs.mjs) — the public MlApi
 // surface, so the doc the model reads can never drift from the interface it describes.
+import { resolveOutputCap, outputCapPrecheck } from "./contract";
 import { ML_API_DOCS } from "./api-docs.gen";
 import { BUILD_INFO } from "./build-info.gen";
 
@@ -406,6 +407,8 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 "The returned value AND the console output are EACH truncated to ~500 chars, so " +
                 "don't dump whole elements/pages — return a compact, filtered summary (counts, a " +
                 "handful of fields, the few items you actually need), not a full outerHTML dump. " +
+                "If you GENUINELY need more room for ONE call, pass `maxChars` (up to 8000) WITH a " +
+                "`maxCharsReason` — that raise asks the human first (a bigger dump costs your own context). " +
                 // Define "read-only" so the model writes qualifying code instead of guessing why some
                 // exec calls run instantly and others prompt (the auto-run is the autoApproveReadonly flag):
                 "AUTO-RUN vs APPROVAL: code that is read-only BY CONSTRUCTION — only queries/reads + pure " +
@@ -445,10 +448,20 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
             render: (_input, args) => ({ type: "code", text: String((args as { js?: string }).js || ""), lang: "javascript", format: true }),
             parameters: {
                 type: "object",
-                properties: { js: { type: "string", description: "JavaScript to run. console.log to print observations and/or end with an expression to return its value. Output is truncated to ~500 chars — return a filtered summary, not a full dump." } },
+                properties: {
+                    js: { type: "string", description: "JavaScript to run. console.log to print observations and/or end with an expression to return its value. Output is truncated to ~500 chars — return a filtered summary, not a full dump." },
+                    maxChars: { type: "number", description: "Raise the per-slot output truncation for THIS call (default 500, max 8000). A raise needs human approval + `maxCharsReason`. Prefer a filtered summary instead." },
+                    maxCharsReason: { type: "string", description: "Why this call needs more than the default 500 chars — required when `maxChars` exceeds it; shown to the human on the approval card." },
+                },
                 required: ["js"]
             },
-            run: async ({ js }: { js: string }): Promise<string | ToolResult> => {
+            // A raise of maxChars beyond the default with no justification is DOOMED (it will just ask for one) —
+            // skip the gate and steer the model to supply `maxCharsReason` (then the human sees it on the card).
+            precheck: (args) => outputCapPrecheck("exec", args as Record<string, unknown>),
+            run: async ({ js, maxChars, maxCharsReason }: { js: string; maxChars?: number; maxCharsReason?: string }): Promise<string | ToolResult> => {
+                // Effective per-slot output cap. Default 500; a raise past it is only reachable AFTER the human
+                // gate (the readonly try refuses to auto-approve an escalated call), clamped to the ceiling.
+                const { cap, clamped } = resolveOutputCap("exec", maxChars, maxCharsReason);
                 // The model can't see the page's console, and expressions like
                 // forEach(...) evaluate to undefined — so it often console.logs to
                 // "read" data and gets nothing back. Capture console output during
@@ -503,8 +516,9 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 }
 
                 // Prefix any captured console output onto the returned value.
-                const logged = logs.length ? `console:\n${clipOut(logs.join("\n"), 500)}` : "";
-                const withLogs = (value: string) => logged ? `${logged}\n\nvalue: ${value}` : value;
+                const logged = logs.length ? `console:\n${clipOut(logs.join("\n"), cap)}` : "";
+                const clampNote = clamped ? `\n\n(output limit clamped to ${cap} chars — the hard ceiling.)` : "";
+                const withLogs = (value: string) => (logged ? `${logged}\n\nvalue: ${value}` : value) + clampNote;
 
                 if (failed) {
                     // errText, NOT `.message`: a rejected `ml.*` call (makeBackgroundTaskPromise) rejects with a
@@ -538,9 +552,9 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 let value: string;
                 if (result === undefined) value = "(undefined)";
                 else if (typeof result === "object") {
-                    try { value = clipOut(JSON.stringify(result), 500); }
-                    catch { value = clipOut(String(result), 500); }
-                } else value = clipOut(String(result), 500);
+                    try { value = clipOut(JSON.stringify(result), cap); }
+                    catch { value = clipOut(String(result), cap); }
+                } else value = clipOut(String(result), cap);
                 return withLogs(value);
             }
         }),

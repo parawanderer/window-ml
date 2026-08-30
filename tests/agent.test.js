@@ -750,6 +750,18 @@ test("exec evaluates expressions, serializes objects, and catches errors", async
     assert.match(big, /^x{500}… \[\+100 chars truncated\]$/);
 });
 
+test("exec: `maxChars` raises the per-call output cap (post-approval), clamped to the ceiling", async () => {
+    const { ml } = loadDomWorld();
+    // Default 500 → 600 'x' clips to 500. With a raise + reason, the same output survives to 4000.
+    assert.match(await run(ml, "exec", { js: "'x'.repeat(600)", maxChars: 4000, maxCharsReason: "need it all" }), /^x{600}$/);
+    // A value past the 8000 ceiling is clamped, and the clamp is disclosed to the model.
+    const clamped = await run(ml, "exec", { js: "'x'.repeat(9000)", maxChars: 100000, maxCharsReason: "y" });
+    assert.match(clamped, /x{8000}… \[\+1000 chars truncated\]/);
+    assert.match(clamped, /clamped to 8000 chars/i, "the model is told its raise was clamped");
+    // A SMALLER cap is honored too (no gate needed for that).
+    assert.match(await run(ml, "exec", { js: "'x'.repeat(600)", maxChars: 100 }), /^x{100}… \[\+500 chars truncated\]$/);
+});
+
 test("exec: `state` persists across calls (the page-kernel scratchpad) + ml.state is the same object", async () => {
     const { ml } = loadDomWorld();
     // Stash on the first call (fast path), read it back on the second — the Jupyter/kernel paradigm.
@@ -2520,6 +2532,17 @@ test("python_exec tool: an ambiguous `table` selector warns it loaded the FIRST"
     const { ml: ml2 } = loadDomWorld(`<table id="only"><tr><td>1</td></tr></table>`);
     ml2.pythonExec = async () => ({ ok: true, value: "ok", stdout: "" });
     assert.doesNotMatch((await ml2.pythonTool().run({ code: "return 1", tables: "#only" })).content, /matched/);
+});
+
+test("python_exec tool: `maxChars` raises the stdout/value cap (post-approval), clamped to the ceiling", async () => {
+    const { ml } = loadDomWorld();
+    ml.pythonExec = async () => ({ ok: true, value: "x".repeat(30000), stdout: "" });
+    // Default 2000 clips.
+    assert.match((await ml.pythonTool().run({ code: "x" })).content, /x{2000}… \[\+28000 chars truncated\]/);
+    // Raised (+ reason) → up to the 20000 ceiling, with a clamp note (30000 requested > 20000 ceiling).
+    const raised = await ml.pythonTool().run({ code: "x", maxChars: 100000, maxCharsReason: "dumping a full frame" });
+    assert.match(raised.content, /x{20000}… \[\+10000 chars truncated\]/);
+    assert.match(raised.content, /clamped to 20000 chars/i);
 });
 
 test("python_exec tool: prepends a synthetic 'loaded' log so models know what's pre-loaded", async () => {

@@ -32,7 +32,7 @@ import type {
     TableSource,
     TablePreview
 } from "./contract";
-import { detectGroundingModel, DEFAULT_GROUNDING_RANGE } from "./contract";
+import { detectGroundingModel, DEFAULT_GROUNDING_RANGE, outputCapEscalated } from "./contract";
 import { evalReadonly } from "./readonly-exec";
 import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement, navTarget, clipOut, jsonShape } from "./dom";
 import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_NOTE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_EXEC_NOTE, IFRAME_CLAUSE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, EXEC_RANGE_CLAUSE, NAV_OFF_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, askAboutTask } from "./prompts";
@@ -974,6 +974,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 // agent can read its own setup (getModel/config/…) without the gate and nothing else.
                 tryReadonly: autoRO ? async (name, args) => {
                     if (name !== "exec" || typeof (args as { js?: unknown }).js !== "string") return null;
+                    if (outputCapEscalated("exec", args)) return null;   // a raised output cap must hit the human gate, never auto-approve
                     try {
                         const ro = await evalReadonly((args as { js: string }).js, document, this);
                         const { result, elements } = formatReadonlyExec(ro.value, ro.logs);

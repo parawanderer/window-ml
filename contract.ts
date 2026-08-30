@@ -145,6 +145,47 @@ export function isBackendUnreachable(msg?: string | null): boolean {
     return /couldn't reach the server|could not reach|failed to fetch|networkerror|err_connection|err_name_not_resolved|econnrefused|enotfound|net::err/i.test(msg);
 }
 
+/** Per-tool output truncation limits. The agent alone is capped at `default` (so it can't spam its own
+ *  context); a human can unlock up to `ceiling` for one call, never past it. */
+export const OUTPUT_CAP = {
+    exec: { default: 500, ceiling: 8000 },
+    python_exec: { default: 2000, ceiling: 20000 },
+} as const;
+export type OutputCapTool = keyof typeof OUTPUT_CAP;
+
+/** Resolve a tool call's effective output cap and whether RAISING it is an escalation that needs the human
+ *  gate + a justification. `requested` is the call's `maxChars` arg (undefined → the default). A value at or
+ *  below the tool default is free — a smaller cap is harmless, so it never escalates. A value above the
+ *  default is clamped to the ceiling and flagged `escalated`; `reasonMissing` is true until the model gives a
+ *  non-empty `reason`. Pure — unit-tested. The escalation decision is enforced in the trusted world (the
+ *  readonly try for exec, autoApprovePython for python), so a page can't forge "this raise is fine". */
+export function resolveOutputCap(
+    tool: OutputCapTool,
+    requested?: unknown,
+    reason?: unknown,
+): { cap: number; escalated: boolean; reasonMissing: boolean; clamped: boolean; def: number; ceiling: number } {
+    const { default: def, ceiling } = OUTPUT_CAP[tool];
+    const n = typeof requested === "number" && isFinite(requested) ? Math.floor(requested) : null;
+    if (n == null || n <= def) {
+        // Absent/invalid → default; a positive smaller value is honored (a tighter cap is always allowed).
+        return { cap: n != null && n > 0 ? n : def, escalated: false, reasonMissing: false, clamped: false, def, ceiling };
+    }
+    const cap = Math.min(n, ceiling);
+    const hasReason = typeof reason === "string" && reason.trim().length > 0;
+    return { cap, escalated: true, reasonMissing: !hasReason, clamped: n > ceiling, def, ceiling };
+}
+/** True when a call's `maxChars` raises the cap above the tool default (→ must not auto-approve). */
+export function outputCapEscalated(tool: OutputCapTool, args: Record<string, unknown>): boolean {
+    return resolveOutputCap(tool, (args as { maxChars?: unknown }).maxChars, (args as { maxCharsReason?: unknown }).maxCharsReason).escalated;
+}
+/** The precheck error shown when a raise lacks its required justification (→ the loop skips the gate and the
+ *  model retries WITH a reason, so the human sees the justification on the approval card). Null when fine. */
+export function outputCapPrecheck(tool: OutputCapTool, args: Record<string, unknown>): string | null {
+    const c = resolveOutputCap(tool, (args as { maxChars?: unknown }).maxChars, (args as { maxCharsReason?: unknown }).maxCharsReason);
+    if (c.escalated && c.reasonMissing) return `Error: raising the output limit to ${c.cap} chars needs a justification. Pass \`maxCharsReason\` explaining why THIS call needs more than the default ${c.def} chars — the human sees it when approving. (Prefer returning a filtered summary instead.)`;
+    return null;
+}
+
 /** `FETCH_URL` payload — a plain uncredentialed GET the background performs on the agent's behalf (bypassing
  *  CORS via host permissions). No headers/body/method knobs by design: a locked, low-surface read primitive. */
 export interface FetchUrlPayload { url: string; credentials?: boolean; }

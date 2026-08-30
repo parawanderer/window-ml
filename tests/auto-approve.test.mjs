@@ -39,3 +39,9 @@ test("'current' and plain DOM selectors are NOT external — auto-approvable", (
     assert.equal(autoApprovePython({ code: "x", tables: "current" }, ON, no), "sandbox");
     assert.equal(autoApprovePython({ code: "x", tables: { a: "#t", b: "current" } }, ON, no), "sandbox");
 });
+
+test("a RAISED output cap (maxChars > default) → null: it costs the agent's own context, so it asks", () => {
+    assert.equal(autoApprovePython({ code: "x", maxChars: 8000, maxCharsReason: "big dump" }, ON, no), null, "raise → gate");
+    assert.equal(autoApprovePython({ code: "x", maxChars: 2000 }, ON, no), "sandbox", "at the default → still auto");
+    assert.equal(autoApprovePython({ code: "x", maxChars: 500 }, ON, no), "sandbox", "a SMALLER cap is harmless → auto");
+});

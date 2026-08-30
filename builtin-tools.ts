@@ -5,15 +5,14 @@
 // domTools; opt in via extraTools, gated by the approval flow.
 
 import type { MlApi, MlTool, LocateSubstep, ToolResult, RenderDescriptor, VisionMemory, ToolContext } from "./contract";
-import { DEFAULT_GROUNDING_RANGE } from "./contract";
+import { DEFAULT_GROUNDING_RANGE, resolveOutputCap, outputCapPrecheck } from "./contract";
 import { PY_PACKAGE_LABELS } from "./python-env";
 import { truncate, clipOut, errText, elLine, queryAll, selectorError, googleSheetCsvUrl, nonEmptyTables, capturedClosedRoot, isElement, viewportRect, boxIntersectsText } from "./dom";
 import { accessibleName } from "./a11y";
 import { regionLegend, formatLegend, type Box as LegendBox } from "./legend";
 
-// Cap on python_exec output (stdout / value / error) fed back to the model — bigger than
-// exec's 500 (data output legitimately runs longer) but still bounds a runaway result.
-const PY_OUT_MAX = 2000;
+// python_exec output (stdout / value / error) fed to the model is capped per slot — default bigger than
+// exec's 500 (data output legitimately runs longer), the model can raise it per-call (gated). See run().
 import { settle, VISION_NUM_CTX, cropDataUrl, MIN_SHOT_PX, POINT_RE, PT_LOOK_RADIUS, mintPoint, resolvePoint, nearbyPoint, markSeen, seenNearby, BOX_RE, mintBox, resolveBox, projectShotPoint, projectShotBox } from "./util";
 import { collectCandidates, buildMarks, annotate, formatBox, letterboxToSquare, projectFromSquare, drawGrid, gridDims, validateCells, cellsBox, collectInBox, elementAtPoint, viewportBox, colorWordHues, pickOverlayColor, pickAccentColor, withHiddenSidebar, regionBox, REGION_NAMES, adjacentCells, type RegionName, type MarkFilter, type Box, type Mark } from "./locate";
 
@@ -1314,9 +1313,14 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                     description: tablesDesc,
                 },
                 tableRaw: { type: "boolean", description: "Load table cells as raw STRINGS (skip the default numeric/currency auto-cast). Use only for ZIP/SKU/leading-zero IDs that casting would corrupt." },
+                maxChars: { type: "number", description: "Raise the per-slot output truncation for THIS call (default 2000, max 20000). A raise needs human approval + `maxCharsReason`. Prefer returning a compact result." },
+                maxCharsReason: { type: "string", description: "Why this call needs more than the default 2000 chars — required when `maxChars` exceeds it; shown to the human on the approval card." },
             },
             required: ["code"],
         },
+        // A maxChars raise with no justification is DOOMED (it will just ask for one) — skip the gate and
+        // steer the model to supply `maxCharsReason` first (then the human sees it on the approval card).
+        precheck: (args) => outputCapPrecheck("python_exec", args as Record<string, unknown>),
         // Pre-run In render — shown during the approval WAIT, when run() hasn't produced its full
         // python-in yet (the input image + DataFrame previews need the tables loaded). Show the
         // highlighted code as a notebook cell now; post-run, run()'s renderIn wins in descriptorFor.
@@ -1326,7 +1330,10 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             const mode = args.cast === "pt" ? "pt" as const : args.cast === "box" ? "box" as const : "script" as const;
             return { type: "python-in", mode, code };
         },
-        run: async ({ code, image, cast, mode, margin, tableRaw, tables }: { code: string; image?: string; cast?: "pt" | "box"; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Record<string, string> }): Promise<string | ToolResult> => {
+        run: async ({ code, image, cast, mode, margin, tableRaw, tables, maxChars, maxCharsReason }: { code: string; image?: string; cast?: "pt" | "box"; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Record<string, string>; maxChars?: number; maxCharsReason?: string }): Promise<string | ToolResult> => {
+            // Effective per-slot output cap (default 2000). A raise past it is only reachable AFTER the human
+            // gate (autoApprovePython refuses to sandbox-approve an escalated call), clamped to the ceiling.
+            const { cap: PY_OUT_MAX, clamped: capClamped } = resolveOutputCap("python_exec", maxChars, maxCharsReason);
             // A DOM-table selector loads the FIRST match — warn if it's ambiguous (loading the wrong
             // table and computing on it would silently give wrong numbers). Covers a single-source
             // `tables` string AND every DOM-selector value in a `tables` map (skipping 'current' /
@@ -1353,7 +1360,8 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             for (const t of r.inputTables || []) loaded.push(t.rows ? `a ${t.rows.length}×${(t.columns?.length || t.rows[0]?.length || 0)} DataFrame → \`${t.name}\`` : `a DataFrame → \`${t.name}\``);
             if (r.inputImage) loaded.push("the screenshot → `img` (PIL) / `img_np` (numpy)");
             const loadedNote = loaded.length ? `[loaded, reference directly] ${loaded.join(", ")}.\n\n` : "";
-            const pre = tableNote + loadedNote + (stdoutClipped ? `stdout:\n${stdoutClipped}\n\n` : "");
+            const capNote = capClamped ? `(output limit clamped to ${PY_OUT_MAX} chars — the hard ceiling.)\n\n` : "";
+            const pre = capNote + tableNote + loadedNote + (stdoutClipped ? `stdout:\n${stdoutClipped}\n\n` : "");
             const stringify = (x: unknown) => clipOut(typeof x === "string" ? x : JSON.stringify(x), PY_OUT_MAX);
             // The In slot: a notebook-cell header (cell mode + input image/table + source). Shared
             // by every return path. The Out slot varies (stdout + one of image/token/value/error).

@@ -11,6 +11,7 @@
 // background reports the run finished. This is the transport half of design A; the loop that drives it
 // is `runAgentLoop` (agent-loop.ts), assembled background-side in a later slice.
 import type { MlTool, PageToolEnvelope, SubcallUsage } from "./contract";
+import { outputCapEscalated } from "./contract";
 import { executeTool, toolContext } from "./tool-exec";
 import { captureVerify } from "./builtin-tools";
 import { descriptorFor } from "./render-descriptor";
@@ -120,6 +121,7 @@ export async function runDelegatedTool(runId: string, name: string, args: Record
     // interpreter reduces it to a facade holding nothing else.
     if (opts.readonlyTry) {
         if (name !== "exec" || typeof (args as { js?: unknown }).js !== "string") return { result: "", readonly: false };
+        if (outputCapEscalated("exec", args)) return { result: "", readonly: false };   // a raised output cap must hit the human gate
         try {
             const ro = await evalReadonly((args as { js: string }).js, document, typeof window !== "undefined" ? window.ml : null);
             const { result, elements } = formatReadonlyExec(ro.value, ro.logs);

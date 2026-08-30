@@ -155,6 +155,20 @@ test("readonlyTry: a non-exec tool or non-string js → readonly:false (falls th
     endRun("ro2");
 });
 
+test("readonlyTry: an in-dialect survey that RAISES maxChars must NOT auto-approve — the raise hits the human gate", async () => {
+    const dom = new JSDOM('<button class="x">A</button>');
+    const [prevDoc, prevEl] = [globalThis.document, globalThis.Element];
+    globalThis.document = dom.window.document; globalThis.Element = dom.window.Element;
+    try {
+        registerRun("roMax", [tool({ name: "exec" })]);
+        const js = "[...document.querySelectorAll('.x')].map(e => e.textContent)";   // read-only BY CONSTRUCTION
+        assert.equal((await runDelegatedTool("roMax", "exec", { js }, { readonlyTry: true })).readonly, true, "unraised → auto-approves");
+        const raised = await runDelegatedTool("roMax", "exec", { js, maxChars: 8000, maxCharsReason: "need the full list" }, { readonlyTry: true });
+        assert.equal(raised.readonly, false, "a raised output cap forces the gate even though the code is read-only");
+        endRun("roMax");
+    } finally { globalThis.document = prevDoc; globalThis.Element = prevEl; }
+});
+
 test("an unknown tool name → a clean error envelope (never a throw)", async () => {
     registerRun("r5", [tool()]);
     const env = await runDelegatedTool("r5", "nope", {});

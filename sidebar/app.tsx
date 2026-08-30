@@ -16,7 +16,7 @@ import {
     sessionMap, rev, view, fontScale, codeWrap, codeLineNumbers, config, models,
     ollamaIds, vramOpen, sidebarOpen, loadedModels, psError, turnsRun, backendError,
 } from "./store";
-import { isBackendUnreachable } from "../contract";
+import { isBackendUnreachable, resolveOutputCap } from "../contract";
 import type { ReusedGrant, PersistGrant } from "../contract";
 import type { Status, Turn, AgentStep, Session } from "./store";
 import { pretty, shortStamp, fullStamp, truncate, collapsedPreview, highlight, beautifyJs, htmlLines, markdown, stripFormatting, lastUser, rollupStatus } from "./format";
@@ -1158,6 +1158,22 @@ function externalSheetGrant(args?: Record<string, unknown>): string[] {
     return args ? [...new Set(externalSheetIds(args))] : [];
 }
 
+// A raised output cap on exec/python_exec is worth calling out on the approval card: the agent is asking to
+// let its own result run longer than the default (its context, your tokens). Show the ceiling-clamped size +
+// the model's required justification (warm/dotted, like a significant action). Renders nothing when unraised.
+function OutputRaiseNote({ tool, args }: { tool?: string; args?: Record<string, unknown> }) {
+    if (tool !== "exec" && tool !== "python_exec") return null;
+    const c = resolveOutputCap(tool, args?.maxChars, args?.maxCharsReason);
+    if (!c.escalated) return null;
+    const reason = typeof args?.maxCharsReason === "string" ? args.maxCharsReason.trim() : "";
+    return (
+        <div class="action-raise">
+            <IconWarn />
+            <span>Raise output limit to <b class="action-submit">{c.cap.toLocaleString()} chars</b> (default {c.def.toLocaleString()}){reason ? <> — <span class="action-target">“{reason}”</span></> : null}.</span>
+        </div>
+    );
+}
+
 // The items a persistable grant would remember (today only `fetch-url` → its URLs). Extensible: a new grant
 // kind returns its own detail strings here + a label in GRANT_KIND + a detail branch in GrantCard.
 const GRANT_KIND: Record<string, { noun: string; nounN: string }> = {
@@ -1268,6 +1284,7 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                     {sheetGrants.length
                         ? <div class="appr-note"><IconWarn /><span>Approving grants this run access to {sheetGrants.map((id, i) => <SheetChip key={i} id={id} />)} for the rest of this session — later calls to {sheetGrants.length === 1 ? "it" : "them"} won't re-prompt.</span></div>
                         : null}
+                    <OutputRaiseNote tool={st.tool} args={st.arguments} />
                     {showGrants ? <GrantCard grants={st.grants!} /> : null}
                     <div class="appr-row">
                         <span class="appr-ask">Approve running <b>{st.tool}</b>?</span>
@@ -2392,6 +2409,7 @@ function ApprovalBody({ st, hash, goal }: { st: AgentStep; hash: string; goal: s
                     <div class="action-verb">{st.tool === "python_exec" ? "Run Python" : "Run JavaScript"}</div>
                     {summary ? <div class="action-summary ml-reveal">{summary}</div> : null}
                     <div class="action-codeblk"><Code text={code.text} lang={code.lang} format={code.lang === "javascript"} /></div>
+                    <OutputRaiseNote tool={st.tool} args={st.arguments} />
                   </div>
                 : intent
                     ? <div class="action-card">

@@ -10,6 +10,7 @@
 
 import { suspiciousChars } from "./security";
 import { externalSheetIds } from "./dom";
+import { outputCapEscalated } from "./contract";
 
 export interface AutoApproveConfig { autoApprovePython?: boolean }
 
@@ -23,6 +24,7 @@ export function autoApprovePython(
 ): "sandbox" | null {
     if (!cfg.autoApprovePython) return null;                                          // feature off
     if ((args as { mode?: unknown }).mode === "full") return null;                    // network → always ask
+    if (outputCapEscalated("python_exec", args)) return null;                         // a raised output cap → ask (context spend)
     if (suspiciousChars(String((args as { code?: unknown }).code ?? "")).length) return null;   // hidden/bidi chars → ask
     if (externalSheetIds(args).some(id => !isSheetApproved(id))) return null;         // an un-approved external sheet → ask
     return "sandbox";
