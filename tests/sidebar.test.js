@@ -1744,7 +1744,7 @@ test("backend offline (HUD card, proactive): a dead box shows an offline card ev
 });
 
 test("backend offline (mid-run): a server that dies MID-run flags offline AND keeps the completed steps", async () => {
-    const w = await loadSidebarWorld({ sync: { chatUrl: "http://gpubox:11434" }, listModels: () => ({ data: ["m"] }) });
+    const w = await loadSidebarWorld({ sync: { chatUrl: "http://gpubox:11434" }, listModels: () => ({ error: "Failed to fetch" }) });
     await w.dispatch(agentStart("mid", "a multi-step task"));
     await w.dispatch(agentStep("mid", 1, { seq: 1, tool: "findByText", arguments: { text: "x" }, result: "found: x" }));
     // …the box dies on the NEXT model call → the loop errors with an unreachable message.
@@ -1758,7 +1758,7 @@ test("backend offline (mid-run): a server that dies MID-run flags offline AND ke
 });
 
 test("backend offline (mid-run, HUD card): a mid-run death shows the offline card, not a stuck 'Working…'", async () => {
-    const w = await loadSidebarWorld({ sync: { chatUrl: "http://gpubox:11434" }, listModels: () => ({ data: ["m"] }) });
+    const w = await loadSidebarWorld({ sync: { chatUrl: "http://gpubox:11434" }, listModels: () => ({ error: "Failed to fetch" }) });
     await w.raw({ __mlSidebarSurface: "card" });
     await w.dispatch(agentStart("midc", "a multi-step task"));
     await w.dispatch(agentStep("midc", 1, { seq: 1, tool: "findByText", arguments: { text: "x" }, result: "found: x" }));
