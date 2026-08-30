@@ -121,6 +121,14 @@ window.addEventListener("message", (e: MessageEvent) => {
         return;
     }
     if (d.__mlSidebarApp === "sessionCancel" && typeof d.hash === "string") {
+        // A background-hosted agent run is owned by the SERVICE WORKER, so cancel it DIRECTLY — do NOT detour
+        // through the inspected page. The page round-trip (below) needs a live content script on the tab, which
+        // an "on-click" site-access page (github) lacks after a reload, or a CSP-blocked page never has — so Stop
+        // was inert there and the run couldn't be killed (reported bug). CANCEL_RUN aborts the run's own
+        // controller; cancelling a run is harmless (the security note in background.ts), and it's a no-op if the
+        // hash isn't a live run. The round-trip still covers a page-hosted chat/handle session + the page-side
+        // "cancelled" UI cleanup when the content script IS present.
+        void chrome.runtime.sendMessage({ type: "CANCEL_RUN", payload: { runId: d.hash } }).catch(() => {});
         void chrome.runtime.sendMessage({ type: "ML_SESSION_REMOTE", tabId, action: "cancel", hash: d.hash }).catch(() => {});
         return;
     }

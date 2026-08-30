@@ -731,6 +731,11 @@ function onWindowMessage(e: MessageEvent): void {
         return;
     }
     if (d.__mlSidebarApp === "sessionCancel" && frame && e.source === frame.contentWindow && typeof d.hash === "string") {
+        // Belt-and-suspenders: a background-hosted run is the SW's — abort its controller DIRECTLY from this
+        // content script (chrome.runtime), so Stop works even if the page-side agentRegistry round-trip
+        // (__mlCancelSession → injected) can't resolve the hash (a re-adopt that didn't re-register it). Harmless
+        // no-op if it's not a live run. The page message still handles a page-hosted chat/handle session.
+        chrome.runtime.sendMessage({ type: "CANCEL_RUN", payload: { runId: d.hash } });
         window.postMessage({ __mlCancelSession: { hash: d.hash } }, "*");
         return;
     }
