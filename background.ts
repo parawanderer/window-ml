@@ -1770,7 +1770,9 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             }
             catch (err) {
                 const m = (err as Error)?.message || String(err);
-                sendResponse({ error: `Could not fetch "${url}" (${m}). The extension may lack host access — grant "On all sites" in the site-access settings, or the URL may be unreachable.` });
+                // A redirect loop / too-many-redirects surfaces as a generic "Failed to fetch" (Chrome opaques the
+                // reason), so we can only HINT at it — the exact hops aren't visible to fetch.
+                sendResponse({ error: `Could not fetch "${url}" (${m}). Possible causes: a redirect loop / too many redirects (the chain isn't visible to the extension), the extension lacking host access (grant "On all sites"), or the URL being unreachable.` });
             }
         })();
         return true;   // async
@@ -2146,7 +2148,7 @@ async function fetchUrlContent(url: string): Promise<FetchResult> {
     const out: FetchResult = {
         url: res.url || url, status: res.status, ok: res.ok, type, language,
         typeByHeader: byHeader, typeByContent: byContent, typeByExtension: byExtension, contentType, text,
-        truncated: truncated || undefined,
+        truncated: truncated || undefined, redirected: res.redirected || undefined,
     };
     // Pre-parse JSON only when it's whole — a truncated body can't parse. (type stays "json" so the agent knows.)
     if (type === "json" && !truncated) { try { out.json = JSON.parse(text); } catch { /* mislabelled → leave as text */ } }

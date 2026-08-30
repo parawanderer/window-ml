@@ -153,6 +153,8 @@ export interface FetchResult {
     text: string;             // the body, raw (capped)
     json?: unknown;           // parsed JSON when type === "json" and it parsed
     truncated?: boolean;      // the body was clipped to the size cap
+    redirected?: boolean;     // the request followed ≥1 redirect (`url` above is the FINAL landing URL — the
+                              // intermediate chain isn't visible to fetch; a redirect log needs chrome.webRequest)
 }
 
 /** How stale a persisted background-run snapshot may be and still auto-resume. A real MV3 eviction respawns
