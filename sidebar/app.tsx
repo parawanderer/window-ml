@@ -955,13 +955,20 @@ function RenderPanel({ d }: { d: RenderDescriptor }) {
         case "keyval": return <div class="r-keyval">{d.pairs.map(([k, v], i) => <div class="r-kv" key={i}><span class="r-k">{k}</span><span class="r-v">{v}</span></div>)}</div>;
         case "elements": return <RenderElements items={d.items} />;
         case "action":
-            // DEBUG In view (overlay/devtools): keep the hoverable/selectable ELEMENT reference (the
-            // selector + human label, hover → outline, right-click → copy a reference), exactly like the
-            // pre-intent render. The user-facing "Agent wants to …" sentence is the CARD's job (built in
-            // ApprovalBody), NOT the log — the log stays a debugging tool.
-            return d.selector
-                ? <RenderElements items={[{ path: d.selector, ...(d.target ? { text: d.target } : {}) }]} />
-                : <Code text={pretty(d)} lang="json" />;
+            // DEBUG In view (overlay/devtools + HUD "show work"): a hoverable ELEMENT reference when the action
+            // targets a page element (selector — hover → outline, right-click → copy a reference); otherwise a
+            // clean verb + URL line for a navigate/fetch (NOT raw JSON, and NOT the card's "Agent wants to …"
+            // sentence — that's ApprovalBody's job; the log stays a plain debugging view).
+            if (d.selector) return <RenderElements items={[{ path: d.selector, ...(d.target ? { text: d.target } : {}) }]} />;
+            if (d.target) return (
+                <div class="r-action">
+                    <span class="r-action-verb">{d.verb}</span>{" "}
+                    {d.input ? <><b class="r-action-input">“{truncate(d.input, 120)}”</b>{" "}</> : null}
+                    <span class="r-action-target">{d.target}</span>
+                    {d.note ? <span class="r-action-note"> · {d.note}</span> : null}
+                </div>
+            );
+            return <Code text={pretty(d)} lang="json" />;
         case "locate": return <LocateRender d={d} />;
         case "python-in": return <PythonInRender d={d} />;
         case "python-out": return <PythonOutRender d={d} />;

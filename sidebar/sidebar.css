@@ -530,6 +530,12 @@ details.io[open] > summary .io-preview { display: none; }
 .r-keyval { display: grid; grid-template-columns: auto 1fr; gap: 1px 10px; font-size: 0.92em; }
 .r-k { color: var(--fg-dim); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .r-v { color: var(--fg); word-break: break-word; }
+/* A navigate/fetch action in the debug In view: verb + its URL, rendered as a readable line (not raw JSON). */
+.r-action { font-size: 0.95em; line-height: 1.55; word-break: break-word; }
+.r-action-verb { font-weight: 700; text-transform: capitalize; }
+.r-action-input { font-weight: 650; color: var(--fg); }
+.r-action-target { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; color: var(--accent); word-break: break-all; }
+.r-action-note { color: var(--fg-dim); }
 .dim { color: var(--fg-faint); font-style: italic; }
 
 /* The agent's final answer reuses the chat reply bubble (.msg.asst). A step-cap

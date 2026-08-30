@@ -462,6 +462,28 @@ test("button #3 (sidebar step): a gate with NO grants shows no remember button",
     assert.equal(w.shadow.querySelector(".astep-approve .grant-note-head"), null, "and no disclosure");
 });
 
+test("fetch_url step: the rendered In shows a clean verb + URL line, NOT a raw JSON dump of the descriptor", async () => {
+    const w = await loadSidebarWorld();
+    const url = "https://raw.githubusercontent.com/SideStore/anisette-servers/main/servers.json";
+    await w.dispatch(agentStart("fu2", "why no https"));
+    await w.dispatch(agentStep("fu2", 1, { seq: 1, tool: "fetch_url", arguments: { url }, result: "Fetched …", renderIn: { type: "action", verb: "fetch", target: url } }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    // Expand the fetch_url step to reveal the In block.
+    const head = [...w.shadow.querySelectorAll(".astep.tool .astep-head")].find(h => /fetch_url/.test(h.textContent));
+    head.click();
+    await w.tick();
+
+    const action = w.shadow.querySelector(".r-action");
+    assert.ok(action, "the action renders as a clean line (not JSON)");
+    assert.match(action.textContent, /fetch/i, "shows the verb");
+    const target = w.shadow.querySelector(".r-action-target");
+    assert.ok(target, "the URL is styled as a target");
+    assert.match(target.textContent, /servers\.json/, "and is the fetched URL");
+    // The rendered view must NOT be the raw descriptor JSON.
+    assert.doesNotMatch(w.shadow.querySelector(".astep-body").textContent, /"type":\s*"action"/, "no raw {type:action} JSON dump");
+});
+
 test("approval card: a fetch_url gate styles the URL like navigate/submit (action-link: warm + dotted), not 'the element'", async () => {
     const w = await loadSidebarWorld({ sync: { chatUrl: "http://x" }, listModels: () => ({ data: ["m"] }) });
     await w.raw({ __mlSidebarSurface: "card" });
