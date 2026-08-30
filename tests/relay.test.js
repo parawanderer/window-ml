@@ -73,6 +73,57 @@ test("fetch_url tool: default (no flag) PREPENDS the shape for a LARGE json, but
     assert.match(smallOut, /"ok": true/);
 });
 
+// ASK mode: the tool fetches, then delegates to a reader model and returns only the ANSWER (not the body),
+// so a large page/API never floods the driver's context. Mock BOTH the FETCH_URL and the FETCH_LLM subcall.
+const askWorld = (fr, reply) => {
+    const seen = { llm: null };
+    const world = loadPageWorld({
+        onRuntimeMessage: (m) => {
+            if (m.type === "FETCH_URL") return { data: fr };
+            if (m.type === "FETCH_LLM") { seen.llm = m.payload; return { data: reply }; }
+            return undefined;
+        },
+    });
+    return { tool: world.ml.fetchTool(), seen, world };
+};
+
+test("fetch_url tool: `ask` distills the body via a reader model and returns the ANSWER, not the bytes", async () => {
+    const big = { widgets: Array.from({ length: 40 }, (_, i) => ({ id: i, price: i * 3 })) };
+    const { tool, seen } = askWorld(jsonResult(big), "The cheapest widget costs 0.");
+    const out = await tool.run({ url: "https://x.test/a.json", ask: "What is the cheapest widget price?" });
+    assert.match(out, /Answer:/);
+    assert.match(out, /cheapest widget costs 0/, "the reader's answer is returned");
+    assert.doesNotMatch(out, /"price": 117/, "the raw body is NOT dumped into the driver's context");
+    // The reader sub-call saw the fetched content AND the question.
+    const prompt = seen.llm.messages[seen.llm.messages.length - 1].content;
+    assert.match(prompt, /What is the cheapest widget price\?/, "the question reached the reader");
+    assert.match(prompt, /"price": 3/, "the fetched content reached the reader");
+    assert.equal(seen.llm.extend, "utility", "the sub-call uses the fast utility reader model");
+});
+
+test("fetch_url tool: `ask` takes precedence over `schema`", async () => {
+    const { tool } = askWorld(jsonResult({ a: 1 }, { schema: "{ a: number }" }), "It has one field, a.");
+    const out = await tool.run({ url: "https://x.test/a.json", schema: true, ask: "How many fields?" });
+    assert.match(out, /Answer:/, "ask wins");
+    assert.doesNotMatch(out, /JSON schema:/, "the schema branch didn't run");
+});
+
+test("fetch_url tool: `ask` on an oversized body clips the content and FLAGS that the answer may be incomplete", async () => {
+    const huge = { blob: "x".repeat(50000) };
+    const { tool, seen } = askWorld(jsonResult(huge), "ok");
+    const out = await tool.run({ url: "https://x.test/a.json", ask: "anything?" });
+    assert.match(out, /truncated before reading/i, "the driver is told the read was partial");
+    const prompt = seen.llm.messages[seen.llm.messages.length - 1].content;
+    assert.ok(prompt.length < 30000, "the content handed to the reader was clipped to the budget");
+});
+
+test("fetch_url tool: the render note shows the ASK question (approval card + In render transparency)", () => {
+    const { tool } = askWorld(jsonResult({ a: 1 }), "x");
+    const r = tool.render(undefined, { url: "https://x.test/a.json", ask: "who is the author?" });
+    assert.match(r.note, /ask: who is the author\?/);
+    assert.equal(r.verb, "fetch");
+});
+
 test("ml.fetch travels the relay, returns the FetchResult, and CACHES it for readonly reuse", async () => {
     const result = { url: "https://x.test/a.json", status: 200, ok: true, type: "json", text: '{"n":7}', json: { n: 7 } };
     const world = loadPageWorld({

@@ -1536,6 +1536,9 @@ class AgentHandle implements MlAgentHandle, AgentControl {
          */
         fetchTool: function(): MlTool {
             const ml = this;
+            // Char budget for the ASK-mode reader sub-call: enough to fit a typical utility-model context
+            // window (~6k tokens) with room for the question + answer; a larger body is clipped (and flagged).
+            const FETCH_ASK_MAX = 24000;
             return ml.defineTool({
                 name: "fetch_url",
                 requiresApproval: true,   // a NEW url hits the unforgeable gate; an approved one auto-approves (autoApprove)
@@ -1553,30 +1556,54 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     "clear error, saying what it actually was, if it isn't JSON). " +
                     "Set `credentials: true` to fetch AS THE USER (sends their cookies) — for AUTHENTICATED data (a " +
                     "private gist, a logged-in dashboard's API). It ALWAYS asks the user (never remembered) and is " +
-                    "never cached; use it ONLY when public access won't do.",
+                    "never cached; use it ONLY when public access won't do. " +
+                    "Set `ask: \"<question>\"` to have a fast reader model READ the fetched content and answer that " +
+                    "question — you get back the ANSWER, not the (possibly huge) body, so a big page/API never floods " +
+                    "your context. Use it when you need a FACT out of the content, not the raw bytes to process further.",
                 parameters: {
                     type: "object",
                     properties: {
                         url: { type: "string", description: "The absolute http(s) URL to fetch." },
                         schema: { type: "boolean", description: "If true, return a compact TS-like SHAPE of the JSON (not the body). Errors if the URL isn't JSON." },
                         credentials: { type: "boolean", description: "If true, fetch AS THE USER (send their cookies) for authenticated data. Always prompts; never cached/remembered." },
+                        ask: { type: "string", description: "If set, a fast reader model reads the fetched content and answers THIS question; you get the answer, not the body (keeps a large page out of your context). Takes precedence over `schema`." },
                     },
                     required: ["url"],
                 },
                 // Show the URL in the approval card + the In render (an `action` render → "fetch <url>"). The
                 // note flags the SCHEMA-only ask, and — importantly for consent — a CREDENTIALED (as-you) fetch.
                 render: (_input: unknown, args?: Record<string, unknown>): RenderDescriptor => {
-                    const a = args as { url?: unknown; schema?: unknown; credentials?: unknown } | undefined;
-                    const note = a?.credentials ? "as you (sends your cookies)" : a?.schema ? "schema only" : "full page";
-                    return { type: "action", verb: "fetch", target: String(a?.url ?? ""), note };
+                    const a = args as { url?: unknown; schema?: unknown; credentials?: unknown; ask?: unknown } | undefined;
+                    // Compose the note so a credentialed AND an asked fetch both show (consent + what's being asked).
+                    const parts: string[] = [];
+                    if (a?.credentials) parts.push("as you (sends your cookies)");
+                    else if (a?.schema) parts.push("schema only");
+                    if (typeof a?.ask === "string" && a.ask.trim()) parts.push(`ask: ${truncate(a.ask.trim(), 50)}`);
+                    return { type: "action", verb: "fetch", target: String(a?.url ?? ""), note: parts.length ? parts.join(" · ") : "full page" };
                 },
-                run: async ({ url, schema = false, credentials = false }: { url?: unknown; schema?: boolean; credentials?: boolean } = {}): Promise<string> => {
+                run: async ({ url, schema = false, credentials = false, ask = null }: { url?: unknown; schema?: boolean; credentials?: boolean; ask?: unknown } = {}): Promise<string> => {
                     if (typeof url !== "string" || !url.trim()) return "Error: fetch_url needs a `url`.";
                     let r: import("./contract").FetchResult;
                     try { r = await ml.fetch(url, { credentials }); }
                     catch (e) { return `Error: ${errText(e)}`; }
                     const mislabel = r.typeByHeader && r.typeByHeader !== r.type ? ` (header said "${r.typeByHeader}")` : "";
                     const head = `Fetched ${r.url} — HTTP ${r.status}, type: ${r.type}${r.language ? ` (${r.language})` : ""}${mislabel}${r.truncated ? " · body truncated" : ""}.`;
+                    // ASK mode: distill the body through a fast reader model (extend:"utility") instead of returning
+                    // it — a large page/API answers a question without ever entering the driver's context (the
+                    // look/read delegate-and-distill pattern, for text). Metered as a sub-call (runs under inAgentRun).
+                    if (typeof ask === "string" && ask.trim()) {
+                        const body = r.json !== undefined ? JSON.stringify(r.json, null, 2) : r.text;
+                        const clipped = clipOut(body, FETCH_ASK_MAX);
+                        const cut = clipped.length < body.length;
+                        let answer: string;
+                        try {
+                            answer = await ml.chat(
+                                `Content fetched from ${r.url} (${r.type}, HTTP ${r.status}${cut ? ", truncated" : ""}):\n\n${clipped}\n\n---\nUsing ONLY the content above, answer concisely. If the answer isn't present in it, say so plainly.\n\nQuestion: ${ask.trim()}`,
+                                { extend: "utility" },
+                            ) as string;
+                        } catch (e) { return `${head}\n\nError reading the content to answer: ${errText(e)}`; }
+                        return `${head}\n\nAnswer${cut ? " (the content was truncated before reading — it may be incomplete)" : ""}:\n${answer}`;
+                    }
                     // `schema: true` — the caller wants the JSON's STRUCTURE, not the body.
                     if (schema) {
                         if (r.json === undefined) {
