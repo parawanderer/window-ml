@@ -362,6 +362,41 @@ test("destructuring ESCAPES are rejected/inert (can't extract an effectful metho
     await assert.rejects(evalReadonly(`const { fetch } = window; return fetch`, doc), outOfDialect);
 });
 
+test("object spread `{ ...expr }` — including the conditional-field shape models write", async () => {
+    assert.deepEqual((await run(`const a = { x: 1 }; return { ...a, y: 2 }`)).value, { x: 1, y: 2 });
+    // A later key overrides an earlier spread (JS semantics).
+    assert.deepEqual((await run(`const a = { x: 1 }; return { ...a, x: 9 }`)).value, { x: 9 });
+    // Conditional spread — `...(cond && { … })`: truthy spreads the object, falsy spreads nothing.
+    assert.deepEqual((await run(`return { a: 1, ...(true && { b: 2 }) }`)).value, { a: 1, b: 2 });
+    assert.deepEqual((await run(`return { a: 1, ...(false && { b: 2 }) }`)).value, { a: 1 });
+    // null / undefined / primitives spread nothing (no throw).
+    assert.deepEqual((await run(`return { ...null, ...undefined, a: 1 }`)).value, { a: 1 });
+    // The exact shape from the report: map with a conditional-key spread.
+    const doc = world();
+    const ml = { getModel: async () => "m", fetch: async () => { throw new Error("egress"); },
+        _fetchCached: (u) => u.includes("srv") ? { url: u, status: 200, ok: true, type: "json", json: { servers: [{ name: "A", address: "x", public_key: "k" }, { name: "B", address: "y" }] } } : undefined };
+    const code = `const r = await ml.fetch("https://x/srv.json"); const servers = r.json?.servers ?? r.json;
+        return { count: servers.length, servers: servers.map(s => ({ name: s.name, address: s.address, ...(s.public_key && { hasPublicKey: true }) })) };`;
+    assert.deepEqual((await evalReadonly(code, doc, ml)).value,
+        { count: 2, servers: [{ name: "A", address: "x", hasPublicKey: true }, { name: "B", address: "y" }] },
+        "the reported fetch+spread survey now runs in-dialect (no approval)");
+});
+
+// ADVERSARIAL (per AGENTS.md): the spread must not become an escape hatch — it can't copy a live method or
+// reach the realm; each own-enumerable value is read through the SAME guard as a member read.
+test("object-spread ESCAPES are rejected/inert (can't launder a method or reach the realm)", async () => {
+    const doc = world();
+    // Spreading the window walk throws — `defaultView` is denied at the read.
+    await assert.rejects(evalReadonly(`return { ...document.defaultView }`, doc), outOfDialect);
+    // Spreading a realm object (document) hits a denied own-enumerable prop → Denied (never yields its methods).
+    await assert.rejects(evalReadonly(`const o = { ...document }; return o.querySelector("a")`, doc), outOfDialect);
+    // A function VALUE carried through a spread is the inert sentinel, and calling an arbitrary method name is
+    // gated anyway → can't be invoked.
+    await assert.rejects(evalReadonly(`const o = { ...{ f: () => 1 } }; return o.f()`, doc), outOfDialect);
+    // A denied prop can't be smuggled as a spread key.
+    await assert.rejects(evalReadonly(`return { ...{ get constructor() { return fetch } } }`, doc), outOfDialect);
+});
+
 test(".then() chains over the ml reads (auto-await left a value, so the callback is applied to it)", async () => {
     assert.equal((await run(`await ml.getModel().then(m => m.toUpperCase())`)).value, "GEMMA4:31B");
     // the whole shape a model actually wrote: batched + chained + logging

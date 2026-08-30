@@ -460,14 +460,22 @@ class Parser {
     }
     parseObject(): Node {
         this.eat("{");
-        const props: { key: string; value: Node }[] = [];
+        const props: ({ key: string; value: Node } | { spread: Node })[] = [];
         while (!this.is("}")) {
-            const k = this.next();
-            let key: string;
-            if (k.t === "name" || k.t === "str") key = k.v;
-            else throw new NotInDialect("object key");
-            if (this.is(":")) { this.i++; props.push({ key, value: this.parseExpression() }); }
-            else props.push({ key, value: { type: "Ident", name: key } });   // shorthand
+            if (this.is("...")) {
+                // Object spread `{ ...expr }` — pure: it copies expr's OWN ENUMERABLE props (each read through
+                // the member-read guard at eval time). The shape models write for conditional fields:
+                // `{ a, ...(cond && { b }) }`.
+                this.next();
+                props.push({ spread: this.parseExpression() });
+            } else {
+                const k = this.next();
+                let key: string;
+                if (k.t === "name" || k.t === "str") key = k.v;
+                else throw new NotInDialect("object key");
+                if (this.is(":")) { this.i++; props.push({ key, value: this.parseExpression() }); }
+                else props.push({ key, value: { type: "Ident", name: key } });   // shorthand
+            }
             if (this.is(",")) this.i++; else break;
         }
         this.eat("}");
@@ -728,7 +736,17 @@ class Evaluator {
             }
             case "Object": {
                 const o: Record<string, unknown> = {};
-                for (const p of node.props) o[p.key] = yield* this.eval(p.value, scope);
+                for (const p of node.props) {
+                    if ("spread" in p) {
+                        // Copy the spread source's OWN ENUMERABLE properties, each through the member-read
+                        // guard (denied props throw; a function value → the inert sentinel — so a spread can't
+                        // launder a live method into a plain object). null/undefined/primitives spread nothing.
+                        const src = yield* this.eval(p.spread, scope);
+                        if (src != null) for (const k of Object.keys(Object(src))) o[k] = this.prop(src, k);
+                    } else {
+                        o[p.key] = yield* this.eval(p.value, scope);
+                    }
+                }
                 return o;
             }
             case "Arrow": {
