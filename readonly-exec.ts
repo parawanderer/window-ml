@@ -212,6 +212,17 @@ class Parser {
         }
         if (t.t === "name" && (t.v === "const" || t.v === "let" || t.v === "var")) {
             this.next();
+            // Destructuring binding — `const [a, b, ...rest] = …` / `const { a, b } = …`. Pure: it just names
+            // parts of an already-evaluated value (the RHS runs through the normal mediated pipeline, and the
+            // object form reads each key through the SAME guard as a member read — denied props throw, a method
+            // becomes the inert sentinel). The shape models write over Promise.all / ml.config() batches.
+            if (this.is("[") || this.is("{")) {
+                const pattern = this.is("[") ? this.parseArrayPattern() : this.parseObjectPattern();
+                this.eat("=");
+                const init = this.parseExpression();
+                if (this.is(";")) this.i++;
+                return { type: "VarDecl", pattern, init };
+            }
             const id = this.next();
             if (id.t !== "name") throw new NotInDialect("expected name");
             this.eat("=");
@@ -413,6 +424,36 @@ class Parser {
         this.eat("}");
         return { type: "Block", body };
     }
+    // `const [a, , b, ...rest] = …` — simple names, holes, and an optional trailing rest. No defaults/nesting.
+    parseArrayPattern(): Node {
+        this.eat("[");
+        const elems: (string | null)[] = [];
+        let rest: string | undefined;
+        while (!this.is("]")) {
+            if (this.is(",")) { elems.push(null); this.next(); continue; }   // hole
+            if (this.is("...")) { this.next(); const r = this.next(); if (r.t !== "name") throw new NotInDialect("expected a name after `...`"); rest = r.v; break; }
+            const n = this.next(); if (n.t !== "name") throw new NotInDialect("only simple names in array destructuring");
+            elems.push(n.v);
+            if (this.is(",")) this.next();
+        }
+        this.eat("]");
+        return { type: "ArrayPattern", elems, rest };
+    }
+    // `const { a, b } = …` — SHORTHAND names only (no `{a: b}` rename, no `{a = 1}` default, no nesting), so
+    // each bound name IS a property key read through the member-read guard (denied props throw, methods → inert).
+    parseObjectPattern(): Node {
+        this.eat("{");
+        const keys: string[] = [];
+        while (!this.is("}")) {
+            const k = this.next();
+            if (k.t !== "name") throw new NotInDialect("only shorthand `{ a, b }` destructuring is supported");
+            if (this.is(":") || this.is("=")) throw new NotInDialect("only shorthand `{ a, b }` destructuring — no rename/default");
+            keys.push(k.v);
+            if (this.is(",")) this.next();
+        }
+        this.eat("}");
+        return { type: "ObjectPattern", keys };
+    }
     parseArrowBody(): Node {
         if (this.is("{")) return this.parseBlock();
         return { type: "ExprBody", expr: this.parseExpression() };
@@ -563,6 +604,16 @@ class Evaluator {
         return k;
     }
 
+    // Read one property with the SAME mediation as readMember: a denied key throws, a function value becomes
+    // the inert sentinel (never the real method — so `const { fetch } = someWindow` can't extract a live fetch),
+    // a DOM collection becomes a real Array. Used by object destructuring.
+    private prop(obj: unknown, key: string): unknown {
+        this.guardKey(key);
+        const v = (obj as any)?.[key];
+        if (typeof v === "function") return METHOD_REF;
+        return isDomCollection(v) ? Array.from(v as ArrayLike<unknown>) : v;
+    }
+
     // read a member (NOT in call position). A function-valued read returns an
     // INERT sentinel, never the real method — so the common existence-guard idiom
     // `el.querySelector && el.querySelector('x')` stays in-dialect (the sentinel is
@@ -618,7 +669,25 @@ class Evaluator {
                 if (node.alt) return yield* this.eval(node.alt, scope);
                 return undefined;
             }
-            case "VarDecl": { scope[node.name] = yield* this.eval(node.init, scope); return undefined; }
+            case "VarDecl": {
+                const val = yield* this.eval(node.init, scope);
+                if (node.pattern) {
+                    const p = node.pattern;
+                    if (p.type === "ArrayPattern") {
+                        // Iterable → array (a non-iterable throws a catchable TypeError, like real destructuring).
+                        const arr = Array.isArray(val) ? val
+                            : (val != null && typeof (val as any)[Symbol.iterator] === "function") ? Array.from(val as Iterable<unknown>)
+                                : (() => { throw new TypeError("cannot destructure a non-iterable value"); })();
+                        (p.elems as (string | null)[]).forEach((name, i) => { if (name) scope[name] = arr[i]; });
+                        if (p.rest) scope[p.rest] = arr.slice(p.elems.length);
+                    } else {   // ObjectPattern — each key read through the member-read guard (methods → inert)
+                        for (const k of p.keys as string[]) scope[k] = this.prop(val, k);
+                    }
+                    return undefined;
+                }
+                scope[node.name] = val;
+                return undefined;
+            }
             case "ForOf": {
                 const iterable = yield* this.eval(node.iter, scope);
                 // Must be iterable — a non-iterable throws a catchable TypeError, not a guard error. Every

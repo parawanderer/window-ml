@@ -182,6 +182,16 @@ shouldn't pay for it on every run. Spec:
 canonical surveys, the `ml` gate, and a battery of escape attempts in
 `tests/readonly-exec.test.mjs`.
 
+**RULE — extending the dialect requires adversarial tests.** Any time you add a construct to the
+read-only dialect (a new statement/operator/pattern, a new allowed method, a new facade member),
+you MUST — without being asked — add ADVERSARIAL tests that try to abuse the NEW pattern to reach
+something it shouldn't (extract/invoke an effectful method, walk to `window`/`constructor`/a realm,
+mutate, spend tokens, loop unbounded) and assert each is REJECTED (`NotInDialect`/`Denied`) or
+rendered inert (the `METHOD_REF` sentinel). A new binding form (e.g. destructuring) must be probed
+for whether it can bind a live method or reach a denied prop; a new allowed method for whether its
+return leaks the realm. The invariant is unchanged: gaps degrade to "asks the human," never to "runs
+unsafely" — new tests prove the new surface keeps that.
+
 **Visual element location (`locate` / vision).** For controls text/ARIA can't reach — unlabelled
 icon buttons, or canvas-only UIs (a bare `<div>`/`<canvas>` with a synthetic click handler) —
 `ml.locateTool` finds an element by **describing its appearance** ("a red umbrella icon", never a

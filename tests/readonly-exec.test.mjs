@@ -322,13 +322,44 @@ test("awaits compose anywhere in the expression, not just at a statement seam", 
 });
 
 test("Promise.all over the ml reads works — the idiom models actually write", async () => {
+    // Array destructuring of the batch is now in-dialect (the shape models really write).
     const js = `const [models, current] = await Promise.all([ml.models(), ml.getModel()]);
                 return { count: models.length, current }`;
-    // (destructuring isn't in the dialect, so the shape models really produce is the indexed one)
     assert.deepEqual((await run(`await Promise.all([ml.models(), ml.getModel()])`)).value,
         [["gemma4:31b", "qwen2.5vl:7b"], "gemma4:31b"]);
-    await assert.rejects(run(js), outOfDialect);   // …and the destructuring form still falls back cleanly
+    assert.deepEqual((await run(js)).value, { count: 2, current: "gemma4:31b" });
     assert.equal((await run(`(await Promise.all([ml.models(), ml.getModel()]))[1]`)).value, "gemma4:31b");
+});
+
+test("destructuring binding: array (with holes + rest) and object shorthand, over the ml reads", async () => {
+    // The exact snippet models write: batch → destructure → JSON.stringify + console.log.
+    const { logs } = await run(`const [model, models, ps] = await Promise.all([ml.getModel(), ml.models(), ml.ps()]);
+        console.log("model:", model); console.log("models:", JSON.stringify(models)); console.log("ps:", JSON.stringify(ps));`);
+    assert.deepEqual(logs, ['model: gemma4:31b', 'models: ["gemma4:31b","qwen2.5vl:7b"]', 'ps: [{"name":"gemma4:31b","size_vram":21000000000}]']);
+    // Object shorthand destructuring of an ml read.
+    assert.equal((await run(`const { model } = await ml.config(); return model`)).value, "gemma4:31b");
+    // Array holes + rest.
+    assert.deepEqual((await run(`const [, b, ...rest] = [1, 2, 3, 4, 5]; return [b, rest]`)).value, [2, [3, 4, 5]]);
+    // Destructuring a DOM read (querySelectorAll → Array) binds the elements.
+    const doc = world();
+    assert.equal((await evalReadonly(`const [first] = document.querySelectorAll("input"); return first.getAttribute("id")`, doc)).value, "a");
+});
+
+// ADVERSARIAL (per AGENTS.md): the new binding form must not become an escape hatch — it can't
+// extract a live effectful method, reach a denied prop, or walk to the realm.
+test("destructuring ESCAPES are rejected/inert (can't extract an effectful method or reach the realm)", async () => {
+    const doc = world();
+    // Object-destructuring a denied prop (the window walk) throws — `defaultView` is denylisted at the read.
+    await assert.rejects(evalReadonly(`const { fetch } = document.defaultView; return fetch`, doc), outOfDialect);
+    // Even a reachable object: destructuring a METHOD binds the INERT sentinel, not the real function — so it
+    // can't be pulled off and called past the gate.
+    await assert.rejects(evalReadonly(`const { querySelector } = document; return querySelector("a")`, doc), outOfDialect);
+    // A denied prop by object destructuring (prototype walk).
+    await assert.rejects(evalReadonly(`const { constructor } = {}; return 1`, doc), outOfDialect);
+    // Array-destructuring a value that carries the realm can't invoke its methods either (methods → inert / gate).
+    await assert.rejects(evalReadonly(`const [w] = [document.defaultView]; return w.fetch("https://evil")`, doc), outOfDialect);
+    // The real fetch is never even reachable to bind (ml facade is cache-only; window fetch is off-limits).
+    await assert.rejects(evalReadonly(`const { fetch } = window; return fetch`, doc), outOfDialect);
 });
 
 test(".then() chains over the ml reads (auto-await left a value, so the callback is applied to it)", async () => {
