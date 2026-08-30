@@ -451,6 +451,31 @@ const tokenHover = (s?: string): { onPointerEnter?: () => void; onPointerLeave?:
 // spoof it. Keyed by the run hash + the step's seq.
 const sendApproval = (hash: string, seq: number, decision: boolean, persist = false) =>
     window.parent.postMessage({ __mlSidebarApp: "approval", hash, seq, decision, persist }, "*");
+
+// The "https://host/*" host-permission pattern the background's SW fetch needs to reach a fetch_url step's
+// URL. "On click" site access WITHHOLDS <all_urls> for third-party hosts, so a first-time fetch of a new
+// origin would fail — but this iframe is extension-origin, so approving CAN grant that host in the same
+// gesture. Null for a non-fetch step or an unparseable/non-http URL.
+function fetchHostPattern(st: AgentStep): string | null {
+    if (st.tool !== "fetch_url") return null;
+    const url = typeof st.arguments?.url === "string" ? st.arguments.url
+        : (st.renderIn && st.renderIn.type === "action" ? st.renderIn.target : "");
+    try { const u = new URL(String(url)); return (u.protocol === "http:" || u.protocol === "https:") ? `${u.protocol}//${u.host}/*` : null; }
+    catch { return null; }
+}
+// Approve/deny a gate. For a fetch_url APPROVAL, first request host access to its origin IN THE SAME user
+// gesture (so the SW fetch can reach it), then post the decision. Idempotent — Chrome no-ops when the host is
+// already granted (no prompt), so it's safe to always try. Degrades gracefully: the approval is sent whether
+// or not the grant succeeds (a denied host just yields the tool's actionable "grant On all sites" error).
+async function decideGate(st: AgentStep, hash: string, seq: number, ok: boolean, persist: boolean): Promise<void> {
+    if (ok) {
+        const pat = fetchHostPattern(st);
+        if (pat && typeof chrome !== "undefined" && chrome.permissions?.request) {
+            try { await chrome.permissions.request({ origins: [pat] }); } catch { /* older Chrome / user dismissed → fetch returns the actionable error */ }
+        }
+    }
+    sendApproval(hash, seq, ok, persist);
+}
 // Steps you've already approved/denied this session, keyed `hash:seq`. A step's own
 // awaitingApproval flag only clears when the DONE event lands — AFTER the tool runs — so without
 // this the run footer keeps showing "waiting for your approval" during that gap. Recording the
@@ -1158,6 +1183,30 @@ function externalSheetGrant(args?: Record<string, unknown>): string[] {
     return args ? [...new Set(externalSheetIds(args))] : [];
 }
 
+// A first-time fetch of a new origin needs the extension's host access to that site (the background SW fetch
+// is withheld under "On click" site access). Because this iframe is extension-origin, approving the gate can
+// grant the host in the same gesture (decideGate) — this note tells the user a Chrome permission prompt will
+// appear, so it isn't a surprise. Async-checks chrome.permissions.contains; renders nothing when already
+// granted (or on a page-loop run with no chrome), so a normal already-allowed fetch stays silent.
+function HostAccessNote({ st }: { st: AgentStep }) {
+    const pat = fetchHostPattern(st);
+    const [missing, setMissing] = useState(false);
+    useEffect(() => {
+        let live = true;
+        if (!pat || typeof chrome === "undefined" || !chrome.permissions?.contains) { setMissing(false); return; }
+        chrome.permissions.contains({ origins: [pat] }).then((has: boolean) => { if (live) setMissing(!has); }).catch(() => {});
+        return () => { live = false; };
+    }, [pat]);
+    if (!pat || !missing) return null;
+    const host = pat.replace(/^https?:\/\//, "").replace(/\/\*$/, "");
+    return (
+        <div class="action-host">
+            <IconWarn />
+            <span>First-time access to <b class="action-target">{host}</b> — approving asks Chrome to grant this site so the fetch can reach it.</span>
+        </div>
+    );
+}
+
 // A raised output cap on exec/python_exec is worth calling out on the approval card: the agent is asking to
 // let its own result run longer than the default (its context, your tokens). Show the ceiling-clamped size +
 // the model's required justification (warm/dotted, like a significant action). Renders nothing when unraised.
@@ -1227,7 +1276,7 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     const decide = (ok: boolean, persist = false) => {
         setExpanded(true); setDecided(true);
         if (hash && st.seq != null) decidedSteps.add(stepKey(hash, st.seq));
-        sendApproval(hash!, st.seq!, ok, persist);
+        void decideGate(st, hash!, st.seq!, ok, persist);   // fetch_url: grant its host in-gesture, then post
         rev.value++;   // re-render the run footer so it drops "waiting for your approval" at once
     };
     // When a step starts awaiting approval, scroll it into view so a gate mid-run isn't missed.
@@ -1284,6 +1333,7 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                     {sheetGrants.length
                         ? <div class="appr-note"><IconWarn /><span>Approving grants this run access to {sheetGrants.map((id, i) => <SheetChip key={i} id={id} />)} for the rest of this session — later calls to {sheetGrants.length === 1 ? "it" : "them"} won't re-prompt.</span></div>
                         : null}
+                    <HostAccessNote st={st} />
                     <OutputRaiseNote tool={st.tool} args={st.arguments} />
                     {showGrants ? <GrantCard grants={st.grants!} /> : null}
                     <div class="appr-row">
@@ -2445,6 +2495,7 @@ function ApprovalBody({ st, hash, goal }: { st: AgentStep; hash: string; goal: s
             {sheets.length
                 ? <div class="action-sheets"><IconWarn /><span>Grants this run access to {sheets.map((id, i) => <SheetChip key={i} id={id} />)} for the session.</span></div>
                 : null}
+            <HostAccessNote st={st} />
         </div>
     );
 }
@@ -3105,7 +3156,7 @@ function CardApp() {
         const h = run.hash, seq = pendingStep.seq;
         const canKeep = hasPersistGrants(pendingStep.grants);
         window.parent.postMessage({ __mlSidebarCardFocus: true }, "*");
-        const decideKey = (ok: boolean, persist = false) => { decidedSteps.add(stepKey(h, seq)); clearHighlight(); sendApproval(h, seq, ok, persist); rev.value++; };
+        const decideKey = (ok: boolean, persist = false) => { decidedSteps.add(stepKey(h, seq)); clearHighlight(); void decideGate(pendingStep, h, seq, ok, persist); rev.value++; };
         const onKey = (e: KeyboardEvent) => {
             // Enter approves; Esc denies; KEEP is a deliberate two-key combo (⌘/Ctrl+K) — intentionally NOT
             // Enter-adjacent, so granting a session-long fetch permission can't be a slip of the Approve key.
@@ -3156,7 +3207,7 @@ function CardApp() {
         if (!pendingStep || pendingStep.seq == null) return;
         decidedSteps.add(stepKey(run.hash, pendingStep.seq));
         clearHighlight();
-        sendApproval(run.hash, pendingStep.seq, ok, persist);
+        void decideGate(pendingStep, run.hash, pendingStep.seq, ok, persist);   // fetch_url: grant its host in-gesture
         rev.value++;
     };
     const onClose = (e: Event) => {

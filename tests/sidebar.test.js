@@ -450,6 +450,47 @@ test("button #3 (sidebar step): plain Approve posts persist:false (one-off)", as
     assert.equal(msg.persist, false, "plain Approve does NOT persist");
 });
 
+test("host access (fetch_url): a first-time origin shows the note; approving requests that host in the same gesture", async () => {
+    const w = await loadSidebarWorld();
+    const reqCalls = [];
+    w.window.chrome.permissions = {
+        contains: async () => false,   // host not yet granted (Chrome withholds <all_urls> under "On click")
+        request: async ({ origins }) => { reqCalls.push(origins); return true; },
+    };
+    await w.dispatch(agentStart("ha", "fetch it"));
+    await w.dispatch(agentStep("ha", 1, {
+        seq: 1, pending: true, awaitingApproval: true, tool: "fetch_url",
+        arguments: { url: "https://raw.githubusercontent.com/o/r/main/x.json" },
+        renderIn: { type: "action", verb: "fetch", target: "https://raw.githubusercontent.com/o/r/main/x.json" },
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.flush();
+    const note = w.shadow.querySelector(".action-host");
+    assert.ok(note, "the first-time host-access note rendered");
+    assert.match(note.textContent, /raw\.githubusercontent\.com/, "names the site being granted");
+    // Approving requests that exact host pattern (gesture-preserved), then posts the decision.
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    w.shadow.querySelector(".astep-approve .appr-btn.yes").click();
+    await w.flush();
+    assert.deepEqual(reqCalls[0], ["https://raw.githubusercontent.com/*"], "requested the target's host pattern");
+    assert.ok(posted.find(m => m.__mlSidebarApp === "approval" && m.decision === true), "and the approval was still posted");
+});
+
+test("host access (fetch_url): an ALREADY-granted origin shows no note", async () => {
+    const w = await loadSidebarWorld();
+    w.window.chrome.permissions = { contains: async () => true, request: async () => true };
+    await w.dispatch(agentStart("ha2", "fetch it"));
+    await w.dispatch(agentStep("ha2", 1, {
+        seq: 1, pending: true, awaitingApproval: true, tool: "fetch_url",
+        arguments: { url: "https://x.test/a.json" },
+        renderIn: { type: "action", verb: "fetch", target: "https://x.test/a.json" },
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.flush();
+    assert.equal(w.shadow.querySelector(".action-host"), null, "no note when the host is already granted");
+});
+
 test("output-cap raise: the approval card calls out the raised limit + the model's justification", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("orc", "big dump"));

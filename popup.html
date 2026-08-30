@@ -171,6 +171,16 @@
             <div id="sheetsHint" class="hint">Lets <code>python_exec</code> load a Google Sheet (the <code>tables</code> arg) as a pandas DataFrame — needs host access to docs.google.com.</div>
             <button id="sheetsAccess" title="Grant host access to Google Sheets (docs.google.com)">Enable</button>
         </div>
+
+        <div class="perm-sep" id="hostSep"></div>
+
+        <label id="hostLabel">Site access (agent fetches)</label>
+        <div class="hint">Sites the agent's <code>fetch_url</code> may read from. Granted when you approve a fetch to a new site (or add one here); remove one to revoke it. Independent of the browser's “On all sites” setting.</div>
+        <div class="row">
+            <input id="hostDomain" type="text" placeholder="example.com">
+            <button id="hostAdd">Grant</button>
+        </div>
+        <div id="hostList" class="perm-list"></div>
     </details>
 
     <details class="conn" id="appearance">

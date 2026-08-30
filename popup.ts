@@ -210,6 +210,59 @@ async function enableSheetsAccess() {
     }
 }
 
+// ---- per-site host access (agent fetch_url) ----
+// The background's fetch_url reads a URL via the SW fetch, which "On click" site access WITHHOLDS for
+// third-party hosts. The approval card grants a host in-gesture when you approve a fetch to a new site; this
+// block is the MANAGEMENT view — see which sites are granted and revoke any. Excludes <all_urls> (the
+// manifest-wide grant that "On all sites" gives — shown as a single note, not a removable chip).
+function hostPatternFrom(input: string): string | null {
+    const d = normDomain(input);
+    return d ? `https://${d}/*` : null;
+}
+function hostLabelOf(origin: string): string {
+    return origin.replace(/^https?:\/\//, "").replace(/\/\*?$/, "");
+}
+function renderHostList(origins: string[]) {
+    const list = document.getElementById("hostList");
+    if (!list) return;
+    list.replaceChildren();
+    if (origins.includes("<all_urls>")) {
+        const e = document.createElement("div"); e.className = "hint";
+        e.innerHTML = `Access to <b>all sites</b> is granted (browser Site access → “On all sites”), so every fetch is allowed.`;
+        list.append(e); return;
+    }
+    const hosts = origins.filter(o => o !== "<all_urls>");
+    if (!hosts.length) {
+        const e = document.createElement("div"); e.className = "hint";
+        e.textContent = "No sites granted yet — the agent asks the first time it fetches each new one.";
+        list.append(e); return;
+    }
+    for (const origin of hosts) {
+        const chip = document.createElement("span"); chip.className = "perm-chip";
+        const host = document.createElement("span"); host.className = "perm-host"; host.textContent = hostLabelOf(origin);
+        const x = document.createElement("button"); x.className = "perm-x"; x.textContent = "✕"; x.title = `Revoke ${hostLabelOf(origin)}`;
+        x.addEventListener("click", async () => { try { await chrome.permissions.remove({ origins: [origin] }); } catch { /* ignore */ } refreshHostAccess(); });
+        chip.append(host, x); list.append(chip);
+    }
+}
+async function refreshHostAccess() {
+    try {
+        const all = await chrome.permissions.getAll();
+        renderHostList((all.origins || []).filter(o => !SHEETS_ORIGINS.includes(o)));   // Sheets has its own row above
+    } catch { document.getElementById("hostSep")?.remove(); document.getElementById("hostLabel")?.remove(); document.getElementById("hostList")?.remove(); }
+}
+async function addHost() {
+    const input = $("hostDomain");
+    const pat = hostPatternFrom(input.value);
+    if (!pat) { setStatus("Enter a valid hostname, e.g. raw.githubusercontent.com", "err"); return; }
+    try {
+        const granted = await chrome.permissions.request({ origins: [pat] });
+        setStatus(granted ? `Granted ${hostLabelOf(pat)}.` : "Not granted.", granted ? "ok" : "err");
+        if (granted) input.value = "";
+        refreshHostAccess();
+    } catch (e: any) { setStatus(`Couldn't request access: ${e?.message || e}.`, "err"); }
+}
+
 // --- self-approval whitelist (mirrors Settings → Permissions) --------------------
 // Sites the user trusts to supply their OWN ml.agent approval gate; every other origin routes a
 // privileged tool call through the extension's approval card. Normalise to a bare hostname.
@@ -303,10 +356,13 @@ $("refreshVram").addEventListener("click", refreshVram);
 $("sheetsAccess").addEventListener("click", enableSheetsAccess);
 $("permAdd").addEventListener("click", addDomain);
 $("permDomain").addEventListener("keydown", (e) => { if ((e as KeyboardEvent).key === "Enter") { e.preventDefault(); addDomain(); } });
+$("hostAdd").addEventListener("click", addHost);
+$("hostDomain").addEventListener("keydown", (e) => { if ((e as KeyboardEvent).key === "Enter") { e.preventDefault(); addHost(); } });
 
 // Populate the form, then auto-fetch the model list (no Load button — the
 // datalist just fills in). refreshVram in parallel.
 loadForm().then(loadModels);
 refreshVram();
 refreshSheetsAccess();
+refreshHostAccess();
 loadPerms();
