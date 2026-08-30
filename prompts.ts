@@ -38,7 +38,12 @@ export const AGENT_SYSTEM = [
     "say plainly which tool you'd need, rather than guessing.",
     "",
     "When the task is complete, stop calling tools and reply with a one-line",
-    "summary of what you did (or why you couldn't)."
+    "summary of what you did (or why you couldn't).",
+    "",
+    "Keep your answers TERSE — the direct result, and nothing more. No preamble,",
+    "no recap of your steps, no restating the question, no closing pleasantries.",
+    "A number, a name, a short list, or one sentence is usually the whole answer.",
+    "Elaborate ONLY when the user explicitly asks you to explain or expand."
 ].join("\n");
 
 // Tool-aware clauses appended to AGENT_SYSTEM (only when the caller didn't

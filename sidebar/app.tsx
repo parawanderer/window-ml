@@ -2594,6 +2594,8 @@ const ACTIVITY: Record<string, { icon: string; label: string; short: string }> =
     screenshot: { icon: "📷", label: "Capturing…", short: "capture" },
     fetch_url: { icon: "🌐", label: "Fetching a URL…", short: "fetch" },
     navigate: { icon: "🧭", label: "Navigating…", short: "navigate" },
+    answer: { icon: "📌", label: "Marking the answer…", short: "answer" },
+    agent_api_docs: { icon: "📖", label: "Reading its own manual…", short: "docs" },
 };
 function activityFor(run: Session): { icon: string; label: string; short: string } {
     const steps = run.steps || [];
