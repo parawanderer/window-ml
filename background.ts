@@ -1964,9 +1964,13 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     }
     if (message.type === "FETCH_SHEET_TITLE") {
         // TITLE-ONLY, pre-approval: the approval card fetches just the sheet name so the USER sees WHICH
-        // sheet they're granting (the MODEL never gets it). INTERNAL-ONLY — it's not in the content relay,
-        // so only the extension-origin card iframe (sender.tab == null) may call it; refuse any page.
-        if (sender.tab != null) { sendResponse({ data: null }); return true; }
+        // sheet they're granting (the MODEL never gets it). INTERNAL-ONLY — it's not in the content relay.
+        // Gate on the sender's ORIGIN, not on sender.tab: the DevTools panel is a top-level extension page
+        // (sender.tab == null), but the overlay/off-mode card is our extension-origin IFRAME embedded in a
+        // page tab (sender.tab is SET, sender.url is our origin). The old `sender.tab != null` guard wrongly
+        // refused that embedded card, so the HUD showed the generic "Google Sheet" instead of the real title.
+        // A web page can't reach chrome.runtime.onMessage at all; a content script's sender.url is the page url.
+        if (!(sender.url || "").startsWith(chrome.runtime.getURL(""))) { sendResponse({ data: null }); return true; }
         const id = String(message.payload?.id || "").trim();
         const url = `https://docs.google.com/spreadsheets/d/${id}/export?format=csv&gid=0`;
         if (!/^[A-Za-z0-9_-]+$/.test(id) || !SHEET_URL_OK.test(url)) { sendResponse({ data: null }); return true; }

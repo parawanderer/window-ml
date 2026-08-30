@@ -2192,12 +2192,20 @@ test("FETCH_SHEET_TITLE: a HEAD request returns just the sheet title (spreadshee
         // We must prefer filename* — otherwise "quarterly sales" reads as "quarterlysales".
         onFetch: (c) => { call = c; return { ok: true, headers: { get: (k) => /content-disposition/i.test(k) ? `attachment; filename="quarterlysales-Sheet1.csv"; filename*=UTF-8''quarterly%20sales%20-%20Sheet1.csv` : "" }, text: async () => "" }; },
     });
-    const res = await bg.send({ type: "FETCH_SHEET_TITLE", payload: { id: "ABC123_-x" } });
+    // The DevTools panel is a top-level extension page → sender.url is our origin, sender.tab is null.
+    const panel = { url: "chrome-extension://test/panel.html" };
+    const res = await bg.send({ type: "FETCH_SHEET_TITLE", payload: { id: "ABC123_-x" } }, panel);
     assert.equal(res.data, "quarterly sales", "filename* wins (spaces kept), ' - Sheet1' tab stripped — NOT the stripped 'quarterlysales'");
     assert.equal(call.opts.method, "HEAD", "HEAD — headers only, no sheet body downloaded pre-approval");
     assert.equal(call.opts.credentials, "include");
+    // The bug: the overlay/off-mode card is our extension-origin IFRAME embedded IN a page tab, so sender.tab
+    // is SET but sender.url is our origin. It MUST be allowed (it was wrongly refused → the HUD showed the
+    // generic "Google Sheet" instead of the real title).
+    const cardIframe = { tab: { id: 5 }, url: "chrome-extension://test/sidebar.html" };
+    const inCard = await bg.send({ type: "FETCH_SHEET_TITLE", payload: { id: "ABC123_-x" } }, cardIframe);
+    assert.equal(inCard.data, "quarterly sales", "the embedded card iframe (sender.tab set, own origin) still resolves the title");
     // A bad id is refused WITHOUT fetching (the host-locked guard).
-    const bad = await bg.send({ type: "FETCH_SHEET_TITLE", payload: { id: "../evil" } });
+    const bad = await bg.send({ type: "FETCH_SHEET_TITLE", payload: { id: "../evil" } }, panel);
     assert.equal(bad.data, null);
 });
 
@@ -2273,9 +2281,9 @@ test("SECURITY (FETCH_SHEET_TITLE): internal-only — a page (sender.tab set) mu
     });
     const res = await bg.send(
         { type: "FETCH_SHEET_TITLE", payload: { id: "VICTIM_SHEET_ID" } },
-        { tab: { id: 9, url: "https://evil.example/attack" } });   // sender.tab set = a page
+        { tab: { id: 9 }, url: "https://evil.example/attack" });   // a page/content-script: sender.url is the WEB origin
     assert.equal(fetched, false, "must not spend the user's cookies on a title for a page");
-    assert.equal(res.data, null, "a page must not learn a sheet's title — today it leaks it");
+    assert.equal(res.data, null, "a page (non-extension origin) must not learn a sheet's title");
 });
 
 test("SECURITY (FETCH_IMAGE_B64): must refuse internal/loopback/metadata targets (SSRF)", async () => {

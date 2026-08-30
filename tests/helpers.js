@@ -154,6 +154,7 @@ function loadBackground({ config = {}, local = {}, onFetch, onCaptureTab, onPyRu
                 getAll: async () => [{ name: "open-composer", shortcut: commandShortcut }],
             },
             runtime: {
+                getURL: (p = "") => `chrome-extension://test/${p}`,   // origin checks (e.g. FETCH_SHEET_TITLE's sender-origin gate)
                 getManifest: () => ({
                     version: manifestVersion,
                     permissions: manifestPermissions,
