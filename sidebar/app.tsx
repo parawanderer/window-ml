@@ -1024,7 +1024,7 @@ function ReusedBlock({ reused }: { reused: ReusedGrant[] }) {
     return (
         <details class="astep-reused">
             <summary class="reused-head"><span class="tri" aria-hidden="true"><IconChevron /></span><IconCheck /><span class="reused-title">Reused a grant you approved</span><span class="reused-why">{summary} · no prompt needed</span></summary>
-            <ul class="reused-list">{reused.map((g, i) => <li key={i}><code>{g.detail}</code></li>)}</ul>
+            <ul class="reused-list">{reused.map((g, i) => <li key={i}>{g.kind === "sheet" ? <SheetChip id={g.detail} /> : <code>{g.detail}</code>}</li>)}</ul>
         </details>
     );
 }

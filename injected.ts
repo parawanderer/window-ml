@@ -956,7 +956,13 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     return { approved: d.approved, feedback: d.feedback || undefined, arguments: d.arguments };
                 },
                 autoApprove: (name, args) => {
-                    if (name === "python_exec") return autoApprovePython(args, { autoApprovePython: autoPy }, (id: string) => approvedSheets.has(id));
+                    if (name === "python_exec") {
+                        const prov = autoApprovePython(args, { autoApprovePython: autoPy }, (id: string) => approvedSheets.has(id));
+                        if (!prov) return null;
+                        // Which already-approved external sheet(s) this run reused → a "reused a grant" note.
+                        const reusedSheets = externalSheetIds(args).filter(id => approvedSheets.has(id));
+                        return reusedSheets.length ? { approval: prov, reused: reusedSheets.map(id => ({ kind: "sheet" as const, detail: id })) } : prov;
+                    }
                     // navigate: SAME-ORIGIN auto-approves (no escalation); a CROSS-ORIGIN nav falls through to
                     // the gate (a page can't silently send the agent to another site). location is authoritative.
                     if (name === "navigate") return sameOriginNav(String((args as { url?: unknown }).url ?? "")) ? "same-origin" : null;

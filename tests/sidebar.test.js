@@ -480,6 +480,21 @@ test("reused-grant step: a readonly exec that re-read a cached URL shows a colla
     assert.match(reused.querySelector(".reused-list code").textContent, /servers\.json/);
 });
 
+test("reused-grant step: a python_exec that reused an approved Sheet renders it as a smart chip", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("rs", "reuse a sheet"));
+    await w.dispatch(agentStep("rs", 1, { seq: 1, tool: "python_exec", arguments: { code: "df.sum()" }, result: "42", approval: "sandbox", reused: [{ kind: "sheet", detail: "1AbCdEfGh" }] }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const head = [...w.shadow.querySelectorAll(".astep.tool .astep-head")].find(h => /python_exec/.test(h.textContent));
+    head.click();
+    await w.tick();
+    const reused = w.shadow.querySelector(".astep-reused");
+    assert.ok(reused, "the reused-grant disclosure renders");
+    assert.match(reused.querySelector(".reused-why").textContent, /1 sheet/, "summarised as a sheet, not a URL");
+    assert.ok(reused.querySelector(".reused-list .sheet-chip"), "the sheet renders as a smart chip (resolves its name)");
+});
+
 test("fetch_url step: the rendered In shows a clean verb + URL line, NOT a raw JSON dump of the descriptor", async () => {
     const w = await loadSidebarWorld();
     const url = "https://raw.githubusercontent.com/SideStore/anisette-servers/main/servers.json";

@@ -36,7 +36,9 @@ export interface AgentLoopDeps {
     // Pure auto-approve decision, made in the TRUSTED world (python readonly / suspicious-char /
     // external-sheet). Returns the provenance to skip the gate, or null to require it. NEVER delegated —
     // a forged "it's auto-approved" is exactly the threat design A closes.
-    autoApprove?(name: string, args: Record<string, unknown>): "readonly" | "sandbox" | "same-origin" | "consented" | null;
+    // Returns the provenance to skip the gate, or null to require it — OR an object also naming the prior
+    // grants this call REUSED (e.g. an already-approved Google Sheet), surfaced on the step for transparency.
+    autoApprove?(name: string, args: Record<string, unknown>): Approval | { approval: Approval; reused?: import("./contract").ReusedGrant[] } | null;
     // Read-only try (exec only): attempt the call via the mediated read-only interpreter, which is
     // side-effect-free (it can't mutate) — so it BOTH decides "auto-approve" AND returns the result. A
     // non-null result skips the gate AND runTool (the interpreter already ran it). null → gate as normal.
@@ -261,13 +263,16 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 // Read-only try FIRST: the mediated interpreter can't mutate, so if the call is in its
                 // dialect it's already run safely — auto-approve with its result, no gate, no runTool.
                 const ro = deps.tryReadonly ? await deps.tryReadonly(call.name, args) : null;
-                const auto = ro ? null : (deps.autoApprove?.(call.name, args) || null);
+                const autoRaw = ro ? null : (deps.autoApprove?.(call.name, args) || null);
+                // autoApprove may return the bare provenance OR { approval, reused } (grants it reused).
+                const auto = autoRaw ? (typeof autoRaw === "string" ? { approval: autoRaw, reused: undefined } : autoRaw) : null;
                 if (ro) {
                     approval = "readonly";
                     tr = ro; result = ro.result;   // the interpreter already produced the result
                 } else if (auto) {
-                    approval = auto;
+                    approval = auto.approval;
                     tr = await deps.runTool(call.name, args); result = tr.result;   // trusted auto-approve → execute
+                    if (auto.reused?.length) tr = { ...tr, reused: [...(tr.reused || []), ...auto.reused] };   // surface the reused grants
                 } else if (deps.precheck && (result = (await deps.precheck(call.name, args)) || "")) {
                     // Doomed-action skip: a side-effect-free precheck (click/type target resolution) found
                     // the action can only fail (no element / stale @pt / bad selector), so return that error
