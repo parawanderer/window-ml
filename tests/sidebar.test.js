@@ -1000,6 +1000,33 @@ test("step-cap stop (HUD card): the corner card offers 'Continue (+N steps)' →
 
 const streamConfig = (over = {}) => ({ system: "s", customSystem: false, tools: [], maxSteps: 20, think: null, env: true, vision: null, hints: null, ...over });
 
+test("HUD card: a streaming follow-up collapses an open 'Show work' and keeps it ABOVE the answer (no reflow spam)", async () => {
+    const w = await loadSidebarWorld();
+    await w.raw({ __mlSidebarSurface: "card" });   // off-mode corner card
+    // A finished run WITH work, and its answer.
+    await w.dispatch(agentStart("fu", "read the config", "m", 20, streamConfig({ stream: true })));
+    await w.dispatch(agentStep("fu", 1, { seq: 1, tool: "exec", arguments: { js: "1" }, result: "1", approval: "readonly" }));
+    await w.dispatch(agentResult("fu", "It lists 14 servers.", 1));
+    await w.tick();
+    // Expand "Show work" on the finished answer (the state the user leaves it in).
+    const toggle = w.shadow.querySelector(".card-work-toggle");
+    assert.ok(toggle, "the finished card shows a Show-work toggle");
+    toggle.click(); await w.tick();
+    assert.match(w.shadow.querySelector(".card-work-toggle").textContent, /Hide work/, "it's expanded before the follow-up");
+    // Now a follow-up streams in (say → the answer streams via agent-stream content).
+    await w.dispatch(agentSay("fu", "and which use http?", undefined, Date.now() + 5));
+    await w.dispatch({ kind: "agent-stream", id: "fu", ts: Date.now() + 6, save: false, session: { hash: "fu", turn: 2 }, step: 2, localStep: 2, content: "Only one uses http." });
+    await w.flush();
+    // The open trace is COLLAPSED so it doesn't loom over / reflow with the streaming answer.
+    assert.match(w.shadow.querySelector(".card-work-toggle").textContent, /Show work/, "Show work collapses when the follow-up starts streaming");
+    // And it stays ABOVE the streaming answer (same order as the done state) — it must not jump to the bottom.
+    const body = w.shadow.querySelector(".card-body");
+    const work = body.querySelector(".card-work");
+    const working = body.querySelector(".card-working");
+    assert.ok(work && working, "both the trace toggle and the streaming/working line render");
+    assert.ok(work.compareDocumentPosition(working) & w.window.Node.DOCUMENT_POSITION_FOLLOWING, "Show work stays ABOVE the streaming answer (no bottom↔top jump)");
+});
+
 test("stream:true: live reasoning fills a live thinking block (ticking count); a real step then clears it", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("st1", "read the diff", "m", 20, streamConfig({ stream: true })));

@@ -3159,6 +3159,13 @@ function CardApp() {
     // Close the steer box once the run is no longer live (it finished / failed / was cancelled) — the box is
     // meaningless without a running loop, and this snaps the card to its finished-answer form cleanly.
     useEffect(() => { if (!running && cardSteerHash.value === run?.hash) cardSteerHash.value = ""; }, [running]);
+    // A FOLLOW-UP turn just started (was done, now working again — there's prior conversation): collapse an
+    // OPEN "Show work" for this run. Otherwise the prior turn's expanded trace looms over the streaming answer
+    // and reflows spammily as it fills in, then snaps away when the run settles. Collapsing matches that clean
+    // end-state from the start; the trace is one click away. Only fires when it was actually open on THIS run.
+    useEffect(() => {
+        if (running && run && cardShowWorkHash.value === run.hash && (run.answers?.length || run.says?.length)) cardShowWorkHash.value = "";
+    }, [running]);
     // An approval opens the tabbed DETAIL (a multi-run summary would hide the action), and stays open through
     // the decision so the outcome is visible instead of snapping back to the calm summary.
     useEffect(() => { if (pending) cardDetail.value = true; }, [pending]);
@@ -3377,9 +3384,11 @@ function CardApp() {
                         // A working run browsed via a tab (multi-run detail): show a live "Working…" line + its
                         // trace, not the finished-answer branch (which would render an empty "no reply yet").
                         ? <>
+                            {/* Show work sits ABOVE, exactly as in the done branch — so it doesn't JUMP from
+                                bottom to top when a streaming follow-up finishes (the "spammy reflow" bug). */}
+                            {(run.steps || []).some(s => s.tool) ? <ShowWork run={run} /> : null}
                             <div class="card-answer dim card-working"><span class="card-work-ic" aria-hidden="true">{activityFor(run).icon}</span>{liveProseFor(run) || activityFor(run).label}<span class="pill-dots"><i /><i /><i /></span></div>
                             {run.liveStream ? <LiveStream ls={run.liveStream} s={run} /> : null}
-                            {(run.steps || []).some(s => s.tool) ? <ShowWork run={run} /> : null}
                           </>
                         : <>
                             {/* "Show work" sits ABOVE the answer now — the audit trail is the header, the answer
