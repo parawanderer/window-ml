@@ -2223,6 +2223,26 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     if (/MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND/i.test(emsg) && attempt < CAPTURE_RETRIES) {
                         await new Promise(r => setTimeout(r, CAPTURE_RETRY_MS)); continue;
                     }
+                    // "Either the '<all_urls>' or 'activeTab' permission is required." captureVisibleTab needs a
+                    // host permission for the tab's URL, OR activeTab. Under "On click" site access <all_urls> is
+                    // WITHHELD, and activeTab (granted when the user invoked the extension) is REVOKED by a
+                    // navigation — so after the agent's own navigate, a fresh page has NEITHER and look/locate/
+                    // screenshot fail. Turn Chrome's opaque error into an actionable one (mirroring the Sheets
+                    // host-access flow) instead of handing the model a message it can't act on.
+                    if (/all_urls|activeTab|permission is required/i.test(emsg)) {
+                        try { await (chrome.action as any).openPopup?.(); } catch { /* no gesture / unsupported → rely on the message */ }
+                        const host = (() => { try { return new URL(sender.tab?.url || sender.url || "").host; } catch { return ""; } })();
+                        sendResponse({ error:
+                            `Can't screenshot this page — the extension has no site access to ${host || "this site"} (\"On click\" ` +
+                            "site access grants it only after you invoke the extension, and a navigation revokes that, so look/" +
+                            "locate/screenshot can't capture the viewport). Tell the USER: I've opened this extension's toolbar popup " +
+                            `— under \"Permissions → Site access\", add \"${host || "this site"}\" and click Grant. Or, quicker: right-click ` +
+                            "the extension's toolbar icon and set \"This can read and change site data\" to \"On this site\" (or \"On all " +
+                            "sites\"). Then ask me to try again. (A one-off alternative: click the extension's icon on this page — that " +
+                            "grants access until the next navigation.)"
+                        });
+                        return;
+                    }
                     sendResponse({ error: emsg }); return;
                 }
             }

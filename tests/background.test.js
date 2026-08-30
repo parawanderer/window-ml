@@ -1375,6 +1375,21 @@ test("CAPTURE_TAB surfaces a capture failure as an error", async () => {
     assert.match(res.error, /cannot capture/);
 });
 
+test("CAPTURE_TAB turns the on-click/no-site-access permission error into an actionable message", async () => {
+    // captureVisibleTab under "On click" access post-navigation: NEITHER <all_urls> (withheld) NOR activeTab
+    // (revoked by the nav). Chrome's opaque error must become guidance the model can relay, not leak raw.
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => htmlResponse(),
+        onCaptureTab: () => { throw new Error("Either the '<all_urls>' or 'activeTab' permission is required."); },
+    });
+    const res = await bg.send({ type: "CAPTURE_TAB", payload: {} }, { tab: { windowId: 1, url: "https://github.com/foo/bar" } });
+    assert.doesNotMatch(res.error, /activeTab permission is required/, "the raw Chrome error is not leaked verbatim");
+    assert.match(res.error, /site access/i, "explains it's a site-access grant");
+    assert.match(res.error, /github\.com/, "names the specific host");
+    assert.match(res.error, /On this site|On all sites|Site access/, "points at the concrete control to grant it");
+});
+
 test("SAVE_SESSION persists a session that GET_SESSION reads back", async () => {
     const bg = loadBackground({ config: baseConfig(), onFetch: () => jsonResponse({}) });
     const session = { hash: "abc123", messages: [{ role: "user", content: "hi" }], model: "m", save: true };
