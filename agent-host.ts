@@ -15,6 +15,7 @@ import type { NeutralMessage, ToolCall, AgentResult, ApprovalDecision } from "./
 import { runAgentLoop, shotTurnMessage } from "./agent-loop";
 import type { ToolMeta, AgentLoopDeps, ToolRunResult } from "./agent-loop";
 import { autoApprovePython } from "./auto-approve";
+import { externalSheetIds } from "./dom";
 
 /** The run's resolved setup, sent from ml.agent's START_RUN shim. The system prompt is built PAGE-SIDE
  *  (it needs page context + the vision/answer/compute clauses + the toolset), so the background receives
@@ -125,7 +126,15 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
         // Trusted auto-approve: only python_exec today; a tool not modelled here simply always asks
         // (friction, never less safety — see auto-approve.ts).
         autoApprove: (name, args) => {
-            if (name === "python_exec") return autoApprovePython(args, { autoApprovePython: !!cfg.autoApprovePython }, deps.isSheetApproved || (() => false));
+            if (name === "python_exec") {
+                const isApproved = deps.isSheetApproved || (() => false);
+                const prov = autoApprovePython(args, { autoApprovePython: !!cfg.autoApprovePython }, isApproved);
+                if (!prov) return null;
+                // Parity with the page loop (injected.ts): surface which already-approved external sheet(s)
+                // this call REUSED as a "reused a grant" note — else the background path silently drops it.
+                const reusedSheets = externalSheetIds(args).filter(id => isApproved(id));
+                return reusedSheets.length ? { approval: prov, reused: reusedSheets.map(id => ({ kind: "sheet" as const, detail: id })) } : prov;
+            }
             // navigate: a cross-origin nav that needs consent GATES; same-site (or already-consented) auto-approves.
             if (name === "navigate") return deps.navNeedsConsent?.(String((args as { url?: unknown }).url ?? "")) ? null : "same-origin";
             // fetch_url: a CREDENTIALED (fetch-as-the-user) call ALWAYS gates — never auto-approved, never

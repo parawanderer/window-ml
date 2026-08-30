@@ -117,6 +117,21 @@ test("an UN-approved external sheet asks; once isSheetApproved → auto (no gate
     assert.equal(auto.approvals.length, 0, "once the spreadsheet is approved this run → auto");
 });
 
+test("a REUSED external sheet surfaces a 'reused a grant' note on the step (background parity with the page loop)", async () => {
+    const args = { code: "return df", tables: "https://docs.google.com/spreadsheets/d/ABC/edit" };
+    const events = [];
+    const deps = baseDeps({
+        callModel: scriptedModel([call("python_exec", args), answer("ok")]),
+        isSheetApproved: () => true,   // already approved earlier this run → this call REUSES it
+        emit: (ev) => events.push(ev),
+    });
+    await runBackgroundAgent({ task: "t", systemPrompt: "S", autoApprovePython: true, tools: [{ name: "python_exec", requiresApproval: true }] }, deps);
+    assert.equal(deps.approvals.length, 0, "reused sheet → auto (no gate)");
+    const done = events.find(e => e.tool === "python_exec" && !e.pending);
+    assert.equal(done.approval, "sandbox");
+    assert.deepEqual(done.reused, [{ kind: "sheet", detail: "ABC" }], "the reused Sheet rides the step (→ the sidebar's reused-grant chip)");
+});
+
 test("gate DENY → the tool is never delegated (the security invariant, through the host)", async () => {
     const deps = baseDeps({
         callModel: scriptedModel([call("danger"), answer("gave up")]),
