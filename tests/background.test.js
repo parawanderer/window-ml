@@ -1412,19 +1412,48 @@ test("CAPTURE_TAB surfaces a capture failure as an error", async () => {
     assert.match(res.error, /cannot capture/);
 });
 
-test("CAPTURE_TAB turns the on-click/no-site-access permission error into an actionable message", async () => {
-    // captureVisibleTab under "On click" access post-navigation: NEITHER <all_urls> (withheld) NOR activeTab
-    // (revoked by the nav). Chrome's opaque error must become guidance the model can relay, not leak raw.
+test("CAPTURE_TAB: with CDP on, screenshots PREFER the debugger — works on strict/on-click pages, no host grant, no quota", async () => {
+    // captureVisibleTab needs activeTab OR <all_urls> specifically; a per-host grant does NOT satisfy it, and
+    // it's rate-limited. The debugger is exempt (like exec/click), so with CDP on we capture through
+    // Page.captureScreenshot FIRST — captureVisibleTab isn't even called.
     const bg = loadBackground({
-        config: baseConfig(),
+        config: baseConfig({ cdp: true }),
+        onFetch: () => htmlResponse(),
+        onCaptureTab: () => { throw new Error("captureVisibleTab must NOT be called when CDP is preferred"); },
+        onDebuggerCommand: (method) => (method === "Page.captureScreenshot" ? { data: "SHOTBASE64" } : undefined),
+    });
+    const res = await bg.send({ type: "CAPTURE_TAB", payload: {} }, { tab: { id: 7, windowId: 1, url: "https://github.com/foo/bar" } });
+    assert.equal(res.error, undefined, "no error — captured via the debugger");
+    assert.equal(res.data, "data:image/png;base64,SHOTBASE64", "returned the CDP PNG as a data URL");
+    assert.ok(bg.debuggerCalls.some(c => c[0] === "attach"), "attached the debugger to capture");
+    assert.equal(bg.captures.length, 0, "captureVisibleTab was NOT called — CDP is preferred when enabled");
+});
+
+test("CAPTURE_TAB: CDP on but the debugger capture fails → falls back to captureVisibleTab", async () => {
+    // e.g. real DevTools already holds the tab's debugger → attach/capture fails → use captureVisibleTab (which
+    // works when the page DOES have access). No silent failure.
+    const bg = loadBackground({
+        config: baseConfig({ cdp: true }),
+        onFetch: () => htmlResponse(),
+        onCaptureTab: () => "data:image/png;base64,FALLBACK",
+        onDebuggerCommand: () => undefined,   // Page.captureScreenshot returns no data → cdpScreenshot errors → fallback
+    });
+    const res = await bg.send({ type: "CAPTURE_TAB", payload: {} }, { tab: { id: 7, windowId: 1, url: "https://x.test/" } });
+    assert.equal(res.error, undefined);
+    assert.equal(res.data, "data:image/png;base64,FALLBACK", "fell back to captureVisibleTab");
+});
+
+test("CAPTURE_TAB (CDP off): the site-access error explains the REAL fix (On all sites / enable CDP), not a per-host grant", async () => {
+    const bg = loadBackground({
+        config: baseConfig({ cdp: false }),
         onFetch: () => htmlResponse(),
         onCaptureTab: () => { throw new Error("Either the '<all_urls>' or 'activeTab' permission is required."); },
     });
-    const res = await bg.send({ type: "CAPTURE_TAB", payload: {} }, { tab: { windowId: 1, url: "https://github.com/foo/bar" } });
+    const res = await bg.send({ type: "CAPTURE_TAB", payload: {} }, { tab: { id: 7, windowId: 1, url: "https://github.com/foo/bar" } });
     assert.doesNotMatch(res.error, /activeTab permission is required/, "the raw Chrome error is not leaked verbatim");
-    assert.match(res.error, /site access/i, "explains it's a site-access grant");
-    assert.match(res.error, /github\.com/, "names the specific host");
-    assert.match(res.error, /On this site|On all sites|Site access/, "points at the concrete control to grant it");
+    assert.match(res.error, /On all sites/, "points at the grant that actually enables captureVisibleTab");
+    assert.match(res.error, /Debugger|CDP/, "offers the debugger route (the easy fix)");
+    assert.doesNotMatch(res.error, /add (\"?github\.com|this host)/i, "does NOT tell them to add a per-host grant — which does NOT work for captureVisibleTab");
 });
 
 test("SAVE_SESSION persists a session that GET_SESSION reads back", async () => {

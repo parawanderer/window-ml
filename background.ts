@@ -1300,6 +1300,27 @@ async function cdpEval(tabId: number, source: string): Promise<{ ok: true; value
     }
 }
 
+/** Screenshot the tab's viewport via CDP `Page.captureScreenshot`. The point of this over
+ *  `chrome.tabs.captureVisibleTab`: captureVisibleTab specifically needs the `activeTab` OR `<all_urls>`
+ *  permission (Chromium's kActiveTabOrAllUrls) — a per-HOST grant does NOT satisfy it, and "On click" site
+ *  access withholds <all_urls> — so look/locate/screenshot fail on e.g. GitHub. The DEBUGGER is exempt (same
+ *  as exec/click), so when CDP is enabled we capture through it instead, no host grant needed. Returns a PNG
+ *  data URL matching captureVisibleTab's shape. Reuses the run's live attachment (attach once, see the
+ *  lifecycle above). */
+async function cdpScreenshot(tabId: number): Promise<{ ok: true; dataUrl: string } | { error: string; needsPermission?: true }> {
+    const at = await ensureDebuggerAttached(tabId);
+    if ("error" in at) return { error: at.error, ...(at.needsPermission ? { needsPermission: true } : {}) };
+    try {
+        const r = await chrome.debugger.sendCommand({ tabId }, "Page.captureScreenshot", { format: "png", captureBeyondViewport: false }) as { data?: string };
+        if (!r?.data) return { error: "the CDP screenshot returned no data." };
+        return { ok: true, dataUrl: `data:image/png;base64,${r.data}` };
+    } catch (e) {
+        return { error: `the CDP screenshot failed (${(e as Error)?.message || e}).` };
+    } finally {
+        touchDebugger(tabId);
+    }
+}
+
 /** SSRF denylist for the uncredentialed image fetch: refuse loopback / private / link-local / metadata
  *  hosts (and non-http schemes / unparseable URLs), so a page can't probe the user's internal network
  *  through the extension's `<all_urls>` reach. */
@@ -2254,11 +2275,23 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         const doCapture = () => sender.tab
             ? chrome.tabs.captureVisibleTab(sender.tab.windowId, { format: "png" })
             : chrome.tabs.captureVisibleTab({ format: "png" });
-        // Chrome RATE-LIMITS captureVisibleTab (~2/sec — MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND). A burst of
-        // look()/locate() calls trips it with a TRANSIENT quota error; the model can't act on "exceeds quota" and
-        // just wastes a turn. So wait out the ~1s window and retry a few times before giving up — the error is
-        // never surfaced unless the limit stays blocked (a real problem, not a burst).
         (async () => {
+            const cfg = await getConfig();
+            const tabId = sender.tab?.id;
+            // PREFER CDP when it's enabled: Page.captureScreenshot captures the SAME viewport at the SAME device
+            // pixel ratio as captureVisibleTab (verified: 800x600@2 → 1600x1200), so the coordinate math is
+            // identical — but it works on strict / "On click" pages with NO host grant (the debugger is exempt,
+            // like exec/click) and is NOT subject to captureVisibleTab's ~2/sec quota. The debugger is attached
+            // once per run (reused), so a multi-look run shows the infobar steadily rather than per-shot.
+            let cdpErr = "";
+            if (cfg.cdp && tabId != null) {
+                const shot = await cdpScreenshot(tabId);
+                if ("ok" in shot) { sendResponse({ data: shot.dataUrl }); return; }
+                cdpErr = shot.error;   // attach conflict (real DevTools open) / no debugger permission → fall back below
+            }
+            // Fallback (CDP off, or its attach failed): captureVisibleTab. Chrome RATE-LIMITS it (~2/sec —
+            // MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND); a burst of look()/locate() trips a TRANSIENT quota error
+            // the model can't act on, so wait out the ~1s window and retry a few times before surfacing it.
             for (let attempt = 0; ; attempt++) {
                 try { sendResponse({ data: await doCapture() }); return; }
                 catch (err) {
@@ -2266,23 +2299,18 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     if (/MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND/i.test(emsg) && attempt < CAPTURE_RETRIES) {
                         await new Promise(r => setTimeout(r, CAPTURE_RETRY_MS)); continue;
                     }
-                    // "Either the '<all_urls>' or 'activeTab' permission is required." captureVisibleTab needs a
-                    // host permission for the tab's URL, OR activeTab. Under "On click" site access <all_urls> is
-                    // WITHHELD, and activeTab (granted when the user invoked the extension) is REVOKED by a
-                    // navigation — so after the agent's own navigate, a fresh page has NEITHER and look/locate/
-                    // screenshot fail. Turn Chrome's opaque error into an actionable one (mirroring the Sheets
-                    // host-access flow) instead of handing the model a message it can't act on.
+                    // captureVisibleTab needs activeTab OR <all_urls> specifically (Chromium's
+                    // kActiveTabOrAllUrls) — a per-HOST grant like github.com does NOT satisfy it, and "On click"
+                    // withholds <all_urls> while a navigation revokes activeTab. The clean fix is the debugger
+                    // (exempt), so steer to CDP; a per-host grant would be a dead end.
                     if (/all_urls|activeTab|permission is required/i.test(emsg)) {
-                        try { await (chrome.action as any).openPopup?.(); } catch { /* no gesture / unsupported → rely on the message */ }
-                        const host = (() => { try { return new URL(sender.tab?.url || sender.url || "").host; } catch { return ""; } })();
+                        const cdpNote = cdpErr
+                            ? ` The debugger route (CDP) is enabled but couldn't attach here (${cdpErr}) — close Chrome DevTools on this tab if it's open, then retry.`
+                            : " Easiest fix: enable \"Debugger-based actions (CDP)\" in window.ml Settings → Advanced — then look/locate screenshot via the debugger (exempt from site access), exactly how exec works here.";
                         sendResponse({ error:
-                            `Can't screenshot this page — the extension has no site access to ${host || "this site"} (\"On click\" ` +
-                            "site access grants it only after you invoke the extension, and a navigation revokes that, so look/" +
-                            "locate/screenshot can't capture the viewport). Tell the USER: I've opened this extension's toolbar popup " +
-                            `— under \"Permissions → Site access\", add \"${host || "this site"}\" and click Grant. Or, quicker: right-click ` +
-                            "the extension's toolbar icon and set \"This can read and change site data\" to \"On this site\" (or \"On all " +
-                            "sites\"). Then ask me to try again. (A one-off alternative: click the extension's icon on this page — that " +
-                            "grants access until the next navigation.)"
+                            `Can't screenshot this page — captureVisibleTab needs "On all sites" access; a per-site grant like this host does NOT enable it.${cdpNote} ` +
+                            "Alternatively set the extension's site access to \"On all sites\" (right-click the toolbar icon → \"This can read and change " +
+                            "site data\" → \"On all sites\"). Then ask me to look again."
                         });
                         return;
                     }
