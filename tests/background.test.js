@@ -634,12 +634,14 @@ test("GET_CONFIG returns the model/ocrModel/apiFormat and withholds the URL and 
     assert.ok(!("chatUrl" in res.data) && !("apiKey" in res.data) && !("pageApprovalDomains" in res.data), Object.keys(res.data).join());
 });
 
-test("CDP_CLICK dispatches a trusted press+release via the debugger and always detaches", async () => {
+test("CDP_CLICK dispatches a trusted press+release via the debugger; the attachment is REUSED across clicks", async () => {
     const bg = loadBackground({ config: baseConfig({ cdp: true }) });
     // A trusted surface (no sender.tab — e.g. the approval UI) passes the inspected tabId in the payload.
     const res = await bg.send({ type: "CDP_CLICK", payload: { x: 120, y: 340, tabId: 9 } }, {});
     assert.deepEqual(res, { ok: true });
-    assert.deepEqual(bg.debuggerCalls.map(c => c[0]), ["attach", "sendCommand", "sendCommand", "detach"], "attach → press → release → detach");
+    // attach → press → release. Detach is now lifecycle-driven (run-end / tab-close / idle), NOT per-click —
+    // attaching/detaching per call is the dominant per-CDP-op cost we're eliminating.
+    assert.deepEqual(bg.debuggerCalls.map(c => c[0]), ["attach", "sendCommand", "sendCommand"], "attach → press → release (no per-click detach)");
     assert.deepEqual(bg.debuggerCalls[0][1], { tabId: 9 });
     assert.equal(bg.debuggerCalls[0][2], "1.3");
     const [, , pressMethod, pressParams] = bg.debuggerCalls[1];
@@ -648,7 +650,10 @@ test("CDP_CLICK dispatches a trusted press+release via the debugger and always d
     assert.equal(pressParams.type, "mousePressed");
     assert.equal(releaseParams.type, "mouseReleased");
     assert.equal(pressParams.x, 120); assert.equal(pressParams.y, 340); assert.equal(pressParams.button, "left");
-    assert.deepEqual(bg.debuggerCalls[3][1], { tabId: 9 }, "detached the same target");
+    // A SECOND click on the same tab REUSES the live attachment — no second attach (the whole point of persisting).
+    await bg.send({ type: "CDP_CLICK", payload: { x: 5, y: 6, tabId: 9 } }, {});
+    assert.equal(bg.debuggerCalls.filter(c => c[0] === "attach").length, 1, "attached ONCE, reused for the second click");
+    assert.equal(bg.debuggerCalls.filter(c => c[0] === "sendCommand").length, 4, "two clicks = two press+release pairs on the one attachment");
 });
 
 test("CDP_CLICK is refused when the cdp flag is off (never attaches)", async () => {
@@ -670,7 +675,7 @@ test("CDP_CLICK reports the missing debugger permission (never attaches)", async
     const bg = loadBackground({ config: baseConfig({ cdp: true }), debuggerPermission: false });
     const res = await bg.send({ type: "CDP_CLICK", payload: { x: 1, y: 2, tabId: 9 } }, {});
     assert.ok(res.needsPermission, "flags that the permission is needed");
-    assert.match(res.error, /`debugger` permission is missing/i);
+    assert.match(res.error, /`debugger` permission isn't granted|permission is missing/i);
     assert.equal(bg.debuggerCalls.length, 0, "never attached without the permission");
 });
 
@@ -712,6 +717,7 @@ async function driveCdpExec({ cdp, debuggerPermission = true, pageEcho, approved
         tools: [{ name: "exec", requiresApproval: true, description: "", parameters: { type: "object", properties: { js: { type: "string" } } }, capabilities: [] }],
         model: "m", think: null, maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools",
     } }, { tab: { id: 8 } });
+    await new Promise(r => setTimeout(r, 0));   // let the run's .finally (releaseDebugger → detach) settle after sendResponse
     return { res, evals, toolResult, approvedJs, attached: bg.debuggerCalls.some(c => c[0] === "attach"), detached: bg.debuggerCalls.some(c => c[0] === "detach") };
 }
 
@@ -738,6 +744,37 @@ test("CDP exec: console.log output is captured and prefixed onto the value (not 
     assert.match(toolResult, /console:/, "console output is surfaced");
     assert.match(toolResult, /before: 3/, "the logged lines reach the model");
     assert.match(toolResult, /value: CDP-RAN/, "the completion value is still there, after the logs");
+});
+
+test("CDP exec: TWO execs in one run share ONE debugger attachment (attach once, detach at run end — the perf fix)", async () => {
+    // The reported slowness: every exec on a strict-CSP page paid a full attach/detach. Now the debugger is
+    // attached once per run and reused, then detached in the run's finally.
+    let n = 0, bg;
+    bg = loadBackground({
+        config: baseConfig({ cdp: true }),
+        onDebuggerCommand: (method) => (method === "Runtime.evaluate" ? { result: { value: { __mlWrapped: true, v: "OK", logs: [] } } } : undefined),
+        onFetch: () => {
+            n++;
+            if (n === 1) return jsonResponse({ choices: [{ message: { content: "", tool_calls: [{ id: "a", type: "function", function: { name: "exec", arguments: JSON.stringify({ js: "document.title" }) } }] } }] });
+            if (n === 2) return jsonResponse({ choices: [{ message: { content: "", tool_calls: [{ id: "b", type: "function", function: { name: "exec", arguments: JSON.stringify({ js: "location.href" }) } }] } }] });
+            return jsonResponse({ choices: [{ message: { content: "done" } }] });
+        },
+        onTabMessage: async (tabId, msg) => {
+            if (msg?.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) await bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
+            if (msg?.type === "RUN_TOOL_IN_PAGE" && msg.payload?.name === "exec" && !msg.payload?.renderOnly && !msg.payload?.readonlyTry && !msg.payload?.precheck)
+                return { result: "This page blocks main-world eval (CSP / Trusted Types).", cdpExec: { source: String(msg.payload.args?.js || "") } };
+            return undefined;
+        },
+    });
+    await bg.send({ type: "START_RUN", payload: {
+        runId: "cx2", task: "run both", systemPrompt: "S",
+        tools: [{ name: "exec", requiresApproval: true, description: "", parameters: { type: "object", properties: { js: { type: "string" } } }, capabilities: [] }],
+        model: "m", think: null, maxSteps: 6, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools",
+    } }, { tab: { id: 8 } });
+    await new Promise(r => setTimeout(r, 0));   // let the run's finally (detach) settle
+    assert.equal(bg.debuggerCalls.filter(c => c[0] === "attach").length, 1, "attached exactly ONCE for two execs");
+    assert.equal(bg.debuggerCalls.filter(c => c[0] === "detach").length, 1, "detached exactly ONCE, at run end");
+    assert.ok(bg.debuggerCalls.filter(c => c[0] === "sendCommand").length >= 2, "both execs evaluated on the one attachment");
 });
 
 test("CDP exec (OFF): a CSP-blocked exec never attaches; the model gets an actionable 'enable CDP' note", async () => {

@@ -191,6 +191,7 @@ function loadBackground({ config = {}, local = {}, onFetch, onCaptureTab, onPyRu
                 // result / exceptionDetails for the CDP-exec tests); default returns undefined (clicks need none).
                 sendCommand: async (target, method, params) => { debuggerCalls.push(["sendCommand", target, method, params]); return onDebuggerCommand ? onDebuggerCommand(method, params) : undefined; },
                 detach: async (target) => { debuggerCalls.push(["detach", target]); },
+                onDetach: { addListener: () => {} },   // the SW listens for an external detach (DevTools opened, target gone)
             },
             tabs: {
                 // Records args so tests can assert the windowId; onCaptureTab (if

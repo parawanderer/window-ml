@@ -1103,7 +1103,7 @@ if (typeof chrome !== "undefined" && chrome.webNavigation?.onCommitted) {
     });
 }
 if (typeof chrome !== "undefined" && chrome.tabs?.onRemoved) {
-    chrome.tabs.onRemoved.addListener((tabId) => { activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); fetchConsent.delete(tabId); credFetchGrants.delete(tabId); runReplayBuffer.delete(tabId); });
+    chrome.tabs.onRemoved.addListener((tabId) => { activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); fetchConsent.delete(tabId); credFetchGrants.delete(tabId); runReplayBuffer.delete(tabId); releaseDebugger(tabId); });
 }
 
 // ---- Choke-point consent (docs/spec/CHOKEPOINT_CONSENT_SPEC.md) ----
@@ -1183,6 +1183,50 @@ async function hasDebuggerPermission(): Promise<boolean> {
     try { return await chrome.permissions.contains({ permissions: ["debugger"] }); } catch { return false; }
 }
 
+// CDP debugger attach lifecycle. On a strict-CSP page EVERY exec (and every reserved-element click) runs
+// through the debugger — and attach/detach is the dominant per-call cost (the eval/click itself is instant;
+// the page work + content-script relay are sub-millisecond, measured). Attaching/detaching per call also
+// flickers the "being debugged" infobar each time. So we attach ONCE per tab on first CDP use and REUSE it
+// across the run, detaching when the run ends, the tab closes, or the tab goes idle. Chrome auto-detaches if
+// the SW is evicted, so a lost cleanup can't strand the infobar.
+const attachedDebuggees = new Set<number>();          // tabIds we currently hold the debugger on
+const debuggerIdleTimers = new Map<number, ReturnType<typeof setTimeout>>();
+const DEBUGGER_IDLE_MS = 20_000;   // detach a tab's debugger after this long with no CDP use (covers a standalone CDP_CLICK with no run to clean up)
+
+/** Attach the debugger to `tabId` if we don't already hold it (idempotent), reusing a live attachment across
+ *  calls. Returns ok, or an actionable error (missing permission / another debugger already attached). */
+async function ensureDebuggerAttached(tabId: number): Promise<{ ok: true } | { error: string; needsPermission?: true }> {
+    if (!(await hasDebuggerPermission())) return { error: "The `debugger` permission isn't granted — enable \"Debugger-based actions (CDP)\" in window.ml Settings → Advanced.", needsPermission: true };
+    if (attachedDebuggees.has(tabId)) return { ok: true };
+    try {
+        await chrome.debugger.attach({ tabId }, "1.3");
+        attachedDebuggees.add(tabId);
+        return { ok: true };
+    } catch (e) {
+        const msg = (e as Error)?.message || String(e);
+        if (/already attached/i.test(msg)) { attachedDebuggees.add(tabId); return { ok: true }; }   // a prior attach we didn't track / a race
+        return { error: msg };
+    }
+}
+/** Detach the debugger from `tabId` (if held) and clear its idle timer. Idempotent. */
+function releaseDebugger(tabId: number): void {
+    const timer = debuggerIdleTimers.get(tabId);
+    if (timer) { clearTimeout(timer); debuggerIdleTimers.delete(tabId); }
+    if (!attachedDebuggees.has(tabId)) return;
+    attachedDebuggees.delete(tabId);
+    try { void chrome.debugger.detach({ tabId }).catch(() => {}); } catch { /* already gone / tab closed */ }
+}
+/** Reset the idle-detach timer after a CDP op — a run detaches eagerly in its finally, but a standalone
+ *  CDP_CLICK (no run) relies on this so the debugger doesn't stay attached forever. */
+function touchDebugger(tabId: number): void {
+    const prev = debuggerIdleTimers.get(tabId);
+    if (prev) clearTimeout(prev);
+    debuggerIdleTimers.set(tabId, setTimeout(() => { debuggerIdleTimers.delete(tabId); releaseDebugger(tabId); }, DEBUGGER_IDLE_MS));
+}
+// Chrome detached the debugger out from under us (DevTools opened on the tab, the target crashed/closed, or
+// the user clicked "cancel" on the infobar) → forget the tab so the next CDP use re-attaches cleanly.
+try { chrome.debugger.onDetach.addListener((source) => { if (source.tabId != null) { attachedDebuggees.delete(source.tabId); const t = debuggerIdleTimers.get(source.tabId); if (t) { clearTimeout(t); debuggerIdleTimers.delete(source.tabId); } } }); } catch { /* no debugger API in this context */ }
+
 /** Click at a VIEWPORT coordinate via CDP — the ONLY way to reach a "reserved" surface (a cross-origin
  *  iframe, or a declarative/native closed shadow root): the BROWSER hit-tests the point, so the click
  *  retargets INTO the frame / closed tree and is a TRUSTED, user-activated event (a synthetic dispatch is
@@ -1190,13 +1234,9 @@ async function hasDebuggerPermission(): Promise<boolean> {
  *  unsuppressible banner is the honest "input-level control" signal — and it's shown ONLY for these reserved
  *  clicks, so the flash marks the risk), sends press+release, and ALWAYS detaches. See docs/spec/CDP_CLICK.md. */
 async function cdpClick(tabId: number, x: number, y: number): Promise<{ ok: true } | { error: string; needsPermission?: true }> {
-    if (!(await hasDebuggerPermission())) return { error: "The `debugger` permission is missing (it's declared at install) — reload the extension and accept its permissions, then retry.", needsPermission: true };
+    const at = await ensureDebuggerAttached(tabId);   // reuses a live attachment; attaches once per run (see the lifecycle above)
+    if ("error" in at) return { error: `Couldn't attach the debugger to click a reserved element (${at.error}). Another debugger (DevTools?) may be attached to this tab.`, ...(at.needsPermission ? { needsPermission: true } : {}) };
     const target: chrome.debugger.Debuggee = { tabId };
-    try {
-        await chrome.debugger.attach(target, "1.3");
-    } catch (e) {
-        return { error: `Couldn't attach the debugger to click a reserved element (${(e as Error)?.message || e}). Another debugger (DevTools?) may be attached to this tab.` };
-    }
     const send = (type: string, buttons: number) =>
         chrome.debugger.sendCommand(target, "Input.dispatchMouseEvent", { type, x, y, button: "left", buttons, clickCount: 1 });
     try {
@@ -1206,7 +1246,7 @@ async function cdpClick(tabId: number, x: number, y: number): Promise<{ ok: true
     } catch (e) {
         return { error: `The CDP click failed (${(e as Error)?.message || e}).` };
     } finally {
-        try { await chrome.debugger.detach(target); } catch { /* already detached / tab gone */ }
+        touchDebugger(tabId);   // keep the attachment warm; the run's finally (or the idle timer) detaches
     }
 }
 
@@ -1218,10 +1258,9 @@ async function cdpClick(tabId: number, x: number, y: number): Promise<{ ok: true
  *  the main-world exec: a trailing-expression first (REPL value), then a statement body (the model `return`s).
  *  See docs/spec/EXEC_STRICT_CSP.md. */
 async function cdpEval(tabId: number, source: string): Promise<{ ok: true; value: string } | { error: string; needsPermission?: true }> {
-    if (!(await hasDebuggerPermission())) return { error: "The `debugger` permission isn't granted — enable \"Debugger-based actions (CDP)\" in window.ml Settings → Advanced (enabling it requests the permission).", needsPermission: true };
+    const at = await ensureDebuggerAttached(tabId);   // reuses a live attachment; attach/detach is the dominant per-exec cost on a strict page
+    if ("error" in at) return { error: `Couldn't attach the debugger to run exec (${at.error}). Another debugger (DevTools?) may be attached to this tab.`, ...(at.needsPermission ? { needsPermission: true } : {}) };
     const target: chrome.debugger.Debuggee = { tabId };
-    try { await chrome.debugger.attach(target, "1.3"); }
-    catch (e) { return { error: `Couldn't attach the debugger to run exec (${(e as Error)?.message || e}). Another debugger (DevTools?) may be attached to this tab.` }; }
     type WrapVal = { __mlWrapped: true; v: string; logs: string[] };
     type EvalResult = { result?: { value?: unknown }; exceptionDetails?: { exception?: { description?: string }; text?: string } };
     const evaluate = (expression: string) => chrome.debugger.sendCommand(target, "Runtime.evaluate",
@@ -1257,7 +1296,7 @@ async function cdpEval(tabId: number, source: string): Promise<{ ok: true; value
     } catch (e) {
         return { error: `The CDP exec failed (${(e as Error)?.message || e}).` };
     } finally {
-        try { await chrome.debugger.detach(target); } catch { /* already detached / tab gone */ }
+        touchDebugger(tabId);   // keep the attachment for the next exec; the run's finally (or the idle timer) detaches
     }
 }
 
@@ -1917,7 +1956,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 });
                 sendResponse({ error: err?.message || String(err) });
             })
-            .finally(() => { runControllers.delete(runId); runInboxes.delete(runId); untrackRun(tabId, runId); deleteRun(runId); });
+            .finally(() => { runControllers.delete(runId); runInboxes.delete(runId); untrackRun(tabId, runId); deleteRun(runId); releaseDebugger(tabId); });   // detach the run's CDP debugger (attached once, reused across execs/clicks)
         return true;   // async: sendResponse fires when the whole run finishes
     }
     if (message.type === "PYTHON_EXEC") {
