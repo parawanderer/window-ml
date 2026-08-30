@@ -321,6 +321,57 @@ test("cross-page: a page loading AFTER the run finished still replays its HUD hi
     await page.close();
 });
 
+// HUD corner card, cross-page: the card is destroyed with the old document at a nav and must REBUILD on the
+// destination page from the background replay. Unlike the two tests above (which assert the debug events reach
+// a page-added init-script listener), this drives the REAL shell + card iframe — the actual regression: the
+// shell's window listener attaches after an async chrome.storage.get, so on a fast cached same-origin nav the
+// replay burst could land before it was listening → the `agent` start was missed → the card never mounted
+// (only the DevTools panel, fed by a surviving port, kept working). Assert the card shows the answer on /step3.
+test("cross-page (HUD card): the corner card rebuilds and shows the answer on the destination page", async () => {
+    const page = await ext.context.newPage();
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+
+    const before = fake.calls().length;
+    fake.setScript([
+        { tool: "navigate", args: { url: "/step3" } },
+        { tool: "findByText", args: { text: "CROSSPAGE" } },   // a page tool ON the destination (like the reported exec)
+        { content: "Done — the corner card must show this on step3." },
+    ]);
+    await page.evaluate(() => { window.ml.agent("Go to step 3 and finish.", { env: false }); return true; });
+    await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(3);
+
+    // The off-mode corner HUD card iframe must appear ON THE DESTINATION PAGE and reveal the final answer.
+    const card = () => page.frames().filter((f) => f.url().includes("sidebar.html") && !f.isDetached()).pop();
+    await expect.poll(async () => { const f = card(); try { return f ? ((await f.locator("body").textContent()) || "") : ""; } catch { return ""; } }, { timeout: 20000 }).toContain("corner card must show");
+    await page.close();
+});
+
+// The DEVTOOLS coexist card, cross-page (the exact reported config): debugMode:"devtools" +
+// agentHudInDevtools → a corner card rides alongside the panel. On page 1 the card mounts from the page's OWN
+// injected `agent` event; after a nav the destination page's card can ONLY get that start from the background
+// replay. The reported bug: the panel kept working (surviving port) but the corner card never reappeared.
+test("cross-page (devtools coexist card): the corner card reappears on the destination page after a nav", async () => {
+    await configureExtension(ext.sw, { debugMode: "devtools", agentHudInDevtools: true });
+    const page = await ext.context.newPage();
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+
+    const before = fake.calls().length;
+    fake.setScript([
+        { tool: "navigate", args: { url: "/step3" } },
+        { tool: "findByText", args: { text: "CROSSPAGE" } },
+        { content: "Done — the coexist card must show this on step3." },
+    ]);
+    await page.evaluate(() => { window.ml.agent("Go to step 3 and finish.", { env: false }); return true; });
+    await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(3);
+
+    const card = () => page.frames().filter((f) => f.url().includes("sidebar.html") && !f.isDetached()).pop();
+    await expect.poll(async () => { const f = card(); try { return f ? ((await f.locator("body").textContent()) || "") : ""; } catch { return ""; } }, { timeout: 20000 }).toContain("coexist card must show");
+    await page.close();
+    await configureExtension(ext.sw, { debugMode: "off", agentHudInDevtools: false });   // restore
+});
+
 // A page served with a `sandbox` CSP (exactly like raw.githubusercontent.com) BLOCKS the extension's injected
 // main-world script, so window.ml never comes up there and a delegated tool has NO answerer. The extension
 // must fail that tool FAST with an actionable error, not wedge the run forever (the reported raw.github

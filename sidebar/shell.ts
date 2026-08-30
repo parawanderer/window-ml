@@ -659,7 +659,11 @@ function onWindowMessage(e: MessageEvent): void {
         // mode the page's bus is dormant so only background-tagged events arrive; in devtools BOTH the
         // page's own injected events (agent start/result) AND the background steps flow.
         if (hudActive()) {
-            if (!cardHost && ev.kind === "agent") mountCard();
+            // Mount on ANY agent-family event, not just the `agent` start — a re-adopted run's card is fed
+            // by the background replay, and if its start event were ever dropped (a burst landing before this
+            // listener, an on-click late injection) mounting only on `agent` would leave the card permanently
+            // absent while live steps arrive. Mounting on the first event we DO see recovers it.
+            if (!cardHost && (ev.kind === "agent" || ev.kind === "agent-step" || ev.kind === "agent-result" || ev.kind === "agent-stream")) mountCard();
             if (cardHost) {
                 // A genuine new run event (step / result / start) is what discards a transient size
                 // override (a user drag, or a "Show work" expand) so the card SNAPS to fit the new
@@ -1084,12 +1088,26 @@ themeMedia?.addEventListener("change", applyCardTheme);   // "auto" follows the 
 // Keep the card pinned to its corner / centred when the viewport resizes (position is computed, not CSS-anchored).
 window.addEventListener("resize", () => { if (cardWrap) layoutCard(); });
 
+// Capture window messages SYNCHRONOUSLY from module load — BEFORE the async storage.get below picks the
+// surface and attach()es the real listener. A cross-page re-adopt streams the run's replayed history the
+// instant injected.js announces itself (PAGE_ADOPT_HELLO → CONTENT_READY → a ML_DEBUG_TO_PAGE burst), and
+// on a fast cached same-origin nav (GitHub) that burst can land before the storage.get resolves — dropping
+// the run's `agent` start so the corner card never mounted (the DevTools panel, fed by a surviving port, was
+// unaffected: the reported "HUD gone after nav"). Queue everything until the mode is known, then replay it
+// through onWindowMessage so nothing is lost. onWindowMessage's own guards (mode/frame/e.source) make a
+// replayed event idempotent; no message can arrive mid-callback, so nothing is double-handled.
+let startupQueue: MessageEvent[] | null = [];
+const captureStartup = (e: MessageEvent): void => { if (startupQueue) startupQueue.push(e); };
+window.addEventListener("message", captureStartup);
 chrome.storage.sync.get({ debugMode: "off", theme: "auto", cardCorner: "bottom-right", agentHud: "progress", agentHudInDevtools: false }, (cfg) => {
     rawTheme = (cfg.theme as string) || "auto";
     cardCorner = (cfg.cardCorner as string) || "bottom-right";
     agentHud = (cfg.agentHud as string) || "progress";
     agentHudInDevtools = !!cfg.agentHudInDevtools;
-    applyMode(cfg.debugMode as DebugMode);
+    applyMode(cfg.debugMode as DebugMode);   // attaches the real onWindowMessage listener (overlay/devtools/off)
+    window.removeEventListener("message", captureStartup);
+    const queued = startupQueue; startupQueue = null;
+    if (queued) for (const e of queued) onWindowMessage(e);   // replay anything that arrived before we were ready
 });
 chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "sync") return;
