@@ -398,8 +398,7 @@ function hostLabelOf(origin: string): string {
 }
 function HostAccess() {
     const [origins, setOrigins] = useState<string[] | null>(null);
-    const [input, setInput] = useState("");
-    const [search, setSearch] = useState("");
+    const [query, setQuery] = useState("");   // ONE box: filters the list as you type, and adds when it's a full hostname
     const [err, setErr] = useState("");
     const refresh = () => {
         try { chrome.permissions.getAll((all: any) => setOrigins((all.origins || []).filter((o: string) => !SHEETS_ORIGINS.includes(o)))); }
@@ -414,14 +413,16 @@ function HostAccess() {
         return () => { try { chrome.permissions.onAdded?.removeListener(onChange); chrome.permissions.onRemoved?.removeListener(onChange); } catch { /* ignore */ } };
     }, []);
     if (origins === null) return null;   // still probing / API unavailable
-    const pat = hostPatternFrom(input);
-    const invalid = !!input.trim() && !pat;
+    // The one input doubles as filter + add: a partial word ("github") just filters the granted list; a full
+    // hostname resolves to a pattern → Add is enabled and grants it. The list gets spammed fast (an agent
+    // fetching around a topic adds dozens), so live-filtering the same box beats a second search field.
+    const pat = hostPatternFrom(query);
     const add = () => {
         if (!pat) return;
         setErr("");
         try {
             chrome.permissions.request({ origins: [pat] }, (granted: boolean) => {
-                if (granted) { setInput(""); refresh(); }
+                if (granted) { setQuery(""); refresh(); }
                 else setErr("Not granted — you can also allow it via the browser's Extensions manager (Site access).");
             });
         } catch (e: any) { setErr(`Couldn't request access: ${e?.message || e}.`); }
@@ -429,9 +430,7 @@ function HostAccess() {
     const revoke = (origin: string) => { try { chrome.permissions.remove({ origins: [origin] }, () => refresh()); } catch { /* ignore */ } };
     const all = origins.includes("<all_urls>");
     const hosts = origins.filter(o => o !== "<all_urls>");
-    // The granted list gets spammed fast (an agent fetching around a topic can add dozens), so filter it once
-    // it's long enough to be a scroll — same pattern as the self-approval whitelist above.
-    const q = search.trim().toLowerCase();
+    const q = query.trim().toLowerCase();
     const shown = q ? hosts.filter(o => hostLabelOf(o).toLowerCase().includes(q)) : hosts;
     return (
         <Section id="hostaccess" title="Site access (agent fetches)">
@@ -440,15 +439,11 @@ function HostAccess() {
                 ? <div class="set-hint">Access to <b>all sites</b> is granted (browser Site access → “On all sites”), so every fetch is allowed.</div>
                 : <>
                     <div class="perm-add">
-                        <input class={`perm-input${invalid ? " err" : ""}`} type="text" placeholder="raw.githubusercontent.com" value={input}
-                            onInput={(e: any) => setInput(e.target.value)}
-                            onKeyDown={(e: any) => { if (e.key === "Enter") { e.preventDefault(); add(); } }} />
+                        <input class="perm-input" type="text" placeholder="Filter sites, or type a hostname to add…" value={query}
+                            onInput={(e: any) => setQuery(e.target.value)}
+                            onKeyDown={(e: any) => { if (e.key === "Enter" && pat) { e.preventDefault(); add(); } }} />
                         <button class="test-btn" disabled={!pat} onClick={add}>Add</button>
                     </div>
-                    {invalid ? <div class="set-err">Enter a valid hostname, e.g. <code>raw.githubusercontent.com</code>.</div> : null}
-                    {hosts.length > 6
-                        ? <input class="perm-search" type="search" placeholder="Filter sites…" value={search} onInput={(e: any) => setSearch(e.target.value)} />
-                        : null}
                     {hosts.length
                         ? <div class="perm-list">
                             {shown.map(o => (
@@ -457,7 +452,8 @@ function HostAccess() {
                                     <button class="perm-x" aria-label={`Revoke ${hostLabelOf(o)}`} title={`Revoke ${hostLabelOf(o)}`} onClick={() => revoke(o)}>✕</button>
                                 </span>
                             ))}
-                            {q && !shown.length ? <div class="set-hint">No sites match “{search}”.</div> : null}
+                            {/* Nothing matches: if the text is a full hostname, nudge to Add it; else it's just a dead filter. */}
+                            {q && !shown.length ? <div class="set-hint">{pat ? <>Not granted yet — press <b>Add</b> to allow <code>{hostLabelOf(pat)}</code>.</> : <>No granted sites match “{query}”.</>}</div> : null}
                           </div>
                         : <div class="set-hint">No sites granted yet — the agent asks the first time it fetches each new one.</div>}
                   </>}

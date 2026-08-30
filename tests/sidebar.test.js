@@ -557,13 +557,16 @@ test("Settings → Site access: a long granted list is filterable (it gets spamm
     const sect = () => [...w.shadow.querySelectorAll(".set-section")].find(s => /Site access/.test(s.querySelector(".set-group")?.textContent || ""));
     const hosts = () => [...sect().querySelectorAll(".perm-host")].map(e => e.textContent);
     assert.equal(hosts().length, 7, "all granted hosts show initially");
-    const filter = sect().querySelector(".perm-search");
-    assert.ok(filter, "a filter box appears once the list is long (>6)");
+    // ONE box: typing a partial word filters the granted list (no separate search field).
+    const filter = sect().querySelector(".perm-add .perm-input");
+    assert.ok(filter, "the add/filter input is present");
     filter.value = "github";
     filter.dispatchEvent(new w.window.Event("input", { bubbles: true }));
     await w.tick();
     const shown = hosts();
     assert.deepEqual(shown.sort(), ["api.github.com", "github.com", "raw.githubusercontent.com"], "only matching sites remain");
+    // A partial word isn't a valid hostname → Add stays disabled (it's a filter, not an add).
+    assert.equal(sect().querySelector(".perm-add .test-btn").disabled, true, "Add is disabled for a partial filter");
 });
 
 test("Settings → Site access: granted hosts list, revoke, and add (mirrors the popup)", async () => {
