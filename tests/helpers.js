@@ -11,6 +11,23 @@ const ROOT = path.join(__dirname, "..");
 // (npm run build) first, so dist/ is fresh. .env still lives at the repo root.
 const DIST = path.join(ROOT, "dist");
 
+// A per-sandbox QUIET console. The loaded extension code chatters on stdout — injected.js prints
+// "🟢 window.ml is ready." on EVERY boot, plus assorted console.warn/error — and in a vm sandbox that raw
+// (multi-byte) output goes straight to the test process's stdout, INTERLEAVING with node:test's
+// V8-serialized child→parent protocol. On Node 22's runner that intermittently misframes a message
+// ("Unable to deserialize cloned data due to invalid or unsupported version" — a flaky CI red on
+// tests/relay.test.js; Node 24/26 tolerate it). None of this output is asserted (the exec tool and the
+// readonly interpreter capture their OWN logs by reassigning the methods, which a fresh object still allows),
+// so route it to no-ops. Fresh object PER sandbox so exec's save/restore can't bleed across worlds. Set
+// SANDBOX_CONSOLE=1 to see the real output while debugging a test.
+function mkConsole() {
+    if (process.env.SANDBOX_CONSOLE) return console;
+    const noop = () => {};
+    const c = {};
+    for (const m of ["log", "info", "warn", "error", "debug", "trace", "dir", "group", "groupCollapsed", "groupEnd", "table", "assert", "count", "countReset", "time", "timeLog", "timeEnd"]) c[m] = noop;
+    return c;
+}
+
 // Loads KEY=VALUE pairs from a repo-root .env into process.env, for the opt-in
 // live tests. Zero-dependency (no `dotenv`); missing file is a no-op so CI and
 // offline runs are unaffected. Real environment variables win over .env, so an
@@ -93,7 +110,7 @@ function loadBackground({ config = {}, local = {}, onFetch, onCaptureTab, onPyRu
     let offscreenDoc = false;
 
     const context = {
-        console,
+        console: mkConsole(),
         URL,
         TextDecoder,
         TextEncoder,
@@ -278,7 +295,7 @@ function loadPageWorld({ onRuntimeMessage, onStream, config, caps } = {}) {
     };
 
     const context = {
-        console,
+        console: mkConsole(),
         Math,
         Date,
         Intl,
@@ -382,7 +399,7 @@ function loadDomWorld(html = "") {
     const dom = new JSDOM(`<!doctype html><html><body>${html}</body></html>`);
     const win = dom.window;
     const context = {
-        console,
+        console: mkConsole(),
         Math,
         Date,
         Intl,

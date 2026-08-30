@@ -2238,11 +2238,14 @@ test("logDebug installs a built-in console tracer and still forwards to onStep",
     const ping = world.ml.defineTool({ name: "ping", run: () => "pong" });
     const seen = [];
     const logs = [];
-    const orig = console.log;
-    console.log = (...a) => logs.push(a);
+    // logDebug's tracer logs to the SANDBOX console (world.context.console), which is a quiet no-op by default
+    // — spy on THAT, not the outer process console (they're deliberately decoupled so boot chatter can't
+    // corrupt the node:test IPC; see mkConsole in helpers.js).
+    const orig = world.context.console.log;
+    world.context.console.log = (...a) => logs.push(a);
     try {
         await world.ml.agent("t", { tools: [ping], logDebug: true, onStep: (e) => seen.push(e) });
-    } finally { console.log = orig; }
+    } finally { world.context.console.log = orig; }
 
     // Built-in tracer logged the tool line: "#1 ping", { x: 1 }, "→", "pong".
     assert.ok(logs.some(a => a[0] === "#1 ping" && a[2] === "→" && a[3] === "pong"), JSON.stringify(logs));
