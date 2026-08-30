@@ -2162,9 +2162,11 @@ function sheetNameFromDisposition(cd: string | null): string | null {
     } catch { return null; }
 }
 
-// The largest body ml.fetch keeps — big enough for a raw source file / API page, bounded so a huge response
-// can't blow up the message channel or context. The tool clips the returned text again for the model.
-const FETCH_URL_MAX = 200_000;
+// The largest body ml.fetch keeps. `ml.fetch()` is meant to feed CODE (parse a whole JSON/CSV/source file
+// in `exec`/`python_exec`), so it must NOT truncate at a small context-sized cap — the model-facing DISPLAY
+// is clipped separately (the fetch_url tool's clipOut, and exec/python's own output clip), so this bound is
+// only a memory/message-channel safety net for a pathologically huge response, set well above realistic files.
+const FETCH_URL_MAX = 8_000_000;
 /** Perform the actual uncredentialed GET for ml.fetch (host permissions bypass CORS; NO cookies). Classifies
  *  the body by header AND content (a server can mislabel), pre-parses JSON, and caps the size. Throws on a
  *  network/permission failure (the handler turns that into an actionable message). */

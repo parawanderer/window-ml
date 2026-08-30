@@ -6,6 +6,20 @@ const { loadPageWorld } = require("./helpers");
 
 const IMG = "data:image/png;base64,AAA";
 
+test("ml.fetch travels the relay, returns the FetchResult, and CACHES it for readonly reuse", async () => {
+    const result = { url: "https://x.test/a.json", status: 200, ok: true, type: "json", text: '{"n":7}', json: { n: 7 } };
+    const world = loadPageWorld({
+        onRuntimeMessage: (msg) => (msg.type === "FETCH_URL" ? { data: result } : undefined),
+    });
+    const got = await world.ml.fetch("https://x.test/a.json");
+    assert.deepEqual(got, result, "the FetchResult comes back over the relay");
+    assert.equal(world.runtimeCalls[0].type, "FETCH_URL");
+    assert.equal(world.runtimeCalls[0].payload.url, "https://x.test/a.json");
+    // The result is now cached — this is what the read-only dialect's ml.fetch reads (free re-reads).
+    assert.deepEqual(world.ml._fetchCached("https://x.test/a.json"), result, "a fetched URL is cached");
+    assert.equal(world.ml._fetchCached("https://x.test/never"), undefined, "an unfetched URL is a cache miss");
+});
+
 test("ml.chat travels the relay and returns the reply verbatim", async () => {
     const world = loadPageWorld({
         onRuntimeMessage: (msg) => {

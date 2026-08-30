@@ -178,6 +178,13 @@ class AgentHandle implements MlAgentHandle, AgentControl {
     // re-prompt. Page-scoped (module lifetime) — gone on reload; never persisted.
     const approvedSheets = new Set<string>();   // spreadsheets the user OK'd this page-session
 
+    // Results of successful `ml.fetch(url)` calls, keyed by URL. Populated when a fetch resolves (the fetch
+    // itself was already approved/consented to reach the background), so a follow-up READONLY `exec` that
+    // re-reads the same URL gets the cached result with NO approval — the `_fetchCached` reader the read-only
+    // dialect's `ml.fetch` is bound to. The python_exec+Google-Sheet parallel: approve the source ONCE, then
+    // operate on it freely. Page-scoped (module lifetime); holds only public, uncredentialed bytes.
+    const mlFetchCache = new Map<string, import("./contract").FetchResult>();
+
     // ---- Agent tool helpers (page-context DOM introspection) ----
     // These keep observations SMALL on purpose: the point of the agent is to
     // iterate with cheap probes instead of dumping HTML into the model's
@@ -2069,11 +2076,27 @@ class AgentHandle implements MlAgentHandle, AgentControl {
          * GET only — no headers, body, or auth. Each NEW url needs the user's one-time approval; then it's
          * remembered for the session.
          *
+         * Re-reading a URL you've already fetched is FREE: the result is cached (page-lifetime), and a
+         * read-only `exec` calling `ml.fetch(url)` on a cached URL returns it with no approval (only a NEW
+         * url asks). Approve the source once, then operate on it — like `python_exec` on a Google Sheet.
+         *
          * @param {string} url An absolute http(s) URL.
          * @returns {Promise<FetchResult>} { url, status, ok, type, language?, text, json?, typeBy*, truncated? }.
          */
         fetch: function(url: string): Promise<import("./contract").FetchResult> {
-            return makeBackgroundTaskPromise("FETCH_URL_REQUEST", "FETCH_URL_RESPONSE", { url: String(url) });
+            const key = String(url);
+            return makeBackgroundTaskPromise<import("./contract").FetchResult>("FETCH_URL_REQUEST", "FETCH_URL_RESPONSE", { url: key })
+                .then(r => { if (r && typeof r.status === "number") mlFetchCache.set(key, r); return r; });   // cache a completed fetch (any status) for readonly reuse
+        },
+        /**
+         * Internal: the CACHE-ONLY read the read-only dialect's `ml.fetch` is bound to. Returns a prior
+         * successful `ml.fetch(url)` result, or undefined on a miss (→ the dialect throws → the exec falls to
+         * the normal approval, which does the real fetch). Never egresses — a pure read of already-approved bytes.
+         * @param {string} url The URL to look up.
+         * @returns {FetchResult|undefined} The cached result, or undefined if this URL hasn't been fetched.
+         */
+        _fetchCached: function(url: string): import("./contract").FetchResult | undefined {
+            return mlFetchCache.get(String(url));
         },
         /**
          * Get the non-secret saved config the page is allowed to read:

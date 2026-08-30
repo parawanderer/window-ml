@@ -1304,6 +1304,10 @@ export interface MlApi {
      *  you can chain (`.json` is pre-parsed; hand `.text` of a CSV to `python_exec`). Each new URL requires the
      *  user's one-time approval (then it's remembered for the session). GET only — no headers, body, or auth. */
     fetch(url: string): Promise<FetchResult>;
+    /** Internal: CACHE-ONLY read of a prior `ml.fetch(url)` result (or undefined on a miss). The read-only
+     *  `exec` dialect binds its `ml.fetch` to this, so re-reading an already-fetched URL is free (no egress).
+     *  Not part of the stable public API. */
+    _fetchCached(url: string): FetchResult | undefined;
     config(): Promise<MlPublicConfig>;
     setModel(model: string): Promise<string>;
     ps(): Promise<LoadedModel[]>;

@@ -521,6 +521,19 @@ function mlFacade(ml: unknown): Record<string, unknown> | null {
         const fn = (ml as Record<string, unknown>)[name];
         if (typeof fn === "function") out[name] = (fn as (...a: unknown[]) => unknown).bind(ml);
     }
+    // `ml.fetch(url)` in the dialect is CACHE-ONLY: it returns an ALREADY-fetched result (a pure read of
+    // bytes the user already approved fetching) and THROWS on a cache miss — so a NEW url falls through to
+    // the normal approval + full eval, which does the real (egress) fetch. It NEVER egresses in read-only,
+    // so a survey that re-reads an approved URL auto-approves (the python_exec+Sheet parallel). Kept OUT of
+    // ML_READONLY_METHODS (which drives the "always free" docs) because it's free only for cached URLs.
+    const cachedFetch = (ml as Record<string, unknown>)["_fetchCached"];
+    if (typeof cachedFetch === "function") {
+        out.fetch = (url: unknown): unknown => {
+            const r = (cachedFetch as (u: unknown) => unknown).call(ml, url);
+            if (r === undefined) throw new Denied(`fetch(${JSON.stringify(String(url))}) isn't cached — approve it once, then re-reads are free`);
+            return r;
+        };
+    }
     return Object.keys(out).length ? out : null;
 }
 

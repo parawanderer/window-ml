@@ -419,7 +419,16 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 "querySelectorAll that returns an Array and understands the same selector dialect the DOM " +
                 "tools use (`>>>` crosses each OPEN shadow root / same-origin iframe; a trailing " +
                 "`:contains(\"text\")` filters by visible text) — instead of hand-chaining `.shadowRoot` / " +
-                "`.contentDocument`." +
+                "`.contentDocument`. " +
+                // ml.fetch in exec: the fetch_url tool, callable inline — the payoff is cached RE-reads are a
+                // read-only op (free), so approve a source once then parse/slice it across calls. Trimmed
+                // signature here; full FetchResult type is in agent_api_docs.
+                "CROSS-SITE READS: `ml.fetch(url)` — the same GET as the `fetch_url` tool, but callable inline — " +
+                "reads a raw file / JSON API / other site the DOM can't reach, returning " +
+                "`{ url, status, ok, type: 'json'|'csv'|'html'|'code'|'text'|…, text, json? }` (full type via " +
+                "`agent_api_docs`). A NEW url asks once; then RE-reading that same url from a read-only survey is " +
+                "FREE (cached) — approve a source once, then parse/slice/re-query it freely (like `python_exec` on " +
+                "a Google Sheet). " +
                 "PERSISTENT STATE: you have a `state` object (also `ml.state`) that is NOT reset between calls — " +
                 "it's a live page kernel, like cells in a Jupyter notebook. For any multi-step work, DEFINE helper " +
                 "functions and stash intermediate results on it ONCE, then REUSE them on later calls instead of " +

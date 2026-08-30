@@ -295,6 +295,25 @@ test("the free ml reads run in-dialect (getModel / config / models / capabilitie
     assert.deepEqual((await run(`(await ml.serverTools()).map(t => t.id)`)).value, ["searxng_search"]);
 });
 
+test("ml.fetch is CACHE-ONLY in the dialect: a cached URL reads free, a new URL falls to approval (never egresses)", async () => {
+    const cached = { url: "https://x.test/data.json", status: 200, ok: true, type: "json", text: '{"n":7}', json: { n: 7 } };
+    const ml = {
+        getModel: async () => "m",
+        // The real (egress) fetch must NEVER be reached from the dialect — the facade binds _fetchCached instead.
+        fetch: async () => { throw new Error("RAN: real fetch (egress) — must not happen in read-only"); },
+        _fetchCached: (url) => (url === cached.url ? cached : undefined),
+    };
+    // A cached URL: returns the stored result, no egress, no approval.
+    assert.deepEqual((await run(`ml.fetch("https://x.test/data.json")`, world(), ml)).value, cached);
+    // …and its fields are usable (the payoff: re-read + process a source without re-approval).
+    assert.equal((await run(`ml.fetch("https://x.test/data.json").json.n`, world(), ml)).value, 7);
+    assert.equal((await run(`ml.fetch("https://x.test/data.json").text.length`, world(), ml)).value, cached.text.length);
+    // A NEW (uncached) URL: throws Denied → the exec falls to normal approval + the real fetch.
+    await assert.rejects(run(`ml.fetch("https://x.test/other.json")`, world(), ml), outOfDialect);
+    // Absent _fetchCached (no fetch ever made) → ml.fetch simply isn't on the facade → NotInDialect.
+    await assert.rejects(run(`ml.fetch("https://x.test/data.json")`, world(), { getModel: async () => "m" }), outOfDialect);
+});
+
 test("awaits compose anywhere in the expression, not just at a statement seam", async () => {
     const js = `return { model: await ml.getModel(), count: (await ml.models()).length }`;
     assert.deepEqual((await run(js)).value, { model: "gemma4:31b", count: 2 });
