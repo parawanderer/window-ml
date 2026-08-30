@@ -187,7 +187,7 @@ function onDebug(ev: MlDebugEvent): void {
     if (ev.kind === "agent-stream") {
         const s = sessionMap.get(ev.session.hash);
         if (!s) return;
-        s.liveStream = { step: ev.step, reasoning: ev.reasoning, content: ev.content };
+        s.liveStream = { step: ev.step, localStep: ev.localStep, reasoning: ev.reasoning, content: ev.content };
         s.status = "pending"; s.ended = false; s.lastTs = ev.ts; rev.value++;
         return;
     }
@@ -631,42 +631,49 @@ function CopyModel({ model }: { model: string }) {
 // timestamp) over the body (markdown ⇄ raw, collapsible), with optional thinking
 // and sources. No "assistant"/"answer" word — the header controls carry the
 // meaning; `label` appears only for an exceptional state (e.g. an agent step-cap).
-function ReplyBubble({ content, status, model, profile, ts, reasoning = null, sources = null, error, label, capped, initialRaw, resumeCap }: {
+function ReplyBubble({ content, status, model, profile, ts, reasoning = null, sources = null, error, label, capped, initialRaw, resumeCap, streaming }: {
     content: string; status: Status; model: string | null; profile: "utility" | "default" | null; ts: number;
     reasoning?: string | null; sources?: unknown[] | null; error?: string; label?: string; capped?: boolean; initialRaw?: boolean;
     resumeCap?: { hash: string; steps: number };   // a step-capped run → a "Continue (+N steps)" button (resume, fresh budget)
+    streaming?: boolean;   // the answer is STREAMING live — same bubble as the finished reply (model chip + content) with a live pulse, no copy/raw/stamp yet
 }) {
     const [showRaw, setShowRaw] = useState(!!initialRaw);
     const [collapsed, setCollapsed] = useState(false);
     // "There's a reply to show" — true for an OK turn AND a step-capped agent answer
-    // (status "err" but it still produced a summary). A real error has `error` set.
-    const hasReply = status !== "pending" && !error;
+    // (status "err" but it still produced a summary). A real error has `error` set. A streaming reply
+    // also has content to show (it's filling in), so it renders the body too.
+    const hasReply = (status !== "pending" && !error) || !!streaming;
     const preview = hasReply ? collapsedPreview(content) : null;
     return (
-        <div class={`msg asst ${status}${capped ? " capped" : ""}`}>
+        <div class={`msg asst ${status}${capped ? " capped" : ""}${streaming ? " streaming" : ""}`}>
             <div class="mrow">
                 {/* Chevron (collapse affordance) · status dot · an optional label for
-                    an exceptional state (e.g. an agent step-cap stop). */}
-                {hasReply
-                    ? <button class="who-toggle" title={collapsed ? "expand" : "collapse"} onClick={() => setCollapsed(v => !v)}>
-                        <span class={`tri${collapsed ? "" : " open"}`} aria-hidden="true"><IconChevron /></span>
-                    </button>
-                    : null}
-                <Dot status={status} />
+                    an exceptional state (e.g. an agent step-cap stop). While STREAMING: a live pulse instead
+                    of the collapse chevron + status dot, and no copy/raw/stamp yet (they land when it settles). */}
+                {streaming
+                    ? <span class="live-dot" aria-hidden="true" />
+                    : <>
+                        {hasReply
+                            ? <button class="who-toggle" title={collapsed ? "expand" : "collapse"} onClick={() => setCollapsed(v => !v)}>
+                                <span class={`tri${collapsed ? "" : " open"}`} aria-hidden="true"><IconChevron /></span>
+                            </button>
+                            : null}
+                        <Dot status={status} />
+                    </>}
                 {label ? <span class="who">{label}</span> : null}
                 {/* The model that produced this reply + its (default)/(utility) profile. */}
                 {hasReply && model ? <CopyModel model={model} /> : null}
                 {hasReply && model && profile ? <span class="profile-inline">({profile})</span> : null}
                 <span class="sp" />
                 {/* Copy + raw⇄nice are for a real reply. A terminal notice (a step-cap
-                    stop) is a short line — collapsible is enough; copy/raw are noise. */}
-                {hasReply && !capped
+                    stop) is a short line — collapsible is enough; copy/raw are noise. Not while streaming. */}
+                {hasReply && !capped && !streaming
                     ? <>
                         <CopyBtn text={content} tip="copy markdown" />
                         {collapsed ? null : <button class="raw-btn" onClick={() => setShowRaw(v => !v)}>{showRaw ? "nice" : "raw"}</button>}
                     </>
                     : null}
-                <Stamp ts={ts} />
+                {streaming ? null : <Stamp ts={ts} />}
             </div>
             {/* Reasoning/thinking text (separate from the reply), collapsed by default. */}
             {hasReply && !collapsed && reasoning
@@ -1653,35 +1660,29 @@ function AgentRunView({ s }: { s: Session }) {
         <>
             <AgentOptionsBlock s={s} />
             {items.map(it => it.el)}
-            {s.liveStream ? <LiveStream ls={s.liveStream} /> : null}
+            {s.liveStream ? <LiveStream ls={s.liveStream} s={s} /> : null}
             {s.status === "pending" ? <PendingNote s={s} /> : null}
         </>
     );
 }
 
 // The model's LIVE output while the current step streams (opt-in stream:true) — fed into the SAME container
-// shapes the finished run uses, not a bespoke block: the reasoning into a live `ThoughtBlock` (ticking token
-// count, expand to watch the text append), the reply into a live answer bubble. Cleared the instant the step's
-// real events land (the reducer nulls liveStream on agent-step/agent-result).
-function LiveStream({ ls }: { ls: NonNullable<Session["liveStream"]> }) {
+// SHAPES the finished run uses, so when the step resolves there's no jarring jump: the reasoning into an
+// `.aturn` group (StepPill + a live `ThoughtBlock`, ticking count, expand to watch), the reply into the real
+// `ReplyBubble` in streaming mode (model chip + content + a live pulse). Cleared the instant the step's real
+// events land (the reducer nulls liveStream on agent-step/agent-result).
+function LiveStream({ ls, s }: { ls: NonNullable<Session["liveStream"]>; s: Session }) {
     if (!ls.reasoning && !ls.content) return null;
     return (
         <>
-            {ls.reasoning ? <ThoughtBlock thought={ls.reasoning} live /> : null}
-            {ls.content ? <LiveReply content={ls.content} /> : null}
+            {ls.reasoning
+                ? <div class="aturn">
+                    <div class="aturn-head"><StepPill step={ls.localStep ?? ls.step} max={s.maxSteps} /></div>
+                    <ThoughtBlock thought={ls.reasoning} live />
+                  </div>
+                : null}
+            {ls.content ? <ReplyBubble content={ls.content} status="ok" model={s.model} profile={sessionProfile(s)} ts={ls.step /* unused while streaming */} streaming /> : null}
         </>
-    );
-}
-// The final answer as it streams — styled like the finished reply bubble (markdown), with a live pulse, so
-// the answer fills in the SAME container it'll settle into rather than a separate preview. Auto-scrolls.
-function LiveReply({ content }: { content: string }) {
-    const ref = useRef<HTMLDivElement>(null);
-    useEffect(() => { if (ref.current) ref.current.scrollTop = ref.current.scrollHeight; });
-    return (
-        <div class="msg asst live-reply">
-            <div class="mrow"><span class="live-dot" aria-hidden="true" /><span class="who">replying</span></div>
-            <div class="md live-reply-body" ref={ref} dangerouslySetInnerHTML={{ __html: markdown(content, { math: true }) }} />
-        </div>
     );
 }
 
@@ -3365,7 +3366,7 @@ function CardApp() {
                         // trace, not the finished-answer branch (which would render an empty "no reply yet").
                         ? <>
                             <div class="card-answer dim card-working"><span class="card-work-ic" aria-hidden="true">{activityFor(run).icon}</span>{liveProseFor(run) || activityFor(run).label}<span class="pill-dots"><i /><i /><i /></span></div>
-                            {run.liveStream ? <LiveStream ls={run.liveStream} /> : null}
+                            {run.liveStream ? <LiveStream ls={run.liveStream} s={run} /> : null}
                             {(run.steps || []).some(s => s.tool) ? <ShowWork run={run} /> : null}
                           </>
                         : <>

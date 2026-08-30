@@ -317,10 +317,8 @@ html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
 .athinking.live .who { color: var(--accent); }
 .athinking.live .astep-preview { color: var(--accent); }
 .live-scroll { white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow-y: auto; }
-/* Live reply — the answer streaming into a bubble like the finished reply. */
-.live-reply .mrow { display: flex; align-items: center; gap: 6px; }
-.live-reply .mrow .who { color: var(--accent); font-size: .82em; text-transform: uppercase; letter-spacing: .03em; }
-.live-reply-body { max-height: 260px; overflow-y: auto; }
+/* A streaming reply is the SAME .msg.asst bubble as the finished one — just a live pulse in place of the
+   collapse chevron/dot, and no copy/raw/stamp yet. Nothing extra to style; the .live-dot carries the cue. */
 /* Conversation blocks in the card trace: your prompts ("you asked") and past answers ("answered") — same
    disclosure shape as thinking. The card is the MINIMAL/monochrome surface (DevTools is the colourful one),
    so these read white + bold (the conversation anchors), set apart from the dim italic "thinking" by weight,

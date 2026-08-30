@@ -1188,7 +1188,7 @@ export interface DebugAgentConfig {
 /** Live model output DURING a step, before the turn resolves — only when the run opted into `stream:true`.
  *  Carries the ACCUMULATED-so-far reasoning/content (the UI REPLACES, not appends, so a dropped/duplicated
  *  event still converges). Lets a long "thinking" phase show its text live instead of a frozen token count. */
-export interface DebugAgentStream extends DebugBase { kind: "agent-stream"; step: number; reasoning?: string; content?: string; }
+export interface DebugAgentStream extends DebugBase { kind: "agent-stream"; step: number; localStep?: number; reasoning?: string; content?: string; }
 export interface DebugAgentStart extends DebugBase { kind: "agent"; task: string; images?: string[]; model: string | null; maxSteps: number; config: DebugAgentConfig; resumed?: boolean; }
 export interface DebugAgentStep extends DebugBase {
     kind: "agent-step"; step: number;

@@ -1580,7 +1580,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                         const flush = (acc: { reasoning: string; content: string }): void => {
                             if (abortCtl.signal.aborted) return;
                             last = Date.now();
-                            fanEvent({ kind: "agent-stream", id: runId, ts: last, save: false, session: { hash: runId, turn: step }, step,
+                            fanEvent({ kind: "agent-stream", id: runId, ts: last, save: false, session: { hash: runId, turn: step }, step, localStep: rawStep,
                                 ...(acc.reasoning ? { reasoning: acc.reasoning } : {}), ...(acc.content ? { content: acc.content } : {}) });
                         };
                         const r = await streamAgentTurn({ messages, tools: toolDefs, model: p.model, think: p.think },
