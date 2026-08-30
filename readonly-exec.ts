@@ -577,7 +577,9 @@ function mlFacade(ml: unknown, reused?: string[]): Record<string, unknown> | nul
     // ML_READONLY_METHODS (which drives the "always free" docs) because it's free only for cached URLs.
     const cachedFetch = (ml as Record<string, unknown>)["_fetchCached"];
     if (typeof cachedFetch === "function") {
-        out.fetch = (url: unknown): unknown => {
+        out.fetch = (url: unknown, opts?: unknown): unknown => {
+            // `fetch(url, { fresh: true })` explicitly SKIPS the cache → force a real (egress) fetch → approval.
+            if (opts && typeof opts === "object" && (opts as { fresh?: unknown }).fresh) throw new Denied("fetch({ fresh: true }) skips the cache — a fresh fetch needs approval");
             const r = (cachedFetch as (u: unknown) => unknown).call(ml, url);
             if (r === undefined) throw new Denied(`fetch(${JSON.stringify(String(url))}) isn't cached — approve it once, then re-reads are free`);
             reused?.push(String(url));   // a cache HIT = this survey re-read a URL you already approved (transparency)

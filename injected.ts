@@ -2110,21 +2110,24 @@ class AgentHandle implements MlAgentHandle, AgentControl {
          * GET only — no headers, body, or auth. Each NEW url needs the user's one-time approval; then it's
          * remembered for the session.
          *
-         * Re-reading a URL you've already fetched is FREE: the result is cached (page-lifetime), and a
-         * read-only `exec` calling `ml.fetch(url)` on a cached URL returns it with no approval (only a NEW
-         * url asks). Approve the source once, then operate on it — like `python_exec` on a Google Sheet.
+         * Re-reading a URL you've already fetched is FREE: a SUCCESSFUL result is cached (page-lifetime), and a
+         * read-only `exec` calling `ml.fetch(url)` on a cached URL returns it with no approval (only a NEW url
+         * asks). Approve the source once, then operate on it — like `python_exec` on a Google Sheet. Failures
+         * (non-2xx) are NOT cached, so a retry after the server recovers re-fetches. Pass `{ fresh: true }` to
+         * SKIP the cache and force a fresh fetch (a real fetch → needs approval even for a cached url).
          *
          * When the body is JSON, `.json` is the parsed value and `.schema` is a compact TS-like SHAPE of it
          * (`{ id: number, items: { name: string }[] }`) — the structure to write code against without holding
          * the whole payload.
          *
          * @param {string} url An absolute http(s) URL.
+         * @param {{ fresh?: boolean }} [opts] `fresh: true` bypasses the read cache (forces a live fetch).
          * @returns {Promise<FetchResult>} { url, status, ok, type, language?, text, json?, schema?, typeBy*, truncated? }.
          */
-        fetch: function(url: string): Promise<import("./contract").FetchResult> {
-            const key = String(url);
+        fetch: function(url: string, _opts?: { fresh?: boolean }): Promise<import("./contract").FetchResult> {
+            const key = String(url);   // the real method always fetches live; `fresh` only matters for the read-only cache path
             return makeBackgroundTaskPromise<import("./contract").FetchResult>("FETCH_URL_REQUEST", "FETCH_URL_RESPONSE", { url: key })
-                .then(r => { if (r && typeof r.status === "number") mlFetchCache.set(key, r); return r; });   // cache a completed fetch (any status) for readonly reuse
+                .then(r => { if (r && r.ok) mlFetchCache.set(key, r); return r; });   // cache ONLY a successful (2xx) fetch for readonly reuse
         },
         /**
          * Internal: the CACHE-ONLY read the read-only dialect's `ml.fetch` is bound to. Returns a prior

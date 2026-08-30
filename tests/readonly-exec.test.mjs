@@ -312,6 +312,10 @@ test("ml.fetch is CACHE-ONLY in the dialect: a cached URL reads free, a new URL 
     await assert.rejects(run(`ml.fetch("https://x.test/other.json")`, world(), ml), outOfDialect);
     // Absent _fetchCached (no fetch ever made) → ml.fetch simply isn't on the facade → NotInDialect.
     await assert.rejects(run(`ml.fetch("https://x.test/data.json")`, world(), { getModel: async () => "m" }), outOfDialect);
+    // `{ fresh: true }` explicitly SKIPS the cache → forces a real fetch → falls to approval, even for a cached url.
+    await assert.rejects(run(`ml.fetch("https://x.test/data.json", { fresh: true })`, world(), ml), outOfDialect);
+    // A falsy/absent fresh flag still reads the cache (free).
+    assert.deepEqual((await run(`ml.fetch("https://x.test/data.json", { fresh: false })`, world(), ml)).value, cached);
 });
 
 test("awaits compose anywhere in the expression, not just at a statement seam", async () => {

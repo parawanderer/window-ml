@@ -87,6 +87,14 @@ test("ml.fetch travels the relay, returns the FetchResult, and CACHES it for rea
     assert.equal(world.ml._fetchCached("https://x.test/never"), undefined, "an unfetched URL is a cache miss");
 });
 
+test("ml.fetch: a FAILED (non-2xx) fetch is NOT cached — a retry re-fetches after the server recovers", async () => {
+    const bad = { url: "https://x.test/down", status: 503, ok: false, type: "text", text: "Service Unavailable", typeByHeader: "text", typeByContent: "text", typeByExtension: null, contentType: "text/plain" };
+    const world = loadPageWorld({ onRuntimeMessage: (m) => (m.type === "FETCH_URL" ? { data: bad } : undefined) });
+    const got = await world.ml.fetch("https://x.test/down");
+    assert.equal(got.status, 503, "the failure result is returned to the caller");
+    assert.equal(world.ml._fetchCached("https://x.test/down"), undefined, "…but NOT cached (so a readonly re-read re-fetches, not serves the stale 503)");
+});
+
 test("ml.chat travels the relay and returns the reply verbatim", async () => {
     const world = loadPageWorld({
         onRuntimeMessage: (msg) => {

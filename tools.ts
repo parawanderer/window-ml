@@ -430,7 +430,8 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 "SHAPE of it (`{ id: number, items: { name: string }[] }`) — read that to learn the structure of a " +
                 "big payload without dumping it all. A NEW url asks once; then RE-reading that same url from a " +
                 "read-only survey is FREE (cached) — approve a source once, then parse/slice/re-query it freely " +
-                "(like `python_exec` on a Google Sheet). " +
+                "(like `python_exec` on a Google Sheet). Failures aren't cached; pass `ml.fetch(url, { fresh: " +
+                "true })` to SKIP the cache and force a live re-fetch (needs approval, even for a cached url). " +
                 "PERSISTENT STATE: you have a `state` object (also `ml.state`) that is NOT reset between calls — " +
                 "it's a live page kernel, like cells in a Jupyter notebook. For any multi-step work, DEFINE helper " +
                 "functions and stash intermediate results on it ONCE, then REUSE them on later calls instead of " +
