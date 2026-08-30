@@ -34,7 +34,7 @@ import type {
 } from "./contract";
 import { detectGroundingModel, DEFAULT_GROUNDING_RANGE } from "./contract";
 import { evalReadonly } from "./readonly-exec";
-import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement, navTarget } from "./dom";
+import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement, navTarget, clipOut } from "./dom";
 import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_NOTE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_EXEC_NOTE, IFRAME_CLAUSE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, EXEC_RANGE_CLAUSE, NAV_OFF_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, askAboutTask } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, markSeen, PT_LOOK_RADIUS, BOX_RE, resolveBox, agentState, mlRange } from "./util";
 import type { ShotBox, ServerTool, VisionMemory, RebuildConfig, AnswerMedia } from "./contract";
@@ -636,6 +636,10 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             // below). `navigate: false` disables it entirely — no tool, no cross-page persistence (the run
             // ends at a nav), and NAV_OFF_CLAUSE tells the model so instead of it wasting steps trying.
             if (navigate && !toolset.some(t => t.name === "navigate")) toolset.push(this.navigateTool({ crossOrigin }));
+            // fetch_url: READ a URL the page can't (a raw file / API / other site) WITHOUT navigating — a gated,
+            // uncredentialed GET. Auto-wired into the default kit (like navigate); it needs no navigation, so it's
+            // added even on a navigate:false run. requiresApproval, so always-on is safe.
+            if (!toolset.some(t => t.name === "fetch_url")) toolset.push(this.fetchTool());
             // Composer attachments for THIS turn's first user message (a screenshot pasted/uploaded into the
             // HUD/sidebar). A vision-capable driver sees them natively; otherwise transcribe via the reader
             // (ml.read → the OCR model) and fold the text into the task, so a text-only agent still gets the
@@ -1506,6 +1510,47 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             });
         },
         /**
+         * Build the `fetch_url` tool: GET a URL's content (uncredentialed, via the background) so the agent can
+         * READ a file/API/other page WITHOUT navigating there. requiresApproval — a new URL hits the unforgeable
+         * gate; an already-approved one auto-approves. Auto-wired into ml.agent unless `fetch: false`.
+         *
+         * @returns {MlTool} A tool with `name: "fetch_url"` and `requiresApproval: true`.
+         */
+        fetchTool: function(): MlTool {
+            const ml = this;
+            return ml.defineTool({
+                name: "fetch_url",
+                requiresApproval: true,   // a NEW url hits the unforgeable gate; an approved one auto-approves (autoApprove)
+                summary: "Fetches a URL's content (uncredentialed GET) to read a file/API the page can't.",
+                description: "GET a URL's content via the extension — bypasses CORS, sends NO cookies. Use it to " +
+                    "READ a raw file, a JSON API, or another site WITHOUT navigating there (also works on pages " +
+                    "that block the extension, e.g. raw.githubusercontent.com). The result reports the body plus a " +
+                    "best-effort TYPE (json/csv/html/xml/markdown/code/text) so you can chain — JSON comes " +
+                    "pre-parsed, hand a CSV to python_exec, a code file names its language. The type is a HEURISTIC " +
+                    "(resolved from the Content-Type header, a content sniff, and the URL extension — a server can " +
+                    "mislabel), not authoritative. GET only (no headers/body/auth). Each NEW url is approved once by " +
+                    "the user, then remembered for the session. Prefer this over `navigate` when you only need to READ a URL.",
+                parameters: {
+                    type: "object",
+                    properties: { url: { type: "string", description: "The absolute http(s) URL to fetch." } },
+                    required: ["url"],
+                },
+                // Show the URL in the approval card (an `action` render → the intent sentence "Agent wants to fetch <url>").
+                render: (_input: unknown, args?: Record<string, unknown>): RenderDescriptor =>
+                    ({ type: "action", verb: "fetch", target: String((args as { url?: unknown } | undefined)?.url ?? "") }),
+                run: async ({ url }: { url?: unknown } = {}): Promise<string> => {
+                    if (typeof url !== "string" || !url.trim()) return "Error: fetch_url needs a `url`.";
+                    let r: import("./contract").FetchResult;
+                    try { r = await ml.fetch(url); }
+                    catch (e) { return `Error: ${errText(e)}`; }
+                    const mislabel = r.typeByHeader && r.typeByHeader !== r.type ? ` (header said "${r.typeByHeader}")` : "";
+                    const head = `Fetched ${r.url} — HTTP ${r.status}, type: ${r.type}${r.language ? ` (${r.language})` : ""}${mislabel}${r.truncated ? " · body truncated" : ""}.`;
+                    const body = r.json !== undefined ? JSON.stringify(r.json, null, 2) : r.text;
+                    return `${head}\n\n${clipOut(body, 4000)}`;
+                },
+            });
+        },
+        /**
          * Cross-page persistence: rebuild a run's BUILTIN toolset from a serializable {@link RebuildConfig}
          * (tool names + carried vision facts) on a fresh document after a same-site navigation. Only builtin
          * tools cross a nav — custom function tools (passed via `tools`/`extraTools`) don't serialize, so a
@@ -1524,6 +1569,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             if (want.has("python_exec")) out.push(ml.pythonTool());
             if (want.has("chat_metadata")) out.push(ml.chatMetaTool());
             if (want.has("navigate")) out.push(ml.navigateTool({ crossOrigin: rebuild.crossOrigin }));
+            if (want.has("fetch_url")) out.push(ml.fetchTool());
             // Auto-wired vision tools, rebuilt from the carried facts (no re-probe) with a fresh near-area memory.
             if (want.has("look") || want.has("locate")) {
                 const memory: VisionMemory = { seen: [], boundariesSeen: new Set() };
@@ -2006,6 +2052,27 @@ class AgentHandle implements MlAgentHandle, AgentControl {
          * @returns {number[]} The integer sequence.
          */
         range: mlRange,
+        /**
+         * GET a URL's content via the background worker — bypasses CORS (host permissions), sends NO cookies
+         * (uncredentialed). Use it to READ a page/file the current DOM can't reach — a raw source file, a JSON
+         * API, another site — instead of NAVIGATING there (which also dodges pages that block the extension,
+         * e.g. raw.githubusercontent.com's sandbox CSP).
+         *
+         * Returns a FetchResult: `.type` classifies the body as json/csv/html/xml/markdown/code/text so you can
+         * chain — `.json` is pre-parsed for JSON; hand a CSV's `.text` to `python_exec`; `.language` names a
+         * code file's language. The type is a best-effort HEURISTIC (resolved from the Content-Type header,
+         * then a content sniff, then the URL extension — a server can mislabel, so `.typeByHeader`/`.typeByContent`/
+         * `.typeByExtension` are all reported); don't treat it as authoritative.
+         *
+         * GET only — no headers, body, or auth. Each NEW url needs the user's one-time approval; then it's
+         * remembered for the session.
+         *
+         * @param {string} url An absolute http(s) URL.
+         * @returns {Promise<FetchResult>} { url, status, ok, type, language?, text, json?, typeBy*, truncated? }.
+         */
+        fetch: function(url: string): Promise<import("./contract").FetchResult> {
+            return makeBackgroundTaskPromise("FETCH_URL_REQUEST", "FETCH_URL_RESPONSE", { url: String(url) });
+        },
         /**
          * Get the non-secret saved config the page is allowed to read:
          * { model, ocrModel, apiFormat }. The server URL and API key are never

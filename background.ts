@@ -6,7 +6,8 @@ import type { MlConfig, ApiFormat, NeutralMessage, ToolCall, FetchLlmPayload, Ll
 import { DEFAULT_CONFIG, modelFilterAllows, bgRunResumable } from "./contract";   // single source of truth (see contract.ts)
 import { runBackgroundAgent } from "./agent-host";   // design A: the background-hosted agent loop
 import type { ToolMeta } from "./agent-loop";
-import { externalSheetIds, googleSheetId } from "./dom";   // track approved external sheets across a run + the choke-point grants
+import { externalSheetIds, googleSheetId, classifyContent } from "./dom";   // track approved external sheets across a run + the choke-point grants; classify a fetched body
+import type { FetchResult } from "./contract";
 import { createNavBarrier } from "./nav-barrier";   // cross-page persistence: hold delegated tools while a run's tab navigates
 
 // The wire body we assemble for a chat request (grows per format/options).
@@ -1003,7 +1004,7 @@ if (typeof chrome !== "undefined" && chrome.webNavigation?.onCommitted) {
     });
 }
 if (typeof chrome !== "undefined" && chrome.tabs?.onRemoved) {
-    chrome.tabs.onRemoved.addListener((tabId) => { activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); });
+    chrome.tabs.onRemoved.addListener((tabId) => { activeRuns.delete(tabId); navBarrier.forget(tabId); readoptPageInfo.delete(tabId); fetchConsent.delete(tabId); });
 }
 
 // ---- Choke-point consent (docs/spec/CHOKEPOINT_CONSENT_SPEC.md) ----
@@ -1011,8 +1012,21 @@ if (typeof chrome !== "undefined" && chrome.tabs?.onRemoved) {
 // A privileged call passes iff: a trusted surface (sender.tab == null), a whitelisted domain, or a per-call
 // grant the design-A loop minted after an iframe approval. Grants are scoped to the approved tool's
 // delegation (minted in delegateTool, cleared when it returns), keyed by (tabId, resource).
-type TabGrants = { sheets: Set<string>; pyCode: Set<string> };
+// `fetchOpen` = an approved `exec` is running: its inline `ml.fetch()` calls are allowed FOR THIS RUN (the
+// human approved the code containing them). Ephemeral like the rest — cleared when the exec delegation
+// returns; persisting a fetched URL for the session is the separate, explicit button-#3 path (not this).
+type TabGrants = { sheets: Set<string>; pyCode: Set<string>; fetchOpen?: boolean };
 const pendingGrants = new Map<number, TabGrants>();
+// PERSISTENT per-tab consent for `ml.fetch` — the exact URLs the user has approved fetching this session
+// (per-URL, not per-origin: the human sees + approves each). Grown ONLY inside a background run's approval
+// `resolve` (unforgeable — a page can't add to it); read by the FETCH_URL handler to authorise an untrusted
+// page's fetch and by `fetchNeedsConsent` to auto-approve a repeat. Cleared when the tab closes.
+const fetchConsent = new Map<number, Set<string>>();
+const consentFetch = (tabId: number, url: string): void => {
+    let s = fetchConsent.get(tabId);
+    if (!s) { s = new Set(); fetchConsent.set(tabId, s); }
+    s.add(url);
+};
 const grantsFor = (tabId: number): TabGrants => {
     let g = pendingGrants.get(tabId);
     if (!g) { g = { sheets: new Set(), pyCode: new Set() }; pendingGrants.set(tabId, g); }
@@ -1433,6 +1447,9 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     // choke-point grants for the privileged sub-ops this tool will make, bound to the exact
                     // resources in its args — an untrusted page's FETCH_SHEET / full PYTHON_EXEC checks them.
                     // Scoped to this delegation: cleared in `finally`, so a later call needs its own approval.
+                    // An APPROVED exec may fetch inline (ml.fetch): the human saw the code, so allow its fetches
+                    // for THIS run (ephemeral — cleared below). Persisting a URL is button #3, not this.
+                    if (name === "exec") grantsFor(tabId).fetchOpen = true;
                     if (name === "python_exec") {
                         const g = grantsFor(tabId);
                         for (const id of externalSheetIds(args)) g.sheets.add(id);
@@ -1567,6 +1584,10 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                                 // Approving a cross-origin nav consents to that ORIGIN for the rest of the run
                                 // (repeat navs to it then skip the gate).
                                 if (ok && tool === "navigate") { try { consentedOrigins.add(new URL(String((args as { url?: unknown }).url ?? "")).origin); } catch { /* relative/bad url — nothing to remember */ } }
+                                // Approving a fetch_url consents to that EXACT url for the rest of the session
+                                // (per-URL — the human saw + approved it); repeat fetches of it then auto-approve,
+                                // and the FETCH_URL handler authorises the page's uncredentialed GET of it.
+                                if (ok && tool === "fetch_url") { const u = String((args as { url?: unknown }).url ?? ""); if (u) consentFetch(tabId, u); }
                                 resolve(decision);
                             },
                             // What the external approver sees when it enumerates gates (the UI shows the same
@@ -1585,6 +1606,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 },
                 isSheetApproved: (id) => approvedSheets.has(id),
                 navNeedsConsent,   // cross-origin nav → gate; same-site / already-consented → auto (see consentedOrigins)
+                fetchNeedsConsent: (url) => !fetchConsent.get(tabId)?.has(url),   // a NEW url → gate; an already-approved one → auto
                 checkpoint: (messages) => persistRun(runId, { p, tabId, messages, sub: snapSub() }),   // durable resume snapshot per step
                 // This turn's delegated vision sub-call tally (accumulated from each delegated tool's envelope
                 // delta in delegateTool) — so chat_metadata reports the real number on the background path too.
@@ -1707,6 +1729,49 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             }
             try { sendResponse({ data: await fetchSheetCsv(url) }); }   // { csv, name } — name from Content-Disposition
             catch (err) { sendResponse({ error: (err as Error)?.message || String(err) }); }
+        })();
+        return true;   // async
+    }
+    if (message.type === "FETCH_URL") {
+        // ml.fetch(url): an UNCREDENTIALED GET the agent uses to READ content the page can't (a raw file, a
+        // JSON API, another site) — bypasses CORS via host permissions, but sends NO cookies. CHOKE-POINT:
+        // there's no URL host-lock (arbitrary URLs are the point), so the boundary IS the consent — an
+        // untrusted page may fetch only a URL the user approved for THIS tab (grown in a run's approval,
+        // unforgeable). A trusted surface / whitelisted domain is unrestricted. Only http(s) targets.
+        (async () => {
+            const url = String((message.payload as { url?: unknown })?.url || "");
+            let scheme = "";
+            try { scheme = new URL(url).protocol; } catch { sendResponse({ error: `Refused: "${url}" is not a valid URL.` }); return; }
+            if (scheme !== "http:" && scheme !== "https:") { sendResponse({ error: `Refused: ml.fetch supports only http(s) URLs (got "${scheme}").` }); return; }
+            const tabId = sender.tab?.id;
+            const untrusted = await senderTrust(sender) === "untrusted";
+            // fetchOpen = an approved exec is running (its inline fetches are OK for the run — redirects included,
+            // it's the code the human approved). Per-URL consent = the human approved EXACTLY this url.
+            const execOpen = tabId != null && !!pendingGrants.get(tabId)?.fetchOpen;
+            if (untrusted && !execOpen && !(tabId != null && fetchConsent.get(tabId)?.has(url))) {
+                sendResponse({ error: `Refused: "${url}" hasn't been approved for fetching on this page. Use the fetch_url tool (each new URL is approved once, then remembered for the session), or call ml.fetch inside an approved exec.` });
+                return;
+            }
+            try {
+                const data = await fetchUrlContent(url);
+                // Redirect guard: a per-URL-consented fetch (NOT a surface/whitelisted/exec one) that ends on a
+                // DIFFERENT, un-consented origin followed a redirect off the approved resource — withhold the body
+                // (a consented public URL could redirect to a private/other target). The GET already happened but
+                // no data leaves, and returning nothing is safe. exec (execOpen) trusts the code's own redirects.
+                if (untrusted && !execOpen) {
+                    let sameOrigin = true;
+                    try { sameOrigin = new URL(data.url).origin === new URL(url).origin; } catch { /* keep true */ }
+                    if (!sameOrigin && !fetchConsent.get(tabId!)?.has(data.url)) {
+                        sendResponse({ error: `"${url}" redirected to a different origin (${(() => { try { return new URL(data.url).origin; } catch { return data.url; } })()}), which hasn't been approved. Fetch that URL directly to approve it.` });
+                        return;
+                    }
+                }
+                sendResponse({ data });
+            }
+            catch (err) {
+                const m = (err as Error)?.message || String(err);
+                sendResponse({ error: `Could not fetch "${url}" (${m}). The extension may lack host access — grant "On all sites" in the site-access settings, or the URL may be unreachable.` });
+            }
         })();
         return true;   // async
     }
@@ -2063,6 +2128,29 @@ function sheetNameFromDisposition(cd: string | null): string | null {
         // around the dash optional — Google's filename separator varies), keeping earlier dashes.
         return fn.replace(/\.csv$/i, "").replace(/\s*-\s*[^-]*$/, "").trim() || null;
     } catch { return null; }
+}
+
+// The largest body ml.fetch keeps — big enough for a raw source file / API page, bounded so a huge response
+// can't blow up the message channel or context. The tool clips the returned text again for the model.
+const FETCH_URL_MAX = 200_000;
+/** Perform the actual uncredentialed GET for ml.fetch (host permissions bypass CORS; NO cookies). Classifies
+ *  the body by header AND content (a server can mislabel), pre-parses JSON, and caps the size. Throws on a
+ *  network/permission failure (the handler turns that into an actionable message). */
+async function fetchUrlContent(url: string): Promise<FetchResult> {
+    const res = await fetch(url, { method: "GET", credentials: "omit", redirect: "follow" });
+    const contentType = res.headers.get("content-type") || "";
+    let text = await res.text();
+    const truncated = text.length > FETCH_URL_MAX;
+    if (truncated) text = text.slice(0, FETCH_URL_MAX);
+    const { type, language, byHeader, byContent, byExtension } = classifyContent(contentType, text, url);
+    const out: FetchResult = {
+        url: res.url || url, status: res.status, ok: res.ok, type, language,
+        typeByHeader: byHeader, typeByContent: byContent, typeByExtension: byExtension, contentType, text,
+        truncated: truncated || undefined,
+    };
+    // Pre-parse JSON only when it's whole — a truncated body can't parse. (type stays "json" so the agent knows.)
+    if (type === "json" && !truncated) { try { out.json = JSON.parse(text); } catch { /* mislabelled → leave as text */ } }
+    return out;
 }
 
 async function fetchSheetCsv(url: string): Promise<{ csv: string; name: string | null }> {

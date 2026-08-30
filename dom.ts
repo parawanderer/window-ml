@@ -1075,3 +1075,87 @@ export function parseCsv(text: string): string[][] {
     if (field !== "" || row.length) { row.push(field); rows.push(row); }
     return rows;
 }
+
+/** Does the head of a body look like CSV? ≥2 non-empty lines that each split on commas into the SAME
+ *  number of columns (≥2). A light heuristic for when the Content-Type is generic (text/plain). */
+function looksCsv(head: string): boolean {
+    const lines = head.split(/\r?\n/).filter(l => l.trim()).slice(0, 6);
+    if (lines.length < 2) return false;
+    const cols = lines.map(l => l.split(",").length);
+    return cols[0] >= 2 && cols.every(c => c === cols[0]);
+}
+
+export type ContentKind = "json" | "csv" | "html" | "xml" | "markdown" | "code" | "text";
+
+/** Classify by the Content-Type HEADER alone. Returns null for a GENERIC/absent header (text/plain,
+ *  octet-stream, empty) — the signal to let the other cues decide (a server can mislabel: raw.github
+ *  serves .json/.csv/.ts as text/plain). A declared-but-other text/* is "text". Pure. */
+export function typeFromHeader(contentType: string): ContentKind | null {
+    const ct = String(contentType || "").split(";")[0].trim().toLowerCase();
+    if (ct === "application/json" || ct.endsWith("+json")) return "json";
+    if (ct === "text/csv" || ct === "application/csv") return "csv";
+    if (ct === "text/html" || ct === "application/xhtml+xml") return "html";
+    if (ct === "text/xml" || ct === "application/xml" || ct.endsWith("+xml")) return "xml";
+    if (ct === "text/markdown") return "markdown";
+    if (ct === "application/javascript" || ct === "text/javascript" || ct === "application/typescript") return "code";
+    if (ct === "" || ct === "text/plain" || ct === "application/octet-stream") return null;   // generic → other cues decide
+    return "text";
+}
+
+/** Classify by the body CONTENT alone (a light STRUCTURAL sniff — json/html/xml/csv). Returns "text" when it
+ *  finds no structure (prose OR code — the extension then distinguishes those). Pure. */
+export function typeFromContent(body: string): ContentKind {
+    const head = String(body || "").slice(0, 2048).replace(/^﻿/, "").trimStart();
+    if (/^<\?xml[\s>]/i.test(head)) return "xml";
+    if (/^<(?:!doctype\s+html|html[\s>])/i.test(head)) return "html";
+    if (head.startsWith("{") || head.startsWith("[")) { try { JSON.parse(body); return "json"; } catch { /* not JSON after all */ } }
+    if (looksCsv(head)) return "csv";
+    return "text";
+}
+
+// URL path extension → its kind + (for source) a language label. The strong cue for code files a server
+// serves as text/plain (a raw .ts is TypeScript, not "raw text").
+const EXT_LANG: Record<string, string> = {
+    js: "javascript", mjs: "javascript", cjs: "javascript", jsx: "javascript",
+    ts: "typescript", tsx: "typescript", py: "python", rb: "ruby", go: "go", rs: "rust",
+    java: "java", kt: "kotlin", swift: "swift", c: "c", h: "c", cpp: "cpp", cc: "cpp", hpp: "cpp",
+    cs: "csharp", php: "php", sh: "shell", bash: "shell", zsh: "shell", pl: "perl", lua: "lua",
+    r: "r", scala: "scala", dart: "dart", ex: "elixir", clj: "clojure", sql: "sql",
+    css: "css", scss: "css", less: "css", yml: "yaml", yaml: "yaml", toml: "toml", ini: "ini",
+};
+const EXT_KIND: Record<string, ContentKind> = {
+    json: "json", jsonl: "json", ndjson: "json",
+    csv: "csv", tsv: "csv",
+    html: "html", htm: "html", xhtml: "html",
+    xml: "xml", svg: "xml", rss: "xml", atom: "xml",
+    md: "markdown", markdown: "markdown", mdx: "markdown",
+    txt: "text", text: "text", log: "text",
+};
+/** Classify by the URL's file EXTENSION (path only — query/hash stripped). Returns the kind + a `language`
+ *  for source files, or null when the URL has no telling extension (an API endpoint, a bare path). Pure. */
+export function typeFromExtension(url: string): { type: ContentKind; language?: string } | null {
+    let path = String(url || "");
+    try { path = new URL(url).pathname; } catch { path = path.split(/[?#]/)[0]; }
+    const m = /\.([A-Za-z0-9]+)$/.exec(path);
+    if (!m) return null;
+    const ext = m[1].toLowerCase();
+    if (ext in EXT_LANG) return { type: "code", language: EXT_LANG[ext] };
+    if (ext in EXT_KIND) return { type: EXT_KIND[ext] };
+    return null;
+}
+
+/** Resolve a fetched body's kind from THREE cues — header, content, and URL extension — and pick a final
+ *  `type` (+ a `language` for code). Precedence: a SPECIFIC header wins; else STRUCTURED content (json/html/
+ *  xml/csv, which is unambiguous); else the extension (catches code/markdown a server sent as text/plain);
+ *  else plain text. Surfaces every cue so the agent sees a mislabel and can still chain. Pure — unit-tested. */
+export function classifyContent(contentType: string, body: string, url = ""): {
+    type: ContentKind; language?: string; byHeader: ContentKind | null; byContent: ContentKind; byExtension: { type: ContentKind; language?: string } | null;
+} {
+    const byHeader = typeFromHeader(contentType);
+    const byContent = typeFromContent(body);
+    const byExtension = typeFromExtension(url);
+    const structured = byContent === "json" || byContent === "html" || byContent === "xml" || byContent === "csv";
+    const type = byHeader ?? (structured ? byContent : (byExtension?.type ?? byContent));
+    const language = type === "code" ? byExtension?.language : undefined;
+    return { type, language, byHeader, byContent, byExtension };
+}

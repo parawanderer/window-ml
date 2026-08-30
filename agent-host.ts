@@ -60,6 +60,9 @@ export interface RunAgentHostDeps {
     // GATE (a page can't silently send the agent to another site); false → same-site (or an already-consented
     // origin) → auto-approve. Trusted (background-decided from the tab's real origin), not page-forgeable.
     navNeedsConsent?(url: string): boolean;
+    // ml.fetch consent: true → this exact URL hasn't been approved on this tab yet → GATE; false → already
+    // approved this session → auto-approve (no re-prompt). Trusted (background-side, per-URL), not forgeable.
+    fetchNeedsConsent?(url: string): boolean;
     // Debug fan-out (agent-step events: the pending START then the DONE).
     emit?: AgentLoopDeps["emit"];
     // Durable resume: called with the run's live message array after each COMPLETED step, so the background
@@ -125,6 +128,8 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
             if (name === "python_exec") return autoApprovePython(args, { autoApprovePython: !!cfg.autoApprovePython }, deps.isSheetApproved || (() => false));
             // navigate: a cross-origin nav that needs consent GATES; same-site (or already-consented) auto-approves.
             if (name === "navigate") return deps.navNeedsConsent?.(String((args as { url?: unknown }).url ?? "")) ? null : "same-origin";
+            // fetch_url: a URL already approved this session auto-approves; a new one gates (the human sees it).
+            if (name === "fetch_url") return deps.fetchNeedsConsent?.(String((args as { url?: unknown }).url ?? "")) ? null : "consented";
             return null;
         },
         buildMessages: buildMessages as AgentLoopDeps["buildMessages"],

@@ -1729,6 +1729,100 @@ test("INJECT_MESSAGE steers a RUNNING background run (drained at the next step b
     assert.equal(ghost.data, false, "injecting into a finished/unknown run is a harmless no-op");
 });
 
+// --- ml.fetch (FETCH_URL): uncredentialed GET + the unforgeable per-URL consent boundary ---
+
+const fetchResponse = (body, { contentType = "text/plain", url = "http://x/", status = 200 } = {}) => ({
+    ok: status >= 200 && status < 300, status, url,
+    headers: { get: (h) => (String(h).toLowerCase() === "content-type" ? contentType : null) },
+    text: async () => body,
+});
+
+test("FETCH_URL: a trusted surface fetches UNCREDENTIALED and classifies the body", async () => {
+    let creds, method;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => { creds = call.opts?.credentials; method = call.opts?.method; return fetchResponse('{"ok":true}', { contentType: "application/json", url: call.url }); },
+    });
+    // No sender.tab → "surface" (the extension's own realm) → unrestricted.
+    const res = await bg.send({ type: "FETCH_URL", payload: { url: "https://api.example/data.json" } });
+    assert.equal(creds, "omit", "the fetch sends NO cookies (uncredentialed) — never the user's authenticated data");
+    assert.equal(method, "GET", "GET only");
+    assert.equal(res.data.type, "json");
+    assert.deepEqual(res.data.json, { ok: true }, "JSON is pre-parsed");
+});
+
+test("FETCH_URL: a mislabelled body classifies by content/extension (raw .ts served as text/plain → code)", async () => {
+    const bg = loadBackground({ config: baseConfig(), onFetch: (call) => fetchResponse("const x = 1;\nexport default x;", { contentType: "text/plain", url: call.url }) });
+    const res = await bg.send({ type: "FETCH_URL", payload: { url: "https://raw.githubusercontent.com/o/r/main/x.ts" } });
+    assert.equal(res.data.type, "code");
+    assert.equal(res.data.language, "typescript");
+    assert.equal(res.data.typeByHeader, null, "header was generic");
+});
+
+test("SECURITY (FETCH_URL): an untrusted page with NO consent is refused — localhost/private/public alike, BEFORE any network", async () => {
+    // The reachable-address range is governed SOLELY by consent — we deliberately do NOT range-block (the human
+    // approves each URL). So without consent, NOTHING is reachable regardless of address, and no request is sent.
+    let fetched = false;
+    const bg = loadBackground({ config: baseConfig(), onFetch: () => { fetched = true; return fetchResponse("x"); } });
+    const addrs = [
+        "http://localhost:8080/admin",
+        "http://127.0.0.1/x",
+        "http://10.0.0.5/internal",
+        "http://192.168.1.1/router",
+        "http://169.254.169.254/latest/meta-data/",   // cloud metadata
+        "https://public.example/data.json",
+    ];
+    for (const url of addrs) {
+        const res = await bg.send({ type: "FETCH_URL", payload: { url } }, { tab: { id: 9, url: "https://evil.example/" } });
+        assert.ok(res.error && /hasn't been approved/i.test(res.error), `${url} refused without consent`);
+    }
+    assert.equal(fetched, false, "the gate is BEFORE the network — no request sent for any un-consented address");
+    // A non-http(s) scheme is refused outright (a page can't turn this into a file:// / data: read).
+    const f = await bg.send({ type: "FETCH_URL", payload: { url: "file:///etc/passwd" } }, { tab: { id: 9, url: "https://evil.example/" } });
+    assert.ok(/only http\(s\)/i.test(f.error), "file:// refused");
+    const c = await bg.send({ type: "FETCH_URL", payload: { url: "chrome://settings" } }, { tab: { id: 9, url: "https://evil.example/" } });
+    assert.ok(/only http\(s\)/i.test(c.error), "chrome:// refused");
+});
+
+test("SECURITY (FETCH_URL): the SAME addresses become reachable once approved via the fetch_url tool (consent is the sole boundary)", async () => {
+    // Prove the boundary is EXACTLY consent: drive a real run, approve fetch_url for a localhost URL, and it
+    // fetches — same address that was refused above. Consent grows ONLY here (the approval), unforgeably.
+    let n = 0;
+    const target = "http://localhost:8080/internal.json";
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            // The agent's model turns hit the LLM endpoint; the ml.fetch hits the target.
+            if (call.url === baseConfig().chatUrl) {
+                return (++n === 1)
+                    ? jsonResponse({ choices: [{ message: { content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "fetch_url", arguments: JSON.stringify({ url: target }) } }] } }] })
+                    : jsonResponse({ choices: [{ message: { content: "done" } }] });
+            }
+            return fetchResponse('{"secret":42}', { contentType: "application/json", url: call.url });   // the delegated ml.fetch
+        },
+        onTabMessage: async (tabId, msg) => {
+            if (msg?.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) {
+                await bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
+            }
+            // The delegated fetch_url tool's run() calls ml.fetch → simulate that page round-trip back to FETCH_URL.
+            if (msg?.type === "RUN_TOOL_IN_PAGE" && msg.payload?.name === "fetch_url" && !msg.payload?.renderOnly && !msg.payload?.readonlyTry && !msg.payload?.precheck) {
+                const r = await bg.send({ type: "FETCH_URL", payload: { url: target } }, { tab: { id: tabId, url: "https://evil.example/" } });
+                return { result: r.error ? `Error: ${r.error}` : `ok ${JSON.stringify(r.data.json)}` };
+            }
+            return undefined;
+        },
+    });
+    const res = await bg.send({ type: "START_RUN", payload: {
+        runId: "fu1", task: "read it", systemPrompt: "S",
+        tools: [{ name: "fetch_url", requiresApproval: true, description: "", parameters: {}, capabilities: [] }],
+        model: "m", think: null, maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools",
+    } }, { tab: { id: 8 } });
+    // The localhost URL was reachable ONCE approved — the SAME address the prior test refused. Consent grew only
+    // via the approval (unforgeable); without it the delegated fetch would have been refused.
+    assert.ok(res.data, "the run finished");
+    assert.ok(bg.calls.some(c => c.url === target), "the localhost URL WAS fetched after approval (consent is the sole gate)");
+});
+
 test("INJECT_MESSAGE with a sayId fans an agent-say-seen when the loop DRAINS it (the 'seen' indicator)", async () => {
     const events = [];
     let n = 0;

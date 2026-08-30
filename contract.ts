@@ -133,6 +133,28 @@ export function modelFilterAllows(model: string, filter: string): boolean {
     try { return new RegExp(filter).test(model); } catch { return true; }
 }
 
+/** `FETCH_URL` payload — a plain uncredentialed GET the background performs on the agent's behalf (bypassing
+ *  CORS via host permissions). No headers/body/method knobs by design: a locked, low-surface read primitive. */
+export interface FetchUrlPayload { url: string; }
+/** The result of `ml.fetch(url)`. Content type is resolved BOTH ways so a mislabel is visible: `type` is the
+ *  final pick (header when specific, else the content sniff), `typeByHeader`/`typeByContent` are the raw
+ *  signals. `json` is pre-parsed when `type === "json"`. `text` is the raw body (size-capped → `truncated`). */
+export type ContentKind = "json" | "csv" | "html" | "xml" | "markdown" | "code" | "text";
+export interface FetchResult {
+    url: string;              // the response URL (after any redirects)
+    status: number;           // HTTP status code
+    ok: boolean;              // status in 200–299
+    type: ContentKind;        // the resolved kind (header, else structured content, else URL extension, else text)
+    language?: string;        // for type === "code": the language from the URL extension ("typescript", "python", …)
+    typeByHeader: ContentKind | null;   // null = the header was generic (text/plain, octet-stream, …)
+    typeByContent: ContentKind;         // the structural content sniff
+    typeByExtension: { type: ContentKind; language?: string } | null;   // the URL-extension cue
+    contentType: string;      // the raw Content-Type header
+    text: string;             // the body, raw (capped)
+    json?: unknown;           // parsed JSON when type === "json" and it parsed
+    truncated?: boolean;      // the body was clipped to the size cap
+}
+
 /** How stale a persisted background-run snapshot may be and still auto-resume. A real MV3 eviction respawns
  *  within seconds and each step re-stamps the snapshot, so a live run's snapshot is always fresh; anything
  *  older than this is a zombie (the SW died and never came back for it) and must NOT be silently resumed. */
@@ -690,7 +712,7 @@ export type PageRequestType =
     | "LLM_REQUEST" | "LLM_STREAM_REQUEST" | "B64_REQUEST" | "LIST_MODELS_REQUEST"
     | "GET_MODEL_REQUEST" | "CONFIG_REQUEST" | "SET_MODEL_REQUEST" | "CAPS_REQUEST"
     | "PS_REQUEST" | "UNLOAD_REQUEST" | "CAPTURE_TAB_REQUEST"
-    | "SAVE_SESSION_REQUEST" | "GET_SESSION_REQUEST" | "PYTHON_EXEC_REQUEST" | "FETCH_SHEET_REQUEST"
+    | "SAVE_SESSION_REQUEST" | "GET_SESSION_REQUEST" | "PYTHON_EXEC_REQUEST" | "FETCH_SHEET_REQUEST" | "FETCH_URL_REQUEST"
     | "LIST_SERVER_TOOLS_REQUEST"   // discover the OpenWebUI server-side tools this key may use (valid `toolIds`)
     | "INVOCATION_REQUEST"   // how the user can open the HUD here (live shortcut — user-rebindable, never hardcode it)
     | "START_RUN_REQUEST"   // design A: kick off a background-hosted ml.agent loop
@@ -703,7 +725,7 @@ export type PageRequestType =
 export type BackgroundMessageType =
     | "FETCH_LLM" | "FETCH_IMAGE_B64" | "LIST_MODELS" | "GET_MODEL" | "GET_CONFIG"
     | "SET_MODEL" | "MODEL_CAPS" | "OLLAMA_PS" | "OLLAMA_UNLOAD" | "CAPTURE_TAB"
-    | "SAVE_SESSION" | "GET_SESSION" | "PYTHON_EXEC" | "FETCH_SHEET" | "FETCH_SHEET_TITLE"
+    | "SAVE_SESSION" | "GET_SESSION" | "PYTHON_EXEC" | "FETCH_SHEET" | "FETCH_SHEET_TITLE" | "FETCH_URL"
     | "LIST_SERVER_TOOLS"   // GET OpenWebUI /api/v1/tools/ — the server-side tools, with their function specs
     | "GET_INVOCATION"   // read chrome.commands' LIVE shortcut for the HUD (+ whether the user rebound it)
     | "ABORT_TASK"    // abort the AbortController registered for a requestId (only FETCH_LLM registers one today)
@@ -1097,7 +1119,7 @@ export interface DebugAgentStep extends DebugBase {
     /** How an approval-gated tool call was decided (undefined for tools that don't
      *  require approval). The sidebar renders it as a green/red provenance badge —
      *  and it's the slot a future interactive-approval control resolves into. */
-    approval?: "readonly" | "sandbox" | "same-origin" | "user" | "denied" | "skipped" | "cancelled";
+    approval?: "readonly" | "sandbox" | "same-origin" | "consented" | "user" | "denied" | "skipped" | "cancelled";
     /** Token counts for this step's driver call, when the server reports them. Each
      *  step re-sends the full growing history, so the LATEST step's usage is the run's
      *  current context occupancy (not a sum across steps — see TokenUsage). */
@@ -1202,6 +1224,9 @@ export interface MlApi {
     /** Built-in `navigate(url)` tool factory (auto-wired into ml.agent unless `navigate: false`): navigate
      *  the tab to another URL, continuing the run on the new page. Same-origin only unless `crossOrigin`. */
     navigateTool(opts?: { crossOrigin?: boolean }): MlTool;
+    /** Built-in `fetch_url` tool factory (auto-wired into ml.agent): GET a URL's content (uncredentialed,
+     *  via the background) so the agent can READ a file/API/other page without navigating. requiresApproval. */
+    fetchTool(): MlTool;
     /** Run a sandboxed Python snippet (Pyodide/WASM, numpy + Pillow) with an optional
      *  screenshot injected as `img`/`img_np`. No network/filesystem/DOM. */
     pythonExec(code: string, opts?: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Element | Record<string, string | Element> | null }): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; resultTable?: { columns: string[]; rows: (string | number | null)[][] } }>;
@@ -1239,6 +1264,12 @@ export interface MlApi {
      *  `for`/`while`): `ml.range(8).map(i => …)`. `range(stop)` / `range(start, stop)` / `range(start,
      *  stop, step)`. Returns a real array capped at 100k (over → throws), so it can never run away. */
     range(a: number, b?: number, step?: number): number[];
+    /** GET a URL's content via the background (bypasses CORS; UNCREDENTIALED — never sends your cookies).
+     *  Use it to READ a page/file the current DOM can't reach — a raw file, a JSON API, another site — instead
+     *  of navigating there. Returns a {@link FetchResult}: `.type` classifies the body (json/csv/html/text) so
+     *  you can chain (`.json` is pre-parsed; hand `.text` of a CSV to `python_exec`). Each new URL requires the
+     *  user's one-time approval (then it's remembered for the session). GET only — no headers, body, or auth. */
+    fetch(url: string): Promise<FetchResult>;
     config(): Promise<MlPublicConfig>;
     setModel(model: string): Promise<string>;
     ps(): Promise<LoadedModel[]>;

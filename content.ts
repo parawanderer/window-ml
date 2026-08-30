@@ -18,7 +18,7 @@ const INJECTED_ABSENT_GRACE_MS = 4_000;
 // Backstop bound once injected IS alive but a tool doesn't answer: generous — longer than any realistic tool
 // (a long `wait`, a heavy `python_exec`) — so it only ever catches a genuine hang, not a slow-but-live tool.
 const TOOL_RELAY_TIMEOUT_MS = 120_000;
-const CSP_BLOCK_MSG = (name: string): string => `Error: this page blocks the extension's page script, so "${name}" can't run here. Its Content-Security-Policy disables injected scripts — raw.githubusercontent.com does this (it serves files with a "sandbox" CSP). Navigate to a normal page instead: for a repo file use the github.com "…/blob/…" VIEW (not the raw.githubusercontent.com host), or another site.`;
+const CSP_BLOCK_MSG = (name: string): string => `Error: this page blocks the extension's page script, so "${name}" can't run here. Its Content-Security-Policy disables injected scripts — raw.githubusercontent.com does this (it serves files with a "sandbox" CSP). Better: don't navigate here at all — if you just need this URL's CONTENT, navigate BACK to a working page and use \`fetch_url\` (or \`ml.fetch(url)\`) to read it directly (an uncredentialed GET, no injected script needed). Otherwise open a normal page (e.g. the github.com "…/blob/…" view, not the raw host).`;
 const s = document.createElement("script");
 s.src = chrome.runtime.getURL("injected.js");
 s.onload = () => s.remove();
@@ -45,6 +45,7 @@ const HANDLE_MAP: Partial<Record<PageRequestType, RelayEntry>> = {
     GET_SESSION_REQUEST: { type: "GET_SESSION", responseType: "GET_SESSION_RESPONSE" },
     PYTHON_EXEC_REQUEST: { type: "PYTHON_EXEC", responseType: "PYTHON_EXEC_RESPONSE" },
     FETCH_SHEET_REQUEST: { type: "FETCH_SHEET", responseType: "FETCH_SHEET_RESPONSE" },
+    FETCH_URL_REQUEST: { type: "FETCH_URL", responseType: "FETCH_URL_RESPONSE" },
     // Design A: kick off a background-hosted ml.agent loop. The single response carries the final
     // AgentResult (the run's debug events stream separately via ML_DEBUG_TO_PAGE, below).
     START_RUN_REQUEST: { type: "START_RUN", responseType: "START_RUN_RESPONSE" },

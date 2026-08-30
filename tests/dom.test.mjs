@@ -1,7 +1,58 @@
 // Pure dom.ts helpers.
 import { test } from "node:test";
 import assert from "node:assert";
-import { elementReference, classifyOverlay, navTarget } from "../dom.ts";
+import { elementReference, classifyOverlay, navTarget, typeFromHeader, typeFromContent, typeFromExtension, classifyContent } from "../dom.ts";
+
+// --- ml.fetch content classification (header / content / extension → a HEURISTIC type for chaining) ---
+test("typeFromHeader: specific content-types map; generic ones return null (defer to content/extension)", () => {
+    assert.equal(typeFromHeader("application/json"), "json");
+    assert.equal(typeFromHeader("application/vnd.api+json"), "json");
+    assert.equal(typeFromHeader("text/csv; charset=utf-8"), "csv");
+    assert.equal(typeFromHeader("text/html"), "html");
+    assert.equal(typeFromHeader("application/xml"), "xml");
+    assert.equal(typeFromHeader("image/svg+xml"), "xml");
+    assert.equal(typeFromHeader("text/markdown"), "markdown");
+    assert.equal(typeFromHeader("application/javascript"), "code");
+    assert.equal(typeFromHeader("text/plain"), null);        // generic → sniff decides
+    assert.equal(typeFromHeader(""), null);
+    assert.equal(typeFromHeader("application/octet-stream"), null);
+    assert.equal(typeFromHeader("text/rtf"), "text");         // declared-but-other text
+});
+test("typeFromContent: structural sniff (json/html/xml/csv); prose or code → text", () => {
+    assert.equal(typeFromContent('{"a":1}'), "json");
+    assert.equal(typeFromContent("[1, 2, 3]"), "json");
+    assert.equal(typeFromContent("{not really json"), "text");   // fails JSON.parse → text
+    assert.equal(typeFromContent("<!DOCTYPE html><html>"), "html");
+    assert.equal(typeFromContent("<?xml version=\"1.0\"?><rss>"), "xml");
+    assert.equal(typeFromContent("a,b,c\n1,2,3\n4,5,6"), "csv");
+    assert.equal(typeFromContent("const x = 1;\nexport default x;"), "text");   // code has no structure → extension distinguishes
+    assert.equal(typeFromContent("just some prose here."), "text");
+});
+test("typeFromExtension: code files get a language; data/markup get a kind; unknown → null", () => {
+    assert.deepEqual(typeFromExtension("https://raw.example/foo/readonly-exec.ts"), { type: "code", language: "typescript" });
+    assert.deepEqual(typeFromExtension("http://x/y/app.js?ref=main"), { type: "code", language: "javascript" });
+    assert.deepEqual(typeFromExtension("http://x/data.csv"), { type: "csv" });
+    assert.deepEqual(typeFromExtension("http://x/feed.xml"), { type: "xml" });
+    assert.deepEqual(typeFromExtension("http://x/README.md"), { type: "markdown" });
+    assert.equal(typeFromExtension("http://x/api/users"), null);   // no extension → null
+    assert.equal(typeFromExtension("http://x/"), null);
+});
+test("classifyContent: header wins; else structured content; else extension (the raw-.ts-as-text/plain case)", () => {
+    // A server MISLABELS a .ts file as text/plain: content has no structure, so the extension resolves it to code.
+    const ts = classifyContent("text/plain; charset=utf-8", "const x = 1;\nconsole.log(x);", "https://raw.githubusercontent.com/o/r/main/readonly-exec.ts");
+    assert.equal(ts.type, "code");
+    assert.equal(ts.language, "typescript");
+    assert.equal(ts.byHeader, null);          // header was generic
+    assert.equal(ts.byContent, "text");
+    assert.deepEqual(ts.byExtension, { type: "code", language: "typescript" });
+    // JSON served as text/plain (raw.github) → structured content wins over the generic header.
+    const j = classifyContent("text/plain", '{"ok":true}', "http://x/data.json");
+    assert.equal(j.type, "json");
+    // A specific header beats a misleading extension: served application/json at a .txt URL.
+    assert.equal(classifyContent("application/json", '{"a":1}', "http://x/note.txt").type, "json");
+    // No cues at all → text.
+    assert.equal(classifyContent("", "hello world", "http://x/api").type, "text");
+});
 
 test("navTarget: a same-origin relative URL resolves to an absolute destination", () => {
     assert.deepEqual(navTarget("/step2", "https://site.example/step1"), { dest: "https://site.example/step2", crossOrigin: false });
