@@ -2304,7 +2304,9 @@ function intentFor(st: AgentStep): Intent | null {
     // approval must call it out. Read from the raw args (the ground truth), regardless of the render path.
     const submit = st.tool === "type" ? !!st.arguments?.submit : undefined;
     const ri = st.renderIn;
-    if (ri && ri.type === "action") return { verb: ri.verb, kind: ri.kind, target: ri.target, selector: ri.selector, input: ri.input, note: ri.note, submit, crossOrigin: ri.crossOrigin, link: st.tool === "navigate" };
+    // `link` renders the target as a significant URL (warm-yellow + dotted, like navigate/submit) rather than
+    // "the element …" — a fetch's URL is leaving-the-page-worthy, so style it the same as navigate's.
+    if (ri && ri.type === "action") return { verb: ri.verb, kind: ri.kind, target: ri.target, selector: ri.selector, input: ri.input, note: ri.note, submit, crossOrigin: ri.crossOrigin, link: st.tool === "navigate" || st.tool === "fetch_url" };
     if (ri && ri.type === "elements" && ri.items[0])   // an older/other target render still gives a target + selector
         return { verb: st.tool === "click" ? "Click" : st.tool === "type" ? "Type" : `Run ${st.tool}`, target: ri.items[0].text || ri.items[0].path, selector: ri.items[0].path, submit };
     const sel = typeof st.arguments?.selector === "string" ? (st.arguments.selector as string) : undefined;

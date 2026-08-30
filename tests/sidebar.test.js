@@ -462,6 +462,21 @@ test("button #3 (sidebar step): a gate with NO grants shows no remember button",
     assert.equal(w.shadow.querySelector(".astep-approve .grant-note-head"), null, "and no disclosure");
 });
 
+test("approval card: a fetch_url gate styles the URL like navigate/submit (action-link: warm + dotted), not 'the element'", async () => {
+    const w = await loadSidebarWorld({ sync: { chatUrl: "http://x" }, listModels: () => ({ data: ["m"] }) });
+    await w.raw({ __mlSidebarSurface: "card" });
+    const url = "https://raw.githubusercontent.com/SideStore/anisette-servers/main/servers.json";
+    await w.dispatch(agentStart("fu", "Fetch and list servers"));
+    await w.dispatch(agentStep("fu", 1, { seq: 1, pending: true, awaitingApproval: true, tool: "fetch_url", arguments: { url }, renderIn: { type: "action", verb: "fetch", target: url } }));
+    await w.tick();
+    const link = w.shadow.querySelector(".action-link");
+    assert.ok(link, "the fetch URL renders in an action-link (the warm + dotted 'significant detail' style, like navigate)");
+    assert.equal(link.textContent, url, "it's the exact URL");
+    const sentence = w.shadow.querySelector(".action-sentence").textContent;
+    assert.match(sentence, /wants to\s+fetch/i, "the verb is 'fetch'");
+    assert.doesNotMatch(sentence, /the element/i, "NOT the generic 'the element' wording");
+});
+
 test("button #3 (HUD card): 'Approve + remember' renders in the card foot and posts persist:true", async () => {
     const w = await loadSidebarWorld();
     await w.raw({ __mlSidebarSurface: "card" });   // become the off-mode corner card
