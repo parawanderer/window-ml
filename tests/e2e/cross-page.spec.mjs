@@ -113,6 +113,41 @@ test("continue: a step-capped run resumes with a fresh budget via __mlContinueRu
     await page.close();
 });
 
+// Streaming (opt-in stream:true): the REAL SSE path end to end. The fake backend streams reasoning_content
+// word by word, then a tool_call (accumulated from the stream), then a streamed final answer. Proves the
+// browser's real fetch + streamAgentTurn reassemble a fragmented tool_call correctly (the loop still delegates
+// it with full args and reads the page value), and that live agent-stream deltas fire. node:vm can only mock
+// the SSE reader; this drives a genuine HTTP event-stream through the built extension.
+test("streaming: a stream:true run streams reasoning deltas AND accumulates a streamed tool_call end to end", async () => {
+    if (BACKEND) return;   // fake-only: the reasoning script + delta assertions are backend-specific
+    const page = await ext.context.newPage();
+    const streams = [];
+    await page.exposeFunction("__strEv", (e) => streams.push(e));
+    await page.addInitScript(() => {
+        if (window.top !== window) return;
+        window.addEventListener("message", (e) => {
+            const d = e.data && e.data.__mlDebug;
+            if (d && (d.kind === "agent-stream" || d.kind === "agent-result")) window.__strEv({ kind: d.kind, reasoning: d.reasoning || "", content: d.content || "", summary: d.summary || "" });
+        });
+    });
+    await page.goto(site.url + "/step3");
+    await waitForMl(page);
+    fake.setScript([
+        { reasoning: "Let me search the page for the code before I answer the question properly.", tool: "findByText", args: { text: "CROSSPAGE" } },
+        (req) => {
+            const seen = req.messages.map((m) => (typeof m.content === "string" ? m.content : "")).join(" ");
+            const m = seen.match(/CROSSPAGE-\d+/);
+            return { reasoning: "Found the code, now composing the answer.", content: m ? `The code is ${m[0]}.` : "not found" };
+        },
+    ]);
+    const result = await page.evaluate(() => window.ml.agent("What code is shown here? Use findByText, then answer.", { env: false, stream: true }));
+    // The streamed, fragmented tool_call was reassembled + delegated with full args, so the page value reached the answer.
+    expect(JSON.stringify(result)).toContain("CROSSPAGE-9471");
+    // Live reasoning deltas fired (the "thinking" streamed), not just the final turn.
+    await expect.poll(() => streams.some((s) => s.kind === "agent-stream" && /search the page|composing the answer/.test(s.reasoning)), { timeout: 10000 }).toBe(true);
+    await page.close();
+});
+
 // A real-shape sanity check that ALSO runs in the non-blocking real-model job: the agent reads a value off
 // the page with a DOM tool and answers it. Deterministic under the fake (a hard gate); a genuine "can a
 // real OpenAI-shaped model actually drive a tool and answer" probe under E2E_BACKEND.
