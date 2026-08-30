@@ -534,7 +534,8 @@ details.io[open] > summary .io-preview { display: none; }
 .r-action { font-size: 0.95em; line-height: 1.55; word-break: break-word; }
 .r-action-verb { font-weight: 700; text-transform: capitalize; }
 .r-action-input { font-weight: 650; color: var(--fg); }
-.r-action-target { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; color: var(--accent); word-break: break-all; }
+.r-action-target { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.9em; color: var(--fg); word-break: break-all; cursor: context-menu; }
+.r-action-target:hover { text-decoration: underline; text-decoration-color: var(--border); text-underline-offset: 2px; }
 .r-action-note { color: var(--fg-dim); }
 .dim { color: var(--fg-faint); font-style: italic; }
 

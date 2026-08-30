@@ -960,14 +960,21 @@ function RenderPanel({ d }: { d: RenderDescriptor }) {
             // clean verb + URL line for a navigate/fetch (NOT raw JSON, and NOT the card's "Agent wants to …"
             // sentence — that's ApprovalBody's job; the log stays a plain debugging view).
             if (d.selector) return <RenderElements items={[{ path: d.selector, ...(d.target ? { text: d.target } : {}) }]} />;
-            if (d.target) return (
-                <div class="r-action">
-                    <span class="r-action-verb">{d.verb}</span>{" "}
-                    {d.input ? <><b class="r-action-input">“{truncate(d.input, 120)}”</b>{" "}</> : null}
-                    <span class="r-action-target">{d.target}</span>
-                    {d.note ? <span class="r-action-note"> · {d.note}</span> : null}
-                </div>
-            );
+            if (d.target) {
+                const target = d.target;
+                return (
+                    <div class="r-action">
+                        <span class="r-action-verb">{d.verb}</span>{" "}
+                        {d.input ? <><b class="r-action-input">“{truncate(d.input, 120)}”</b>{" "}</> : null}
+                        <span class="r-action-target" title="right-click to open or copy"
+                            onContextMenu={e => openCtxMenu(e, [
+                                { label: "Open in new tab", run: () => { try { window.open(target, "_blank", "noopener"); } catch { /* popup blocked */ } } },
+                                { label: "Copy URL", run: () => { try { void navigator.clipboard?.writeText(target); } catch { /* no clipboard */ } } },
+                            ])}>{target}</span>
+                        {d.note ? <span class="r-action-note"> · {d.note}</span> : null}
+                    </div>
+                );
+            }
             return <Code text={pretty(d)} lang="json" />;
         case "locate": return <LocateRender d={d} />;
         case "python-in": return <PythonInRender d={d} />;

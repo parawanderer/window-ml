@@ -482,6 +482,17 @@ test("fetch_url step: the rendered In shows a clean verb + URL line, NOT a raw J
     assert.match(target.textContent, /servers\.json/, "and is the fetched URL");
     // The rendered view must NOT be the raw descriptor JSON.
     assert.doesNotMatch(w.shadow.querySelector(".astep-body").textContent, /"type":\s*"action"/, "no raw {type:action} JSON dump");
+
+    // Right-click the URL → a context menu offering "Open in new tab" + "Copy URL".
+    let opened = null;
+    w.window.open = (u) => { opened = u; return null; };
+    target.dispatchEvent(new w.window.MouseEvent("contextmenu", { bubbles: true, clientX: 5, clientY: 5 }));
+    await w.tick();
+    const items = [...w.shadow.querySelectorAll(".ctx-menu .ctx-item")].map(b => b.textContent);
+    assert.ok(items.includes("Open in new tab"), "the menu offers open-in-new-tab");
+    assert.ok(items.includes("Copy URL"), "and copy");
+    [...w.shadow.querySelectorAll(".ctx-menu .ctx-item")].find(b => b.textContent === "Open in new tab").click();
+    assert.equal(opened, url, "clicking it opens the URL in a new tab");
 });
 
 test("approval card: a fetch_url gate styles the URL like navigate/submit (action-link: warm + dotted), not 'the element'", async () => {
