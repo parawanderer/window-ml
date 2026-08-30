@@ -1062,8 +1062,12 @@ const bufferReplay = (tabId: number, event: unknown): void => {
 const trackRun = (tabId: number, runId: string, rebuild?: import("./contract").RebuildConfig): void => {
     const s = activeRuns.get(tabId) ?? new Set<string>();
     // A fresh run on an IDLE tab starts a clean replay buffer — drop a prior COMPLETED run's retained history
-    // (see untrackRun) so a new run's replay isn't polluted by the last one's.
-    if (!s.size) runReplayBuffer.delete(tabId);
+    // (see untrackRun) so a new run's replay isn't polluted by the last one's. But a RESUME of a run still in
+    // bgRuns (a follow-up turn under the SAME hash) MUST keep the buffer: a resume never re-emits the `agent`
+    // start, so if the turn then navigates, the destination page's card has NO session to rebuild from and
+    // shows blank (the reported "HUD gone after a resume that navigates"). Same run resuming → keep; a
+    // different new run → wipe.
+    if (!s.size && !bgRuns.has(runId)) runReplayBuffer.delete(tabId);
     s.add(runId); activeRuns.set(tabId, s);
     if (rebuild) runRebuilds.set(runId, rebuild);
 };

@@ -511,6 +511,41 @@ test("cross-page: a HUD composer follow-up reaches the run after it navigated aw
     await page.close();
 });
 
+// HUD card on a RESUME that ITSELF navigates (the reported repro: "open that page at your current hash" →
+// the run resumes and navigates, then answers). A RESUME deliberately does NOT re-emit the `agent` start
+// (re-emitting would wipe the accumulated session), so the destination page's fresh card has NO start event
+// to mount on — only the resumed turn's steps/result. The card must still appear on the destination page.
+test("cross-page (HUD card): a resume that navigates still shows the card on the destination page", async () => {
+    const page = await ext.context.newPage();
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+
+    // Turn 1: a background-hosted run that finishes on the START page (no nav yet). Grab its hash.
+    const events = [];
+    await page.exposeFunction("__cpResume", (e) => events.push(e));
+    await page.addInitScript(() => { if (window.top === window) window.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) window.__cpResume({ kind: e.data.__mlDebug.kind, id: e.data.__mlDebug.id }); }); });
+    await page.reload(); await waitForMl(page);   // re-add the init listener on a fresh load
+    const before = fake.calls().length;
+    fake.setScript([{ content: "Turn one done." }]);
+    await page.evaluate(() => { window.ml.createAgent({ env: false }).run("Say turn one."); return true; });
+    await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(1);
+    const hash = await expect.poll(() => events.find((e) => e.kind === "agent")?.id, { timeout: 10000 }).toBeTruthy().then(() => events.find((e) => e.kind === "agent").id);
+
+    // Turn 2 (RESUME): navigate to /step3, then answer — exactly the reported flow.
+    fake.setScript([
+        { tool: "navigate", args: { url: "/step3" } },
+        { content: "Resumed answer — the corner card must show THIS on step3." },
+    ]);
+    await page.evaluate((h) => { window.postMessage({ __mlSessionSend: { hash: h, text: "Open the page at your current hash." } }, "*"); return true; }, hash);
+    await expect.poll(() => page.url(), { timeout: 20000 }).toContain("/step3");
+
+    // The corner HUD card must appear ON THE DESTINATION PAGE with the resumed answer — even though the resume
+    // never re-emitted an `agent` start.
+    const card = () => page.frames().filter((f) => f.url().includes("sidebar.html") && !f.isDetached()).pop();
+    await expect.poll(async () => { const f = card(); try { return f ? ((await f.locator("body").textContent()) || "") : ""; } catch { return ""; } }, { timeout: 20000 }).toContain("must show THIS on step3");
+    await page.close();
+});
+
 // A HUD follow-up AFTER a nav routes through RESUME_RUN (the page handle died at the nav). RESUME_RUN must
 // CONTINUE the step/seq numbering past the prior turns — it reused base 0, so the follow-up turn's tool steps
 // collided with turn 1's at seq 1, and the reducer (which patches a step by seq) OVERWROTE turn 1's steps
