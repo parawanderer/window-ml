@@ -1019,12 +1019,17 @@ test("HUD card: a streaming follow-up collapses an open 'Show work' and keeps it
     await w.flush();
     // The open trace is COLLAPSED so it doesn't loom over / reflow with the streaming answer.
     assert.match(w.shadow.querySelector(".card-work-toggle").textContent, /Show work/, "Show work collapses when the follow-up starts streaming");
-    // And it stays ABOVE the streaming answer (same order as the done state) — it must not jump to the bottom.
+    // The streaming answer renders as CLEAN markdown text — like the finished answer. NO "Running JavaScript…"
+    // activity line and NO DevTools model-chip / reply-bubble chrome (those don't belong in the HUD).
     const body = w.shadow.querySelector(".card-body");
+    const answer = body.querySelector(".card-answer.md");
+    assert.ok(answer, "the streaming answer renders as a clean markdown block");
+    assert.match(answer.textContent, /Only one uses http/, "the streamed content is shown");
+    assert.equal(body.querySelector(".card-working"), null, "no 'Running JavaScript…' activity line during answer streaming");
+    assert.equal(body.querySelector(".model-name"), null, "no DevTools model chip (CopyModel) in the HUD");
+    // And the trace stays ABOVE the streaming answer (same order as the done state) — no bottom↔top jump.
     const work = body.querySelector(".card-work");
-    const working = body.querySelector(".card-working");
-    assert.ok(work && working, "both the trace toggle and the streaming/working line render");
-    assert.ok(work.compareDocumentPosition(working) & w.window.Node.DOCUMENT_POSITION_FOLLOWING, "Show work stays ABOVE the streaming answer (no bottom↔top jump)");
+    assert.ok(work && (work.compareDocumentPosition(answer) & w.window.Node.DOCUMENT_POSITION_FOLLOWING), "Show work stays ABOVE the streaming answer");
 });
 
 test("stream:true: live reasoning fills a live thinking block (ticking count); a real step then clears it", async () => {

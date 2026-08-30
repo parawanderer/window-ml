@@ -3387,8 +3387,13 @@ function CardApp() {
                             {/* Show work sits ABOVE, exactly as in the done branch — so it doesn't JUMP from
                                 bottom to top when a streaming follow-up finishes (the "spammy reflow" bug). */}
                             {(run.steps || []).some(s => s.tool) ? <ShowWork run={run} /> : null}
-                            <div class="card-answer dim card-working"><span class="card-work-ic" aria-hidden="true">{activityFor(run).icon}</span>{liveProseFor(run) || activityFor(run).label}<span class="pill-dots"><i /><i /><i /></span></div>
-                            {run.liveStream ? <LiveStream ls={run.liveStream} s={run} /> : null}
+                            {run.liveStream?.content
+                                // The answer is STREAMING → render it as clean markdown, EXACTLY like the
+                                // finished answer (it becomes run.summary when the run settles — no reflow). The
+                                // HUD is answer-first: no "Running JavaScript…" activity line and no model-chip /
+                                // reply-bubble chrome (that's DevTools/sidebar detail — the LiveStream component).
+                                ? <div class="card-answer md" dangerouslySetInnerHTML={{ __html: markdown(run.liveStream.content, { math: true }) }} />
+                                : <div class="card-answer dim card-working"><span class="card-work-ic" aria-hidden="true">{activityFor(run).icon}</span>{liveProseFor(run) || activityFor(run).label}<span class="pill-dots"><i /><i /><i /></span></div>}
                           </>
                         : <>
                             {/* "Show work" sits ABOVE the answer now — the audit trail is the header, the answer
