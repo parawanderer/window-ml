@@ -573,6 +573,13 @@ details.io[open] > summary .io-preview { display: none; }
    from the steps above. */
 .msg.asst.capped { margin-top: 6px; }
 .msg.asst.capped .who { color: var(--warn); }
+/* "Continue (+N steps)" — resume a step-capped run. A calm accent pill, not an alarm; the +N is dimmed. */
+.continue-run { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; padding: 4px 12px;
+    font-size: 0.9em; font-weight: 600; cursor: pointer; border-radius: 999px;
+    color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent);
+    background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.continue-run:hover { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.continue-run .continue-steps { font-weight: 400; opacity: 0.75; }
 /* Per-reply model chip: outlined, click-to-copy (see CopyModel). */
 .model-name { background: transparent; border: 1px solid var(--border); color: var(--fg-dim); border-radius: 4px; padding: 0 6px; font: 0.85em ui-monospace, SFMono-Regular, Menlo, monospace; cursor: pointer; }
 .model-name:hover { color: var(--fg); border-color: var(--fg-dim); }

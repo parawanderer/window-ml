@@ -725,6 +725,11 @@ function onWindowMessage(e: MessageEvent): void {
             window.postMessage({ __mlSessionSend: { hash: d.hash, text: d.text, images: cleanImages(d.images), elementContext } }, "*");
         return;
     }
+    if (d.__mlSidebarApp === "continueRun" && frame && e.source === frame.contentWindow && typeof d.hash === "string") {
+        // "Continue (+N steps)" on a step-capped run — resume it (fresh budget) with no follow-up text.
+        window.postMessage({ __mlContinueRun: { hash: d.hash } }, "*");
+        return;
+    }
     if (d.__mlSidebarApp === "sessionCancel" && frame && e.source === frame.contentWindow && typeof d.hash === "string") {
         window.postMessage({ __mlCancelSession: { hash: d.hash } }, "*");
         return;
@@ -1130,5 +1135,6 @@ chrome.runtime.onMessage.addListener((msg) => {
     else if (msg?.type === "ML_SESSION_TO_PAGE") {
         if (msg.action === "send") window.postMessage({ __mlSessionSend: { hash: msg.hash, text: msg.text, images: cleanImages(msg.images) } }, "*");
         else if (msg.action === "cancel") window.postMessage({ __mlCancelSession: { hash: msg.hash } }, "*");
+        else if (msg.action === "continue") window.postMessage({ __mlContinueRun: { hash: msg.hash } }, "*");
     }
 });

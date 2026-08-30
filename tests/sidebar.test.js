@@ -819,6 +819,57 @@ test("devtools/panel: a follow-up run() task (continuation agent-say, no sayId) 
     assert.equal(w.shadow.querySelectorAll(".steer-seen").length, 0, "no steer badge on the task or a continuation — only genuine mid-run steers get it");
 });
 
+test("step-cap stop (sidebar): the answer offers 'Continue (+N steps)' → posts continueRun for that run", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("cap1", "big task", "m", 20));
+    await w.dispatch(agentResult("cap1", "Stopped at the 20-step cap without finishing.", 20, true));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const btn = w.shadow.querySelector(".continue-run");
+    assert.ok(btn, "the Continue button renders on a step-capped answer");
+    assert.match(btn.textContent, /Continue/);
+    assert.match(btn.textContent, /\+20 steps/, "shows the fresh step budget");
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    btn.click();
+    const msg = posted.find(m => m.__mlSidebarApp === "continueRun");
+    assert.ok(msg, "clicking posts a continueRun message");
+    assert.equal(msg.hash, "cap1");
+});
+
+test("step-cap stop (sidebar): a normal (non-capped) or CANCELLED answer shows NO Continue button", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("ok1", "task", "m", 20));
+    await w.dispatch(agentResult("ok1", "All done.", 3, false));   // clean finish
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    assert.equal(w.shadow.querySelector(".continue-run"), null, "a completed run has nothing to continue");
+    // A cancelled run is capped-styled but must NOT offer continue (the user stopped it deliberately).
+    const w2 = await loadSidebarWorld();
+    await w2.dispatch(agentStart("cx", "task", "m", 20));
+    await w2.dispatch({ ...agentResult("cx", "Cancelled by the caller.", 2, false), cancelled: true });
+    w2.shadow.querySelector(".row").click();
+    await w2.tick();
+    assert.equal(w2.shadow.querySelector(".continue-run"), null, "a cancelled run offers no Continue");
+});
+
+test("step-cap stop (HUD card): the corner card offers 'Continue (+N steps)' → posts continueRun (parity)", async () => {
+    const w = await loadSidebarWorld();
+    await w.raw({ __mlSidebarSurface: "card" });
+    await w.dispatch(agentStart("capC", "big task", "m", 50));
+    await w.dispatch(agentStep("capC", 1, { seq: 1, tool: "fetch_url", arguments: { url: "https://x.test" }, result: "…", approval: "user" }));
+    await w.dispatch(agentResult("capC", "Stopped at the 50-step cap without finishing.", 50, true));
+    await w.tick();
+    const btn = w.shadow.querySelector(".continue-run");
+    assert.ok(btn, "the Continue button renders on the HUD card too");
+    assert.match(btn.textContent, /\+50 steps/);
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    btn.click();
+    const msg = posted.find(m => m.__mlSidebarApp === "continueRun");
+    assert.ok(msg && msg.hash === "capC", "the card posts continueRun for its run");
+});
+
 test("agent run: a successful navigate step renders a page-transition divider in the log", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("nav1", "go to example and read it"));

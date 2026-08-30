@@ -81,6 +81,38 @@ test("smoke: the extension loads and window.ml runs a one-shot agent", async () 
     await page.close();
 });
 
+// Continue-past-step-cap: a run that STOPS at its maxSteps cap resumes — via the same __mlContinueRun the
+// "Continue (+N steps)" button posts — with a FRESH step budget, continuing from its stored state (no typed
+// follow-up). We drive a maxSteps:1 run (the first tool call exhausts the cap → hitCap), then fire the
+// continue message and assert the run finishes.
+test("continue: a step-capped run resumes with a fresh budget via __mlContinueRun (the Continue button)", async () => {
+    const page = await ext.context.newPage();
+    const results = [];
+    await page.exposeFunction("__cont", (e) => results.push(e));
+    await page.addInitScript(() => {
+        if (window.top !== window) return;
+        window.addEventListener("message", (e) => {
+            if (e.data && e.data.__mlDebug && e.data.__mlDebug.kind === "agent-result")
+                window.__cont({ summary: e.data.__mlDebug.summary, hitCap: !!e.data.__mlDebug.hitCap });
+        });
+    });
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+    // maxSteps:1 → step 1 is the tool call, then the loop exceeds the cap → hitCap. After continue, the next
+    // turn's first call is the final answer → the run completes.
+    fake.setScript([
+        { tool: "findByText", args: { text: "Step" } },
+        { content: "Finished after the extra budget." },
+    ]);
+    const first = await page.evaluate(() => window.ml.agent("do the thing", { env: false, maxSteps: 1 }));
+    expect(first.hitCap).toBe(true);
+    // Fire the exact message the Continue button posts (the injected consumer resumes by hash, empty task).
+    await page.evaluate((hash) => window.postMessage({ __mlContinueRun: { hash } }, "*"), first.hash);
+    // The resumed turn completes — a non-capped agent-result with the post-continue answer.
+    await expect.poll(() => results.some((r) => !r.hitCap && /extra budget/.test(r.summary || "")), { timeout: 15000 }).toBe(true);
+    await page.close();
+});
+
 // A real-shape sanity check that ALSO runs in the non-blocking real-model job: the agent reads a value off
 // the page with a DOM tool and answers it. Deterministic under the fake (a hard gate); a genuine "can a
 // real OpenAI-shaped model actually drive a tool and answer" probe under E2E_BACKEND.

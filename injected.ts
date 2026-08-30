@@ -2406,8 +2406,20 @@ class AgentHandle implements MlAgentHandle, AgentControl {
 
     window.addEventListener("message", (e: MessageEvent) => {
         if (e.source !== window || !e.data) return;
-        const d = e.data as { __mlSessionSend?: { hash: string; text: string; images?: string[]; elementContext?: import("./contract").ElementContext }; __mlCancelSession?: { hash: string } };
+        const d = e.data as { __mlSessionSend?: { hash: string; text: string; images?: string[]; elementContext?: import("./contract").ElementContext }; __mlCancelSession?: { hash: string }; __mlContinueRun?: { hash: string } };
         try {
+            if (d.__mlContinueRun) {
+                // "Continue (+N steps)" on a step-capped run: resume it with an EMPTY task — a resume re-enters
+                // the loop with a FRESH maxSteps budget (the loop restarts its step count), so the run keeps
+                // going from its stored state with N more steps, without the user typing a follow-up. Bypasses
+                // the __mlSessionSend empty-text guard on purpose (there IS no text — it's "just keep going").
+                const hash = String(d.__mlContinueRun.hash);
+                const h = handleRegistry.get(hash);
+                if (h) { if (!h.running) void h.run(""); return; }   // page-hosted handle: continue over prior messages
+                const bg = agentRegistry.get(hash);
+                if (bg) { void bg.resume(""); return; }              // background-hosted / cross-page run: RESUME_RUN, empty task
+                return;
+            }
             if (d.__mlSessionSend) {
                 const hash = String(d.__mlSessionSend.hash);
                 const rawText = String(d.__mlSessionSend.text || "");

@@ -124,6 +124,10 @@ window.addEventListener("message", (e: MessageEvent) => {
         void chrome.runtime.sendMessage({ type: "ML_SESSION_REMOTE", tabId, action: "cancel", hash: d.hash }).catch(() => {});
         return;
     }
+    if (d.__mlSidebarApp === "continueRun" && typeof d.hash === "string") {
+        void chrome.runtime.sendMessage({ type: "ML_SESSION_REMOTE", tabId, action: "continue", hash: d.hash }).catch(() => {});
+        return;
+    }
 });
 
 // If the panel goes away with a highlight still showing (it lives on the inspected page, not here),

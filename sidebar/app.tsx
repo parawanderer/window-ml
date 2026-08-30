@@ -620,9 +620,10 @@ function CopyModel({ model }: { model: string }) {
 // timestamp) over the body (markdown ⇄ raw, collapsible), with optional thinking
 // and sources. No "assistant"/"answer" word — the header controls carry the
 // meaning; `label` appears only for an exceptional state (e.g. an agent step-cap).
-function ReplyBubble({ content, status, model, profile, ts, reasoning = null, sources = null, error, label, capped, initialRaw }: {
+function ReplyBubble({ content, status, model, profile, ts, reasoning = null, sources = null, error, label, capped, initialRaw, resumeCap }: {
     content: string; status: Status; model: string | null; profile: "utility" | "default" | null; ts: number;
     reasoning?: string | null; sources?: unknown[] | null; error?: string; label?: string; capped?: boolean; initialRaw?: boolean;
+    resumeCap?: { hash: string; steps: number };   // a step-capped run → a "Continue (+N steps)" button (resume, fresh budget)
 }) {
     const [showRaw, setShowRaw] = useState(!!initialRaw);
     const [collapsed, setCollapsed] = useState(false);
@@ -669,6 +670,14 @@ function ReplyBubble({ content, status, model, profile, ts, reasoning = null, so
                         : showRaw
                             ? <Code text={content} lang="markdown" />
                             : <div class="md" dangerouslySetInnerHTML={{ __html: markdown(content, { math: true }) }} />}
+            {/* A step-capped run stopped mid-task — one click resumes it with a fresh N-step budget (no need to
+                type a follow-up). Resuming re-enters the SAME run by hash from its stored state. */}
+            {resumeCap && !collapsed
+                ? <button class="continue-run" title="Resume this run with more steps, continuing from where it stopped"
+                    onClick={() => window.parent.postMessage({ __mlSidebarApp: "continueRun", hash: resumeCap.hash }, "*")}>
+                    Continue <span class="continue-steps">+{resumeCap.steps} steps</span>
+                  </button>
+                : null}
             {sources?.length
                 ? <details class="sources"><summary>{`sources (${sources.length})`}</summary><Code text={pretty(sources)} lang="json" /></details>
                 : null}
@@ -1597,11 +1606,15 @@ function AgentRunView({ s }: { s: Session }) {
     // The whole session is a CHAT LOG: user messages (task + follow-ups + says) and answers interleaved
     // with the turn step-groups, ordered by step position. `atStep + fraction` slots an answer just after
     // its turn's steps, and a following user message just after that.
+    const lastAnswerTs = (s.answers && s.answers.length) ? s.answers[s.answers.length - 1].ts : -1;
     const answer = (a: NonNullable<Session["answers"]>[number], key: string) =>
         a.error
             ? <ReplyBubble key={key} content="" status="err" model={s.model} profile={sessionProfile(s)} ts={a.ts} error={a.error} label="run failed" />
             : <ReplyBubble key={key} content={a.text} status={a.status} model={s.model} profile={sessionProfile(s)} ts={a.ts}
-                label={a.cancelled ? "cancelled" : a.hitCap ? "stopped (step cap)" : undefined} capped={a.hitCap || a.cancelled} />;
+                label={a.cancelled ? "cancelled" : a.hitCap ? "stopped (step cap)" : undefined} capped={a.hitCap || a.cancelled}
+                // Only the LATEST answer, and only a step-cap stop (not a cancel/error), offers Continue — resuming
+                // an old buried answer would be confusing, and a live run has nothing to resume.
+                resumeCap={a.hitCap && !a.cancelled && a.ts === lastAnswerTs && s.status !== "pending" ? { hash: s.hash, steps: s.maxSteps || 20 } : undefined} />;
     // Answers AND says share the same positional base (atStep + 0.5 = "after this turn's steps"); the TS
     // breaks the tie. A fixed answer-before-say fraction was wrong: when a turn runs no tool steps (a plain
     // chat-style reply, or a cancel), every answer/say lands at the SAME atStep, so the fraction forced ALL
@@ -3314,6 +3327,14 @@ function CardApp() {
                             {/* answer-designated element visuals — the user-facing deliverable (HUD-only; the debug
                                 sidebar deliberately doesn't render these). Click to lightbox. */}
                             {run.answerMedia && run.answerMedia.length ? <AnswerMediaGallery media={run.answerMedia} /> : null}
+                            {/* Step-capped stop → one click resumes with a fresh N-step budget (no need to type
+                                a follow-up in the composer). Not shown for a cancel/error. */}
+                            {run.hitCap && !run.cancelled
+                                ? <button class="continue-run" title="Resume this run with more steps, continuing from where it stopped"
+                                    onClick={() => window.parent.postMessage({ __mlSidebarApp: "continueRun", hash: run.hash }, "*")}>
+                                    Continue <span class="continue-steps">+{run.maxSteps || 20} steps</span>
+                                  </button>
+                                : null}
                           </>}
             </div>
             {/* Deny/Approve as a FIXED footer — outside the scroll area, so it's always visible (a
