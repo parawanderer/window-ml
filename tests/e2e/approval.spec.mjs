@@ -115,3 +115,50 @@ test("OPT-IN: a default 'ui' run's gate is NOT listed or resolvable by the chann
 test("resolve() on an unknown/stale key is a harmless no-op (returns false)", async () => {
     expect(await ext.sw.evaluate(() => globalThis.__mlApprovals.resolve("nope:999", true))).toBe(false);
 });
+
+// ml.fetch end-to-end: the agent READS a raw JSON / CSV / mislabelled-code URL via `fetch_url` (NOT the DOM),
+// each behind the unforgeable approval gate (resolved via __mlApprovals). Proves the whole pipeline —
+// background uncredentialed GET, the consent gate, and the heuristic classification (incl. a raw .ts served
+// as text/plain classified as code by its extension). Deterministic under the fake LLM.
+test("fetch_url: reads + classifies raw JSON, CSV, and a mislabelled code file (approved via the channel)", async () => {
+    const page = await ext.context.newPage();
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+
+    // Drive one fetch_url call, approve its gate, and return the tool RESULT the model saw on its final turn.
+    async function fetchThroughAgent(url) {
+        const before = fake.calls().length;
+        fake.setScript([
+            { tool: "fetch_url", args: { url } },
+            // Echo back what fetch_url reported (its result is the previous "tool" message) so we can assert on it.
+            (req) => {
+                const seen = req.messages.map((m) => (typeof m.content === "string" ? m.content : "")).join("\n");
+                return { content: seen };
+            },
+        ]);
+        const runPromise = page.evaluate((u) => window.ml.agent(`Fetch ${u} and report it.`, { env: false, approvalRouting: "both" }), url);
+        const gate = await waitForGate(ext.sw);
+        expect(gate.tool).toBe("fetch_url");
+        expect(gate.arguments.url).toBe(url);   // the human sees the exact URL in the gate
+        await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), gate.key);
+        await runPromise.catch(() => {});
+        await expect.poll(() => fake.calls().length - before, { timeout: 15000 }).toBeGreaterThanOrEqual(2);
+        return fake.calls().at(-1).messages.map((m) => (typeof m.content === "string" ? m.content : "")).join("\n");
+    }
+
+    const jsonSeen = await fetchThroughAgent(site.url + "/data.json");
+    expect(jsonSeen).toMatch(/type: json/);
+    expect(jsonSeen).toContain("widget");                 // the body reached the model
+    expect(jsonSeen).toContain('"tags"');                 // pre-parsed JSON was pretty-printed
+
+    const csvSeen = await fetchThroughAgent(site.url + "/data.csv");
+    expect(csvSeen).toMatch(/type: csv/);
+    expect(csvSeen).toContain("apples,3,1.20");
+
+    // A raw .ts served as text/plain — the header can't classify it, so the URL extension resolves it to code.
+    const codeSeen = await fetchThroughAgent(site.url + "/code.ts");
+    expect(codeSeen).toMatch(/type: code \(typescript\)/);
+    expect(codeSeen).toContain("export const answer");
+
+    await page.close();
+});

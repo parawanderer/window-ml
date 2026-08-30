@@ -69,6 +69,15 @@ const sendBlocked = (res) => {
     res.end(BLOCKED_PAGE);
 };
 
+// Raw content endpoints for the ml.fetch e2e — the agent READS these via fetch_url (not the DOM). Note
+// /code.ts is served as text/plain (a raw-git mislabel) so classification must fall back to the extension.
+const RAW = {
+    "/data.json": { ct: "application/json", body: JSON.stringify({ id: 7, name: "widget", tags: ["a", "b"] }) },
+    "/data.csv": { ct: "text/csv", body: "name,qty,price\napples,3,1.20\npears,5,0.90\n" },
+    "/code.ts": { ct: "text/plain; charset=utf-8", body: "export const answer: number = 42;\nexport function id<T>(x: T): T { return x; }\n" },
+};
+const sendRaw = (res, r) => { res.writeHead(200, { "content-type": r.ct, "cache-control": "no-store" }); res.end(r.body); };
+
 // --- Same-origin 3-step chain — the Variant A case ----------------------------------------------------
 const routes = (crossOrigin) => ({
     "/": page({
@@ -119,6 +128,7 @@ export function startPageServer({ port = 0, crossPort = 0, host = "127.0.0.1" } 
             const outer = createServer((req, res) => {
                 const p = (req.url || "/").split("?")[0];
                 if (p === "/blocked") return sendBlocked(res);   // a CSP-sandboxed page (blocks injected.js)
+                if (RAW[p]) return sendRaw(res, RAW[p]);          // raw JSON/CSV/code endpoints (ml.fetch e2e)
                 const r = routes(crossOrigin);
                 if (r[p]) return send(res, r[p]);
                 send(res, page({ badge: "404", title: "No such page", body: `<p>Try <a class="x" href="/">the start</a>.</p>`, next: null }), 404);
