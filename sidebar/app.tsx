@@ -463,12 +463,14 @@ const tokenHover = (s?: string): { onPointerEnter?: () => void; onPointerLeave?:
 const sendApproval = (hash: string, seq: number, decision: boolean, persist = false) =>
     window.parent.postMessage({ __mlSidebarApp: "approval", hash, seq, decision, persist }, "*");
 
-// The "https://host/*" host-permission pattern the background's SW fetch needs to reach a fetch_url step's
-// URL. "On click" site access WITHHOLDS <all_urls> for third-party hosts, so a first-time fetch of a new
+// The "https://host/*" host-permission pattern a step needs granted before it can run: a fetch_url's URL
+// (the background SW fetch needs the host) OR a navigate's destination (a cross-origin nav must RE-INJECT the
+// content script on the new origin, which "On click" site access withholds — without the grant the run can't
+// re-adopt there). "On click" withholds <all_urls> for third-party hosts, so a first-time fetch/nav to a new
 // origin would fail — but this iframe is extension-origin, so approving CAN grant that host in the same
-// gesture. Null for a non-fetch step or an unparseable/non-http URL.
-function fetchHostPattern(st: AgentStep): string | null {
-    if (st.tool !== "fetch_url") return null;
+// gesture. Null for any other tool or an unparseable/non-http URL.
+function grantHostPattern(st: AgentStep): string | null {
+    if (st.tool !== "fetch_url" && st.tool !== "navigate") return null;
     const url = typeof st.arguments?.url === "string" ? st.arguments.url
         : (st.renderIn && st.renderIn.type === "action" ? st.renderIn.target : "");
     try { const u = new URL(String(url)); return (u.protocol === "http:" || u.protocol === "https:") ? `${u.protocol}//${u.host}/*` : null; }
@@ -480,7 +482,7 @@ function fetchHostPattern(st: AgentStep): string | null {
 // or not the grant succeeds (a denied host just yields the tool's actionable "grant On all sites" error).
 async function decideGate(st: AgentStep, hash: string, seq: number, ok: boolean, persist: boolean): Promise<void> {
     if (ok) {
-        const pat = fetchHostPattern(st);
+        const pat = grantHostPattern(st);
         if (pat && typeof chrome !== "undefined" && chrome.permissions?.request) {
             try { await chrome.permissions.request({ origins: [pat] }); } catch { /* older Chrome / user dismissed → fetch returns the actionable error */ }
         }
@@ -1233,7 +1235,7 @@ function externalSheetGrant(args?: Record<string, unknown>): string[] {
 // appear, so it isn't a surprise. Async-checks chrome.permissions.contains; renders nothing when already
 // granted (or on a page-loop run with no chrome), so a normal already-allowed fetch stays silent.
 function HostAccessNote({ st }: { st: AgentStep }) {
-    const pat = fetchHostPattern(st);
+    const pat = grantHostPattern(st);
     const [missing, setMissing] = useState(false);
     useEffect(() => {
         let live = true;
@@ -1243,10 +1245,13 @@ function HostAccessNote({ st }: { st: AgentStep }) {
     }, [pat]);
     if (!pat || !missing) return null;
     const host = pat.replace(/^https?:\/\//, "").replace(/\/\*$/, "");
+    // A navigate needs the host so the content script can re-inject on the new site (re-adoption); a fetch
+    // needs it so the background fetch can reach the URL. Same grant, different reason — say which.
+    const why = st.tool === "navigate" ? "so the agent can keep working on it after navigating" : "so the fetch can reach it";
     return (
         <div class="action-host">
             <IconWarn />
-            <span>First-time access to <b class="action-target">{host}</b> — approving asks Chrome to grant this site so the fetch can reach it.</span>
+            <span>First-time access to <b class="action-target">{host}</b> — approving asks Chrome to grant this site {why}.</span>
         </div>
     );
 }

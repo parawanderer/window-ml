@@ -399,6 +399,7 @@ function hostLabelOf(origin: string): string {
 function HostAccess() {
     const [origins, setOrigins] = useState<string[] | null>(null);
     const [input, setInput] = useState("");
+    const [search, setSearch] = useState("");
     const [err, setErr] = useState("");
     const refresh = () => {
         try { chrome.permissions.getAll((all: any) => setOrigins((all.origins || []).filter((o: string) => !SHEETS_ORIGINS.includes(o)))); }
@@ -428,9 +429,13 @@ function HostAccess() {
     const revoke = (origin: string) => { try { chrome.permissions.remove({ origins: [origin] }, () => refresh()); } catch { /* ignore */ } };
     const all = origins.includes("<all_urls>");
     const hosts = origins.filter(o => o !== "<all_urls>");
+    // The granted list gets spammed fast (an agent fetching around a topic can add dozens), so filter it once
+    // it's long enough to be a scroll — same pattern as the self-approval whitelist above.
+    const q = search.trim().toLowerCase();
+    const shown = q ? hosts.filter(o => hostLabelOf(o).toLowerCase().includes(q)) : hosts;
     return (
         <Section id="hostaccess" title="Site access (agent fetches)">
-            <div class="set-note">The <code>fetch_url</code> tool reads a URL through the background, which “On click” site access withholds for third-party hosts. Approving a fetch to a new site grants that host in the same gesture; the granted sites are listed here so you can add or revoke them yourself. A narrower grant than “On all sites”.</div>
+            <div class="set-note">The <code>fetch_url</code> tool reads a URL through the background, which “On click” site access withholds for third-party hosts. Approving a fetch (or a cross-site navigate) grants that host in the same gesture; the granted sites are listed here so you can add or revoke them yourself. A narrower grant than “On all sites”.</div>
             {all
                 ? <div class="set-hint">Access to <b>all sites</b> is granted (browser Site access → “On all sites”), so every fetch is allowed.</div>
                 : <>
@@ -441,14 +446,18 @@ function HostAccess() {
                         <button class="test-btn" disabled={!pat} onClick={add}>Add</button>
                     </div>
                     {invalid ? <div class="set-err">Enter a valid hostname, e.g. <code>raw.githubusercontent.com</code>.</div> : null}
+                    {hosts.length > 6
+                        ? <input class="perm-search" type="search" placeholder="Filter sites…" value={search} onInput={(e: any) => setSearch(e.target.value)} />
+                        : null}
                     {hosts.length
                         ? <div class="perm-list">
-                            {hosts.map(o => (
+                            {shown.map(o => (
                                 <span class="perm-chip" key={o}>
                                     <span class="perm-host">{hostLabelOf(o)}</span>
                                     <button class="perm-x" aria-label={`Revoke ${hostLabelOf(o)}`} title={`Revoke ${hostLabelOf(o)}`} onClick={() => revoke(o)}>✕</button>
                                 </span>
                             ))}
+                            {q && !shown.length ? <div class="set-hint">No sites match “{search}”.</div> : null}
                           </div>
                         : <div class="set-hint">No sites granted yet — the agent asks the first time it fetches each new one.</div>}
                   </>}

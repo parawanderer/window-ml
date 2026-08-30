@@ -517,6 +517,55 @@ test("host access (fetch_url): the user clicks NO on Chrome's host prompt → th
     assert.ok(posted.find(m => m.__mlSidebarApp === "approval" && m.decision === true), "approval posted despite the denied host grant");
 });
 
+test("host access (navigate): approving a CROSS-SITE navigate grants the destination host in the same gesture", async () => {
+    const w = await loadSidebarWorld();
+    const reqCalls = [];
+    w.window.chrome.permissions = {
+        contains: async () => false,   // destination host not yet granted (needed to re-inject the content script there)
+        request: async ({ origins }) => { reqCalls.push(origins); return true; },
+    };
+    await w.dispatch(agentStart("nv", "go to the docs"));
+    await w.dispatch(agentStep("nv", 1, {
+        seq: 1, pending: true, awaitingApproval: true, tool: "navigate",
+        arguments: { url: "https://docs.other.dev/guide" },
+        renderIn: { type: "action", verb: "navigate", target: "https://docs.other.dev/guide", crossOrigin: "docs.other.dev" },
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.flush();
+    const note = w.shadow.querySelector(".action-host");
+    assert.ok(note, "the first-time host-access note renders for a cross-site navigate too");
+    assert.match(note.textContent, /docs\.other\.dev/, "names the destination site");
+    assert.match(note.textContent, /after navigating/, "the reason is navigate-specific, not the fetch wording");
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    w.shadow.querySelector(".astep-approve .appr-btn.yes").click();
+    await w.flush();
+    assert.deepEqual(reqCalls[0], ["https://docs.other.dev/*"], "requested the destination's host pattern in-gesture");
+    assert.ok(posted.find(m => m.__mlSidebarApp === "approval" && m.decision === true), "and the approval was posted");
+});
+
+test("Settings → Site access: a long granted list is filterable (it gets spammed fast)", async () => {
+    const w = await loadSidebarWorld();
+    const many = ["ani.sidestore.io", "ani.sidestore.app", "ani.npeg.us", "api.github.com", "github.com", "raw.githubusercontent.com", "www.youtube.com"].map(h => `https://${h}/*`);
+    w.window.chrome.permissions = {
+        getAll: (cb) => cb({ origins: many }),
+        remove: (_o, cb) => cb(true), request: (_o, cb) => cb(true),
+        onAdded: { addListener() {}, removeListener() {} }, onRemoved: { addListener() {}, removeListener() {} },
+    };
+    await openSettings(w, "Permissions");
+    await w.flush();
+    const sect = () => [...w.shadow.querySelectorAll(".set-section")].find(s => /Site access/.test(s.querySelector(".set-group")?.textContent || ""));
+    const hosts = () => [...sect().querySelectorAll(".perm-host")].map(e => e.textContent);
+    assert.equal(hosts().length, 7, "all granted hosts show initially");
+    const filter = sect().querySelector(".perm-search");
+    assert.ok(filter, "a filter box appears once the list is long (>6)");
+    filter.value = "github";
+    filter.dispatchEvent(new w.window.Event("input", { bubbles: true }));
+    await w.tick();
+    const shown = hosts();
+    assert.deepEqual(shown.sort(), ["api.github.com", "github.com", "raw.githubusercontent.com"], "only matching sites remain");
+});
+
 test("Settings → Site access: granted hosts list, revoke, and add (mirrors the popup)", async () => {
     const w = await loadSidebarWorld();
     const removed = [], requested = [];
