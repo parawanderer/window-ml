@@ -33,7 +33,7 @@ test("fetch_url `ask`: the question + who-answered + tokens export in BOTH Markd
             step: 1, localStep: 1, tool: "fetch_url",
             arguments: { url: "https://ani.sidestore.io/", ask: "Does it look like a valid anisette token or an error?" },
             result: "Fetched https://ani.sidestore.io/ - HTTP 200.\n\nAnswer:\nIt is not a token.",
-            renderIn: { type: "action", verb: "fetch", target: "https://ani.sidestore.io/", ask: "Does it look like a valid anisette token or an error?", answeredBy: "gemma4:e2b", tokens: 572 },
+            renderIn: { type: "action", verb: "fetch", target: "https://ani.sidestore.io/", ask: "Does it look like a valid anisette token or an error?", answeredBy: "gemma4:e2b", tokens: 572, askBody: '{"error":"unauthorized: invalid client"}', askBodyLang: "json" },
         }],
     };
     const { md } = serializeSession(s);
@@ -43,5 +43,8 @@ test("fetch_url `ask`: the question + who-answered + tokens export in BOTH Markd
         assert.match(out, /Asked: Does it look like a valid anisette token/, `${fmt} shows the full question`);
         assert.match(out, /Answered by gemma4:e2b/, `${fmt} shows who answered`);
         assert.match(out, /572 tokens/, `${fmt} shows the tokens the answer spent`);
+        // The in-the-middle step: the raw content the reader saw is exported in BOTH sinks.
+        assert.match(out, /content read by the model/, `${fmt} labels the raw content block`);
+        assert.match(out, /unauthorized: invalid client/, `${fmt} includes the raw content the reader read`);
     }
 });

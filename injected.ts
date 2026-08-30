@@ -1616,6 +1616,10 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                             type: "action", verb: "fetch", target: r.url, ask: question,
                             ...(credentials ? { note: "as you (sends your cookies)" } : {}),
                             ...(answeredBy ? { answeredBy } : {}), ...(tokens > 0 ? { tokens } : {}),
+                            // The raw content handed to the reader — the in-the-middle step, so the distill is
+                            // auditable (like locate's per-substep prompt). JSON gets syntax highlighting.
+                            askBody: clipped, askBodyLang: r.json !== undefined ? "json" : "text",
+                            ...(cut ? { askBodyTruncated: true } : {}),
                         };
                         return { content, renderIn };
                     }

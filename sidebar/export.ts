@@ -234,6 +234,9 @@ function writeAgent(s: Session, d: Sink): void {
             const lines = [`${ri.verb}${ri.target ? " " + ri.target : ""}${ri.note ? " · " + ri.note : ""}`, `Asked: ${ri.ask}`];
             if (ri.answeredBy) lines.push(`Answered by ${ri.answeredBy}${ri.tokens ? ` · ${ri.tokens.toLocaleString()} tokens` : ""}`);
             d.block("In", lines.join("\n"));
+            // The in-the-middle step: the RAW content the reader saw. Collapsed (it can be large) — a disclosure,
+            // like the python input table, so the .md stays readable but the PDF (<details open>) still shows it.
+            if (ri.askBody) d.details(`content read by the model${ri.askBodyTruncated ? " (truncated)" : ""} · ${ri.askBody.length.toLocaleString()} chars`, () => d.code(ri.askBody!, ri.askBodyLang || "text"));
             renderedIn = true;
         } else if (!st.renderIn && st.tool === "exec" && typeof st.arguments?.js === "string") {
             d.block("In", beautifyJs(st.arguments.js), "javascript");

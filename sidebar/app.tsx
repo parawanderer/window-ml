@@ -1028,6 +1028,10 @@ function RenderPanel({ d }: { d: RenderDescriptor }) {
                             it + the tokens that reader sub-call spent — so the distill is legible, not a squeezed note. */}
                         {d.ask ? <div class="r-action-ask"><b>Asked:</b> {d.ask}</div> : null}
                         {d.answeredBy ? <div class="r-action-meta">Answered by: <span class="r-action-model">{d.answeredBy}</span>{d.tokens ? <> · {d.tokens.toLocaleString()} tokens</> : null}</div> : null}
+                        {/* The in-the-middle step: the RAW content the reader model actually saw before answering.
+                            Collapsed (it can be large), like locate's per-substep prompt — open it to audit the distill. */}
+                        {d.askBody ? <details class="r-py-sec r-action-body-sec"><summary class="r-py-lbl">content read by the model{d.askBodyTruncated ? " (truncated)" : ""} · {d.askBody.length.toLocaleString()} chars</summary>
+                            <Code text={d.askBody} lang={d.askBodyLang || "text"} /></details> : null}
                     </div>
                 );
             }
