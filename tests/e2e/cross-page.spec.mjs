@@ -609,11 +609,11 @@ test("button #3 (overlay UI): clicking 'Approve + remember' persists the URL —
         if (await rows.count()) await rows.first().click().catch(() => {});
         return await remember.count();
     }, { timeout: 15000 }).toBe(1);
-    // The disclosure unfurls exactly the URL being remembered.
-    await sb.locator(".astep-approve .grant-note-head").click();
+    // The collapsed grant card unfurls exactly the URL being remembered.
+    await sb.locator(".astep-approve .appr-grant summary").click();
     await expect.poll(async () => (await sb.locator(".astep-approve .grant-url-list code").allTextContents()), { timeout: 5000 }).toContain(raw);
 
-    await remember.click();   // Approve + remember
+    await remember.click();   // Keep (approve + remember)
 
     // The run reaches the final answer: turn 2's fetch_url auto-approved off the persisted consent (had button
     // #3 not persisted, turn 2 would have opened a SECOND gate and the run would sit blocked at 2 calls).

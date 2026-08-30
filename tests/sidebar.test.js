@@ -414,15 +414,14 @@ test("button #3 (sidebar step): 'Approve + remember' renders, unfurls its URLs, 
     await w.tick();
 
     const remember = w.shadow.querySelector(".astep-approve .appr-btn.remember");
-    assert.ok(remember, "the 'Approve + remember' button rendered on the awaiting step");
-    assert.match(remember.textContent, /remember/i);
-    // The disclosure lists EXACTLY the static URLs that will persist (what's shown IS what persists).
-    const noteHead = w.shadow.querySelector(".astep-approve .grant-note-head");
-    assert.ok(noteHead, "the remember disclosure rendered");
-    noteHead.click();
-    await w.tick();
-    const urls = [...w.shadow.querySelectorAll(".astep-approve .grant-url-list code")].map(n => n.textContent);
-    assert.deepEqual(urls, ["https://x.test/a.json", "https://x.test/b.json"], "unfurls exactly the two literals");
+    assert.ok(remember, "the short 'Keep' button rendered on the awaiting step");
+    assert.match(remember.textContent, /keep/i);
+    // The collapsed grant card summarises deterministically and lists EXACTLY the URLs that persist.
+    const grant = w.shadow.querySelector(".astep-approve .appr-grant");
+    assert.ok(grant, "the grant card rendered");
+    assert.match(grant.querySelector(".appr-grant-sum").textContent, /remembers 2 URLs/i, "deterministic summary");
+    const urls = [...grant.querySelectorAll(".grant-url-list code")].map(n => n.textContent);
+    assert.deepEqual(urls, ["https://x.test/a.json", "https://x.test/b.json"], "the exact two literals");
 
     const posted = [];
     w.window.postMessage = (d) => posted.push(d);
@@ -458,8 +457,8 @@ test("button #3 (sidebar step): a gate with NO grants shows no remember button",
     w.shadow.querySelector(".row").click();
     await w.tick();
     assert.ok(w.shadow.querySelector(".astep-approve"), "the approval bar rendered");
-    assert.equal(w.shadow.querySelector(".astep-approve .appr-btn.remember"), null, "no remember button without grants");
-    assert.equal(w.shadow.querySelector(".astep-approve .grant-note-head"), null, "and no disclosure");
+    assert.equal(w.shadow.querySelector(".astep-approve .appr-btn.remember"), null, "no Keep button without grants");
+    assert.equal(w.shadow.querySelector(".astep-approve .appr-grant"), null, "and no grant card");
 });
 
 test("reused-grant step: a readonly exec that re-read a cached URL shows a collapsed 'reused a grant' note", async () => {

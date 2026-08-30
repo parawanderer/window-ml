@@ -17,7 +17,7 @@ import {
     ollamaIds, vramOpen, sidebarOpen, loadedModels, psError, turnsRun, backendError,
 } from "./store";
 import { isBackendUnreachable } from "../contract";
-import type { ReusedGrant } from "../contract";
+import type { ReusedGrant, PersistGrant } from "../contract";
 import type { Status, Turn, AgentStep, Session } from "./store";
 import { pretty, shortStamp, fullStamp, truncate, collapsedPreview, highlight, beautifyJs, htmlLines, markdown, stripFormatting, lastUser, rollupStatus } from "./format";
 import { annotatedConfig, turnProfile, shownModel, sessionProfile } from "./model";
@@ -1158,35 +1158,29 @@ function externalSheetGrant(args?: Record<string, unknown>): string[] {
     return args ? [...new Set(externalSheetIds(args))] : [];
 }
 
-// button #3: the distinct static URLs a step's persistable egress grants would remember for the session
-// (today only `fetch-url` — an exec's inline ml.fetch literals). Extracted BACKGROUND-side and carried on
-// the step (st.grants), so the human reviews exactly what will be persisted. Extensible: a new grant kind
-// adds a branch here + one in the background's persistGrants (both keyed by `PersistGrant.kind`).
-function persistGrantUrls(grants?: import("../contract").PersistGrant[]): string[] {
-    if (!grants?.length) return [];
-    const urls: string[] = [];
-    for (const g of grants) if (g.kind === "fetch-url") urls.push(...g.urls);
-    return [...new Set(urls)];
-}
+// The items a persistable grant would remember (today only `fetch-url` → its URLs). Extensible: a new grant
+// kind returns its own detail strings here + a label in GRANT_KIND + a detail branch in GrantCard.
+const GRANT_KIND: Record<string, { noun: string; nounN: string }> = {
+    "fetch-url": { noun: "URL", nounN: "URLs" },
+};
+function grantUrlsOf(g: PersistGrant): string[] { return g.kind === "fetch-url" ? [...new Set(g.urls)] : []; }
+function hasPersistGrants(grants?: PersistGrant[]): boolean { return !!grants?.some(g => grantUrlsOf(g).length > 0); }
 
-// The "Approve + remember" disclosure shown above the approval buttons when a call carries persistable
-// grants — an unfurlable list of the exact URLs the session will remember (what's shown IS what persists).
-// Shared by the sidebar step and the HUD card so both surfaces read identically.
-function GrantRememberNote({ urls }: { urls: string[] }) {
-    const [open, setOpen] = useState(false);
+// The collapsed "Keep" grant card shown above the approval buttons — a deterministic per-kind SUMMARY of
+// what approving-and-remembering will persist for the session ("Keep remembers 1 URL …"), expand for the
+// exact items. Driven by the step's `grants` BY KIND, so a new grant kind slots in with no layout change.
+// Shared by the sidebar step and the HUD card. (The "Keep" button does approve + persist.)
+function GrantCard({ grants }: { grants: PersistGrant[] }) {
+    const byKind = new Map<string, number>();
+    for (const g of grants) { const n = grantUrlsOf(g).length; if (n) byKind.set(g.kind, (byKind.get(g.kind) || 0) + n); }
+    const summary = [...byKind.entries()].map(([k, n]) => { const nm = GRANT_KIND[k]; return `${n} ${n === 1 ? nm?.noun || k : nm?.nounN || k}`; }).join(" · ");
     return (
-        <div class="appr-note grant-note">
-            <IconWarn />
-            <div class="grant-note-body">
-                <button class="grant-note-head" onClick={() => setOpen(v => !v)} aria-expanded={open}>
-                    <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
-                    <span>“Approve + remember” lets this run re-fetch {urls.length === 1 ? "this URL" : `these ${urls.length} URLs`} for the rest of the session without re-asking.</span>
-                </button>
-                {open
-                    ? <ul class="grant-url-list">{urls.map((u, i) => <li key={i}><code>{u}</code></li>)}</ul>
-                    : null}
+        <details class="appr-grant">
+            <summary class="appr-grant-head"><span class="tri" aria-hidden="true"><IconChevron /></span><IconWarn /><span class="appr-grant-sum"><b>Keep</b> remembers {summary} for this session</span></summary>
+            <div class="appr-grant-detail">
+                {grants.map((g, i) => grantUrlsOf(g).length ? <ul class="grant-url-list" key={i}>{grantUrlsOf(g).map((u, j) => <li key={j}><code>{u}</code></li>)}</ul> : null)}
             </div>
-        </div>
+        </details>
     );
 }
 
@@ -1228,7 +1222,7 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     // spreadsheet for the rest of the page-session (later calls to it won't re-prompt). Tell the
     // human the approval is a session-scoped grant, not a one-shot.
     const sheetGrants = awaiting ? externalSheetGrant(st.arguments) : [];
-    const grantUrls = awaiting ? persistGrantUrls(st.grants) : [];
+    const showGrants = awaiting && hasPersistGrants(st.grants);
     return (
         <div class={`astep tool${open ? " open" : ""}${st.pending ? " pending" : ""}${awaiting ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : (st.approval === "skipped" || st.approval === "cancelled") ? " appr-skip" : " appr-yes") : ""}`}>
             <button class="astep-head" onClick={() => setExpanded(v => !v)}>
@@ -1271,13 +1265,13 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                     {sheetGrants.length
                         ? <div class="appr-note"><IconWarn /><span>Approving grants this run access to {sheetGrants.map((id, i) => <SheetChip key={i} id={id} />)} for the rest of this session — later calls to {sheetGrants.length === 1 ? "it" : "them"} won't re-prompt.</span></div>
                         : null}
-                    {grantUrls.length ? <GrantRememberNote urls={grantUrls} /> : null}
+                    {showGrants ? <GrantCard grants={st.grants!} /> : null}
                     <div class="appr-row">
                         <span class="appr-ask">Approve running <b>{st.tool}</b>?</span>
                         <span class="sp" />
                         <button class="appr-btn no" onClick={() => decide(false)}>Deny</button>
                         <button class="appr-btn yes" onClick={() => decide(true)}>Approve</button>
-                        {grantUrls.length ? <button class="appr-btn yes remember" onClick={() => decide(true, true)}>Approve + remember</button> : null}
+                        {showGrants ? <button class="appr-btn yes remember" title="Approve and remember for this session" onClick={() => decide(true, true)}>Keep</button> : null}
                     </div>
                 </div>
                 : null}
@@ -3238,13 +3232,13 @@ function CardApp() {
                 drag-collapse or the scrollbar appearing can never cut or shift the buttons). */}
             {pending && pendingStep
                 ? (() => {
-                    const grantUrls = persistGrantUrls(pendingStep.grants);
+                    const showGrants = hasPersistGrants(pendingStep.grants);
                     return <div class="card-foot card-foot-appr">
-                        {grantUrls.length ? <GrantRememberNote urls={grantUrls} /> : null}
+                        {showGrants ? <GrantCard grants={pendingStep.grants!} /> : null}
                         <div class="card-foot-row">
                             <button class="appr-btn no" onClick={() => decide(false)}>Deny <kbd class="kb">esc</kbd></button>
                             <button class="appr-btn yes" onClick={() => decide(true)}>Approve <kbd class="kb">⏎</kbd></button>
-                            {grantUrls.length ? <button class="appr-btn yes remember" onClick={() => decide(true, true)}>Approve + remember</button> : null}
+                            {showGrants ? <button class="appr-btn yes remember" title="Approve and remember for this session" onClick={() => decide(true, true)}>Keep</button> : null}
                         </div>
                     </div>;
                   })()
