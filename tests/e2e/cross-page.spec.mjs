@@ -886,8 +886,14 @@ test("HUD maximise: the completion card grows to a near-full-page corner window 
     const w = await wrap.evaluate((el) => el.getBoundingClientRect().width);
     expect(w, "a corner window, not a full-page override").toBeLessThan(vw);
 
-    // Minimise → back to the compact expanded card.
-    await card().locator('.card-icon[aria-label="Minimise"]').click();
-    await expect.poll(async () => await wrap.getAttribute("data-state"), { timeout: 5000 }).toBe("expanded");
+    // Minimise → back to the compact expanded card. Re-click INSIDE the poll: a single click can race the
+    // card's re-render (the Maximise↔Minimise button swaps), leaving it stuck "maximized" (a flaky red).
+    await expect.poll(async () => {
+        try {
+            const f = card();
+            if (f) await f.locator('.card-icon[aria-label="Minimise"]').click({ timeout: 500 }).catch(() => {});
+            return await wrap.getAttribute("data-state");
+        } catch { return null; }
+    }, { timeout: 8000 }).toBe("expanded");
     await page.close();
 });

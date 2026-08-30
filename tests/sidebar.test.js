@@ -1720,18 +1720,22 @@ const agentFail = (hash, error, steps = 0) => ({ kind: "agent-result", id: hash,
 const UNREACHABLE = "Couldn't reach the server at http://gpubox:11434 (Failed to fetch). Is OpenWebUI / Ollama running there?";
 
 test("backend offline (panel): an unreachable run failure shows a top banner; a later success clears it", async () => {
-    const w = await loadSidebarWorld({ sync: { chatUrl: "http://gpubox:11434" } });
+    // The proactive health probe (LIST_MODELS) independently sets/clears backendError, so make it AGREE with
+    // each phase (down, then up) — else it races the run-driven banner (a flaky CI red). `flush` lets it settle.
+    let reachable = false;
+    const w = await loadSidebarWorld({ sync: { chatUrl: "http://gpubox:11434" }, listModels: () => reachable ? { data: ["m"] } : { error: "Failed to fetch" } });
     await w.dispatch(agentStart("bo1", "do a thing"));
     await w.dispatch(agentFail("bo1", UNREACHABLE));
-    await w.tick();
+    await w.flush();
     const banner = w.shadow.querySelector(".backend-offline");
     assert.ok(banner, "the offline banner appears in the panel");
     assert.match(banner.textContent, /Backend unreachable/);
     assert.match(banner.textContent, /gpubox/, "shows the configured server URL");
-    // A subsequent successful run means the box answered → clear it.
+    // A subsequent successful run means the box answered → clear it (the probe now agrees it's reachable).
+    reachable = true;
     await w.dispatch(agentStart("bo2", "another"));
     await w.dispatch(agentResult("bo2", "done", 1));
-    await w.tick();
+    await w.flush();
     assert.equal(w.shadow.querySelector(".backend-offline"), null, "a successful run clears the banner");
 });
 
@@ -1744,11 +1748,12 @@ test("backend offline (panel): an HTTP-status failure does NOT show the banner (
 });
 
 test("backend offline (HUD card): an unreachable failure shows a distinct 'Backend unreachable' card", async () => {
-    const w = await loadSidebarWorld({ sync: { chatUrl: "http://gpubox:11434" }, listModels: () => ({ data: ["m"] }) });
+    // The box is down, so the health probe must AGREE (error), else it clears the run-set backendError → flake.
+    const w = await loadSidebarWorld({ sync: { chatUrl: "http://gpubox:11434" }, listModels: () => ({ error: "Failed to fetch" }) });
     await w.raw({ __mlSidebarSurface: "card" });
     await w.dispatch(agentStart("boc", "do a thing"));
     await w.dispatch(agentFail("boc", UNREACHABLE));
-    await w.tick();
+    await w.flush();
     assert.ok(w.shadow.querySelector(".card-error-offline"), "the HUD card uses the offline error variant");
     assert.match(w.shadow.querySelector(".card-app, .card-body, body").textContent, /Backend unreachable/, "the card headline says the box is unreachable");
 });
