@@ -1873,6 +1873,38 @@ test("autoApproveReadonly: the agent reads its OWN setup (ml.config) with NO app
     assert.equal(step.approval, "readonly", "step tagged as auto-approved");
 });
 
+test("cached ml.fetch: fetch_url prompts + caches once, then a readonly exec re-reading it AUTO-APPROVES", async () => {
+    // The whole loop through the REAL code: turn 1 fetches via the `fetch_url` tool (approval → the result is
+    // CACHED); turn 2's `ml.fetch(url)…` in `exec` re-reads that cached result, which the read-only dialect
+    // binds to (cache-only, no egress) → it auto-approves with no prompt. The payoff Shane asked for: approve a
+    // source once, then re-read/process it freely — and only ONE network fetch happens.
+    const url = "https://x.test/servers.json";
+    const fetchResult = { url, status: 200, ok: true, type: "json", text: '{"n":7}', json: { n: 7 } };
+    const script = scriptedModel([
+        toolCall("fetch_url", { url }, "c1"),
+        toolCall("exec", { js: `ml.fetch(${JSON.stringify(url)}).json.n` }, "c2"),
+        reply("done"),
+    ]);
+    const world = loadPageWorld({
+        config: { model: "m", ocrModel: "", autoApproveReadonly: true },
+        onRuntimeMessage: (m) => (m.type === "FETCH_URL" ? { data: fetchResult } : script(m)),
+    });
+    const events = [];
+    const win = world.context.window;
+    win.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) events.push(e.data.__mlDebug); });
+    win.postMessage({ __mlSidebar: "ready" });
+    await new Promise(r => setTimeout(r, 0));
+    const exec = world.ml.domTools.find(t => t.name === "exec");
+    let approvals = 0;
+    await world.ml.agent("x", { tools: [exec, world.ml.fetchTool()], vision: false, approve: () => { approvals++; return true; } });
+
+    assert.equal(approvals, 1, "only the fetch_url prompted; the cached exec re-read was FREE (read-only)");
+    assert.equal(world.runtimeCalls.filter(c => c.type === "FETCH_URL").length, 1, "fetched over the wire exactly once — the re-read hit the cache");
+    const execStep = events.find(e => e.kind === "agent-step" && e.tool === "exec" && !e.pending);
+    assert.equal(execStep.approval, "readonly", "the exec re-read auto-approved — a cached fetch is a read-only op");
+    assert.match(execStep.result, /7/, "the cached JSON was actually read (.json.n === 7)");
+});
+
 test("autoApproveReadonly: a MUTATING ml call (setModel) still goes through the approval gate", async () => {
     const world = loadPageWorld({
         config: { model: "gemma4:31b", ocrModel: "", autoApproveReadonly: true },

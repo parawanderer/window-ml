@@ -34,7 +34,7 @@ import type {
 } from "./contract";
 import { detectGroundingModel, DEFAULT_GROUNDING_RANGE } from "./contract";
 import { evalReadonly } from "./readonly-exec";
-import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement, navTarget, clipOut } from "./dom";
+import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement, navTarget, clipOut, jsonShape } from "./dom";
 import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_NOTE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_EXEC_NOTE, IFRAME_CLAUSE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, EXEC_RANGE_CLAUSE, NAV_OFF_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, askAboutTask } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, markSeen, PT_LOOK_RADIUS, BOX_RE, resolveBox, agentState, mlRange } from "./util";
 import type { ShotBox, ServerTool, VisionMemory, RebuildConfig, AnswerMedia } from "./contract";
@@ -1538,24 +1538,46 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     "pre-parsed, hand a CSV to python_exec, a code file names its language. The type is a HEURISTIC " +
                     "(resolved from the Content-Type header, a content sniff, and the URL extension — a server can " +
                     "mislabel), not authoritative. GET only (no headers/body/auth). Each NEW url is approved once by " +
-                    "the user, then remembered for the session. Prefer this over `navigate` when you only need to READ a URL.",
+                    "the user, then remembered for the session. Prefer this over `navigate` when you only need to READ a URL. " +
+                    "Set `schema: true` when you KNOW it returns JSON and only need the STRUCTURE — you get a compact " +
+                    "TS-like shape (`{ id: number, items: { name: string }[] }`) instead of the whole payload (and a " +
+                    "clear error, saying what it actually was, if it isn't JSON).",
                 parameters: {
                     type: "object",
-                    properties: { url: { type: "string", description: "The absolute http(s) URL to fetch." } },
+                    properties: {
+                        url: { type: "string", description: "The absolute http(s) URL to fetch." },
+                        schema: { type: "boolean", description: "If true, return a compact TS-like SHAPE of the JSON (not the body). Errors if the URL isn't JSON." },
+                    },
                     required: ["url"],
                 },
                 // Show the URL in the approval card (an `action` render → the intent sentence "Agent wants to fetch <url>").
                 render: (_input: unknown, args?: Record<string, unknown>): RenderDescriptor =>
                     ({ type: "action", verb: "fetch", target: String((args as { url?: unknown } | undefined)?.url ?? "") }),
-                run: async ({ url }: { url?: unknown } = {}): Promise<string> => {
+                run: async ({ url, schema = false }: { url?: unknown; schema?: boolean } = {}): Promise<string> => {
                     if (typeof url !== "string" || !url.trim()) return "Error: fetch_url needs a `url`.";
                     let r: import("./contract").FetchResult;
                     try { r = await ml.fetch(url); }
                     catch (e) { return `Error: ${errText(e)}`; }
                     const mislabel = r.typeByHeader && r.typeByHeader !== r.type ? ` (header said "${r.typeByHeader}")` : "";
                     const head = `Fetched ${r.url} — HTTP ${r.status}, type: ${r.type}${r.language ? ` (${r.language})` : ""}${mislabel}${r.truncated ? " · body truncated" : ""}.`;
+                    // `schema: true` — the caller wants the JSON's STRUCTURE, not the body.
+                    if (schema) {
+                        if (r.json === undefined) {
+                            // Not JSON (or unparseable / truncated) — tell the model what it ACTUALLY was so it can adjust.
+                            const why = r.truncated ? "the body was too large to parse whole" : `it's ${r.type}, Content-Type: ${r.contentType || "(none)"}`;
+                            return `Error: you asked for the JSON schema, but ${r.url} isn't JSON — ${why}${mislabel}. First bytes:\n\n${clipOut(r.text, 600)}`;
+                        }
+                        const sig = r.schema ?? jsonShape(r.json), raw = JSON.stringify(r.json, null, 2);
+                        // If the shape is bigger than the payload itself (a tiny/flat object), just dump the JSON.
+                        if (sig.length >= raw.length) return `${head}\n\n${clipOut(raw, 4000)}\n\n(raw JSON shown — its schema would be larger than the object itself.)`;
+                        return `${head}\n\nJSON schema:\n${clipOut(sig, 4000)}`;
+                    }
+                    // Default: the body. For a LARGE json, prepend the shape so the structure survives the clip — but
+                    // only when the shape is actually SMALLER than the payload (else it's noise, not a summary).
                     const body = r.json !== undefined ? JSON.stringify(r.json, null, 2) : r.text;
-                    return `${head}\n\n${clipOut(body, 4000)}`;
+                    const shapeLine = (r.json !== undefined && r.schema && (r.truncated || body.length > 600) && r.schema.length < body.length)
+                        ? `JSON schema: ${r.schema}\n\n` : "";
+                    return `${head}\n\n${shapeLine}${clipOut(body, 4000)}`;
                 },
             });
         },
@@ -2080,8 +2102,12 @@ class AgentHandle implements MlAgentHandle, AgentControl {
          * read-only `exec` calling `ml.fetch(url)` on a cached URL returns it with no approval (only a NEW
          * url asks). Approve the source once, then operate on it — like `python_exec` on a Google Sheet.
          *
+         * When the body is JSON, `.json` is the parsed value and `.schema` is a compact TS-like SHAPE of it
+         * (`{ id: number, items: { name: string }[] }`) — the structure to write code against without holding
+         * the whole payload.
+         *
          * @param {string} url An absolute http(s) URL.
-         * @returns {Promise<FetchResult>} { url, status, ok, type, language?, text, json?, typeBy*, truncated? }.
+         * @returns {Promise<FetchResult>} { url, status, ok, type, language?, text, json?, schema?, typeBy*, truncated? }.
          */
         fetch: function(url: string): Promise<import("./contract").FetchResult> {
             const key = String(url);

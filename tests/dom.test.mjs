@@ -1,7 +1,7 @@
 // Pure dom.ts helpers.
 import { test } from "node:test";
 import assert from "node:assert";
-import { elementReference, classifyOverlay, navTarget, typeFromHeader, typeFromContent, typeFromExtension, classifyContent } from "../dom.ts";
+import { elementReference, classifyOverlay, navTarget, typeFromHeader, typeFromContent, typeFromExtension, classifyContent, jsonShape } from "../dom.ts";
 
 // --- ml.fetch content classification (header / content / extension → a HEURISTIC type for chaining) ---
 test("typeFromHeader: specific content-types map; generic ones return null (defer to content/extension)", () => {
@@ -52,6 +52,48 @@ test("classifyContent: header wins; else structured content; else extension (the
     assert.equal(classifyContent("application/json", '{"a":1}', "http://x/note.txt").type, "json");
     // No cues at all → text.
     assert.equal(classifyContent("", "hello world", "http://x/api").type, "text");
+});
+
+// jsonShape — the TS-like signature generator. The schema a model reads to write code against a payload.
+test("jsonShape: primitives and a flat object", () => {
+    assert.equal(jsonShape(7), "number");
+    assert.equal(jsonShape("hi"), "string");
+    assert.equal(jsonShape(true), "boolean");
+    assert.equal(jsonShape(null), "null");
+    assert.equal(jsonShape({ id: 7, name: "a", ok: true }), "{ id: number, name: string, ok: boolean }");
+});
+
+test("jsonShape: nested objects and arrays with an item count", () => {
+    assert.equal(jsonShape({ version: 2, tags: ["a", "b"] }), "{ version: number, tags: string[] /* 2 items */ }");
+    assert.equal(jsonShape({ user: { name: "a", age: 3 } }), "{ user: { name: string, age: number } }");
+    assert.equal(jsonShape([1]), "number[] /* 1 item */");   // singular
+});
+
+test("jsonShape: an array of objects MERGES keys — optional (absent in some) + unioned leaf types", () => {
+    const v = [{ name: "a", port: 1 }, { name: "b" }, { name: "c", port: "x" }];
+    // `port` is absent from the 2nd → optional; its type unions number|string across the sample.
+    assert.equal(jsonShape({ servers: v }), "{ servers: { name: string, port?: number | string }[] /* 3 items */ }");
+});
+
+test("jsonShape: empty array, mixed-primitive array, and empty object", () => {
+    assert.equal(jsonShape([]), "unknown[]");
+    assert.equal(jsonShape([1, "a", true]), "(number | string | boolean)[] /* 3 items */");
+    assert.equal(jsonShape({}), "{  }");
+});
+
+test("jsonShape: weird keys are quoted", () => {
+    assert.equal(jsonShape({ "a-b": 1, ok: 2 }), '{ "a-b": number, ok: number }');
+});
+
+test("jsonShape is BOUNDED — depth, key count, and array sample are capped", () => {
+    // Depth cap: beyond maxDepth the shape collapses to `object` rather than recursing forever.
+    const deep = { a: { b: { c: { d: 1 } } } };
+    assert.equal(jsonShape(deep, { maxDepth: 2 }), "{ a: { b: object } }");
+    // Key cap: only maxKeys keys are shown, with a "+N" remainder.
+    const wide = Object.fromEntries(Array.from({ length: 5 }, (_, i) => [`k${i}`, i]));
+    assert.match(jsonShape(wide, { maxKeys: 2 }), /^\{ k0: number, k1: number, …\+3 \}$/);
+    // Sample cap: a huge array is summarised from a sample but still reports the TRUE length.
+    assert.match(jsonShape(Array.from({ length: 10000 }, () => ({ x: 1 })), { sample: 3 }), /\/\* 10000 items \*\/$/);
 });
 
 test("navTarget: a same-origin relative URL resolves to an absolute destination", () => {

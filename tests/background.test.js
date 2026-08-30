@@ -1775,6 +1775,20 @@ test("FETCH_URL: a trusted surface fetches UNCREDENTIALED and classifies the bod
     assert.deepEqual(res.data.json, { ok: true }, "JSON is pre-parsed");
 });
 
+test("FETCH_URL: a JSON body gets a `schema` (TS-like shape); a non-JSON body does not", async () => {
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => call.url.endsWith(".json")
+            ? fetchResponse('{"id":7,"items":[{"name":"a"},{"name":"b"}]}', { contentType: "application/json", url: call.url })
+            : fetchResponse("plain text, not json", { contentType: "text/plain", url: call.url }),
+    });
+    const j = await bg.send({ type: "FETCH_URL", payload: { url: "https://api.example/data.json" } });
+    assert.equal(j.data.schema, "{ id: number, items: { name: string }[] /* 2 items */ }", "the parsed JSON carries its shape");
+    const t = await bg.send({ type: "FETCH_URL", payload: { url: "https://api.example/readme.txt" } });
+    assert.equal(t.data.schema, undefined, "a non-JSON body has no schema");
+    assert.equal(t.data.json, undefined);
+});
+
 test("FETCH_URL: a mislabelled body classifies by content/extension (raw .ts served as text/plain → code)", async () => {
     const bg = loadBackground({ config: baseConfig(), onFetch: (call) => fetchResponse("const x = 1;\nexport default x;", { contentType: "text/plain", url: call.url }) });
     const res = await bg.send({ type: "FETCH_URL", payload: { url: "https://raw.githubusercontent.com/o/r/main/x.ts" } });

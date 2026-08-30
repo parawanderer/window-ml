@@ -164,6 +164,8 @@ export interface FetchResult {
     contentType: string;      // the raw Content-Type header
     text: string;             // the body, raw (capped)
     json?: unknown;           // parsed JSON when type === "json" and it parsed
+    schema?: string;          // a compact TS-like SHAPE of `json` (see dom.ts jsonShape) — the structure to
+                              // write code against without the whole payload; present iff `json` is set
     truncated?: boolean;      // the body was clipped to the size cap
     redirected?: boolean;     // the request followed ≥1 redirect (`url` above is the FINAL landing URL — the
                               // intermediate chain isn't visible to fetch; a redirect log needs chrome.webRequest)

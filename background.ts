@@ -6,7 +6,7 @@ import type { MlConfig, ApiFormat, NeutralMessage, ToolCall, FetchLlmPayload, Ll
 import { DEFAULT_CONFIG, modelFilterAllows, bgRunResumable } from "./contract";   // single source of truth (see contract.ts)
 import { runBackgroundAgent } from "./agent-host";   // design A: the background-hosted agent loop
 import type { ToolMeta } from "./agent-loop";
-import { externalSheetIds, googleSheetId, classifyContent } from "./dom";   // track approved external sheets across a run + the choke-point grants; classify a fetched body
+import { externalSheetIds, googleSheetId, classifyContent, jsonShape } from "./dom";   // track approved external sheets across a run + the choke-point grants; classify a fetched body + summarise its JSON shape
 import { extractGrants } from "./grant-extract";   // button #3: static egress-grant extraction for "Approve + remember"
 import type { FetchResult } from "./contract";
 import { createNavBarrier } from "./nav-barrier";   // cross-page persistence: hold delegated tools while a run's tab navigates
@@ -2183,7 +2183,11 @@ async function fetchUrlContent(url: string): Promise<FetchResult> {
         truncated: truncated || undefined, redirected: res.redirected || undefined,
     };
     // Pre-parse JSON only when it's whole — a truncated body can't parse. (type stays "json" so the agent knows.)
-    if (type === "json" && !truncated) { try { out.json = JSON.parse(text); } catch { /* mislabelled → leave as text */ } }
+    // A parsed value also gets a compact TS-like `schema` (jsonShape) so the model can see the structure
+    // without the whole payload — on the return object, and the tool can prefer it.
+    if (type === "json" && !truncated) {
+        try { out.json = JSON.parse(text); out.schema = jsonShape(out.json); } catch { /* mislabelled → leave as text */ }
+    }
     return out;
 }
 

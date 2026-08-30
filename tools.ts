@@ -425,10 +425,12 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 // signature here; full FetchResult type is in agent_api_docs.
                 "CROSS-SITE READS: `ml.fetch(url)` — the same GET as the `fetch_url` tool, but callable inline — " +
                 "reads a raw file / JSON API / other site the DOM can't reach, returning " +
-                "`{ url, status, ok, type: 'json'|'csv'|'html'|'code'|'text'|…, text, json? }` (full type via " +
-                "`agent_api_docs`). A NEW url asks once; then RE-reading that same url from a read-only survey is " +
-                "FREE (cached) — approve a source once, then parse/slice/re-query it freely (like `python_exec` on " +
-                "a Google Sheet). " +
+                "`{ url, status, ok, type: 'json'|'csv'|'html'|'code'|'text'|…, text, json?, schema? }` (full type " +
+                "via `agent_api_docs`). For a JSON body, `.json` is pre-parsed and `.schema` is a compact TS-like " +
+                "SHAPE of it (`{ id: number, items: { name: string }[] }`) — read that to learn the structure of a " +
+                "big payload without dumping it all. A NEW url asks once; then RE-reading that same url from a " +
+                "read-only survey is FREE (cached) — approve a source once, then parse/slice/re-query it freely " +
+                "(like `python_exec` on a Google Sheet). " +
                 "PERSISTENT STATE: you have a `state` object (also `ml.state`) that is NOT reset between calls — " +
                 "it's a live page kernel, like cells in a Jupyter notebook. For any multi-step work, DEFINE helper " +
                 "functions and stash intermediate results on it ONCE, then REUSE them on later calls instead of " +

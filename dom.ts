@@ -1144,6 +1144,58 @@ export function typeFromExtension(url: string): { type: ContentKind; language?: 
     return null;
 }
 
+/** A compact, LLM-legible SHAPE of a parsed JSON value — a TypeScript-like type skeleton, NOT a JSONSchema
+ *  object (models read TS types natively). Leaves become their type; an array collapses to `T[]` with an item
+ *  count; object shapes are MERGED across a sample of an array's elements so varying/optional keys surface as
+ *  `key?`, and differing leaf types union (`string | number`). Bounded by depth / keys / sample so even a huge
+ *  payload reduces to a few lines — the schema a model needs to write code against a response WITHOUT seeing
+ *  the whole thing. Pure + deterministic. e.g. `{ version: number, servers: { name: string, port?: number }[] }`. */
+export function jsonShape(value: unknown, opts: { maxDepth?: number; maxKeys?: number; sample?: number } = {}): string {
+    const maxDepth = opts.maxDepth ?? 6, maxKeys = opts.maxKeys ?? 40, sample = opts.sample ?? 25;
+    const keyStr = (k: string): string => /^[A-Za-z_$][\w$]*$/.test(k) ? k : JSON.stringify(k);
+
+    const shape = (v: unknown, depth: number): string => {
+        if (v === null) return "null";
+        if (Array.isArray(v)) {
+            const n = v.length;
+            if (!n) return "unknown[]";
+            if (depth >= maxDepth) return "unknown[]";
+            const es = elemShape(v.slice(0, sample), depth + 1);
+            // Parenthesise a top-level UNION element so `(number | string)[]` reads unambiguously (an object
+            // shape `{ … }` is already delimited, so it doesn't need it).
+            const el = es.includes(" | ") && !es.startsWith("{") ? `(${es})` : es;
+            return `${el}[] /* ${n} item${n === 1 ? "" : "s"} */`;
+        }
+        if (typeof v === "object") return depth >= maxDepth ? "object" : objShape(v as Record<string, unknown>, depth);
+        return typeof v;   // string / number / boolean / (undefined shouldn't occur in JSON)
+    };
+
+    // Merge array-element shapes: all-objects → union of keys (optional where absent); else union of leaf shapes.
+    const elemShape = (elems: unknown[], depth: number): string => {
+        const objs = elems.filter(e => e !== null && typeof e === "object" && !Array.isArray(e)) as Record<string, unknown>[];
+        if (objs.length === elems.length && objs.length) {
+            const present = new Map<string, number>(), shapes = new Map<string, Set<string>>();
+            for (const e of objs) for (const k of Object.keys(e)) {
+                present.set(k, (present.get(k) ?? 0) + 1);
+                if (!shapes.has(k)) shapes.set(k, new Set());
+                shapes.get(k)!.add(shape(e[k], depth + 1));
+            }
+            const keys = [...present.keys()].slice(0, maxKeys);
+            const parts = keys.map(k => `${keyStr(k)}${present.get(k)! < objs.length ? "?" : ""}: ${[...shapes.get(k)!].join(" | ")}`);
+            return `{ ${parts.join(", ")}${present.size > keys.length ? `, …+${present.size - keys.length}` : ""} }`;
+        }
+        return [...new Set(elems.map(e => shape(e, depth)))].join(" | ") || "unknown";
+    };
+
+    const objShape = (o: Record<string, unknown>, depth: number): string => {
+        const all = Object.keys(o), keys = all.slice(0, maxKeys);
+        const parts = keys.map(k => `${keyStr(k)}: ${shape(o[k], depth + 1)}`);
+        return `{ ${parts.join(", ")}${all.length > keys.length ? `, …+${all.length - keys.length}` : ""} }`;
+    };
+
+    return shape(value, 0);
+}
+
 /** Resolve a fetched body's kind from THREE cues — header, content, and URL extension — and pick a final
  *  `type` (+ a `language` for code). Precedence: a SPECIFIC header wins; else STRUCTURED content (json/html/
  *  xml/csv, which is unambiguous); else the extension (catches code/markdown a server sent as text/plain);

@@ -6,6 +6,63 @@ const { loadPageWorld } = require("./helpers");
 
 const IMG = "data:image/png;base64,AAA";
 
+// The fetch_url TOOL's display logic (schema flag, non-JSON error, shape-vs-raw size, large-JSON prepend).
+// Drive the real tool `run` with a crafted FetchResult (mock FETCH_URL), so this is the shipped code.
+const fetchTool = (fr) => {
+    const world = loadPageWorld({ onRuntimeMessage: (m) => (m.type === "FETCH_URL" ? { data: fr } : undefined) });
+    return world.ml.fetchTool();
+};
+const jsonResult = (json, extra = {}) => ({
+    url: "https://x.test/a.json", status: 200, ok: true, type: "json",
+    text: JSON.stringify(json), json, typeByHeader: "json", typeByContent: "json", typeByExtension: null,
+    contentType: "application/json", ...extra,
+});
+
+test("fetch_url tool: schema:true returns the JSON shape, not the body", async () => {
+    const json = { id: 7, items: [{ name: "a" }, { name: "b" }] };
+    const out = await fetchTool(jsonResult(json, { schema: "{ id: number, items: { name: string }[] /* 2 items */ }" })).run({ url: "https://x.test/a.json", schema: true });
+    assert.match(out, /JSON schema:/);
+    assert.match(out, /items: \{ name: string \}\[\]/);
+    assert.doesNotMatch(out, /"name":\s*"a"/, "the raw body is NOT dumped when schema was requested");
+});
+
+test("fetch_url tool: schema:true falls back to computing the shape when the result carries none", async () => {
+    // No `.schema` on the result → the tool computes jsonShape(json) itself.
+    const out = await fetchTool(jsonResult({ a: [1, 2, 3] })).run({ url: "https://x.test/a.json", schema: true });
+    assert.match(out, /JSON schema:/);
+    assert.match(out, /a: number\[\]/);
+});
+
+test("fetch_url tool: schema:true on a NON-JSON body errors and says what it actually was", async () => {
+    const html = { url: "https://x.test/page", status: 200, ok: true, type: "html", text: "<!doctype html><title>Hi</title>", typeByHeader: "html", typeByContent: "html", typeByExtension: null, contentType: "text/html" };
+    const out = await fetchTool(html).run({ url: "https://x.test/page", schema: true });
+    assert.match(out, /^Error:/);
+    assert.match(out, /isn't JSON/i);
+    assert.match(out, /it's html/i, "tells the model what it WAS");
+    assert.match(out, /text\/html/, "includes the Content-Type");
+    assert.match(out, /<!doctype html>/, "and the first bytes so the model can see it");
+});
+
+test("fetch_url tool: schema:true dumps the RAW json + a note when the shape would be larger than the object", async () => {
+    // A tiny flat object: its shape (`{ a: number }`) is longer than the payload itself.
+    const out = await fetchTool(jsonResult({ a: 1 }, { schema: "{ a: number }" })).run({ url: "https://x.test/a.json", schema: true });
+    assert.doesNotMatch(out, /JSON schema:/, "no shape header");
+    assert.match(out, /"a": 1/, "the raw JSON is shown");
+    assert.match(out, /schema would be larger than the object/i, "with a note explaining why");
+});
+
+test("fetch_url tool: default (no flag) PREPENDS the shape for a LARGE json, but not a small one", async () => {
+    // Large json → the shape orients the model even though the body is clipped.
+    const big = { items: Array.from({ length: 60 }, (_, i) => ({ name: `item-number-${i}`, index: i })) };
+    const bigOut = await fetchTool(jsonResult(big, { schema: "{ items: { name: string, index: number }[] /* 60 items */ }" })).run({ url: "https://x.test/a.json" });
+    assert.match(bigOut, /JSON schema: \{ items:/, "a big json gets its shape prepended");
+    assert.match(bigOut, /"item-number-0"/, "and the (clipped) body too");
+    // Small json → no shape line, just the body.
+    const smallOut = await fetchTool(jsonResult({ ok: true }, { schema: "{ ok: boolean }" })).run({ url: "https://x.test/a.json" });
+    assert.doesNotMatch(smallOut, /JSON schema:/, "a small json isn't cluttered with a shape line");
+    assert.match(smallOut, /"ok": true/);
+});
+
 test("ml.fetch travels the relay, returns the FetchResult, and CACHES it for readonly reuse", async () => {
     const result = { url: "https://x.test/a.json", status: 200, ok: true, type: "json", text: '{"n":7}', json: { n: 7 } };
     const world = loadPageWorld({
