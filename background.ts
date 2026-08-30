@@ -3,7 +3,7 @@
 // server JSON is genuinely opaque, so it's typed `any`; our own data uses the
 // shared contract types.
 import type { MlConfig, ApiFormat, NeutralMessage, ToolCall, FetchLlmPayload, LlmResult, LoadedModel, ServerTool, JsonSchema, TokenUsage, StartRunPayload, SetApprovalPayload, CancelRunPayload, ResumeRunPayload, InjectMessagePayload, ApprovalDecision } from "./contract";
-import { DEFAULT_CONFIG, modelFilterAllows, bgRunResumable, acceptLanguageFrom } from "./contract";   // single source of truth (see contract.ts)
+import { DEFAULT_CONFIG, modelFilterAllows, bgRunResumable, acceptLanguageFrom, pushReplay } from "./contract";   // single source of truth (see contract.ts)
 import { runBackgroundAgent } from "./agent-host";   // design A: the background-hosted agent loop
 import type { ToolMeta } from "./agent-loop";
 import { externalSheetIds, googleSheetId, classifyContent, jsonShape, clipOut } from "./dom";   // track approved external sheets across a run + the choke-point grants; classify a fetched body + summarise its JSON shape
@@ -1056,8 +1056,7 @@ const CAPTURE_RETRY_MS = 550;    // …spaced just over the 1s/2-call window →
 const bufferReplay = (tabId: number, event: unknown): void => {
     let buf = runReplayBuffer.get(tabId);
     if (!buf) { buf = []; runReplayBuffer.set(tabId, buf); }
-    buf.push(event);
-    if (buf.length > REPLAY_CAP) buf.splice(0, buf.length - REPLAY_CAP);
+    pushReplay(buf, event, REPLAY_CAP);
 };
 const trackRun = (tabId: number, runId: string, rebuild?: import("./contract").RebuildConfig): void => {
     const s = activeRuns.get(tabId) ?? new Set<string>();

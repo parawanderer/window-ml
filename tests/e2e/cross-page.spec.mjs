@@ -406,6 +406,73 @@ test("csp-sandbox: a delegated tool on a script-blocking page FAILS FAST with an
     await page.close();
 });
 
+// The reported bug: the corner HUD card reappears after a SAME-origin nav but NOT a CROSS-DOMAIN one. Devtools
+// coexist card + a run that navigates to a DIFFERENT origin — the card must rebuild on the destination origin.
+test("cross-domain (HUD card): the corner card reappears on the destination ORIGIN after a cross-origin nav", async () => {
+    await configureExtension(ext.sw, { debugMode: "devtools", agentHudInDevtools: true });
+    const page = await ext.context.newPage();
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+
+    const before = fake.calls().length;
+    fake.setScript([
+        { tool: "navigate", args: { url: site.crossOrigin + "/" } },
+        { tool: "findByText", args: { text: "XDOMAIN" } },
+        { content: "Resumed answer — the coexist card must show THIS on the other origin." },
+    ]);
+    await page.evaluate((cross) => { window.ml.agent(`Go to ${cross} and read the code.`, { env: false, crossOrigin: true, approvalRouting: "external" }); return true; }, site.crossOrigin);
+    // Approve the cross-origin crossing (routed to the IPC channel).
+    await expect.poll(async () => (await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).length, { timeout: 15000 }).toBe(1);
+    const [gate] = await ext.sw.evaluate(() => globalThis.__mlApprovals.list());
+    await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), gate.key);
+    await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(3);
+    expect(new URL(page.url()).host).toBe(new URL(site.crossOrigin).host);   // really left the first origin
+
+    // The corner HUD card must appear ON THE DESTINATION ORIGIN with the answer.
+    const card = () => page.frames().filter((f) => f.url().includes("sidebar.html") && !f.isDetached()).pop();
+    await expect.poll(async () => { const f = card(); try { return f ? ((await f.locator("body").textContent()) || "") : ""; } catch { return ""; } }, { timeout: 20000 }).toContain("must show THIS on the other origin");
+    await page.close();
+    await configureExtension(ext.sw, { debugMode: "off", agentHudInDevtools: false });   // restore
+});
+
+// The EXACT reported repro: a RESUME (follow-up "can you go to youtube…") that navigates CROSS-DOMAIN. A
+// resume emits no `agent` start, so the destination-origin card must rebuild from the replay/steps alone.
+test("cross-domain (HUD card): a RESUME that navigates cross-origin still shows the card on the destination origin", async () => {
+    await configureExtension(ext.sw, { debugMode: "devtools", agentHudInDevtools: true });
+    const page = await ext.context.newPage();
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+
+    // Turn 1: a background-hosted run that finishes on the START origin. Grab its hash.
+    const events = [];
+    await page.exposeFunction("__cpXd", (e) => events.push(e));
+    await page.addInitScript(() => { if (window.top === window) window.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) window.__cpXd({ kind: e.data.__mlDebug.kind, id: e.data.__mlDebug.id }); }); });
+    await page.reload(); await waitForMl(page);
+    let before = fake.calls().length;
+    fake.setScript([{ content: "Turn one done." }]);
+    await page.evaluate(() => { window.ml.createAgent({ env: false, crossOrigin: true, approvalRouting: "external" }).run("Say turn one."); return true; });
+    await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(1);
+    const hash = await expect.poll(() => events.find((e) => e.kind === "agent")?.id, { timeout: 10000 }).toBeTruthy().then(() => events.find((e) => e.kind === "agent").id);
+
+    // Turn 2 (RESUME): navigate CROSS-ORIGIN, then answer.
+    before = fake.calls().length;
+    fake.setScript([
+        { tool: "navigate", args: { url: site.crossOrigin + "/" } },
+        { tool: "findByText", args: { text: "XDOMAIN" } },
+        { content: "Resumed answer — the coexist card must show THIS across the domain." },
+    ]);
+    await page.evaluate((h) => { window.postMessage({ __mlSessionSend: { hash: h, text: "Go to the other site and read the code." } }, "*"); return true; }, hash);
+    await expect.poll(async () => (await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).length, { timeout: 15000 }).toBe(1);
+    const [gate] = await ext.sw.evaluate(() => globalThis.__mlApprovals.list());
+    await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), gate.key);
+    await expect.poll(() => page.url(), { timeout: 20000 }).toContain(new URL(site.crossOrigin).host);
+
+    const card = () => page.frames().filter((f) => f.url().includes("sidebar.html") && !f.isDetached()).pop();
+    await expect.poll(async () => { const f = card(); try { return f ? ((await f.locator("body").textContent()) || "") : ""; } catch { return ""; } }, { timeout: 20000 }).toContain("must show THIS across the domain");
+    await page.close();
+    await configureExtension(ext.sw, { debugMode: "off", agentHudInDevtools: false });
+});
+
 // Variant B — cross-DOMAIN. Even WITH { crossOrigin: true }, leaving the origin is a scope escalation, so a
 // cross-origin nav must GATE for consent (a page can't silently send the agent to another site). We route
 // the gate to the IPC channel so the test can approve/deny it.

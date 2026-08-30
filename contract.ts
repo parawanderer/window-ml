@@ -226,6 +226,20 @@ export interface FetchResult {
                               // intermediate chain isn't visible to fetch; a redirect log needs chrome.webRequest)
 }
 
+/** Append a debug event to a per-tab HUD replay ring, dropping the oldest past `cap` — but NEVER dropping a
+ *  run's `agent` START event. A re-adopting page (cross-page / cross-DOMAIN nav) rebuilds its corner card from
+ *  this replay; without the start the reducer can't CREATE the session, so every replayed step orphans and the
+ *  card renders EMPTY ("the HUD never appears after a navigate"). This bit the cross-domain case because a LONG
+ *  prior session overflowed the ring and evicted the start. Re-pin any dropped start at the head (usually 0-1).
+ *  Mutates `buf`. Pure — unit-tested in tests/replay.test.mjs. */
+export function pushReplay(buf: unknown[], event: unknown, cap: number): void {
+    buf.push(event);
+    if (buf.length <= cap) return;
+    const dropped = buf.splice(0, buf.length - cap);
+    const lostStarts = dropped.filter(e => (e as { kind?: string })?.kind === "agent");
+    if (lostStarts.length) buf.unshift(...lostStarts);   // the session-creating events survive the cap
+}
+
 /** How stale a persisted background-run snapshot may be and still auto-resume. A real MV3 eviction respawns
  *  within seconds and each step re-stamps the snapshot, so a live run's snapshot is always fresh; anything
  *  older than this is a zombie (the SW died and never came back for it) and must NOT be silently resumed. */
