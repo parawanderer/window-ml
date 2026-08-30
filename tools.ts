@@ -9,7 +9,7 @@ import type { VerifyArea } from "./builtin-tools";
 /** Serialize a screenshot-crop of each designated `answer` element for the HUD completion card. ml-backed
  *  (built in injected.ts), so the pure domTools stay pure — the answer tool just calls it when present. */
 export type CaptureAnswer = (els: Element[], note?: string, show?: "inline" | "highlight") => Promise<AnswerMedia[]>;
-import { truncate, clipOut, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, deepQueryAll, closedShadowHosts, frameHostOf, selectorError } from "./dom";
+import { truncate, clipOut, errText, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, deepQueryAll, closedShadowHosts, frameHostOf, selectorError } from "./dom";
 import { INTERACTIVE_SEL, roleOf, accessibleName, placeholderText, ariaState, hasLayout, styleHidden, isFaded } from "./a11y";
 import { pageContext, browserInfo, agentState } from "./util";
 import { makeBackgroundTaskPromise } from "./bridge";
@@ -507,7 +507,9 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 const withLogs = (value: string) => logged ? `${logged}\n\nvalue: ${value}` : value;
 
                 if (failed) {
-                    const msg = (failed as Error).message;
+                    // errText, NOT `.message`: a rejected `ml.*` call (makeBackgroundTaskPromise) rejects with a
+                    // STRING (the actionable message), which has no `.message` → the "Error: undefined" bug.
+                    const msg = errText(failed);
                     // The #1 exec mistake: querySelectorAll / .children / getElementsBy* return a
                     // NodeList/HTMLCollection (array-LIKE, no .map/.filter). Steer the retry
                     // instead of leaving the model to flail on "map is not a function".

@@ -298,6 +298,8 @@ html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
 /* A turn's PROSE (content) — rendered like the answer: full-brightness markdown, no box/dot/label,
    expanded by default with a subtle collapse chevron on the left. */
 .aturn-prose { display: flex; align-items: flex-start; gap: 4px; margin: 3px 0 7px; padding-left: 2px; }
+/* short prose with no collapse toggle: indent to align its text with the chevron'd prose above/below. */
+.aturn-prose.no-toggle { padding-left: 17px; }
 .aturn-prose .prose-tri { flex: none; margin-top: 3px; }
 .aturn-prose .md { flex: 1; min-width: 0; color: var(--fg); }
 .aturn-prose .asst-collapsed { flex: 1; min-width: 0; color: var(--fg-dim); }

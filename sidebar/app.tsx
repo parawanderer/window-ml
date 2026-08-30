@@ -1288,6 +1288,9 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
 function TurnProse({ text }: { text: string }) {
     const [collapsed, setCollapsed] = useState(false);
     const p = collapsedPreview(text);
+    // Nothing to collapse (a short single-line thought that fits the preview whole) → no toggle chevron; it
+    // would only mislead ("expand" reveals nothing). Just render the prose.
+    if (!p.more) return <div class="aturn-prose no-toggle"><div class="md" dangerouslySetInnerHTML={{ __html: markdown(text, { math: true }) }} /></div>;
     return (
         <div class={`aturn-prose${collapsed ? " collapsed" : ""}`}>
             <button class="who-toggle prose-tri" title={collapsed ? "expand" : "collapse"} onClick={() => setCollapsed(v => !v)}>
@@ -3199,6 +3202,7 @@ function CardApp() {
     }
     return (
         <div class="card-app" data-rev={r}>
+            <ContextMenu />{/* right-click menus (e.g. a fetch/navigate URL → open in new tab) need their renderer in the HUD too, not just the panel */}
             {tabs ? <CardTabs runs={runs} selected={hash} /> : null}
             <div class="card-head" onPointerDown={startCardDrag} onContextMenu={cardCtxMenu}>
                 {tabs ? null : <span class="card-bot" aria-hidden="true">🤖</span>}   {/* multi-run: the tab strip already IDs the run — drop the 🤖 to de-clutter */}

@@ -124,7 +124,8 @@ export async function runDelegatedTool(runId: string, name: string, args: Record
             const ro = await evalReadonly((args as { js: string }).js, document, typeof window !== "undefined" ? window.ml : null);
             const { result, elements } = formatReadonlyExec(ro.value, ro.logs);
             const { in: renderIn, out: renderOut } = descriptorFor(tool, { result, elements }, args);
-            return { result, elementCount: elements ? elements.length : undefined, renderIn, renderOut, readonly: true };
+            const urls = [...new Set(ro.reused)];   // cached ml.fetch URLs this survey reused → the "reused a grant" note
+            return { result, elementCount: elements ? elements.length : undefined, renderIn, renderOut, readonly: true, reused: urls.length ? urls.map(u => ({ kind: "fetch-url" as const, detail: u })) : undefined };
         } catch { return { result: "", readonly: false }; }
     }
     // A tool (look/locate, or click/type/wait with verify) may make its own delegated vision sub-calls —

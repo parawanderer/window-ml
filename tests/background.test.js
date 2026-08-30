@@ -1861,6 +1861,38 @@ test("SECURITY (FETCH_URL): the SAME addresses become reachable once approved vi
     assert.ok(bg.calls.some(c => c.url === target), "the localhost URL WAS fetched after approval (consent is the sole gate)");
 });
 
+test("background-hosted reused-grant parity: a delegated readonly-try forwards `reused` onto the step", async () => {
+    // A background run's readonly exec (delegated to the page) that re-read a CACHED ml.fetch URL must carry
+    // the `reused` note onto its emitted step, same as the page-hosted path — the reported gap.
+    const events = [];
+    let n = 0;
+    const url = "https://raw.githubusercontent.com/o/r/main/servers.json";
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => (++n === 1
+            ? jsonResponse({ choices: [{ message: { content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "exec", arguments: JSON.stringify({ js: `ml.fetch("${url}").json` }) } }] } }] })
+            : jsonResponse({ choices: [{ message: { content: "done" } }] })),
+        onTabMessage: (_t, msg) => {
+            if (msg?.type === "ML_DEBUG_TO_PAGE") events.push(msg.event);
+            // The delegated readonly-try HANDLED it (cached fetch) → returns readonly:true + the reused grant.
+            if (msg?.type === "RUN_TOOL_IN_PAGE" && msg.payload?.readonlyTry) {
+                return { readonly: true, result: "[…servers…]", reused: [{ kind: "fetch-url", detail: url }] };
+            }
+            return undefined;
+        },
+    });
+    await bg.send({ type: "START_RUN", payload: {
+        runId: "ru-bg", task: "reuse a fetch", systemPrompt: "S",
+        tools: [{ name: "exec", requiresApproval: true, description: "", parameters: {}, capabilities: [] }],
+        model: "m", think: null, maxSteps: 5, autoApprovePython: false, autoApproveReadonly: true, surface: "devtools",
+    } }, { tab: { id: 4 } });
+
+    const step = events.find(e => e.kind === "agent-step" && e.tool === "exec" && !e.pending);
+    assert.ok(step, "the exec step emitted");
+    assert.equal(step.approval, "readonly", "auto-approved via the delegated readonly-try");
+    assert.deepEqual(step.reused, [{ kind: "fetch-url", detail: url }], "the reused cached URL rode onto the step (background parity)");
+});
+
 // --- button #3: "Approve + remember" — an approved exec persists its STATIC ml.fetch literals for the session ---
 
 // Drive an exec whose inline ml.fetch literals should be offered as persistable grants, decide it via

@@ -956,6 +956,9 @@ export interface PageToolEnvelope {
     feedback?: ToolFeedback;
     /** a readonlyTry that the mediated interpreter HANDLED (→ auto-approve) */
     readonly?: boolean;
+    /** prior grants a readonlyTry REUSED (cached ml.fetch URLs) — surfaced as the "reused a grant" note on
+     *  the step, so a background-hosted run explains why it auto-ran, same as the page path. */
+    reused?: ReusedGrant[];
     /** a precheck that found the action doomed (no target) → skip the gate, use `result` */
     precheckFailed?: boolean;
     /** RESERVED-surface click: the page-side tool couldn't synth-click a cross-origin iframe / sealed shadow

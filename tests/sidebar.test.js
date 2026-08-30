@@ -461,6 +461,22 @@ test("button #3 (sidebar step): a gate with NO grants shows no remember button",
     assert.equal(w.shadow.querySelector(".astep-approve .appr-grant"), null, "and no grant card");
 });
 
+test("turn prose: a SHORT one-line thought has NO misleading collapse chevron; a LONG one keeps it", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("tp", "do it"));
+    await w.dispatch(agentStep("tp", 1, { seq: 1, thought: "Let me try the fetch tool instead:" }));   // short → nothing to collapse
+    await w.dispatch(agentStep("tp", 2, { seq: 2, thought: "x ".repeat(120) }));   // long (>100 chars) → truncates
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const proses = [...w.shadow.querySelectorAll(".aturn-prose")];
+    assert.equal(proses.length, 2, "both thoughts render as prose");
+    const short = proses.find(p => /fetch tool instead/.test(p.textContent));
+    assert.ok(short.classList.contains("no-toggle"), "short thought is flagged no-toggle");
+    assert.equal(short.querySelector(".prose-tri"), null, "…and has NO chevron (nothing to expand)");
+    const long = proses.find(p => !/fetch tool instead/.test(p.textContent));
+    assert.ok(long.querySelector(".prose-tri"), "the long thought keeps its collapse chevron");
+});
+
 test("reused-grant step: a readonly exec that re-read a cached URL shows a collapsed 'reused a grant' note", async () => {
     const w = await loadSidebarWorld();
     const url = "https://x.test/servers.json";

@@ -1573,7 +1573,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     if (name !== "exec") return null;
                     const env = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name, args, readonlyTry: true } })
                         .catch(() => null) as Partial<import("./contract").PageToolEnvelope> | null;
-                    return env && env.readonly ? { result: env.result || "", renderIn: env.renderIn, renderOut: env.renderOut } : null;
+                    return env && env.readonly ? { result: env.result || "", renderIn: env.renderIn, renderOut: env.renderOut, reused: env.reused } : null;
                 } : undefined,
                 // Doomed-action precheck (click/type): ask the page to resolve the target side-effect-free.
                 // A non-null error → the gate is SKIPPED and the error returned. Only delegated for tools

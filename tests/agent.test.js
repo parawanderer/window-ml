@@ -840,6 +840,16 @@ test("exec returns console output even when the expression evaluates to undefine
     assert.match(res, /value: \(undefined\)/);
 });
 
+test("exec: a STRING rejection (a failed ml.* call) surfaces the real message, not 'Error: undefined'", async () => {
+    // makeBackgroundTaskPromise rejects with a STRING (the actionable message); exec used `.message` (undefined
+    // for a string) → the useless "Error: undefined". errText handles both.
+    const { ml } = loadDomWorld("");
+    const r = await run(ml, "exec", { js: "throw 'Could not fetch — redirect loop at github.com'" });
+    const out = typeof r === "string" ? r : (r?.content ?? String(r));
+    assert.match(out, /redirect loop at github\.com/, "the thrown string IS the message");
+    assert.doesNotMatch(out, /Error: undefined/, "not the useless placeholder");
+});
+
 test("exec hands back DOM nodes as hoverable elements", async () => {
     const { ml } = loadDomWorld("<li></li><li></li>");
     const one = await run(ml, "exec", { js: "document.querySelector('li')" });
