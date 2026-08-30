@@ -678,14 +678,15 @@ test("CDP_CLICK reports the missing debugger permission (never attaches)", async
 // human approves it (via the fanned gate), the delegated page-side eval is CSP-BLOCKED and hands back a
 // cdpExec signal, and the background re-runs it via the debugger. The page echoes a DECOY source to prove the
 // background runs only the human-APPROVED args.js (unforgeable), never the page's value.
-async function driveCdpExec({ cdp, debuggerPermission = true, pageEcho }) {
-    const approvedJs = "await ml.fetch('https://api.example/x').then(r => r.type)";
+async function driveCdpExec({ cdp, debuggerPermission = true, pageEcho, approvedJs = "await ml.fetch('https://api.example/x').then(r => r.type)", simulateLogs = [] }) {
     const evals = [];
     let toolResult = null, n = 0, bg;
     bg = loadBackground({
         config: baseConfig({ cdp }),
         debuggerPermission,
-        onDebuggerCommand: (method, params) => { if (method === "Runtime.evaluate") { evals.push(params.expression); return { result: { value: "CDP-RAN" } }; } },
+        // Simulate the page running cdpEval's console-capture WRAPPER: it patches console, runs the source,
+        // and returns { __mlWrapped, v, logs } by value — so console output survives the CDP round-trip.
+        onDebuggerCommand: (method, params) => { if (method === "Runtime.evaluate") { evals.push(params.expression); return { result: { value: { __mlWrapped: true, v: "CDP-RAN", logs: simulateLogs } } }; } },
         onFetch: (call) => {
             n++;
             if (n === 1) return jsonResponse({ choices: [{ message: { content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "exec", arguments: JSON.stringify({ js: approvedJs }) } }] } }] });
@@ -721,7 +722,22 @@ test("CDP exec (ON + granted): a CSP-blocked exec re-runs the APPROVED source vi
     assert.ok(evals.some(e => e.includes("ml.fetch('https://api.example/x')")), "it evaluated the human-APPROVED args.js");
     assert.ok(!evals.some(e => e.includes("evil.example/steal")), "NEVER the page-echoed decoy source — unforgeable");
     assert.match(toolResult, /CDP-RAN/, "the CDP result reached the model");
+    // The evaluated expression WRAPS the approved source with the console-capture harness, so a page's
+    // console.log survives the CDP round-trip (the "logs got lost in CDP" fix) instead of vanishing.
+    assert.ok(evals.some(e => /__logs/.test(e) && /console\[m\]/.test(e)), "the source is wrapped to capture console output");
     void approvedJs;
+});
+
+test("CDP exec: console.log output is captured and prefixed onto the value (not lost via CDP)", async () => {
+    const { toolResult } = await driveCdpExec({
+        cdp: true, debuggerPermission: true, pageEcho: "x",
+        approvedJs: "console.log('before:', 3); return 42;",
+        simulateLogs: ["before: 3", "after add: [\"apple\"]"],
+    });
+    // The main-world path's `console:\n…\n\nvalue: …` shape, reproduced on the CDP path.
+    assert.match(toolResult, /console:/, "console output is surfaced");
+    assert.match(toolResult, /before: 3/, "the logged lines reach the model");
+    assert.match(toolResult, /value: CDP-RAN/, "the completion value is still there, after the logs");
 });
 
 test("CDP exec (OFF): a CSP-blocked exec never attaches; the model gets an actionable 'enable CDP' note", async () => {

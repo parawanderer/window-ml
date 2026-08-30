@@ -6,7 +6,7 @@ import type { MlConfig, ApiFormat, NeutralMessage, ToolCall, FetchLlmPayload, Ll
 import { DEFAULT_CONFIG, modelFilterAllows, bgRunResumable, acceptLanguageFrom } from "./contract";   // single source of truth (see contract.ts)
 import { runBackgroundAgent } from "./agent-host";   // design A: the background-hosted agent loop
 import type { ToolMeta } from "./agent-loop";
-import { externalSheetIds, googleSheetId, classifyContent, jsonShape } from "./dom";   // track approved external sheets across a run + the choke-point grants; classify a fetched body + summarise its JSON shape
+import { externalSheetIds, googleSheetId, classifyContent, jsonShape, clipOut } from "./dom";   // track approved external sheets across a run + the choke-point grants; classify a fetched body + summarise its JSON shape
 import { extractGrants } from "./grant-extract";   // button #3: static egress-grant extraction for "Approve + remember"
 import type { FetchResult } from "./contract";
 import { createNavBarrier } from "./nav-barrier";   // cross-page persistence: hold delegated tools while a run's tab navigates
@@ -1218,20 +1218,38 @@ async function cdpEval(tabId: number, source: string): Promise<{ ok: true; value
     const target: chrome.debugger.Debuggee = { tabId };
     try { await chrome.debugger.attach(target, "1.3"); }
     catch (e) { return { error: `Couldn't attach the debugger to run exec (${(e as Error)?.message || e}). Another debugger (DevTools?) may be attached to this tab.` }; }
+    type WrapVal = { __mlWrapped: true; v: string; logs: string[] };
     type EvalResult = { result?: { value?: unknown }; exceptionDetails?: { exception?: { description?: string }; text?: string } };
     const evaluate = (expression: string) => chrome.debugger.sendCommand(target, "Runtime.evaluate",
         { expression, awaitPromise: true, returnByValue: true, userGesture: true }) as Promise<EvalResult>;
     const syntaxErr = (r: EvalResult) => /SyntaxError/.test(r?.exceptionDetails?.exception?.description || r?.exceptionDetails?.text || "");
+    // Capture console output the SAME way the main-world exec path does — the model can't see the page's real
+    // console, and a `Runtime.evaluate` that only returns the completion value silently drops every console.log
+    // (the reported "logs got lost in CDP"). Patch console INSIDE the page (via the wrapper), collect the lines,
+    // stringify the completion value there too (so returnByValue always gets a clean string[]+string), restore.
+    const wrap = (inner: string) => `(async () => {
+        const __logs = [], __M = ['log','info','warn','error','debug'], __S = {};
+        for (const m of __M) { __S[m] = console[m]; console[m] = (...a) => __logs.push(a.map(x => { try { return typeof x === 'string' ? x : JSON.stringify(x); } catch { return String(x); } }).join(' ')); }
+        try {
+            const __v = await (${inner});
+            const __vs = __v === undefined ? '(undefined)' : typeof __v === 'string' ? __v : (() => { try { return JSON.stringify(__v); } catch { return String(__v); } })();
+            return { __mlWrapped: true, v: __vs, logs: __logs };
+        } finally { for (const m of __M) console[m] = __S[m]; }
+    })()`;
     try {
+        const CAP = 500;   // match exec's default per-slot output cap (the tool's resolveOutputCap default)
         const expr = source.trim().replace(/;\s*$/, "");
         // Trailing-expression form first (REPL value, like the main-world fast path); a statement body isn't a
         // valid parenthesised expression → SyntaxError → retry as a body where the model `return`s its value.
-        let r = await evaluate(`(async () => (${expr}))()`);
-        if (syntaxErr(r)) r = await evaluate(`(async () => { ${source} })()`);
+        let r = await evaluate(wrap(`(${expr})`));
+        if (syntaxErr(r)) r = await evaluate(wrap(`(async () => { ${source} })()`));
         if (r?.exceptionDetails) return { error: `The exec threw (via CDP): ${r.exceptionDetails.exception?.description || r.exceptionDetails.text || "error"}` };
-        const v = r?.result?.value;
-        const value = v === undefined ? "(undefined)" : typeof v === "string" ? v : (() => { try { return JSON.stringify(v); } catch { return String(v); } })();
-        return { ok: true, value };
+        const out = r?.result?.value as WrapVal | undefined;
+        const value = out && out.__mlWrapped ? out.v : "(undefined)";
+        const logs = out && Array.isArray(out.logs) ? out.logs : [];
+        // Prefix captured console output onto the value, exactly like the main-world path's `withLogs`.
+        const combined = logs.length ? `console:\n${clipOut(logs.join("\n"), CAP)}\n\nvalue: ${value}` : value;
+        return { ok: true, value: combined };
     } catch (e) {
         return { error: `The CDP exec failed (${(e as Error)?.message || e}).` };
     } finally {
