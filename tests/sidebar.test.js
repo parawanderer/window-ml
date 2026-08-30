@@ -3228,6 +3228,17 @@ test("card surface: a type approval calls out type-AND-SUBMIT (dotted underline)
     assert.ok(sentence && !sentence.querySelector(".action-submit"), "a plain type has no submit emphasis");
 });
 
+test("HUD activity: a pending fetch_url shows the fetch activity (globe), not the ⚙️ generic default", async () => {
+    const w = await loadSidebarWorld();
+    await w.raw({ __mlSidebarSurface: "card" });
+    await w.dispatch(agentStart("fua", "get the servers list"));
+    await w.dispatch(agentStep("fua", 1, { seq: 1, pending: true, tool: "fetch_url", arguments: { url: "https://x.test/a.json" } }));
+    await w.flush();
+    const txt = w.shadow.querySelector("body").textContent;
+    assert.ok(txt.includes("🌐"), "the fetch (globe) activity icon shows in the HUD");
+    assert.ok(!txt.includes("⚙️"), "and NOT the generic ⚙️ 'Running fetch_url' fallback");
+});
+
 test("card surface: quiet HUD suppresses the working pill, but an approval still surfaces the card", async () => {
     const w = await loadSidebarWorld({ sync: { debugMode: "off", agentHud: "quiet" } });
     const posted = [];

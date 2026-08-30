@@ -2442,6 +2442,8 @@ const ACTIVITY: Record<string, { icon: string; label: string; short: string }> =
     python_exec: { icon: "🐍", label: "Running Python…", short: "python" },
     scroll: { icon: "🖱", label: "Scrolling…", short: "scroll" },
     screenshot: { icon: "📷", label: "Capturing…", short: "capture" },
+    fetch_url: { icon: "🌐", label: "Fetching a URL…", short: "fetch" },
+    navigate: { icon: "🧭", label: "Navigating…", short: "navigate" },
 };
 function activityFor(run: Session): { icon: string; label: string; short: string } {
     const steps = run.steps || [];
