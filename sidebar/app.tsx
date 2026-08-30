@@ -647,19 +647,16 @@ function ReplyBubble({ content, status, model, profile, ts, reasoning = null, so
     return (
         <div class={`msg asst ${status}${capped ? " capped" : ""}${streaming ? " streaming" : ""}`}>
             <div class="mrow">
-                {/* Chevron (collapse affordance) · status dot · an optional label for
-                    an exceptional state (e.g. an agent step-cap stop). While STREAMING: a live pulse instead
-                    of the collapse chevron + status dot, and no copy/raw/stamp yet (they land when it settles). */}
-                {streaming
-                    ? <span class="live-dot" aria-hidden="true" />
-                    : <>
-                        {hasReply
-                            ? <button class="who-toggle" title={collapsed ? "expand" : "collapse"} onClick={() => setCollapsed(v => !v)}>
-                                <span class={`tri${collapsed ? "" : " open"}`} aria-hidden="true"><IconChevron /></span>
-                            </button>
-                            : null}
-                        <Dot status={status} />
-                    </>}
+                {/* Chevron (collapse affordance) · status dot · an optional label for an exceptional state
+                    (e.g. an agent step-cap stop). Same structure while STREAMING — the chevron stays and a live
+                    pulse swaps in FOR the status dot (same slot, so the model chip / text don't shift on settle);
+                    copy/raw/stamp are the only things that appear when it settles (on the right, no left shift). */}
+                {hasReply
+                    ? <button class="who-toggle" title={collapsed ? "expand" : "collapse"} onClick={() => setCollapsed(v => !v)}>
+                        <span class={`tri${collapsed ? "" : " open"}`} aria-hidden="true"><IconChevron /></span>
+                      </button>
+                    : null}
+                {streaming ? <span class="live-dot" aria-hidden="true" /> : <Dot status={status} />}
                 {label ? <span class="who">{label}</span> : null}
                 {/* The model that produced this reply + its (default)/(utility) profile. */}
                 {hasReply && model ? <CopyModel model={model} /> : null}
@@ -1149,10 +1146,11 @@ function ThoughtBlock({ thought, live }: { thought: string; live?: boolean }) {
         <div class={`athought athinking${live ? " live" : ""}`}>
             <button class="astep-head" onClick={() => setOpen(v => !v)}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
-                {live ? <span class="live-dot" aria-hidden="true" /> : null}
                 <span class="who">thinking</span>
                 {/* The ~token estimate is a debug detail — hidden in the user-facing HUD card, EXCEPT while live,
-                    where the ticking count IS the "it's working" signal the card wants. */}
+                    where the ticking count (with a trailing "…") IS the "it's working" cue. No live DOT: it
+                    would take a slot that vanishes on settle, jerking "thinking" left. The row's structure is
+                    IDENTICAL live vs settled, so nothing shifts. */}
                 {!open && (surface.value !== "card" || live) ? <span class="astep-preview">~{tokEst} tokens{live ? "…" : ""}</span> : null}
             </button>
             {/* Live: plain text (partial markdown mid-stream renders ugly); finished: markdown. */}
@@ -3131,9 +3129,14 @@ function CardApp() {
     // Orb-steer: while a run is LIVE and its steer box is open, force the card OPEN (out of the orb) so the
     // input is reachable. Only meaningful for a running run — it self-clears the instant the run finishes.
     const steering = !!run && running && cardSteerHash.value === run.hash;
+    // The final answer is STREAMING (stream:true) → open the card so the answer FILLS IN live, instead of the
+    // orb popping the finished answer all at once. Only for the reply phase (liveStream.content) — the pure
+    // thinking phase keeps the calm orb + its narration caption. Respects quiet/silent (those suppress the card).
+    const streamingAnswer = !!run?.liveStream?.content && !quiet && !silent;
     const state = composing ? "composer"                       // the composer takes over — centered Spotlight bar
         : steering ? "expanded"                                // steering a live run: open the card for the inline steer box
         : pending ? "expanded"                                 // an approval: show the action directly (even for a silent run)
+        : streamingAnswer ? "expanded"                         // the answer is streaming in → open the card to show it live
             : (tabs && anyContent) ? (cardDetail.value ? "expanded" : "toast")   // multi-run with content: tabbed detail ⇄ calm summary toast (one card-level toggle)
                 : showOrb ? (liveProse ? "orbprose" : hovering ? "orblabel" : "orb")   // in flight → orb; caption when narrating; capsule on hover (single run, or several all merely working)
                     : (done && !silent) ? (isCardCollapsed(run!.hash) ? "toast" : (cardMaximizedHash.value === run!.hash ? "maximized" : "expanded"))   // single finished run: the answer — MAXIMISED into a corner window when toggled

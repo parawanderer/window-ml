@@ -313,9 +313,9 @@ html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
 /* Live model stream (opt-in stream:true): fed into the SAME containers the finished run uses. A pulsing dot
    marks the live ones; a scrollable body shows the streaming text tail. */
 @keyframes livepulse { 0%,100% { opacity: 1; } 50% { opacity: .25; } }
+/* The pulsing dot is the ONLY accent cue while live — text + labels keep their SETTLED colors so nothing
+   flashes colour when the step lands (the dot just disappears). */
 .live-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: livepulse 1s ease-in-out infinite; }
-.athinking.live .who { color: var(--accent); }
-.athinking.live .astep-preview { color: var(--accent); }
 .live-scroll { white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow-y: auto; }
 /* A streaming reply is the SAME .msg.asst bubble as the finished one — just a live pulse in place of the
    collapse chevron/dot, and no copy/raw/stamp yet. Nothing extra to style; the .live-dot carries the cue. */
