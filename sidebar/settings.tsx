@@ -384,6 +384,79 @@ function SheetsGrant() {
     );
 }
 
+// ── Per-site host access (agent fetch_url) ───────────────────────────────────
+// The background's fetch_url reads a URL via the SW fetch, which "On click" site access WITHHOLDS for
+// third-party hosts. The approval card grants a host in-gesture when you approve a fetch to a new site;
+// THIS is the management view (mirrors the popup's "Site access" block) — see which sites are granted and
+// revoke any. Excludes the Sheets origins (their own row above) and <all_urls> (shown as a note, not a chip).
+function hostPatternFrom(input: string): string | null {
+    const d = normDomain(input);
+    return d ? `https://${d}/*` : null;
+}
+function hostLabelOf(origin: string): string {
+    return origin.replace(/^https?:\/\//, "").replace(/\/\*?$/, "");
+}
+function HostAccess() {
+    const [origins, setOrigins] = useState<string[] | null>(null);
+    const [input, setInput] = useState("");
+    const [err, setErr] = useState("");
+    const refresh = () => {
+        try { chrome.permissions.getAll((all: any) => setOrigins((all.origins || []).filter((o: string) => !SHEETS_ORIGINS.includes(o)))); }
+        catch { setOrigins(null); }   // API unavailable → the block hides itself
+    };
+    useEffect(() => {
+        refresh();
+        // A grant made in-gesture from the approval card (or a revoke from the popup) should show up here
+        // without reopening Settings — mirror the browser's own permission events.
+        const onChange = () => refresh();
+        try { chrome.permissions.onAdded?.addListener(onChange); chrome.permissions.onRemoved?.addListener(onChange); } catch { /* events absent on old Chrome */ }
+        return () => { try { chrome.permissions.onAdded?.removeListener(onChange); chrome.permissions.onRemoved?.removeListener(onChange); } catch { /* ignore */ } };
+    }, []);
+    if (origins === null) return null;   // still probing / API unavailable
+    const pat = hostPatternFrom(input);
+    const invalid = !!input.trim() && !pat;
+    const add = () => {
+        if (!pat) return;
+        setErr("");
+        try {
+            chrome.permissions.request({ origins: [pat] }, (granted: boolean) => {
+                if (granted) { setInput(""); refresh(); }
+                else setErr("Not granted — you can also allow it via the browser's Extensions manager (Site access).");
+            });
+        } catch (e: any) { setErr(`Couldn't request access: ${e?.message || e}.`); }
+    };
+    const revoke = (origin: string) => { try { chrome.permissions.remove({ origins: [origin] }, () => refresh()); } catch { /* ignore */ } };
+    const all = origins.includes("<all_urls>");
+    const hosts = origins.filter(o => o !== "<all_urls>");
+    return (
+        <Section id="hostaccess" title="Site access (agent fetches)">
+            <div class="set-note">The <code>fetch_url</code> tool reads a URL through the background, which “On click” site access withholds for third-party hosts. Approving a fetch to a new site grants that host in the same gesture; the granted sites are listed here so you can add or revoke them yourself. A narrower grant than “On all sites”.</div>
+            {all
+                ? <div class="set-hint">Access to <b>all sites</b> is granted (browser Site access → “On all sites”), so every fetch is allowed.</div>
+                : <>
+                    <div class="perm-add">
+                        <input class={`perm-input${invalid ? " err" : ""}`} type="text" placeholder="raw.githubusercontent.com" value={input}
+                            onInput={(e: any) => setInput(e.target.value)}
+                            onKeyDown={(e: any) => { if (e.key === "Enter") { e.preventDefault(); add(); } }} />
+                        <button class="test-btn" disabled={!pat} onClick={add}>Add</button>
+                    </div>
+                    {invalid ? <div class="set-err">Enter a valid hostname, e.g. <code>raw.githubusercontent.com</code>.</div> : null}
+                    {hosts.length
+                        ? <div class="perm-list">
+                            {hosts.map(o => (
+                                <span class="perm-chip" key={o}>
+                                    <span class="perm-host">{hostLabelOf(o)}</span>
+                                    <button class="perm-x" aria-label={`Revoke ${hostLabelOf(o)}`} title={`Revoke ${hostLabelOf(o)}`} onClick={() => revoke(o)}>✕</button>
+                                </span>
+                            ))}
+                          </div>
+                        : <div class="set-hint">No sites granted yet — the agent asks the first time it fetches each new one.</div>}
+                  </>}
+            {err ? <div class="set-err">{err}</div> : null}
+        </Section>
+    );
+}
+
 function PermissionsView() {
     const c = config.value;
     const domains = c.pageApprovalDomains || [];
@@ -423,6 +496,7 @@ function PermissionsView() {
                       </div>
                     : <div class="set-hint">No trusted domains — every site's privileged agent calls go through the extension's approval card.</div>}
             </Section>
+            <HostAccess />
             <SheetsGrant />
         </>
     );
@@ -613,7 +687,7 @@ export function Settings() {
                 </label>
                 </Section>
 
-                <Section id="grounding" title="Visual grounding (experimental)">
+                <Section id="grounding" title="Visual grounding">
                 <div class="set-note">Optional coordinate model for the agent's <code>locate</code> tool. <b>Loads an extra model into VRAM</b> — leave off if memory is tight. Off = <code>locate</code> still works via the Set-of-Marks screenshot tool (no extra model). Recommended: <code>qwen2.5vl:7b</code> (or <code>:3b</code>); accuracy is unproven.</div>
                 <label class="set-check">
                     <input type="checkbox" checked={c.groundingEnabled}

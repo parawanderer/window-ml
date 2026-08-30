@@ -491,6 +491,82 @@ test("host access (fetch_url): an ALREADY-granted origin shows no note", async (
     assert.equal(w.shadow.querySelector(".action-host"), null, "no note when the host is already granted");
 });
 
+test("host access (fetch_url): the user clicks NO on Chrome's host prompt → the approval still posts (fetch runs, then fails gracefully)", async () => {
+    const w = await loadSidebarWorld();
+    const reqCalls = [];
+    // Chrome's native grant prompt is DENIED: request resolves false (not a throw).
+    w.window.chrome.permissions = {
+        contains: async () => false,
+        request: async ({ origins }) => { reqCalls.push(origins); return false; },
+    };
+    await w.dispatch(agentStart("hn", "fetch it"));
+    await w.dispatch(agentStep("hn", 1, {
+        seq: 1, pending: true, awaitingApproval: true, tool: "fetch_url",
+        arguments: { url: "https://raw.githubusercontent.com/o/r/main/x.json" },
+        renderIn: { type: "action", verb: "fetch", target: "https://raw.githubusercontent.com/o/r/main/x.json" },
+    }));
+    w.shadow.querySelector(".row").click();
+    await w.flush();
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    w.shadow.querySelector(".astep-approve .appr-btn.yes").click();
+    await w.flush();
+    // The host grant was attempted (in-gesture) but DENIED — yet the approval is still sent: the tool
+    // runs and the background fetch returns its actionable "grant host access" error for the model to see.
+    assert.deepEqual(reqCalls[0], ["https://raw.githubusercontent.com/*"], "still requested the host in-gesture");
+    assert.ok(posted.find(m => m.__mlSidebarApp === "approval" && m.decision === true), "approval posted despite the denied host grant");
+});
+
+test("Settings → Site access: granted hosts list, revoke, and add (mirrors the popup)", async () => {
+    const w = await loadSidebarWorld();
+    const removed = [], requested = [];
+    let origins = ["https://raw.githubusercontent.com/*", "https://api.example.com/*"];
+    w.window.chrome.permissions = {
+        getAll: (cb) => cb({ origins }),
+        remove: ({ origins: o }, cb) => { removed.push(o); origins = origins.filter(x => !o.includes(x)); cb(true); },
+        request: ({ origins: o }, cb) => { requested.push(o); origins = [...origins, ...o]; cb(true); },
+        onAdded: { addListener() {}, removeListener() {} },
+        onRemoved: { addListener() {}, removeListener() {} },
+    };
+    await openSettings(w, "Permissions");
+    await w.flush();
+    // Scope to the "Site access" section — the self-approval whitelist above it also uses .perm-* classes.
+    const sect = () => [...w.shadow.querySelectorAll(".set-section")].find(s => /Site access/.test(s.querySelector(".set-group")?.textContent || ""));
+    const hosts = () => [...sect().querySelectorAll(".perm-host")].map(e => e.textContent);
+    assert.ok(hosts().includes("raw.githubusercontent.com"), "lists a granted host (label stripped of scheme/glob)");
+    assert.ok(hosts().includes("api.example.com"), "lists all granted hosts");
+    // Revoke one → chrome.permissions.remove with its origin pattern, and it drops from the list.
+    const chip = [...sect().querySelectorAll(".perm-chip")].find(c => c.textContent.includes("api.example.com"));
+    chip.querySelector(".perm-x").click();
+    await w.flush();
+    assert.deepEqual(removed[0], ["https://api.example.com/*"], "revoke requests removal of that exact origin");
+    assert.ok(!hosts().includes("api.example.com"), "revoked host disappears from the list");
+    // Add a new one via the input → chrome.permissions.request with the derived pattern.
+    const input = sect().querySelector(".perm-add .perm-input");
+    input.value = "docs.example.org";
+    input.dispatchEvent(new w.window.Event("input", { bubbles: true }));
+    await w.tick();
+    [...sect().querySelectorAll(".perm-add .test-btn")].find(b => b.textContent.trim() === "Add").click();
+    await w.flush();
+    assert.deepEqual(requested[requested.length - 1], ["https://docs.example.org/*"], "add requests the typed host's pattern");
+    assert.ok(hosts().includes("docs.example.org"), "the newly granted host appears");
+});
+
+test("Settings → Site access: 'On all sites' (<all_urls>) shows the note instead of an add form", async () => {
+    const w = await loadSidebarWorld();
+    w.window.chrome.permissions = {
+        getAll: (cb) => cb({ origins: ["<all_urls>"] }),
+        remove: (_o, cb) => cb(true), request: (_o, cb) => cb(true),
+        onAdded: { addListener() {}, removeListener() {} }, onRemoved: { addListener() {}, removeListener() {} },
+    };
+    await openSettings(w, "Permissions");
+    await w.flush();
+    const sect = [...w.shadow.querySelectorAll(".set-section")].find(s => /Site access/.test(s.querySelector(".set-group")?.textContent || ""));
+    assert.ok(sect, "the Site access section rendered");
+    assert.match(sect.textContent, /all sites/i, "explains that all-sites access is granted");
+    assert.equal(sect.querySelector(".perm-add"), null, "no add form when everything is already allowed");
+});
+
 test("output-cap raise: the approval card calls out the raised limit + the model's justification", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("orc", "big dump"));
