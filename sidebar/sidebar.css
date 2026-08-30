@@ -418,6 +418,7 @@ html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
 .appr-grant .appr-grant-sum { color: var(--fg); font-size: 0.82em; }
 .appr-grant .appr-grant-sum b { font-weight: 700; }
 .appr-grant .appr-grant-detail { margin-top: 5px; }
+.appr-grant .appr-grant-note { margin: 6px 0 0 17px; font-size: 0.78em; color: var(--fg-dim); font-style: italic; }
 .grant-url-list { list-style: none; margin: 0 0 0 17px; padding: 0; display: flex; flex-direction: column; gap: 2px; }
 .grant-url-list code { font-size: 0.9em; word-break: break-all; color: var(--fg-dim); }
 /* rendered ⇄ raw toggle for a descriptor step */

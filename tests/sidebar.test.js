@@ -419,7 +419,7 @@ test("button #3 (sidebar step): 'Approve + remember' renders, unfurls its URLs, 
     // The collapsed grant card summarises deterministically and lists EXACTLY the URLs that persist.
     const grant = w.shadow.querySelector(".astep-approve .appr-grant");
     assert.ok(grant, "the grant card rendered");
-    assert.match(grant.querySelector(".appr-grant-sum").textContent, /remembers 2 URLs/i, "deterministic summary");
+    assert.match(grant.querySelector(".appr-grant-sum").textContent, /fetch 2 URLs.*without approval/i, "explains the grant in plain terms");
     const urls = [...grant.querySelectorAll(".grant-url-list code")].map(n => n.textContent);
     assert.deepEqual(urls, ["https://x.test/a.json", "https://x.test/b.json"], "the exact two literals");
 
@@ -557,6 +557,38 @@ test("button #3 (HUD card): 'Approve + remember' renders in the card foot and po
     const msg = posted.find(m => m.__mlSidebarApp === "approval");
     assert.ok(msg && msg.decision === true && msg.persist === true, "card posts approval with persist:true");
     assert.equal(msg.hash, "b3c");
+    // The Keep button carries the deliberate two-key hint (⌘K / Ctrl K), not an Enter-adjacent combo.
+    assert.match(remember.textContent, /(⌘K|Ctrl K)/);
+});
+
+test("button #3 (HUD card): ⌘K/Ctrl+K is a deliberate Approve+Keep combo; plain Enter is Approve-only", async () => {
+    const w = await loadSidebarWorld();
+    await w.raw({ __mlSidebarSurface: "card" });
+    await w.dispatch(agentStart("kbk", "fetch stuff"));
+    await w.dispatch(grantStep("kbk"));
+    await w.flush();
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    // The two-key combo (Ctrl/⌘ + K) approves AND remembers.
+    w.window.dispatchEvent(new w.window.KeyboardEvent("keydown", { key: "k", ctrlKey: true, bubbles: true }));
+    const keep = posted.find(m => m.__mlSidebarApp === "approval");
+    assert.ok(keep, "⌘/Ctrl+K resolves the gate");
+    assert.equal(keep.decision, true);
+    assert.equal(keep.persist, true, "…and persists (it's Keep, not plain Approve)");
+});
+
+test("button #3 (HUD card): plain Enter approves WITHOUT persisting (Keep is only the two-key combo)", async () => {
+    const w = await loadSidebarWorld();
+    await w.raw({ __mlSidebarSurface: "card" });
+    await w.dispatch(agentStart("kbe", "fetch stuff"));
+    await w.dispatch(grantStep("kbe"));
+    await w.flush();
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    w.window.dispatchEvent(new w.window.KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    const msg = posted.find(m => m.__mlSidebarApp === "approval");
+    assert.ok(msg && msg.decision === true, "Enter approves");
+    assert.equal(msg.persist, false, "…but does NOT persist — Keep requires the deliberate combo");
 });
 
 test("agent run: agent-result arriving BEFORE the (replayed) start is not dropped — the answer survives", async () => {

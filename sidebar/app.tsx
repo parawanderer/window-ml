@@ -1170,15 +1170,18 @@ function hasPersistGrants(grants?: PersistGrant[]): boolean { return !!grants?.s
 // what approving-and-remembering will persist for the session ("Keep remembers 1 URL …"), expand for the
 // exact items. Driven by the step's `grants` BY KIND, so a new grant kind slots in with no layout change.
 // Shared by the sidebar step and the HUD card. (The "Keep" button does approve + persist.)
+// Deliberate two-key combo for Keep (⌘K on mac, Ctrl+K elsewhere) — NOT Enter-adjacent, on purpose.
+const KEEP_HINT = (typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || navigator.userAgent || "")) ? "⌘K" : "Ctrl K";
 function GrantCard({ grants }: { grants: PersistGrant[] }) {
     const byKind = new Map<string, number>();
     for (const g of grants) { const n = grantUrlsOf(g).length; if (n) byKind.set(g.kind, (byKind.get(g.kind) || 0) + n); }
     const summary = [...byKind.entries()].map(([k, n]) => { const nm = GRANT_KIND[k]; return `${n} ${n === 1 ? nm?.noun || k : nm?.nounN || k}`; }).join(" · ");
     return (
         <details class="appr-grant">
-            <summary class="appr-grant-head"><span class="tri" aria-hidden="true"><IconChevron /></span><IconWarn /><span class="appr-grant-sum"><b>Keep</b> remembers {summary} for this session</span></summary>
+            <summary class="appr-grant-head"><span class="tri" aria-hidden="true"><IconChevron /></span><IconWarn /><span class="appr-grant-sum"><b>Keep</b> lets the agent fetch {summary} WITHOUT approval for the rest of this session</span></summary>
             <div class="appr-grant-detail">
                 {grants.map((g, i) => grantUrlsOf(g).length ? <ul class="grant-url-list" key={i}>{grantUrlsOf(g).map((u, j) => <li key={j}><code>{u}</code></li>)}</ul> : null)}
+                <div class="appr-grant-note">Fetched results are cached and reused — the agent won't re-ask for {grants.length === 1 && grantUrlsOf(grants[0]).length === 1 ? "it" : "them"} until you reload.</div>
             </div>
         </details>
     );
@@ -1271,7 +1274,7 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                         <span class="sp" />
                         <button class="appr-btn no" onClick={() => decide(false)}>Deny</button>
                         <button class="appr-btn yes" onClick={() => decide(true)}>Approve</button>
-                        {showGrants ? <button class="appr-btn yes remember" title="Approve and remember for this session" onClick={() => decide(true, true)}>Keep</button> : null}
+                        {showGrants ? <button class="appr-btn yes remember" title="Approve — and let the agent fetch these URLs WITHOUT approval for the rest of this session (results are cached)" onClick={() => decide(true, true)}>Keep</button> : null}
                     </div>
                 </div>
                 : null}
@@ -3079,10 +3082,14 @@ function CardApp() {
     useEffect(() => {
         if (!run || !pendingStep || pendingStep.seq == null) return;
         const h = run.hash, seq = pendingStep.seq;
+        const canKeep = hasPersistGrants(pendingStep.grants);
         window.parent.postMessage({ __mlSidebarCardFocus: true }, "*");
-        const decideKey = (ok: boolean) => { decidedSteps.add(stepKey(h, seq)); clearHighlight(); sendApproval(h, seq, ok); rev.value++; };
+        const decideKey = (ok: boolean, persist = false) => { decidedSteps.add(stepKey(h, seq)); clearHighlight(); sendApproval(h, seq, ok, persist); rev.value++; };
         const onKey = (e: KeyboardEvent) => {
-            if (e.key === "Enter") { e.preventDefault(); decideKey(true); }
+            // Enter approves; Esc denies; KEEP is a deliberate two-key combo (⌘/Ctrl+K) — intentionally NOT
+            // Enter-adjacent, so granting a session-long fetch permission can't be a slip of the Approve key.
+            if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") { if (canKeep) { e.preventDefault(); decideKey(true, true); } }
+            else if (e.key === "Enter" && !e.metaKey && !e.ctrlKey) { e.preventDefault(); decideKey(true); }
             else if (e.key === "Escape") { e.preventDefault(); decideKey(false); }
         };
         window.addEventListener("keydown", onKey);
@@ -3240,7 +3247,7 @@ function CardApp() {
                         <div class="card-foot-row">
                             <button class="appr-btn no" onClick={() => decide(false)}>Deny <kbd class="kb">esc</kbd></button>
                             <button class="appr-btn yes" onClick={() => decide(true)}>Approve <kbd class="kb">⏎</kbd></button>
-                            {showGrants ? <button class="appr-btn yes remember" title="Approve and remember for this session" onClick={() => decide(true, true)}>Keep</button> : null}
+                            {showGrants ? <button class="appr-btn yes remember" title="Approve — and let the agent fetch these URLs WITHOUT approval for the rest of this session (results are cached)" onClick={() => decide(true, true)}>Keep <kbd class="kb">{KEEP_HINT}</kbd></button> : null}
                         </div>
                     </div>;
                   })()
