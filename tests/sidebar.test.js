@@ -3378,6 +3378,29 @@ test("card composer: no model configured → an inline nudge, NOT a run (pre-fli
     assert.ok(doc.querySelector(".card-cmp-input"), "the composer stays open (not closed) so you can fix it");
 });
 
+test("card composer: backend unreachable → a NEW run is BLOCKED with an inline notice (only new runs paused)", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off", model: "llama3", chatUrl: "http://gpubox:11434" }, listModels: () => ({ error: "Failed to fetch" }) });
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    await w.raw({ __mlSidebarSurface: "card" });
+    await w.raw({ __mlSidebarComposer: "open" });
+    await w.flush();   // the on-mount health probe flags the dead box
+    const doc = w.window.document;
+    // Proactively (before even typing) the composer shows the backend is down.
+    assert.match(doc.querySelector(".card-cmp-err")?.textContent || "", /Backend unreachable/i, "a proactive offline notice shows");
+
+    doc.querySelector(".card-cmp-input").value = "do something";
+    doc.querySelector(".card-cmp-input").dispatchEvent(new w.window.Event("input", { bubbles: true }));
+    await w.tick();
+    posted.length = 0;
+    [...doc.querySelectorAll(".card-foot button")].find(b => /Send/.test(b.textContent)).click();
+    await w.flush();
+
+    assert.ok(!posted.some(m => m.__mlSidebarApp === "startRun"), "no NEW run is started while the box is down");
+    assert.match(doc.querySelector(".card-cmp-err").textContent, /Backend unreachable/i, "the block reason is shown");
+    assert.ok(doc.querySelector(".card-cmp-input"), "the composer stays open so it can send once the box is back");
+});
+
 test("card composer: the model picker overrides the run's model, and a cloud pick adds a per-call vision toggle", async () => {
     const w = await loadSidebarWorld({
         sync: { debugMode: "off", model: "llama3" },

@@ -304,6 +304,16 @@ async function modelSupportsVision(config: MlConfig, model: string): Promise<boo
 // Rate-limit backoff tuning for `send`'s 429 handling: how many times to retry, and the per-wait ceiling.
 const RATE_LIMIT_RETRIES = 4;
 const RATE_LIMIT_MAX_WAIT_MS = 30_000;
+
+// Transient network-failure RESILIENCE for `send`: a model call whose fetch fails at the NETWORK level (the
+// box briefly down / restarting / a blip) is RETRIED with backoff instead of failing the run — so an ONGOING
+// run rides out a short outage and RECOVERS the moment the backend returns. Bounded (attempts × wait ≈ the
+// window ridden out), abort-aware (a cancel during the wait rejects cleanly). After the cap it throws the
+// actionable offline error (the run fails; the sidebar's health probe shows the banner). Harmless locally.
+const NET_RETRIES = 6;
+// ~6 × 4s ≈ 24s of outage ridden out before giving up. Overridable (tests set 0 so the retry path runs
+// instantly instead of adding 24s of real waits per down-backend test).
+const NET_RETRY_WAIT_MS: number = ((): number => { try { return (globalThis as { __ML_NET_RETRY_WAIT_MS?: number }).__ML_NET_RETRY_WAIT_MS ?? 4000; } catch { return 4000; } })();
 /** How long to pause before retrying a 429: the `Retry-After` header (seconds) if present, else a
  *  "try again in Xs" hint in the body, else a default. +250ms slack so we clear the window; bounded by
  *  RATE_LIMIT_MAX_WAIT_MS. Pure (header + body strings in) → unit-tested in tests/background.test.js. */
@@ -468,8 +478,11 @@ async function prepareRequest(payload: FetchLlmPayload, signal?: AbortSignal) {
             } catch (e: any) {
                 if (e?.name === "AbortError") throw e;   // a real cancel — leave it for the loop to read as cancelled
                 // A network-level failure (server down, wrong host/port, DNS, refused connection, TLS/CORS) —
-                // fetch rejects with a bare "Failed to fetch". Translate it into an actionable message; the raw
-                // one is meaningless to a user and identical for every cause.
+                // fetch rejects with a bare "Failed to fetch". RETRY with backoff first: a transient blip
+                // (box restarting mid-run) is ridden out so the run RECOVERS when the backend returns. Only
+                // after the bounded window do we give up with an actionable message (the raw one is meaningless
+                // and identical for every cause). abortableWait rejects on a cancel, so Stop still works.
+                if (attempt < NET_RETRIES) { await abortableWait(NET_RETRY_WAIT_MS); continue; }
                 throw new Error(
                     `Couldn't reach the server at ${config.chatUrl} (${e?.message || e}). ` +
                     `Is OpenWebUI / Ollama running there? Check the Server URL, API key, and API format in the extension settings.`

@@ -98,6 +98,7 @@ function loadBackground({ config = {}, local = {}, onFetch, onCaptureTab, onPyRu
         TextDecoder,
         TextEncoder,
         AbortController,   // FETCH_LLM registers one per request (for ABORT_TASK cancellation)
+        __ML_NET_RETRY_WAIT_MS: 0,   // network-retry backoff → instant in tests (no 24s of real waits per down-backend test)
         setTimeout, clearTimeout, DOMException,   // rate-limit backoff (abortableWait) uses timers + abort
         Response,          // some paths construct/inspect Response
         fetch: async (url, opts = {}) => {

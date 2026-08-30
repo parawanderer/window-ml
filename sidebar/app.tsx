@@ -2789,6 +2789,11 @@ function ComposerCard() {
         // prepareRequest with "No model configured". Catch it HERE instead — an inline nudge, so a fresh
         // install that hasn't picked a model gets an actionable message, not a cryptic failure. A per-call
         // pick counts, so this only fires when there's neither an override nor a configured default.
+        // Backend down: block a NEW run — it would only fail (or retry fruitlessly). The health probe clears
+        // `backendError` the instant the box answers again, re-enabling submission. (Steering/appending an
+        // EXISTING run above is allowed — its next model call rides out the outage via the background's
+        // network retry, so an ongoing run recovers.)
+        if (backendError.value) { setErr("Backend unreachable — can't start a new run until the server is back (it re-enables automatically)."); return; }
         const model = composerModel.value.trim();   // "" = follow the configured default
         const resolved = composerResolvedModel();
         if (!resolved) { setErr("No model set. Pick one from the model menu above, or set a default in the extension settings."); return; }
@@ -2827,7 +2832,9 @@ function ComposerCard() {
                         if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
                         else if (e.key === "Escape") { e.preventDefault(); close(); }
                     }} />
-                {err ? <div class="card-cmp-err">{err}</div> : null}
+                {err ? <div class="card-cmp-err">{err}</div>
+                    : (backendError.value && target.mode !== "append") ? <div class="card-cmp-err">⚠ Backend unreachable — new runs are paused until the server is back.</div>
+                        : null}
             </div>
             <div class="card-foot card-cmp-foot">
                 <input ref={att.fileRef} type="file" accept="image/*" multiple style="display:none"

@@ -117,6 +117,30 @@ test("FETCH_LLM: repeated 429s give up after the retry cap with a clear error (n
     assert.match(res.error, /HTTP 429/, "the persistent rate limit is surfaced, not swallowed");
 });
 
+test("FETCH_LLM: a transient NETWORK failure is retried, so an ongoing run RECOVERS when the box returns", async () => {
+    // The box blips mid-run (2 failed calls), then comes back. The retry rides it out — the run recovers
+    // instead of hard-failing. (Backoff is 0ms under test via __ML_NET_RETRY_WAIT_MS.)
+    let calls = 0;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => { calls++; if (calls <= 2) throw new TypeError("Failed to fetch"); return jsonResponse({ choices: [{ message: { content: "recovered" } }] }); },
+    });
+    const res = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }], model: "m" } });
+    assert.equal(calls, 3, "the two network failures were retried, not fatal");
+    assert.equal(res.data, "recovered", "the run recovered the moment the backend answered again");
+});
+
+test("FETCH_LLM: a network failure that NEVER recovers gives up after the retry cap with the offline error", async () => {
+    let calls = 0;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => { calls++; throw new TypeError("Failed to fetch"); },
+    });
+    const res = await bg.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "hi" }], model: "m" } });
+    assert.ok(calls >= 5, `bounded retries then surfaces the error (was ${calls} attempts)`);
+    assert.match(res.error, /Couldn't reach the server/, "gives up with the actionable offline error");
+});
+
 test("FETCH_LLM: an unreachable server → an actionable error, not a bare 'Failed to fetch'", async () => {
     const bg = loadBackground({
         config: baseConfig(),
