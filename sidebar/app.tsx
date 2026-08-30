@@ -3134,7 +3134,7 @@ function CardApp() {
             {pending && pendingStep
                 ? (() => {
                     const grantUrls = persistGrantUrls(pendingStep.grants);
-                    return <div class="card-foot">
+                    return <div class="card-foot card-foot-appr">
                         {grantUrls.length ? <GrantRememberNote urls={grantUrls} /> : null}
                         <div class="card-foot-row">
                             <button class="appr-btn no" onClick={() => decide(false)}>Deny <kbd class="kb">esc</kbd></button>

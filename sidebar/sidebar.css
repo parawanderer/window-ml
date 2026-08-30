@@ -960,7 +960,9 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
    scrollbar-gutter: stable reserves the scrollbar's width so content doesn't SHIFT when it appears. */
 .card-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; padding: 10px 12px 14px; padding-bottom: 8px; }
 /* Deny/Approve footer — pinned below the scroll area, always visible. */
-.card-foot { flex: 0 0 auto; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); }
+.card-foot { flex: 0 0 auto; display: flex; gap: 8px; justify-content: flex-end; padding: 10px 12px; border-top: 1px solid var(--border); }
+/* the APPROVAL footer stacks (an optional grant note above the button row); the composer footer stays a row. */
+.card-foot-appr { flex-direction: column; }
 .card-foot-row { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 .card-foot .appr-btn { padding: 6px 18px; font-size: 1em; }
 /* button #3 disclosure in the HUD card foot — a touch smaller, sits above the buttons. */
