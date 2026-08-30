@@ -637,9 +637,11 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             // ends at a nav), and NAV_OFF_CLAUSE tells the model so instead of it wasting steps trying.
             if (navigate && !toolset.some(t => t.name === "navigate")) toolset.push(this.navigateTool({ crossOrigin }));
             // fetch_url: READ a URL the page can't (a raw file / API / other site) WITHOUT navigating — a gated,
-            // uncredentialed GET. Auto-wired into the default kit (like navigate); it needs no navigation, so it's
-            // added even on a navigate:false run. requiresApproval, so always-on is safe.
-            if (!toolset.some(t => t.name === "fetch_url")) toolset.push(this.fetchTool());
+            // uncredentialed GET. Auto-wired into the DEFAULT kit only (`tools` not overridden); it needs no
+            // navigation, so it's added even on a navigate:false run. A caller who hand-picks `tools` gets exactly
+            // what they list (add `ml.fetchTool()` to include it) — unlike the vision tools, which augment any
+            // driver because they're capability-probed. requiresApproval, so default-on is safe.
+            if (!tools && !toolset.some(t => t.name === "fetch_url")) toolset.push(this.fetchTool());
             // Composer attachments for THIS turn's first user message (a screenshot pasted/uploaded into the
             // HUD/sidebar). A vision-capable driver sees them natively; otherwise transcribe via the reader
             // (ml.read → the OCR model) and fold the text into the task, so a text-only agent still gets the

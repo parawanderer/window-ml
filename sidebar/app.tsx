@@ -84,7 +84,7 @@ function onDebug(ev: MlDebugEvent): void {
     if (ev.kind === "agent-step") {
         const s = sessionMap.get(ev.session.hash);
         if (!s) { queueOrphan(ev.session.hash, ev); return; }   // no start yet → hold it, don't manufacture a phantom
-        const step = { step: ev.step, localStep: ev.localStep, seq: ev.seq, pending: ev.pending, awaitingApproval: ev.awaitingApproval, thought: ev.thought, reasoning: ev.reasoning, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: ev.elements, renderIn: ev.renderIn, renderOut: ev.renderOut, feedback: ev.feedback, argIssues: ev.argIssues, approval: ev.approval, usage: ev.usage, subUsage: ev.subUsage };
+        const step = { step: ev.step, localStep: ev.localStep, seq: ev.seq, pending: ev.pending, awaitingApproval: ev.awaitingApproval, thought: ev.thought, reasoning: ev.reasoning, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: ev.elements, renderIn: ev.renderIn, renderOut: ev.renderOut, feedback: ev.feedback, argIssues: ev.argIssues, approval: ev.approval, usage: ev.usage, subUsage: ev.subUsage, grants: ev.grants };
         const steps = s.steps || [];
         // In-flight: a tool step arrives twice — a pending START then the DONE, sharing a `seq`.
         // Patch the existing row in place (immutably) so it fills in; otherwise append. Thoughts
@@ -434,8 +434,8 @@ const tokenHover = (s?: string): { onPointerEnter?: () => void; onPointerLeave?:
 // (e.source === frame.contentWindow, unforgeable by the page) — forwards it to the background as
 // SET_APPROVAL. That authentication is the whole point: the decision is made HERE and the page can't
 // spoof it. Keyed by the run hash + the step's seq.
-const sendApproval = (hash: string, seq: number, decision: boolean) =>
-    window.parent.postMessage({ __mlSidebarApp: "approval", hash, seq, decision }, "*");
+const sendApproval = (hash: string, seq: number, decision: boolean, persist = false) =>
+    window.parent.postMessage({ __mlSidebarApp: "approval", hash, seq, decision, persist }, "*");
 // Steps you've already approved/denied this session, keyed `hash:seq`. A step's own
 // awaitingApproval flag only clears when the DONE event lands — AFTER the tool runs — so without
 // this the run footer keeps showing "waiting for your approval" during that gap. Recording the
@@ -1108,6 +1108,38 @@ function externalSheetGrant(args?: Record<string, unknown>): string[] {
     return args ? [...new Set(externalSheetIds(args))] : [];
 }
 
+// button #3: the distinct static URLs a step's persistable egress grants would remember for the session
+// (today only `fetch-url` — an exec's inline ml.fetch literals). Extracted BACKGROUND-side and carried on
+// the step (st.grants), so the human reviews exactly what will be persisted. Extensible: a new grant kind
+// adds a branch here + one in the background's persistGrants (both keyed by `PersistGrant.kind`).
+function persistGrantUrls(grants?: import("../contract").PersistGrant[]): string[] {
+    if (!grants?.length) return [];
+    const urls: string[] = [];
+    for (const g of grants) if (g.kind === "fetch-url") urls.push(...g.urls);
+    return [...new Set(urls)];
+}
+
+// The "Approve + remember" disclosure shown above the approval buttons when a call carries persistable
+// grants — an unfurlable list of the exact URLs the session will remember (what's shown IS what persists).
+// Shared by the sidebar step and the HUD card so both surfaces read identically.
+function GrantRememberNote({ urls }: { urls: string[] }) {
+    const [open, setOpen] = useState(false);
+    return (
+        <div class="appr-note grant-note">
+            <IconWarn />
+            <div class="grant-note-body">
+                <button class="grant-note-head" onClick={() => setOpen(v => !v)} aria-expanded={open}>
+                    <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
+                    <span>“Approve + remember” lets this run re-fetch {urls.length === 1 ? "this URL" : `these ${urls.length} URLs`} for the rest of the session without re-asking.</span>
+                </button>
+                {open
+                    ? <ul class="grant-url-list">{urls.map((u, i) => <li key={i}><code>{u}</code></li>)}</ul>
+                    : null}
+            </div>
+        </div>
+    );
+}
+
 function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     const [expanded, setExpanded] = useState(false);
     const [decided, setDecided] = useState(false);   // hide the controls the instant we click (before the DONE lands)
@@ -1129,10 +1161,10 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     const open = expanded || awaiting;
     // Keep the step expanded after you decide (setExpanded), so it doesn't collapse when `awaiting`
     // clears — you see the Out result fill in on the same open cell.
-    const decide = (ok: boolean) => {
+    const decide = (ok: boolean, persist = false) => {
         setExpanded(true); setDecided(true);
         if (hash && st.seq != null) decidedSteps.add(stepKey(hash, st.seq));
-        sendApproval(hash!, st.seq!, ok);
+        sendApproval(hash!, st.seq!, ok, persist);
         rev.value++;   // re-render the run footer so it drops "waiting for your approval" at once
     };
     // When a step starts awaiting approval, scroll it into view so a gate mid-run isn't missed.
@@ -1146,6 +1178,7 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     // spreadsheet for the rest of the page-session (later calls to it won't re-prompt). Tell the
     // human the approval is a session-scoped grant, not a one-shot.
     const sheetGrants = awaiting ? externalSheetGrant(st.arguments) : [];
+    const grantUrls = awaiting ? persistGrantUrls(st.grants) : [];
     return (
         <div class={`astep tool${open ? " open" : ""}${st.pending ? " pending" : ""}${awaiting ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : (st.approval === "skipped" || st.approval === "cancelled") ? " appr-skip" : " appr-yes") : ""}`}>
             <button class="astep-head" onClick={() => setExpanded(v => !v)}>
@@ -1187,11 +1220,13 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                     {sheetGrants.length
                         ? <div class="appr-note"><IconWarn /><span>Approving grants this run access to {sheetGrants.map((id, i) => <SheetChip key={i} id={id} />)} for the rest of this session — later calls to {sheetGrants.length === 1 ? "it" : "them"} won't re-prompt.</span></div>
                         : null}
+                    {grantUrls.length ? <GrantRememberNote urls={grantUrls} /> : null}
                     <div class="appr-row">
                         <span class="appr-ask">Approve running <b>{st.tool}</b>?</span>
                         <span class="sp" />
                         <button class="appr-btn no" onClick={() => decide(false)}>Deny</button>
                         <button class="appr-btn yes" onClick={() => decide(true)}>Approve</button>
+                        {grantUrls.length ? <button class="appr-btn yes remember" onClick={() => decide(true, true)}>Approve + remember</button> : null}
                     </div>
                 </div>
                 : null}
@@ -2983,11 +3018,11 @@ function CardApp() {
     const doneN = runs.filter(runIsDone).length;
     const anyPend = runs.some(runIsPending);   // a run needs approval — must stay visible even in the summary
     const summaryHead = anyPend ? "Approval needed" : doneN === runs.length ? "All tasks complete" : doneN > 0 ? "Some tasks complete" : "Tasks running…";
-    const decide = (ok: boolean) => {
+    const decide = (ok: boolean, persist = false) => {
         if (!pendingStep || pendingStep.seq == null) return;
         decidedSteps.add(stepKey(run.hash, pendingStep.seq));
         clearHighlight();
-        sendApproval(run.hash, pendingStep.seq, ok);
+        sendApproval(run.hash, pendingStep.seq, ok, persist);
         rev.value++;
     };
     const onClose = (e: Event) => {
@@ -3092,10 +3127,17 @@ function CardApp() {
             {/* Deny/Approve as a FIXED footer — outside the scroll area, so it's always visible (a
                 drag-collapse or the scrollbar appearing can never cut or shift the buttons). */}
             {pending && pendingStep
-                ? <div class="card-foot">
-                    <button class="appr-btn no" onClick={() => decide(false)}>Deny <kbd class="kb">esc</kbd></button>
-                    <button class="appr-btn yes" onClick={() => decide(true)}>Approve <kbd class="kb">⏎</kbd></button>
-                  </div>
+                ? (() => {
+                    const grantUrls = persistGrantUrls(pendingStep.grants);
+                    return <div class="card-foot">
+                        {grantUrls.length ? <GrantRememberNote urls={grantUrls} /> : null}
+                        <div class="card-foot-row">
+                            <button class="appr-btn no" onClick={() => decide(false)}>Deny <kbd class="kb">esc</kbd></button>
+                            <button class="appr-btn yes" onClick={() => decide(true)}>Approve <kbd class="kb">⏎</kbd></button>
+                            {grantUrls.length ? <button class="appr-btn yes remember" onClick={() => decide(true, true)}>Approve + remember</button> : null}
+                        </div>
+                    </div>;
+                  })()
                 : done ? <CardReply hash={run.hash} />
                     : steering ? <CardSteer hash={run.hash} onClose={() => { cardSteerHash.value = ""; }} />
                         : null}

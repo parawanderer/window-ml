@@ -689,7 +689,7 @@ function onWindowMessage(e: MessageEvent): void {
     if (d.__mlSidebarApp === "approval" && frame && e.source === frame.contentWindow
         && typeof d.hash === "string" && typeof d.seq === "number") {
         try {
-            void chrome.runtime.sendMessage({ type: "SET_APPROVAL", payload: { runId: d.hash, seq: d.seq, decision: !!d.decision } }).catch(() => {});
+            void chrome.runtime.sendMessage({ type: "SET_APPROVAL", payload: { runId: d.hash, seq: d.seq, decision: !!d.decision, persist: !!d.persist } }).catch(() => {});
         } catch { /* extension context gone */ }
         return;
     }

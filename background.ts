@@ -7,6 +7,7 @@ import { DEFAULT_CONFIG, modelFilterAllows, bgRunResumable } from "./contract"; 
 import { runBackgroundAgent } from "./agent-host";   // design A: the background-hosted agent loop
 import type { ToolMeta } from "./agent-loop";
 import { externalSheetIds, googleSheetId, classifyContent } from "./dom";   // track approved external sheets across a run + the choke-point grants; classify a fetched body
+import { extractGrants } from "./grant-extract";   // button #3: static egress-grant extraction for "Approve + remember"
 import type { FetchResult } from "./contract";
 import { createNavBarrier } from "./nav-barrier";   // cross-page persistence: hold delegated tools while a run's tab navigates
 
@@ -1027,6 +1028,15 @@ const consentFetch = (tabId: number, url: string): void => {
     if (!s) { s = new Set(); fetchConsent.set(tabId, s); }
     s.add(url);
 };
+// button #3 ("Approve + remember"): persist a gated call's static egress grants for the session. Keyed by
+// `kind` so a new egress kind is one case here + one extractor in grant-extract.ts + one UI branch. Called
+// ONLY from a run's approval `resolve` on a positive persist decision (unforgeable — grants are re-derived
+// background-side from the call, never trusted from the message).
+const persistGrants = (tabId: number, grants: import("./contract").PersistGrant[]): void => {
+    for (const g of grants) {
+        if (g.kind === "fetch-url") for (const u of g.urls) consentFetch(tabId, u);
+    }
+};
 const grantsFor = (tabId: number): TabGrants => {
     let g = pendingGrants.get(tabId);
     if (!g) { g = { sheets: new Set(), pyCode: new Set() }; pendingGrants.set(tabId, g); }
@@ -1131,7 +1141,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // not a content-relayed HANDLE_MAP type — so a page-set window.confirm / hostile approve() can't
         // reach here even though the page knows its own runId. Design A's crux.
         const p = message.payload as SetApprovalPayload;
-        resolveApproval(`${p.runId}:${p.seq}`, p.decision ? { approved: true, source: "user" } : { approved: false, feedback: p.feedback, source: "user" });
+        resolveApproval(`${p.runId}:${p.seq}`, p.decision ? { approved: true, source: "user", persist: p.persist } : { approved: false, feedback: p.feedback, source: "user" });
         return;   // fire-and-forget
     }
     if (message.type === "CONTENT_READY") {
@@ -1576,6 +1586,10 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     // turn 2+). Turn 1 worked only because seqBase==0. (Mirror emitStep's null-guard exactly.)
                     const gateSeq = seq != null ? seqBase + seq : seq;
                     const key = `${runId}:${gateSeq}`;
+                    // button #3: statically extract the persistable egress grants (e.g. this exec's inline
+                    // ml.fetch literals) ONCE, background-side. The SAME list feeds the descriptor/step the
+                    // human reviews AND the persistence below, so what's shown IS what's remembered.
+                    const grants = extractGrants(tool, args);
                     return new Promise<ApprovalDecision>((resolve) => {
                         pendingApprovals.set(key, {
                             resolve: (decision) => {
@@ -1588,6 +1602,9 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                                 // (per-URL — the human saw + approved it); repeat fetches of it then auto-approve,
                                 // and the FETCH_URL handler authorises the page's uncredentialed GET of it.
                                 if (ok && tool === "fetch_url") { const u = String((args as { url?: unknown }).url ?? ""); if (u) consentFetch(tabId, u); }
+                                // button #3: "Approve + remember" — also persist the exec's static ml.fetch
+                                // literals for the session (a positive `persist` decision only).
+                                if (ok && typeof decision === "object" && decision.persist) persistGrants(tabId, grants);
                                 resolve(decision);
                             },
                             // What the external approver sees when it enumerates gates (the UI shows the same
@@ -1601,7 +1618,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                         // the same origin-authed SET_APPROVAL, so the gate is unforgeable across every surface.
                         // approvalRouting "external" SUPPRESSES the UI buttons (the gate still blocks — only the
                         // __mlApprovals channel resolves it); "ui"/"both" show them as before.
-                        emitStep({ step, seq, pending: true, awaitingApproval: p.approvalRouting !== "external", approvalExternal: p.approvalRouting === "external" || undefined, tool, arguments: args, renderIn });
+                        emitStep({ step, seq, pending: true, awaitingApproval: p.approvalRouting !== "external", approvalExternal: p.approvalRouting === "external" || undefined, tool, arguments: args, renderIn, grants: grants.length ? grants : undefined });
                     });
                 },
                 isSheetApproved: (id) => approvedSheets.has(id),

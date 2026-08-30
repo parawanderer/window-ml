@@ -386,6 +386,18 @@ html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
 .appr-btn.yes { color: var(--accent-fg); background: var(--ok); border-color: var(--ok); }
 .appr-btn.no { color: var(--err); border-color: var(--err); }
 .appr-btn:hover { filter: brightness(1.08); }
+/* button #3 "Approve + remember": a hollow variant of the yes button so the plain Approve stays primary. */
+.appr-btn.yes.remember { background: none; color: var(--ok); }
+.appr-btn.yes.remember:hover { background: color-mix(in srgb, var(--ok) 16%, transparent); }
+/* button #3 disclosure: what "remember" will persist (the exact static URLs). */
+.grant-note .grant-note-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.grant-note .grant-note-head .tri svg { width: 12px; height: 12px; color: var(--fg-dim); margin-top: 0; }
+.grant-note-head { display: flex; align-items: flex-start; gap: 5px; background: none; border: none; padding: 0;
+    color: var(--fg); font: inherit; font-size: 0.82em; text-align: left; cursor: pointer; }
+.grant-note-head .tri { flex: none; width: 12px; height: 12px; transition: transform 0.12s; margin-top: 1px; }
+.grant-note-head .tri.open { transform: rotate(90deg); }
+.grant-url-list { list-style: none; margin: 0 0 0 17px; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.grant-url-list code { font-size: 0.9em; word-break: break-all; color: var(--fg-dim); }
 /* rendered ⇄ raw toggle for a descriptor step */
 /* No `overflow: hidden` here — it would clip the buttons' hover tooltip (which hangs
    below the toggle). The rounded ends come from the first/last button instead. */
@@ -948,8 +960,12 @@ html[data-surface="card"] ::-webkit-scrollbar-thumb:hover { background: var(--pa
    scrollbar-gutter: stable reserves the scrollbar's width so content doesn't SHIFT when it appears. */
 .card-body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; scrollbar-gutter: stable; padding: 10px 12px 14px; padding-bottom: 8px; }
 /* Deny/Approve footer — pinned below the scroll area, always visible. */
-.card-foot { flex: 0 0 auto; display: flex; gap: 8px; justify-content: flex-end; padding: 10px 12px; border-top: 1px solid var(--border); }
+.card-foot { flex: 0 0 auto; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); }
+.card-foot-row { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
 .card-foot .appr-btn { padding: 6px 18px; font-size: 1em; }
+/* button #3 disclosure in the HUD card foot — a touch smaller, sits above the buttons. */
+.card-foot .grant-note { display: flex; align-items: flex-start; gap: 6px; font-size: 0.85em; }
+.card-foot .grant-note > svg { flex: none; width: 14px; height: 14px; margin-top: 1px; color: var(--warn); }
 /* Inline reply on the finished card. Two states: a quiet collapsed GHOST affordance (icon + "Reply…", does
    NOT look like a chat box) that blooms in with a hue→black glow instead of flashing; and, on click, the
    real one-line input whose send button lives INSIDE the field, appearing only once you type. Continues the

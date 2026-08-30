@@ -538,7 +538,20 @@ export interface ApprovalRequest {
  *  denial reads back accurately to the model. Absent → treated as "user". */
 export type ApprovalDecision =
     | boolean
-    | { approved: boolean; feedback?: string; arguments?: Record<string, unknown>; source?: "user" | "external" };
+    | { approved: boolean; feedback?: string; arguments?: Record<string, unknown>; source?: "user" | "external";
+        /** button #3: ALSO persist this call's statically-known egress grants (its `ml.fetch` literal URLs)
+         *  for the rest of the session, so a later call to the same URL auto-approves. Only ever set on a
+         *  positive decision; the grants themselves are re-derived background-side (never trusted from here). */
+        persist?: boolean };
+
+/** A persistable egress consent a tool call would establish — the unit button #3 remembers for the session.
+ *  Extracted STATICALLY, background-side (grant-extract.ts), so it holds only literal targets the human saw.
+ *  `kind` keys the UI's per-kind rendering + the background's per-kind persistence (today: `ml.fetch` URLs). */
+export interface PersistGrant {
+    kind: "fetch-url";
+    /** the distinct static URLs this grant would remember */
+    urls: string[];
+}
 
 export interface AgentTranscriptEntry {
     thought?: string;
@@ -841,6 +854,9 @@ export interface SetApprovalPayload {
     seq: number;
     decision: boolean;
     feedback?: string;
+    /** button #3: on a positive decision, ALSO persist the gated call's static egress grants for the
+     *  session (the background re-derives them from the call — this is just the "remember it" intent). */
+    persist?: boolean;
 }
 
 /** CANCEL_RUN payload — abort a background-hosted run by id (the HUD's "Cancel agent run"). Harmless
@@ -1122,6 +1138,10 @@ export interface DebugAgentStep extends DebugBase {
      *  require approval). The sidebar renders it as a green/red provenance badge —
      *  and it's the slot a future interactive-approval control resolves into. */
     approval?: "readonly" | "sandbox" | "same-origin" | "consented" | "user" | "denied" | "skipped" | "cancelled";
+    /** button #3: the persistable egress grants this call would establish (its `ml.fetch` literal URLs),
+     *  extracted background-side. Present on a pending approval step when there's ≥1 — the sidebar/HUD then
+     *  offer an "Approve + remember" control and unfurl exactly this list (what's shown IS what persists). */
+    grants?: PersistGrant[];
     /** Token counts for this step's driver call, when the server reports them. Each
      *  step re-sends the full growing history, so the LATEST step's usage is the run's
      *  current context occupancy (not a sum across steps — see TokenUsage). */

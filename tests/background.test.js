@@ -1823,6 +1823,65 @@ test("SECURITY (FETCH_URL): the SAME addresses become reachable once approved vi
     assert.ok(bg.calls.some(c => c.url === target), "the localhost URL WAS fetched after approval (consent is the sole gate)");
 });
 
+// --- button #3: "Approve + remember" — an approved exec persists its STATIC ml.fetch literals for the session ---
+
+// Drive an exec whose inline ml.fetch literals should be offered as persistable grants, decide it via
+// SET_APPROVAL (persist toggled by the caller), and return the disclosed gate + whether each URL is
+// reachable by an UNTRUSTED page AFTER the run (i.e. purely via persisted consent, not the ephemeral
+// exec-open grant, which is cleared when the delegation returns).
+async function runExecWithFetch({ js, persist }) {
+    const urlA = "http://localhost:8080/a.json", urlC = "http://localhost:8080/c.json";
+    let n = 0, gate = null;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            if (call.url === baseConfig().chatUrl) {
+                return (++n === 1)
+                    ? jsonResponse({ choices: [{ message: { content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "exec", arguments: JSON.stringify({ js }) } }] } }] })
+                    : jsonResponse({ choices: [{ message: { content: "done" } }] });
+            }
+            return fetchResponse('{"ok":1}', { contentType: "application/json", url: call.url });
+        },
+        onTabMessage: async (_tabId, msg) => {
+            if (msg?.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) {
+                gate = msg.event;
+                await bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true, persist } });
+            }
+            if (msg?.type === "RUN_TOOL_IN_PAGE" && msg.payload?.name === "exec" && !msg.payload?.renderOnly && !msg.payload?.readonlyTry && !msg.payload?.precheck) {
+                return { result: "exec ran" };
+            }
+            return undefined;
+        },
+    });
+    const res = await bg.send({ type: "START_RUN", payload: {
+        runId: "b3", task: "fetch", systemPrompt: "S",
+        tools: [{ name: "exec", requiresApproval: true, description: "", parameters: {}, capabilities: [] }],
+        model: "m", think: null, maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools",
+    } }, { tab: { id: 8 } });
+    // AFTER the run (exec-open grant cleared): is each URL reachable by an untrusted page? Only persisted consent can allow it.
+    const reach = async (url) => { const r = await bg.send({ type: "FETCH_URL", payload: { url } }, { tab: { id: 8, url: "https://evil.example/" } }); return !r.error; };
+    return { res, gate, urlA, urlC, reachA: await reach(urlA), reachC: await reach(urlC) };
+}
+
+test("button #3: the exec gate DISCLOSES its static ml.fetch literals as grants (not dynamic ones)", async () => {
+    const urlA = "http://localhost:8080/a.json";
+    const { res, gate } = await runExecWithFetch({ js: `await ml.fetch("${urlA}"); await ml.fetch("http://localhost:8080/b.json"); await ml.fetch(dyn)`, persist: false });
+    assert.ok(res.data, "the run finished");
+    assert.ok(gate, "the exec gate opened");
+    assert.deepEqual(gate.grants, [{ kind: "fetch-url", urls: [urlA, "http://localhost:8080/b.json"] }], "only the STATIC literals are disclosed (ml.fetch(dyn) is omitted)");
+});
+
+test("button #3: 'Approve + remember' (persist:true) makes the shown literals fetchable without re-approval; an unlisted URL stays refused", async () => {
+    const { urlA, reachA, reachC } = await runExecWithFetch({ js: `await ml.fetch("http://localhost:8080/a.json")`, persist: true });
+    assert.ok(reachA, `the remembered URL (${urlA}) fetches without re-approval after the run`);
+    assert.equal(reachC, false, "an un-remembered URL is still refused (only the human-seen literals persisted)");
+});
+
+test("button #3: plain Approve (persist:false) does NOT remember — the URL is re-gated next time (one-off)", async () => {
+    const { reachA } = await runExecWithFetch({ js: `await ml.fetch("http://localhost:8080/a.json")`, persist: false });
+    assert.equal(reachA, false, "without persist, the exec-open grant is ephemeral — no session consent survives the run");
+});
+
 test("INJECT_MESSAGE with a sayId fans an agent-say-seen when the loop DRAINS it (the 'seen' indicator)", async () => {
     const events = [];
     let n = 0;

@@ -537,6 +537,58 @@ test("cross-page: the composer Stop cancels a background run blocked on an appro
     await page.close();
 });
 
+// button #3 ("Approve + remember") end-to-end through the REAL overlay UI: an exec whose inline ml.fetch is a
+// literal URL opens a gate that offers the extra button; clicking it must PERSIST that URL's consent for the
+// session, so a LATER fetch_url of the same URL auto-approves (no second gate) and the run completes. This
+// exercises the whole path — the rendered button, the unforgeable SET_APPROVAL(persist) forward, the
+// background's static re-extraction + persistGrants, and the consent → auto-approve — in a real Chromium.
+test("button #3 (overlay UI): clicking 'Approve + remember' persists the URL — a later fetch of it auto-approves", async () => {
+    await configureExtension(ext.sw, { debugMode: "overlay" });
+    const page = await ext.context.newPage();
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+    const raw = site.url + "/data.json";
+    fake.setScript([
+        // Turn 1: an exec that fetches the URL as a LITERAL — egress, so it can't auto-approve → the gate opens
+        // with the "Approve + remember" control (button #3 extracted the literal background-side).
+        { tool: "exec", args: { js: `const r = await ml.fetch(${JSON.stringify(raw)}); r.type` } },
+        // Turn 2: a standalone fetch_url to the SAME url. If button #3 persisted it, this AUTO-approves (no gate).
+        { tool: "fetch_url", args: { url: raw } },
+        { content: "done — fetched twice" },
+    ]);
+    const before = fake.calls().length;
+    await page.evaluate((t) => { window.ml.agent(t, { env: false }); return true; }, "Fetch the file, then fetch it again.");
+
+    const sb = page.frames().find((f) => f.url().includes("sidebar.html"));
+    expect(sb, "the overlay sidebar iframe is present").toBeTruthy();
+    await expect.poll(async () => await sb.locator(".row").count(), { timeout: 15000 }).toBeGreaterThanOrEqual(1);
+    await page.locator("#ml-sb-tab").click();     // open the collapsed overlay panel
+
+    // Open the run's detail + wait for the button #3 control — clicking the row from INSIDE the poll, because
+    // the freshly-mounted app can miss a single early click while it's still handshaking (same as the
+    // cross-origin answer test). Idempotent once the detail is up (no more `.row`).
+    const remember = sb.locator(".astep-approve .appr-btn.remember");
+    await expect.poll(async () => {
+        const rows = sb.locator(".row");
+        if (await rows.count()) await rows.first().click().catch(() => {});
+        return await remember.count();
+    }, { timeout: 15000 }).toBe(1);
+    // The disclosure unfurls exactly the URL being remembered.
+    await sb.locator(".astep-approve .grant-note-head").click();
+    await expect.poll(async () => (await sb.locator(".astep-approve .grant-url-list code").allTextContents()), { timeout: 5000 }).toContain(raw);
+
+    await remember.click();   // Approve + remember
+
+    // The run reaches the final answer: turn 2's fetch_url auto-approved off the persisted consent (had button
+    // #3 not persisted, turn 2 would have opened a SECOND gate and the run would sit blocked at 2 calls).
+    await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(3);
+    await expect.poll(async () => ((await sb.locator("body").textContent()) || "").toLowerCase(), { timeout: 10000 }).toContain("fetched twice");
+    expect(((await sb.locator("body").textContent()) || "").toLowerCase(), "no second gate — the repeat fetch auto-approved").not.toContain("waiting for your approval");
+
+    await configureExtension(ext.sw, { debugMode: "off" });   // restore for later tests
+    await page.close();
+});
+
 // answer → HUD: a designated element's SCREENSHOT renders in the "Task complete" card (the user-facing
 // deliverable). off mode → the corner HUD card is that surface; the debug sidebar deliberately shows none of
 // it. This proves the real capture → HUD-render pipeline end-to-end in a browser (single + MULTIPLE elements).

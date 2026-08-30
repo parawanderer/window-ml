@@ -398,6 +398,87 @@ test("agent run: an ORPHAN step/result (no `agent` start) does NOT manufacture a
     assert.ok(!w.shadow.querySelector(".pending-note"), "and it reads DONE (the queued result sealed it)");
 });
 
+// --- button #3: "Approve + remember" — clickability in BOTH surfaces (sidebar step + HUD card) ---
+
+const grantStep = (hash) => agentStep(hash, 1, {
+    seq: 1, pending: true, awaitingApproval: true, tool: "exec",
+    arguments: { js: 'await ml.fetch("https://x.test/a.json"); await ml.fetch("https://x.test/b.json")' },
+    grants: [{ kind: "fetch-url", urls: ["https://x.test/a.json", "https://x.test/b.json"] }],
+});
+
+test("button #3 (sidebar step): 'Approve + remember' renders, unfurls its URLs, and posts persist:true", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("b3s", "fetch stuff"));
+    await w.dispatch(grantStep("b3s"));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+
+    const remember = w.shadow.querySelector(".astep-approve .appr-btn.remember");
+    assert.ok(remember, "the 'Approve + remember' button rendered on the awaiting step");
+    assert.match(remember.textContent, /remember/i);
+    // The disclosure lists EXACTLY the static URLs that will persist (what's shown IS what persists).
+    const noteHead = w.shadow.querySelector(".astep-approve .grant-note-head");
+    assert.ok(noteHead, "the remember disclosure rendered");
+    noteHead.click();
+    await w.tick();
+    const urls = [...w.shadow.querySelectorAll(".astep-approve .grant-url-list code")].map(n => n.textContent);
+    assert.deepEqual(urls, ["https://x.test/a.json", "https://x.test/b.json"], "unfurls exactly the two literals");
+
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    remember.click();
+    const msg = posted.find(m => m.__mlSidebarApp === "approval");
+    assert.ok(msg, "clicking posts an approval message");
+    assert.equal(msg.decision, true, "it approves");
+    assert.equal(msg.persist, true, "…and asks to persist (button #3)");
+    assert.equal(msg.hash, "b3s");
+    assert.equal(msg.seq, 1);
+});
+
+test("button #3 (sidebar step): plain Approve posts persist:false (one-off)", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("b3s2", "fetch stuff"));
+    await w.dispatch(grantStep("b3s2"));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    // The plain Approve is the .yes button that is NOT .remember.
+    const approve = [...w.shadow.querySelectorAll(".astep-approve .appr-btn.yes")].find(b => !b.classList.contains("remember"));
+    approve.click();
+    const msg = posted.find(m => m.__mlSidebarApp === "approval");
+    assert.equal(msg.decision, true);
+    assert.equal(msg.persist, false, "plain Approve does NOT persist");
+});
+
+test("button #3 (sidebar step): a gate with NO grants shows no remember button", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("b3s3", "click something"));
+    await w.dispatch(agentStep("b3s3", 1, { seq: 1, pending: true, awaitingApproval: true, tool: "click", arguments: { selector: "#go" } }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    assert.ok(w.shadow.querySelector(".astep-approve"), "the approval bar rendered");
+    assert.equal(w.shadow.querySelector(".astep-approve .appr-btn.remember"), null, "no remember button without grants");
+    assert.equal(w.shadow.querySelector(".astep-approve .grant-note-head"), null, "and no disclosure");
+});
+
+test("button #3 (HUD card): 'Approve + remember' renders in the card foot and posts persist:true", async () => {
+    const w = await loadSidebarWorld();
+    await w.raw({ __mlSidebarSurface: "card" });   // become the off-mode corner card
+    await w.dispatch(agentStart("b3c", "fetch stuff"));
+    await w.dispatch(grantStep("b3c"));
+    await w.tick();
+
+    const remember = w.shadow.querySelector(".card-foot .appr-btn.remember");
+    assert.ok(remember, "the 'Approve + remember' button rendered in the card footer");
+    const posted = [];
+    w.window.postMessage = (d) => posted.push(d);
+    remember.click();
+    const msg = posted.find(m => m.__mlSidebarApp === "approval");
+    assert.ok(msg && msg.decision === true && msg.persist === true, "card posts approval with persist:true");
+    assert.equal(msg.hash, "b3c");
+});
+
 test("agent run: agent-result arriving BEFORE the (replayed) start is not dropped — the answer survives", async () => {
     const w = await loadSidebarWorld();
     // The result wins the race onto the fresh page (no `agent` start yet). It must create a stub, not vanish.

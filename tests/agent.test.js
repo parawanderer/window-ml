@@ -1889,7 +1889,8 @@ test("autoApproveReadonly: a MUTATING ml call (setModel) still goes through the 
 test("autoApproveReadonly: an out-of-dialect exec still goes through the approval gate", async () => {
     const world = loadPageWorld({
         config: { model: "", ocrModel: "", autoApproveReadonly: true },
-        onRuntimeMessage: scriptedModel([toolCall("exec", { js: "for (const x of [1]) { x }" }, "c1"), reply("done")]),
+        // A C-style for loop is NOT in the read-only dialect (only for…of is) → it must still gate.
+        onRuntimeMessage: scriptedModel([toolCall("exec", { js: "for (let i = 0; i < 1; i++) { i }" }, "c1"), reply("done")]),
     });
     const win = world.context.window;
     const events = [];
@@ -1899,7 +1900,7 @@ test("autoApproveReadonly: an out-of-dialect exec still goes through the approva
     const exec = world.ml.domTools.find(t => t.name === "exec");
     let approvals = 0;
     await world.ml.agent("x", { tools: [exec], vision: false, approve: () => { approvals++; return true; } });
-    assert.equal(approvals, 1, "the IIFE isn't in the read-only dialect → normal approval");
+    assert.equal(approvals, 1, "the C-style for loop isn't in the read-only dialect → normal approval");
     assert.equal(events.find(e => e.kind === "agent-step" && e.tool === "exec" && !e.pending).approval, "user", "tagged approved-by-user");
 });
 
