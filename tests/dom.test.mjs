@@ -1,7 +1,7 @@
 // Pure dom.ts helpers.
 import { test } from "node:test";
 import assert from "node:assert";
-import { elementReference, classifyOverlay, navTarget, typeFromHeader, typeFromContent, typeFromExtension, classifyContent, jsonShape, askReaderNumCtx } from "../dom.ts";
+import { elementReference, classifyOverlay, navTarget, typeFromHeader, typeFromContent, typeFromExtension, classifyContent, jsonShape, askReaderNumCtx, isCspEvalBlocked } from "../dom.ts";
 
 // --- ml.fetch content classification (header / content / extension → a HEURISTIC type for chaining) ---
 test("typeFromHeader: specific content-types map; generic ones return null (defer to content/extension)", () => {
@@ -182,4 +182,16 @@ test("askReaderNumCtx: a large page grows the window to fit the content (2K-roun
         assert.equal(c % 2048, 0, `${n} → a 2K-aligned window`);
         assert.ok(c >= 8192, "never below the floor");
     }
+});
+
+test("isCspEvalBlocked: recognizes a CSP / Trusted-Types eval BLOCK (→ escalate to CDP), not a normal error", () => {
+    // Chrome's real messages for a missing 'unsafe-eval' and for require-trusted-types-for 'script'.
+    assert.ok(isCspEvalBlocked("EvalError: Refused to evaluate a string as JavaScript because 'unsafe-eval' is not an allowed source of script in the following Content Security Policy directive"));
+    assert.ok(isCspEvalBlocked("EvalError: call to Function() blocked by CSP"));
+    assert.ok(isCspEvalBlocked("TypeError: Failed to execute 'Function' on 'Function': This document requires 'TrustedScript' assignment."));
+    assert.ok(isCspEvalBlocked("This document requires 'TrustedType' assignment"));
+    // A genuine code error is NOT a CSP block — it must NOT escalate to the debugger.
+    assert.ok(!isCspEvalBlocked("TypeError: x.map is not a function"));
+    assert.ok(!isCspEvalBlocked("ReferenceError: foo is not defined"));
+    assert.ok(!isCspEvalBlocked(""));
 });

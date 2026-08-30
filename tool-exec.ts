@@ -26,6 +26,8 @@ export interface ToolEnvelope {
     renderIn?: RenderDescriptor;
     /** reserved-surface (cross-origin iframe / sealed shadow) click signal → the executor does a CDP click */
     cdpClick?: { x: number; y: number; hint?: string; verify?: boolean };
+    /** strict-page exec: main-world eval was CSP/TT-blocked → the executor re-runs the source via CDP */
+    cdpExec?: { source: string };
     /** what the tool fed into the model's context (locate's snap-inject) → surfaced in the debug render + export */
     feedback?: ToolFeedback;
 }
@@ -50,7 +52,7 @@ export async function executeTool(tool: MlTool, args: Record<string, unknown>, c
         // also hand back real DOM nodes / a screenshot (routed to onStep/the transcript, never the model).
         if (raw && typeof raw === "object" && typeof (raw as ToolResult).content === "string") {
             const r = raw as ToolResult;
-            return { result: r.content + note, elements: r.elements, answerMedia: r.answerMedia, image: r.image, imageLabel: r.imageLabel, images: r.images, render: r.render, renderIn: r.renderIn, cdpClick: r.cdpClick, feedback: r.feedback };
+            return { result: r.content + note, elements: r.elements, answerMedia: r.answerMedia, image: r.image, imageLabel: r.imageLabel, images: r.images, render: r.render, renderIn: r.renderIn, cdpClick: r.cdpClick, cdpExec: r.cdpExec, feedback: r.feedback };
         }
         return { result: String(raw) + note };
     } catch (e) { return { result: `Error: ${errText(e)}` + note }; }

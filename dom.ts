@@ -52,6 +52,14 @@ export function askReaderNumCtx(contentChars: number): number {
     return Math.max(MIN, Math.ceil(est / 2048) * 2048);
 }
 
+/** True when an exec eval error is a page CSP / Trusted-Types BLOCK — main-world `eval`/`new Function` refused
+ *  at COMPILE time (nothing ran), not a genuine code error. On such a page the (already-approved) exec can be
+ *  re-run via CDP `Runtime.evaluate` (the debugger is CSP/TT-exempt). Matches Chrome's messages for a
+ *  missing `'unsafe-eval'` and for `require-trusted-types-for 'script'`. Pure/tested. */
+export function isCspEvalBlocked(msg: string): boolean {
+    return /unsafe-eval|Content Security Policy|blocked by CSP|call to Function\(\) blocked|TrustedScript|Trusted ?Type|require-trusted-types/i.test(String(msg || ""));
+}
+
 /**
  * Extract error text from a caught throw. Background tasks reject with a plain
  * STRING (not an Error), so `e.message` would be undefined — fall back to String.

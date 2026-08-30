@@ -1206,6 +1206,39 @@ async function cdpClick(tabId: number, x: number, y: number): Promise<{ ok: true
     }
 }
 
+/** Run `source` via CDP `Runtime.evaluate` in the tab's MAIN world — the ONLY way to execute imperative JS on
+ *  a page whose CSP omits 'unsafe-eval' or enforces Trusted Types (the debugger is exempt). `source` is the
+ *  ALREADY-APPROVED exec code (main-world eval was blocked at COMPILE → nothing ran). window.ml, page globals,
+ *  and the live DOM are all reachable (it runs in the page's own main world). Attaches the debugger (its
+ *  banner is the honest "the browser is being driven" signal), evaluates, ALWAYS detaches. Two shapes, like
+ *  the main-world exec: a trailing-expression first (REPL value), then a statement body (the model `return`s).
+ *  See docs/spec/EXEC_STRICT_CSP.md. */
+async function cdpEval(tabId: number, source: string): Promise<{ ok: true; value: string } | { error: string; needsPermission?: true }> {
+    if (!(await hasDebuggerPermission())) return { error: "The `debugger` permission isn't granted — enable \"Debugger-based actions (CDP)\" in window.ml Settings → Advanced (enabling it requests the permission).", needsPermission: true };
+    const target: chrome.debugger.Debuggee = { tabId };
+    try { await chrome.debugger.attach(target, "1.3"); }
+    catch (e) { return { error: `Couldn't attach the debugger to run exec (${(e as Error)?.message || e}). Another debugger (DevTools?) may be attached to this tab.` }; }
+    type EvalResult = { result?: { value?: unknown }; exceptionDetails?: { exception?: { description?: string }; text?: string } };
+    const evaluate = (expression: string) => chrome.debugger.sendCommand(target, "Runtime.evaluate",
+        { expression, awaitPromise: true, returnByValue: true, userGesture: true }) as Promise<EvalResult>;
+    const syntaxErr = (r: EvalResult) => /SyntaxError/.test(r?.exceptionDetails?.exception?.description || r?.exceptionDetails?.text || "");
+    try {
+        const expr = source.trim().replace(/;\s*$/, "");
+        // Trailing-expression form first (REPL value, like the main-world fast path); a statement body isn't a
+        // valid parenthesised expression → SyntaxError → retry as a body where the model `return`s its value.
+        let r = await evaluate(`(async () => (${expr}))()`);
+        if (syntaxErr(r)) r = await evaluate(`(async () => { ${source} })()`);
+        if (r?.exceptionDetails) return { error: `The exec threw (via CDP): ${r.exceptionDetails.exception?.description || r.exceptionDetails.text || "error"}` };
+        const v = r?.result?.value;
+        const value = v === undefined ? "(undefined)" : typeof v === "string" ? v : (() => { try { return JSON.stringify(v); } catch { return String(v); } })();
+        return { ok: true, value };
+    } catch (e) {
+        return { error: `The CDP exec failed (${(e as Error)?.message || e}).` };
+    } finally {
+        try { await chrome.debugger.detach(target); } catch { /* already detached / tab gone */ }
+    }
+}
+
 /** SSRF denylist for the uncredentialed image fetch: refuse loopback / private / link-local / metadata
  *  hosts (and non-http schemes / unparseable URLs), so a page can't probe the user's internal network
  *  through the extension's `<all_urls>` reach. */
@@ -1684,6 +1717,20 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                             // Append the page-side stuck-loop re-snap nudge (a repeat @pt click) to the SUCCESS result.
                             const tail = env.cdpClick.verify ? "" : " Re-run look to see the result.";
                             return { result: `Clicked the reserved target at (${env.cdpClick.x}, ${env.cdpClick.y}) via the debugger.${tail}${env.cdpClick.hint || ""}${vres}`, image: vimg, imageLabel: vimgLabel, feedback: vfeedback, renderIn: env.renderIn, renderOut: env.renderOut };
+                        }
+                        // STRICT-PAGE exec: main-world eval was CSP/TT-blocked and the page handed back a cdpExec
+                        // signal. UNFORGEABLE: we re-run the exact source the human APPROVED — `args.js`, from the
+                        // gate above — NEVER the page-echoed `env.cdpExec.source`, so this can only ever execute
+                        // the approved code; and there is no page-reachable CDP-exec message, so the ONLY path is
+                        // here, after the approval. No approved `js` → refuse (never CDP-eval a page value).
+                        if (env?.cdpExec) {
+                            const approvedSource = typeof (args as { js?: unknown })?.js === "string" ? (args as { js: string }).js : null;
+                            if (!approvedSource) return { result: env.result || "", renderIn: env.renderIn, renderOut: env.renderOut };
+                            const cfg = await getConfig();
+                            if (!cfg.cdp) return { result: `${env.result || ""}\n\nRunning it needs Debugger-based actions (CDP), which are OFF — enable them in window.ml Settings → Advanced (the debugger clears the page's CSP/Trusted-Types), or fall back to a read-only survey / ml.fetch.`, renderIn: env.renderIn, renderOut: env.renderOut };
+                            const r = await cdpEval(tabId, approvedSource);
+                            if ("ok" in r) return { result: r.value, renderIn: env.renderIn, renderOut: env.renderOut };
+                            return { result: `${env.result || ""}\n\n${r.error}`, renderIn: env.renderIn, renderOut: env.renderOut };
                         }
                         // The page already computed the rendered In/Out slots (descriptorFor) — forward them so
                         // the sidebar shows the rich view. `image` rides along for INLINE VISION (native look):

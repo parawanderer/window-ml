@@ -445,6 +445,11 @@ export interface ToolResult {
      *  docs/spec/CDP_CLICK.md. `hint` = a stuck-loop re-snap nudge to append when this @pt was clicked before
      *  (the CDP result string is built background-side, so the page threads the nudge here). */
     cdpClick?: { x: number; y: number; hint?: string; verify?: boolean };
+    /** STRICT-PAGE exec signal: the page's CSP omits 'unsafe-eval' or enforces Trusted Types, so main-world
+     *  `eval`/`new Function` was BLOCKED (threw at compile, nothing ran). The tool declines and asks the
+     *  background to re-run the SAME (already-approved) source via CDP `Runtime.evaluate` — the debugger is
+     *  exempt from the page's CSP/TT. `source` is the model's exec code. See docs/spec/EXEC_STRICT_CSP.md. */
+    cdpExec?: { source: string };
     /** what this tool fed into the model's context (locate's snap-inject); surfaced in the debug render + export */
     feedback?: ToolFeedback;
 }
@@ -1035,6 +1040,9 @@ export interface PageToolEnvelope {
      *  target and needs a CDP click at this viewport coordinate — the BACKGROUND (trusted) does it. `hint` is
      *  an optional stuck-loop re-snap nudge the background appends to the click result. */
     cdpClick?: { x: number; y: number; hint?: string; verify?: boolean };
+    /** STRICT-PAGE exec: main-world eval was blocked by the page's CSP/Trusted-Types, so the background re-runs
+     *  the same approved `source` via CDP `Runtime.evaluate` (debugger is CSP-exempt). See EXEC_STRICT_CSP.md. */
+    cdpExec?: { source: string };
     /** DELEGATED vision sub-call tokens spent BY THIS tool call (look/locate/verify's own ml.chat) — a DELTA
      *  measured around the page-side run, so the background loop can accumulate the per-turn tally its meta
      *  tool + UI report (the page meter, bus.ts, lives page-side and the SW loop can't read it directly). */

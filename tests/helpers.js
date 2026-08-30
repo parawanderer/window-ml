@@ -96,7 +96,7 @@ function streamResponse(lines, { status = 200 } = {}) {
 // `commandShortcut` is what chrome.commands reports as CURRENTLY bound for the HUD
 // (null = the API is unavailable, "" = the user cleared the binding); `manifestPermissions`
 // lets a test declare contextMenus, which GET_INVOCATION reads as "the right-click entry exists".
-function loadBackground({ config = {}, local = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9" }) {
+function loadBackground({ config = {}, local = {}, onFetch, onCaptureTab, onPyRun, onTabMessage, onDebuggerCommand, commandShortcut = "Alt+Space", manifestPermissions = ["scripting", "activeTab", "storage", "offscreen"], debuggerPermission = true, manifestVersion = "9.9.9" }) {
     const calls = [];
     const captures = [];        // captureVisibleTab arg lists, for screenshot tests
     const tabMessages = [];     // chrome.tabs.sendMessage arg lists, for reverse-channel tests
@@ -187,7 +187,9 @@ function loadBackground({ config = {}, local = {}, onFetch, onCaptureTab, onPyRu
             // press+release sequence and that we always detach.
             debugger: {
                 attach: async (target, version) => { debuggerCalls.push(["attach", target, version]); },
-                sendCommand: async (target, method, params) => { debuggerCalls.push(["sendCommand", target, method, params]); },
+                // `onDebuggerCommand(method, params)` lets a test script the reply (e.g. Runtime.evaluate's
+                // result / exceptionDetails for the CDP-exec tests); default returns undefined (clicks need none).
+                sendCommand: async (target, method, params) => { debuggerCalls.push(["sendCommand", target, method, params]); return onDebuggerCommand ? onDebuggerCommand(method, params) : undefined; },
                 detach: async (target) => { debuggerCalls.push(["detach", target]); },
             },
             tabs: {

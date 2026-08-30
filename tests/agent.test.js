@@ -717,6 +717,21 @@ test("sampleText samples N, truncates, marks overflow, and returns those nodes",
     assert.match(run(ml, "sampleText", { selector: ".nope" }), /No element matches/);
 });
 
+test("exec on a strict page (CSP / Trusted-Types block) → signals cdpExec with the SOURCE, not a plain error", async () => {
+    const { ml } = loadDomWorld();
+    const exec = ml.domTools.find(t => t.name === "exec");
+    // Main-world eval REFUSED by the page CSP (Chrome's real message). The tool must escalate: hand back a
+    // cdpExec signal carrying the source so the background can re-run it via the debugger (CSP-exempt).
+    const js = 'throw new Error("Refused to evaluate a string as JavaScript because unsafe-eval is not an allowed source")';
+    const r = await exec.run({ js });
+    assert.equal(typeof r, "object", "returns a ToolResult (with the signal), not a bare error string");
+    assert.deepEqual(r.cdpExec, { source: js }, "carries the SOURCE for the background to re-run via CDP");
+    assert.match(r.content, /blocks main-world eval|CSP|Trusted Types/i, "the base content explains the eval was blocked");
+    // A GENUINE code error is NOT escalated to the debugger — no cdpExec.
+    const g = await exec.run({ js: "nope()" });
+    assert.ok(!(g && typeof g === "object" && g.cdpExec), "a normal error stays a normal error (never escalates)");
+});
+
 test("exec evaluates expressions, serializes objects, and catches errors", async () => {
     const { ml } = loadDomWorld("<li></li><li></li>");
     assert.equal(await run(ml, "exec", { js: "1 + 2" }), "3");

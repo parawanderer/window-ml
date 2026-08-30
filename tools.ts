@@ -9,7 +9,7 @@ import type { VerifyArea } from "./builtin-tools";
 /** Serialize a screenshot-crop of each designated `answer` element for the HUD completion card. ml-backed
  *  (built in injected.ts), so the pure domTools stay pure — the answer tool just calls it when present. */
 export type CaptureAnswer = (els: Element[], note?: string, show?: "inline" | "highlight") => Promise<AnswerMedia[]>;
-import { truncate, clipOut, errText, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, deepQueryAll, closedShadowHosts, frameHostOf, selectorError } from "./dom";
+import { truncate, clipOut, errText, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, deepQueryAll, closedShadowHosts, frameHostOf, selectorError, isCspEvalBlocked } from "./dom";
 import { INTERACTIVE_SEL, roleOf, accessibleName, placeholderText, ariaState, hasLayout, styleHidden, isFaded } from "./a11y";
 import { pageContext, browserInfo, agentState } from "./util";
 import { makeBackgroundTaskPromise } from "./bridge";
@@ -524,6 +524,12 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                     // errText, NOT `.message`: a rejected `ml.*` call (makeBackgroundTaskPromise) rejects with a
                     // STRING (the actionable message), which has no `.message` → the "Error: undefined" bug.
                     const msg = errText(failed);
+                    // STRICT-PAGE eval BLOCK (CSP omits 'unsafe-eval' / Trusted Types): the eval was refused at
+                    // COMPILE time — nothing ran. Signal the executor to re-run the SAME (approved) source via
+                    // CDP `Runtime.evaluate` (debugger, CSP-exempt). The background decides — run it (cdp on +
+                    // granted), or return an actionable "enable / grant" note (off / missing). The `content` here
+                    // is the base the background builds on when it CAN'T run CDP.
+                    if (isCspEvalBlocked(msg)) return { content: withLogs("This page blocks main-world eval (its CSP omits 'unsafe-eval', or it enforces Trusted Types), so the code couldn't run in the page context."), cdpExec: { source: js } };
                     // The #1 exec mistake: querySelectorAll / .children / getElementsBy* return a
                     // NodeList/HTMLCollection (array-LIKE, no .map/.filter). Steer the retry
                     // instead of leaving the model to flail on "map is not a function".
