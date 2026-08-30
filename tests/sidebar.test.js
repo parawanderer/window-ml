@@ -462,6 +462,24 @@ test("button #3 (sidebar step): a gate with NO grants shows no remember button",
     assert.equal(w.shadow.querySelector(".astep-approve .grant-note-head"), null, "and no disclosure");
 });
 
+test("reused-grant step: a readonly exec that re-read a cached URL shows a collapsed 'reused a grant' note", async () => {
+    const w = await loadSidebarWorld();
+    const url = "https://x.test/servers.json";
+    await w.dispatch(agentStart("ru", "reuse a fetch"));
+    await w.dispatch(agentStep("ru", 1, { seq: 1, tool: "exec", arguments: { js: `ml.fetch("${url}").json` }, result: "[…]", approval: "readonly", reused: [{ kind: "fetch-url", detail: url }] }));
+    w.shadow.querySelector(".row").click();
+    await w.tick();
+    const head = [...w.shadow.querySelectorAll(".astep.tool .astep-head")].find(h => /exec/.test(h.textContent));
+    head.click();
+    await w.tick();
+    const reused = w.shadow.querySelector(".astep-reused");
+    assert.ok(reused, "the reused-grant disclosure renders on the step");
+    assert.match(reused.textContent, /Reused a grant you approved/i);
+    assert.match(reused.querySelector(".reused-why").textContent, /1 URL/, "deterministic summary of what was reused");
+    // Collapsed by default; the exact URL is in the (expandable) list.
+    assert.match(reused.querySelector(".reused-list code").textContent, /servers\.json/);
+});
+
 test("fetch_url step: the rendered In shows a clean verb + URL line, NOT a raw JSON dump of the descriptor", async () => {
     const w = await loadSidebarWorld();
     const url = "https://raw.githubusercontent.com/SideStore/anisette-servers/main/servers.json";

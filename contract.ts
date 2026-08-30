@@ -558,6 +558,14 @@ export type ApprovalDecision =
          *  positive decision; the grants themselves are re-derived background-side (never trusted from here). */
         persist?: boolean };
 
+/** A prior grant a tool call REUSED (so it ran without a fresh prompt) — the transparency counterpart of
+ *  PersistGrant. `kind` keys the per-kind label/icon; `detail` is the human-readable thing reused (the URL,
+ *  the sheet name/id). Extensible: a new grant kind adds a `kind` + a detail here + one render branch. */
+export interface ReusedGrant {
+    kind: "fetch-url" | "sheet";
+    detail: string;
+}
+
 /** A persistable egress consent a tool call would establish — the unit button #3 remembers for the session.
  *  Extracted STATICALLY, background-side (grant-extract.ts), so it holds only literal targets the human saw.
  *  `kind` keys the UI's per-kind rendering + the background's per-kind persistence (today: `ml.fetch` URLs). */
@@ -1156,6 +1164,10 @@ export interface DebugAgentStep extends DebugBase {
      *  extracted background-side. Present on a pending approval step when there's ≥1 — the sidebar/HUD then
      *  offer an "Approve + remember" control and unfurl exactly this list (what's shown IS what persists). */
     grants?: PersistGrant[];
+    /** transparency: prior grants this step REUSED (so it auto-ran without a prompt) — a cached `ml.fetch`
+     *  URL a read-only `exec` re-read, an already-approved Google Sheet a `python_exec` reused. The sidebar
+     *  shows a collapsed "reused a grant you approved" note in the In area, so a no-prompt run explains itself. */
+    reused?: ReusedGrant[];
     /** Token counts for this step's driver call, when the server reports them. Each
      *  step re-sends the full growing history, so the LATEST step's usage is the run's
      *  current context occupancy (not a sum across steps — see TokenUsage). */

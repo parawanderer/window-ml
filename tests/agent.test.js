@@ -1903,6 +1903,8 @@ test("cached ml.fetch: fetch_url prompts + caches once, then a readonly exec re-
     const execStep = events.find(e => e.kind === "agent-step" && e.tool === "exec" && !e.pending);
     assert.equal(execStep.approval, "readonly", "the exec re-read auto-approved — a cached fetch is a read-only op");
     assert.match(execStep.result, /7/, "the cached JSON was actually read (.json.n === 7)");
+    // TRANSPARENCY: the step reports WHICH prior grant it reused (why it didn't prompt).
+    assert.deepEqual(execStep.reused, [{ kind: "fetch-url", detail: url }], "the reused cached URL is reported on the step");
 });
 
 test("autoApproveReadonly: a MUTATING ml call (setModel) still goes through the approval gate", async () => {

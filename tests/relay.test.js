@@ -18,6 +18,16 @@ const jsonResult = (json, extra = {}) => ({
     contentType: "application/json", ...extra,
 });
 
+test("fetch_url tool: the render note flags schema-only vs full-page (so the log says which the agent asked for)", async () => {
+    const tool = fetchTool(jsonResult({ a: 1 }));
+    const full = tool.render(undefined, { url: "https://x.test/a.json" });
+    assert.equal(full.note, "full page", "default fetch → full page");
+    const schema = tool.render(undefined, { url: "https://x.test/a.json", schema: true });
+    assert.equal(schema.note, "schema only", "schema:true → schema only");
+    assert.equal(schema.verb, "fetch");
+    assert.equal(schema.target, "https://x.test/a.json");
+});
+
 test("fetch_url tool: schema:true returns the JSON shape, not the body", async () => {
     const json = { id: 7, items: [{ name: "a" }, { name: "b" }] };
     const out = await fetchTool(jsonResult(json, { schema: "{ id: number, items: { name: string }[] /* 2 items */ }" })).run({ url: "https://x.test/a.json", schema: true });

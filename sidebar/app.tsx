@@ -17,6 +17,7 @@ import {
     ollamaIds, vramOpen, sidebarOpen, loadedModels, psError, turnsRun, backendError,
 } from "./store";
 import { isBackendUnreachable } from "../contract";
+import type { ReusedGrant } from "../contract";
 import type { Status, Turn, AgentStep, Session } from "./store";
 import { pretty, shortStamp, fullStamp, truncate, collapsedPreview, highlight, beautifyJs, htmlLines, markdown, stripFormatting, lastUser, rollupStatus } from "./format";
 import { annotatedConfig, turnProfile, shownModel, sessionProfile } from "./model";
@@ -85,7 +86,7 @@ function onDebug(ev: MlDebugEvent): void {
     if (ev.kind === "agent-step") {
         const s = sessionMap.get(ev.session.hash);
         if (!s) { queueOrphan(ev.session.hash, ev); return; }   // no start yet → hold it, don't manufacture a phantom
-        const step = { step: ev.step, localStep: ev.localStep, seq: ev.seq, pending: ev.pending, awaitingApproval: ev.awaitingApproval, thought: ev.thought, reasoning: ev.reasoning, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: ev.elements, renderIn: ev.renderIn, renderOut: ev.renderOut, feedback: ev.feedback, argIssues: ev.argIssues, approval: ev.approval, usage: ev.usage, subUsage: ev.subUsage, grants: ev.grants };
+        const step = { step: ev.step, localStep: ev.localStep, seq: ev.seq, pending: ev.pending, awaitingApproval: ev.awaitingApproval, thought: ev.thought, reasoning: ev.reasoning, tool: ev.tool, arguments: ev.arguments, result: ev.result, elements: ev.elements, renderIn: ev.renderIn, renderOut: ev.renderOut, feedback: ev.feedback, argIssues: ev.argIssues, approval: ev.approval, usage: ev.usage, subUsage: ev.subUsage, grants: ev.grants, reused: ev.reused };
         const steps = s.steps || [];
         // In-flight: a tool step arrives twice — a pending START then the DONE, sharing a `seq`.
         // Patch the existing row in place (immutably) so it fills in; otherwise append. Thoughts
@@ -1007,6 +1008,27 @@ function FeedbackBlock({ fb }: { fb: ToolFeedback }) {
     );
 }
 
+// "Reused a grant you approved" — why an approval-gated step auto-ran with no prompt: it re-used a resource
+// you already OK'd (a cached ml.fetch URL a read-only exec re-read; an already-approved Google Sheet a
+// python_exec reused). Collapsed by default; the summary is deterministic (kind + count), expand for the
+// exact items. Generic over `kind` so future grant kinds render here with no layout change.
+const REUSED_KIND: Record<string, { noun: string; nounN: string }> = {
+    "fetch-url": { noun: "URL", nounN: "URLs" },
+    sheet: { noun: "sheet", nounN: "sheets" },
+};
+function ReusedBlock({ reused }: { reused: ReusedGrant[] }) {
+    // Summarise per-kind (e.g. "2 URLs · 1 sheet") — deterministic, no payload.
+    const byKind = new Map<string, ReusedGrant[]>();
+    for (const g of reused) { if (!byKind.has(g.kind)) byKind.set(g.kind, []); byKind.get(g.kind)!.push(g); }
+    const summary = [...byKind.entries()].map(([k, gs]) => { const n = REUSED_KIND[k]; return `${gs.length} ${gs.length === 1 ? n?.noun || k : n?.nounN || k}`; }).join(" · ");
+    return (
+        <details class="astep-reused">
+            <summary class="reused-head"><span class="tri" aria-hidden="true"><IconChevron /></span><IconCheck /><span class="reused-title">Reused a grant you approved</span><span class="reused-why">{summary} · no prompt needed</span></summary>
+            <ul class="reused-list">{reused.map((g, i) => <li key={i}><code>{g.detail}</code></li>)}</ul>
+        </details>
+    );
+}
+
 // A Jupyter-style In:/Out: block: a gutter label + content, collapsible on its
 // own (a grey inline preview shows when collapsed). If a descriptor targets THIS
 // block it renders by default with a per-block rendered⇄raw toggle (e.g. exec's
@@ -1224,6 +1246,7 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
             {open
                 ? <div class="astep-body">
                     {issues ? <div class="tt tt-row arg-issues"><IconWarn /><span>arg schema: {issues.join("; ")}</span><span class="tt-pop wrap left" role="tooltip">The args don't match this tool's parameter schema.</span></div> : null}
+                    {st.reused?.length ? <ReusedBlock reused={st.reused} /> : null}
                     {args || inRender
                         ? <IoBlock label="In" tip="The arguments the model passed to this tool call."
                             preview={inlineJson(args || {})} render={inRender}

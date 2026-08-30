@@ -555,7 +555,7 @@ export const ML_READONLY_METHODS = ["getModel", "config", "models", "capabilitie
 /** Build the `ml` object the dialect sees: ONLY {@link ML_READONLY_METHODS}, bound to the real API.
  *  A purpose-built facade rather than `window.ml` itself, so the free set is enforced by what exists,
  *  not only by a name check. Returns null when there's no ml (→ `ml` isn't in scope at all). */
-function mlFacade(ml: unknown): Record<string, unknown> | null {
+function mlFacade(ml: unknown, reused?: string[]): Record<string, unknown> | null {
     if (!ml || typeof ml !== "object") return null;
     const out: Record<string, unknown> = Object.create(null);
     for (const name of ML_READONLY_METHODS) {
@@ -572,6 +572,7 @@ function mlFacade(ml: unknown): Record<string, unknown> | null {
         out.fetch = (url: unknown): unknown => {
             const r = (cachedFetch as (u: unknown) => unknown).call(ml, url);
             if (r === undefined) throw new Denied(`fetch(${JSON.stringify(String(url))}) isn't cached — approve it once, then re-reads are free`);
+            reused?.push(String(url));   // a cache HIT = this survey re-read a URL you already approved (transparency)
             return r;
         };
     }
@@ -917,10 +918,11 @@ function runSync(gen: Ev): unknown {
  * program value plus any captured console output. Rejects with NotInDialect / Denied on
  * anything outside the dialect or blocked — callers fall back to approval+eval.
  */
-export async function evalReadonly(code: string, doc: Document, ml?: unknown): Promise<{ value: unknown; logs: string[] }> {
+export async function evalReadonly(code: string, doc: Document, ml?: unknown): Promise<{ value: unknown; logs: string[]; reused: string[] }> {
     const logs: string[] = [];
     const rec = (...a: unknown[]) => logs.push(a.map(x => typeof x === "string" ? x : safeStr(x)).join(" "));
-    const facade = mlFacade(ml);
+    const reused: string[] = [];   // ml.fetch cache hits — URLs this survey re-read from a prior approval
+    const facade = mlFacade(ml, reused);
     const root: Record<string, unknown> = Object.create(null);
     Object.assign(root, {
         document: doc, Array, Object, JSON, Math, String, Number, Boolean, Promise,
@@ -934,7 +936,7 @@ export async function evalReadonly(code: string, doc: Document, ml?: unknown): P
     if (view && typeof view.getComputedStyle === "function") root.getComputedStyle = view.getComputedStyle.bind(view);
     const ast = new Parser(tokenize(code)).parseProgram();
     const value = await runAsync(new Evaluator(facade).eval(ast, root));
-    return { value, logs };
+    return { value, logs, reused };
 }
 
 function safeStr(x: unknown): string { try { return JSON.stringify(x); } catch { return String(x); } }

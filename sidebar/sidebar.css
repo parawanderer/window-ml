@@ -348,6 +348,21 @@ html[data-surface="card"] .aturn:has(.astep.open) .aturn-head .step-pill {
 .astep-feedback .feedback-why { color: var(--fg-faint); font-size: 0.78em; font-style: italic; }
 .astep-feedback .feedback-body { margin-top: 6px; }
 .astep-feedback img { max-width: 100%; max-height: 320px; width: auto; border-radius: 5px; border: 1px solid var(--border); display: block; }
+
+/* "Reused a grant you approved" — why an approval-gated step auto-ran. Collapsed; green (a consent already given). */
+.astep-reused { margin: 4px 0 6px; padding: 5px 8px; border-radius: 6px;
+    border-left: 2px solid color-mix(in srgb, var(--ok) 60%, transparent);
+    background: color-mix(in srgb, var(--ok) 9%, transparent); }
+.astep-reused > .reused-head { display: flex; align-items: center; gap: 6px; cursor: pointer; list-style: none; flex-wrap: wrap; }
+.astep-reused > .reused-head::-webkit-details-marker { display: none; }
+.astep-reused .reused-head .tri { display: inline-flex; flex: none; transition: transform .15s ease; color: var(--fg-faint); }
+.astep-reused .reused-head .tri svg { width: 11px; height: 11px; }
+.astep-reused[open] .reused-head .tri { transform: rotate(90deg); }
+.astep-reused .reused-head > svg { flex: none; width: 14px; height: 14px; color: var(--ok); }
+.astep-reused .reused-title { color: var(--fg); font-size: 0.82em; font-weight: 700; letter-spacing: .02em; }
+.astep-reused .reused-why { color: var(--fg-faint); font-size: 0.78em; font-style: italic; }
+.astep-reused .reused-list { margin: 6px 0 0; padding: 0 0 0 17px; display: flex; flex-direction: column; gap: 2px; }
+.astep-reused .reused-list code { font-size: 0.9em; word-break: break-all; color: var(--fg-dim); }
 .astep-feedback .feedback-desc { color: var(--fg-faint); font-size: 0.78em; }
 .astep-feedback .feedback-desc-text { margin-top: 3px; color: var(--fg-dim); font-size: 0.88em; line-height: 1.45; white-space: pre-wrap; }
 /* approval provenance — reuse the step's left border as a green/red outline + a pill. */

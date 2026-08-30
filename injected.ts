@@ -897,7 +897,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             // Enrich the loop's event with the page-only bits: argIssues, the element COUNT for the debug
             // event + the real nodes for onStep, and a best-effort In/Out render for a step the executor
             // DIDN'T run (pending START / denied / skipped), preferring the executor's own render when present.
-            const emit = (ev: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: unknown; tool?: string; arguments?: Record<string, unknown>; result?: string; approval?: "readonly" | "sandbox" | "user" | "denied" | "skipped" | "cancelled"; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; usage?: unknown; elements?: unknown[] }) => {
+            const emit = (ev: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: unknown; tool?: string; arguments?: Record<string, unknown>; result?: string; approval?: "readonly" | "sandbox" | "user" | "denied" | "skipped" | "cancelled"; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; usage?: unknown; elements?: unknown[]; reused?: import("./contract").ReusedGrant[] }) => {
                 const tool = ev.tool ? byName[ev.tool] : undefined;
                 const nodes = ev.elements as Node[] | undefined;
                 const argIssues = ev.tool && tool ? validateArgs(tool.parameters, ev.arguments || {}) : undefined;
@@ -920,7 +920,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     step, localStep: ev.step, seq, pending: ev.pending || undefined,
                     thought: ev.thought, reasoning: (ev.reasoning as string | null) || undefined, tool: ev.tool, arguments: ev.arguments,
                     result: ev.result, elements: nodes ? nodes.length : undefined,
-                    renderIn, renderOut, feedback: ev.feedback,
+                    renderIn, renderOut, feedback: ev.feedback, reused: ev.reused,
                     argIssues: argIssues && argIssues.length ? argIssues : undefined,
                     approval: ev.approval, usage: (ev.usage as TokenUsage | null) || undefined,
                     // Running tally of delegated look/locate/verify token spend so far this turn (metered in
@@ -972,7 +972,10 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                         const ro = await evalReadonly((args as { js: string }).js, document, this);
                         const { result, elements } = formatReadonlyExec(ro.value, ro.logs);
                         const { in: renderIn, out: renderOut } = descriptorFor(byName[name], { result, elements }, args);
-                        return { result, elements, renderIn, renderOut };
+                        // Cached ml.fetch URLs this survey re-read → a "reused a grant you approved" note (transparency).
+                        const urls = [...new Set(ro.reused)];
+                        const reused = urls.length ? urls.map(u => ({ kind: "fetch-url" as const, detail: u })) : undefined;
+                        return { result, elements, renderIn, renderOut, reused };
                     } catch { return null; }
                 } : undefined,
                 precheck: async (name, args) => {
@@ -1550,9 +1553,12 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     },
                     required: ["url"],
                 },
-                // Show the URL in the approval card (an `action` render → the intent sentence "Agent wants to fetch <url>").
-                render: (_input: unknown, args?: Record<string, unknown>): RenderDescriptor =>
-                    ({ type: "action", verb: "fetch", target: String((args as { url?: unknown } | undefined)?.url ?? "") }),
+                // Show the URL in the approval card + the In render (an `action` render → "fetch <url>"). The
+                // note flags whether the agent asked for the SCHEMA (structure only) vs the full page/body.
+                render: (_input: unknown, args?: Record<string, unknown>): RenderDescriptor => {
+                    const a = args as { url?: unknown; schema?: unknown } | undefined;
+                    return { type: "action", verb: "fetch", target: String(a?.url ?? ""), note: a?.schema ? "schema only" : "full page" };
+                },
                 run: async ({ url, schema = false }: { url?: unknown; schema?: boolean } = {}): Promise<string> => {
                     if (typeof url !== "string" || !url.trim()) return "Error: fetch_url needs a `url`.";
                     let r: import("./contract").FetchResult;

@@ -21,7 +21,7 @@ export interface ToolMeta { name: string; requiresApproval?: boolean; capabiliti
 // executor's world (page-side for the delegated path) so the emitter can show a rendered In/Out.
 // `image` is a screenshot a vision tool (native `look`) captured — INLINE VISION: it's injected into
 // the model's next turn as a user image (via pushToolImages) so the model reasons over the real pixels.
-export interface ToolRunResult { result: string; elements?: unknown[]; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; image?: string; imageLabel?: string; images?: { image: string; label?: string }[]; feedback?: ToolFeedback; }
+export interface ToolRunResult { result: string; elements?: unknown[]; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; image?: string; imageLabel?: string; images?: { image: string; label?: string }[]; feedback?: ToolFeedback; reused?: import("./contract").ReusedGrant[]; }
 
 export interface AgentLoopDeps {
     // One model turn → the assistant message (content + normalized tool_calls + usage + the separate
@@ -61,7 +61,7 @@ export interface AgentLoopDeps {
     // `elements` carries the tool's real result nodes on a DONE (page-side only — nodes can't cross the
     // bus, so the background path leaves it undefined and assembles answer nodes separately). The page's
     // emit uses them for onStep + the debug event's element COUNT.
-    emit?(ev: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: unknown; tool?: string; arguments?: Record<string, unknown>; result?: string; approval?: Approval; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; usage?: unknown; elements?: unknown[] }): void;
+    emit?(ev: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: unknown; tool?: string; arguments?: Record<string, unknown>; result?: string; approval?: Approval; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; usage?: unknown; elements?: unknown[]; reused?: import("./contract").ReusedGrant[] }): void;
     // Mid-run STEERING (a.say()): drained at each step boundary (before the model call) — returns any user
     // messages queued since the last step, injected via pushUser so the model sees them on its next turn.
     // Omit → no steering. The queue lives in the caller's world (page handle / SW inbox).
@@ -317,7 +317,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             // path). They reach the caller's res.transcript / onStep, never the model.
             if (tr?.elements && tr.elements.length) entry.elements = tr.elements as AgentTranscriptEntry["elements"];
             transcript.push(entry);
-            deps.emit?.({ step, seq: s, tool: call.name, arguments: args, result, approval, renderIn: tr?.renderIn, renderOut: tr?.renderOut, feedback: tr?.feedback, elements: tr?.elements });   // DONE (patches the START)
+            deps.emit?.({ step, seq: s, tool: call.name, arguments: args, result, approval, renderIn: tr?.renderIn, renderOut: tr?.renderOut, feedback: tr?.feedback, elements: tr?.elements, reused: tr?.reused });   // DONE (patches the START)
             deps.pushToolResult(messages, call, result);
             if (tr?.image) pendingImages.push({ image: tr.image, label: tr.imageLabel || "screenshot" });
             // Multiple images from one call (look's overlay + no-overlay) → each becomes its own inline image.
