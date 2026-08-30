@@ -1748,6 +1748,13 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                                 // button #3: "Approve + remember" — also persist the exec's static ml.fetch
                                 // literals for the session (a positive `persist` decision only).
                                 if (ok && typeof decision === "object" && decision.persist) persistGrants(tabId, grants);
+                                // Clear the gate on EVERY surface the INSTANT it's decided — not only when the
+                                // tool's DONE lands (which for a slow fetch is seconds off). Without this, a
+                                // second UI (the other of DevTools panel / HUD card) kept showing approve/deny
+                                // until the tool finished. This patches the pending step to non-awaiting on all
+                                // surfaces (same seq); the DONE later fills the result. Fired BEFORE resolve() so
+                                // it precedes the tool run.
+                                emitStep({ step, seq, pending: true, awaitingApproval: false, approval: ok ? "user" : "denied", tool, arguments: args });
                                 resolve(decision);
                             },
                             // What the external approver sees when it enumerates gates (the UI shows the same

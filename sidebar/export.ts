@@ -401,7 +401,7 @@ table { border-collapse: collapse; }
 
 // A full standalone HTML document for the session. The <title> matters: Chrome
 // seeds the "Save as PDF" filename from it.
-function sessionToHtml(s: Session, docTitle: string): string {
+export function sessionToHtml(s: Session, docTitle: string): string {
     const { sink, done } = htmlSink();
     writeSession(s, sink);
     return `<!doctype html>

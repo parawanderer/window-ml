@@ -148,6 +148,42 @@ test("streaming: a stream:true run streams reasoning deltas AND accumulates a st
     await page.close();
 });
 
+// Two-UI approval sync: when a gate is decided (from ANY surface / the external channel), every OTHER surface
+// must clear its approve/deny box IMMEDIATELY, not only when the tool's DONE lands (seconds off for a slow
+// fetch). The fix fans a "decided" step patch (awaitingApproval:false, no result yet) the instant the gate
+// resolves, before the tool runs. We reproduce with the SW __mlApprovals channel standing in for "the other
+// UI", and assert the page surface receives that decided patch ahead of the DONE.
+test("approval: resolving a gate clears the approve/deny box on other surfaces immediately (before the tool DONE)", async () => {
+    if (BACKEND) return;
+    const page = await ext.context.newPage();
+    const steps = [];
+    await page.exposeFunction("__apEv", (e) => steps.push(e));
+    await page.addInitScript(() => {
+        if (window.top !== window) return;
+        window.addEventListener("message", (e) => {
+            const d = e.data && e.data.__mlDebug;
+            if (d && d.kind === "agent-step") window.__apEv({ seq: d.seq, awaitingApproval: !!d.awaitingApproval, approval: d.approval || null, hasResult: d.result != null });
+        });
+    });
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+    fake.setScript([
+        { tool: "exec", args: { js: "window.__gate = 1; 'mutated'" } },   // a MUTATING exec -> out of the readonly dialect -> gates
+        { content: "done" },
+    ]);
+    // approvalRouting "both" so the SW channel (our stand-in for a second UI) can resolve the gate.
+    await page.evaluate(() => { window.ml.agent("mutate then finish", { env: false, approvalRouting: "both" }); return true; });
+    await expect.poll(() => steps.some((s) => s.awaitingApproval), { timeout: 12000 }).toBe(true);
+    const gateSeq = steps.find((s) => s.awaitingApproval).seq;
+    // Resolve from the channel (a different surface than the page). One press -> every surface clears.
+    await expect.poll(async () => (await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).length, { timeout: 5000 }).toBeGreaterThan(0);
+    await ext.sw.evaluate(() => { const [g] = globalThis.__mlApprovals.list(); return globalThis.__mlApprovals.resolve(g.key, true); });
+    // The page surface gets a DECIDED patch for that step (awaiting cleared, approval set, NO result yet) -
+    // proving it clears BEFORE the tool's DONE (which carries the result).
+    await expect.poll(() => steps.some((s) => s.seq === gateSeq && !s.awaitingApproval && s.approval === "user" && !s.hasResult), { timeout: 5000 }).toBe(true);
+    await page.close();
+});
+
 // A real-shape sanity check that ALSO runs in the non-blocking real-model job: the agent reads a value off
 // the page with a DOM tool and answers it. Deterministic under the fake (a hard gate); a genuine "can a
 // real OpenAI-shaped model actually drive a tool and answer" probe under E2E_BACKEND.
