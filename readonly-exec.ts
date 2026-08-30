@@ -554,6 +554,11 @@ const ALLOWED_METHODS = new Set([
     // String↔RegExp (pure matching — a regex literal is now in-dialect): the string-side readers plus the
     // RegExp-side `test`/`exec`. All side-effect-free; `exec`/matchAll return match arrays, not the realm.
     "match", "matchAll", "search", "test", "exec",
+    // Set / Map — reads (has/get; size is a property, read via readMember) PLUS the mutators
+    // (add/set/delete/clear). Like the array in-place builders, the mutators only run on a container the
+    // SCRIPT created (MUTATING_METHODS + `owned`) — never a Set/Map/collection reached off a page object, so
+    // e.g. `document.body.classList.add('x')` stays Denied while `new Set()`/`new Map()` accumulators work.
+    "has", "get", "add", "set", "delete", "clear",
     // Object / JSON / Math / Number
     "keys", "values", "entries", "fromEntries", "stringify", "parse", "assign",
     // Promise combinators + `then` — models batch and chain the async ml reads
@@ -601,10 +606,11 @@ const SAFE_CONSTRUCTORS: Record<string, new (...a: any[]) => unknown> = {
     Set, Map, WeakSet, WeakMap, Array, Object, Date, RegExp, Number, String, Boolean, Error,
 };
 
-// In-place array MUTATORS. Allowed ONLY on a container the SCRIPT created (tracked in `owned`) — never an
-// array reached off a page object. So `pageState.items.push(x)` / `.sort()` can't reorder/grow the page's
-// own data; only the survey's local accumulators (`(o[k] = o[k] || []).push(x)`, `[...set].sort()`) can.
-const MUTATING_METHODS = new Set(["push", "pop", "shift", "unshift", "splice", "sort", "reverse", "fill"]);
+// In-place MUTATORS (array push/…, plus Set.add and Map/Set set/delete/clear). Allowed ONLY on a container
+// the SCRIPT created (tracked in `owned`) — never a container reached off a page object. So `pageState.items
+// .push(x)` / `.sort()` / `document.body.classList.add('x')` can't grow/reorder/mutate the page's own data;
+// only the survey's local accumulators (`(o[k] = o[k] || []).push(x)`, `new Set()`, `new Map()`) can.
+const MUTATING_METHODS = new Set(["push", "pop", "shift", "unshift", "splice", "sort", "reverse", "fill", "add", "set", "delete", "clear"]);
 
 // The `window.ml` methods this dialect may call — side-effect-free reads: no privilege, no page
 // mutation, no tokens/VRAM. Everything else is simply ABSENT from the facade we build, so it can't
@@ -829,7 +835,13 @@ class Evaluator {
             case "New": {
                 const ctor = SAFE_CONSTRUCTORS[node.ctor];
                 if (!ctor) throw new Denied(`new ${node.ctor}() is not allowed — only pure builtins (Set, Map, Array, Date, RegExp, …)`);
-                return this.own(new ctor(...(yield* this.evalArgs(node.args, scope))));
+                // A script-CREATED instance is owned, so its own mutators (Set.add / Map.set/…) pass the
+                // MUTATING_METHODS gate. Mark it directly, not via own(): a Set/Map's prototype isn't
+                // Object.prototype, so own()'s isWritableTarget check would skip it. (Assignment `o[k]=v`
+                // stays restricted to plain objects/arrays — the Assign case re-checks isWritableTarget.)
+                const inst = new ctor(...(yield* this.evalArgs(node.args, scope)));
+                if (inst !== null && typeof inst === "object") this.owned.add(inst as object);
+                return inst;
             }
             case "Assign": {
                 // MEMBER-only, and the target must be a container the SCRIPT CREATED (`owned`) with a non-denied
@@ -840,7 +852,9 @@ class Evaluator {
                     throw new NotInDialect("assignment is allowed only to a property of an object/array you built (o[k] = v), never a bare variable");
                 const obj: any = yield* this.eval(node.target.obj, scope);
                 const key = node.target.computed ? this.guardKey(yield* this.eval(node.target.prop, scope)) : this.guardKey(node.target.prop);
-                if (!this.owned.has(obj))
+                // owned AND a plain object/array: a script-created Set/Map is owned (so its mutator METHODS
+                // work) but is NOT a valid `o[k]=v` target — mutate it through .add/.set, not property writes.
+                if (!this.owned.has(obj) || !isWritableTarget(obj))
                     throw new Denied("can only assign to an object or array you built — never a DOM node, a page object, or the environment");
                 const val = yield* this.eval(node.value, scope);
                 obj[key] = val;

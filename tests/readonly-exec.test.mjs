@@ -335,6 +335,61 @@ test("adversarial (new): only pure builtins — code gen / network / host constr
     assert.equal((await run(`new Array(3).length`)).value, 3);
     assert.equal((await run(`new Map([['a', 1], ['b', 2]]).size`)).value, 2);
 });
+test("Set/Map: the reported grouping survey (new Set + has/add + spread + console.log) auto-runs, with logs", async () => {
+    const js = `const s = new Set(['apple', 'banana', 'cherry', 'date', 'apple', 'fig']);
+        const has = s.has('banana');
+        const size = s.size;
+        const hasApple = s.has('apple');
+        s.add('grape');
+        const after = [...s];
+        console.log('before:', size, 'has banana:', has, 'has apple (dup):', hasApple);
+        console.log('after add:', after);
+        return { size, has, hasApple, after };`;
+    const { value, logs } = await run(js);
+    assert.deepEqual(value, { size: 5, has: true, hasApple: true, after: ["apple", "banana", "cherry", "date", "fig", "grape"] });
+    assert.ok(logs.some(l => /before: 5/.test(l)), "console.log output is captured");
+    assert.ok(logs.some(l => /after add:/.test(l)), "the second log line is captured too");
+});
+test("Set/Map: reads + mutators (has/get/add/set/delete/clear) work on a container YOU built", async () => {
+    assert.deepEqual((await run(`const m = new Map(); m.set('a', 1); m.set('b', 2); return [m.get('a'), m.has('b'), m.size];`)).value, [1, true, 2]);
+    assert.equal((await run(`const m = new Map([['a', 1], ['b', 2]]); m.delete('a'); return m.size;`)).value, 1);
+    assert.equal((await run(`const s = new Set([1, 2, 3]); s.clear(); return s.size;`)).value, 0);
+    // A Map-of-arrays accumulator (the family-grouping idiom) built without reassignment or `if`.
+    assert.deepEqual((await run(`['ab', 'ac', 'bd'].reduce((m, n) => { const k = n[0]; (m.get(k) || m.set(k, []).get(k)).push(n); return m; }, new Map()).size`)).value, 2);
+});
+test("adversarial (Set/Map mutators): add/set/delete/clear only touch a container YOU built — never off the page", async () => {
+    const doc = world();
+    doc.body.className = "a b";
+    // classList is a live DOMTokenList reached off a page node → NOT owned → its mutators are refused.
+    await assert.rejects(run(`document.body.classList.add('evil'); 1`, doc), outOfDialect);
+    await assert.rejects(run(`document.body.classList.remove('a'); 1`, doc), outOfDialect);   // not even allowlisted
+    assert.equal(doc.body.className, "a b");   // untouched
+    // A Set/Map hung on a page object is reached via a property read → NOT owned → mutators Denied.
+    doc.appSet = new Set([1, 2]);
+    doc.appMap = new Map([["a", 1]]);
+    await assert.rejects(run(`document.appSet.add(9); 1`, doc), outOfDialect);
+    await assert.rejects(run(`document.appMap.set('b', 2); 1`, doc), outOfDialect);
+    await assert.rejects(run(`document.appSet.clear(); 1`, doc), outOfDialect);
+    await assert.rejects(run(`document.appMap.delete('a'); 1`, doc), outOfDialect);
+    assert.equal(doc.appSet.size, 2); assert.equal(doc.appMap.size, 1);   // untouched
+    // READING a page Set/Map is fine (has/get/size are pure) — only the mutators are gated.
+    assert.equal((await run(`document.appSet.has(1)`, doc)).value, true);
+    assert.equal((await run(`document.appMap.get('a')`, doc)).value, 1);
+});
+test("adversarial (Set/Map): a script-created Set/Map is owned for its METHODS but is still not an o[k]=v target, and can't reach the realm", async () => {
+    // Marking `new Set()` owned (so .add works) must NOT open property assignment on it.
+    await assert.rejects(run(`const s = new Set(); s.foo = 1; s`), outOfDialect);
+    await assert.rejects(run(`const m = new Map(); m['x'] = 1; m`), outOfDialect);
+    // …and the realm stays unreachable through it (constructor read denied).
+    await assert.rejects(run(`const s = new Set(); s.constructor`), outOfDialect);
+    await assert.rejects(run(`new Map().constructor`), outOfDialect);
+    // A mutator can't be LAUNDERED onto a page container by copying it into an owned one, either — the copy
+    // is a different (owned) object; the page Set is untouched.
+    const doc = world();
+    doc.appSet = new Set([1]);
+    await assert.rejects(run(`const s = document.appSet; s.add(2); 1`, doc), outOfDialect);
+    assert.equal(doc.appSet.size, 1);
+});
 test("adversarial (destructuring): you can GET a data property but not a DENIED one or a usable live method", async () => {
     const doc = world();
     await assert.rejects(run(`const { constructor } = {}; constructor('return 1')`), outOfDialect);
