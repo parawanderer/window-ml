@@ -1517,6 +1517,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     properties: {
                         url: { type: "string", description: "The URL to go to (absolute or site-relative, e.g. \"/dashboard\")." },
                         verify: { type: "string", enum: ["viewport", "text", "text-all"], description: "Fold a view of the DESTINATION page into the result (saves a `wait`+`look`/`fetch` turn to see where you landed). \"viewport\" = a SCREENSHOT (an inline look); \"text\" = the page distilled to clean Markdown (nav/chrome stripped — cheaper, no vision needed); \"text-all\" = the same Markdown but keeping nav/header/footer. Omit to skip." },
+                        pipe: { type: "string", description: "Optional, only with verify:\"text\"/\"text-all\". Scan/filter the destination page's Markdown through a small shell-style pipeline before it reaches you (NOT a real shell): grep (-i -v -n -c -F -w -o -E, -A/-B/-C N), head/tail (-n N), wc (-l -w -c), sort (-n -r -u -f), uniq (-c -i), chained with `|`. E.g. \"grep -i '^## ' | head\" to see just the headings of where you landed." },
                     },
                     required: ["url"],
                 },

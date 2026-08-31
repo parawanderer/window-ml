@@ -1919,9 +1919,11 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                                 // cheaper, no vision — "text" strips nav/chrome, "text-all" keeps it). Best-effort.
                                 const rawVerify = (args as { verify?: unknown })?.verify;
                                 const verify = rawVerify === true ? "viewport" : typeof rawVerify === "string" ? rawVerify : null;
+                                // `pipe` scans the text-verify Markdown (text/text-all only) — threaded to the page.
+                                const navPipe = typeof (args as { pipe?: unknown })?.pipe === "string" ? (args as { pipe: string }).pipe : undefined;
                                 if (verify && !navBarrier.isNavigating(tabId)) {
-                                    const payload = verify === "text" ? { runId, verifyText: "strip" as const }
-                                        : verify === "text-all" ? { runId, verifyText: "all" as const }
+                                    const payload = verify === "text" ? { runId, verifyText: "strip" as const, verifyPipe: navPipe }
+                                        : verify === "text-all" ? { runId, verifyText: "all" as const, verifyPipe: navPipe }
                                         : { runId, verifyViewport: true };
                                     const v = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload }).catch(() => null) as Partial<import("./contract").PageToolEnvelope> | null;
                                     if (v && (v.image || v.feedback || v.result)) {

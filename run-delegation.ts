@@ -15,7 +15,8 @@ import { outputCapEscalated } from "./contract";
 import { executeTool, toolContext } from "./tool-exec";
 import { captureVerify, captureVerifyElement } from "./builtin-tools";
 import { htmlToMarkdown } from "./html-to-md";
-import { clipOut, elLine } from "./dom";
+import { clipOut, elLine, errText } from "./dom";
+import { runPipe } from "./text-pipe";
 import { descriptorFor } from "./render-descriptor";
 import { evalReadonly } from "./readonly-exec";
 import { formatReadonlyExec } from "./approval";
@@ -75,7 +76,7 @@ export function getRun(runId: string): PageRun | undefined { return runs.get(run
  *  executeTool already validates args + catches errors (never throws), so this only reduces the
  *  envelope: real nodes → a count, and an answer-capable tool's nodes are stashed page-side. */
 const VERIFY_TEXT_MAX = 8000;   // cap the navigate verify:"text" Markdown so a big page can't flood the turn
-export async function runDelegatedTool(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyElement?: string; verifyFocus?: boolean } = {}): Promise<PageToolEnvelope> {
+export async function runDelegatedTool(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean } = {}): Promise<PageToolEnvelope> {
     const run = runs.get(runId);
     if (!run) return { result: `Error: no active agent run "${runId}" on this page (it may have ended).` };
     // navigate({ verify: "text" / "text-all" }): after the destination page re-adopts, the background rings
@@ -84,11 +85,24 @@ export async function runDelegatedTool(runId: string, name: string, args: Record
     // nav/header/footer/aside (the content); "all" keeps them. Same await/merge path as the screenshot verify.
     if (opts.verifyText) {
         const html = (typeof document !== "undefined" ? document.documentElement?.outerHTML : "") || "";
-        const md = htmlToMarkdown(html, { stripChrome: opts.verifyText === "strip" });
+        let md = htmlToMarkdown(html, { stripChrome: opts.verifyText === "strip" });
+        const label = opts.verifyText === "strip" ? "nav/chrome stripped" : "full page";
+        // `pipe`: scan/filter the destination Markdown through the same safe grep/head/tail/… dialect as
+        // fetch_url. Pure text; a bad command → an actionable error (exec hint gated on exec being wired this run).
+        let footer = "";
+        if (opts.verifyPipe && opts.verifyPipe.trim()) {
+            const p = opts.verifyPipe.trim(), src = md;
+            const nlines = (s: string): number => s === "" ? 0 : s.replace(/\n$/, "").split("\n").length;
+            try { md = runPipe(src, p); }
+            catch (e) {
+                const escape = ("exec" in run.byName) ? " For anything more complex, read the page in an exec survey instead." : "";
+                return { result: `Destination page — pipe error: ${errText(e)}\n\nThe pipe is a small line-scanner (grep · head · tail · wc · sort · uniq), not a real shell.${escape}` };
+            }
+            footer = `\n\n(piped through \`${p}\`: ${nlines(md)} lines, ${md.length.toLocaleString()} chars — filtered from ${nlines(src)} source lines)`;
+        }
         const clipped = clipOut(md, VERIFY_TEXT_MAX);
         const cut = clipped.length < md.length;
-        const label = opts.verifyText === "strip" ? "nav/chrome stripped" : "full page";
-        return { result: `Destination page as Markdown (${label}${cut ? ", truncated" : ""}):\n\n${clipped}` };
+        return { result: `Destination page as Markdown (${label}${cut ? ", truncated" : ""}):\n\n${clipped}${footer}` };
     }
     // navigate({ verify: true / "viewport" }): after the destination page re-adopts, the background rings back
     // HERE to capture a WHOLE-VIEWPORT screenshot of the new page (captureVerify, center null) — a vision driver
@@ -197,8 +211,8 @@ export async function runDelegatedTool(runId: string, name: string, args: Record
 export function installToolDelegation(): void {
     window.addEventListener("message", async (event: MessageEvent) => {
         if (event.source !== window || !event.data || event.data.type !== "PAGE_TOOL_RUN") return;
-        const { callId, runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyElement, verifyFocus } = event.data as { callId: string; runId: string; name: string; args: Record<string, unknown>; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyElement?: string; verifyFocus?: boolean };
-        const envelope = await runDelegatedTool(runId, name, args || {}, { renderOnly: !!renderOnly, readonlyTry: !!readonlyTry, precheck: !!precheck, verifyAt, verifyViewport: !!verifyViewport, verifyText, verifyElement, verifyFocus });
+        const { callId, runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus } = event.data as { callId: string; runId: string; name: string; args: Record<string, unknown>; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean };
+        const envelope = await runDelegatedTool(runId, name, args || {}, { renderOnly: !!renderOnly, readonlyTry: !!readonlyTry, precheck: !!precheck, verifyAt, verifyViewport: !!verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus });
         window.postMessage({ type: "PAGE_TOOL_RESULT", callId, envelope }, "*");
     });
 }

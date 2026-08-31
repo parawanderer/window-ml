@@ -71,6 +71,22 @@ test("a multi-crop look (plural `images`, no single `image`) still renders its s
     endRun("rimg");
 });
 
+test("navigate verify text + pipe: the destination Markdown is scanned through the pipeline (+ footer); a bad pipe is actionable", async () => {
+    const dom = new JSDOM("<body><h1>Home</h1><h2>Alpha</h2><p>aaa</p><h2>Beta</h2><p>bbb</p></body>");
+    const prevDoc = globalThis.document;
+    globalThis.document = dom.window.document;
+    try {
+        registerRun("rvt", [tool({ name: "exec" })]);   // exec wired → the pipe-error hint is allowed
+        const env = await runDelegatedTool("rvt", "navigate", {}, { verifyText: "all", verifyPipe: "grep '^## '" });
+        assert.match(env.result, /## Alpha\n## Beta/, "only the heading lines survive the pipe");
+        assert.doesNotMatch(env.result, /aaa|bbb/, "the body paragraphs are filtered out before it reaches the model");
+        assert.match(env.result, /piped through `grep '\^## '`/, "the size/line footer");
+        const bad = await runDelegatedTool("rvt", "navigate", {}, { verifyText: "all", verifyPipe: "sed x" });
+        assert.match(bad.result, /pipe error[\s\S]*not a real shell[\s\S]*exec/i, "actionable, with the exec hint (exec is wired)");
+        endRun("rvt");
+    } finally { globalThis.document = prevDoc; }
+});
+
 test("auto-derived elements render uses clickSelector (the model's currency), NOT elPath", async () => {
     // The rendered element list must PAIR with the selectors the tool hands the model in its text
     // (click/type/answer take clickSelector). elPath's full path wouldn't match; also no bogus
