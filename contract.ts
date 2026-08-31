@@ -466,6 +466,11 @@ export interface ToolResult {
      *  background to re-run the SAME (already-approved) source via CDP `Runtime.evaluate` — the debugger is
      *  exempt from the page's CSP/TT. `source` is the model's exec code. See docs/spec/EXEC_STRICT_CSP.md. */
     cdpExec?: { source: string };
+    /** SEALED-SHADOW click signal: a `>>>` selector targets content inside a closed/declarative shadow root a
+     *  page selector can't enter, so the tool declines and asks the background to RESOLVE the selector via CDP
+     *  (which pierces closed roots) and click the resolved element by coordinate. `selector` is the `>>>` path,
+     *  `index` the Nth match. Background-only, like `cdpClick`. See the CDP shadow resolver in background.ts. */
+    cdpShadowClick?: { selector: string; index?: number; verify?: boolean };
     /** what this tool fed into the model's context (locate's snap-inject); surfaced in the debug render + export */
     feedback?: ToolFeedback;
 }
@@ -838,6 +843,7 @@ export type PageRequestType =
     | "GET_MODEL_REQUEST" | "CONFIG_REQUEST" | "SET_MODEL_REQUEST" | "CAPS_REQUEST"
     | "PS_REQUEST" | "UNLOAD_REQUEST" | "CAPTURE_TAB_REQUEST"
     | "SAVE_SESSION_REQUEST" | "GET_SESSION_REQUEST" | "PYTHON_EXEC_REQUEST" | "FETCH_SHEET_REQUEST" | "FETCH_URL_REQUEST"
+    | "CDP_SHADOW_RESOLVE_REQUEST"   // read-only: resolve a `>>>` selector into a SEALED closed shadow root via CDP (discovery)
     | "LIST_SERVER_TOOLS_REQUEST"   // discover the OpenWebUI server-side tools this key may use (valid `toolIds`)
     | "INVOCATION_REQUEST"   // how the user can open the HUD here (live shortcut — user-rebindable, never hardcode it)
     | "START_RUN_REQUEST"   // design A: kick off a background-hosted ml.agent loop
@@ -851,6 +857,7 @@ export type BackgroundMessageType =
     | "FETCH_LLM" | "FETCH_IMAGE_B64" | "LIST_MODELS" | "GET_MODEL" | "GET_CONFIG"
     | "SET_MODEL" | "MODEL_CAPS" | "OLLAMA_PS" | "OLLAMA_UNLOAD" | "CAPTURE_TAB"
     | "SAVE_SESSION" | "GET_SESSION" | "PYTHON_EXEC" | "FETCH_SHEET" | "FETCH_SHEET_TITLE" | "FETCH_URL"
+    | "CDP_SHADOW_RESOLVE"   // read-only CDP resolve of a `>>>` selector across sealed shadow roots (discovery half of sealed reach)
     | "LIST_SERVER_TOOLS"   // GET OpenWebUI /api/v1/tools/ — the server-side tools, with their function specs
     | "GET_INVOCATION"   // read chrome.commands' LIVE shortcut for the HUD (+ whether the user rebound it)
     | "ABORT_TASK"    // abort the AbortController registered for a requestId (only FETCH_LLM registers one today)
@@ -1059,6 +1066,9 @@ export interface PageToolEnvelope {
     /** STRICT-PAGE exec: main-world eval was blocked by the page's CSP/Trusted-Types, so the background re-runs
      *  the same approved `source` via CDP `Runtime.evaluate` (debugger is CSP-exempt). See EXEC_STRICT_CSP.md. */
     cdpExec?: { source: string };
+    /** SEALED-SHADOW click: the page-side tool couldn't enter a closed/declarative shadow root to click a `>>>`
+     *  target, so the BACKGROUND (trusted) CDP-resolves the selector (piercing the closed root) and clicks it. */
+    cdpShadowClick?: { selector: string; index?: number; verify?: boolean };
     /** DELEGATED vision sub-call tokens spent BY THIS tool call (look/locate/verify's own ml.chat) — a DELTA
      *  measured around the page-side run, so the background loop can accumulate the per-turn tally its meta
      *  tool + UI report (the page meter, bus.ts, lives page-side and the SW loop can't read it directly). */

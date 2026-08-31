@@ -166,6 +166,7 @@ export async function runDelegatedTool(runId: string, name: string, args: Record
             feedback: env.feedback,   // what locate fed into the model's context → surfaced in the debug render + export
             cdpClick: env.cdpClick,   // reserved-surface click → the BACKGROUND does the CDP click (trusted)
             cdpExec: env.cdpExec,     // strict-page exec → the BACKGROUND re-runs the source via CDP eval (CSP-exempt)
+            cdpShadowClick: env.cdpShadowClick,   // sealed-shadow `>>>` click → the BACKGROUND CDP-resolves + clicks it
         };
     });
 }

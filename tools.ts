@@ -9,7 +9,12 @@ import type { VerifyArea } from "./builtin-tools";
 /** Serialize a screenshot-crop of each designated `answer` element for the HUD completion card. ml-backed
  *  (built in injected.ts), so the pure domTools stay pure — the answer tool just calls it when present. */
 export type CaptureAnswer = (els: Element[], note?: string, show?: "inline" | "highlight") => Promise<AnswerMedia[]>;
-import { truncate, clipOut, errText, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, deepQueryAll, closedShadowHosts, frameHostOf, selectorError, isCspEvalBlocked } from "./dom";
+// A CDP-backed resolve of a `>>>` selector across SEALED (closed/declarative) shadow roots — the discovery
+// half of the sealed-shadow reach. Returns describe lines (tag#id.classes "text") for each match, or null when
+// the debugger is off / nothing resolved. ml-backed (round-trips to the background), injected so the pure
+// domTools stay ml-free. Used by describeElement to reveal content a page selector can't enter.
+export type ShadowResolve = (selector: string) => Promise<{ line: string }[] | null>;
+import { truncate, clipOut, errText, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, deepQueryAll, closedShadowHosts, frameHostOf, selectorError, isCspEvalBlocked, firstHopSealed, isSealedHost } from "./dom";
 import { INTERACTIVE_SEL, roleOf, accessibleName, placeholderText, ariaState, hasLayout, styleHidden, isFaded } from "./a11y";
 import { pageContext, browserInfo, agentState } from "./util";
 import { makeBackgroundTaskPromise } from "./bridge";
@@ -137,7 +142,7 @@ const shadowScanNote = (ctx?: ToolContext): string => {
 
 // Pass this array (or a superset — `[...ml.domTools, myTool]`) to ml.agent. Each
 // tool returns a short string; observations never balloon into raw HTML.
-export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, verifyArea?: VerifyArea, captureAnswer?: CaptureAnswer): MlTool[] => {
+export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, verifyArea?: VerifyArea, captureAnswer?: CaptureAnswer, shadowResolve?: ShadowResolve): MlTool[] => {
     const T = defineTool;
     return [
         T({
@@ -301,13 +306,30 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 },
                 required: ["selector"]
             },
-            run: ({ selector, depth = 2 }: { selector: string; depth?: number }, ctx?: ToolContext): string | ToolResult => {
+            // Stays SYNCHRONOUS on the common paths; ONLY the sealed-shadow discovery (rare, `>>>` into a closed
+            // root) returns a Promise — so the CDP round-trip is awaited without making every describe async.
+            run: ({ selector, depth = 2 }: { selector: string; depth?: number }, ctx?: ToolContext): string | ToolResult | Promise<string | ToolResult> => {
                 let els: Element[];
                 try { els = queryAll(selector); }
                 catch (e) { return selectorError(selector, e as Error); }
                 const el = els[0];
-                if (!el) return `No element matches "${selector}".`;
-                return { content: firstOfNote(selector, els.length) + describeSkeleton(el, Math.min(Math.max(depth, 0), 4), "", ctx?.hasTool("locate")), elements: [el] };
+                if (!el) {
+                    // A `>>>` path into a SEALED (closed/declarative) shadow root finds nothing HERE. If the
+                    // debugger is on, resolve it via CDP (which pierces the closed root) and LIST what's inside —
+                    // so the model can discover the content, then click({ selector, index }) reaches it the same way.
+                    if (firstHopSealed(selector)) return (async (): Promise<string> => {
+                        const m = shadowResolve ? await shadowResolve(selector).catch(() => null) : null;
+                        if (m && m.length) return `${firstOfNote(selector, m.length)}${m.length} element${m.length === 1 ? "" : "s"} inside a sealed shadow root (reached via the debugger — a page selector can't enter it):\n${m.map((x, i) => `#${i}: ${x.line}`).join("\n")}\n\nAct on one with click({ selector: "${selector}", index: N }).`;
+                        return `"${selector}" points inside a SEALED (closed/declarative) shadow root a page selector can't enter, and the debugger either found nothing there or isn't enabled — turn on "Debugger-based actions (CDP)" in window.ml Settings → Advanced to reach sealed roots.`;
+                    })();
+                    return `No element matches "${selector}".`;
+                }
+                // If the matched element is ITSELF a sealed host, describeSkeleton stops at its boundary — point the
+                // model at the `>>>` + debugger path to see inside (only when the resolver is wired this run).
+                const sealedHint = shadowResolve && isSealedHost(el)
+                    ? `\n\n⚠ ${elLine(el)} is a SEALED shadow host — its contents are behind a boundary describeSkeleton can't enter. Inspect them with describeElement({ selector: "${selector} >>> *" }); the debugger pierces it.`
+                    : "";
+                return { content: firstOfNote(selector, els.length) + describeSkeleton(el, Math.min(Math.max(depth, 0), 4), "", ctx?.hasTool("locate")) + sealedHint, elements: [el] };
             }
         }),
         T({

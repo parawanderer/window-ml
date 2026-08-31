@@ -374,6 +374,26 @@ test("shadow DOM: scanning tools + describeElement tailor the CLOSED-root steer 
     assert.match(String(tool("pageInfo").run({})), /Shadow DOM.*(no light DOM|ml\.shadowRoots)/s, "pageInfo counts shadow roots up front + points at the diagnostic");
 });
 
+test("click: a `>>>` into a SEALED shadow root hands back a cdpShadowClick signal (the background reaches it via CDP, not a dead 'no match')", async () => {
+    const { ml, document } = loadDomWorld('<sealed-box id="s"></sealed-box>');
+    // A sealed host has NO reachable shadow root in jsdom; paint it so isSealedHost (firstHopSealed) promotes it.
+    document.getElementById("s").getBoundingClientRect = () => ({ left: 10, top: 10, width: 40, height: 20, right: 50, bottom: 30 });
+    const res = await ml.clickTool().run({ selector: "sealed-box >>> .go", verify: true });
+    assert.ok(res && res.cdpShadowClick, "emits a cdpShadowClick signal instead of dead-ending at 'no match'");
+    assert.equal(res.cdpShadowClick.selector, "sealed-box >>> .go", "carries the `>>>` selector for the background to CDP-resolve");
+    assert.equal(res.cdpShadowClick.verify, true, "verify rides along so the background captures the result after the CDP click");
+});
+
+test("click: a `>>>` miss into a NON-sealed (open) host is a plain 'no match' — never a spurious CDP signal", async () => {
+    const { ml, document } = loadDomWorld('<open-box id="o"></open-box>');
+    const o = document.getElementById("o");
+    o.getBoundingClientRect = () => ({ left: 10, top: 10, width: 40, height: 20, right: 50, bottom: 30 });
+    o.attachShadow({ mode: "open" }).innerHTML = '<button class="here">x</button>';
+    const res = await ml.clickTool().run({ selector: "open-box >>> .missing" });
+    assert.equal(typeof res, "string", "a plain error string");
+    assert.match(res, /No element matches/, "an open root the JS path already enters → ordinary no-match");
+});
+
 test("same-origin iframe: the DOM tools cross it via `>>>` (findByText / describeElement / interactives)", () => {
     const { ml, document } = loadDomWorld('<iframe id="f"></iframe><button>outside</button>');
     const frame = document.getElementById("f");

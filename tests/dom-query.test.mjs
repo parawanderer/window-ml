@@ -8,7 +8,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
-import { queryAll, shadowHostReport } from "../dom.ts";
+import { queryAll, shadowHostReport, firstHopSealed } from "../dom.ts";
 
 /** Boot a jsdom document and install it as the global queryAll reads. Returns the document. */
 function mount(html) {
@@ -215,4 +215,57 @@ test("role= / label= pierce a same-origin iframe with no explicit >>>", () => {
     if (!ifr.contentDocument) { console.log("jsdom: no iframe contentDocument — skipping"); return; }
     ifr.contentDocument.body.innerHTML = `<button id="inner">Reveal</button>`;
     assert.deepEqual(queryAll('role=button[name="Reveal"]').map(e => e.id), ["inner"]);
+});
+
+// ---------------------------------------------------------------- firstHopSealed (CDP trigger) ---
+// firstHopSealed is the ONLY gate for the CDP shadow resolver: true → the first `>>>` hop lands on a
+// genuinely SEALED closed/declarative shadow host (a page selector can't enter it), so the tools resolve/act
+// via the debugger instead of dead-ending. isSealedHost requires a RENDERED box, which jsdom lacks — so a
+// positive case stubs getBoundingClientRect on the host. The negatives (no `>>>`, open root, empty host) need
+// no layout.
+
+// Give a host a non-zero box so isSealedHost promotes it from "empty" to "sealed".
+const paint = (el) => { el.getBoundingClientRect = () => ({ left: 10, top: 10, width: 40, height: 20, right: 50, bottom: 30 }); };
+
+test("firstHopSealed: TRUE for a `>>>` into a painted, hyphenated, light-empty host (a sealed closed root)", () => {
+    mount(`<sealed-box id="s"></sealed-box>`);
+    paint(document.getElementById("s"));
+    assert.equal(firstHopSealed("sealed-box >>> .inner"), true);
+});
+
+test("firstHopSealed: FALSE without a `>>>` (a single hop is never this resolver's job)", () => {
+    mount(`<sealed-box id="s"></sealed-box>`);
+    paint(document.getElementById("s"));
+    assert.equal(firstHopSealed("sealed-box"), false);
+});
+
+test("firstHopSealed: FALSE for an OPEN shadow host (the JS path already enters it)", () => {
+    mount(`<open-box id="o"></open-box>`);
+    const o = document.getElementById("o");
+    paint(o);
+    o.attachShadow({ mode: "open" }).innerHTML = `<button class="inner">Go</button>`;
+    assert.equal(firstHopSealed("open-box >>> .inner"), false);
+});
+
+test("firstHopSealed: FALSE for an EMPTY emulated host (no rendered box — an unopened menu/outlet, not a barrier)", () => {
+    mount(`<router-outlet id="r"></router-outlet>`);
+    // jsdom's default getBoundingClientRect returns a 0-box → isSealedHost false → not sealed.
+    assert.equal(firstHopSealed("router-outlet >>> .inner"), false);
+});
+
+test("firstHopSealed: FALSE for a non-hyphenated host (a plain <div> is never a Web Component barrier)", () => {
+    mount(`<div id="d"></div>`);
+    paint(document.getElementById("d"));
+    assert.equal(firstHopSealed("div >>> .inner"), false);
+});
+
+test("firstHopSealed: FALSE when the host has light children (its content is reachable in the light DOM)", () => {
+    mount(`<my-widget id="w"><span>hi</span></my-widget>`);
+    paint(document.getElementById("w"));
+    assert.equal(firstHopSealed("my-widget >>> span"), false);
+});
+
+test("firstHopSealed: FALSE for a bad first-hop selector (never throws)", () => {
+    mount(`<sealed-box id="s"></sealed-box>`);
+    assert.equal(firstHopSealed("((( >>> .inner"), false);
 });

@@ -508,10 +508,26 @@ export const deepQueryAll = (selector: string, root: ParentNode = document): Ele
  *  component (an unopened `mat-menu`/`gem-popover`, a `router-outlet`) — those have no shadow root and no
  *  content right now, so they're NOT barriers. Requiring a rendered box drops that noise (a probe of real
  *  pages: Shoelace is 344/344 OPEN roots — 0 sealed; a "103 closed" count is almost all empty emulated hosts). */
-const isSealedHost = (e: Element): boolean => {
+export const isSealedHost = (e: Element): boolean => {
     if (!e.tagName.includes("-") || e.children.length || (e.textContent || "").trim()) return false;
     const b = e.getBoundingClientRect();
     return b.width > 0 && b.height > 0;
+};
+
+/** Does the FIRST hop of a `>>>` selector land on a GENUINELY SEALED shadow host — a closed/declarative root
+ *  neither `.shadowRoot` nor the load-time attachShadow capture can enter (so a page selector returns [])? This
+ *  is the ONLY trigger for the CDP shadow resolver: when true AND the debugger is on, the tools resolve/act
+ *  through CDP (which pierces closed roots) instead of dead-ending at locate/@pt. A single hop (no `>>>`), an
+ *  open/pierced root, or a same-origin frame is NOT this case (the JS path already reaches those), and an empty
+ *  emulated host (an unopened menu/outlet — no rendered box) is excluded by `isSealedHost`, so CDP doesn't fire
+ *  on the Angular-app false positives. A wasted CDP resolve (host sealed but the inner hop misses) just returns
+ *  [] harmlessly, so this can be liberal about the inner hops — it only gates on the boundary being real. */
+export const firstHopSealed = (selector: string, root: ParentNode = document): boolean => {
+    const segs = String(selector).split(">>>").map(s => s.trim()).filter(Boolean);
+    if (segs.length < 2) return false;
+    let hosts: Element[];
+    try { hosts = Array.from(root.querySelectorAll(segs[0])); } catch { return false; }
+    return hosts.some(h => !traversableRoot(h) && !sameOriginFrameDoc(h) && isSealedHost(h));
 };
 /** Count shadow roots for ORIENTATION — a model scanning the DOM may not realise shadow roots exist at all.
  *  `open` = REACHABLE roots (recursive, incl. nested) — open roots, PLUS captured closed roots when piercing

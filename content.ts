@@ -46,6 +46,7 @@ const HANDLE_MAP: Partial<Record<PageRequestType, RelayEntry>> = {
     PYTHON_EXEC_REQUEST: { type: "PYTHON_EXEC", responseType: "PYTHON_EXEC_RESPONSE" },
     FETCH_SHEET_REQUEST: { type: "FETCH_SHEET", responseType: "FETCH_SHEET_RESPONSE" },
     FETCH_URL_REQUEST: { type: "FETCH_URL", responseType: "FETCH_URL_RESPONSE" },
+    CDP_SHADOW_RESOLVE_REQUEST: { type: "CDP_SHADOW_RESOLVE", responseType: "CDP_SHADOW_RESOLVE_RESPONSE" },
     // Design A: kick off a background-hosted ml.agent loop. The single response carries the final
     // AgentResult (the run's debug events stream separately via ML_DEBUG_TO_PAGE, below).
     START_RUN_REQUEST: { type: "START_RUN", responseType: "START_RUN_RESPONSE" },

@@ -1325,6 +1325,90 @@ async function cdpScreenshot(tabId: number): Promise<{ ok: true; dataUrl: string
     }
 }
 
+// A match the CDP shadow resolver returns: one element reached across a closed/declarative shadow boundary —
+// its describe line (tag#id.classes "own text") + its viewport CENTRE (for a coordinate click) + its box size.
+export interface CdpShadowMatch { line: string; cx: number; cy: number; w: number; h: number; }
+// Runs IN THE PAGE (via callFunctionOn) on a resolved node — the node lives in a closed shadow root a page
+// selector can't reach, but it IS a real Element in the page's realm, so getBoundingClientRect/textContent work.
+// Returns the same one-line shape elLine builds, plus the click centre. Self-contained (no closure deps).
+const CDP_SHADOW_DESC_FN = `function () {
+    var el = this;
+    if (!el || el.nodeType !== 1) return null;
+    var tag = (el.tagName || '').toLowerCase();
+    var id = el.id ? '#' + el.id : '';
+    var cls = (el.classList && el.classList.length) ? '.' + Array.prototype.slice.call(el.classList, 0, 4).join('.') : '';
+    var own = '';
+    try { own = Array.prototype.filter.call(el.childNodes, function (n) { return n.nodeType === 3; }).map(function (n) { return n.textContent; }).join(' ').trim().slice(0, 60); } catch (e) {}
+    var r = { left: 0, top: 0, width: 0, height: 0 };
+    try { r = el.getBoundingClientRect(); } catch (e) {}
+    return { line: tag + id + cls + (own ? (' "' + own + '"') : ''), cx: Math.round(r.left + r.width / 2), cy: Math.round(r.top + r.height / 2), w: Math.round(r.width), h: Math.round(r.height) };
+}`;
+
+/** Resolve a `>>>` selector across ALL shadow boundaries — OPEN, closed-programmatic, AND the declarative/native
+ *  CLOSED roots the page's own JS (and our attachShadow capture) can NOT enter — using the CDP DOM domain, which
+ *  pierces every boundary. This is the ONE thing page-world JS structurally can't do, and it's used ONLY when
+ *  `firstHopSealed` confirmed a genuinely sealed host is in the path (never as a general query path). Walks the
+ *  hops server-side: querySelectorAll each hop in its scope, and at a boundary descend into the host's shadow
+ *  roots (describeNode `pierce` → the closed root's node → push it to the frontend so the next hop can query it).
+ *  Each final match is resolved to a live JS handle (resolveNode) and callFunctionOn runs the describe fn ON it —
+ *  so we get the element's real describe line + viewport centre for a coordinate click. Read-only: it never
+ *  mutates; clicking is a SEPARATE cdpClick the caller makes with the returned centre. */
+async function cdpShadowResolve(tabId: number, selector: string, cap = 25): Promise<{ ok: true; matches: CdpShadowMatch[] } | { error: string; needsPermission?: true }> {
+    const at = await ensureDebuggerAttached(tabId);
+    if ("error" in at) return { error: at.error, ...(at.needsPermission ? { needsPermission: true } : {}) };
+    const target: chrome.debugger.Debuggee = { tabId };
+    const send = <T = Record<string, unknown>>(method: string, params: Record<string, unknown>): Promise<T> =>
+        chrome.debugger.sendCommand(target, method, params) as Promise<T>;
+    try {
+        // getDocument (depth 0 — cheap) establishes the root node; querySelectorAll then resolves server-side
+        // against the LIVE DOM (not the returned tree), so depth 0 is enough and we avoid shipping a huge tree.
+        const doc = await send<{ root?: { nodeId?: number } }>("DOM.getDocument", { depth: 0 });
+        const rootId = doc?.root?.nodeId;
+        if (!rootId) return { error: "CDP couldn't read the document root." };
+        const hops = String(selector).split(">>>").map(s => s.trim()).filter(Boolean);
+        if (hops.length < 2) return { ok: true, matches: [] };   // no boundary to cross — not this resolver's job
+        let scopes: number[] = [rootId];
+        for (let i = 0; i < hops.length; i++) {
+            const isLast = i === hops.length - 1;
+            const next: number[] = [];
+            for (const scope of scopes) {
+                let nodeIds: number[] = [];
+                try { ({ nodeIds = [] } = await send<{ nodeIds?: number[] }>("DOM.querySelectorAll", { nodeId: scope, selector: hops[i] })); } catch { /* hop invalid in this scope */ }
+                if (isLast) { next.push(...nodeIds); continue; }
+                // Not the last hop → each match is a HOST; descend into its shadow roots (open + closed).
+                for (const hostId of nodeIds) {
+                    let node: { shadowRoots?: { nodeId?: number; backendNodeId?: number }[] } | undefined;
+                    try { ({ node } = await send<{ node?: typeof node }>("DOM.describeNode", { nodeId: hostId, depth: 0, pierce: true })); } catch { continue; }
+                    for (const sr of node?.shadowRoots || []) {
+                        let srId = sr.nodeId;
+                        if (!srId && sr.backendNodeId != null) {
+                            try { const pushed = await send<{ nodeIds?: number[] }>("DOM.pushNodesByBackendIdsToFrontend", { backendNodeIds: [sr.backendNodeId] }); srId = pushed?.nodeIds?.[0]; } catch { /* couldn't map → skip this root */ }
+                        }
+                        if (srId) next.push(srId);
+                    }
+                }
+            }
+            scopes = next;
+            if (!scopes.length) break;
+        }
+        const matches: CdpShadowMatch[] = [];
+        for (const nodeId of scopes.slice(0, cap)) {
+            try {
+                const { object } = await send<{ object?: { objectId?: string } }>("DOM.resolveNode", { nodeId });
+                if (!object?.objectId) continue;
+                const { result } = await send<{ result?: { value?: CdpShadowMatch } }>("Runtime.callFunctionOn", { objectId: object.objectId, functionDeclaration: CDP_SHADOW_DESC_FN, returnByValue: true });
+                await send("Runtime.releaseObject", { objectId: object.objectId }).catch(() => { /* best-effort */ });
+                if (result?.value && typeof result.value.line === "string") matches.push(result.value);
+            } catch { /* one node failed to resolve → skip it */ }
+        }
+        return { ok: true, matches };
+    } catch (e) {
+        return { error: `the CDP shadow resolve failed (${(e as Error)?.message || e}).` };
+    } finally {
+        touchDebugger(tabId);
+    }
+}
+
 /** SSRF denylist for the uncredentialed image fetch: refuse loopback / private / link-local / metadata
  *  hosts (and non-http schemes / unparseable URLs), so a page can't probe the user's internal network
  *  through the extension's `<all_urls>` reach. */
@@ -1487,6 +1571,25 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             const tabId = sender.tab?.id ?? p.tabId;   // a page → its own tab; a trusted surface → the payload's
             if (typeof tabId !== "number" || typeof p.x !== "number" || typeof p.y !== "number") { sendResponse({ error: "CDP_CLICK needs a tab and numeric x/y." }); return; }
             sendResponse(await cdpClick(tabId, p.x, p.y));
+        })();
+        return true;   // async
+    }
+    if (message.type === "CDP_SHADOW_RESOLVE") {
+        // READ-ONLY resolve of a `>>>` selector across sealed (closed/declarative) shadow roots via CDP — the
+        // discovery half of the sealed-shadow reach (describeElement inside a host the JS path can't enter).
+        // Gated on the off-by-default `cdp` flag (the debugger banner is the visible signal); a page targets
+        // only its OWN tab. NOT senderTrust-gated: it only READS same-document, same-origin content the page's
+        // own server authored (no cross-origin gain), and its output (describe lines + coordinates) is not
+        // actionable on its own — CDP_CLICK stays untrusted-refused, and a synthetic click on a sealed host
+        // can't reach the inner control. The privileged CLICK still flows through the trusted envelope path.
+        (async () => {
+            const cfg = await getConfig();
+            if (!cfg.cdp) { sendResponse({ error: "Debugger-based actions (CDP) are off — enable them in window.ml Settings → Advanced to reach sealed shadow roots." }); return; }
+            const p = (message.payload || {}) as { selector?: string; tabId?: number };
+            const tabId = sender.tab?.id ?? p.tabId;
+            if (typeof tabId !== "number" || typeof p.selector !== "string") { sendResponse({ error: "CDP_SHADOW_RESOLVE needs a tab and a selector." }); return; }
+            const r = await cdpShadowResolve(tabId, p.selector);
+            sendResponse("error" in r ? { error: r.error } : { data: r.matches });
         })();
         return true;   // async
     }
@@ -1812,6 +1915,29 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                             // Append the page-side stuck-loop re-snap nudge (a repeat @pt click) to the SUCCESS result.
                             const tail = env.cdpClick.verify ? "" : " Re-run look to see the result.";
                             return { result: `Clicked the reserved target at (${env.cdpClick.x}, ${env.cdpClick.y}) via the debugger.${tail}${env.cdpClick.hint || ""}${vres}`, image: vimg, imageLabel: vimgLabel, feedback: vfeedback, renderIn: env.renderIn, renderOut: env.renderOut };
+                        }
+                        // SEALED-SHADOW click: a `>>>` selector targeted content inside a closed/declarative shadow
+                        // root the page couldn't enter. The click was ALREADY approved above; the trusted background
+                        // RESOLVES the selector via CDP (which pierces closed roots) to a viewport coordinate, then
+                        // CDP-clicks it — so a sealed root never dead-ends at locate/@pt. Same `cdp`-flag gate + verify
+                        // ring-back as the reserved cdpClick path above.
+                        if (env?.cdpShadowClick) {
+                            const cfg = await getConfig();
+                            if (!cfg.cdp) return { result: `${env.result || ""}\n\nReaching a sealed shadow root needs a debugger (CDP) click, which is OFF — enable "Debugger-based actions (CDP)" in window.ml Settings → Advanced.`, renderIn: env.renderIn, renderOut: env.renderOut };
+                            const resolved = await cdpShadowResolve(tabId, env.cdpShadowClick.selector);
+                            if ("error" in resolved) return { result: `${env.result || ""}\n\n${resolved.error}`, renderIn: env.renderIn, renderOut: env.renderOut };
+                            const m = resolved.matches[env.cdpShadowClick.index || 0];
+                            if (!m) return { result: `${env.result || ""}\n\nThe debugger couldn't reach "${env.cdpShadowClick.selector}" inside the sealed shadow root (no match). Check the selector, or fall back to locate/@pt.`, renderIn: env.renderIn, renderOut: env.renderOut };
+                            const r = await cdpClick(tabId, m.cx, m.cy);
+                            if (!("ok" in r)) return { result: (r as { error: string }).error, renderIn: env.renderIn, renderOut: env.renderOut };
+                            let vres = "", vimg: string | undefined, vimgLabel: string | undefined, vfeedback: import("./contract").ToolFeedback | undefined;
+                            if (env.cdpShadowClick.verify) {
+                                const venv = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, verifyAt: { x: m.cx, y: m.cy } } })
+                                    .catch(() => null) as Partial<import("./contract").PageToolEnvelope> | null;
+                                if (venv) { vres = venv.result || ""; vimg = venv.image; vimgLabel = venv.imageLabel; vfeedback = venv.feedback; addSub(venv.subUsage); }
+                            }
+                            const tail = env.cdpShadowClick.verify ? "" : " Re-run look to see the result.";
+                            return { result: `Clicked ${m.line} inside a sealed shadow root via the debugger (at ${m.cx}, ${m.cy}).${tail}${vres}`, image: vimg, imageLabel: vimgLabel, feedback: vfeedback, renderIn: env.renderIn, renderOut: env.renderOut };
                         }
                         // STRICT-PAGE exec: main-world eval was CSP/TT-blocked and the page handed back a cdpExec
                         // signal. UNFORGEABLE: we re-run the exact source the human APPROVED — `args.js`, from the

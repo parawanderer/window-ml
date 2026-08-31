@@ -2326,6 +2326,16 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 out.push({ image, label: note, selector: elPath(el), kind, mode });
             }
             return out;
+        },
+        // shadowResolve: describeElement's discovery into a SEALED (closed/declarative) shadow root — round-trips
+        // to the background, which CDP-resolves the `>>>` selector (piercing the closed root a page selector
+        // can't enter) and returns describe lines. Off (cdp flag) / no match → the message errors → null → the
+        // normal "no match" path. Read-only; the privileged sealed CLICK still flows through the trusted envelope.
+        async (selector: string): Promise<{ line: string }[] | null> => {
+            try {
+                const matches = await makeBackgroundTaskPromise<{ line: string }[]>("CDP_SHADOW_RESOLVE_REQUEST", "CDP_SHADOW_RESOLVE_RESPONSE", { selector });
+                return Array.isArray(matches) ? matches : null;
+            } catch { return null; }
         });
 
     // listen for the background loop's delegated tool-run requests (relayed by content.ts

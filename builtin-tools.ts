@@ -7,7 +7,7 @@
 import type { MlApi, MlTool, LocateSubstep, ToolResult, RenderDescriptor, VisionMemory, ToolContext } from "./contract";
 import { DEFAULT_GROUNDING_RANGE, resolveOutputCap, outputCapPrecheck } from "./contract";
 import { PY_PACKAGE_LABELS } from "./python-env";
-import { truncate, clipOut, errText, elLine, queryAll, selectorError, googleSheetCsvUrl, nonEmptyTables, capturedClosedRoot, isElement, viewportRect, boxIntersectsText } from "./dom";
+import { truncate, clipOut, errText, elLine, queryAll, selectorError, googleSheetCsvUrl, nonEmptyTables, capturedClosedRoot, isElement, viewportRect, boxIntersectsText, firstHopSealed } from "./dom";
 import { accessibleName } from "./a11y";
 import { regionLegend, formatLegend, type Box as LegendBox } from "./legend";
 
@@ -1096,6 +1096,9 @@ export const buildClickTool = (ml: MlApi): MlTool => {
         if (POINT_RE.test(s)) return resolvePoint(selector) ? null : `Unknown point token "${selector}" — it may be stale (from an earlier page/run). Re-run locate to get a fresh one.`;
         let el: Element | undefined;
         try { el = queryAll(selector)[index]; } catch (e) { return selectorError(selector, e as Error); }
+        // A `>>>` path into a SEALED (closed/declarative) shadow root finds nothing HERE, but the background can
+        // still reach it via CDP — so it's NOT doomed. run() emits a cdpShadowClick signal; keep the gate open.
+        if (!el && firstHopSealed(selector)) return null;
         return el ? null : `No element matches "${selector}"${index ? ` at index ${index}` : ""}.`;
     };
     return ml.defineTool({
@@ -1150,7 +1153,16 @@ export const buildClickTool = (ml: MlApi): MlTool => {
                 if (verify) { const v = await captureVerify(ml, ctx, { x: pt.x, y: pt.y }, "clicked"); return { content: base + (v.content || ""), image: v.image, imageLabel: v.imageLabel, feedback: v.feedback }; }
                 return `${base} Re-run look to see the result.`;
             }
-            const el = queryAll(selector)[index]!;   // precheck confirmed it matches
+            const el0 = queryAll(selector)[index];
+            if (!el0) {
+                // No page-reachable element, but precheck let this through because a genuinely SEALED
+                // (closed/declarative) shadow host is in the `>>>` path. The page can't enter it, so hand the
+                // background a cdpShadowClick signal — it CDP-resolves the selector (piercing the closed root) and
+                // clicks the resolved coordinate. Gated background-side on the `cdp` flag + the same approval.
+                if (firstHopSealed(selector)) return { content: `"${selector}" targets content inside a sealed (closed/declarative) shadow root a page selector can't enter — resolving and clicking it via the debugger.`, cdpShadowClick: { selector, index, verify: verify || undefined } };
+                return `No element matches "${selector}"${index ? ` at index ${index}` : ""}.`;
+            }
+            const el = el0;
             const preCenter = elementCenter(el);   // captured BEFORE the click, in case it removes/replaces the element
             const before = (typeof location !== "undefined" && location.href) || "";
             try { el.scrollIntoView({ block: "center", inline: "center" }); } catch {}

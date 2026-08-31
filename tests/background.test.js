@@ -791,6 +791,100 @@ test("CDP exec (ON + permission MISSING): never attaches; the model is told to g
     assert.match(toolResult, /debugger.*(isn't granted|permission)|Settings/i, "actionable: grant debugger access");
 });
 
+// --- CDP SHADOW RESOLVER (reach a SEALED closed/declarative shadow root the JS path can't enter) ---
+// Simulate the CDP DOM resolution of `sealed-host >>> .inner`: querySelectorAll finds the host (nodeId 10) in
+// the light DOM; describeNode(pierce) exposes its CLOSED shadow root (nodeId 20); querySelectorAll inside it
+// finds the inner element (nodeId 30); resolveNode + callFunctionOn read its describe line + click centre.
+function shadowCdp(method, params) {
+    if (method === "DOM.getDocument") return { root: { nodeId: 1 } };
+    if (method === "DOM.querySelectorAll") {
+        if (params.nodeId === 1 && params.selector === "sealed-host") return { nodeIds: [10] };
+        if (params.nodeId === 20 && params.selector === ".inner") return { nodeIds: [30] };
+        return { nodeIds: [] };
+    }
+    if (method === "DOM.describeNode" && params.nodeId === 10) return { node: { shadowRoots: [{ nodeId: 20 }] } };
+    if (method === "DOM.resolveNode" && params.nodeId === 30) return { object: { objectId: "obj30" } };
+    if (method === "Runtime.callFunctionOn" && params.objectId === "obj30") return { result: { value: { line: 'button.inner "Go"', cx: 50, cy: 60, w: 40, h: 20 } } };
+    return undefined;   // Runtime.releaseObject etc.
+}
+
+test("CDP_SHADOW_RESOLVE reads inside a SEALED closed shadow root via CDP (read-only: never clicks)", async () => {
+    const clicks = [];
+    const bg = loadBackground({ config: baseConfig({ cdp: true }), onDebuggerCommand: (m, p) => { if (m === "Input.dispatchMouseEvent") clicks.push(p); return shadowCdp(m, p); } });
+    const res = await bg.send({ type: "CDP_SHADOW_RESOLVE", payload: { selector: "sealed-host >>> .inner", tabId: 7 } }, { tab: { id: 7, url: "https://x.test/" } });
+    assert.deepEqual(res.data, [{ line: 'button.inner "Go"', cx: 50, cy: 60, w: 40, h: 20 }], "resolved the sealed inner element via CDP");
+    assert.equal(clicks.length, 0, "READ-ONLY: it dispatches no click");
+    assert.ok(bg.debuggerCalls.some(c => c[0] === "attach"), "attached the debugger to read");
+});
+
+test("CDP_SHADOW_RESOLVE is refused when the cdp flag is off (never attaches)", async () => {
+    const bg = loadBackground({ config: baseConfig({ cdp: false }) });
+    const res = await bg.send({ type: "CDP_SHADOW_RESOLVE", payload: { selector: "sealed-host >>> .inner", tabId: 7 } }, { tab: { id: 7 } });
+    assert.match(res.error, /off|enable/i, "actionable: enable CDP");
+    assert.equal(bg.debuggerCalls.length, 0, "never attached the debugger");
+});
+
+// Drive a full background run: the model calls click on a `>>>` path into a sealed root, the human approves,
+// the page can't enter the root and hands back a cdpShadowClick signal, and the trusted background CDP-resolves
+// the selector then clicks the resolved coordinate — so a sealed root never dead-ends at locate/@pt.
+async function driveCdpShadowClick({ cdp, resolveEmpty = false }) {
+    const clicks = [];
+    let toolResult = null, n = 0, bg;
+    const sel = "sealed-host >>> .inner";
+    bg = loadBackground({
+        config: baseConfig({ cdp }),
+        onDebuggerCommand: (m, p) => {
+            if (m === "Input.dispatchMouseEvent") { clicks.push(p); return undefined; }
+            if (resolveEmpty && m === "DOM.querySelectorAll" && p.selector === ".inner") return { nodeIds: [] };
+            return shadowCdp(m, p);
+        },
+        onFetch: (call) => {
+            n++;
+            if (n === 1) return jsonResponse({ choices: [{ message: { content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "click", arguments: JSON.stringify({ selector: sel }) } }] } }] });
+            const msgs = call.body?.messages || [];
+            const tr = [...msgs].reverse().find(m => m.role === "tool");
+            toolResult = tr ? (typeof tr.content === "string" ? tr.content : JSON.stringify(tr.content)) : null;
+            return jsonResponse({ choices: [{ message: { content: "done" } }] });
+        },
+        onTabMessage: async (tabId, msg) => {
+            if (msg?.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) {
+                await bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
+            }
+            if (msg?.type === "RUN_TOOL_IN_PAGE" && msg.payload?.name === "click" && !msg.payload?.renderOnly && !msg.payload?.precheck) {
+                return { result: "sealed shadow — resolving via the debugger.", cdpShadowClick: { selector: sel } };
+            }
+            return undefined;
+        },
+    });
+    await bg.send({ type: "START_RUN", payload: {
+        runId: "cs", task: "click it", systemPrompt: "S",
+        tools: [{ name: "click", requiresApproval: true, description: "", parameters: { type: "object", properties: { selector: { type: "string" } } }, capabilities: [] }],
+        model: "m", think: null, maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools",
+    } }, { tab: { id: 8 } });
+    await new Promise(r => setTimeout(r, 0));   // let the run's .finally (releaseDebugger) settle
+    return { toolResult, clicks, attached: bg.debuggerCalls.some(c => c[0] === "attach") };
+}
+
+test("delegated cdpShadowClick (ON): a sealed `>>>` click is CDP-resolved, then clicked at the resolved coordinate", async () => {
+    const { toolResult, clicks, attached } = await driveCdpShadowClick({ cdp: true });
+    assert.ok(attached, "attached the debugger");
+    assert.equal(clicks.length, 2, "press + release dispatched");
+    assert.equal(clicks[0].x, 50, "clicked the resolved centre X"); assert.equal(clicks[0].y, 60, "…and Y");
+    assert.match(toolResult, /sealed shadow root via the debugger/i, "the model is told it clicked inside a sealed root via CDP");
+});
+
+test("delegated cdpShadowClick (OFF): nothing clicks; the model is told to enable CDP", async () => {
+    const { toolResult, clicks, attached } = await driveCdpShadowClick({ cdp: false });
+    assert.equal(attached, false, "never attached"); assert.equal(clicks.length, 0, "no click");
+    assert.match(toolResult, /sealed shadow root needs a debugger|enable "Debugger/i, "actionable: enable CDP");
+});
+
+test("delegated cdpShadowClick: the resolver finds nothing → honest 'no match', no click", async () => {
+    const { toolResult, clicks } = await driveCdpShadowClick({ cdp: true, resolveEmpty: true });
+    assert.equal(clicks.length, 0, "nothing resolved → nothing clicked");
+    assert.match(toolResult, /couldn't reach|no match/i, "honest failure, not a phantom click");
+});
+
 test("FETCH_LLM openai schema becomes a json_schema response_format", async () => {
     const schema = { type: "object", properties: { hide: { type: "boolean" } } };
     const bg = loadBackground({
