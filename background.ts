@@ -10,6 +10,7 @@ import { externalSheetIds, googleSheetId, classifyContent, jsonShape, clipOut } 
 import { extractGrants } from "./grant-extract";   // button #3: static egress-grant extraction for "Approve + remember"
 import type { FetchResult } from "./contract";
 import { createNavBarrier } from "./nav-barrier";   // cross-page persistence: hold delegated tools while a run's tab navigates
+import { incognitoEnableSteps } from "./util";   // browser-specific "Allow in Incognito" steps for the private-render error
 
 // The wire body we assemble for a chat request (grows per format/options).
 interface ChatBody {
@@ -2834,7 +2835,7 @@ async function fetchRenderedContent(url: string, incognito: boolean): Promise<Fe
     let windowId: number | undefined;   // set on the incognito path — we remove the whole (minimized) window
     if (incognito) {
         if (!(await isIncognitoAllowed())) {
-            throw new Error(`A private (no-session) rendered fetch needs the extension enabled in Incognito, which is OFF. Turn ON "Allow in Incognito" on the extension's details page — the toolbar popup's Permissions → "Incognito rendering" opens it for you (the browser doesn't let the extension flip it automatically) — then retry, OR pass credentials:true to render with your NORMAL session instead.`);
+            throw new Error(`A private (no-session) rendered fetch needs the extension enabled in Incognito, which is OFF — the browser won't let the extension flip it, so TELL THE USER exactly how: ${incognitoEnableSteps()} The toolbar popup's Permissions → "Incognito rendering" also opens that page for them. OR pass credentials:true to render with the user's NORMAL session instead (no Incognito needed).`);
         }
         let win: chrome.windows.Window | undefined;
         try { win = await chrome.windows.create({ url, incognito: true, focused: false, state: "minimized" }); }

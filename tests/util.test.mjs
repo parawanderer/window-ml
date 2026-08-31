@@ -4,7 +4,7 @@
 // in the VIEWPORT.
 import { test } from "node:test";
 import assert from "node:assert";
-import { projectShotPoint, projectShotBox, browserInfo, mlRange, RANGE_MAX } from "../util.ts";
+import { projectShotPoint, projectShotBox, browserInfo, incognitoEnableSteps, mlRange, RANGE_MAX } from "../util.ts";
 
 // ---- mlRange: the bounded counter loop (ml.range) ----
 test("mlRange: the three forms (stop / start,stop / start,stop,step) incl. a descending range", () => {
@@ -61,6 +61,26 @@ test("browserInfo never throws on an empty navigator — it degrades to a named 
     assert.match(info.name, /unknown/i);
     assert.equal(info.scheme, "chrome");        // still gives a usable settings URL
     assert.equal(info.version, null);
+});
+
+// ---- incognitoEnableSteps: browser-correct "Allow in Incognito" instructions (private rendered fetch) ----
+test("incognitoEnableSteps uses each fork's own scheme AND its own word for private browsing", () => {
+    const steps = name => incognitoEnableSteps({ name, version: "1", scheme: name === "Microsoft Edge" ? "edge" : name === "Brave" ? "brave" : "chrome" });
+    // Chrome: chrome:// + "Incognito"
+    const chrome = incognitoEnableSteps({ name: "Google Chrome", version: "1", scheme: "chrome" });
+    assert.match(chrome, /chrome:\/\/extensions/);
+    assert.match(chrome, /Allow in Incognito/);
+    // Edge: edge:// + "InPrivate" (NOT "Incognito" — the toggle would be unfindable)
+    const edge = steps("Microsoft Edge");
+    assert.match(edge, /edge:\/\/extensions/);
+    assert.match(edge, /Allow in InPrivate/);
+    assert.doesNotMatch(edge, /Incognito/);
+    // Brave: brave:// + "Private"
+    const brave = steps("Brave");
+    assert.match(brave, /brave:\/\/extensions/);
+    assert.match(brave, /Allow in Private/);
+    // Names the extension so the user knows what to look for.
+    assert.match(chrome, /window\.ml/);
 });
 
 

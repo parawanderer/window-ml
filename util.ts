@@ -72,6 +72,26 @@ export const browserInfo = (nav?: {
     return { name, version, scheme: SCHEMES[name] || "chrome" };
 };
 
+// What each fork CALLS private browsing — the extension toggle is labelled with it, and it differs across
+// Chromium forks (Chrome "Incognito", Edge "InPrivate", Brave "Private", Opera "private"). Default: Incognito.
+const INCOGNITO_TERM: Record<string, string> = {
+    "Microsoft Edge": "InPrivate", "Brave": "Private", "Opera": "private", "Vivaldi": "Incognito", "Yandex": "Incognito",
+};
+/**
+ * Exact, browser-SPECIFIC steps to turn on the extension's "Allow in Incognito" (the private-browsing
+ * permission a session-less `rendered` fetch needs). Chrome doesn't let an extension request it, so the model
+ * relays these to the user. Uses the fork's own scheme (chrome:// vs brave:///edge://…) AND its own word for
+ * private browsing ("InPrivate" on Edge, "Private" on Brave), so the instructions actually match the UI.
+ *
+ * @param {BrowserInfo} [info] Defaults to the detected browser (injectable for tests).
+ * @returns {string} A one-line, ready-to-relay instruction.
+ */
+export const incognitoEnableSteps = (info?: BrowserInfo): string => {
+    const b = info ?? browserInfo();
+    const term = INCOGNITO_TERM[b.name] ?? "Incognito";
+    return `In ${b.name}: open ${b.scheme}://extensions , find "window.ml", click "Details", then turn ON the "Allow in ${term}" toggle (${b.name}'s name for private browsing is "${term}").`;
+};
+
 /**
  * Compact "where and when am I" snapshot: URL, title, page language, and the
  * current date/time + locale/timezone. ml.agent injects this by default (so the
