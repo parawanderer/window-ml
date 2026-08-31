@@ -85,6 +85,13 @@ const sameOriginNav = (url: string): boolean => {
     return "error" in t ? true : !t.crossOrigin;
 };
 
+/** Is a `fetch_url` target SAME-ORIGIN as the current page? An uncredentialed same-origin fetch is FREE (the
+ *  page can already `fetch()` its own origin), like a same-origin navigate. A bad URL → not same-origin (let the
+ *  normal gate handle it). Used by the page loop's autoApprove. */
+const sameOriginFetch = (url: string): boolean => {
+    try { return new URL(url, location.href).origin === location.origin; } catch { return false; }
+};
+
 /** One resolved `python_exec` table source: its var name, provenance, and the payload the sandbox
  *  builds a DataFrame from (rows or read_html html). Internal to injected.ts. */
 type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; columns: string[]; rows: (string | number | null)[][] } | { kind: "html"; html: string } };
@@ -981,6 +988,10 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     // navigate: SAME-ORIGIN auto-approves (no escalation); a CROSS-ORIGIN nav falls through to
                     // the gate (a page can't silently send the agent to another site). location is authoritative.
                     if (name === "navigate") return sameOriginNav(String((args as { url?: unknown }).url ?? "")) ? "same-origin" : null;
+                    // fetch_url: an UNCREDENTIALED same-origin GET is free (the page could fetch its own origin
+                    // itself) — like a same-origin navigate. Credentialed / rendered fall through to the gate.
+                    if (name === "fetch_url" && !(args as { credentials?: unknown }).credentials && !(args as { rendered?: unknown }).rendered)
+                        return sameOriginFetch(String((args as { url?: unknown }).url ?? "")) ? "same-origin" : null;
                     return null;
                 },
                 // Read-only exec fast-path: the mediated interpreter is side-effect-free, so trying it is safe

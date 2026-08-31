@@ -64,6 +64,9 @@ export interface RunAgentHostDeps {
     // ml.fetch consent: true → this exact URL hasn't been approved on this tab yet → GATE; false → already
     // approved this session → auto-approve (no re-prompt). Trusted (background-side, per-URL), not forgeable.
     fetchNeedsConsent?(url: string): boolean;
+    // true → this UNCREDENTIALED fetch is same-origin as the run (its own / consented origins) → FREE (no
+    // prompt), like a same-origin navigate: the page could fetch its own origin itself. Background-decided.
+    fetchSameOrigin?(url: string): boolean;
     // Debug fan-out (agent-step events: the pending START then the DONE).
     emit?: AgentLoopDeps["emit"];
     // Durable resume: called with the run's live message array after each COMPLETED step, so the background
@@ -143,7 +146,11 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
             // auto-approves; a new one gates once, then is remembered.
             if (name === "fetch_url") {
                 if ((args as { credentials?: unknown }).credentials) return null;
-                return deps.fetchNeedsConsent?.(String((args as { url?: unknown }).url ?? "")) ? null : "consented";
+                const url = String((args as { url?: unknown }).url ?? "");
+                // Same-origin uncredentialed fetch → free, like a same-origin navigate (but NOT for `rendered`,
+                // which opens a real tab/window — kept gated).
+                if (!(args as { rendered?: unknown }).rendered && deps.fetchSameOrigin?.(url)) return "same-origin";
+                return deps.fetchNeedsConsent?.(url) ? null : "consented";
             }
             return null;
         },

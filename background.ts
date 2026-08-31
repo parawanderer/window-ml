@@ -2132,6 +2132,15 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 isSheetApproved: (id) => approvedSheets.has(id),
                 navNeedsConsent,   // cross-origin nav → gate; same-site / already-consented → auto (see consentedOrigins)
                 fetchNeedsConsent: (url) => !fetchConsent.get(tabId)?.has(url),   // a NEW url → gate; an already-approved one → auto
+                // An UNCREDENTIALED fetch to an origin the run is at / has been consented to (relative, or in
+                // consentedOrigins — seeded with the start origin) is FREE: the page can already fetch its own
+                // origin, so it's no escalation. Used by the auto-approve (no prompt), like a same-origin navigate.
+                fetchSameOrigin: (url: string): boolean => {
+                    try {
+                        if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(url) && !url.startsWith("//")) return true;   // relative → the page's own origin
+                        return consentedOrigins.has(new URL(url.startsWith("//") ? "https:" + url : url).origin);
+                    } catch { return false; }
+                },
                 checkpoint: (messages) => persistRun(runId, { p, tabId, messages, sub: snapSub() }),   // durable resume snapshot per step
                 // This turn's delegated vision sub-call tally (accumulated from each delegated tool's envelope
                 // delta in delegateTool) — so chat_metadata reports the real number on the background path too.
@@ -2286,9 +2295,13 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 }
             } else {
                 // UNCREDENTIALED: fetchOpen = an approved exec is running (its inline fetches are the human-approved
-                // code); per-URL consent = the human approved EXACTLY this url (and it's remembered).
+                // code); per-URL consent = the human approved EXACTLY this url (and it's remembered). SAME-ORIGIN as
+                // the sender's page is FREE (no grant): the page can already `fetch()` its own origin itself (CORS
+                // permits it; the extension's version is even weaker — no cookies), so gating it protects nothing.
+                // Not for `rendered` (it opens a real tab/window — a heavier action, kept gated).
                 const execOpen = tabId != null && !!pendingGrants.get(tabId)?.fetchOpen;
-                if (untrusted && !execOpen && !(tabId != null && fetchConsent.get(tabId)?.has(url))) {
+                const sameOriginAsSender = (() => { try { return !!sender.url && new URL(url, sender.url).origin === new URL(sender.url).origin; } catch { return false; } })();
+                if (untrusted && !(sameOriginAsSender && !rendered) && !execOpen && !(tabId != null && fetchConsent.get(tabId)?.has(url))) {
                     sendResponse({ error: `Refused: "${url}" hasn't been approved for fetching on this page. Use the fetch_url tool (each new URL is approved once, then remembered for the session), or call ml.fetch inside an approved exec.` });
                     return;
                 }

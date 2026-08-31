@@ -2219,6 +2219,29 @@ test("SECURITY (FETCH_URL): an untrusted page with NO consent is refused — loc
     assert.ok(/only http\(s\)/i.test(c.error), "chrome:// refused");
 });
 
+test("FETCH_URL: an untrusted page's UNCREDENTIALED SAME-ORIGIN fetch is FREE — but cross-origin / rendered / credentialed stay gated", async () => {
+    // A same-origin fetch grants nothing the page couldn't do itself (`fetch()` its own origin is CORS-allowed,
+    // and the extension's is even weaker — no cookies), so it needs no grant. Cross-origin, `rendered` (opens a
+    // real tab/window) and `credentials` (as-you) stay gated. sender.url = the requesting FRAME (real Chrome sets it).
+    let fetchedUrl = null;
+    const bg = loadBackground({ config: baseConfig(), onFetch: (call) => { fetchedUrl = call.url; return fetchResponse('{"ok":1}', { contentType: "application/json", url: call.url }); } });
+    const page = "https://site.example/dashboard";
+    const send = (payload) => bg.send({ type: "FETCH_URL", payload }, { tab: { id: 9, url: page }, url: page });
+
+    const same = await send({ url: "https://site.example/api/data.json" });
+    assert.ok(same.data && !same.error, "same-origin uncredentialed fetch is allowed with NO grant");
+    assert.equal(fetchedUrl, "https://site.example/api/data.json", "the same-origin fetch actually ran");
+
+    const cross = await send({ url: "https://other.example/x" });
+    assert.ok(cross.error && /hasn't been approved/i.test(cross.error), "cross-origin still needs consent");
+
+    const rendered = await send({ url: "https://site.example/spa", rendered: true });
+    assert.ok(rendered.error && /hasn't been approved/i.test(rendered.error), "same-origin RENDERED stays gated (opens a real tab/window)");
+
+    const cred = await send({ url: "https://site.example/api", credentials: true });
+    assert.ok(cred.error && /wasn't approved/i.test(cred.error), "same-origin CREDENTIALED stays locked (as-you)");
+});
+
 test("SECURITY (FETCH_URL): the SAME addresses become reachable once approved via the fetch_url tool (consent is the sole boundary)", async () => {
     // Prove the boundary is EXACTLY consent: drive a real run, approve fetch_url for a localhost URL, and it
     // fetches — same address that was refused above. Consent grows ONLY here (the approval), unforgeably.
