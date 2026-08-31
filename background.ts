@@ -10,7 +10,7 @@ import { externalSheetIds, googleSheetId, classifyContent, jsonShape, clipOut } 
 import { extractGrants } from "./grant-extract";   // button #3: static egress-grant extraction for "Approve + remember"
 import type { FetchResult } from "./contract";
 import { createNavBarrier } from "./nav-barrier";   // cross-page persistence: hold delegated tools while a run's tab navigates
-import { incognitoEnableSteps } from "./util";   // browser-specific "Allow in Incognito" steps for the private-render error
+import { incognitoEnableSteps, browserInfo } from "./util";   // browser-specific "Allow in Incognito" steps + the fork's settings scheme
 
 // The wire body we assemble for a chat request (grows per format/options).
 interface ChatBody {
@@ -2320,6 +2320,18 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         })();
         return true;   // async
     }
+    if (message.type === "OPEN_EXTENSIONS_PAGE") {
+        // Deep-link to THIS extension's details page (where "Allow in Incognito" lives) — opened for the
+        // Settings/popup "Incognito rendering" button. EXTENSION-ORIGIN ONLY (a page can't reach
+        // chrome.runtime.onMessage, but guard anyway): the URL is derived here (browser-correct scheme +
+        // chrome.runtime.id), never taken from the sender, so this can't be turned into an "open any URL".
+        if (!(sender.url || "").startsWith(chrome.runtime.getURL(""))) { sendResponse({ error: "refused" }); return true; }
+        let scheme = "chrome"; try { scheme = browserInfo().scheme; } catch { /* default */ }
+        chrome.tabs.create({ url: `${scheme}://extensions/?id=${chrome.runtime.id}` })
+            .then(() => sendResponse({ data: true }))
+            .catch((e) => sendResponse({ error: (e as Error)?.message || String(e) }));
+        return true;   // async
+    }
     if (message.type === "FETCH_SHEET_TITLE") {
         // TITLE-ONLY, pre-approval: the approval card fetches just the sheet name so the USER sees WHICH
         // sheet they're granting (the MODEL never gets it). INTERNAL-ONLY — it's not in the content relay.
@@ -2835,7 +2847,7 @@ async function fetchRenderedContent(url: string, incognito: boolean): Promise<Fe
     let windowId: number | undefined;   // set on the incognito path — we remove the whole (minimized) window
     if (incognito) {
         if (!(await isIncognitoAllowed())) {
-            throw new Error(`A private (no-session) rendered fetch needs the extension enabled in Incognito, which is OFF — the browser won't let the extension flip it, so TELL THE USER exactly how: ${incognitoEnableSteps()} The toolbar popup's Permissions → "Incognito rendering" also opens that page for them. OR pass credentials:true to render with the user's NORMAL session instead (no Incognito needed).`);
+            throw new Error(`A private (no-session) rendered fetch needs the extension enabled in Incognito, which is OFF — the browser won't let the extension flip it, so TELL THE USER exactly how: ${incognitoEnableSteps(undefined, chrome.runtime.id)} The toolbar popup's Permissions → "Incognito rendering" also opens that page for them. OR pass credentials:true to render with the user's NORMAL session instead (no Incognito needed).`);
         }
         let win: chrome.windows.Window | undefined;
         try { win = await chrome.windows.create({ url, incognito: true, focused: false, state: "minimized" }); }

@@ -4,7 +4,7 @@
 // in the VIEWPORT.
 import { test } from "node:test";
 import assert from "node:assert";
-import { projectShotPoint, projectShotBox, browserInfo, incognitoEnableSteps, mlRange, RANGE_MAX } from "../util.ts";
+import { projectShotPoint, projectShotBox, browserInfo, incognitoEnableSteps, extensionDetailsUrl, mlRange, RANGE_MAX } from "../util.ts";
 
 // ---- mlRange: the bounded counter loop (ml.range) ----
 test("mlRange: the three forms (stop / start,stop / start,stop,step) incl. a descending range", () => {
@@ -81,6 +81,23 @@ test("incognitoEnableSteps uses each fork's own scheme AND its own word for priv
     assert.match(brave, /Allow in Private/);
     // Names the extension so the user knows what to look for.
     assert.match(chrome, /window\.ml/);
+});
+
+test("incognitoEnableSteps deep-links to THIS extension's details page when given the id", () => {
+    const brave = { name: "Brave", version: "1", scheme: "brave" };
+    // With the id → a direct ?id= link (lands on the toggle), NOT the bare extensions list.
+    const withId = incognitoEnableSteps(brave, "kbioabndhiilpdbnafipimjnbohmfkgo");
+    assert.match(withId, /brave:\/\/extensions\/\?id=kbioabndhiilpdbnafipimjnbohmfkgo/);
+    // Without the id → falls back to the list URL (no dangling ?id=).
+    const noId = incognitoEnableSteps(brave);
+    assert.match(noId, /brave:\/\/extensions(?!\/\?id=)/);
+    assert.doesNotMatch(noId, /\?id=/);
+});
+
+test("extensionDetailsUrl builds a scheme-correct ?id= link, or the list URL without an id", () => {
+    assert.equal(extensionDetailsUrl({ name: "Google Chrome", version: "1", scheme: "chrome" }, "abc"), "chrome://extensions/?id=abc");
+    assert.equal(extensionDetailsUrl({ name: "Brave", version: "1", scheme: "brave" }, "xyz"), "brave://extensions/?id=xyz");
+    assert.equal(extensionDetailsUrl({ name: "Microsoft Edge", version: "1", scheme: "edge" }), "edge://extensions");
 });
 
 

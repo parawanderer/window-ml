@@ -3,7 +3,7 @@
 // via chrome.runtime for privileged work.
 import type { MlConfig, Theme, LoadedModel } from "./contract";
 import { DEFAULT_CONFIG, fmtCtx } from "./contract";   // single source of truth (see contract.ts)
-import { browserInfo } from "./util";   // browser-correct internal scheme (chrome:// vs brave://vs edge://…)
+import { browserInfo, extensionDetailsUrl } from "./util";   // browser-correct internal scheme + details-page URL
 
 // The popup is a QUICK LAUNCHER: connection (the bare minimum to work) + the two
 // always-handy toggles (theme, debug panel). Everything else — OCR/utility/grounding/
@@ -218,9 +218,7 @@ async function enableSheetsAccess() {
 // switch lives, using the browser-correct internal scheme (chrome:// on Chrome, brave:///edge:// on forks —
 // the wrong scheme is a dead link).
 const extensionsDetailsUrl = (): string => {
-    let scheme = "chrome";
-    try { scheme = browserInfo().scheme; } catch { /* default chrome:// */ }
-    return `${scheme}://extensions/?id=${chrome.runtime.id}`;
+    try { return extensionDetailsUrl(browserInfo(), chrome.runtime.id); } catch { return `chrome://extensions/?id=${chrome.runtime.id}`; }
 };
 function reflectIncognitoAccess(allowed: boolean) {
     const btn = $("incognitoAccess") as unknown as HTMLButtonElement, hint = document.getElementById("incognitoHint")!;

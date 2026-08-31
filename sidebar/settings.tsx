@@ -384,6 +384,37 @@ function SheetsGrant() {
     );
 }
 
+// The Incognito-access DEEP-LINK (private rendered fetch). Unlike a host permission, "Allow in Incognito" can't
+// be requested via any API (it's a user-only toggle) — so we only READ it (isAllowedIncognitoAccess) and open
+// the extension's details page (via the background, which reliably opens a chrome:// tab — the embedded settings
+// iframe can't). Mirrors the popup's "Incognito rendering" row.
+function IncognitoGrant() {
+    const [allowed, setAllowed] = useState<boolean | null>(null);
+    const [err, setErr] = useState("");
+    useEffect(() => {
+        try {
+            if (!chrome.extension?.isAllowedIncognitoAccess) { setAllowed(null); return; }
+            chrome.extension.isAllowedIncognitoAccess((a: boolean) => setAllowed(!!a));
+        } catch { setAllowed(null); }
+    }, []);
+    const openSettings = () => {
+        setErr("");
+        try { chrome.runtime.sendMessage({ type: "OPEN_EXTENSIONS_PAGE" }, (r: any) => { if (r?.error) setErr("Couldn't open the extensions page — open it from the browser menu (Extensions → Manage) and enable Incognito for window.ml."); }); }
+        catch { setErr("Couldn't open the extensions page — open it from the browser menu."); }
+    };
+    if (allowed === null) return null;   // API unavailable → hide the row
+    return (
+        <details class="set-section" open={!allowed}>
+            <summary class="set-group">Incognito rendering{allowed ? <span class="perm-ok"> ✓</span> : null}</summary>
+            <div class="set-note">Lets a <code>fetch_url</code> / <code>ml.fetch</code> with <code>rendered:true</code> load a page's JavaScript <b>privately</b> — in an incognito tab with no session — so a client-rendered page renders without your cookies. (With <code>credentials:true</code> it uses your normal session and needs no Incognito.) The browser only lets <b>you</b> turn this on.</div>
+            {allowed
+                ? <div class="set-hint"><span class="perm-ok">Incognito access on.</span> A private (no-session) <code>rendered</code> fetch works.</div>
+                : <div class="free-row"><button class="test-btn" onClick={openSettings}>Open settings to enable</button></div>}
+            {err ? <div class="set-err">{err}</div> : null}
+        </details>
+    );
+}
+
 // ── Per-site host access (agent fetch_url) ───────────────────────────────────
 // The background's fetch_url reads a URL via the SW fetch, which "On click" site access WITHHOLDS for
 // third-party hosts. The approval card grants a host in-gesture when you approve a fetch to a new site;
@@ -526,6 +557,7 @@ function PermissionsView() {
             </Section>
             <HostAccess />
             <SheetsGrant />
+            <IncognitoGrant />
         </>
     );
 }

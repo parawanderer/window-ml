@@ -77,19 +77,27 @@ export const browserInfo = (nav?: {
 const INCOGNITO_TERM: Record<string, string> = {
     "Microsoft Edge": "InPrivate", "Brave": "Private", "Opera": "private", "Vivaldi": "Incognito", "Yandex": "Incognito",
 };
+/** The extension's own details page — deep-links straight to where "Allow in Incognito" lives — in the fork's
+ *  internal scheme. Pass `chrome.runtime.id` for `extId`; without it, falls back to the extensions list URL. */
+export const extensionDetailsUrl = (info: BrowserInfo, extId?: string): string =>
+    extId ? `${info.scheme}://extensions/?id=${extId}` : `${info.scheme}://extensions`;
 /**
  * Exact, browser-SPECIFIC steps to turn on the extension's "Allow in Incognito" (the private-browsing
  * permission a session-less `rendered` fetch needs). Chrome doesn't let an extension request it, so the model
- * relays these to the user. Uses the fork's own scheme (chrome:// vs brave:///edge://…) AND its own word for
- * private browsing ("InPrivate" on Edge, "Private" on Brave), so the instructions actually match the UI.
+ * relays these to the user. Uses the fork's own scheme (chrome:// vs brave:///edge://…), its own word for
+ * private browsing ("InPrivate" on Edge, "Private" on Brave), AND — given the extension id — a link straight
+ * to THIS extension's details page (…/extensions/?id=<id>), so the user lands right on the toggle.
  *
  * @param {BrowserInfo} [info] Defaults to the detected browser (injectable for tests).
+ * @param {string} [extId] The extension id (chrome.runtime.id) → a direct details-page link.
  * @returns {string} A one-line, ready-to-relay instruction.
  */
-export const incognitoEnableSteps = (info?: BrowserInfo): string => {
+export const incognitoEnableSteps = (info?: BrowserInfo, extId?: string): string => {
     const b = info ?? browserInfo();
     const term = INCOGNITO_TERM[b.name] ?? "Incognito";
-    return `In ${b.name}: open ${b.scheme}://extensions , find "window.ml", click "Details", then turn ON the "Allow in ${term}" toggle (${b.name}'s name for private browsing is "${term}").`;
+    const url = extensionDetailsUrl(b, extId);
+    const where = extId ? `open ${url} (window.ml's own details page)` : `open ${url} , find "window.ml", click "Details"`;
+    return `In ${b.name}: ${where}, then turn ON the "Allow in ${term}" toggle (${b.name}'s name for private browsing is "${term}").`;
 };
 
 /**
