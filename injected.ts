@@ -37,7 +37,7 @@ import { evalReadonly } from "./readonly-exec";
 import { htmlToMarkdown } from "./html-to-md";
 import { runPipe } from "./text-pipe";
 import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement, navTarget, clipOut, askReaderNumCtx, jsonShape, shadowHostReport, clickSelector } from "./dom";
-import { accessibleName } from "./a11y";
+import { accessibleName, roleOf, ariaState } from "./a11y";
 import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_NOTE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_EXEC_NOTE, IFRAME_CLAUSE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, EXEC_RANGE_CLAUSE, NAV_OFF_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, askAboutTask } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, markSeen, PT_LOOK_RADIUS, BOX_RE, resolveBox, agentState, mlRange } from "./util";
 import type { ShotBox, ServerTool, VisionMemory, RebuildConfig, AnswerMedia } from "./contract";
@@ -2090,12 +2090,12 @@ class AgentHandle implements MlAgentHandle, AgentControl {
         // Public alias: a shadow/iframe-piercing `document.querySelectorAll` the model can call from
         // `exec` (and the readonly dialect) instead of hand-chaining `.shadowRoot`/`.contentDocument`.
         queryAll,
-        // The a11y/reference expertise the `interactives`/`findByText` tools use, exposed as read-only
-        // primitives so `exec` can COMPOSE its own finder (blessed in the readonly dialect, so a survey
-        // that uses them auto-approves). accessibleName = the screen-reader name; selectorFor = the stable
-        // `>>>` reference to hand click/type. Both pure reads of one element.
-        accessibleName: (el: Element): string => accessibleName(el),
-        selectorFor: (el: Element): string => clickSelector(el),
+        // The screen-reader + actionable view of ONE element as a single object — the a11y/reference expertise
+        // the interactives/findByText tools use, exposed as a read-only primitive so `exec` can COMPOSE its own
+        // finder (blessed in the readonly dialect → a survey that uses it auto-approves). One call gives the role,
+        // accessible name, aria state, and the stable `>>>` reference to hand click/type. All pure reads.
+        a11y: (el: Element): { role: string; name: string; state: string; selector: string } =>
+            ({ role: roleOf(el), name: accessibleName(el), state: ariaState(el), selector: clickSelector(el) }),
         // PRIVATE debug helper (underscore → not in agent_api_docs, the agent never learns of it): list every
         // shadow-root host + whether the tools can enter it — `{ open, pierced, sealed, empty, hosts }`, each host
         // `{ selector, tag, state }` with state open / pierced / sealed / empty. Call `ml._shadowRoots()` from the

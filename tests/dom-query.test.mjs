@@ -269,3 +269,26 @@ test("firstHopSealed: FALSE for a bad first-hop selector (never throws)", () => 
     mount(`<sealed-box id="s"></sealed-box>`);
     assert.equal(firstHopSealed("((( >>> .inner"), false);
 });
+
+// ---------------------------------------------------------------- extension-UI exclusion ---
+// The extension injects its own HUD (overlay/card/highlight/lightbox), all with ml-sb-* / ml-lightbox /
+// ml-highlight ids. `ml.queryAll` must NOT pick those up as page content (a real bug: it found the HUD's own
+// buttons, inside the overlay shadow root deepQueryAll pierces). Excluded by default; `includeExtensionUi` opts in.
+test("queryAll EXCLUDES the extension's own injected UI (light-DOM lightbox + overlay shadow content)", () => {
+    const doc = mount(`<button id="page">Page</button>
+        <div id="ml-lightbox"><button id="ml-lightbox-x">✕</button></div>
+        <div id="ml-sb-card"></div>`);
+    // An overlay-style host: a button inside ml-sb-card's OPEN shadow root (deepQueryAll would normally pierce it).
+    doc.getElementById("ml-sb-card").attachShadow({ mode: "open" }).innerHTML = '<button id="hud">HUD</button>';
+    assert.deepEqual(queryAll("button").map(e => e.id), ["page"], "only the page button — the lightbox ✕ AND the HUD shadow button are skipped");
+    // A page shadow root's content is UNaffected (only OUR ml-* hosts are skipped).
+    const w = doc.createElement("my-widget"); doc.body.append(w); w.attachShadow({ mode: "open" }).innerHTML = '<button id="inner">In</button>';
+    assert.ok(queryAll("button").map(e => e.id).includes("inner"), "a normal page shadow root is still pierced");
+});
+
+test("queryAll({ includeExtensionUi }) re-includes the HUD — both light-DOM and its shadow content", () => {
+    const doc = mount(`<button id="page">Page</button><div id="ml-sb-card"></div>`);
+    doc.getElementById("ml-sb-card").attachShadow({ mode: "open" }).innerHTML = '<button id="hud">HUD</button>';
+    const ids = queryAll("button", true).map(e => e.id).sort();
+    assert.deepEqual(ids, ["hud", "page"], "the flag reaches the overlay's own shadow content too");
+});

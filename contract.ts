@@ -1429,16 +1429,16 @@ export interface MlApi {
      *  `text="t"` (smallest text carrier), `role=button[name="Save"]` / `role=heading[level=1]` (ARIA role
      *  + accessible-name substring + state), `label="Username"` (form control by its label/accessible
      *  name). Use this instead of hand-chaining `.shadowRoot`/`.contentDocument`. Read-only. */
-    queryAll(selector: string): Element[];
-    /** The ACCESSIBLE NAME of an element the way a screen reader computes it: aria-label → aria-labelledby →
-     *  the wrapping `<label>` / placeholder → visible text. This is the same expertise the `interactives` tool
-     *  uses — exposed so you can COMPOSE it in an `exec` survey (e.g. only the buttons named "Delete"):
-     *  `ml.queryAll("button").filter(b => /delete/i.test(ml.accessibleName(b)))`. Read-only. */
-    accessibleName(el: Element): string;
-    /** The stable REFERENCE selector for an element — the exact string you pass to `click`/`type`/`answer`,
-     *  crossing shadow / same-origin-iframe boundaries with `>>>` as needed. Pair it with {@link queryAll} to
-     *  compose your own finder in `exec`: `ml.queryAll("…").map(el => ml.selectorFor(el))`. Read-only. */
-    selectorFor(el: Element): string;
+    /** By default EXCLUDES the extension's own injected UI (the HUD overlay/card/highlight/lightbox); pass
+     *  `includeExtensionUi: true` to reach those page elements too. */
+    queryAll(selector: string, includeExtensionUi?: boolean): Element[];
+    /** The screen-reader + actionable view of ONE element, as a single object — the same expertise the
+     *  `interactives` tool uses, so you can COMPOSE your own finder in an `exec` survey:
+     *  `ml.queryAll("button").map(b => ml.a11y(b)).filter(a => /delete/i.test(a.name))` then act on `a.selector`.
+     *  `role` (screen-reader role) · `name` (aria-label → aria-labelledby → label/placeholder → text) ·
+     *  `state` (aria checked/expanded/disabled/… , "" if none) · `selector` (the stable `>>>` reference you pass
+     *  to click/type/answer). Read-only. */
+    a11y(el: Element): { role: string; name: string; state: string; selector: string };
     /** PRIVATE debug helper (underscore → dropped from agent_api_docs). Lists every shadow-root host + whether
      *  the tools can enter it — `state`: open (reachable) · pierced (a closed root captured at load) · sealed
      *  (renders content behind a boundary a selector can't enter) · empty (rendering nothing — an unopened

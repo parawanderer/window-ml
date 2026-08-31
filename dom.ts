@@ -485,12 +485,24 @@ const TRAILING_NTH_NATIVE = /^([\s\S]*):nth-(?:of-type|child)\(\s*(\d+)\s*\)\s*$
  *  boundaries, so web-component content (Gemini's editor, many design systems) is invisible to a selector.
  *  Collects matches at `root` + recursively inside every OPEN shadowRoot (closed roots are unreachable by
  *  design), deduped. Reads the live DOM. */
-export const deepQueryAll = (selector: string, root: ParentNode = document): Element[] => {
+// The extension's OWN injected UI — the overlay shell, corner card, hover-highlight, lightbox (ids.ts) — all
+// use an `ml-sb-*` / `ml-lightbox*` / `ml-highlight*` id. A page query / composition shouldn't pick it up (it's
+// not page content): `ml.queryAll("button")` was finding the HUD's own controls (in the overlay shadow root,
+// which deepQueryAll pierces). We skip those subtrees by default; re-include with `includeExtensionUi: true`.
+const EXT_UI_SEL = '[id^="ml-sb-"], [id^="ml-lightbox"], [id^="ml-highlight"]';
+/** Is `el` itself an extension-UI ROOT host (so its subtree — incl. its shadow — is our own UI)? */
+export const isExtUiRoot = (el: Element): boolean => { try { return el.matches(EXT_UI_SEL); } catch { return false; } };
+/** Is `el` inside the extension's own UI (a LIGHT-DOM check via closest — the shadow case is handled by not
+ *  recursing into ext-UI hosts, so nothing from our overlay's shadow ever reaches here). */
+export const isExtUi = (el: Element): boolean => { try { return !!el.closest(EXT_UI_SEL); } catch { return false; } };
+
+export const deepQueryAll = (selector: string, root: ParentNode = document, includeExtensionUi = false): Element[] => {
     const out: Element[] = [];
     const seen = new Set<Element>();
     const visit = (r: ParentNode): void => {
-        try { for (const e of r.querySelectorAll(selector || "*")) if (!seen.has(e)) { seen.add(e); out.push(e); } } catch { /* invalid selector in this scope */ }
+        try { for (const e of r.querySelectorAll(selector || "*")) if (!seen.has(e) && (includeExtensionUi || !isExtUi(e))) { seen.add(e); out.push(e); } } catch { /* invalid selector in this scope */ }
         for (const host of r.querySelectorAll("*")) {
+            if (!includeExtensionUi && isExtUiRoot(host as Element)) continue;   // don't descend into our own overlay/card UI
             const sr = traversableRoot(host as Element);   // open root, or (when piercing is on) a captured closed root
             if (sr) { visit(sr); continue; }
             const doc = sameOriginFrameDoc(host as Element);   // a SAME-ORIGIN <iframe> → cross into its document
@@ -809,7 +821,14 @@ const evalExtHop = (seg: string, scopes: ParentNode[], deepFirst: boolean): Elem
     return current;
 };
 
-export const queryAll = (selector: string): Element[] => {
+/** Public entry: resolve a selector (with `>>>` hops + extended pseudos), EXCLUDING the extension's own injected
+ *  UI by default — pass `includeExtensionUi: true` to reach it (e.g. to inspect the HUD itself). One post-filter
+ *  point over the raw engine catches every path (the multi-hop raw querySelectorAll, evalExtHop, deepQueryAll). */
+export const queryAll = (selector: string, includeExtensionUi = false): Element[] => {
+    const els = queryAllRaw(selector, includeExtensionUi);
+    return includeExtensionUi ? els : els.filter(e => !isExtUi(e));
+};
+const queryAllRaw = (selector: string, includeExtensionUi = false): Element[] => {
     // Parse into `>>>` HOPS first, so each hop's pseudos are evaluated in that hop's own scope.
     const segs = String(selector).trim().split(">>>").map(s => s.trim()).filter(Boolean);
     if (!segs.length) return [];
@@ -839,11 +858,11 @@ export const queryAll = (selector: string): Element[] => {
     // (deepQueryAll, light matches first in document order), with a native `:nth-of-type/child(n)` fallback.
     const seg = segs[0];
     document.querySelectorAll(seg);   // validate — an INVALID selector must throw, not silently return 0
-    const els = deepQueryAll(seg);
+    const els = deepQueryAll(seg, document, includeExtensionUi);
     if (els.length) return els;
     const m = seg.match(TRAILING_NTH_NATIVE);
     if (m) {
-        const pool = deepQueryAll(m[1].trim() || "*");
+        const pool = deepQueryAll(m[1].trim() || "*", document, includeExtensionUi);
         const i = parseInt(m[2], 10) - 1;   // CSS nth-* is 1-based
         return pool[i] ? [pool[i]] : [];
     }

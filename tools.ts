@@ -134,7 +134,7 @@ const firstOfNote = (selector: string, count: number): string =>
 // tool doesn't offer — using the same expertise as read-only primitives (auto-approves, no gate). One terse line.
 const composeHint = (ctx?: ToolContext): string =>
     ctx?.hasTool("exec")
-        ? "\n\n(For a custom filter, compose it in a read-only exec survey: `ml.queryAll(sel)` + `ml.accessibleName(el)` / `ml.selectorFor(el)` with .filter/.map — auto-approves, no prompt.)"
+        ? "\n\n(For a custom filter, compose it in a read-only exec survey: `ml.queryAll(sel).map(el => ml.a11y(el))` gives { role, name, state, selector } per element — .filter/.map it, then act on `.selector`. Auto-approves, no prompt.)"
         : "";
 
 // Appended to a page-SCANNING tool's output: the CLOSED shadow roots a selector scan couldn't enter, so the

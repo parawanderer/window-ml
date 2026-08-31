@@ -619,11 +619,12 @@ const MUTATING_METHODS = new Set(["push", "pop", "shift", "unshift", "splice", "
 // already the non-secret MlPublicConfig subset — no URL, no API key. `queryAll` returns live Elements
 // (not plain data), but those flow through the SAME read-mediation as document.querySelectorAll's —
 // a pure shadow/iframe-piercing query, no new capability over what the dialect already reaches.
-// `accessibleName`/`selectorFor` take a LIVE element (from queryAll) and return a STRING — pure reads of one
-// node's attributes / ancestor path (the same a11y + `>>>`-reference expertise the interactives/findByText
-// tools use). They add no capability the dialect lacks (it already reaches elements + reads their attributes);
-// they just package it correctly. A string result can't reach a realm/effect, and neither mutates or spends.
-export const ML_READONLY_METHODS = ["getModel", "config", "models", "capabilities", "ps", "serverTools", "queryAll", "range", "accessibleName", "selectorFor"] as const;
+// `a11y` takes a LIVE element (from queryAll) and returns a fresh plain OBJECT of STRINGS — role / accessible
+// name / aria state / `>>>` reference — pure reads of one node (the same a11y + reference expertise the
+// interactives/findByText tools use). It adds no capability the dialect lacks (it already reaches elements +
+// reads their attributes); it just packages it. The object's values are strings and its `constructor`/proto
+// stay denied by guardKey, so it can't reach a realm/effect, and it neither mutates nor spends.
+export const ML_READONLY_METHODS = ["getModel", "config", "models", "capabilities", "ps", "serverTools", "queryAll", "range", "a11y"] as const;
 
 /** Build the `ml` object the dialect sees: ONLY {@link ML_READONLY_METHODS}, bound to the real API.
  *  A purpose-built facade rather than `window.ml` itself, so the free set is enforced by what exists,
