@@ -95,7 +95,9 @@ test("smoke: the extension loads and window.ml runs a one-shot agent", async () 
 
     const before = fake.calls().length;
     fake.setScript([
-        { tool: "fetch_url", args: { url: site.url + "/spa", rendered: true } },
+        // credentials:true → renders in a NORMAL tab (the harness has no Incognito access; the private default
+        // needs "Allow in Incognito" — covered by the next test). Same JS-runs + overlay-strip either way.
+        { tool: "fetch_url", args: { url: site.url + "/spa", rendered: true, credentials: true } },
         // Reactive final answer: the RENDERED DOM (in the tool result) must carry the JS-only content marker AND
         // NOT the cookie-overlay marker (overlays are stripped before the grab).
         (reqBody) => { const s = JSON.stringify(reqBody.messages || []); const content = s.includes("SPA-RENDERED-9931"); const overlay = s.includes("COOKIE-OVERLAY-SLOP-7777"); return { content: content && !overlay ? "RENDERED-CLEAN" : content ? "RENDERED-WITH-OVERLAY" : "RENDERED-MISSING" }; },
@@ -110,6 +112,34 @@ test("smoke: the extension loads and window.ml runs a one-shot agent", async () 
 
     await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(2);
     await expect.poll(() => answers.join("|"), { timeout: 10000 }).toContain("RENDERED-CLEAN");   // content present, overlay stripped
+    await page.close();
+    await configureExtension(ext.sw, { debugMode: "off" });
+});
+
+// The PRIVATE (default) rendered fetch renders in INCOGNITO — no session. That needs "Allow in Incognito",
+// which is OFF for an unpacked extension in the harness, so the render returns ACTIONABLE guidance (walk the
+// user to the toggle) instead of a silent failure. Proves the permission flow fires (and that uncredentialed
+// rendered doesn't fall back to the session).
+(BACKEND ? test.skip : test)("fetch_url rendered (private/incognito): without 'Allow in Incognito' it returns actionable guidance", async () => {
+    await configureExtension(ext.sw, { debugMode: "devtools", agentHudInDevtools: false });
+    const page = await ext.context.newPage();
+    const answers = [];
+    await page.exposeFunction("__reni", (s) => answers.push(s));
+    await page.addInitScript(() => { if (window.top === window) window.addEventListener("message", (e) => { if (e.data?.__mlDebug?.kind === "agent-result") window.__reni(e.data.__mlDebug.summary); }); });
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+
+    const before = fake.calls().length;
+    fake.setScript([
+        { tool: "fetch_url", args: { url: site.url + "/spa", rendered: true } },   // no credentials → private/incognito
+        (reqBody) => ({ content: /incognito/i.test(JSON.stringify(reqBody.messages || [])) ? "NEEDS-INCOGNITO" : "NO-GUIDANCE" }),
+    ]);
+    await page.evaluate(() => { window.ml.agent("Render the SPA privately.", { env: false, approvalRouting: "external" }); return true; });
+    await expect.poll(async () => (await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).length, { timeout: 15000 }).toBe(1);
+    const [gate] = await ext.sw.evaluate(() => globalThis.__mlApprovals.list());
+    await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), gate.key);
+    await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(2);
+    await expect.poll(() => answers.join("|"), { timeout: 10000 }).toContain("NEEDS-INCOGNITO");
     await page.close();
     await configureExtension(ext.sw, { debugMode: "off" });
 });

@@ -1574,10 +1574,14 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     "never cached; use it ONLY when public access won't do. " +
                     "Set `rendered: true` when a plain GET returns an EMPTY / skeleton page because the content is " +
                     "drawn by JavaScript (a client-rendered SPA, an infinite-scroll feed's first screen): it opens the " +
-                    "URL in a BACKGROUND TAB so the page's JS runs, then returns the SETTLED DOM (as the user, with " +
-                    "their session) — with cookie/consent/ad overlays heuristically stripped. Slower and heavier than a " +
-                    "raw GET (a real page load) — reach for it only when the raw fetch's HTML is clearly unrendered. " +
-                    "Like `credentials`, it ALWAYS asks and is never cached. " +
+                    "URL in a background tab so the page's JS runs, then returns the SETTLED DOM — with cookie/consent/ad " +
+                    "overlays heuristically stripped. By DEFAULT it renders PRIVATELY, in an incognito tab with NO " +
+                    "session/cookies (lower-risk — no logged-in identity), so once you approve a URL it's REMEMBERED for " +
+                    "the session (needs the extension's 'Allow in Incognito' setting on — you'll get a clear message to " +
+                    "enable it if it's off). ADD `credentials: true` to render in the USER'S logged-in session instead " +
+                    "(for a page that only shows content when signed in) — that ALWAYS re-asks and is never remembered. " +
+                    "Either way it's slower/heavier than a raw GET; reach for it only when the raw fetch's HTML is clearly " +
+                    "unrendered. Never cached. " +
                     "Set `ask: \"<question>\"` to have a fast reader model READ the fetched content and answer that " +
                     "question — you get back the ANSWER, not the (possibly huge) body, so a big page/API never floods " +
                     "your context. Use it when you need a FACT out of the content, not the raw bytes to process further. " +
@@ -1598,7 +1602,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                         url: { type: "string", description: "The absolute http(s) URL to fetch." },
                         schema: { type: "boolean", description: "If true, return a compact TS-like SHAPE of the JSON (not the body). Errors if the URL isn't JSON." },
                         credentials: { type: "boolean", description: "If true, fetch AS THE USER (send their cookies) for authenticated data. Always prompts; never cached/remembered." },
-                        rendered: { type: "boolean", description: "If true, load the URL in a background tab so its JavaScript runs, then return the SETTLED DOM — for client-rendered/SPA pages a raw GET returns empty. As-the-user (uses the session), slower/heavier; always prompts; never cached." },
+                        rendered: { type: "boolean", description: "If true, load the URL in a background tab so its JavaScript runs, then return the SETTLED DOM — for client-rendered/SPA pages a raw GET returns empty. By default renders PRIVATELY in incognito (no session; remembered per-url once approved; needs 'Allow in Incognito'). Add credentials:true to render in the user's logged-in session (always re-asks). Slower/heavier; never cached." },
                         ask: { type: "string", description: "If set, a fast reader model reads the fetched content and answers THIS question; you get the answer, not the body (keeps a large page out of your context). Takes precedence over `schema`." },
                         raw: { type: "boolean", description: "If true, return an HTML page's ORIGINAL raw HTML instead of the auto-converted Markdown (HTML is converted to clean Markdown by default for readability; non-HTML is unaffected)." },
                         pipe: { type: "string", description: "Optional. SCAN/FILTER the returned text through a small shell-style pipeline BEFORE it reaches you — so you read only the relevant lines instead of the whole doc (cheaper). It's an interpreted line-based environment (NOT a real shell); supported commands, chained with `|`: grep (flags -i -v -n -c -F -w -o -E, context -A/-B/-C N), head/tail (-n N), wc (-l -w -c), sort (-n -r -u -f), uniq (-c -i). E.g. \"grep -i pricing | head -20\", or \"grep -o '[0-9]+' | sort -n | tail -1\". For anything MORE COMPLEX than this dialect, use exec instead: `const { markdown } = await ml.fetch('<the url>');` then process that string with JS." },
@@ -1609,7 +1613,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 // note flags the SCHEMA-only ask, and — importantly for consent — a CREDENTIALED (as-you) fetch.
                 render: (_input: unknown, args?: Record<string, unknown>): RenderDescriptor => {
                     const a = args as { url?: unknown; schema?: unknown; credentials?: unknown; rendered?: unknown; ask?: unknown; pipe?: unknown } | undefined;
-                    const note = a?.rendered ? "rendered in a background tab, as you" : a?.credentials ? "as you (sends your cookies)" : a?.schema ? "schema only" : a?.ask ? undefined : "full page";
+                    const note = a?.rendered ? (a?.credentials ? "rendered in your session (runs the page's JS)" : "rendered privately (incognito — no cookies, runs the page's JS)") : a?.credentials ? "as you (sends your cookies)" : a?.schema ? "schema only" : a?.ask ? undefined : "full page";
                     // The ASK gets its OWN line (full text, never truncated), not squeezed into the inline note.
                     const ask = (typeof a?.ask === "string" && a.ask.trim()) ? a.ask.trim() : undefined;
                     const pipe = (typeof a?.pipe === "string" && a.pipe.trim()) ? a.pipe.trim() : undefined;

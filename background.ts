@@ -2089,14 +2089,14 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                                 // Approving a cross-origin nav consents to that ORIGIN for the rest of the run
                                 // (repeat navs to it then skip the gate).
                                 if (ok && tool === "navigate") { try { consentedOrigins.add(new URL(String((args as { url?: unknown }).url ?? "")).origin); } catch { /* relative/bad url — nothing to remember */ } }
-                                // Approving a fetch_url: an UNCREDENTIALED one consents to that EXACT url for the
-                                // session (repeat fetches auto-approve). A CREDENTIALED one (fetch-as-the-user) OR
-                                // a RENDERED one (loads in a background tab as-you) instead mints a ONE-TIME grant
-                                // for this url — NEVER persisted, so it always re-prompts; consumed by the
-                                // FETCH_URL handler's credentialed/rendered GET.
+                                // Approving a fetch_url: a CREDENTIALED one (fetch-as-the-user — raw cookies, or a
+                                // rendered load in your session) mints a ONE-TIME grant, NEVER persisted, so it
+                                // always re-prompts. An UNCREDENTIALED one (a raw uncredentialed GET, or an
+                                // INCOGNITO rendered load — no session, lower risk) consents to that EXACT url for
+                                // the session (repeat fetches auto-approve — the rememberable path).
                                 if (ok && tool === "fetch_url") {
                                     const u = String((args as { url?: unknown }).url ?? "");
-                                    if (u) { if ((args as { credentials?: unknown }).credentials || (args as { rendered?: unknown }).rendered) grantCredFetch(tabId, u); else consentFetch(tabId, u); }
+                                    if (u) { if ((args as { credentials?: unknown }).credentials) grantCredFetch(tabId, u); else consentFetch(tabId, u); }
                                 }
                                 // button #3: "Approve + remember" — also persist the exec's static ml.fetch
                                 // literals for the session (a positive `persist` decision only).
@@ -2271,14 +2271,15 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             if (scheme !== "http:" && scheme !== "https:") { sendResponse({ error: `Refused: ml.fetch supports only http(s) URLs (got "${scheme}").` }); return; }
             const tabId = sender.tab?.id;
             const untrusted = await senderTrust(sender) === "untrusted";
-            // CREDENTIALED (fetch-as-the-user) or RENDERED (loads the URL in a background tab, which runs its JS
-            // AND carries the user's cookies) → a "read any URL as you" primitive, so an untrusted page needs a
-            // ONE-TIME per-URL grant (minted by an approved fetch_url, consumed here). execOpen/consent
-            // deliberately DON'T authorize it, so an inline as-you `ml.fetch` in exec is refused (no per-URL
-            // grant) — directing the model to the explicit, human-approved tool.
-            if (credentials || rendered) {
+            // CREDENTIALED (fetch-as-the-user — a raw GET with cookies, OR a rendered load in a NORMAL tab that
+            // carries the session) → a "read any URL as you" primitive, so an untrusted page needs a ONE-TIME
+            // per-URL grant (minted by an approved fetch_url, consumed here). execOpen/consent deliberately DON'T
+            // authorize it, so an inline as-you `ml.fetch` in exec is refused. An UNCREDENTIALED rendered fetch
+            // (rendered && !credentials) runs in INCOGNITO — no session — so it's NOT as-you: it takes the
+            // rememberable uncredentialed-consent path below, same as a raw uncredentialed GET.
+            if (credentials) {
                 if (untrusted && !takeCredFetch(tabId, url)) {
-                    sendResponse({ error: `Refused: an as-you fetch of "${url}" wasn't approved. A fetch AS THE USER (${rendered ? "rendered in a background tab" : "cookies"}) must be approved per-URL via the fetch_url tool; it can't run inline in exec or reuse a prior grant.` });
+                    sendResponse({ error: `Refused: an as-you fetch of "${url}" wasn't approved. A fetch AS THE USER (${rendered ? "rendered in your session" : "cookies"}) must be approved per-URL via the fetch_url tool; it can't run inline in exec or reuse a prior grant.` });
                     return;
                 }
             } else {
@@ -2292,7 +2293,8 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             }
             const execOpen = tabId != null && !!pendingGrants.get(tabId)?.fetchOpen;
             try {
-                const data = rendered ? await fetchRenderedContent(url) : await fetchUrlContent(url, credentials);
+                // rendered: normal tab (session) when credentialed, else an incognito window (no session).
+                const data = rendered ? await fetchRenderedContent(url, !credentials) : await fetchUrlContent(url, credentials);
                 // Redirect guard: a per-URL-consented fetch (NOT a surface/whitelisted/exec one) that ends on a
                 // DIFFERENT, un-consented origin followed a redirect off the approved resource — withhold the body
                 // (a consented public URL could redirect to a private/other target). The GET already happened but
@@ -2812,17 +2814,38 @@ function renderSnapshot(): { html: string; href: string } {
     } catch { /* leave the DOM as-is on any failure */ }
     return { html: (document.documentElement && document.documentElement.outerHTML) || "", href: location.href };
 }
-/** RENDERED fetch: open the URL in an inactive BACKGROUND TAB so the page's JavaScript runs (client-rendered /
- *  SPA content a raw GET can't see), let it settle, snapshot the LIVE DOM (overlays stripped — see
- *  renderSnapshot), then ALWAYS close the tab. A real tab load carries the user's session (cookies) — so this
- *  is credentialed-weight (gated + one-time grant upstream, never cached). The snapshot's HTML flows through
- *  the same classify + HTML→Markdown path as a raw fetch. */
-async function fetchRenderedContent(url: string): Promise<FetchResult> {
-    let tab: chrome.tabs.Tab;
-    try { tab = await chrome.tabs.create({ url, active: false }); }
-    catch (e) { throw new Error(`Couldn't open a background tab to render "${url}" (${(e as Error)?.message || e}).`); }
-    const tabId = tab.id;
-    if (tabId == null) throw new Error(`Couldn't open a background tab to render "${url}".`);
+/** True iff the extension is allowed to run in Incognito (the user's "Allow in Incognito" toggle). Off by
+ *  default — an uncredentialed rendered fetch needs it, so we check and give an actionable error when it's off. */
+function isIncognitoAllowed(): Promise<boolean> {
+    return new Promise((res) => { try { chrome.extension.isAllowedIncognitoAccess((a) => res(!!a)); } catch { res(false); } });
+}
+/** RENDERED fetch: open the URL in a background tab/window so the page's JavaScript runs (client-rendered / SPA
+ *  content a raw GET can't see), let it settle, snapshot the LIVE DOM (overlays stripped — see renderSnapshot),
+ *  then ALWAYS close it. Two modes, chosen upstream by whether the caller asked for the user's session:
+ *   · incognito=TRUE  → an INCOGNITO window: NO session (fresh, cookie-less). Less risky (no reused auth) → the
+ *                       gate is the rememberable uncredentialed consent. Needs "Allow in Incognito".
+ *   · incognito=FALSE → a normal background tab: carries the user's session (cookies). Credentialed-weight
+ *                       (one-time grant, always-prompt). The snapshot HTML flows through the same
+ *                       classify + HTML→Markdown path as a raw fetch either way. */
+async function fetchRenderedContent(url: string, incognito: boolean): Promise<FetchResult> {
+    let tabId: number | undefined;
+    let windowId: number | undefined;   // set on the incognito path — we remove the whole (minimized) window
+    if (incognito) {
+        if (!(await isIncognitoAllowed())) {
+            throw new Error(`A private (no-session) rendered fetch needs the extension enabled in Incognito, which is OFF. Open the extension's details page and turn ON "Allow in Incognito", then retry — OR pass credentials:true to render with your NORMAL session instead.`);
+        }
+        let win: chrome.windows.Window | undefined;
+        try { win = await chrome.windows.create({ url, incognito: true, focused: false, state: "minimized" }); }
+        catch (e) { throw new Error(`Couldn't open a private window to render "${url}" (${(e as Error)?.message || e}). Incognito may be disabled by policy.`); }
+        windowId = win?.id;
+        tabId = win?.tabs?.[0]?.id;
+    } else {
+        let tab: chrome.tabs.Tab;
+        try { tab = await chrome.tabs.create({ url, active: false }); }
+        catch (e) { throw new Error(`Couldn't open a background tab to render "${url}" (${(e as Error)?.message || e}).`); }
+        tabId = tab.id;
+    }
+    if (tabId == null) throw new Error(`Couldn't open a ${incognito ? "private " : ""}tab to render "${url}".`);
     try {
         await waitForTabComplete(tabId, RENDER_LOAD_TIMEOUT_MS);
         await new Promise((r) => setTimeout(r, RENDER_SETTLE_MS));
@@ -2845,7 +2868,8 @@ async function fetchRenderedContent(url: string): Promise<FetchResult> {
             truncated: truncated || undefined, redirected: (finalUrl !== url) || undefined, rendered: true,
         };
     } finally {
-        try { await chrome.tabs.remove(tabId); } catch { /* already closed */ }
+        if (windowId != null) { try { await chrome.windows.remove(windowId); } catch { /* already closed */ } }
+        else if (tabId != null) { try { await chrome.tabs.remove(tabId); } catch { /* already closed */ } }
     }
 }
 
