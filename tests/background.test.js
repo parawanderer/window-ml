@@ -2153,10 +2153,36 @@ test("INJECT_MESSAGE steers a RUNNING background run (drained at the next step b
 
 // --- ml.fetch (FETCH_URL): uncredentialed GET + the unforgeable per-URL consent boundary ---
 
-const fetchResponse = (body, { contentType = "text/plain", url = "http://x/", status = 200 } = {}) => ({
-    ok: status >= 200 && status < 300, status, url,
-    headers: { get: (h) => (String(h).toLowerCase() === "content-type" ? contentType : null) },
-    text: async () => body,
+const fetchResponse = (body, { contentType = "text/plain", url = "http://x/", status = 200, headers = {} } = {}) => {
+    const all = { "content-type": contentType };
+    for (const [k, v] of Object.entries(headers)) all[String(k).toLowerCase()] = v;
+    return {
+        ok: status >= 200 && status < 300, status, url,
+        headers: { get: (h) => (all[String(h).toLowerCase()] ?? null) },
+        text: async () => body,
+    };
+};
+
+test("FETCH_URL: exposes ONLY the safelisted response headers — never Cookie/Authorization/Set-Cookie", async () => {
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => fetchResponse('[]', {
+            contentType: "application/json", url: call.url,
+            headers: {
+                "Link": '<https://api/x?page=2>; rel="next"', "ETag": 'W/"abc"', "Cache-Control": "max-age=60",
+                // Sensitive — must NOT surface:
+                "Set-Cookie": "session=SECRET; HttpOnly", "Authorization": "Bearer SECRET", "X-Csrf-Token": "SECRET",
+            },
+        }),
+    });
+    const r = await bg.send({ type: "FETCH_URL", payload: { url: "https://api.example/list" } }, { tab: { id: 1, url: "https://api.example/" }, url: "https://api.example/" });
+    assert.equal(r.data.headers.link, '<https://api/x?page=2>; rel="next"', "safelisted Link is exposed");
+    assert.equal(r.data.headers.etag, 'W/"abc"', "safelisted ETag is exposed");
+    assert.equal(r.data.headers.cacheControl, "max-age=60", "safelisted Cache-Control is exposed");
+    // The whole serialized result must not contain ANY of the secrets — they were never read.
+    const blob = JSON.stringify(r.data);
+    assert.ok(!/SECRET/.test(blob), "no Set-Cookie / Authorization / CSRF value leaks into the result");
+    assert.ok(!("cookie" in r.data.headers) && !("authorization" in r.data.headers), "sensitive header fields aren't even present");
 });
 
 test("FETCH_URL: a trusted surface fetches UNCREDENTIALED and classifies the body", async () => {

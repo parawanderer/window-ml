@@ -24,7 +24,8 @@ import { ML_READONLY_METHODS } from "./readonly-exec";
 // Generated from contract.ts at build time (scripts/gen-api-docs.mjs) — the public MlApi
 // surface, so the doc the model reads can never drift from the interface it describes.
 import { resolveOutputCap, outputCapPrecheck } from "./contract";
-import { ML_API_DOCS } from "./api-docs.gen";
+import { ML_API_PARTS } from "./api-docs.gen";
+import { queryApiDocs, isDefaultQuery, type ApiDocsQuery } from "./api-docs-query";
 import { BUILD_INFO } from "./build-info.gen";
 
 // A single-element tool (describeElement/ancestors) uses the FIRST of N matches — say so, so
@@ -625,19 +626,67 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
             name: "agent_api_docs",
             summary: "Looks up the window.ml extension's own API reference.",
             // Deliberately terse: this is a "when you need it" escape hatch, not a step in the
-            // method, and it pays ~4k tokens of reference into context when called. The system
-            // prompt's SELF_CLAUSE is what tells the model the tool is worth reaching for.
+            // method. The reference is LARGE, so it's served ctags-style (api-docs-query.ts): the
+            // default call is MlApi + a type index; drill into a type or scan by term on demand.
+            // The system prompt's SELF_CLAUSE is what tells the model the tool is worth reaching for.
             description: "Your own implementation details: the public API of window.ml, the browser " +
                 "extension you run inside, and how a user invokes you — the devtools console, or the " +
                 "in-page HUD and the keyboard shortcut currently bound to it. Also gives the public repo " +
-                "link + the exact commit this build is on (with its date), so you can read your own source. " +
-                "Call it when asked about yourself, how to reach you, or the API, instead of guessing. " +
-                "Takes no arguments.",
-            parameters: { type: "object", properties: {} },
-            // The generated reference is build-time; the source provenance (repo/commit) is build-time too;
-            // the HUD shortcut and the read-only-exec flag are runtime state the user owns, appended live.
-            run: async (): Promise<string> => [ML_API_DOCS, sourceSection(), await invocationSection(), await selfIntrospectionSection()]
-                .filter(Boolean).join("\n\n")
+                "link + the exact commit this build is on, so you can read your own source. Call it when " +
+                "asked about yourself, how to reach you, or the API, instead of guessing. This reference is " +
+                "LARGE, so it comes in pieces: call with NO args first to get the `ml` object (its methods) and " +
+                "an index of the type names they reference. Then drill down — usually by METHOD (`members`), " +
+                "which also pulls in the types that method's signature uses, so one call gives you everything " +
+                "you need to call it. Start shallow, go deeper only as needed.",
+            parameters: {
+                type: "object",
+                properties: {
+                    members: {
+                        type: "array",
+                        items: { type: "string" },
+                        description: "Expand these `ml` methods (e.g. [\"fetch\", \"agent\"]): each one's " +
+                            "signature/JSDoc PLUS the type sections its signature references. The usual drill-down."
+                    },
+                    types: {
+                        type: "array",
+                        items: { type: "string" },
+                        description: "Expand these referenced types in full by name (e.g. [\"FetchResult\"]). " +
+                            "Names come from the index or from a method you expanded. For a type you already spotted."
+                    },
+                    search: {
+                        type: "string",
+                        description: "Scan every member and type section for this term (e.g. \"screenshot\") " +
+                            "and return what mentions it. Use it when you don't know the method or type name."
+                    },
+                    fresh: {
+                        type: "boolean",
+                        description: "If you used this tool before but you critically need to re-read a definition, " +
+                            "set this to force a fresh full re-print. Do NOT set it if you recently checked the " +
+                            "definitions you need (repeats within a dig are collapsed to save space). Default off."
+                    }
+                }
+            },
+            // The reference itself is build-time (sliced here per the query). The source provenance (repo/commit),
+            // the live HUD shortcut, and the read-only-exec note are RUNTIME state the user owns — resolved here and
+            // handed to the slicer as searchable env sections. Resolved for the default view (which shows them) and
+            // for a `search` (the model hunts the HUD shortcut via search, as observed) — but NOT for a member/type
+            // drill, which shouldn't pay two background round-trips for context it didn't ask for.
+            run: async (args: ApiDocsQuery = {}, ctx?: ToolContext): Promise<string> => {
+                const wantEnv = isDefaultQuery(args) || !!(args.search && args.search.trim());
+                const env = wantEnv
+                    ? [
+                        { name: "Opening the HUD", body: await invocationSection() },
+                        { name: "My source", body: sourceSection() },
+                        { name: "Reading your own setup", body: await selfIntrospectionSection() },
+                    ].filter(e => e.body)
+                    : [];
+                // Within-burst dedup: this call IS the docs streak, so reset the leniency counter; `fresh`
+                // purges what was shown so the model re-reads in full. `shown` (undefined on a legacy ctx-less
+                // path) collapses chunks already printed earlier in the dig to one-line stubs.
+                const mem = ctx?.docsMemory;
+                if (mem) { mem.sinceDocs = 0; if (args.fresh) mem.shown.clear(); }
+                return queryApiDocs(ML_API_PARTS, args, env, mem?.shown);
+            }
         }),
         T({
             name: "scroll",

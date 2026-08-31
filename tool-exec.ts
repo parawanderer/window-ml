@@ -3,14 +3,27 @@
 // today, and design A's RUN_TOOL_IN_PAGE handler (the background delegating page-context execution to
 // the page) will call the SAME function — so the two paths can't drift. Page-side (a tool's run()
 // touches the DOM and may return real Nodes); the delegation layer reduces `elements` to a count.
-import type { MlTool, ToolResult, RenderDescriptor, ToolContext, ToolFeedback } from "./contract";
+import type { MlTool, ToolResult, RenderDescriptor, ToolContext, ToolFeedback, DocsMemory } from "./contract";
 import { validateArgs } from "./validate";
 import { errText } from "./dom";
 
+// `agent_api_docs`'s within-burst dedup memory is per RUN, but `toolContext` is rebuilt on every
+// background-delegated call (run-delegation.ts) — so it can't be created here per call. Keyed off the run's
+// `byName` map (the one object both loop paths hold stable for the whole run) it's created once and reused.
+const docsMemories = new WeakMap<object, DocsMemory>();
+
+// How many NON-docs tool calls may fall between two `agent_api_docs` calls before the dig counts as "over" and
+// the shown-set is purged. 1 = tolerate a single quick detour (an `exec` check) mid-dig without re-printing;
+// a second intervening step means the model has moved on, so a later re-pull re-reads the definitions fresh.
+const DOCS_STREAK_LENIENCY = 1;
+
 /** Build the runtime ToolContext from the run's toolset (+ model/caps). One helper so the page loop and the
- *  background-delegation path produce an identical `ctx`. `byName` is the same map both paths already hold. */
+ *  background-delegation path produce an identical `ctx`. `byName` is the same map both paths already hold —
+ *  which is also what keys the per-run docs-dedup memory, so it survives `toolContext` being rebuilt per call. */
 export function toolContext(byName: Record<string, MlTool>, model: string | null = null, capabilities: string[] | null = null, driverSees = false, visionModel: string | null = null): ToolContext {
-    return { tools: Object.keys(byName), hasTool: (n) => n in byName, model, capabilities, driverSees, visionModel };
+    let docsMemory = docsMemories.get(byName);
+    if (!docsMemory) { docsMemory = { shown: new Set(), sinceDocs: 0 }; docsMemories.set(byName, docsMemory); }
+    return { tools: Object.keys(byName), hasTool: (n) => n in byName, model, capabilities, driverSees, visionModel, docsMemory };
 }
 
 export interface ToolEnvelope {
@@ -50,6 +63,12 @@ export async function executeTool(tool: MlTool, args: Record<string, unknown>, c
     }
     // Soft issues APPEND (not prepend), so a real "Error:"/"Denied" prefix stays at position 0.
     const note = issues.length ? `\n\n⚠ Argument schema issue(s): ${issues.join("; ")}` : "";
+    // Drive `agent_api_docs`'s burst-scoped dedup: a NON-docs tool call is a step away from the dig, so count
+    // it, and once the model has moved on (past the leniency) purge what it was shown so a later re-pull re-reads
+    // definitions fresh. The docs tool itself resets `sinceDocs` when it runs (it's the streak).
+    if (ctx?.docsMemory && tool.name !== "agent_api_docs" && ++ctx.docsMemory.sinceDocs > DOCS_STREAK_LENIENCY) {
+        ctx.docsMemory.shown.clear();
+    }
     try {
         const raw = await tool.run(args, ctx);
         // A tool may return a plain string, or { content, elements, image?, render?, renderIn? } to

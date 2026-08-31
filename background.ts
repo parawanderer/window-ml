@@ -2773,6 +2773,20 @@ function browserFetchHeaders(): Record<string, string> {
  *  `credentials` is set — then it sends the user's cookies (the gated as-you path). Classifies the body by
  *  header AND content (a server can mislabel), pre-parses JSON, and caps the size. Throws on a
  *  network/permission failure (the handler turns that into an actionable message). */
+// Pull ONLY the safelisted, non-sensitive response headers into FetchResult.headers. A SAFELIST (not a
+// denylist) is definitive: an auth-bearing header (Cookie/Set-Cookie/Authorization/WWW-Authenticate/CSRF/API-
+// key/…) is simply never read, so a fetch can never surface the user's session. Absent headers are omitted.
+function safeResponseHeaders(h: Headers): NonNullable<FetchResult["headers"]> | undefined {
+    const map: [keyof NonNullable<FetchResult["headers"]>, string][] = [
+        ["link", "link"], ["etag", "etag"], ["lastModified", "last-modified"], ["retryAfter", "retry-after"],
+        ["contentLength", "content-length"], ["contentDisposition", "content-disposition"],
+        ["cacheControl", "cache-control"], ["date", "date"],
+    ];
+    const out: NonNullable<FetchResult["headers"]> = {};
+    let any = false;
+    for (const [field, name] of map) { const v = h.get(name); if (v != null) { out[field] = v; any = true; } }
+    return any ? out : undefined;
+}
 async function fetchUrlContent(url: string, credentials = false): Promise<FetchResult> {
     // `credentials:"include"` sends the user's cookies (authenticated fetch — gated + one-time upstream);
     // default `"omit"` reads only public bytes. Browser-identity headers either way (see browserFetchHeaders).
@@ -2786,6 +2800,7 @@ async function fetchUrlContent(url: string, credentials = false): Promise<FetchR
         url: res.url || url, status: res.status, ok: res.ok, type, language,
         typeByHeader: byHeader, typeByContent: byContent, typeByExtension: byExtension, contentType, text,
         truncated: truncated || undefined, redirected: res.redirected || undefined,
+        headers: safeResponseHeaders(res.headers),
     };
     // Pre-parse JSON only when it's whole — a truncated body can't parse. (type stays "json" so the agent knows.)
     // A parsed value also gets a compact TS-like `schema` (jsonShape) so the model can see the structure

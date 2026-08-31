@@ -1173,9 +1173,6 @@ class AgentHandle implements MlAgentHandle, AgentControl {
          * @param {Object} [options] Chat options.
          * @returns {Promise<string>} The model's concise reply.
          */
-        chatShort: async function(prompt: string, options: ChatOptions): Promise<string> {
-            return (await this.chat(`${prompt}. Short and concise:`, options)) as string;
-        },
         // OCR: transcribe baked-in text from an image to a plain string, using
         // the dedicated OCR (vision) model — so the reasoning model never sees
         // image tokens. Composes with chat:
@@ -2312,7 +2309,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
          *
          * @param {string} url An absolute http(s) URL.
          * @param {{ fresh?: boolean; credentials?: boolean; rendered?: boolean }} [opts] `fresh` bypasses the read cache; `credentials` fetches with the user's cookies; `rendered` loads it in a background tab and returns the settled DOM (both gated, uncached).
-         * @returns {Promise<FetchResult>} { url, status, ok, type, language?, text, json?, schema?, typeBy*, truncated?, rendered? }.
+         * @returns {Promise<FetchResult>} { url, status, ok, type, language?, text, json?, schema?, typeBy*, truncated?, rendered?, headers? }. `headers` is a SAFELIST of non-sensitive response headers (link/etag/lastModified/retryAfter/contentLength/contentDisposition/cacheControl/date) — auth headers (Cookie/Authorization/…) are never exposed.
          */
         fetch: function(url: string, opts?: { fresh?: boolean; credentials?: boolean; rendered?: boolean }): Promise<import("./contract").FetchResult> {
             const key = String(url);   // the real method always fetches live; `fresh` only matters for the read-only cache path
@@ -2379,26 +2376,6 @@ class AgentHandle implements MlAgentHandle, AgentControl {
          */
         unload: async function(model: string | null = null): Promise<string[]> {
             return makeBackgroundTaskPromise("UNLOAD_REQUEST", "UNLOAD_RESPONSE", { "model": model });
-        },
-        /**
-         * Chat and log the response to the console.
-         *
-         * @param {string} prompt The user prompt.
-         * @param {Object} [options] Chat options.
-         */
-        logChat: async function(prompt: string, options: ChatOptions): Promise<void> {
-            const response = await this.chat(prompt, options);
-            console.log(response);
-        },
-        /**
-         * Chat with a "short and concise" modifier and log the response.
-         *
-         * @param {string} prompt The user prompt.
-         * @param {Object} [options] Chat options.
-         */
-        logChatShort: async function(prompt: string, options: ChatOptions): Promise<void> {
-            const response = await this.chatShort(prompt, options);
-            console.log(response);
         },
     };
 

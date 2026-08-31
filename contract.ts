@@ -236,6 +236,20 @@ export interface FetchResult {
                               // intermediate chain isn't visible to fetch; a redirect log needs chrome.webRequest)
     rendered?: boolean;       // the body is the SETTLED DOM after the page's JS ran in a background tab (rendered
                               // mode), not the raw HTTP response — so client-rendered/SPA content is present
+    /** A SAFELIST of NON-SENSITIVE response headers — the ONLY headers ever exposed. Auth-bearing headers
+     *  (Cookie, Set-Cookie, Authorization, WWW-Authenticate, CSRF/API-key headers, …) are STRUCTURALLY excluded
+     *  and never appear here, so a fetch can never leak the user's session. Each field is absent when the server
+     *  didn't send it. (Rendered mode is a DOM snapshot, not an HTTP response, so it has none of these.) */
+    headers?: {
+        link?: string;               // RFC-5988 pagination (rel="next"/"last") — count or page through a list API
+        etag?: string;               // opaque version tag (caching / optimistic concurrency)
+        lastModified?: string;       // the resource's last-modified date
+        retryAfter?: string;         // 429/503 backoff — seconds, or an HTTP date
+        contentLength?: string;      // the server's declared body size in bytes
+        contentDisposition?: string; // e.g. `attachment; filename="report.zip"` — the intended download filename
+        cacheControl?: string;       // cache directives (max-age, no-store, …)
+        date?: string;               // the server's response date
+    };
 }
 
 /** Append a debug event to a per-tab HUD replay ring, dropping the oldest past `cap` — but NEVER dropping a
@@ -617,6 +631,19 @@ export interface ToolContext {
      *  uses. Equals `model` when the driver sees natively (`driverSees`), else a separate reader (the OCR
      *  model); null when no vision model resolved. Carried from the auto-wire's one resolution. */
     visionModel: string | null;
+    /** Per-run scratch for `agent_api_docs`'s within-burst dedup — the API chunks it has already shown so a
+     *  contiguous dig doesn't re-print them (see DocsMemory). Persisted per run (keyed by the toolset) and
+     *  reset by `executeTool` once the model breaks the docs streak; a tool that doesn't use it ignores it. */
+    docsMemory?: DocsMemory;
+}
+
+/** `agent_api_docs`'s per-run memory: which reference chunks have been shown in the CURRENT burst of docs
+ *  calls, plus how many non-docs tool calls have happened since the last one (for the leniency reset). */
+export interface DocsMemory {
+    /** Section keys already shown this burst (`"type:FetchResult"`, `"member:fetch"`, `"env:…"`, `"ml"`). */
+    shown: Set<string>;
+    /** Non-`agent_api_docs` tool calls since the last docs call; `shown` clears once it exceeds the leniency. */
+    sinceDocs: number;
 }
 
 export interface MlTool {
@@ -742,6 +769,8 @@ export interface AgentOptions {
     hints?: string | null;
     maxSteps?: number;
     model?: string | null;
+    /** Toggle the model's separate reasoning pass: true = think before each step, false = don't;
+     *  null = omit the param (Ollama-only — some cloud models reject it). */
     think?: boolean | null;
     approve?: (req: ApprovalRequest) => boolean | ApprovalDecision | Promise<boolean | ApprovalDecision>;
     onStep?: ((ev: AgentStepEvent) => void) | null;
@@ -828,6 +857,9 @@ export interface ChatOptions {
     numCtx?: number | null;
     /** Ollama num_gpu (0 = force CPU); ollama format only */
     numGpu?: number | null;
+    /** Toggle the model's separate reasoning pass: true = think before answering, false = don't;
+     *  null = omit the param (Ollama-only — some cloud models reject it). The thinking text is
+     *  returned separately from the reply, not inline. */
     think?: boolean | null;
     images?: (string | HTMLImageElement)[];
     schema?: JsonSchema | null;
@@ -1374,12 +1406,6 @@ export interface MlApi {
      *  prompt string you pass (plus any `images`), NOT the page. No DOM access, no tools —
      *  to ask about the page, extract the text yourself and pass it in, or use ml.agent. */
     chat(prompt: string, options?: ChatOptions): Promise<string | unknown>;
-    /** One-shot chat that always returns a string (never a parsed schema). */
-    chatShort(prompt: string, options: ChatOptions): Promise<string>;
-    /** ml.chat but the reply is also console.logged. */
-    logChat(prompt: string, options: ChatOptions): Promise<void>;
-    /** ml.chatShort but the reply is also console.logged. */
-    logChatShort(prompt: string, options: ChatOptions): Promise<void>;
 
     /* ---- tools / agent ---- */
     /** Low-level single model turn WITH client-side tools; you own the loop. */

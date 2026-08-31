@@ -7,7 +7,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import { readFileSync } from "node:fs";
-import { generateApiDocs, renderModule, parseDecls, stripPrivateMembers } from "../scripts/gen-api-docs.mjs";
+import { generateApiDocs, renderModule, parseDecls, stripPrivateMembers, AGENT_HIDDEN } from "../scripts/gen-api-docs.mjs";
 
 const CONTRACT = readFileSync(new URL("../contract.ts", import.meta.url), "utf8");
 const docs = generateApiDocs();
@@ -25,14 +25,21 @@ const apiMembers = () => {
 
 test("api-docs.gen.ts is up to date with contract.ts (run `npm run gen-api-docs`)", () => {
     const onDisk = readFileSync(new URL("../api-docs.gen.ts", import.meta.url), "utf8");
-    assert.equal(onDisk, renderModule(docs),
+    assert.equal(onDisk, renderModule(),
         "api-docs.gen.ts is stale — contract.ts changed since the last build.");
 });
 
-test("every public MlApi member reaches the doc", () => {
+test("every public, non-AGENT_HIDDEN MlApi member reaches the doc", () => {
     const { public: pub } = apiMembers();
     assert.ok(pub.length > 15, `expected a real API surface, parsed ${pub.length} members`);
-    for (const name of pub) assert.match(docs, new RegExp(`\\b${name}\\b`), `${name} missing from the docs`);
+    for (const name of pub.filter(n => !AGENT_HIDDEN.has(n))) assert.match(docs, new RegExp(`\\b${name}\\b`), `${name} missing from the docs`);
+});
+
+test("AGENT_HIDDEN members are kept in the API but stripped from the agent doc", () => {
+    const { public: pub } = apiMembers();
+    for (const name of AGENT_HIDDEN) assert.ok(pub.includes(name), `${name} should still be a public MlApi member (only hidden from the doc)`);
+    // Their SIGNATURES don't appear (a `name(...)` call form) — `ready` legitimately shows in a preamble example.
+    for (const name of ["step", "pythonExec"]) assert.doesNotMatch(docs, new RegExp(`\\n\\s*${name}\\(`), `${name}'s signature leaked into the doc`);
 });
 
 test("`_` plumbing is stripped — members, their JSDoc, and the section header", () => {
@@ -47,11 +54,18 @@ test("`_` plumbing is stripped — members, their JSDoc, and the section header"
 test("option/result types are expanded, not just named", () => {
     // The reason the generator chases type references at all: the model needs the option
     // fields, not `options?: ChatOptions`.
-    for (const type of ["ChatOptions", "AgentOptions", "MlHistory", "MlTool", "AgentResult"]) {
+    for (const type of ["ChatOptions", "AgentOptions", "MlHistory", "AgentResult", "FetchResult"]) {
         assert.match(docs, new RegExp(`### ${type}\\b`), `${type} not expanded`);
     }
     assert.match(docs, /schema\?:/, "ChatOptions.schema missing — type expansion didn't reach the fields");
     assert.match(docs, /maxSteps\?:/, "AgentOptions.maxSteps missing");
+});
+
+test("tool-initialiser / opaque types are named but NOT expanded (the model only passes them)", () => {
+    assert.match(docs, /MlTool/, "MlTool should still be referenced by name in signatures");
+    for (const t of ["MlTool", "ToolResult", "ToolContext", "ApprovalRequest", "VisionMemory"]) {
+        assert.doesNotMatch(docs, new RegExp(`### ${t}\\b`), `${t} should be opaque (not expanded) — it's a pass-around detail`);
+    }
 });
 
 test("the doc names the console entry points the agent gets asked about", () => {
