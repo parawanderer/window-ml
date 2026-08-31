@@ -2834,7 +2834,7 @@ async function fetchRenderedContent(url: string, incognito: boolean): Promise<Fe
     let windowId: number | undefined;   // set on the incognito path — we remove the whole (minimized) window
     if (incognito) {
         if (!(await isIncognitoAllowed())) {
-            throw new Error(`A private (no-session) rendered fetch needs the extension enabled in Incognito, which is OFF. Open the extension's details page and turn ON "Allow in Incognito", then retry — OR pass credentials:true to render with your NORMAL session instead.`);
+            throw new Error(`A private (no-session) rendered fetch needs the extension enabled in Incognito, which is OFF. Turn ON "Allow in Incognito" on the extension's details page — the toolbar popup's Permissions → "Incognito rendering" opens it for you (the browser doesn't let the extension flip it automatically) — then retry, OR pass credentials:true to render with your NORMAL session instead.`);
         }
         let win: chrome.windows.Window | undefined;
         try { win = await chrome.windows.create({ url, incognito: true, focused: false, state: "minimized" }); }

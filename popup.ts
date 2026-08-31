@@ -3,6 +3,7 @@
 // via chrome.runtime for privileged work.
 import type { MlConfig, Theme, LoadedModel } from "./contract";
 import { DEFAULT_CONFIG, fmtCtx } from "./contract";   // single source of truth (see contract.ts)
+import { browserInfo } from "./util";   // browser-correct internal scheme (chrome:// vs brave://vs edge://…)
 
 // The popup is a QUICK LAUNCHER: connection (the bare minimum to work) + the two
 // always-handy toggles (theme, debug panel). Everything else — OCR/utility/grounding/
@@ -210,6 +211,39 @@ async function enableSheetsAccess() {
     }
 }
 
+// ---- Incognito access (private rendered fetch) ----
+// A `rendered: true` fetch without credentials renders in an INCOGNITO tab (no session). That needs the
+// extension's "Allow in Incognito" toggle, which — unlike host permissions — CANNOT be requested via any API
+// (it's a user-only setting). So all we can do is DEEP-LINK to the browser's extension-details page where the
+// switch lives, using the browser-correct internal scheme (chrome:// on Chrome, brave:///edge:// on forks —
+// the wrong scheme is a dead link).
+const extensionsDetailsUrl = (): string => {
+    let scheme = "chrome";
+    try { scheme = browserInfo().scheme; } catch { /* default chrome:// */ }
+    return `${scheme}://extensions/?id=${chrome.runtime.id}`;
+};
+function reflectIncognitoAccess(allowed: boolean) {
+    const btn = $("incognitoAccess") as unknown as HTMLButtonElement, hint = document.getElementById("incognitoHint")!;
+    if (allowed) {
+        btn.textContent = "Enabled ✓"; btn.disabled = true;
+        hint.innerHTML = `<span class="ok">Incognito access on — a private (no-session) <code>rendered</code> fetch works.</span>`;
+    } else {
+        btn.textContent = "Open settings"; btn.disabled = false;
+        hint.innerHTML = `Lets a <code>rendered:true</code> fetch load a page's JS PRIVATELY (incognito, no session). The browser only lets YOU turn this on — click to open the settings page, then flip “Allow in Incognito”.`;
+    }
+}
+async function refreshIncognitoAccess() {
+    try {
+        // isAllowedIncognitoAccess is callback-style; wrap it so a missing API (very old builds) hides the row.
+        if (!chrome.extension?.isAllowedIncognitoAccess) throw new Error("no incognito API");
+        chrome.extension.isAllowedIncognitoAccess((a: boolean) => reflectIncognitoAccess(!!a));
+    } catch { document.getElementById("incognitoSection")?.remove(); }
+}
+async function openIncognitoSettings() {
+    try { await chrome.tabs.create({ url: extensionsDetailsUrl() }); window.close(); }
+    catch (e: any) { setStatus(`Couldn't open the extensions page (${e?.message || e}). Open ${extensionsDetailsUrl()} manually and turn on “Allow in Incognito”.`, "err"); }
+}
+
 // ---- per-site host access (agent fetch_url) ----
 // The background's fetch_url reads a URL via the SW fetch, which "On click" site access WITHHOLDS for
 // third-party hosts. The approval card grants a host in-gesture when you approve a fetch to a new site; this
@@ -354,6 +388,7 @@ $("stopAllRuns").addEventListener("click", stopAllRuns);
 $("test").addEventListener("click", saveAndTest);
 $("refreshVram").addEventListener("click", refreshVram);
 $("sheetsAccess").addEventListener("click", enableSheetsAccess);
+$("incognitoAccess").addEventListener("click", openIncognitoSettings);
 $("permAdd").addEventListener("click", addDomain);
 $("permDomain").addEventListener("keydown", (e) => { if ((e as KeyboardEvent).key === "Enter") { e.preventDefault(); addDomain(); } });
 $("hostAdd").addEventListener("click", addHost);
@@ -364,5 +399,6 @@ $("hostDomain").addEventListener("keydown", (e) => { if ((e as KeyboardEvent).ke
 loadForm().then(loadModels);
 refreshVram();
 refreshSheetsAccess();
+refreshIncognitoAccess();
 refreshHostAccess();
 loadPerms();
