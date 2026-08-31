@@ -247,6 +247,11 @@ let cardAutoH = 200;
 let cardManualH: number | null = null;   // transient drag override (discarded when content changes / on unmount)
 let cardProseW: number | null = null;    // the caption pill's measured content width (app-reported), clamped for orbprose
 let cardDrag: { left: number; top: number } | null = null;   // live grab-drag position (px); null when resting
+// The PAGE element that had focus before the card borrowed it for an approval prompt — handed back when the
+// approval resolves (see the __mlSidebarCardFocus / approval handlers). Without this, a HUD-driven run's card
+// keeps focus after you approve, so the agent's next `@focus` type / precheck reads `#ml-sb-card` instead of
+// the canvas/field it was working on (observed: two wasted "isn't a text field or canvas" retries).
+let cardBorrowedFocus: HTMLElement | null = null;
 // The cursor's live page position + the fraction of the card it grabbed, tracked so a mid-drag SIZE change
 // (the pill collapsing to the orb) keeps that grabbed point under the cursor — instead of pinning the old
 // top-left, which flung the tiny orb to the edge with a gap. Both null when not dragging.
@@ -695,6 +700,10 @@ function onWindowMessage(e: MessageEvent): void {
         try {
             void chrome.runtime.sendMessage({ type: "SET_APPROVAL", payload: { runId: d.hash, seq: d.seq, decision: !!d.decision, persist: !!d.persist } }).catch(() => {});
         } catch { /* extension context gone */ }
+        // The approval is resolved (approve OR deny) — hand focus back to the page element the card borrowed it
+        // from, so the run's next `@focus`/type + its precheck target that element (the canvas/field), not the
+        // card. Runs BEFORE the tool executes (async in the background), so a click that re-focuses wins anyway.
+        if (cardBorrowedFocus) { const el = cardBorrowedFocus; cardBorrowedFocus = null; try { if (el.isConnected) el.focus(); } catch { /* gone/unfocusable */ } }
         return;
     }
     // The composer's "start this task": relay it to the PAGE so injected runs a REAL ml.agent() call —
@@ -836,6 +845,14 @@ function onWindowMessage(e: MessageEvent): void {
     // Moving focus is harmless — the page still can't inject a trusted keypress into this cross-origin
     // extension frame — so the keyboard gate stays unforgeable.
     if (d.__mlSidebarCardFocus && frame && e.source === frame.contentWindow) {
+        // REMEMBER the page element that had focus before we borrow it for the approval, so the approval
+        // handler can hand it back. Skip the card's own elements (don't "restore" focus to the card) and the
+        // bare body/root (nothing worth restoring). Only capture the first grab of an approval cycle.
+        const active = document.activeElement as HTMLElement | null;
+        if (!cardBorrowedFocus && active && active !== frame && active !== document.body && active !== document.documentElement
+            && !(typeof active.closest === "function" && active.closest("#ml-sb-card"))) {
+            cardBorrowedFocus = active;
+        }
         try { frame.focus(); } catch { /* ignore */ }
         return;
     }
