@@ -31,7 +31,7 @@ export interface ToolEnvelope {
     /** sealed-shadow (`>>>` into a closed/declarative root) click → the executor CDP-resolves + clicks it */
     cdpShadowClick?: { selector: string; index?: number; verify?: boolean };
     /** trusted-keyboard type (canvas / WebGL / remote-desktop / sealed field) → the executor types via CDP */
-    cdpType?: { text: string; submit?: boolean; append?: boolean; x?: number; y?: number; selector?: string; index?: number; verify?: boolean };
+    cdpType?: { text: string; submit?: boolean; append?: boolean; x?: number; y?: number; selector?: string; index?: number; verify?: boolean; verifyElement?: string; verifyFocus?: boolean };
     /** what the tool fed into the model's context (locate's snap-inject) → surfaced in the debug render + export */
     feedback?: ToolFeedback;
 }

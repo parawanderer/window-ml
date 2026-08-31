@@ -2001,6 +2001,10 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     }
                     catch (e) { return `Error: ${errText(e)}`; }
                     const label = shots[0].label;
+                    // The SUBJECT for the content line — for a marked target, `shots[0].label` is a VIEW label
+                    // ("with click-point box"), NOT a subject, which read as "Screenshot of the with click-point
+                    // box". Name the target itself; the crop labels still appear in `multi`.
+                    const subject = isMarked ? (isPoint ? `marked point ${selector!.trim()}` : `marked region ${selector!.trim()}`) : label;
                     // @pt verify shot → disclose the snap-around-point recovery, @pt-only: the
                     // driver can see here whether the mark grazes a target it can otherwise see.
                     const pointTip = isPoint
@@ -2018,7 +2022,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     let elements;
                     if (selector) { try { const el = queryAll(selector)[index || 0]; if (el) elements = [el]; } catch {} }
                     return {
-                        content: `Screenshot of the ${label}${multi} captured — shown to you in the next message.${pointTip}${overTextTip}${legend}`,
+                        content: `Screenshot of the ${subject}${multi} captured — shown to you in the next message.${pointTip}${overTextTip}${legend}`,
                         // One view → the single `image` shortcut; two → `images` (each injected as its own turn).
                         ...(shots.length > 1 ? { images: shots } : { image: shots[0].image, imageLabel: label }),
                         elements

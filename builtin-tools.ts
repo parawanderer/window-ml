@@ -7,7 +7,7 @@
 import type { MlApi, MlTool, LocateSubstep, ToolResult, RenderDescriptor, VisionMemory, ToolContext } from "./contract";
 import { DEFAULT_GROUNDING_RANGE, resolveOutputCap, outputCapPrecheck } from "./contract";
 import { PY_PACKAGE_LABELS } from "./python-env";
-import { truncate, clipOut, errText, elLine, queryAll, selectorError, googleSheetCsvUrl, nonEmptyTables, capturedClosedRoot, isElement, viewportRect, boxIntersectsText, firstHopSealed } from "./dom";
+import { truncate, clipOut, errText, elLine, queryAll, selectorError, googleSheetCsvUrl, nonEmptyTables, capturedClosedRoot, isElement, viewportRect, boxIntersectsText, firstHopSealed, clickSelector } from "./dom";
 import { accessibleName } from "./a11y";
 import { regionLegend, formatLegend, type Box as LegendBox } from "./legend";
 
@@ -22,6 +22,19 @@ import { collectCandidates, buildMarks, annotate, formatBox, letterboxToSquare, 
 // register in games and some streams drop untrusted clicks). Background-gated too — this only picks the path.
 let cdpEnabled = false;
 export const setCdpEnabled = (on: boolean): void => { cdpEnabled = on; };
+
+/** Is this element a plausible KEYBOARD target — something typing into would actually register? A text field
+ *  (input/textarea/select), a contenteditable, a <canvas> (WebGL/game/stream reading keydown), or any element
+ *  the author made focusable with `tabindex` (a custom widget). NOT the body/documentElement (= nothing
+ *  focused) or a plain button/link/div. Used by `type`'s precheck for `@focus` (fail fast, no approval, when
+ *  nothing typeable is focused) and by the whole-element verify. */
+export const isTypeableEl = (el: Element | null): boolean => {
+    if (!el || (typeof document !== "undefined" && (el === document.body || el === document.documentElement))) return false;
+    const tag = el.tagName;
+    if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || tag === "CANVAS") return true;
+    if ((el as HTMLElement).isContentEditable) return true;
+    return el.hasAttribute("tabindex");   // a focusable custom widget / game surface
+};
 
 // --- Coordinate targets (canvas / WebGL) -----------------------------------
 // A <canvas> has NO sub-node to snap to, so `locate` mints an OPAQUE `@pt:` token (see
@@ -133,7 +146,19 @@ const nounFor = (el: Element): string => {
 // targets) carry no DOM label — just a point/region kind. A tool returns this from its `render` so the
 // card describes it deterministically (custom approval-gated tools included); see contract's `action`.
 export const actionRender = (verb: string, args: Record<string, unknown>, extra?: { input?: string; note?: string }): RenderDescriptor | null => {
-    const sel = typeof args.selector === "string" ? args.selector.trim() : "";
+    let sel = typeof args.selector === "string" ? args.selector.trim() : "";
+    // @focus: resolve to the element that CURRENTLY has focus, so the approval card + the green pulsing
+    // highlight box target the REAL element (a bare "@focus" isn't a selector → no box, which is why the user
+    // never saw the highlight). Nothing focusable → a plain "focus" intent with no highlight. (Only the explicit
+    // token — an EMPTY selector stays null below, so `click` with no target is unaffected.)
+    if (sel === "@focus") {
+        const ae = typeof document !== "undefined" ? document.activeElement : null;
+        if (ae && ae !== document.body && ae !== document.documentElement) {
+            const n = accessibleName(ae) || (ae.textContent || "").trim();
+            return { type: "action", verb, kind: nounFor(ae), target: n ? truncate(n.replace(/\s+/g, " "), 80) : undefined, selector: clickSelector(ae), input: extra?.input, note: extra?.note };
+        }
+        return { type: "action", verb, kind: "focus", input: extra?.input, note: extra?.note };
+    }
     if (!sel) return null;
     const idx = typeof args.index === "number" ? args.index : 0;
     let kind: string | undefined; let target: string | undefined; let crossOrigin: string | undefined;
@@ -1087,6 +1112,26 @@ export async function captureVerify(ml: MlApi, ctx: ToolContext | undefined, cen
     catch { return {}; }
     return { content: `\n\n👁 ${areaNote} You can't see images, so this is ${reader || "the reader"}'s description:\n${desc}${clickPoint}${legend}`, feedback: { reason, via: "text", text: desc, prompt: question, image: crop } };
 }
+/** Verify by cropping the WHOLE target element (not a fixed-radius point crop) — what `type` wants: a picture
+ *  of the field/canvas it typed into. `target` is a selector or an Element; `ml.screenshot` crops it to its
+ *  bounding box. Same native (inline image) / delegated (reader describes) split + feedback shape as
+ *  captureVerify. Only `type` into an `@pt` keeps the point crop (captureVerify) — there's no element there. */
+export async function captureVerifyElement(ml: MlApi, ctx: ToolContext | undefined, target: string | Element, verb: string, label?: string): Promise<Partial<ToolResult>> {
+    const driverSees = !!ctx?.driverSees;
+    const reader = ctx?.visionModel || null;
+    if (!driverSees && !reader) return { content: "\n\n(verify was requested, but no vision model is available to capture the result — read it with look/findByText next.)" };
+    let crop: string;
+    try { crop = await ml.screenshot(target as string, { noOverlay: true }); }
+    catch { return {}; }   // the element vanished / can't be shot → no verify, base result stands
+    const what = label || (typeof target === "string" ? `"${target}"` : "the element");
+    const reason = "after the action";
+    if (driverSees) return { content: `\n\n Here's ${what} after you ${verb} it. Read the result and continue — no need to look() first.`, image: crop, imageLabel: reason, feedback: { reason, via: "image", image: crop } };
+    const question = `The image is a screenshot of ${what} just AFTER a "${verb}" action. Describe what it now shows — especially anything that CHANGED (a new value, text that appeared on it).`;
+    let desc: string;
+    try { desc = String(await ml.chat(question, { images: [crop], model: reader, maxTokens: 256, numCtx: VISION_NUM_CTX })).trim(); }
+    catch { return {}; }
+    return { content: `\n\n👁 Here's ${what} after you ${verb} it. You can't see images, so this is ${reader || "the reader"}'s description:\n${desc}`, feedback: { reason, via: "text", text: desc, prompt: question, image: crop } };
+}
 // The viewport CENTRE of an element (composing iframe offsets), for a verify crop. null if it has no box.
 const elementCenter = (el: Element): { x: number; y: number } | null => {
     const r = viewportRect(el);
@@ -1209,8 +1254,17 @@ export const buildTypeTool = (ml: MlApi): MlTool => {
     // the loop skip the approval prompt for a doomed type; run() calls it first so they can't drift.
     const typePrecheck = ({ selector, index = 0 }: { selector: string; index?: number }): string | null => {
         const s = (selector || "").trim();
-        // Trusted-keyboard targets aren't page-resolvable here — they're never "doomed"; the background types them.
-        if (s === "@focus" || s === "") return null;                          // the page's current focus (canvas/stream)
+        // @focus: type into whatever the page has focused — but FAIL FAST (doomed → no approval prompt) when
+        // there's nothing focused, or the focused thing isn't typeable (a button/link/body), so a pointless
+        // trusted-keyboard round-trip is skipped.
+        if (s === "@focus" || s === "") {
+            const ae = typeof document !== "undefined" ? document.activeElement : null;
+            if (!ae || (typeof document !== "undefined" && (ae === document.body || ae === document.documentElement)))
+                return "Nothing is focused — there's no @focus target to type into. Click the field/canvas first (so it gains focus), or type into a specific selector / @pt.";
+            if (!isTypeableEl(ae))
+                return `The focused element (${elLine(ae)}) isn't a text field or canvas, so typing into it won't register. Focus a field/canvas first, or type into a specific selector / @pt.`;
+            return null;
+        }
         if (BOX_RE.test(s)) return `"${selector}" is an @box region, not a field. Locate a control inside it, or type into an @pt / @focus.`;
         if (POINT_RE.test(s)) return resolvePoint(selector) ? null : `Unknown point token "${selector}" — it may be stale. Re-run locate.`;
         let el: Element | undefined;
@@ -1254,7 +1308,10 @@ export const buildTypeTool = (ml: MlApi): MlTool => {
             // signal — it types real (isTrusted) key events synthetic KeyboardEvents can't. `@focus`/empty →
             // the page's current focus; an `@pt` → click that point to focus, then type; a sealed `>>>` → resolve
             // + focus + type. Background-gated on the `cdp` flag (it returns an actionable note when off).
-            if (s === "@focus" || s === "") return { content: `Typing "${truncate(text, 60)}" into the page's current focus via trusted keyboard (CDP).`, cdpType: { text, submit: submit || undefined, verify: verify || undefined } };
+            // verify TARGET (the picture verify shows): the WHOLE element for a selector/@focus (verifyElement /
+            // verifyFocus), the POINT crop only for an @pt (there's no element there). Rides the cdpType signal;
+            // the background rings the page back to capture it after the trusted action.
+            if (s === "@focus" || s === "") return { content: `Typing "${truncate(text, 60)}" into the page's current focus via trusted keyboard (CDP).`, cdpType: { text, submit: submit || undefined, verify: verify || undefined, verifyFocus: verify || undefined } };
             if (POINT_RE.test(s)) { const pt = resolvePoint(s)!; return { content: `Typing "${truncate(text, 60)}" into the target at (${pt.x}, ${pt.y}) via trusted keyboard (CDP).`, cdpType: { x: pt.x, y: pt.y, text, submit: submit || undefined, verify: verify || undefined } }; }
             const sealed0 = queryAll(selector)[index];
             if (!sealed0 && firstHopSealed(selector)) return { content: `Typing "${truncate(text, 60)}" into "${selector}" inside a sealed shadow root via the debugger.`, cdpType: { selector, index, text, submit: submit || undefined, verify: verify || undefined } };
@@ -1262,10 +1319,10 @@ export const buildTypeTool = (ml: MlApi): MlTool => {
             // A <canvas> has no value / contenteditable — the normal path below would set a meaningless
             // `textContent` and falsely report "Value now: …". Route it to trusted keyboard instead: CDP-click its
             // CENTRE to focus it (a canvas keydown handler only fires on the focused canvas), then type real key
-            // events. Background gates on the cdp flag.
+            // events. verify shows the WHOLE canvas (verifyElement). Background gates on the cdp flag.
             if (el.tagName === "CANVAS") {
                 const c = elementCenter(el);
-                if (c) return { content: `Typing "${truncate(text, 60)}" into the <canvas> ${elLine(el)} via trusted keyboard (CDP) — clicking its centre to focus first.`, cdpType: { x: Math.round(c.x), y: Math.round(c.y), text, submit: submit || undefined, verify: verify || undefined } };
+                if (c) return { content: `Typing "${truncate(text, 60)}" into the <canvas> ${elLine(el)} via trusted keyboard (CDP) — clicking its centre to focus first.`, cdpType: { x: Math.round(c.x), y: Math.round(c.y), text, submit: submit || undefined, verify: verify || undefined, verifyElement: verify ? selector : undefined } };
             }
             const preCenter = elementCenter(el);   // BEFORE typing/submit, in case submit navigates the field away
             const input = el as HTMLInputElement;
@@ -1290,10 +1347,15 @@ export const buildTypeTool = (ml: MlApi): MlTool => {
             const shown = editable ? input.value : (el.textContent || "");
             const base = `Typed into ${elLine(el)}. Value now: "${truncate(shown, 100)}".${note}`;
             if (verify) {
-                // Re-resolve: center on the field's CURRENT spot if it survived, else its pre-type spot (submit navigated it away → mutated).
-                let center = preCenter, mutated = false;
-                try { const now = queryAll(selector)[index]; const c = (now && isElement(now)) ? elementCenter(now) : null; if (c) center = c; else mutated = true; } catch { mutated = true; }
-                if (center) { const v = await captureVerify(ml, ctx, center, "typed", mutated); return { content: base + (v.content || ""), image: v.image, imageLabel: v.imageLabel, feedback: v.feedback }; }
+                // If the field SURVIVED, verify shows the WHOLE field (a picture of what you typed into), not a
+                // fixed-radius point crop. If it VANISHED after submit (navigation), fall back to a point crop of
+                // where it was, flagged as mutated.
+                let now: Element | undefined; try { now = queryAll(selector)[index]; } catch { /* gone */ }
+                if (now && isElement(now)) {
+                    const v = await captureVerifyElement(ml, ctx, now, "typed", `the field ${elLine(now)}`);
+                    if (v.content || v.image || v.feedback) return { content: base + (v.content || ""), image: v.image, imageLabel: v.imageLabel, feedback: v.feedback };
+                }
+                if (preCenter) { const v = await captureVerify(ml, ctx, preCenter, "typed", true); return { content: base + (v.content || ""), image: v.image, imageLabel: v.imageLabel, feedback: v.feedback }; }
             }
             return `${base} Re-run look/findByText to see the result.`;
         }

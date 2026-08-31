@@ -58,6 +58,19 @@ test("run()-precomputed render slots become renderIn/renderOut (descriptorFor)",
     endRun("r4");
 });
 
+test("a multi-crop look (plural `images`, no single `image`) still renders its screenshot in Out", async () => {
+    // Regression: descriptorFor only derived the Out image from `image` (singular). A two-view look
+    // (views:["overlay","no-overlay"]) returns `images`, so the debug log showed NO screenshot. Now the
+    // FIRST (marked) crop becomes the Out image descriptor.
+    registerRun("rimg", [tool({ name: "look", run: async () => ({
+        content: "Screenshot captured",
+        images: [{ image: "data:image/png;base64,MARKED", label: "with click-point box" }, { image: "data:image/png;base64,CLEAN", label: "clean — no box" }],
+    }) })]);
+    const env = await runDelegatedTool("rimg", "look", {});
+    assert.deepEqual(env.renderOut, { type: "image", src: "data:image/png;base64,MARKED", label: "with click-point box" }, "the primary crop renders instead of vanishing");
+    endRun("rimg");
+});
+
 test("auto-derived elements render uses clickSelector (the model's currency), NOT elPath", async () => {
     // The rendered element list must PAIR with the selectors the tool hands the model in its text
     // (click/type/answer take clickSelector). elPath's full path wouldn't match; also no bogus

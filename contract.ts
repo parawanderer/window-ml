@@ -476,7 +476,7 @@ export interface ToolResult {
      *  `>>>` `selector` (CDP-resolve → focus the field) · an `@pt` `x,y` (CDP-click there first to focus) · or
      *  NEITHER (type into the page's CURRENT focus — a canvas/stream). `submit` presses Enter after; `append`
      *  keeps the field's existing value (else clears it first, sealed field only). Background-only, `cdp`-gated. */
-    cdpType?: { text: string; submit?: boolean; append?: boolean; x?: number; y?: number; selector?: string; index?: number; verify?: boolean };
+    cdpType?: { text: string; submit?: boolean; append?: boolean; x?: number; y?: number; selector?: string; index?: number; verify?: boolean; verifyElement?: string; verifyFocus?: boolean };
     /** what this tool fed into the model's context (locate's snap-inject); surfaced in the debug render + export */
     feedback?: ToolFeedback;
 }
@@ -566,6 +566,9 @@ export interface ToolRenderInput {
     elements?: Node[];
     image?: string;
     imageLabel?: string;
+    /** multiple inline images the tool sent the model (look's overlay + no-overlay crops) — the Out render
+     *  shows the FIRST when there's no single `image`, so a multi-crop look still renders its screenshot */
+    images?: { image: string; label?: string }[];
     /** an Out render the tool's run() precomputed (wins over auto-derive) */
     render?: RenderDescriptor;
     /** an In render the tool's run() precomputed (wins over the render() method) */
@@ -1080,7 +1083,7 @@ export interface PageToolEnvelope {
     /** TRUSTED-KEYBOARD type: the BACKGROUND types `text` via CDP (real key events) into a sealed `>>>` field
      *  (`selector`), an `@pt` (`x,y`, clicked first to focus), or the current focus (neither) — for canvas /
      *  WebGL / remote-desktop targets where synthetic KeyboardEvents don't register. `cdp`-gated. */
-    cdpType?: { text: string; submit?: boolean; append?: boolean; x?: number; y?: number; selector?: string; index?: number; verify?: boolean };
+    cdpType?: { text: string; submit?: boolean; append?: boolean; x?: number; y?: number; selector?: string; index?: number; verify?: boolean; verifyElement?: string; verifyFocus?: boolean };
     /** DELEGATED vision sub-call tokens spent BY THIS tool call (look/locate/verify's own ml.chat) — a DELTA
      *  measured around the page-side run, so the background loop can accumulate the per-turn tally its meta
      *  tool + UI report (the page meter, bus.ts, lives page-side and the SW loop can't read it directly). */

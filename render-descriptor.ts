@@ -26,6 +26,9 @@ export function descriptorFor(
     let outD: RenderDescriptor | undefined;
     if (input.render && input.render.type) outD = input.render;   // run() precomputed the Out (e.g. locate's marks)
     else if (input.image) outD = { type: "image", src: input.image, label: input.imageLabel };
+    // A multi-crop look (views:["overlay","no-overlay"]) returns `images` (plural) and NO single `image` —
+    // show the primary (marked) crop so the screenshot the model saw still renders instead of vanishing.
+    else if (input.images?.length) outD = { type: "image", src: input.images[0].image, label: input.images[0].label };
     else if (input.elements?.length) outD = {
         type: "elements",
         // Use clickSelector — the SAME stateless currency the tools hand the model in their text

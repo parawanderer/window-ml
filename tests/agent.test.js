@@ -490,13 +490,13 @@ test("click verify: a self-removing element is flagged MUTATED (area centered on
     assert.match(res.feedback.reason, /changed/i, "and the feedback reason says the target changed");
 });
 
-test("type verify: captures the field area after typing", async () => {
+test("type verify: captures the WHOLE field element after typing", async () => {
     const { ml, document } = loadDomWorld('<input id="q" type="text">');
     mockRect(document.getElementById("q"), { x: 5, y: 5, w: 200, h: 24 });
     ml.screenshot = async () => "data:image/png;base64,CROP";
     const res = await ml.typeTool().run({ selector: "#q", text: "hello", verify: true }, visionCtx(true));
-    assert.equal(res.image, "data:image/png;base64,CROP", "the field-area crop is injected");
-    assert.match(res.content, /area where you typed/i);
+    assert.equal(res.image, "data:image/png;base64,CROP", "a crop of the whole field is injected");
+    assert.match(res.content, /after you typed it/i, "verify now shows the whole selector element, not a point crop");
     assert.match(res.content, /Value now: "hello"/, "the base type result is still there");
 });
 

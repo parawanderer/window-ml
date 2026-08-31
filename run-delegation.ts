@@ -13,9 +13,9 @@
 import type { MlTool, PageToolEnvelope, SubcallUsage } from "./contract";
 import { outputCapEscalated } from "./contract";
 import { executeTool, toolContext } from "./tool-exec";
-import { captureVerify } from "./builtin-tools";
+import { captureVerify, captureVerifyElement } from "./builtin-tools";
 import { htmlToMarkdown } from "./html-to-md";
-import { clipOut } from "./dom";
+import { clipOut, elLine } from "./dom";
 import { descriptorFor } from "./render-descriptor";
 import { evalReadonly } from "./readonly-exec";
 import { formatReadonlyExec } from "./approval";
@@ -75,7 +75,7 @@ export function getRun(runId: string): PageRun | undefined { return runs.get(run
  *  executeTool already validates args + catches errors (never throws), so this only reduces the
  *  envelope: real nodes → a count, and an answer-capable tool's nodes are stashed page-side. */
 const VERIFY_TEXT_MAX = 8000;   // cap the navigate verify:"text" Markdown so a big page can't flood the turn
-export async function runDelegatedTool(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all" } = {}): Promise<PageToolEnvelope> {
+export async function runDelegatedTool(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyElement?: string; verifyFocus?: boolean } = {}): Promise<PageToolEnvelope> {
     const run = runs.get(runId);
     if (!run) return { result: `Error: no active agent run "${runId}" on this page (it may have ended).` };
     // navigate({ verify: "text" / "text-all" }): after the destination page re-adopts, the background rings
@@ -99,6 +99,25 @@ export async function runDelegatedTool(runId: string, name: string, args: Record
         if (!ml) return { result: "" };
         return withSubUsage(async () => {
             const v = await captureVerify(ml, ctx, null, "navigated");
+            return { result: v.content || "", image: v.image, imageLabel: v.imageLabel, feedback: v.feedback };
+        });
+    }
+    // Post-CDP `type` verify — the WHOLE element (verifyElement = a selector) or the FOCUSED element
+    // (verifyFocus). The trusted type ran BACKGROUND-side, so the page captures the picture HERE. A canvas /
+    // sealed / normal selector shows its whole box; @focus shows document.activeElement (viewport if none).
+    if (opts.verifyElement || opts.verifyFocus) {
+        const ctx = toolContext(run.byName, run.model ?? null, null, run.driverSees ?? false, run.visionModel ?? null);
+        const ml = (typeof window !== "undefined" ? window.ml : null) as unknown as import("./contract").MlApi;
+        if (!ml) return { result: "" };
+        return withSubUsage(async () => {
+            if (opts.verifyElement) {
+                const v = await captureVerifyElement(ml, ctx, opts.verifyElement!, "typed");
+                return { result: v.content || "", image: v.image, imageLabel: v.imageLabel, feedback: v.feedback };
+            }
+            const ae = typeof document !== "undefined" ? document.activeElement : null;
+            const focusable = ae && ae !== document.body && ae !== document.documentElement;
+            const v = focusable ? await captureVerifyElement(ml, ctx, ae as Element, "typed", `the focused element ${elLine(ae as Element)}`)
+                : await captureVerify(ml, ctx, null, "typed");
             return { result: v.content || "", image: v.image, imageLabel: v.imageLabel, feedback: v.feedback };
         });
     }
@@ -178,8 +197,8 @@ export async function runDelegatedTool(runId: string, name: string, args: Record
 export function installToolDelegation(): void {
     window.addEventListener("message", async (event: MessageEvent) => {
         if (event.source !== window || !event.data || event.data.type !== "PAGE_TOOL_RUN") return;
-        const { callId, runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText } = event.data as { callId: string; runId: string; name: string; args: Record<string, unknown>; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all" };
-        const envelope = await runDelegatedTool(runId, name, args || {}, { renderOnly: !!renderOnly, readonlyTry: !!readonlyTry, precheck: !!precheck, verifyAt, verifyViewport: !!verifyViewport, verifyText });
+        const { callId, runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyElement, verifyFocus } = event.data as { callId: string; runId: string; name: string; args: Record<string, unknown>; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyElement?: string; verifyFocus?: boolean };
+        const envelope = await runDelegatedTool(runId, name, args || {}, { renderOnly: !!renderOnly, readonlyTry: !!readonlyTry, precheck: !!precheck, verifyAt, verifyViewport: !!verifyViewport, verifyText, verifyElement, verifyFocus });
         window.postMessage({ type: "PAGE_TOOL_RESULT", callId, envelope }, "*");
     });
 }

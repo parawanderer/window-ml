@@ -2003,7 +2003,12 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                             if (!("ok" in typed)) return { result: (typed as { error: string }).error, renderIn: env.renderIn, renderOut: env.renderOut };
                             let vres = "", vimg: string | undefined, vimgLabel: string | undefined, vfeedback: import("./contract").ToolFeedback | undefined;
                             if (t.verify) {
-                                const payload = typeof fx === "number" && typeof fy === "number" ? { runId, verifyAt: { x: fx, y: fy } } : { runId, verifyViewport: true };
+                                // The verify PICTURE: the whole element (selector/canvas → verifyElement), the focused
+                                // element (@focus → verifyFocus), else the point crop (an @pt / sealed field, by coords).
+                                const payload = t.verifyElement ? { runId, verifyElement: t.verifyElement }
+                                    : t.verifyFocus ? { runId, verifyFocus: true }
+                                    : typeof fx === "number" && typeof fy === "number" ? { runId, verifyAt: { x: fx, y: fy } }
+                                    : { runId, verifyViewport: true };
                                 const venv = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload }).catch(() => null) as Partial<import("./contract").PageToolEnvelope> | null;
                                 if (venv) { vres = venv.result || ""; vimg = venv.image; vimgLabel = venv.imageLabel; vfeedback = venv.feedback; addSub(venv.subUsage); }
                             }

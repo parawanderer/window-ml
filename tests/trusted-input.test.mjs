@@ -22,18 +22,36 @@ const typeTool = () => buildTypeTool(ml);
 const clickTool = () => buildClickTool(ml);
 
 test("type @focus → a cdpType signal for the page's CURRENT focus (no coords, no selector)", async () => {
-    mount();
-    const res = await typeTool().run({ selector: "@focus", text: "hello", submit: true });
+    const doc = mount(`<input id="f">`);
+    doc.getElementById("f").focus();   // something typeable is focused, so @focus isn't doomed
+    const res = await typeTool().run({ selector: "@focus", text: "hello", submit: true, verify: true });
     assert.ok(res.cdpType, "emits cdpType");
     assert.equal(res.cdpType.text, "hello");
     assert.equal(res.cdpType.submit, true, "submit rides along");
+    assert.equal(res.cdpType.verifyFocus, true, "verify shows the whole FOCUSED element");
     assert.ok(!("x" in res.cdpType) && !("selector" in res.cdpType), "focus mode carries neither coords nor a selector");
 });
 
 test("type '' (empty selector) is treated as @focus too", async () => {
-    mount();
+    const doc = mount(`<input id="f">`);
+    doc.getElementById("f").focus();
     const res = await typeTool().run({ selector: "", text: "hi" });
     assert.ok(res.cdpType && res.cdpType.text === "hi", "empty selector → current-focus cdpType");
+});
+
+test("type @focus with NOTHING focused → fails fast (no cdpType, no approval)", async () => {
+    mount(`<div>nothing focusable</div>`);   // activeElement = body
+    const res = await typeTool().run({ selector: "@focus", text: "hi" });
+    assert.equal(typeof res, "string", "a plain doomed-precheck error, not a cdpType signal");
+    assert.match(res, /Nothing is focused/);
+});
+
+test("type @focus onto a NON-typeable focused element (a button) → fails fast", async () => {
+    const doc = mount(`<button id="b">Go</button>`);
+    doc.getElementById("b").focus();
+    const res = await typeTool().run({ selector: "@focus", text: "hi" });
+    assert.equal(typeof res, "string");
+    assert.match(res, /isn't a text field or canvas/);
 });
 
 test("type @pt → a cdpType signal carrying the coordinate (click-to-focus then type)", async () => {
@@ -72,10 +90,11 @@ test("type into a NORMAL field still sets the value directly (no CDP) — the DO
 test("type into a <canvas> SELECTOR → trusted keyboard at its centre (not a fake textContent set)", async () => {
     const doc = mount(`<canvas id="screen"></canvas>`);
     doc.getElementById("screen").getBoundingClientRect = () => ({ left: 0, top: 0, width: 640, height: 380, right: 640, bottom: 380 });
-    const res = await typeTool().run({ selector: "#screen", text: "HELLO", submit: true });
+    const res = await typeTool().run({ selector: "#screen", text: "HELLO", submit: true, verify: true });
     assert.ok(res.cdpType, "a canvas selector routes to trusted keyboard, not the normal value-set path");
     assert.equal(res.cdpType.x, 320); assert.equal(res.cdpType.y, 190, "clicks the canvas CENTRE to focus first");
     assert.equal(res.cdpType.text, "HELLO"); assert.equal(res.cdpType.submit, true);
+    assert.equal(res.cdpType.verifyElement, "#screen", "verify shows the WHOLE canvas element, not the click point");
     assert.doesNotMatch(String(res.content ?? res), /Value now/, "never the misleading 'Value now: …' for a canvas");
 });
 
