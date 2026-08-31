@@ -219,6 +219,7 @@ function loadBackground({ config = {}, local = {}, onFetch, onCaptureTab, onPyRu
         debuggerCalls,
         stored,
         localStore,   // chrome.storage.local contents — tests assert a snapshot was kept/removed
+        context,      // the vm sandbox — reach test-only globalThis hooks (e.g. __mlSeedBgRunForTest)
         // Simulates chrome.runtime.sendMessage hitting the listener.
         send: (message, sender = {}) =>
             new Promise((resolve) => listeners[0](message, sender, resolve)),

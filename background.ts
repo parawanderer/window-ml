@@ -1022,6 +1022,11 @@ const hydrationDone: Promise<void> = (typeof chrome !== "undefined" && chrome.st
     runRebuilds.clear(); runReplayBuffer.clear(); pendingApprovals.clear(); hydratedRuns.clear(); resurrectedRuns.clear(); readoptPageInfo.clear();
     await hydratePersistedRuns();
 };
+// TEST-ONLY: seed a minimal resumable bgRun for a tab, so a unit test can exercise the "don't wipe a tab that
+// still has a recoverable run" guard (resetDebug / tabHasBgRun) without driving a whole run to completion.
+(globalThis as unknown as { __mlSeedBgRunForTest?: unknown }).__mlSeedBgRunForTest = (tabId: number, runId: string): void => {
+    bgRuns.set(runId, { p: { runId } as unknown as StartRunPayload, tabId, messages: [] });
+};
 
 // Per-run steering inbox (a.say() mid-run): the SW-side twin of the page loop's control.inbox. INJECT_MESSAGE
 // pushes here (only the owning tab may); the run's loop drains it at each step boundary (deps.drainInbox).
@@ -1343,7 +1348,10 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     // (which can't see page window-messages) can mirror the overlay's stream. Fire-and-
     // forget — no response. RESET clears a tab's buffer on navigation (fresh page).
     if (message.type === "ML_DEBUG_EVENT") { if (sender.tab?.id != null) relayDebugEvent(sender.tab.id, message.event); return; }
-    if (message.type === "ML_DEBUG_RESET") { if (sender.tab?.id != null) resetDebug(sender.tab.id); return; }
+    // Await the startup rehydrate before deciding whether to wipe: right after an SW respawn (e.g. a site-access
+    // grant cycled the worker), a fresh page's ML_DEBUG_RESET can RACE hydratePersistedRuns — if it wins,
+    // activeRuns/bgRuns are still empty and it wipes an interrupted run's session before it's re-tracked.
+    if (message.type === "ML_DEBUG_RESET") { const tid = sender.tab?.id; if (tid != null) void hydrationDone.then(() => resetDebug(tid)); return; }
     // DevTools-panel hover-highlight reverse channel: the panel (a devtools page) can't reach the
     // inspected page, so it asks us to relay its highlight request to that tab's content-script shell,
     // which draws the box. Only the extension can call a typed background message like this — a web page
@@ -2381,9 +2389,13 @@ function relayDebugEvent(tabId: number, event: unknown): void {
 // connected panel to drop its stale sessions — the panel's app outlives a page reload, so
 // without this it keeps the prior load's data while new events pile on under it.
 function resetDebug(tabId: number): void {
-    // A cross-page run's shell remounts on the new page and fires ML_DEBUG_RESET — but the run is STILL live,
-    // so keep its history: don't wipe the buffer or tell panels to drop sessions while the tab hosts a run.
-    if (activeRuns.has(tabId)) return;
+    // A cross-page run's shell remounts on the new page and fires ML_DEBUG_RESET — but the run may STILL be
+    // live (activeRuns) OR resumable (bgRuns: completed-but-follow-up-able, or INTERRUPTED by an SW restart —
+    // e.g. a mid-run site-access grant that cycled the worker). In any of those the session is on disk / in
+    // bgRuns and about to recover, so keep its history: a late CS injection's reset must NOT drop the panel/HUD
+    // session out from under a run that's coming back (the reported "the session vanished after I granted the
+    // site" bug). Only a tab with NO run at all clears.
+    if (activeRuns.has(tabId) || tabHasBgRun(tabId)) return;
     debugBuffer.delete(tabId);
     const ports = devtoolsPorts.get(tabId);
     if (ports) for (const p of ports) { try { p.postMessage({ reset: true }); } catch { /* port closing */ } }

@@ -1470,7 +1470,7 @@ test("SAVE_SESSION persists a session that GET_SESSION reads back", async () => 
     assert.equal(missing.data, null);
 });
 
-test("devtools panel: buffers debug events per tab, replays on connect, relays live, resets", () => {
+test("devtools panel: buffers debug events per tab, replays on connect, relays live, resets", async () => {
     const bg = loadBackground({ config: baseConfig() });
     // Fire-and-forget: the ML_DEBUG_* handlers don't sendResponse, so we don't await —
     // they run synchronously inside the send() executor.
@@ -1492,11 +1492,29 @@ test("devtools panel: buffers debug events per tab, replays on connect, relays l
     assert.equal(live.length, 1, "one live relay");
     assert.equal(live[0].__mlDebug.n, 3);
 
-    // RESET clears the tab's buffer (fresh page) → a panel opened after replays nothing.
+    // RESET clears the tab's buffer (fresh page) → a panel opened after replays nothing. The handler now
+    // defers past the startup rehydrate (a microtask), so let it settle before asserting.
     bg.send({ type: "ML_DEBUG_RESET" }, { tab: { id: 7 } });
+    await new Promise(r => setTimeout(r, 0));
     const panel2 = bg.connect("ml-devtools");
     panel2.send({ type: "ml-devtools-init", tabId: 7 });
     assert.deepEqual(panel2.messages.find(m => Array.isArray(m.replay)).replay, [], "reset → nothing to replay");
+});
+
+test("ML_DEBUG_RESET does NOT wipe a tab that still has a resumable/interrupted run (the site-grant vanish)", async () => {
+    // A mid-run site-access grant can cycle the SW; the destination page's late CS injection then fires
+    // ML_DEBUG_RESET. If that wiped the panel while the interrupted run is recovering (in bgRuns), the session
+    // vanishes. Simulate: buffer events for a tab, mark the tab as HOSTING a bg run, then reset → kept.
+    const bg = loadBackground({ config: baseConfig() });
+    bg.send({ type: "ML_DEBUG_EVENT", event: { kind: "agent", n: 1 } }, { tab: { id: 5 } });
+    bg.send({ type: "ML_DEBUG_EVENT", event: { kind: "agent-step", n: 2 } }, { tab: { id: 5 } });
+    bg.context.__mlSeedBgRunForTest(5, "run5");   // the tab has a run in bgRuns (completed-resumable or hydrated-interrupted)
+    bg.send({ type: "ML_DEBUG_RESET" }, { tab: { id: 5 } });
+    await new Promise(r => setTimeout(r, 0));
+    const panel = bg.connect("ml-devtools");
+    panel.send({ type: "ml-devtools-init", tabId: 5 });
+    const replay = panel.messages.find(m => Array.isArray(m.replay)).replay;
+    assert.equal(replay.length, 2, "the interrupted/resumable run's history survived the late reset");
 });
 
 test("ML_HL_REMOTE: the panel's hover-highlight is relayed to the inspected tab's content script", () => {

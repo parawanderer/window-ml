@@ -709,6 +709,37 @@ test("durable resume: an SW-evicted run rehydrates and continues when the page r
     await page.close();
 });
 
+// REPRO of the reported vanish: a CROSS-ORIGIN nav to a not-yet-granted site pops Chrome's native site-access
+// grant, and granting it can CYCLE the MV3 service worker mid-nav (re-registering content scripts). We model
+// that as: approve the cross-origin nav → it lands → EVICT the SW (drops in-memory bgRuns/activeRuns, like a
+// real restart) → the grant re-injects the CS (a fresh CONTENT_READY = a reload). The run must RECOVER via
+// durable resume and continue on the destination origin, not vanish.
+test("cross-domain durable resume: an SW restart during the cross-origin nav (site grant) recovers on the destination", async () => {
+    const page = await ext.context.newPage();
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+    const before = fake.calls().length;
+    fake.setScript([
+        { tool: "navigate", args: { url: site.crossOrigin + "/" } },   // cross-origin → gates for consent
+        { tool: "findByText", args: { text: "XDOMAIN" } },             // runs ON the destination after re-adopt
+        { content: "Continued after the grant restarted the worker." },
+    ]);
+    await page.evaluate((cross) => { window.ml.agent(`Go to ${cross} and read the code.`, { env: false, crossOrigin: true, approvalRouting: "external" }); return true; }, site.crossOrigin);
+    await expect.poll(async () => (await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).length, { timeout: 15000 }).toBe(1);
+    const [gate] = await ext.sw.evaluate(() => globalThis.__mlApprovals.list());
+    await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), gate.key);   // approve the crossing
+    await expect.poll(() => new URL(page.url()).host, { timeout: 20000 }).toBe(new URL(site.crossOrigin).host);   // it landed on the other origin
+
+    // The site grant restarts the worker mid-nav → drop in-memory state (durable snapshot survives on disk).
+    await ext.sw.evaluate(() => globalThis.__mlEvictForTest());
+    // The grant re-injects the content script = a fresh CONTENT_READY on the destination origin.
+    await page.reload();
+    await waitForMl(page);
+    // The run must RECOVER and finish (findByText + answer) — not vanish.
+    await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBeGreaterThanOrEqual(3);
+    await page.close();
+});
+
 // The debug SURFACE (inline sidebar / off card / devtools panel — same app) must show the run's FULL history
 // on the destination page after a nav, not just post-nav steps: the overlay shell mounts fresh per page and
 // gets the run's replayed history (runReplayBuffer) on re-adopt. Here we assert the rendered steps directly.
