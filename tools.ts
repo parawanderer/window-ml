@@ -117,7 +117,7 @@ const sourceSection = (): string => {
     const b = BUILD_INFO;
     const lines: string[] = [];
     if (b.repoUrl) lines.push(`- Public repository: ${b.repoUrl}`);
-    if (b.shortCommit) lines.push(`- This harness is built from commit \`${b.shortCommit}\`${b.commitDate ? ` (committed ${b.commitDate})` : ""}${b.commitUrl ? ` — ${b.commitUrl}` : ""}`);
+    if (b.shortCommit) lines.push(`- This harness is built from commit \`${b.shortCommit}\`${(b as { dirty?: boolean }).dirty ? " PLUS uncommitted local changes (NOT a clean build of that commit — the source at this commit won't match exactly)" : ""}${b.commitDate ? ` (committed ${b.commitDate})` : ""}${b.commitUrl ? ` — ${b.commitUrl}` : ""}`);
     if (b.buildTime) lines.push(`- Built: ${b.buildTime}`);
     if (!lines.length) return "";
     return ["## My source", "",

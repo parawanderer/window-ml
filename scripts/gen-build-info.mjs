@@ -38,9 +38,15 @@ function repoUrl() {
 export function writeBuildInfo() {
     const commit = git("rev-parse HEAD");
     const url = repoUrl();
+    // Is the working tree DIRTY at build time — uncommitted changes (staged or unstaged) on top of `commit`?
+    // `status --porcelain` prints one line per change, so any output = dirty. A build FROM a clean checkout is
+    // exactly `commit`; a dev build usually isn't, and the export should say so (so a logged "91f98a1" is
+    // trustworthy only when clean). Empty (no git) → false, same soft-fail as the rest.
+    const dirty = git("status --porcelain") !== "";
     const info = {
         commit,
         shortCommit: git("rev-parse --short HEAD"),
+        dirty,   // true = built with uncommitted changes on top of `commit` (not a reproducible build)
         commitDate: git("show -s --format=%cI HEAD"),   // ISO-8601 committer date (when the commit was made)
         repoUrl: url,
         commitUrl: url && commit ? `${url}/commit/${commit}` : "",

@@ -20,6 +20,9 @@ import { BUILD_INFO } from "../build-info.gen";
 // char count so a reader can judge the real cost of both export variants.
 const estTokens = (s: string): number => Math.ceil(s.length / 4);
 const sizeTag = (s: string): string => `(${s.length.toLocaleString()} chars, ~${estTokens(s).toLocaleString()} tokens)`;
+// The build the run's extension was on. `-dirty` when it was built with uncommitted changes (so a bare short
+// commit in a log is trustworthy only when it's absent) — the same provenance the agent reads via agent_api_docs.
+const buildLabel = (): string => `${BUILD_INFO.shortCommit}${(BUILD_INFO as { dirty?: boolean }).dirty ? "-dirty (uncommitted changes)" : ""} · built ${fullStamp(Date.parse(BUILD_INFO.buildTime))}`;
 import { annotatedConfig, resolveModel, shownModel } from "./model";
 
 type Sidecar = { name: string; bytes: Uint8Array };
@@ -153,7 +156,7 @@ function writeAgent(s: Session, d: Sink): void {
         ["Outcome", s.hitCap ? "stopped (step cap)" : s.status === "err" ? "error" : s.summary != null ? "answered" : "running"],
         // The build this run's extension was on — the SAME commit the agent reads via agent_api_docs, so an
         // exported log is pinnable to a build when reproducing behaviour.
-        ["Build", `${BUILD_INFO.shortCommit} · built ${fullStamp(Date.parse(BUILD_INFO.buildTime))}`],
+        ["Build", buildLabel()],
     ]);
     // Composer attachments the user pasted with the initial task → PNG sidecars (as the sidebar shows them).
     (s.taskImages || []).forEach((img, j) => d.image(img, `task-img-${j + 1}`, `task image ${j + 1}`));
@@ -346,7 +349,7 @@ function writeChat(s: Session, d: Sink): void {
     const meta: [string, string][] = [];
     if (s.title) meta.push(["Title", s.title]);
     meta.push(["Started", fullStamp(s.createdTs)], ["Last activity", fullStamp(s.lastTs)], ["Type", s.tag]);
-    meta.push(["Build", `${BUILD_INFO.shortCommit} · built ${fullStamp(Date.parse(BUILD_INFO.buildTime))}`]);
+    meta.push(["Build", buildLabel()]);
     d.meta(meta);
     d.head("Options");
     d.code(annotatedConfig(s.config), "javascript");
