@@ -2867,6 +2867,33 @@ function renderSnapshot(): { html: string; href: string } {
         // Overlays often lock body scroll — irrelevant to the text grab, but tidy up so nothing looks frozen.
         try { document.documentElement.style.overflow = ""; if (document.body) document.body.style.overflow = ""; } catch { /* ignore */ }
     } catch { /* leave the DOM as-is on any failure */ }
+    // Prune NON-VISIBLE elements so the markdown reflects what the page actually SHOWS. Rendered runs in a live
+    // tab WITH LAYOUT, so `checkVisibility()` is real here (a raw fetch has no layout). This kills the hidden
+    // fallback slots frameworks SSR but never reveal — e.g. GitHub's `<div data-show-on-forbidden-error hidden>`
+    // "Uh oh!"/"Sorry, something went wrong" blocks that otherwise pollute the output. Off-screen / below-the-fold
+    // content STAYS (checkVisibility is about display/visibility/hidden/content-visibility, not viewport position),
+    // so a scrolled-past widget isn't lost. Top-down: a hidden node is removed WITHOUT descending (its subtree is
+    // hidden too), which also bounds the cost. Best-effort per node.
+    try {
+        const isVisible = (el: Element): boolean => {
+            try {
+                const cv = (el as unknown as { checkVisibility?: (o?: unknown) => boolean }).checkVisibility;
+                if (typeof cv === "function") return cv.call(el, { contentVisibilityAuto: true, visibilityProperty: true });
+            } catch { /* fall through to the manual check */ }
+            try {
+                if ((el as HTMLElement).hidden) return false;
+                const cs = getComputedStyle(el);
+                return cs.display !== "none" && cs.visibility !== "hidden";
+            } catch { return true; }   // can't tell → keep it
+        };
+        const prune = (root: Element): void => {
+            for (const el of Array.from(root.children)) {
+                if (!isVisible(el)) { try { el.remove(); } catch { /* gone */ } continue; }
+                prune(el);
+            }
+        };
+        if (document.body) prune(document.body);
+    } catch { /* leave the DOM as-is on any failure */ }
     return { html: (document.documentElement && document.documentElement.outerHTML) || "", href: location.href };
 }
 /** True iff the extension is allowed to run in Incognito (the user's "Allow in Incognito" toggle). Off by

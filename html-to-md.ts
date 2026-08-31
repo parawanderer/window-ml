@@ -28,6 +28,20 @@ function get(stripChrome: boolean): TurndownService {
     });
     service.use(gfm);   // tables/strikethrough/task-lists survive as GFM instead of collapsing to linear text
     service.remove([...NOISE, ...(stripChrome ? CHROME : [])] as unknown as TurndownService.Filter);
+    // STATICALLY-hidden elements — the `hidden` attribute or an inline display:none / visibility:hidden. These
+    // are in the HTML but never shown, so they pollute the reading text (e.g. GitHub SSRs `<div ... hidden>`
+    // "Uh oh!"/"Sorry, something went wrong" fallback slots). This is the raw path's analogue of the rendered
+    // path's layout-aware checkVisibility() prune — it can only see INLINE/attribute hiding (no stylesheet/layout
+    // here), but that catches the common SSR-hidden pattern. Off-screen/CSS-class-hidden content is untouched.
+    service.remove(((node: unknown): boolean => {
+        const el = node as { nodeType?: number; hasAttribute?: (n: string) => boolean; getAttribute?: (n: string) => string | null };
+        if (!el || el.nodeType !== 1 || typeof el.getAttribute !== "function") return false;
+        try {
+            if (el.hasAttribute?.("hidden")) return true;
+            const style = (el.getAttribute("style") || "").replace(/\s+/g, "").toLowerCase();
+            return /(^|;)display:none|(^|;)visibility:hidden/.test(style);
+        } catch { return false; }
+    }) as unknown as TurndownService.Filter);
     services[key] = service;
     return service;
 }

@@ -164,6 +164,12 @@ export function startPageServer({ port = 0, crossPort = 0, host = "127.0.0.1" } 
                     return res.end(`<!doctype html><meta charset=utf-8><title>lazy</title><body><div style="height:4000px">spacer above the fold</div><div id=target>placeholder</div>`
                         + `<script>var t=document.getElementById('target');var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){t.textContent='LAZY-SCROLL-5591 loaded on scroll-into-view';io.disconnect();}})});io.observe(t);</script>`);
                 }
+                if (p === "/hidden") {   // CSS-CLASS hidden content (display:none via a stylesheet rule) — only the
+                    // rendered path's layout-aware checkVisibility() catches it (the raw static strip sees inline/attr only).
+                    res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+                    return res.end(`<!doctype html><meta charset=utf-8><title>hidden</title><style>.gone{display:none}</style>`
+                        + `<body><main><p>VISIBLE-CONTENT-1</p><div class="gone"><h3>CSS-HIDDEN-JUNK-4242</h3><p>should not reach the markdown</p></div></main>`);
+                }
                 if (RAW[p]) return sendRaw(res, RAW[p]);          // raw JSON/CSV/code endpoints (ml.fetch e2e)
                 const r = routes(crossOrigin);
                 if (r[p]) return send(res, r[p]);

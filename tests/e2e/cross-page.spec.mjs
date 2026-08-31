@@ -182,6 +182,13 @@ async function renderAndCheck(path, marker) {
     expect(await renderAndCheck("/lazy", "LAZY-SCROLL-5591")).toContain("MARKER-PRESENT");
 });
 
+// renderSnapshot's layout-aware checkVisibility() prunes CSS-CLASS-hidden content (display:none via a
+// stylesheet) that the raw static strip can't see — so hidden fallback slots (GitHub's "Uh oh!" blocks) don't
+// pollute the rendered markdown.
+(BACKEND ? test.skip : test)("fetch_url rendered: checkVisibility prunes CSS-class-hidden content (raw strip can't see it)", async () => {
+    expect(await renderAndCheck("/hidden", "CSS-HIDDEN-JUNK-4242")).toContain("MARKER-ABSENT");
+});
+
 // Continue-past-step-cap: a run that STOPS at its maxSteps cap resumes — via the same __mlContinueRun the
 // "Continue (+N steps)" button posts — with a FRESH step budget, continuing from its stored state (no typed
 // follow-up). We drive a maxSteps:1 run (the first tool call exhausts the cap → hitCap), then fire the

@@ -19,6 +19,16 @@ test("strips scripts, styles, and page chrome (nav / header / footer / aside)", 
     assert.doesNotMatch(md, /evil\(\)|color:red|NAVLOGO|FOOTERJUNK|SIDEBAR|Menu Home/, "drops scripts/styles/chrome");
 });
 
+test("strips STATICALLY-hidden elements — the `hidden` attribute + inline display:none/visibility:hidden", () => {
+    // GitHub SSRs hidden fallback slots (`<div data-...-error hidden>Uh oh!</div>`) that pollute the reading text.
+    const md = htmlToMarkdown(`<main><p>Visible content.</p>`
+        + `<div data-show-on-forbidden-error hidden><h3>Uh oh!</h3><p>Sorry, something went wrong.</p></div>`
+        + `<div style="display:none">DISPLAY-NONE-JUNK</div>`
+        + `<span style="visibility: hidden">VIS-HIDDEN-JUNK</span></main>`);
+    assert.match(md, /Visible content\./, "keeps visible content");
+    assert.doesNotMatch(md, /Uh oh!|Sorry, something went wrong|DISPLAY-NONE-JUNK|VIS-HIDDEN-JUNK/, "drops statically-hidden nodes");
+});
+
 test("a full HTML document yields just the body content — head/title/meta dropped", () => {
     const md = htmlToMarkdown(`<!doctype html><html><head><title>PAGETITLE</title><meta charset="utf-8"><script>x</script></head><body><h2>Hi</h2><p>Body text.</p></body></html>`);
     assert.match(md, /## Hi/);
