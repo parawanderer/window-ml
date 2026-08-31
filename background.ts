@@ -2090,12 +2090,13 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                                 // (repeat navs to it then skip the gate).
                                 if (ok && tool === "navigate") { try { consentedOrigins.add(new URL(String((args as { url?: unknown }).url ?? "")).origin); } catch { /* relative/bad url — nothing to remember */ } }
                                 // Approving a fetch_url: an UNCREDENTIALED one consents to that EXACT url for the
-                                // session (repeat fetches auto-approve). A CREDENTIALED one (fetch-as-the-user)
-                                // instead mints a ONE-TIME grant for this url — NEVER persisted, so it always
-                                // re-prompts; consumed by the FETCH_URL handler's credentialed GET.
+                                // session (repeat fetches auto-approve). A CREDENTIALED one (fetch-as-the-user) OR
+                                // a RENDERED one (loads in a background tab as-you) instead mints a ONE-TIME grant
+                                // for this url — NEVER persisted, so it always re-prompts; consumed by the
+                                // FETCH_URL handler's credentialed/rendered GET.
                                 if (ok && tool === "fetch_url") {
                                     const u = String((args as { url?: unknown }).url ?? "");
-                                    if (u) { if ((args as { credentials?: unknown }).credentials) grantCredFetch(tabId, u); else consentFetch(tabId, u); }
+                                    if (u) { if ((args as { credentials?: unknown }).credentials || (args as { rendered?: unknown }).rendered) grantCredFetch(tabId, u); else consentFetch(tabId, u); }
                                 }
                                 // button #3: "Approve + remember" — also persist the exec's static ml.fetch
                                 // literals for the session (a positive `persist` decision only).
@@ -2264,18 +2265,20 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         (async () => {
             const url = String((message.payload as { url?: unknown })?.url || "");
             const credentials = !!(message.payload as { credentials?: unknown })?.credentials;
+            const rendered = !!(message.payload as { rendered?: unknown })?.rendered;
             let scheme = "";
             try { scheme = new URL(url).protocol; } catch { sendResponse({ error: `Refused: "${url}" is not a valid URL.` }); return; }
             if (scheme !== "http:" && scheme !== "https:") { sendResponse({ error: `Refused: ml.fetch supports only http(s) URLs (got "${scheme}").` }); return; }
             const tabId = sender.tab?.id;
             const untrusted = await senderTrust(sender) === "untrusted";
-            // CREDENTIALED (fetch-as-the-user): sends the user's cookies → a "read any URL as you" primitive, so
-            // an untrusted page needs a ONE-TIME per-URL grant (minted by an approved fetch_url, consumed here).
-            // execOpen/consent deliberately DON'T authorize it, so an inline `ml.fetch(url,{credentials:true})`
-            // in exec is refused (no per-URL grant) — directs the model to the explicit, human-approved tool.
-            if (credentials) {
+            // CREDENTIALED (fetch-as-the-user) or RENDERED (loads the URL in a background tab, which runs its JS
+            // AND carries the user's cookies) → a "read any URL as you" primitive, so an untrusted page needs a
+            // ONE-TIME per-URL grant (minted by an approved fetch_url, consumed here). execOpen/consent
+            // deliberately DON'T authorize it, so an inline as-you `ml.fetch` in exec is refused (no per-URL
+            // grant) — directing the model to the explicit, human-approved tool.
+            if (credentials || rendered) {
                 if (untrusted && !takeCredFetch(tabId, url)) {
-                    sendResponse({ error: `Refused: a credentialed fetch of "${url}" wasn't approved. A fetch AS THE USER (cookies) must be approved per-URL via the fetch_url tool ({ credentials: true }); it can't run inline in exec or reuse a prior grant.` });
+                    sendResponse({ error: `Refused: an as-you fetch of "${url}" wasn't approved. A fetch AS THE USER (${rendered ? "rendered in a background tab" : "cookies"}) must be approved per-URL via the fetch_url tool; it can't run inline in exec or reuse a prior grant.` });
                     return;
                 }
             } else {
@@ -2289,7 +2292,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             }
             const execOpen = tabId != null && !!pendingGrants.get(tabId)?.fetchOpen;
             try {
-                const data = await fetchUrlContent(url, credentials);
+                const data = rendered ? await fetchRenderedContent(url) : await fetchUrlContent(url, credentials);
                 // Redirect guard: a per-URL-consented fetch (NOT a surface/whitelisted/exec one) that ends on a
                 // DIFFERENT, un-consented origin followed a redirect off the approved resource — withhold the body
                 // (a consented public URL could redirect to a private/other target). The GET already happened but
@@ -2752,6 +2755,98 @@ async function fetchUrlContent(url: string, credentials = false): Promise<FetchR
         try { out.json = JSON.parse(text); out.schema = jsonShape(out.json); } catch { /* mislabelled → leave as text */ }
     }
     return out;
+}
+
+const RENDER_LOAD_TIMEOUT_MS = 15_000;   // max wait for the background tab to reach "complete" before snapshotting anyway
+const RENDER_SETTLE_MS = 1_200;          // then a short settle so a SPA's post-load async data lands in the DOM
+/** Resolve when tab `tabId` finishes loading (status "complete"), or after `timeoutMs` — whichever first, so a
+ *  page that never fully settles still gets snapshotted. Best-effort; never rejects. */
+function waitForTabComplete(tabId: number, timeoutMs: number): Promise<void> {
+    return new Promise((resolve) => {
+        let done = false;
+        const finish = (): void => { if (done) return; done = true; try { chrome.tabs.onUpdated.removeListener(onUpd); } catch { /* ignore */ } clearTimeout(timer); resolve(); };
+        const onUpd = (id: number, info: { status?: string }): void => { if (id === tabId && info.status === "complete") finish(); };
+        chrome.tabs.onUpdated.addListener(onUpd);
+        const timer = setTimeout(finish, timeoutMs);
+        chrome.tabs.get(tabId).then((t) => { if (t.status === "complete") finish(); }).catch(() => finish());
+    });
+}
+/** Runs IN the rendered page (serialized by executeScript — MUST be self-contained, no outer refs). Strips the
+ *  junk overlays a live SPA renders — cookie/consent banners, ad interstitials, newsletter/paywall modals —
+ *  BEFORE snapshotting, so the returned DOM (→ Markdown) is the real content, not the popup slop. Conservative:
+ *  only removes fixed/sticky/absolute-positioned nodes that either match a cookie/ad keyword or are a
+ *  high-z-index viewport-covering backdrop, and NEVER a node that holds the bulk of the page's text (so it
+ *  can't nuke a full-screen app shell). Best-effort; a failure just leaves the DOM untouched. */
+function renderSnapshot(): { html: string; href: string } {
+    try {
+        // STRONG cues → remove on sight; WEAK cues (broader, more false-positive-prone) → only when the node is
+        // small (a banner/modal, not a content region). Matched against id/class/aria/data of positioned nodes.
+        const STRONG = /cookie|consent|gdpr|ccpa|onetrust|cookiebot|truste|didomi|usercentric|paywall|newsletter|subscribe|interstitial|advert|sponsor|\bad[-_]/i;
+        const WEAK = /modal|popup|pop-up|overlay|backdrop|banner|lightbox|dialog|notice|gate|promo/i;
+        const vw = window.innerWidth || 1024, vh = window.innerHeight || 768, area = vw * vh || 1;
+        const bodyLen = ((document.body && document.body.textContent) || "").trim().length || 1;
+        const kill: Element[] = [];
+        const all = document.body ? document.body.getElementsByTagName("*") : ([] as unknown as HTMLCollectionOf<Element>);
+        for (const el of Array.from(all)) {
+            let cs: CSSStyleDeclaration;
+            try { cs = getComputedStyle(el); } catch { continue; }
+            const pos = cs.position;
+            if (pos !== "fixed" && pos !== "sticky" && pos !== "absolute") continue;
+            if (cs.display === "none" || cs.visibility === "hidden" || Number(cs.opacity) === 0) continue;
+            const cnRaw = (el as HTMLElement).className;
+            const cn = typeof cnRaw === "string" ? cnRaw : ((cnRaw as unknown as { baseVal?: string })?.baseVal || "");
+            const tag = `${el.id} ${cn} ${el.getAttribute("aria-label") || ""} ${el.getAttribute("data-testid") || ""}`.toLowerCase();
+            const txtLen = (el.textContent || "").trim().length;
+            if (txtLen > bodyLen * 0.6) continue;   // this node IS most of the page → it's content, never an overlay
+            const r = el.getBoundingClientRect();
+            const covers = r.width * r.height > area * 0.5;
+            const z = parseInt(cs.zIndex) || 0;
+            const strong = STRONG.test(tag);
+            const weakSmall = WEAK.test(tag) && txtLen < 1500;
+            const backdrop = pos === "fixed" && covers && z >= 100 && txtLen < 2000;
+            if (strong || weakSmall || backdrop) kill.push(el);
+        }
+        for (const el of kill) { try { el.remove(); } catch { /* already gone */ } }
+        // Overlays often lock body scroll — irrelevant to the text grab, but tidy up so nothing looks frozen.
+        try { document.documentElement.style.overflow = ""; if (document.body) document.body.style.overflow = ""; } catch { /* ignore */ }
+    } catch { /* leave the DOM as-is on any failure */ }
+    return { html: (document.documentElement && document.documentElement.outerHTML) || "", href: location.href };
+}
+/** RENDERED fetch: open the URL in an inactive BACKGROUND TAB so the page's JavaScript runs (client-rendered /
+ *  SPA content a raw GET can't see), let it settle, snapshot the LIVE DOM (overlays stripped — see
+ *  renderSnapshot), then ALWAYS close the tab. A real tab load carries the user's session (cookies) — so this
+ *  is credentialed-weight (gated + one-time grant upstream, never cached). The snapshot's HTML flows through
+ *  the same classify + HTML→Markdown path as a raw fetch. */
+async function fetchRenderedContent(url: string): Promise<FetchResult> {
+    let tab: chrome.tabs.Tab;
+    try { tab = await chrome.tabs.create({ url, active: false }); }
+    catch (e) { throw new Error(`Couldn't open a background tab to render "${url}" (${(e as Error)?.message || e}).`); }
+    const tabId = tab.id;
+    if (tabId == null) throw new Error(`Couldn't open a background tab to render "${url}".`);
+    try {
+        await waitForTabComplete(tabId, RENDER_LOAD_TIMEOUT_MS);
+        await new Promise((r) => setTimeout(r, RENDER_SETTLE_MS));
+        let injected: chrome.scripting.InjectionResult[] | undefined;
+        try {
+            injected = await chrome.scripting.executeScript({ target: { tabId }, func: renderSnapshot });
+        } catch (e) {
+            throw new Error(`Rendered fetch couldn't read "${url}" (${(e as Error)?.message || e}). The extension may lack access to this site (grant "On all sites" in site access), or the page blocked extension scripting.`);
+        }
+        const r = injected?.[0]?.result as { html?: string; href?: string } | undefined;
+        let text = r?.html || "";
+        const finalUrl = r?.href || url;
+        const truncated = text.length > FETCH_URL_MAX;
+        if (truncated) text = text.slice(0, FETCH_URL_MAX);
+        const { type, language, byHeader, byContent, byExtension } = classifyContent("text/html", text, finalUrl);
+        return {
+            url: finalUrl, status: 200, ok: true, type, language,
+            typeByHeader: byHeader, typeByContent: byContent, typeByExtension: byExtension,
+            contentType: "text/html", text,
+            truncated: truncated || undefined, redirected: (finalUrl !== url) || undefined, rendered: true,
+        };
+    } finally {
+        try { await chrome.tabs.remove(tabId); } catch { /* already closed */ }
+    }
 }
 
 async function fetchSheetCsv(url: string): Promise<{ csv: string; name: string | null }> {

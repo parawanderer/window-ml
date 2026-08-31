@@ -2268,6 +2268,16 @@ test("SECURITY (FETCH_URL credentialed): an untrusted page can't fetch AS THE US
     assert.equal(fetched, false, "no credentialed fetch was made (gate is BEFORE the network)");
 });
 
+test("SECURITY (FETCH_URL rendered): an untrusted page can't render-fetch AS THE USER (open a tab) without a grant", async () => {
+    // rendered = open the URL in a real background tab → runs its JS AND carries the user's session. It's the
+    // same as-you weight as credentials, so an untrusted page with no one-time grant is REFUSED before ANY tab
+    // is opened. (The gate is before fetchRenderedContent; the exact "wasn't approved" error proves that — a
+    // buggy fall-through would instead hit the unmocked chrome.tabs.create and surface a different error.)
+    const bg = loadBackground({ config: baseConfig() });
+    const r = await bg.send({ type: "FETCH_URL", payload: { url: "https://private.example/app", rendered: true } }, { tab: { id: 9, url: "https://evil.example/" } });
+    assert.ok(r.error && /wasn't approved/i.test(r.error), "refused: no as-you grant → no tab opened");
+});
+
 test("SECURITY (FETCH_URL credentialed): a fetch_url{credentials} ALWAYS gates, sends cookies once approved, and the grant is ONE-TIME", async () => {
     let n = 0, approvals = 0, credsUsed;
     const target = "https://private.example/me.json";

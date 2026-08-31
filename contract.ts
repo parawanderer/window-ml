@@ -202,7 +202,7 @@ export function outputCapPrecheck(tool: OutputCapTool, args: Record<string, unkn
 
 /** `FETCH_URL` payload — a plain uncredentialed GET the background performs on the agent's behalf (bypassing
  *  CORS via host permissions). No headers/body/method knobs by design: a locked, low-surface read primitive. */
-export interface FetchUrlPayload { url: string; credentials?: boolean; }
+export interface FetchUrlPayload { url: string; credentials?: boolean; rendered?: boolean; }
 /** The result of `ml.fetch(url)`. Content type is resolved BOTH ways so a mislabel is visible: `type` is the
  *  final pick (header when specific, else the content sniff), `typeByHeader`/`typeByContent` are the raw
  *  signals. `json` is pre-parsed when `type === "json"`. `text` is the raw body (size-capped → `truncated`). */
@@ -226,6 +226,8 @@ export interface FetchResult {
     truncated?: boolean;      // the body was clipped to the size cap
     redirected?: boolean;     // the request followed ≥1 redirect (`url` above is the FINAL landing URL — the
                               // intermediate chain isn't visible to fetch; a redirect log needs chrome.webRequest)
+    rendered?: boolean;       // the body is the SETTLED DOM after the page's JS ran in a background tab (rendered
+                              // mode), not the raw HTTP response — so client-rendered/SPA content is present
 }
 
 /** Append a debug event to a per-tab HUD replay ring, dropping the oldest past `cap` — but NEVER dropping a
@@ -1464,8 +1466,11 @@ export interface MlApi {
      *  Use it to READ a page/file the current DOM can't reach — a raw file, a JSON API, another site — instead
      *  of navigating there. Returns a {@link FetchResult}: `.type` classifies the body (json/csv/html/text) so
      *  you can chain (`.json` is pre-parsed; hand `.text` of a CSV to `python_exec`). Each new URL requires the
-     *  user's one-time approval (then it's remembered for the session). GET only — no headers, body, or auth. */
-    fetch(url: string, opts?: { fresh?: boolean; credentials?: boolean }): Promise<FetchResult>;
+     *  user's one-time approval (then it's remembered for the session). GET only — no headers, body, or auth.
+     *  `credentials: true` fetches AS THE USER (sends cookies; always prompts, never cached). `rendered: true`
+     *  loads the URL in a background tab so its JavaScript runs, then returns the SETTLED DOM (for SPA / client-
+     *  rendered pages a raw GET can't see) — also as-you + always-prompt + uncached. */
+    fetch(url: string, opts?: { fresh?: boolean; credentials?: boolean; rendered?: boolean }): Promise<FetchResult>;
     /** Internal: CACHE-ONLY read of a prior `ml.fetch(url)` result (or undefined on a miss). The read-only
      *  `exec` dialect binds its `ml.fetch` to this, so re-reading an already-fetched URL is free (no egress).
      *  Not part of the stable public API. */

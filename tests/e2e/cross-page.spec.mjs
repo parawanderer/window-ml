@@ -81,6 +81,39 @@ test("smoke: the extension loads and window.ml runs a one-shot agent", async () 
     await page.close();
 });
 
+// fetch_url { rendered: true } — loads the URL in a background tab so its JS runs, then returns the SETTLED
+// DOM. /spa's raw HTML is an empty shell ("Loading…"); only after the client script runs does the marker
+// appear. A raw GET would never see it. Gated like a credentialed fetch (always prompts) → resolved via IPC.
+(BACKEND ? test.skip : test)("fetch_url rendered: a background-tab render returns JS-injected content (a raw GET can't) with cookie/ad overlays stripped", async () => {
+    await configureExtension(ext.sw, { debugMode: "devtools", agentHudInDevtools: false });
+    const page = await ext.context.newPage();
+    const answers = [];
+    await page.exposeFunction("__ren", (s) => answers.push(s));
+    await page.addInitScript(() => { if (window.top === window) window.addEventListener("message", (e) => { if (e.data?.__mlDebug?.kind === "agent-result") window.__ren(e.data.__mlDebug.summary); }); });
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+
+    const before = fake.calls().length;
+    fake.setScript([
+        { tool: "fetch_url", args: { url: site.url + "/spa", rendered: true } },
+        // Reactive final answer: the RENDERED DOM (in the tool result) must carry the JS-only content marker AND
+        // NOT the cookie-overlay marker (overlays are stripped before the grab).
+        (reqBody) => { const s = JSON.stringify(reqBody.messages || []); const content = s.includes("SPA-RENDERED-9931"); const overlay = s.includes("COOKIE-OVERLAY-SLOP-7777"); return { content: content && !overlay ? "RENDERED-CLEAN" : content ? "RENDERED-WITH-OVERLAY" : "RENDERED-MISSING" }; },
+    ]);
+    await page.evaluate(() => { window.ml.agent("Fetch the SPA page rendered and report.", { env: false, approvalRouting: "external" }); return true; });
+
+    // The rendered fetch ALWAYS gates → approve it via the IPC channel.
+    await expect.poll(async () => (await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).length, { timeout: 15000 }).toBe(1);
+    const [gate] = await ext.sw.evaluate(() => globalThis.__mlApprovals.list());
+    expect(String(gate.tool)).toBe("fetch_url");
+    await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), gate.key);
+
+    await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(2);
+    await expect.poll(() => answers.join("|"), { timeout: 10000 }).toContain("RENDERED-CLEAN");   // content present, overlay stripped
+    await page.close();
+    await configureExtension(ext.sw, { debugMode: "off" });
+});
+
 // Continue-past-step-cap: a run that STOPS at its maxSteps cap resumes — via the same __mlContinueRun the
 // "Continue (+N steps)" button posts — with a FRESH step budget, continuing from its stored state (no typed
 // follow-up). We drive a maxSteps:1 run (the first tool call exhausts the cap → hitCap), then fire the

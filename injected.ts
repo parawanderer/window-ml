@@ -1572,6 +1572,12 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     "Set `credentials: true` to fetch AS THE USER (sends their cookies) — for AUTHENTICATED data (a " +
                     "private gist, a logged-in dashboard's API). It ALWAYS asks the user (never remembered) and is " +
                     "never cached; use it ONLY when public access won't do. " +
+                    "Set `rendered: true` when a plain GET returns an EMPTY / skeleton page because the content is " +
+                    "drawn by JavaScript (a client-rendered SPA, an infinite-scroll feed's first screen): it opens the " +
+                    "URL in a BACKGROUND TAB so the page's JS runs, then returns the SETTLED DOM (as the user, with " +
+                    "their session) — with cookie/consent/ad overlays heuristically stripped. Slower and heavier than a " +
+                    "raw GET (a real page load) — reach for it only when the raw fetch's HTML is clearly unrendered. " +
+                    "Like `credentials`, it ALWAYS asks and is never cached. " +
                     "Set `ask: \"<question>\"` to have a fast reader model READ the fetched content and answer that " +
                     "question — you get back the ANSWER, not the (possibly huge) body, so a big page/API never floods " +
                     "your context. Use it when you need a FACT out of the content, not the raw bytes to process further. " +
@@ -1592,6 +1598,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                         url: { type: "string", description: "The absolute http(s) URL to fetch." },
                         schema: { type: "boolean", description: "If true, return a compact TS-like SHAPE of the JSON (not the body). Errors if the URL isn't JSON." },
                         credentials: { type: "boolean", description: "If true, fetch AS THE USER (send their cookies) for authenticated data. Always prompts; never cached/remembered." },
+                        rendered: { type: "boolean", description: "If true, load the URL in a background tab so its JavaScript runs, then return the SETTLED DOM — for client-rendered/SPA pages a raw GET returns empty. As-the-user (uses the session), slower/heavier; always prompts; never cached." },
                         ask: { type: "string", description: "If set, a fast reader model reads the fetched content and answers THIS question; you get the answer, not the body (keeps a large page out of your context). Takes precedence over `schema`." },
                         raw: { type: "boolean", description: "If true, return an HTML page's ORIGINAL raw HTML instead of the auto-converted Markdown (HTML is converted to clean Markdown by default for readability; non-HTML is unaffected)." },
                         pipe: { type: "string", description: "Optional. SCAN/FILTER the returned text through a small shell-style pipeline BEFORE it reaches you — so you read only the relevant lines instead of the whole doc (cheaper). It's an interpreted line-based environment (NOT a real shell); supported commands, chained with `|`: grep (flags -i -v -n -c -F -w -o -E, context -A/-B/-C N), head/tail (-n N), wc (-l -w -c), sort (-n -r -u -f), uniq (-c -i). E.g. \"grep -i pricing | head -20\", or \"grep -o '[0-9]+' | sort -n | tail -1\". For anything MORE COMPLEX than this dialect, use exec instead: `const { markdown } = await ml.fetch('<the url>');` then process that string with JS." },
@@ -1601,17 +1608,17 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 // Show the URL in the approval card + the In render (an `action` render → "fetch <url>"). The
                 // note flags the SCHEMA-only ask, and — importantly for consent — a CREDENTIALED (as-you) fetch.
                 render: (_input: unknown, args?: Record<string, unknown>): RenderDescriptor => {
-                    const a = args as { url?: unknown; schema?: unknown; credentials?: unknown; ask?: unknown; pipe?: unknown } | undefined;
-                    const note = a?.credentials ? "as you (sends your cookies)" : a?.schema ? "schema only" : a?.ask ? undefined : "full page";
+                    const a = args as { url?: unknown; schema?: unknown; credentials?: unknown; rendered?: unknown; ask?: unknown; pipe?: unknown } | undefined;
+                    const note = a?.rendered ? "rendered in a background tab, as you" : a?.credentials ? "as you (sends your cookies)" : a?.schema ? "schema only" : a?.ask ? undefined : "full page";
                     // The ASK gets its OWN line (full text, never truncated), not squeezed into the inline note.
                     const ask = (typeof a?.ask === "string" && a.ask.trim()) ? a.ask.trim() : undefined;
                     const pipe = (typeof a?.pipe === "string" && a.pipe.trim()) ? a.pipe.trim() : undefined;
                     return { type: "action", verb: "fetch", target: String(a?.url ?? ""), ...(note ? { note } : {}), ...(ask ? { ask } : {}), ...(pipe ? { pipe } : {}) };
                 },
-                run: async ({ url, schema = false, credentials = false, ask = null, raw = false, pipe = null }: { url?: unknown; schema?: boolean; credentials?: boolean; ask?: unknown; raw?: boolean; pipe?: unknown } = {}, ctx?: import("./contract").ToolContext): Promise<string | ToolResult> => {
+                run: async ({ url, schema = false, credentials = false, rendered = false, ask = null, raw = false, pipe = null }: { url?: unknown; schema?: boolean; credentials?: boolean; rendered?: boolean; ask?: unknown; raw?: boolean; pipe?: unknown } = {}, ctx?: import("./contract").ToolContext): Promise<string | ToolResult> => {
                     if (typeof url !== "string" || !url.trim()) return "Error: fetch_url needs a `url`.";
                     let r: import("./contract").FetchResult;
-                    try { r = await ml.fetch(url, { credentials }); }
+                    try { r = await ml.fetch(url, { credentials, rendered }); }
                     catch (e) { return `Error: ${errText(e)}`; }
                     const mislabel = r.typeByHeader && r.typeByHeader !== r.type ? ` (header said "${r.typeByHeader}")` : "";
                     const head = `Fetched ${r.url} — HTTP ${r.status}, type: ${r.type}${r.language ? ` (${r.language})` : ""}${mislabel}${r.truncated ? " · body truncated" : ""}.`;
@@ -2271,14 +2278,19 @@ class AgentHandle implements MlAgentHandle, AgentControl {
          * the whole payload. When the body is HTML, `.markdown` is a clean Markdown distillation (scripts, nav,
          * and page chrome stripped) — read that for the content; `.text` still holds the original raw HTML.
          *
+         * `{ rendered: true }` loads the URL in a background tab so its JavaScript runs, then returns the SETTLED
+         * DOM (for client-rendered/SPA pages a raw GET returns empty). Like `credentials` it's as-the-user
+         * (a real tab load carries the session), always prompts, is never cached, and works only via `fetch_url`.
+         *
          * @param {string} url An absolute http(s) URL.
-         * @param {{ fresh?: boolean; credentials?: boolean }} [opts] `fresh` bypasses the read cache; `credentials` fetches with the user's cookies (gated, uncached).
-         * @returns {Promise<FetchResult>} { url, status, ok, type, language?, text, json?, schema?, typeBy*, truncated? }.
+         * @param {{ fresh?: boolean; credentials?: boolean; rendered?: boolean }} [opts] `fresh` bypasses the read cache; `credentials` fetches with the user's cookies; `rendered` loads it in a background tab and returns the settled DOM (both gated, uncached).
+         * @returns {Promise<FetchResult>} { url, status, ok, type, language?, text, json?, schema?, typeBy*, truncated?, rendered? }.
          */
-        fetch: function(url: string, opts?: { fresh?: boolean; credentials?: boolean }): Promise<import("./contract").FetchResult> {
+        fetch: function(url: string, opts?: { fresh?: boolean; credentials?: boolean; rendered?: boolean }): Promise<import("./contract").FetchResult> {
             const key = String(url);   // the real method always fetches live; `fresh` only matters for the read-only cache path
             const credentials = !!opts?.credentials;
-            return makeBackgroundTaskPromise<import("./contract").FetchResult>("FETCH_URL_REQUEST", "FETCH_URL_RESPONSE", { url: key, credentials })
+            const rendered = !!opts?.rendered;
+            return makeBackgroundTaskPromise<import("./contract").FetchResult>("FETCH_URL_REQUEST", "FETCH_URL_RESPONSE", { url: key, credentials, rendered })
                 .then(r => {
                     // For an HTML body, attach a `.markdown` distillation (scripts/nav/chrome stripped) so ANY
                     // caller — exec, a read-only survey (`ml.fetch(url).markdown`), the fetch_url tool — gets the
@@ -2287,7 +2299,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     if (r && r.type === "html" && typeof r.text === "string" && r.markdown === undefined) {
                         try { r.markdown = htmlToMarkdown(r.text); } catch { /* leave undefined — callers fall back to .text */ }
                     }
-                    if (r && r.ok && !credentials) mlFetchCache.set(key, r);   // cache ONLY a successful UNCREDENTIALED fetch (credentialed bytes are authenticated — never cache)
+                    if (r && r.ok && !credentials && !rendered) mlFetchCache.set(key, r);   // cache ONLY a successful UNCREDENTIALED, non-rendered fetch (as-you bytes are authenticated — never cache)
                     return r;
                 });
         },

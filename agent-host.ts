@@ -137,10 +137,11 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
             }
             // navigate: a cross-origin nav that needs consent GATES; same-site (or already-consented) auto-approves.
             if (name === "navigate") return deps.navNeedsConsent?.(String((args as { url?: unknown }).url ?? "")) ? null : "same-origin";
-            // fetch_url: a CREDENTIALED (fetch-as-the-user) call ALWAYS gates — never auto-approved, never
-            // remembered. An uncredentialed URL already approved this session auto-approves; a new one gates.
+            // fetch_url: a CREDENTIALED (fetch-as-the-user) OR RENDERED (loads in a background tab as-you) call
+            // ALWAYS gates — never auto-approved, never remembered (both carry the user's session). An
+            // uncredentialed URL already approved this session auto-approves; a new one gates.
             if (name === "fetch_url") {
-                if ((args as { credentials?: unknown }).credentials) return null;
+                if ((args as { credentials?: unknown }).credentials || (args as { rendered?: unknown }).rendered) return null;
                 return deps.fetchNeedsConsent?.(String((args as { url?: unknown }).url ?? "")) ? null : "consented";
             }
             return null;

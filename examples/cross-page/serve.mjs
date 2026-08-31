@@ -128,6 +128,17 @@ export function startPageServer({ port = 0, crossPort = 0, host = "127.0.0.1" } 
             const outer = createServer((req, res) => {
                 const p = (req.url || "/").split("?")[0];
                 if (p === "/blocked") return sendBlocked(res);   // a CSP-sandboxed page (blocks injected.js)
+                if (p === "/spa") {   // CLIENT-RENDERED: raw HTML is an empty shell; JS fills the content AND pops a
+                    // cookie-consent overlay after load — the rendered fetch must return the content, minus the overlay.
+                    res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+                    return res.end(`<!doctype html><meta charset=utf-8><title>SPA</title><div id=app>Loading…</div>`
+                        + `<script>setTimeout(()=>{`
+                        + `document.getElementById('app').textContent='SPA-RENDERED-9931 the client script ran';`
+                        + `var c=document.createElement('div');c.id='cookie-consent-banner';`
+                        + `c.style.cssText='position:fixed;left:0;right:0;bottom:0;z-index:9999';`
+                        + `c.textContent='COOKIE-OVERLAY-SLOP-7777 We value your privacy. Accept all cookies?';`
+                        + `document.body.appendChild(c);},50)</script>`);
+                }
                 if (RAW[p]) return sendRaw(res, RAW[p]);          // raw JSON/CSV/code endpoints (ml.fetch e2e)
                 const r = routes(crossOrigin);
                 if (r[p]) return send(res, r[p]);
