@@ -464,6 +464,13 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 "tools use (`>>>` crosses each OPEN shadow root / same-origin iframe; a trailing " +
                 "`:contains(\"text\")` filters by visible text) — instead of hand-chaining `.shadowRoot` / " +
                 "`.contentDocument`. " +
+                // Advertise the a11y primitive HERE (not only on interactives' output) so a straight-to-exec
+                // survey reaches for it instead of hand-rolling a partial `getAttribute('aria-label')`.
+                "ACCESSIBLE NAME / ROLE / REFERENCE: for a control's screen-reader name, role, aria-state, or the " +
+                "stable `>>>` selector to pass to click/type, use `ml.a11y(el)` → { role, name, state, selector } " +
+                "(the SAME expertise `interactives` uses — the full aria-label → aria-labelledby → label/placeholder " +
+                "→ text cascade) rather than hand-rolling `getAttribute('aria-label')`, which misses cases. " +
+                "`ml.queryAll` + `ml.a11y` are read-only, so a survey composing them auto-runs (no prompt). " +
                 // ml.fetch in exec: the fetch_url tool, callable inline — the payoff is cached RE-reads are a
                 // read-only op (free), so approve a source once then parse/slice it across calls. Trimmed
                 // signature here; full FetchResult type is in agent_api_docs.
