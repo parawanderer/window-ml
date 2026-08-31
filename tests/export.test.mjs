@@ -48,3 +48,36 @@ test("fetch_url `ask`: the question + who-answered + tokens export in BOTH Markd
         assert.match(out, /unauthorized: invalid client/, `${fmt} includes the raw content the reader read`);
     }
 });
+
+import { config } from "../sidebar/store.ts";
+import { BUILD_INFO } from "../build-info.gen.ts";
+
+test("run export: build hash + system-prompt size tag; tool defs gated on the setting (both sinks)", () => {
+    const s = {
+        hash: "bh1", kind: "agent", model: "qwen3", tag: "session", createdTs: 1, lastTs: 2, status: "ok",
+        turns: [], steps: [], task: "do it", answers: [{ text: "done", ts: 9, atStep: 0, status: "ok" }],
+        agentConfig: {
+            system: "You are an automation agent.", customSystem: false, maxSteps: 5, think: null, env: true, vision: null,
+            tools: [{ name: "click", requiresApproval: true, description: "Click an element.", parameters: { type: "object", properties: { selector: { type: "string" } }, required: ["selector"] } }],
+        },
+    };
+    // The build stamp rides the top-of-run meta in BOTH formats — pinnable to a build when reproducing.
+    for (const out of [serializeSession(s).md, sessionToHtml(s, "run")]) {
+        assert.ok(out.includes(BUILD_INFO.shortCommit), "the run export carries the build's short commit");
+        assert.match(out.replace(/<[^>]+>/g, ""), /System prompt.*chars.*~.*tokens/s, "the system prompt is annotated with its char + token cost");
+    }
+    // OFF by default → no tool-definitions dump.
+    config.value = { ...config.value, exportToolDefs: false };
+    assert.doesNotMatch(serializeSession(s).md, /Tool definitions/, "off by default: no tool-defs dump");
+    // ON → the full definitions (JSON, with parameters) appear, annotated with their cost.
+    config.value = { ...config.value, exportToolDefs: true };
+    try {
+        const md = serializeSession(s).md;
+        assert.match(md, /Tool definitions \(1\).*chars.*~.*tokens/s, "on: the tool-defs section with its size tag");
+        assert.match(md, /"Click an element\."/, "the tool description is dumped");
+        assert.match(md, /"selector"/, "the parameter schema is dumped");
+        assert.match(sessionToHtml(s, "run").replace(/<[^>]+>/g, "").replace(/&quot;/g, '"'), /Tool definitions/, "the PDF/HTML sink includes it too");
+    } finally {
+        config.value = { ...config.value, exportToolDefs: false };   // don't leak the toggle to other tests
+    }
+});

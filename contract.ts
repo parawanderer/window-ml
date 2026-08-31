@@ -64,6 +64,8 @@ export interface MlConfig {
     utilityForceCpu: boolean;
     /** let the utility model summarise session titles in the debug sidebar */
     autoTitles: boolean;
+    /** include the FULL tool definitions (pretty JSON) in a run's markdown/PDF export (default off — spammy) */
+    exportToolDefs: boolean;
     /** experimental: auto-approve read-only exec surveys via the mediated interpreter */
     autoApproveReadonly: boolean;
     /** experimental: auto-approve python_exec (the sandbox is isolated by construction) */
@@ -305,6 +307,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     utilityNumCtx: 4096,
     utilityForceCpu: false,
     autoTitles: true,
+    exportToolDefs: false,
     autoApproveReadonly: true,
     autoApprovePython: true,
     pierceClosedShadow: true,

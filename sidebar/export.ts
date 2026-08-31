@@ -10,9 +10,16 @@
 // Includes a tiny dependency-free store-method ZIP writer (PNGs are already
 // deflated). Extracted from app.tsx.
 import atomOneLight from "highlight.js/styles/atom-one-light.css";
-import { sessionMap, turnsRun } from "./store";
+import { sessionMap, turnsRun, config } from "./store";
 import type { Session } from "./store";
 import { pretty, fullStamp, beautifyJs, escapeHtml, highlight, markdown } from "./format";
+import { BUILD_INFO } from "../build-info.gen";
+
+// A rough token estimate for a string — the ubiquitous ~4-chars/token heuristic (good enough to gauge how much
+// of the context window the system prompt / tool schemas eat; it's labelled ~approx, not exact). Paired with the
+// char count so a reader can judge the real cost of both export variants.
+const estTokens = (s: string): number => Math.ceil(s.length / 4);
+const sizeTag = (s: string): string => `(${s.length.toLocaleString()} chars, ~${estTokens(s).toLocaleString()} tokens)`;
 import { annotatedConfig, resolveModel, shownModel } from "./model";
 
 type Sidecar = { name: string; bytes: Uint8Array };
@@ -144,6 +151,9 @@ function writeAgent(s: Session, d: Sink): void {
         ["Finished", fullStamp(s.lastTs)],
         ["Steps", `${turnsRun(s.steps)}${s.maxSteps ? ` / ${s.maxSteps}` : ""}`],
         ["Outcome", s.hitCap ? "stopped (step cap)" : s.status === "err" ? "error" : s.summary != null ? "answered" : "running"],
+        // The build this run's extension was on — the SAME commit the agent reads via agent_api_docs, so an
+        // exported log is pinnable to a build when reproducing behaviour.
+        ["Build", `${BUILD_INFO.shortCommit} · built ${fullStamp(Date.parse(BUILD_INFO.buildTime))}`],
     ]);
     // Composer attachments the user pasted with the initial task → PNG sidecars (as the sidebar shows them).
     (s.taskImages || []).forEach((img, j) => d.image(img, `task-img-${j + 1}`, `task image ${j + 1}`));
@@ -157,7 +167,22 @@ function writeAgent(s: Session, d: Sink): void {
         lines.push(`tools (${c.tools.length}): ${c.tools.map(t => t.name + (t.requiresApproval ? " ⚠" : "")).join(", ")}`);
         d.head("Agent options");
         d.code(lines.join("\n"));
-        d.details(`System prompt${c.customSystem ? " (custom)" : ""}`, () => d.code(c.system));
+        // Annotate the system prompt with what it costs the context window every turn (chars + ~tokens).
+        d.details(`System prompt${c.customSystem ? " (custom)" : ""} ${sizeTag(c.system)}`, () => d.code(c.system));
+        // The FULL tool definitions (pretty JSON — name/summary/description/parameters, NOT the implementation),
+        // gated on the "Include tool definitions in run exports" setting (off by default — ~thousands of tokens).
+        // Annotated with the same char/token cost, since the schemas re-send on every turn alongside the prompt.
+        if (config.value.exportToolDefs && c.tools.length) {
+            const defs = c.tools.map(t => ({
+                name: t.name,
+                ...(t.summary ? { summary: t.summary } : {}),
+                ...(t.requiresApproval ? { requiresApproval: true } : {}),
+                ...(t.description ? { description: t.description } : {}),
+                ...(t.parameters ? { parameters: t.parameters } : {}),
+            }));
+            const json = pretty(defs);
+            d.details(`Tool definitions (${defs.length}) ${sizeTag(json)}`, () => d.code(json, "json"));
+        }
     }
     // Follow-up user prompts (says) + each turn's answer, INTERLEAVED into the step walk by position —
     // otherwise a multi-turn session exports as one flat run with a single final answer, losing the "you
@@ -321,6 +346,7 @@ function writeChat(s: Session, d: Sink): void {
     const meta: [string, string][] = [];
     if (s.title) meta.push(["Title", s.title]);
     meta.push(["Started", fullStamp(s.createdTs)], ["Last activity", fullStamp(s.lastTs)], ["Type", s.tag]);
+    meta.push(["Build", `${BUILD_INFO.shortCommit} · built ${fullStamp(Date.parse(BUILD_INFO.buildTime))}`]);
     d.meta(meta);
     d.head("Options");
     d.code(annotatedConfig(s.config), "javascript");

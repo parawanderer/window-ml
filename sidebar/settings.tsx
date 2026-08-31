@@ -800,6 +800,15 @@ export function Settings() {
                     <span>Show line numbers</span>
                 </label>
                 </Section>
+
+                <Section id="export" title="Export">
+                <label class="set-check">
+                    <input type="checkbox" checked={c.exportToolDefs}
+                        onChange={(e: any) => setField("exportToolDefs", e.target.checked)} />
+                    <span>Include tool definitions in run exports</span>
+                </label>
+                <div class="set-note">Dumps the FULL tool definitions (pretty JSON — names, descriptions, parameter schemas; not the implementation) below the system prompt in a run's Markdown/PDF export, annotated with their character + approximate token cost. Off by default — it's several thousand tokens of schema.</div>
+                </Section>
             </> : null}
 
             {tab === "advanced" ? <>
