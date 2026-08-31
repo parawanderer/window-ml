@@ -300,6 +300,20 @@ const hudActive = (): boolean => mode === "off" || (mode === "devtools" && agent
 // background stream, tagged __mlFromBg — the page's bus stays dormant — so no cross-source ordering).
 const CARD_RING_MAX = 200;
 const bgRing: MessageEvent["data"][] = [];
+// Buffer a background-stream event into bgRing, dropping the oldest past the cap — but NEVER dropping a run's
+// `agent` START. The card/overlay app REBUILDS a re-adopted run's session from this ring (flushed when its
+// iframe handshakes `ready`); without the start the reducer can't CREATE the session, so every buffered step
+// ORPHANS and the corner card renders EMPTY. This bit a cross-page nav after a LONG session: the destination's
+// replay burst (up to the background's REPLAY_CAP=400) overflowed this smaller ring and shifted the start out
+// before the iframe readied. Mirrors contract.ts's pushReplay (the background-ring twin); the wrapper shape
+// here is `{ __mlDebug: { kind }, __mlFromBg }`, so pin on d.__mlDebug.kind. Re-pin any dropped start at the head.
+function pushBg(d: MessageEvent["data"]): void {
+    bgRing.push(d);
+    if (bgRing.length <= CARD_RING_MAX) return;
+    const dropped = bgRing.splice(0, bgRing.length - CARD_RING_MAX);
+    const lostStarts = dropped.filter(e => e?.__mlDebug?.kind === "agent");
+    if (lostStarts.length) bgRing.unshift(...lostStarts);   // the session-creating events survive the cap
+}
 
 // The tallest the card may be dragged / expanded to — the "Show work" open target too.
 function maxCardH(): number { return Math.round(window.innerHeight * 0.92); }
@@ -675,7 +689,7 @@ function onWindowMessage(e: MessageEvent): void {
                 // content — NOT the noisy ResizeObserver height stream, which mustn't undo a drag.
                 if (ev.kind === "agent-step" || ev.kind === "agent-result" || ev.kind === "agent") cardManualH = null;
                 if (cardReady) frame?.contentWindow?.postMessage(d, "*");
-                else { bgRing.push(d); if (bgRing.length > CARD_RING_MAX) bgRing.shift(); }
+                else pushBg(d);
             }
         }
         // DEVTOOLS: forward to the panel — but NOT background-origin events (they already reached the
@@ -687,7 +701,7 @@ function onWindowMessage(e: MessageEvent): void {
             // REPLAYED history, which can arrive before the app is listening; posting to a not-ready app drops
             // it (the "Sessions (0)" on a re-adopted run). Flushed in order on the app's `ready` (below).
             if (overlayReady) frame?.contentWindow?.postMessage(d, "*");
-            else { bgRing.push(d); if (bgRing.length > CARD_RING_MAX) bgRing.shift(); }
+            else pushBg(d);
         }
         return;
     }

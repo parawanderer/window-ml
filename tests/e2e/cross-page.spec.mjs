@@ -473,6 +473,52 @@ test("cross-domain (HUD card): a RESUME that navigates cross-origin still shows 
     await configureExtension(ext.sw, { debugMode: "off", agentHudInDevtools: false });
 });
 
+// The reported repro's ACTUAL trigger: a LONG session (many tool calls) that then navigates cross-origin. The
+// destination page rebuilds its card from a replay burst; the shell's bgRing buffers that burst until the card
+// iframe handshakes `ready`. bgRing is a smaller ring (200) than the background replay (400) and — the bug —
+// used to drop-oldest WITHOUT pinning the run's `agent` start, so a >200-event burst shifted the start out
+// before the flush → the app orphaned every step → the corner card rendered EMPTY (the DevTools panel, fed by
+// a surviving port, kept working — exactly what was reported). pushBg now pins the start (shell twin of the
+// background pushReplay fix). Skips under a real backend (needs the scripted 120-call turn).
+(BACKEND ? test.skip : test)("cross-domain (HUD card): a >200-event session still rebuilds the card after a cross-origin nav (bgRing start not dropped)", async () => {
+    await configureExtension(ext.sw, { debugMode: "devtools", agentHudInDevtools: true });
+    const page = await ext.context.newPage();
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+    const events = [];
+    await page.exposeFunction("__cpBg", (e) => events.push(e));
+    await page.addInitScript(() => { if (window.top === window) window.addEventListener("message", (e) => { if (e.data && e.data.__mlDebug) window.__cpBg({ kind: e.data.__mlDebug.kind, id: e.data.__mlDebug.id }); }); });
+    await page.reload(); await waitForMl(page);
+
+    // Turn 1: ~120 read-only tool calls (each emits a pending + a done step ⇒ ~240 buffered events > the 200
+    // bgRing cap), then an answer — filling the replay ring past the shell's ring so the start would be dropped.
+    let before = fake.calls().length;
+    const many = [];
+    for (let i = 0; i < 120; i++) many.push({ tool: "findByText", args: { text: "step" } });
+    many.push({ content: "Long turn done." });
+    fake.setScript(many);
+    await page.evaluate(() => { window.ml.createAgent({ crossOrigin: true, approvalRouting: "external", maxSteps: 300 }).run("Scan the page many times."); return true; });
+    await expect.poll(() => fake.calls().length - before, { timeout: 90000 }).toBe(121);
+    const hash = await expect.poll(() => events.find((e) => e.kind === "agent")?.id, { timeout: 10000 }).toBeTruthy().then(() => events.find((e) => e.kind === "agent").id);
+
+    // Turn 2 (RESUME): navigate CROSS-ORIGIN, then answer — the destination card must NOT be empty.
+    before = fake.calls().length;
+    fake.setScript([
+        { tool: "navigate", args: { url: site.crossOrigin + "/" } },
+        { content: "Answer after a long session — the card must show THIS on the destination origin." },
+    ]);
+    await page.evaluate((h) => { window.postMessage({ __mlSessionSend: { hash: h, text: "Go to the other site." } }, "*"); return true; }, hash);
+    await expect.poll(async () => (await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).length, { timeout: 15000 }).toBe(1);
+    const [gate] = await ext.sw.evaluate(() => globalThis.__mlApprovals.list());
+    await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), gate.key);
+    await expect.poll(() => page.url(), { timeout: 20000 }).toContain(new URL(site.crossOrigin).host);
+
+    const card = () => page.frames().filter((f) => f.url().includes("sidebar.html") && !f.isDetached()).pop();
+    await expect.poll(async () => { const f = card(); try { return f ? ((await f.locator("body").textContent()) || "") : ""; } catch { return ""; } }, { timeout: 20000 }).toContain("must show THIS on the destination origin");
+    await page.close();
+    await configureExtension(ext.sw, { debugMode: "off", agentHudInDevtools: false });
+});
+
 // Variant B — cross-DOMAIN. Even WITH { crossOrigin: true }, leaving the origin is a scope escalation, so a
 // cross-origin nav must GATE for consent (a page can't silently send the agent to another site). We route
 // the gate to the IPC channel so the test can approve/deny it.
