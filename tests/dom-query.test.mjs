@@ -8,7 +8,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
-import { queryAll } from "../dom.ts";
+import { queryAll, shadowHostReport } from "../dom.ts";
 
 /** Boot a jsdom document and install it as the global queryAll reads. Returns the document. */
 function mount(html) {
@@ -133,6 +133,21 @@ test("Playwright forms PIERCE a same-origin iframe with NO explicit >>> (deepQue
     assert.deepEqual(queryAll('#f >>> span:contains("secret")').map(e => e.id), ["inner"]);
 });
 
+test(">>> is FORGIVING: with no shadow/iframe boundary it falls back to the host's light subtree", () => {
+    // Angular-style EMULATED encapsulation: a custom element that LOOKS like a web component but is light DOM
+    // (no shadow root). A model can't tell it apart, so `host >>> inner` must still find the light descendant.
+    mount(`<temp-chat-button id="host"><gem-icon-button><button id="btn">Temporary chat</button></gem-icon-button></temp-chat-button>`);
+    assert.equal(ids(queryAll("temp-chat-button >>> gem-icon-button")), "gem-icon-button", "light-DOM child found via >>>");
+    assert.equal(ids(queryAll("temp-chat-button >>> button")), "btn", "light-DOM descendant found via >>>");
+    assert.equal(queryAll("temp-chat-button >>> .nope").length, 0, "still empty when nothing matches");
+});
+test(">>> prefers a REAL shadow root over the light fallback (unchanged for genuine web components)", () => {
+    const doc = mount(`<my-widget id="host"><span id="lightspan">light</span></my-widget>`);
+    const root = doc.getElementById("host").attachShadow({ mode: "open" });
+    root.innerHTML = `<span id="shadowspan">shadow</span>`;
+    // With a shadow root present, >>> steps INTO it (finds the shadow span), not the light one.
+    assert.equal(ids(queryAll("#host >>> span")), "shadowspan", "crosses into the shadow root, not the light child");
+});
 test(":contains on the INNER >>> hop filters after crossing the boundary", () => {
     const doc = mount(`<x-a id="h1"></x-a><x-a id="h2"></x-a>`);
     for (const [id, label] of [["h1", "alpha"], ["h2", "beta"]]) {
@@ -142,6 +157,25 @@ test(":contains on the INNER >>> hop filters after crossing the boundary", () =>
     // cross into every x-a's shadow, then keep only the button whose text contains "beta".
     assert.equal(ids(queryAll('x-a >>> button:contains("beta")')), "btn-h2");
     assert.equal(ids(queryAll('x-a >>> button:contains("go")')), "btn-h1,btn-h2");
+});
+
+// -------------------------------------------------------- ml.shadowRoots() diagnostic report ---
+
+test("shadowRoots report: open roots counted; hyphenated hosts split into SEALED (renders a box) vs EMPTY", () => {
+    const doc = mount(`<x-open id="o"></x-open><x-empty id="e"></x-empty><x-sealed id="s"></x-sealed><x-light id="l">has text</x-light><div id="plain"></div>`);
+    doc.getElementById("o").attachShadow({ mode: "open" }).innerHTML = "<span>hi</span>";
+    doc.getElementById("s").getBoundingClientRect = () => ({ width: 40, height: 20 });   // jsdom has no layout — force a rendered box
+    const r = shadowHostReport(doc);
+    const byTag = Object.fromEntries(r.hosts.map(h => [h.tag, h.state]));
+    assert.equal(r.open, 1, "one open shadow root");
+    assert.equal(byTag["x-open"], "open");
+    assert.equal(byTag["x-sealed"], "sealed", "hyphenated + no light content + a rendered box → sealed (a real barrier)");
+    assert.equal(byTag["x-empty"], "empty", "hyphenated + no content + no box → empty (an unopened/emulated host, NOT a barrier)");
+    assert.ok(!("x-light" in byTag), "a host with light text content is reachable — not flagged");
+    assert.ok(!("div" in byTag), "a plain element is never a shadow host");
+    assert.equal(r.sealed, 1); assert.equal(r.empty, 1);
+    // Each host carries a selector to inspect/locate it.
+    assert.ok(r.hosts.every(h => typeof h.selector === "string" && h.selector.length));
 });
 
 // ------------------------------------------------------------ role= / label= engines (a11y) ---

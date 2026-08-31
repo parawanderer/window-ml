@@ -35,7 +35,7 @@ import type {
 import { detectGroundingModel, DEFAULT_GROUNDING_RANGE, outputCapEscalated } from "./contract";
 import { evalReadonly } from "./readonly-exec";
 import { htmlToMarkdown } from "./html-to-md";
-import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement, navTarget, clipOut, askReaderNumCtx, jsonShape } from "./dom";
+import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement, navTarget, clipOut, askReaderNumCtx, jsonShape, shadowHostReport } from "./dom";
 import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_NOTE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_EXEC_NOTE, IFRAME_CLAUSE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, EXEC_RANGE_CLAUSE, NAV_OFF_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, askAboutTask } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, markSeen, PT_LOOK_RADIUS, BOX_RE, resolveBox, agentState, mlRange } from "./util";
 import type { ShotBox, ServerTool, VisionMemory, RebuildConfig, AnswerMedia } from "./contract";
@@ -1565,7 +1565,16 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     "question — you get back the ANSWER, not the (possibly huge) body, so a big page/API never floods " +
                     "your context. Use it when you need a FACT out of the content, not the raw bytes to process further. " +
                     "An HTML page is auto-converted to clean Markdown (scripts/nav/chrome stripped) so you get the " +
-                    "readable content, not tag soup; set `raw: true` if you specifically need the original HTML.",
+                    "readable content, not tag soup; set `raw: true` if you specifically need the original HTML. " +
+                    "**NOTE:** When a user asks you to get information from a user-facing HTML page, assume the user " +
+                    "wants you to actually navigate them to a page by default so that they see the information themselves. " +
+                    "You can still use this tool to fetch the information for your own usage, but navigate the user so that " +
+                    "they have parity to you. Only when the prompt is clearly indicative of a programmatic lookup or the user " +
+                    "clearly does not want to see your work should you use this tool without updating the user's web browser view " +
+                    "(e.g. querying an API to locate the target in the background before navigating the user, or answering a question " +
+                    "that does not indicate the user would like to see the page/information off the page themselves). Users most " +
+                    "likely do NOT want to see raw text documents or JSON, but generally MAY be interested to see user-facing HTML " +
+                    "pages.",
                 parameters: {
                     type: "object",
                     properties: {
@@ -2026,6 +2035,19 @@ class AgentHandle implements MlAgentHandle, AgentControl {
         // Public alias: a shadow/iframe-piercing `document.querySelectorAll` the model can call from
         // `exec` (and the readonly dialect) instead of hand-chaining `.shadowRoot`/`.contentDocument`.
         queryAll,
+        /**
+         * DIAGNOSTIC: list every shadow-root host on the page — WHERE the shadow roots pageInfo counts
+         * actually are, and whether the DOM tools can enter each. Answers "there are N shadow roots I can't
+         * access — where?": returns `{ open, pierced, sealed, empty, hosts }`, where each host is
+         * `{ selector, tag, state }` and `state` is `"open"` (a normal open root, reachable), `"pierced"` (a
+         * PROGRAMMATIC closed root the load-time attachShadow capture grabbed — reachable when piercing is on),
+         * `"sealed"` (renders content behind a boundary a selector can't enter — a DECLARATIVE closed root, or
+         * CSS-painted content; reach it visually with `locate`/`@pt`), or `"empty"` (a hyphenated element
+         * rendering nothing right now — an unopened menu/popover or an emulated-encapsulation host, NOT a
+         * barrier). The sealed/empty split is what a raw "N closed roots" count conflates. Read-only.
+         * @returns {{ open: number, pierced: number, sealed: number, empty: number, hosts: { selector: string, tag: string, state: string }[] }}
+         */
+        shadowRoots: function() { return shadowHostReport(document); },
         _selectorError: selectorError,
         // Parses a structured-output reply, tolerating a stray ```json fence
         // and surfacing the raw text on failure for debugging.

@@ -501,10 +501,24 @@ export const deepQueryAll = (selector: string, root: ParentNode = document): Ele
     return out;
 };
 
+/** A hyphenated custom element with NO light content (no element children, no text) that nonetheless PAINTS a
+ *  visible box — so its content lives behind a boundary a selector can't enter (a genuine closed/declarative
+ *  shadow root, or CSS-painted content). This is the SEALED set worth reporting. The naive "hyphenated + no
+ *  children" heuristic over-counts wildly: on an Angular app it flags every EMPTY emulated-encapsulation
+ *  component (an unopened `mat-menu`/`gem-popover`, a `router-outlet`) — those have no shadow root and no
+ *  content right now, so they're NOT barriers. Requiring a rendered box drops that noise (a probe of real
+ *  pages: Shoelace is 344/344 OPEN roots — 0 sealed; a "103 closed" count is almost all empty emulated hosts). */
+const isSealedHost = (e: Element): boolean => {
+    if (!e.tagName.includes("-") || e.children.length || (e.textContent || "").trim()) return false;
+    const b = e.getBoundingClientRect();
+    return b.width > 0 && b.height > 0;
+};
 /** Count shadow roots for ORIENTATION — a model scanning the DOM may not realise shadow roots exist at all.
  *  `open` = REACHABLE roots (recursive, incl. nested) — open roots, PLUS captured closed roots when piercing
- *  is on (the DOM tools reach both). `closed` = a heuristic for Web Components whose content is an
- *  UNREACHABLE closed root (hyphenated tag, no light children, no open/captured root — visual-only). */
+ *  is on (the DOM tools reach both). `closed` = a heuristic for Web Components whose content is an UNREACHABLE
+ *  closed root (hyphenated tag, no light children). This is a quick upper bound (it also catches EMPTY
+ *  emulated-encapsulation hosts — the message says "closed/empty"); `ml.shadowRoots()` splits sealed vs empty
+ *  honestly for the ones that actually paint content. */
 export const shadowRootStats = (root: ParentNode = document): { open: number; closed: number } => {
     let open = 0, closed = 0;
     const visit = (r: ParentNode): void => {
@@ -513,7 +527,7 @@ export const shadowRootStats = (root: ParentNode = document): { open: number; cl
             if (e.shadowRoot) { open++; visit(e.shadowRoot); continue; }
             const captured = capturedClosedRoot(e);   // piercing on + patch grabbed it → now reachable
             if (captured) { open++; visit(captured); continue; }
-            if (e.tagName.includes("-") && !e.children.length) closed++;   // truly unreachable
+            if (e.tagName.includes("-") && !e.children.length) closed++;   // unreachable (upper bound; ml.shadowRoots() refines)
         }
     };
     visit(root);
@@ -551,6 +565,44 @@ export const closedShadowHosts = (root: ParentNode = document, limit = 8): strin
     };
     visit(root);
     return hosts;
+};
+
+/** A shadow-root host for the `ml.shadowRoots()` diagnostic: WHERE a shadow root is + whether the tools can
+ *  enter it. `open` = a normal open root (reachable); `pierced` = a closed root the load-time attachShadow
+ *  capture grabbed (reachable when piercing is on); `sealed` = a SEALED closed root that PAINTS content we
+ *  can't enter (reach it visually with locate/@pt); `empty` = a hyphenated element with no light content that
+ *  renders nothing right now — probably just an empty slot/outlet (a router-outlet, an unopened menu), NOT a
+ *  barrier. The sealed/empty split is what the raw "N closed roots" count conflates. */
+export interface ShadowHost { selector: string; tag: string; state: "open" | "pierced" | "sealed" | "empty"; }
+/** List every shadow-root host in the page (recursing through reachable roots + same-origin frames), so a
+ *  user can SEE where the "N closed shadow roots" pageInfo counts actually are — and, crucially, tell a real
+ *  SEALED root (content we can't reach) from a host that's just EMPTY right now. The raw count is a heuristic
+ *  (hyphenated tag + no light children) that can't distinguish the two; here a rendered box > 0 promotes it to
+ *  `sealed`, else `empty`. Returns host SELECTORS so you can inspect/locate them. Read-only; capped at `limit`. */
+export const shadowHostReport = (root: ParentNode = document, limit = 500): { open: number; pierced: number; sealed: number; empty: number; hosts: ShadowHost[] } => {
+    let open = 0, pierced = 0, sealed = 0, empty = 0;
+    const hosts: ShadowHost[] = [];
+    const add = (e: Element, state: ShadowHost["state"]): void => { if (hosts.length < limit) hosts.push({ selector: clickSelector(e), tag: e.tagName.toLowerCase(), state }); };
+    const visit = (r: ParentNode): void => {
+        for (const el of r.querySelectorAll("*")) {
+            const e = el as Element;
+            if (e.shadowRoot) { open++; add(e, "open"); visit(e.shadowRoot); continue; }
+            const captured = capturedClosedRoot(e);
+            if (captured) { pierced++; add(e, "pierced"); visit(captured); continue; }
+            // Hyphenated custom element with NO light content — its content, if any, is behind a boundary a
+            // selector can't enter. Split it honestly: does it actually PAINT a box (a real sealed root / CSS
+            // content) or render nothing (an empty emulated host — an unopened menu/popover, an outlet)?
+            if (e.tagName.includes("-") && !e.children.length && !(e.textContent || "").trim()) {
+                if (isSealedHost(e)) { sealed++; add(e, "sealed"); }   // renders content we can't reach
+                else { empty++; add(e, "empty"); }                     // nothing there now — not a barrier
+                continue;
+            }
+            const doc = sameOriginFrameDoc(e);
+            if (doc) visit(doc);
+        }
+    };
+    visit(root);
+    return { open, pierced, sealed, empty, hosts };
 };
 
 /** Text/positional filters peeled from a selector step. `texts` = ALL must be a visible-text substring
@@ -754,7 +806,13 @@ export const queryAll = (selector: string): Element[] => {
             if (hasExtPseudo(segs[i])) matched = evalExtHop(segs[i], scopes, false);
             else { const raw: Element[] = []; for (const sc of scopes) { try { raw.push(...sc.querySelectorAll(segs[i])); } catch { /* skip a bad segment */ } } matched = raw; }
             if (i === segs.length - 1) return matched;
-            scopes = matched.map(e => traversableRoot(e) ?? sameOriginFrameDoc(e)).filter((r): r is Document | ShadowRoot => !!r);
+            // Descend into each match's OPEN shadow root / same-origin iframe for the next hop. If a host has
+            // NEITHER — a plain element, or a custom element using Angular-style EMULATED encapsulation (light
+            // DOM with _nghost/_ngcontent attrs that only LOOKS like a web component) — fall back to the
+            // element's own LIGHT subtree. So `a >>> b` means "b anywhere under a, crossing a real boundary if
+            // there is one" — a strict superset of the old shadow-only behaviour, so a model that reaches for
+            // `>>>` on emulated-encapsulation markup still finds the descendant instead of a silent [].
+            scopes = matched.map(e => traversableRoot(e) ?? sameOriginFrameDoc(e) ?? (e as ParentNode));
             if (!scopes.length) return [];
         }
         return [];
