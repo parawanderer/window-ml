@@ -556,7 +556,9 @@ export type RenderDescriptor = (
     // `askBody`/`askBodyLang`/`askBodyTruncated` the RAW fetched content handed to that reader — the
     // in-the-middle step, shown as a collapsed code block (like locate's per-substep prompt), so the distill
     // is auditable: you can read exactly what the model saw before it answered.
-    | { type: "action"; verb: string; kind?: string; target?: string; selector?: string; input?: string; note?: string; crossOrigin?: string; ask?: string; answeredBy?: string; tokens?: number; askBody?: string; askBodyLang?: string; askBodyTruncated?: boolean }
+    // `pipe` (fetch_url): the grep/head/tail/… shell pipeline the model scanned the fetched text through —
+    // shown as a `bash` code block in the In slot so it reads as the interpreted command it is.
+    | { type: "action"; verb: string; kind?: string; target?: string; selector?: string; input?: string; note?: string; crossOrigin?: string; ask?: string; answeredBy?: string; tokens?: number; askBody?: string; askBodyLang?: string; askBodyTruncated?: boolean; pipe?: string }
 );
 // The slot a descriptor fills is decided by which hook produced it (a tool's `render()`
 // method / run()-returned `renderIn` → the In slot; a run()-returned `render` / an

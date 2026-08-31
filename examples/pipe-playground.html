@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Pipe Playground — a fetch_url({ pipe }) demo (grep/head/tail/sort/uniq)</title>
+<style>
+  body { font: 15px/1.6 system-ui, sans-serif; margin: 28px auto; max-width: 820px; color: #18181b; padding: 0 20px; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  h2 { font-size: 15px; margin: 22px 0 6px; padding-top: 10px; border-top: 1px solid #e4e4e7; color: #3f3f46; }
+  p { color: #3f3f46; } code { font: 12.5px ui-monospace, monospace; background: #f4f4f5; padding: 1px 5px; border-radius: 4px; }
+  ul { margin: 6px 0 0; padding-left: 22px; } li { margin: 3px 0; }
+  .tag { font: 11px ui-monospace, monospace; font-weight: 700; padding: 0 5px; border-radius: 4px; }
+  .feat { background: #dcfce7; color: #166534; } .fix { background: #dbeafe; color: #1e40af; }
+  .security { background: #fee2e2; color: #991b1b; } .perf { background: #fef9c3; color: #854d0e; } .docs { background: #ede9fe; color: #5b21b6; }
+  .try { background: #f8fafc; border: 1px solid #e4e4e7; border-radius: 10px; padding: 14px 18px; margin: 18px 0; }
+  .warn { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 10px; padding: 12px 16px; color: #7c2d12; }
+  .hint { color: #71717a; font-size: 13px; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #18181b; color: #e4e4e7; } p { color: #a1a1aa; } code { background: #27272a; }
+    h2 { border-color: #333; color: #d4d4d8; } .try { background: #1f1f23; border-color: #333; } .warn { background: #2a1f14; border-color: #7c2d12; color: #fdba74; }
+  }
+</style>
+</head>
+<body>
+  <h1>Pipe Playground</h1>
+  <p>A long, structured document (a fake <b>CHANGELOG</b>) for exercising <code>fetch_url</code>'s
+  <code>pipe</code> option — the small, safe <code>grep · head · tail · wc · sort · uniq</code> line-scanner.
+  The point: instead of reading this whole page into context, the agent <code>fetch_url</code>s it and pipes it
+  down to the handful of lines it needs.</p>
+
+  <div class="warn" id="serveWarn" hidden>
+    ⚠ <b>Open me over http, not <code>file://</code></b> — <code>fetch_url</code> only fetches http(s) URLs. Run
+    <code>cd examples &amp;&amp; python3 -m http.server 8000</code> and visit
+    <code>http://localhost:8000/pipe-playground.html</code>.
+  </div>
+
+  <div class="try">
+    <p style="margin-top:0"><b>Try</b> (the agent fetches THIS page as Markdown, then pipes it — the queries
+    match the version headings + dates, which these instructions can't accidentally match):</p>
+    <ul class="hint">
+      <li>"How many releases are in the changelog?" → <code>pipe: "grep '^## ' | wc -l"</code></li>
+      <li>"List the 3 newest releases." → <code>pipe: "grep '^## ' | head -3"</code></li>
+      <li>"What's the OLDEST release date?" → <code>pipe: "grep -oE '202[0-9]-[0-9][0-9]-[0-9][0-9]' | sort | head -1"</code></li>
+      <li>"How many releases per month?" → <code>pipe: "grep -oE '202[0-9]-[0-9][0-9]-' | sort | uniq -c"</code> (the classic frequency count)</li>
+    </ul>
+    <p class="hint" style="margin-bottom:0">For anything the dialect can't express, the tool tells the model to
+    drop to <code>exec</code>: <code>const { markdown } = await ml.fetch(url)</code> and process the string in JS.</p>
+  </div>
+
+  <main id="changelog">
+  <h2>v2.4.0 — 2026-08-30</h2>
+  <ul>
+    <li><span class="tag feat">feat</span> pipe: fetch_url gains a grep/head/tail scanner (closes #412)</li>
+    <li><span class="tag security">security</span> sanitize redirect targets before a credentialed fetch (CVE-2026-1188)</li>
+    <li><span class="tag fix">fix</span> markdown: nested lists no longer lose their indentation</li>
+    <li><span class="tag perf">perf</span> attach the debugger once per run, not per exec</li>
+  </ul>
+  <h2>v2.3.1 — 2026-08-12</h2>
+  <ul>
+    <li><span class="tag fix">fix</span> hud: corner card empty after a cross-domain nav</li>
+    <li><span class="tag security">security</span> reject a page-forged FETCH_SHEET that isn't a docs.google.com export</li>
+    <li><span class="tag docs">docs</span> document the readonly-exec dialect gaps</li>
+  </ul>
+  <h2>v2.3.0 — 2026-07-28</h2>
+  <ul>
+    <li><span class="tag feat">feat</span> locate: grid-then-grounding strategy for dense canvases</li>
+    <li><span class="tag feat">feat</span> python_exec: pandas + a { tables } DataFrame loader</li>
+    <li><span class="tag fix">fix</span> streaming: accumulate Ollama tool_calls across NDJSON chunks</li>
+    <li><span class="tag perf">perf</span> reuse a resident model when num_ctx would only shrink it</li>
+    <li><span class="tag security">security</span> strip URL/key overrides from any page-relayed config message</li>
+  </ul>
+  <h2>v2.2.0 — 2026-07-05</h2>
+  <ul>
+    <li><span class="tag feat">feat</span> cross-page runs survive a same-origin navigation</li>
+    <li><span class="tag fix">fix</span> approval: a mid-run steer no longer lands in the previous block</li>
+    <li><span class="tag docs">docs</span> add the cross-page agent spec</li>
+    <li><span class="tag fix">fix</span> devtools panel: replay the buffer on a mid-run connect</li>
+  </ul>
+  <h2>v2.1.2 — 2026-06-18</h2>
+  <ul>
+    <li><span class="tag security">security</span> hard-lock FETCH_SHEET to the credentialed export shape</li>
+    <li><span class="tag fix">fix</span> exec: console.log output was dropped on strict-CSP pages</li>
+    <li><span class="tag perf">perf</span> cache the OCR reader's num_ctx across delegated sub-calls</li>
+  </ul>
+  <h2>v2.1.0 — 2026-05-30</h2>
+  <ul>
+    <li><span class="tag feat">feat</span> trusted (CDP) type + click for canvas / remote-desktop targets</li>
+    <li><span class="tag feat">feat</span> shadow: reach sealed closed/declarative roots via CDP</li>
+    <li><span class="tag fix">fix</span> a &lt;canvas&gt; selector routes click/type to the trusted path</li>
+    <li><span class="tag docs">docs</span> LOCATE-VISION pipeline writeup</li>
+  </ul>
+  <h2>v2.0.1 — 2026-05-11</h2>
+  <ul>
+    <li><span class="tag security">security</span> validate the target host of every credentialed background fetch</li>
+    <li><span class="tag fix">fix</span> resume: rehydrate an MV3-evicted run from storage on SW respawn</li>
+  </ul>
+  <h2>v2.0.0 — 2026-04-22</h2>
+  <ul>
+    <li><span class="tag feat">feat</span> the background-hosted agent loop (unforgeable approval gate)</li>
+    <li><span class="tag feat">feat</span> approval-over-IPC via the SW-only __mlApprovals channel</li>
+    <li><span class="tag perf">perf</span> stream each SERVER_TOOL_MODES attempt instead of blocking</li>
+    <li><span class="tag fix">fix</span> think:false is read from params, not the top level (openai route)</li>
+    <li><span class="tag docs">docs</span> rewrite the message-contract section</li>
+  </ul>
+  </main>
+
+  <!--
+    ANSWER KEY (in a comment → NOT in the DOM, so the agent must COMPUTE it through the pipe, not read it).
+    The agent fetches this page; fetch_url converts the HTML to Markdown (each <h2> → a "## vX" line, each <li>
+    → a "- …" line). The demo queries deliberately match the version HEADINGS and DATES — patterns the prose /
+    Try-list can't accidentally contain — so the counts are clean. Verified over the real HTML→Markdown output:
+    • grep '^## ' | wc -l                                    → 8  (eight releases: v2.4.0 … v2.0.0)
+    • grep '^## ' | head -3                                  → v2.4.0, v2.3.1, v2.3.0 (newest first)
+    • grep -oE '202[0-9]-[0-9][0-9]-[0-9][0-9]' | sort | head -1  → 2026-04-22 (oldest release date)
+    • grep -oE '202[0-9]-[0-9][0-9]-' | sort | uniq -c       → 2026-04 ×1 · 05 ×2 · 06 ×1 · 07 ×2 · 08 ×2
+    Newest release: v2.4.0 (top of the doc).
+  -->
+
+  <script>
+    // fetch_url can't reach a file:// URL — nudge the user to serve over http if that's how they opened it.
+    if (location.protocol === "file:") document.getElementById("serveWarn").hidden = false;
+  </script>
+</body>
+</html>

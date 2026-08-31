@@ -35,6 +35,7 @@ import type {
 import { detectGroundingModel, DEFAULT_GROUNDING_RANGE, outputCapEscalated } from "./contract";
 import { evalReadonly } from "./readonly-exec";
 import { htmlToMarkdown } from "./html-to-md";
+import { runPipe } from "./text-pipe";
 import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement, navTarget, clipOut, askReaderNumCtx, jsonShape, shadowHostReport } from "./dom";
 import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_NOTE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_EXEC_NOTE, IFRAME_CLAUSE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, EXEC_RANGE_CLAUSE, NAV_OFF_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, askAboutTask } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, markSeen, PT_LOOK_RADIUS, BOX_RE, resolveBox, agentState, mlRange } from "./util";
@@ -1591,19 +1592,21 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                         credentials: { type: "boolean", description: "If true, fetch AS THE USER (send their cookies) for authenticated data. Always prompts; never cached/remembered." },
                         ask: { type: "string", description: "If set, a fast reader model reads the fetched content and answers THIS question; you get the answer, not the body (keeps a large page out of your context). Takes precedence over `schema`." },
                         raw: { type: "boolean", description: "If true, return an HTML page's ORIGINAL raw HTML instead of the auto-converted Markdown (HTML is converted to clean Markdown by default for readability; non-HTML is unaffected)." },
+                        pipe: { type: "string", description: "Optional. SCAN/FILTER the returned text through a small shell-style pipeline BEFORE it reaches you — so you read only the relevant lines instead of the whole doc (cheaper). It's an interpreted line-based environment (NOT a real shell); supported commands, chained with `|`: grep (flags -i -v -n -c -F -w -o -E, context -A/-B/-C N), head/tail (-n N), wc (-l -w -c), sort (-n -r -u -f), uniq (-c -i). E.g. \"grep -i pricing | head -20\", or \"grep -o '[0-9]+' | sort -n | tail -1\". For anything MORE COMPLEX than this dialect, use exec instead: `const { markdown } = await ml.fetch('<the url>');` then process that string with JS." },
                     },
                     required: ["url"],
                 },
                 // Show the URL in the approval card + the In render (an `action` render → "fetch <url>"). The
                 // note flags the SCHEMA-only ask, and — importantly for consent — a CREDENTIALED (as-you) fetch.
                 render: (_input: unknown, args?: Record<string, unknown>): RenderDescriptor => {
-                    const a = args as { url?: unknown; schema?: unknown; credentials?: unknown; ask?: unknown } | undefined;
+                    const a = args as { url?: unknown; schema?: unknown; credentials?: unknown; ask?: unknown; pipe?: unknown } | undefined;
                     const note = a?.credentials ? "as you (sends your cookies)" : a?.schema ? "schema only" : a?.ask ? undefined : "full page";
                     // The ASK gets its OWN line (full text, never truncated), not squeezed into the inline note.
                     const ask = (typeof a?.ask === "string" && a.ask.trim()) ? a.ask.trim() : undefined;
-                    return { type: "action", verb: "fetch", target: String(a?.url ?? ""), ...(note ? { note } : {}), ...(ask ? { ask } : {}) };
+                    const pipe = (typeof a?.pipe === "string" && a.pipe.trim()) ? a.pipe.trim() : undefined;
+                    return { type: "action", verb: "fetch", target: String(a?.url ?? ""), ...(note ? { note } : {}), ...(ask ? { ask } : {}), ...(pipe ? { pipe } : {}) };
                 },
-                run: async ({ url, schema = false, credentials = false, ask = null, raw = false }: { url?: unknown; schema?: boolean; credentials?: boolean; ask?: unknown; raw?: boolean } = {}): Promise<string | ToolResult> => {
+                run: async ({ url, schema = false, credentials = false, ask = null, raw = false, pipe = null }: { url?: unknown; schema?: boolean; credentials?: boolean; ask?: unknown; raw?: boolean; pipe?: unknown } = {}, ctx?: import("./contract").ToolContext): Promise<string | ToolResult> => {
                     if (typeof url !== "string" || !url.trim()) return "Error: fetch_url needs a `url`.";
                     let r: import("./contract").FetchResult;
                     try { r = await ml.fetch(url, { credentials }); }
@@ -1620,19 +1623,40 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     // The body to read/return: converted Markdown for HTML (unless raw), else the JSON/raw text.
                     // ml.fetch already attached `.markdown` for HTML; reuse it (fall back to a fresh conversion).
                     const bodyText = (): string => r.json !== undefined ? JSON.stringify(r.json, null, 2) : (converted ? (r.markdown ?? htmlToMarkdown(r.text)) : r.text);
+                    // `pipe`: SCAN/FILTER the body through the safe grep/head/tail/wc/sort/uniq pipeline. Applied to
+                    // BOTH the default view AND (BEFORE) the ask-reader input, so both see the filtered stream. Pure
+                    // text; on a bad command it returns { err } → an actionable message pointing at the exec escape
+                    // hatch. The FOOTER states the result's size (lines / chars, vs source) so the model has a
+                    // reference for what it's operating on. `pipeStr` is the trimmed pipe (falsy = no pipe).
+                    const pipeStr = typeof pipe === "string" && pipe.trim() ? pipe.trim() : "";
+                    const nlines = (s: string): number => s === "" ? 0 : s.replace(/\n$/, "").split("\n").length;
+                    const doPipe = (raw: string): { text: string; footer: string; err?: string } => {
+                        if (!pipeStr) return { text: raw, footer: "" };
+                        let out: string;
+                        try { out = runPipe(raw, pipeStr); }
+                        // The exec escape-hatch hint only makes sense when `exec` is actually wired this run — gate it.
+                        catch (e) { const escape = ctx?.hasTool("exec") ? ` For anything more complex, use exec: \`const { markdown } = await ml.fetch(${JSON.stringify(r.url)});\` then process the string in JS.` : ""; return { text: raw, footer: "", err: `${head}\n\nPipe error: ${errText(e)}\n\nThe pipe is a small line-scanner (grep · head · tail · wc · sort · uniq), not a real shell.${escape}` }; }
+                        return { text: out, footer: `\n\n(piped through \`${pipeStr}\`: ${nlines(out)} lines, ${out.length.toLocaleString()} chars — filtered from ${nlines(raw)} source lines)` };
+                    };
                     // ASK mode: distill the body through a fast reader model (extend:"utility") instead of returning
                     // it — a large page/API answers a question without ever entering the driver's context (the
                     // look/read delegate-and-distill pattern, for text). Metered as a sub-call (runs under inAgentRun).
                     if (typeof ask === "string" && ask.trim()) {
                         const question = ask.trim();
-                        const body = bodyText();
+                        // pipe FIRST (if set): the reader answers over the FILTERED stream, not the whole page.
+                        const pp = doPipe(bodyText());
+                        if (pp.err) return pp.err;
+                        const body = pp.text;
                         const clipped = clipOut(body, FETCH_ASK_MAX);
                         const cut = clipped.length < body.length;
+                        // Tell the reader the content is a PIPE-PROCESSED partial view (so it doesn't assume it's the
+                        // whole page / treats a missing detail as "filtered out", not "absent from the source").
+                        const pipeForReader = pipeStr ? ` — PRE-FILTERED through the shell pipe \`${pipeStr}\`, so this is a PARTIAL view of the page, not the whole document` : "";
                         const beforeU = subcallUsage();   // the reader sub-call's cost (model + tokens) for the render
                         let answer: string;
                         try {
                             answer = await ml.chat(
-                                `Content fetched from ${r.url} (${r.type}, HTTP ${r.status}${cut ? ", truncated" : ""}):\n\n${clipped}\n\n---\nUsing ONLY the content above, answer concisely. If the answer isn't present in it, say so plainly.\n\nQuestion: ${question}`,
+                                `Content fetched from ${r.url} (${r.type}, HTTP ${r.status}${pipeForReader}${cut ? ", truncated" : ""}):\n\n${clipped}\n\n---\nUsing ONLY the content above, answer concisely. If the answer isn't present in it, say so plainly.\n\nQuestion: ${question}`,
                                 // A summariser needs a window sized to the content, not the tiny utility default —
                                 // else Ollama silently drops the top of a big page. Residency guard reuses a bigger
                                 // resident model for free (see background prepareRequest); only a fresh load is bounded.
@@ -1645,10 +1669,11 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                         const tokens = (afterU.prompt - beforeU.prompt) + (afterU.completion - beforeU.completion);
                         const prevCalls = new Map((beforeU.byModel || []).map(m => [m.model, m.calls]));
                         const answeredBy = (afterU.byModel || []).find(m => (m.calls - (prevCalls.get(m.model) || 0)) > 0)?.model || null;
-                        const content = `${head}\n\nAnswer${cut ? " (the content was truncated before reading — it may be incomplete)" : ""}:\n${answer}${mdNote}`;
+                        const content = `${head}\n\nAnswer${cut ? " (the content was truncated before reading — it may be incomplete)" : ""}:\n${answer}${mdNote}${pp.footer}`;
                         const renderIn: RenderDescriptor = {
                             type: "action", verb: "fetch", target: r.url, ask: question,
                             ...(credentials ? { note: "as you (sends your cookies)" } : {}),
+                            ...(pipeStr ? { pipe: pipeStr } : {}),
                             ...(answeredBy ? { answeredBy } : {}), ...(tokens > 0 ? { tokens } : {}),
                             // The content handed to the reader — the in-the-middle step, so the distill is auditable
                             // (like locate's per-substep prompt). JSON is highlighted; a converted HTML page shows as
@@ -1670,12 +1695,21 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                         if (sig.length >= raw.length) return `${head}\n\n${clipOut(raw, 4000)}\n\n(raw JSON shown — its schema would be larger than the object itself.)`;
                         return `${head}\n\nJSON schema:\n${clipOut(sig, 4000)}`;
                     }
-                    // Default: the body (HTML → Markdown unless raw). For a LARGE json, prepend the shape so the
-                    // structure survives the clip — but only when the shape is actually SMALLER than the payload.
-                    const body = bodyText();
-                    const shapeLine = (r.json !== undefined && r.schema && (r.truncated || body.length > 600) && r.schema.length < body.length)
+                    // Default: the body (HTML → Markdown unless raw), optionally scanned through `pipe` (which the
+                    // model uses to filter a big doc to the relevant lines BEFORE the clip). For a LARGE json, prepend
+                    // the shape so the structure survives the clip — but only when NOT piped (a piped body is already
+                    // a filtered view) and the shape is actually SMALLER than the payload.
+                    const pd = doPipe(bodyText());
+                    if (pd.err) return pd.err;
+                    const body = pd.text;
+                    const shapeLine = (!pipeStr && r.json !== undefined && r.schema && (r.truncated || body.length > 600) && r.schema.length < body.length)
                         ? `JSON schema: ${r.schema}\n\n` : "";
-                    return `${head}${mdNote}\n\n${shapeLine}${clipOut(body, 4000)}`;
+                    // The pipe footer (size/lines) goes at the END, so the model has a reference for the doc it got.
+                    const buildTool = (t: string): string => `${head}${mdNote}\n\n${shapeLine}${t}${pd.footer}`;
+                    const bodyRender: RenderDescriptor | undefined = pipeStr
+                        ? { type: "action", verb: "fetch", target: r.url, pipe: pipeStr }
+                        : undefined;
+                    return bodyRender ? { content: buildTool(clipOut(body, 4000)), renderIn: bodyRender } : buildTool(clipOut(body, 4000));
                 },
             });
         },

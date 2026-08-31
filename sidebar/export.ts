@@ -265,6 +265,13 @@ function writeAgent(s: Session, d: Sink): void {
             // The in-the-middle step: the RAW content the reader saw. Collapsed (it can be large) — a disclosure,
             // like the python input table, so the .md stays readable but the PDF (<details open>) still shows it.
             if (ri.askBody) d.details(`content read by the model${ri.askBodyTruncated ? " (truncated)" : ""} · ${ri.askBody.length.toLocaleString()} chars`, () => d.code(ri.askBody!, ri.askBodyLang || "text"));
+            if (ri.pipe) d.block("Piped through", ri.pipe, "bash");
+            renderedIn = true;
+        } else if (st.renderIn && st.renderIn.type === "action" && st.renderIn.pipe) {
+            // fetch_url `pipe` (no ask): show the URL + the shell pipeline as a `bash` block, matching the sidebar.
+            const ri = st.renderIn;
+            d.block("In", `${ri.verb}${ri.target ? " " + ri.target : ""}`);
+            d.block("Piped through", ri.pipe!, "bash");
             renderedIn = true;
         } else if (!st.renderIn && st.tool === "exec" && typeof st.arguments?.js === "string") {
             d.block("In", beautifyJs(st.arguments.js), "javascript");

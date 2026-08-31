@@ -1041,6 +1041,9 @@ function RenderPanel({ d }: { d: RenderDescriptor }) {
                             Collapsed (it can be large), like locate's per-substep prompt — open it to audit the distill. */}
                         {d.askBody ? <details class="r-py-sec r-action-body-sec"><summary class="r-py-lbl">content read by the model{d.askBodyTruncated ? " (truncated)" : ""} · {d.askBody.length.toLocaleString()} chars</summary>
                             <Code text={d.askBody} lang={d.askBodyLang || "text"} /></details> : null}
+                        {/* fetch_url `pipe`: the shell pipeline the fetched text was scanned through — shown as the
+                            interpreted `bash` command it is, so it reads as code, not a note. */}
+                        {d.pipe ? <div class="r-action-pipe"><div class="r-py-lbl">piped through</div><Code text={d.pipe} lang="bash" /></div> : null}
                     </div>
                 );
             }

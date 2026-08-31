@@ -737,6 +737,17 @@ test("sampleText samples N, truncates, marks overflow, and returns those nodes",
     assert.match(run(ml, "sampleText", { selector: ".nope" }), /No element matches/);
 });
 
+test("sampleText pipe: scans the sampled lines through the grep/sort pipeline", () => {
+    const { ml } = loadDomWorld("<p>Apple</p><p>banana</p><p>apple pie</p><p>Cherry</p><p>banana split</p>");
+    const tool = ml.domTools.find(t => t.name === "sampleText");
+    const res = tool.run({ selector: "p", n: 10, pipe: "grep -i banana | wc -l" });
+    assert.match(res.content, /^2/, "counts the sampled lines matching (case-insensitive)");
+    assert.match(res.content, /piped through `grep -i banana \| wc -l`/, "notes the pipe");
+    // A bad command → an actionable error; the exec suggestion is gated on exec being wired.
+    const err = tool.run({ selector: "p", n: 10, pipe: "sed x" }, { hasTool: (n) => n === "exec" });
+    assert.match(String(err), /Pipe error.*not a real shell.*use exec/s);
+});
+
 test("exec on a strict page (CSP / Trusted-Types block) → signals cdpExec with the SOURCE, not a plain error", async () => {
     const { ml } = loadDomWorld();
     const exec = ml.domTools.find(t => t.name === "exec");
@@ -1995,6 +2006,35 @@ test("fetch_url: an HTML page is auto-converted to Markdown (+ a note); raw:true
     const fr = await world.ml.fetch(url);
     assert.match(fr.markdown, /# Hello/, "ml.fetch attaches .markdown for HTML");
     assert.match(fr.text, /<h1>Hello<\/h1>/, ".text keeps the raw HTML");
+});
+
+test("fetch_url pipe: filters the returned text through the grep/head pipeline (+ a line-count note); a bad pipe points at exec", async () => {
+    const url = "https://x.test/data.txt";
+    let fetchResult;
+    const world = loadPageWorld({
+        config: { model: "m", ocrModel: "" },
+        onRuntimeMessage: (m) => (m.type === "FETCH_URL" ? { data: fetchResult } : undefined),
+    });
+    await new Promise(r => setTimeout(r, 0));
+    const tool = world.ml.fetchTool();
+    const body = ["price: 10", "note: hi", "price: 25", "misc", "PRICE: 5"].join("\n");
+    fetchResult = { url, status: 200, ok: true, type: "text", contentType: "text/plain", text: body };
+
+    const out = await tool.run({ url, pipe: "grep -i price | head -2" });
+    const md = typeof out === "string" ? out : out.content;
+    assert.match(md, /price: 10\nprice: 25/, "only the matching lines, capped by head");
+    assert.doesNotMatch(md, /note: hi|misc/, "non-matching lines dropped before it reaches the model");
+    assert.match(md, /piped through `grep -i price \| head -2`: 2 lines.*filtered from 5 source lines/, "the size/line footer, at the end");
+
+    // A command outside the dialect → an actionable error. The exec escape hatch is GATED on exec being wired.
+    const withExec = { hasTool: (n) => n === "exec", tools: ["exec"], model: null, capabilities: null };
+    const err = await tool.run({ url, pipe: "sed 's/a/b/'" }, withExec);
+    assert.match(String(err), /Pipe error/, "surfaces the interpreter error");
+    assert.match(String(err), /const \{ markdown \} = await ml\.fetch/, "with exec wired → points at the exec escape hatch");
+    // Without exec wired, the hint is omitted (no misleading suggestion to use a tool it doesn't have).
+    const errNoExec = await tool.run({ url, pipe: "sed 's/a/b/'" }, { hasTool: () => false, tools: [], model: null, capabilities: null });
+    assert.match(String(errNoExec), /not a real shell/, "still explains the dialect");
+    assert.doesNotMatch(String(errNoExec), /use exec/, "no exec suggestion when exec isn't available");
 });
 
 test("fetch_url: non-HTML content (JSON) is never converted or note-tagged", async () => {
