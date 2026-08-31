@@ -69,6 +69,28 @@ test("type into a NORMAL field still sets the value directly (no CDP) — the DO
     assert.ok(!(res.cdpType), "no trusted-keyboard signal for an ordinary field");
 });
 
+test("type into a <canvas> SELECTOR → trusted keyboard at its centre (not a fake textContent set)", async () => {
+    const doc = mount(`<canvas id="screen"></canvas>`);
+    doc.getElementById("screen").getBoundingClientRect = () => ({ left: 0, top: 0, width: 640, height: 380, right: 640, bottom: 380 });
+    const res = await typeTool().run({ selector: "#screen", text: "HELLO", submit: true });
+    assert.ok(res.cdpType, "a canvas selector routes to trusted keyboard, not the normal value-set path");
+    assert.equal(res.cdpType.x, 320); assert.equal(res.cdpType.y, 190, "clicks the canvas CENTRE to focus first");
+    assert.equal(res.cdpType.text, "HELLO"); assert.equal(res.cdpType.submit, true);
+    assert.doesNotMatch(String(res.content ?? res), /Value now/, "never the misleading 'Value now: …' for a canvas");
+});
+
+test("click a <canvas> SELECTOR → trusted CENTRE click when enabled (synthetic el.click can't focus a trusted-only canvas)", async () => {
+    const doc = mount(`<canvas id="screen"></canvas>`);
+    doc.getElementById("screen").getBoundingClientRect = () => ({ left: 0, top: 0, width: 640, height: 380, right: 640, bottom: 380 });
+    setCdpEnabled(true);
+    const on = await clickTool().run({ selector: "#screen" });
+    assert.ok(on.cdpClick, "cdp ON → a trusted CDP click on the canvas");
+    assert.equal(on.cdpClick.x, 320); assert.equal(on.cdpClick.y, 190, "at its centre");
+    setCdpEnabled(false);
+    const off = await clickTool().run({ selector: "#screen" });
+    assert.ok(!off.cdpClick, "cdp OFF → the synthetic el.click() path (unchanged)");
+});
+
 test("click @pt: CDP-trusted ONLY when the run enabled it; otherwise the synthetic canvas path", async () => {
     mount();   // empty doc → elementFromPoint returns null (not a reserved surface)
     const tok = mintPoint(200, 250);

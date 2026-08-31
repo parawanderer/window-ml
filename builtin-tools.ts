@@ -1176,6 +1176,15 @@ export const buildClickTool = (ml: MlApi): MlTool => {
                 return `No element matches "${selector}"${index ? ` at index ${index}` : ""}.`;
             }
             const el = el0;
+            // A <canvas> (WebGL / remote-desktop / game screen) has no DOM child to target, and a trusted-only
+            // canvas IGNORES a synthetic `el.click()` (it isn't even a real `mousedown`, so it never focuses the
+            // canvas either — the reason a following @focus type lands nowhere). With trusted input enabled,
+            // click its CENTRE via CDP: a real event the canvas honours AND that focuses it. cdp off → the
+            // synthetic path below (fine for a 2D canvas that accepts synthetic clicks).
+            if (el.tagName === "CANVAS" && cdpEnabled) {
+                const c = elementCenter(el);
+                if (c) return { content: `Clicking the <canvas> ${elLine(el)} at its centre (${Math.round(c.x)}, ${Math.round(c.y)}) with a TRUSTED (CDP) event — a canvas ignores a synthetic click.`, cdpClick: { x: Math.round(c.x), y: Math.round(c.y), verify: verify || undefined } };
+            }
             const preCenter = elementCenter(el);   // captured BEFORE the click, in case it removes/replaces the element
             const before = (typeof location !== "undefined" && location.href) || "";
             try { el.scrollIntoView({ block: "center", inline: "center" }); } catch {}
@@ -1249,7 +1258,15 @@ export const buildTypeTool = (ml: MlApi): MlTool => {
             if (POINT_RE.test(s)) { const pt = resolvePoint(s)!; return { content: `Typing "${truncate(text, 60)}" into the target at (${pt.x}, ${pt.y}) via trusted keyboard (CDP).`, cdpType: { x: pt.x, y: pt.y, text, submit: submit || undefined, verify: verify || undefined } }; }
             const sealed0 = queryAll(selector)[index];
             if (!sealed0 && firstHopSealed(selector)) return { content: `Typing "${truncate(text, 60)}" into "${selector}" inside a sealed shadow root via the debugger.`, cdpType: { selector, index, text, submit: submit || undefined, verify: verify || undefined } };
-            const el = queryAll(selector)[index]!;   // precheck confirmed it matches (normal DOM field)
+            const el = queryAll(selector)[index]!;   // precheck confirmed it matches
+            // A <canvas> has no value / contenteditable — the normal path below would set a meaningless
+            // `textContent` and falsely report "Value now: …". Route it to trusted keyboard instead: CDP-click its
+            // CENTRE to focus it (a canvas keydown handler only fires on the focused canvas), then type real key
+            // events. Background gates on the cdp flag.
+            if (el.tagName === "CANVAS") {
+                const c = elementCenter(el);
+                if (c) return { content: `Typing "${truncate(text, 60)}" into the <canvas> ${elLine(el)} via trusted keyboard (CDP) — clicking its centre to focus first.`, cdpType: { x: Math.round(c.x), y: Math.round(c.y), text, submit: submit || undefined, verify: verify || undefined } };
+            }
             const preCenter = elementCenter(el);   // BEFORE typing/submit, in case submit navigates the field away
             const input = el as HTMLInputElement;
             const editable = "value" in el;
