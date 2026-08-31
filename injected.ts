@@ -185,7 +185,8 @@ class AgentHandle implements MlAgentHandle, AgentControl {
     // itself was already approved/consented to reach the background), so a follow-up READONLY `exec` that
     // re-reads the same URL gets the cached result with NO approval — the `_fetchCached` reader the read-only
     // dialect's `ml.fetch` is bound to. The python_exec+Google-Sheet parallel: approve the source ONCE, then
-    // operate on it freely. Page-scoped (module lifetime); holds only public, uncredentialed bytes.
+    // operate on it freely. Page-scoped (module lifetime); holds only public, uncredentialed, non-rendered bytes
+    // (a credentialed / rendered fetch is authenticated or session-bound → NEVER cached).
     const mlFetchCache = new Map<string, import("./contract").FetchResult>();
 
     // ---- Agent tool helpers (page-context DOM introspection) ----
@@ -650,8 +651,9 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             // below). `navigate: false` disables it entirely — no tool, no cross-page persistence (the run
             // ends at a nav), and NAV_OFF_CLAUSE tells the model so instead of it wasting steps trying.
             if (navigate && !toolset.some(t => t.name === "navigate")) toolset.push(this.navigateTool({ crossOrigin }));
-            // fetch_url: READ a URL the page can't (a raw file / API / other site) WITHOUT navigating — a gated,
-            // uncredentialed GET. Auto-wired into the DEFAULT kit only (`tools` not overridden); it needs no
+            // fetch_url: READ a URL the page can't (a raw file / API / other site) WITHOUT navigating — a gated
+            // GET (uncredentialed by default; `credentials`/`rendered` opt into the user's session / a JS render).
+            // Auto-wired into the DEFAULT kit only (`tools` not overridden); it needs no
             // navigation, so it's added even on a navigate:false run. A caller who hand-picks `tools` gets exactly
             // what they list (add `ml.fetchTool()` to include it) — unlike the vision tools, which augment any
             // driver because they're capability-probed. requiresApproval, so default-on is safe.
@@ -1543,9 +1545,11 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             });
         },
         /**
-         * Build the `fetch_url` tool: GET a URL's content (uncredentialed, via the background) so the agent can
-         * READ a file/API/other page WITHOUT navigating there. requiresApproval — a new URL hits the unforgeable
-         * gate; an already-approved one auto-approves. Auto-wired into ml.agent unless `fetch: false`.
+         * Build the `fetch_url` tool: GET a URL's content via the background so the agent can READ a
+         * file/API/other page WITHOUT navigating there. Uncredentialed by default; `credentials` fetches in the
+         * user's session and `rendered` loads it in a tab so its JS runs (see the tool description).
+         * requiresApproval — a new URL hits the unforgeable gate; an already-approved one auto-approves.
+         * Auto-wired into ml.agent unless `fetch: false`.
          *
          * @returns {MlTool} A tool with `name: "fetch_url"` and `requiresApproval: true`.
          */
@@ -1557,8 +1561,8 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             return ml.defineTool({
                 name: "fetch_url",
                 requiresApproval: true,   // a NEW url hits the unforgeable gate; an approved one auto-approves (autoApprove)
-                summary: "Fetches a URL's content (uncredentialed GET) to read a file/API the page can't.",
-                description: "GET a URL's content via the extension — bypasses CORS, sends NO cookies. Use it to " +
+                summary: "Fetches a URL's content (GET) to read a file/API the page can't; optional as-you / rendered modes.",
+                description: "GET a URL's content via the extension — bypasses CORS, and by default sends NO cookies. Use it to " +
                     "READ a raw file, a JSON API, or another site WITHOUT navigating there (also works on pages " +
                     "that block the extension, e.g. raw.githubusercontent.com). The result reports the body plus a " +
                     "best-effort TYPE (json/csv/html/xml/markdown/code/text) so you can chain — JSON comes " +
@@ -2252,10 +2256,10 @@ class AgentHandle implements MlAgentHandle, AgentControl {
          */
         range: mlRange,
         /**
-         * GET a URL's content via the background worker — bypasses CORS (host permissions), sends NO cookies
-         * (uncredentialed). Use it to READ a page/file the current DOM can't reach — a raw source file, a JSON
-         * API, another site — instead of NAVIGATING there (which also dodges pages that block the extension,
-         * e.g. raw.githubusercontent.com's sandbox CSP).
+         * GET a URL's content via the background worker — bypasses CORS (host permissions), and by DEFAULT sends
+         * no cookies (uncredentialed; `credentials`/`rendered` opt in — see below). Use it to READ a page/file
+         * the current DOM can't reach — a raw source file, a JSON API, another site — instead of NAVIGATING
+         * there (which also dodges pages that block the extension, e.g. raw.githubusercontent.com's sandbox CSP).
          *
          * Returns a FetchResult: `.type` classifies the body as json/csv/html/xml/markdown/code/text so you can
          * chain — `.json` is pre-parsed for JSON; hand a CSV's `.text` to `python_exec`; `.language` names a

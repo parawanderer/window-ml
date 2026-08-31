@@ -200,8 +200,10 @@ export function outputCapPrecheck(tool: OutputCapTool, args: Record<string, unkn
     return null;
 }
 
-/** `FETCH_URL` payload — a plain uncredentialed GET the background performs on the agent's behalf (bypassing
- *  CORS via host permissions). No headers/body/method knobs by design: a locked, low-surface read primitive. */
+/** `FETCH_URL` payload — a GET the background performs on the agent's behalf (bypassing CORS via host
+ *  permissions). Uncredentialed by default; `credentials` sends the user's cookies, `rendered` loads it in a
+ *  tab so its JS runs (incognito unless credentialed). No headers/body/method knobs by design: a locked,
+ *  low-surface read primitive. */
 export interface FetchUrlPayload { url: string; credentials?: boolean; rendered?: boolean; }
 /** The result of `ml.fetch(url)`. Content type is resolved BOTH ways so a mislabel is visible: `type` is the
  *  final pick (header when specific, else the content sniff), `typeByHeader`/`typeByContent` are the raw
@@ -1408,8 +1410,9 @@ export interface MlApi {
     /** Built-in `navigate(url)` tool factory (auto-wired into ml.agent unless `navigate: false`): navigate
      *  the tab to another URL, continuing the run on the new page. Same-origin only unless `crossOrigin`. */
     navigateTool(opts?: { crossOrigin?: boolean }): MlTool;
-    /** Built-in `fetch_url` tool factory (auto-wired into ml.agent): GET a URL's content (uncredentialed,
-     *  via the background) so the agent can READ a file/API/other page without navigating. requiresApproval. */
+    /** Built-in `fetch_url` tool factory (auto-wired into ml.agent): GET a URL's content via the background so
+     *  the agent can READ a file/API/other page without navigating (uncredentialed by default; opt into the
+     *  user's session with `credentials`, or a JS render with `rendered`). requiresApproval. */
     fetchTool(): MlTool;
     /** Run a sandboxed Python snippet (Pyodide/WASM, numpy + Pillow) with an optional
      *  screenshot injected as `img`/`img_np`. No network/filesystem/DOM. */
@@ -1462,14 +1465,16 @@ export interface MlApi {
      *  `for`/`while`): `ml.range(8).map(i => …)`. `range(stop)` / `range(start, stop)` / `range(start,
      *  stop, step)`. Returns a real array capped at 100k (over → throws), so it can never run away. */
     range(a: number, b?: number, step?: number): number[];
-    /** GET a URL's content via the background (bypasses CORS; UNCREDENTIALED — never sends your cookies).
-     *  Use it to READ a page/file the current DOM can't reach — a raw file, a JSON API, another site — instead
-     *  of navigating there. Returns a {@link FetchResult}: `.type` classifies the body (json/csv/html/text) so
-     *  you can chain (`.json` is pre-parsed; hand `.text` of a CSV to `python_exec`). Each new URL requires the
-     *  user's one-time approval (then it's remembered for the session). GET only — no headers, body, or auth.
-     *  `credentials: true` fetches AS THE USER (sends cookies; always prompts, never cached). `rendered: true`
-     *  loads the URL in a background tab so its JavaScript runs, then returns the SETTLED DOM (for SPA / client-
-     *  rendered pages a raw GET can't see) — also as-you + always-prompt + uncached. */
+    /** GET a URL's content via the background (bypasses CORS; UNCREDENTIALED BY DEFAULT — no cookies unless you
+     *  ask). Use it to READ a page/file the current DOM can't reach — a raw file, a JSON API, another site —
+     *  instead of navigating there. Returns a {@link FetchResult}: `.type` classifies the body (json/csv/html/
+     *  text) so you can chain (`.json` is pre-parsed; hand `.text` of a CSV to `python_exec`). Each new URL
+     *  requires the user's one-time approval (then it's remembered for the session). GET only — no custom
+     *  headers or body. `credentials: true` fetches AS THE USER (sends cookies; always prompts, never cached).
+     *  `rendered: true` loads the URL in a background tab so its JavaScript runs, then returns the SETTLED DOM
+     *  (for SPA / client-rendered pages a raw GET can't see); by default it renders PRIVATELY in incognito (no
+     *  session — rememberable like a plain fetch), or in the user's session when combined with `credentials`.
+     *  Rendered is never cached. */
     fetch(url: string, opts?: { fresh?: boolean; credentials?: boolean; rendered?: boolean }): Promise<FetchResult>;
     /** Internal: CACHE-ONLY read of a prior `ml.fetch(url)` result (or undefined on a miss). The read-only
      *  `exec` dialect binds its `ml.fetch` to this, so re-reading an already-fetched URL is free (no egress).

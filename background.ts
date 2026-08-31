@@ -2257,8 +2257,9 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         return true;   // async
     }
     if (message.type === "FETCH_URL") {
-        // ml.fetch(url): an UNCREDENTIALED GET the agent uses to READ content the page can't (a raw file, a
-        // JSON API, another site) — bypasses CORS via host permissions, but sends NO cookies. CHOKE-POINT:
+        // ml.fetch(url): a GET the agent uses to READ content the page can't (a raw file, a JSON API, another
+        // site) — bypasses CORS via host permissions. Uncredentialed by default (no cookies); `credentials`
+        // sends the user's session and `rendered` loads it in a tab so its JS runs (see the branches). CHOKE-POINT:
         // there's no URL host-lock (arbitrary URLs are the point), so the boundary IS the consent — an
         // untrusted page may fetch only a URL the user approved for THIS tab (grown in a run's approval,
         // unforgeable). A trusted surface / whitelisted domain is unrestricted. Only http(s) targets.
@@ -2733,8 +2734,9 @@ function browserFetchHeaders(): Record<string, string> {
     } catch { /* skip */ }
     return h;
 }
-/** Perform the actual uncredentialed GET for ml.fetch (host permissions bypass CORS; NO cookies). Classifies
- *  the body by header AND content (a server can mislabel), pre-parses JSON, and caps the size. Throws on a
+/** Perform the actual GET for ml.fetch (host permissions bypass CORS). Uncredentialed (no cookies) unless
+ *  `credentials` is set — then it sends the user's cookies (the gated as-you path). Classifies the body by
+ *  header AND content (a server can mislabel), pre-parses JSON, and caps the size. Throws on a
  *  network/permission failure (the handler turns that into an actionable message). */
 async function fetchUrlContent(url: string, credentials = false): Promise<FetchResult> {
     // `credentials:"include"` sends the user's cookies (authenticated fetch — gated + one-time upstream);

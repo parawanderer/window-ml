@@ -18,7 +18,7 @@ const INJECTED_ABSENT_GRACE_MS = 4_000;
 // Backstop bound once injected IS alive but a tool doesn't answer: generous — longer than any realistic tool
 // (a long `wait`, a heavy `python_exec`) — so it only ever catches a genuine hang, not a slow-but-live tool.
 const TOOL_RELAY_TIMEOUT_MS = 120_000;
-const CSP_BLOCK_MSG = (name: string): string => `Error: this page blocks the extension's page script, so "${name}" can't run here. Its Content-Security-Policy disables injected scripts — raw.githubusercontent.com does this (it serves files with a "sandbox" CSP). Better: don't navigate here at all — if you just need this URL's CONTENT, navigate BACK to a working page and use \`fetch_url\` (or \`ml.fetch(url)\`) to read it directly (an uncredentialed GET, no injected script needed). Otherwise open a normal page (e.g. the github.com "…/blob/…" view, not the raw host).`;
+const CSP_BLOCK_MSG = (name: string): string => `Error: this page blocks the extension's page script, so "${name}" can't run here. Its Content-Security-Policy disables injected scripts — raw.githubusercontent.com does this (it serves files with a "sandbox" CSP). Better: don't navigate here at all — if you just need this URL's CONTENT, navigate BACK to a working page and use \`fetch_url\` (or \`ml.fetch(url)\`) to read it directly (a background GET, no injected script needed). Otherwise open a normal page (e.g. the github.com "…/blob/…" view, not the raw host).`;
 const s = document.createElement("script");
 s.src = chrome.runtime.getURL("injected.js");
 s.onload = () => s.remove();
