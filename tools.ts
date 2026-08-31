@@ -129,6 +129,14 @@ const sourceSection = (): string => {
 const firstOfNote = (selector: string, count: number): string =>
     count > 1 ? `⚠ "${selector}" matched ${count} elements — using the FIRST (#0). Narrow it (an id, or :nth-of-type(N)), or countMatches to list them.\n\n` : "";
 
+// A hint (only when `exec` is wired — a smarter model can act on it, a weaker one ignores it and just keeps
+// calling the tool) that this tool's job can be COMPOSED as a read-only exec survey when you need a filter the
+// tool doesn't offer — using the same expertise as read-only primitives (auto-approves, no gate). One terse line.
+const composeHint = (ctx?: ToolContext): string =>
+    ctx?.hasTool("exec")
+        ? "\n\n(For a custom filter, compose it in a read-only exec survey: `ml.queryAll(sel)` + `ml.accessibleName(el)` / `ml.selectorFor(el)` with .filter/.map — auto-approves, no prompt.)"
+        : "";
+
 // Appended to a page-SCANNING tool's output: the CLOSED shadow roots a selector scan couldn't enter, so the
 // model knows a target it can't find may be sealed inside one. The workaround is conditional on `locate`
 // being wired this run (ctx.hasTool) — without it there is no way in. "" when there are no closed roots.
@@ -181,7 +189,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                     els.push(el);
                     if (els.length >= limit) break;
                 }
-                const shadowNote = shadowScanNote(ctx);
+                const shadowNote = shadowScanNote(ctx) + composeHint(ctx);
                 return els.length ? { content: out.join("\n") + shadowNote, elements: els } : `No elements contain "${text}".${shadowNote}`;
             }
         }),
@@ -288,7 +296,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                         els.push(it.el);
                     }
                 }
-                const shadowNote = shadowScanNote(ctx);
+                const shadowNote = shadowScanNote(ctx) + composeHint(ctx);
                 if (!els.length) return (contains ? `No interactive controls with a name containing "${contains}". Try again without \`contains\` to list everything.` : "No interactive controls found.") + shadowNote;
                 return { content: note + out.join("\n") + shadowNote, elements: els };
             }

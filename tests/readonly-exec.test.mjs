@@ -783,3 +783,44 @@ test("ESCAPE: a denied op inside ${} still escalates (can't be laundered through
 test("ESCAPE: a statement smuggled into ${} fails closed", async () => {
     await assert.rejects(run("`${1; 2}`"), outOfDialect);
 });
+
+// --- blessed DOM primitives: ml.accessibleName / ml.selectorFor (compose the interactives/findByText job) ---
+// They take a LIVE element (from queryAll) and return a STRING — the a11y-name / `>>>`-reference expertise, so
+// exec can compose a custom finder as a read-only survey. Per the AGENTS.md RULE, adversarial-tested: the new
+// element-arg pattern can't become an escape, the string result can't reach a realm, and they add no capability.
+const withPrims = (doc) => ({
+    ...ML,
+    queryAll: (s) => [...doc.querySelectorAll(s)],
+    accessibleName: (el) => (!el || !el.getAttribute) ? "" : (el.getAttribute("aria-label") || el.getAttribute("placeholder") || (el.textContent || "")),
+    selectorFor: (el) => (el && el.id) ? "#" + el.id : (el && el.tagName ? el.tagName.toLowerCase() : ""),
+});
+
+test("blessed primitives: accessibleName/selectorFor COMPOSE in a read-only survey (auto-approves, no gate)", async () => {
+    const doc = world();
+    const ml = withPrims(doc);
+    // The interactives/findByText job, composed: filter by accessible name, map to the click reference.
+    const js = `ml.queryAll("input, textarea, [contenteditable]")
+        .filter(el => ml.accessibleName(el).includes("Gemini"))
+        .map(el => ml.selectorFor(el))`;
+    assert.deepEqual((await run(js, doc, ml)).value, ["#a", "#b", "#c"], "names filtered, refs mapped — in-dialect");
+    // Used inside a .map callback (sync ml read), like queryAll — objects out.
+    assert.deepEqual((await run(`ml.queryAll("#a").map(el => ({ name: ml.accessibleName(el), ref: ml.selectorFor(el) }))`, doc, ml)).value,
+        [{ name: "Ask Gemini", ref: "#a" }]);
+});
+
+test("blessed primitives: ADVERSARIAL — string-only result, ml-facade-only name, harmless args, no new effect", async () => {
+    const doc = world();
+    const ml = withPrims(doc);
+    // (1) the STRING result can't be walked to a constructor / prototype / realm.
+    await assert.rejects(run(`ml.accessibleName(ml.queryAll("input")[0]).constructor`, doc, ml), outOfDialect);
+    await assert.rejects(run(`ml.selectorFor(ml.queryAll("input")[0])["__proto__"]`, doc, ml), outOfDialect);
+    // (2) the names live ONLY on the ml facade — calling them on a page object is out-of-dialect (not a global method).
+    await assert.rejects(run(`document.body.accessibleName()`, doc, ml), outOfDialect);
+    await assert.rejects(run(`ml.queryAll("input")[0].selectorFor()`, doc, ml), outOfDialect);
+    // (3) an odd/hostile ARG is harmless — a non-element just yields a string, no throw that escapes, no leak.
+    assert.equal(typeof (await run(`ml.accessibleName(document)`, doc, ml)).value, "string");
+    assert.equal((await run(`ml.selectorFor(null)`, doc, ml)).value, "");
+    // (4) they add NO new reach to the gated half — the effectful ml methods are still unreachable.
+    await assert.rejects(run(`ml.setModel("x")`, doc, ml), outOfDialect);
+    await assert.rejects(run(`ml.screenshot("@pt:0")`, doc, ml), outOfDialect);
+});

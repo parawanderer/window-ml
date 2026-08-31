@@ -675,6 +675,17 @@ test("interactives scopes to an open modal dialog (the rating popup case)", () =
     assert.ok(!/"Like"/.test(out.content), "controls outside the modal are not listed");
 });
 
+test("findByText/interactives hint at exec composition ONLY when exec is wired (ctx.hasTool)", () => {
+    const { ml } = loadDomWorld('<button aria-label="Delete">x</button><p>hello there</p>');
+    const withExec = { hasTool: (n) => n === "exec", tools: ["exec"], model: null, capabilities: null };
+    const noExec = { hasTool: () => false, tools: [], model: null, capabilities: null };
+    const fbt = ml.domTools.find(t => t.name === "findByText");
+    assert.match(String(fbt.run({ text: "hello" }, withExec).content), /compose it in a read-only exec survey[\s\S]*ml\.accessibleName/, "exec wired → the compose hint (smart models can act on it)");
+    assert.doesNotMatch(String(fbt.run({ text: "hello" }, noExec).content), /read-only exec survey/, "no exec → no hint (weaker models just keep calling the tool)");
+    const inter = ml.domTools.find(t => t.name === "interactives");
+    assert.match(String(inter.run({}, withExec).content), /ml\.selectorFor/, "interactives hints too when exec is wired");
+});
+
 test("describeElement describes the first match (+ node) and handles bad input", () => {
     const { ml } = loadDomWorld('<div class="card" data-id="7"><span>hi</span></div>');
     const res = run(ml, "describeElement", { selector: ".card", depth: 0 });
