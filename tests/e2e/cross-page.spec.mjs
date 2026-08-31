@@ -788,6 +788,28 @@ test("cross-page: the inline sidebar renders the run's history (incl. pre-nav st
 // Orient-on-nav: the `navigate` tool's RESULT carries the DESTINATION page's pageInfo, so the model's next
 // turn already knows where it landed (no wasted look()/pageInfo turn). The fake sees every message, so we
 // assert the navigate tool result the model receives is enriched with the new page's URL/title.
+test("navigate verify:'text' folds the destination page's Markdown into the tool result (fetch_url's HTML→MD)", async () => {
+    const page = await ext.context.newPage();
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+    const before = fake.calls().length;
+    fake.setScript([
+        { tool: "navigate", args: { url: "/step3", verify: "text" } },   // distil the destination to Markdown
+        { content: "done" },
+    ]);
+    await page.evaluate(() => { window.ml.agent("Go to step 3 and show me the page as text.", { env: false }); return true; });
+    await expect.poll(() => new URL(page.url()).pathname, { timeout: 20000 }).toBe("/step3");
+    await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(2);
+    // The 2nd turn's history holds the navigate result WITH /step3 converted to Markdown (nav/chrome + <style> stripped).
+    const msgs = fake.calls().at(-1).messages || [];
+    const toolMsg = [...msgs].reverse().find((m) => m.role === "tool");
+    const seen = toolMsg ? (typeof toolMsg.content === "string" ? toolMsg.content : JSON.stringify(toolMsg.content)) : "";
+    expect(seen).toMatch(/Markdown/);            // the verify-text header
+    expect(seen).toMatch(/CROSSPAGE-9471/);      // the destination page's actual content, converted
+    expect(seen).not.toMatch(/<style|<h1/);      // it's Markdown, not raw HTML tags
+    await page.close();
+});
+
 test("orient-on-nav: the navigate tool result carries the destination page's context to the model", async () => {
     const page = await ext.context.newPage();
     await page.goto(site.url + "/");

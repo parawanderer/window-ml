@@ -34,6 +34,20 @@ test("collapses blank-line runs and trims; empty input → empty string", () => 
     assert.equal(htmlToMarkdown("   "), "");
 });
 
+test("stripChrome:false (navigate verify text-all) KEEPS nav/header/footer; default strips them", () => {
+    const html = `<header>SITEHEADER</header><nav>Home About</nav><main><p>Body.</p></main><footer>SITEFOOTER</footer>`;
+    const stripped = htmlToMarkdown(html);                          // default → chrome removed
+    assert.match(stripped, /Body\./);
+    assert.doesNotMatch(stripped, /SITEHEADER|Home About|SITEFOOTER/, "default strips chrome");
+    const all = htmlToMarkdown(html, { stripChrome: false });       // text-all → chrome kept
+    assert.match(all, /Body\./);
+    assert.match(all, /SITEHEADER/, "text-all keeps the header");
+    assert.match(all, /SITEFOOTER/, "text-all keeps the footer");
+    assert.match(all, /Home About/, "text-all keeps the nav");
+    // Scripts/styles are stripped in BOTH modes (pure noise).
+    assert.doesNotMatch(htmlToMarkdown(`<script>x()</script><nav>n</nav><p>y</p>`, { stripChrome: false }), /x\(\)/);
+});
+
 test("a table survives as a Markdown table", () => {
     const md = htmlToMarkdown(`<table><thead><tr><th>Name</th><th>Qty</th></tr></thead><tbody><tr><td>Apple</td><td>3</td></tr></tbody></table>`);
     assert.match(md, /\| Name \| Qty \|/);

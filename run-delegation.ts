@@ -14,6 +14,8 @@ import type { MlTool, PageToolEnvelope, SubcallUsage } from "./contract";
 import { outputCapEscalated } from "./contract";
 import { executeTool, toolContext } from "./tool-exec";
 import { captureVerify } from "./builtin-tools";
+import { htmlToMarkdown } from "./html-to-md";
+import { clipOut } from "./dom";
 import { descriptorFor } from "./render-descriptor";
 import { evalReadonly } from "./readonly-exec";
 import { formatReadonlyExec } from "./approval";
@@ -72,12 +74,25 @@ export function getRun(runId: string): PageRun | undefined { return runs.get(run
 /** Run ONE delegated tool call for a background-hosted run → a serializable envelope for the bus.
  *  executeTool already validates args + catches errors (never throws), so this only reduces the
  *  envelope: real nodes → a count, and an answer-capable tool's nodes are stashed page-side. */
-export async function runDelegatedTool(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean } = {}): Promise<PageToolEnvelope> {
+const VERIFY_TEXT_MAX = 8000;   // cap the navigate verify:"text" Markdown so a big page can't flood the turn
+export async function runDelegatedTool(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all" } = {}): Promise<PageToolEnvelope> {
     const run = runs.get(runId);
     if (!run) return { result: `Error: no active agent run "${runId}" on this page (it may have ended).` };
-    // navigate({ verify: true }): after the destination page re-adopts, the background rings back HERE to
-    // capture a WHOLE-VIEWPORT screenshot of the new page (captureVerify, center null) — a vision driver gets
-    // it inline, a text-only driver a delegated description. Merged into the navigate result background-side.
+    // navigate({ verify: "text" / "text-all" }): after the destination page re-adopts, the background rings
+    // back HERE to distil the new page's DOM to Markdown (same HTML→Markdown as fetch_url) — a text-only way to
+    // SEE where you landed without a screenshot (cheaper for a text driver, and no vision needed). "strip" drops
+    // nav/header/footer/aside (the content); "all" keeps them. Same await/merge path as the screenshot verify.
+    if (opts.verifyText) {
+        const html = (typeof document !== "undefined" ? document.documentElement?.outerHTML : "") || "";
+        const md = htmlToMarkdown(html, { stripChrome: opts.verifyText === "strip" });
+        const clipped = clipOut(md, VERIFY_TEXT_MAX);
+        const cut = clipped.length < md.length;
+        const label = opts.verifyText === "strip" ? "nav/chrome stripped" : "full page";
+        return { result: `Destination page as Markdown (${label}${cut ? ", truncated" : ""}):\n\n${clipped}` };
+    }
+    // navigate({ verify: true / "viewport" }): after the destination page re-adopts, the background rings back
+    // HERE to capture a WHOLE-VIEWPORT screenshot of the new page (captureVerify, center null) — a vision driver
+    // gets it inline, a text-only driver a delegated description. Merged into the navigate result background-side.
     if (opts.verifyViewport) {
         const ctx = toolContext(run.byName, run.model ?? null, null, run.driverSees ?? false, run.visionModel ?? null);
         const ml = (typeof window !== "undefined" ? window.ml : null) as unknown as import("./contract").MlApi;
@@ -161,8 +176,8 @@ export async function runDelegatedTool(runId: string, name: string, args: Record
 export function installToolDelegation(): void {
     window.addEventListener("message", async (event: MessageEvent) => {
         if (event.source !== window || !event.data || event.data.type !== "PAGE_TOOL_RUN") return;
-        const { callId, runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport } = event.data as { callId: string; runId: string; name: string; args: Record<string, unknown>; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean };
-        const envelope = await runDelegatedTool(runId, name, args || {}, { renderOnly: !!renderOnly, readonlyTry: !!readonlyTry, precheck: !!precheck, verifyAt, verifyViewport: !!verifyViewport });
+        const { callId, runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText } = event.data as { callId: string; runId: string; name: string; args: Record<string, unknown>; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all" };
+        const envelope = await runDelegatedTool(runId, name, args || {}, { renderOnly: !!renderOnly, readonlyTry: !!readonlyTry, precheck: !!precheck, verifyAt, verifyViewport: !!verifyViewport, verifyText });
         window.postMessage({ type: "PAGE_TOOL_RESULT", callId, envelope }, "*");
     });
 }

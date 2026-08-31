@@ -130,7 +130,7 @@ chrome.runtime.onMessage.addListener((message: PageMessage & { event?: unknown }
         return undefined;
     }
     if (!message || message.type !== "RUN_TOOL_IN_PAGE") return undefined;
-    const { runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport } = (message.payload || {}) as { runId: string; name: string; args: unknown; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean };
+    const { runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText } = (message.payload || {}) as { runId: string; name: string; args: unknown; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all" };
     // window.ml's script was fetch-refused by CSP (script-src 'none') — nothing will ever answer. Fail fast.
     if (injectedBlocked) { sendResponse({ result: CSP_BLOCK_MSG(name) }); return true; }
     const callId = Math.random().toString(36).slice(2);
@@ -163,7 +163,7 @@ chrome.runtime.onMessage.addListener((message: PageMessage & { event?: unknown }
         finish({ result: `Error: the page didn't respond while running "${name}" (timed out). It may be mid-navigation. Re-check the page (look / pageInfo) and retry, or navigate to a different page.` }, false);
     }, TOOL_RELAY_TIMEOUT_MS);
     window.addEventListener("message", onResult);
-    window.postMessage({ type: "PAGE_TOOL_RUN", callId, runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport }, "*");
+    window.postMessage({ type: "PAGE_TOOL_RUN", callId, runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText }, "*");
     return true;   // async sendResponse (the window round-trip completes later)
 });
 

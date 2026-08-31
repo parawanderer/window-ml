@@ -1770,14 +1770,20 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                                 await navBarrier.whenReady(tabId);
                                 const info = readoptPageInfo.get(tabId); readoptPageInfo.delete(tabId);
                                 if (info) env.result = `${env.result || ""}\n\nYou are now on the new page:\n${info}`;
-                                // verify:true → fold a SCREENSHOT of the destination page into the result (like the
-                                // click/type verify), captured on the NEW page after re-adopt. A vision driver gets it
-                                // inline; a text-only driver a delegated description. Best-effort — a failed capture
-                                // just omits it, and the page must have re-adopted (else there's nothing to shoot).
-                                if ((args as { verify?: boolean })?.verify && !navBarrier.isNavigating(tabId)) {
-                                    const v = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, verifyViewport: true } }).catch(() => null) as Partial<import("./contract").PageToolEnvelope> | null;
+                                // verify → fold a view of the DESTINATION page into the result, captured on the NEW
+                                // page after re-adopt (same await path as the click/type verify). "viewport" (or
+                                // legacy true) = a SCREENSHOT (vision inline / a delegated description for a text
+                                // driver); "text" / "text-all" = the page distilled to MARKDOWN (fetch_url's HTML→MD;
+                                // cheaper, no vision — "text" strips nav/chrome, "text-all" keeps it). Best-effort.
+                                const rawVerify = (args as { verify?: unknown })?.verify;
+                                const verify = rawVerify === true ? "viewport" : typeof rawVerify === "string" ? rawVerify : null;
+                                if (verify && !navBarrier.isNavigating(tabId)) {
+                                    const payload = verify === "text" ? { runId, verifyText: "strip" as const }
+                                        : verify === "text-all" ? { runId, verifyText: "all" as const }
+                                        : { runId, verifyViewport: true };
+                                    const v = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload }).catch(() => null) as Partial<import("./contract").PageToolEnvelope> | null;
                                     if (v && (v.image || v.feedback || v.result)) {
-                                        if (v.result) env.result = `${env.result || ""}\n${v.result}`;
+                                        if (v.result) env.result = `${env.result || ""}\n\n${v.result}`;
                                         env.image = v.image; env.imageLabel = v.imageLabel; env.feedback = v.feedback;
                                         addSub(v.subUsage);
                                     }
