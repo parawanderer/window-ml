@@ -46,7 +46,7 @@ import { makeDomTools } from "./tools";
 import { hideSidebarForShot, makeBackgroundTaskPromise, makeChatRequest, makeStreamingTaskPromise } from "./bridge";
 import { validateArgs, validateExtend } from "./validate";
 import { renderArgs, logStep, defaultApprove, normalizeApproval, formatReadonlyExec } from "./approval";
-import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPythonTool, targetRender, captureVerify, lookViews, BOX_OVER_TEXT_TIP, VIEWS_PARAM, legendFor } from "./builtin-tools";
+import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPythonTool, targetRender, captureVerify, lookViews, BOX_OVER_TEXT_TIP, VIEWS_PARAM, legendFor, setCdpEnabled } from "./builtin-tools";
 import { pyVarNameError } from "./python-env";
 import { autoApprovePython } from "./auto-approve";
 import { executeTool, toolContext } from "./tool-exec";
@@ -592,6 +592,9 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             // closed roots stay unreachable, exactly as before.
             const pierceClosed = !!(agentCfg && (agentCfg as { pierceClosedShadow?: boolean }).pierceClosedShadow);
             setPierceClosedShadow(pierceClosed);
+            // CDP-trusted input flag — set AFTER the surface decision below (it's only usable on the
+            // background-hosted path; gating it on that avoids regressing page-hosted canvas clicks to a no-op).
+            const cdpOn = !!(agentCfg && (agentCfg as { cdp?: boolean }).cdp);
             // #8 + #3: give the agent eyes with no wiring, preferring NATIVE vision.
             // If the agent's OWN model is vision-capable, register a capture-only
             // `look` whose screenshot ml.agent injects straight into the model's
@@ -791,6 +794,11 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 (surface === "overlay" || surface === "devtools") ? surface
                     : (hasApprovalTool && !agentCfg?.pageApprovalAllowed) ? "off" : null;
             control.bg = !!bgSurface;   // so a handle's mid-run say() knows to steer via INJECT_MESSAGE, not the page inbox
+            // Trusted (CDP) input works ONLY on the background-hosted path (the page can't reach the debugger).
+            // Gate the canvas-click trusted-vs-synthetic choice on that, so a page-hosted run keeps its synthetic
+            // canvas click instead of emitting a cdpClick the page loop would drop. (Sealed/@pt/@focus envelopes
+            // always emit and the background gates them — they have no synthetic path to regress.)
+            setCdpEnabled(cdpOn && !!bgSurface);
             if (bgSurface) {
                 registerRun(runHash, toolset, runModel, driverSees, runVisionModel);
                 // Phase 2 resume for a BACKGROUND-hosted run: the run's history lives in the service worker,
@@ -853,7 +861,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                             toolNames: toolset.map(t => t.name),
                             model: runModel, driverSees, visionModel: runVisionModel,
                             groundingModel: runGroundingModel, groundingRange: runGroundingRange,
-                            pierceClosed, crossOrigin,
+                            pierceClosed, cdp: cdpOn, crossOrigin,
                         },
                     }, (result, data) => {
                         // Sync the run's final history back into the handle (page-authoritative). This is why
@@ -1707,6 +1715,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
          */
         _adoptRun: function(runId: string, rebuild: RebuildConfig): void {
             setPierceClosedShadow(!!rebuild.pierceClosed);
+            setCdpEnabled(!!rebuild.cdp);
             const toolset = this._rebuildToolset(rebuild);
             const model = rebuild.model ?? null, driverSees = !!rebuild.driverSees, visionModel = rebuild.visionModel ?? null;
             registerRun(runId, toolset, model, driverSees, visionModel);

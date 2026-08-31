@@ -624,7 +624,7 @@ test("GET_CONFIG returns the model/ocrModel/apiFormat and withholds the URL and 
     assert.deepEqual(res.data, {
         model: "qwen3:235b", ocrModel: "qwen2.5vl", ocrNumCtx: 8192, apiFormat: "ollama", defaultModelVision: "",
         utilityModel: "", utilityNumCtx: 4096, utilityForceCpu: false, autoApproveReadonly: true, autoApprovePython: true,
-        pierceClosedShadow: true,
+        pierceClosedShadow: true, cdp: false,
         groundingEnabled: false, groundingModel: "", groundingRange: 1000, debugMode: "off",
         // Computed per-origin: no sender.tab in this harness call → not on the whitelist → false. The raw
         // pageApprovalDomains list is deliberately NOT exposed (only this boolean for the caller's origin).
@@ -883,6 +883,74 @@ test("delegated cdpShadowClick: the resolver finds nothing → honest 'no match'
     const { toolResult, clicks } = await driveCdpShadowClick({ cdp: true, resolveEmpty: true });
     assert.equal(clicks.length, 0, "nothing resolved → nothing clicked");
     assert.match(toolResult, /couldn't reach|no match/i, "honest failure, not a phantom click");
+});
+
+// TRUSTED KEYBOARD (canvas / WebGL / remote desktop / sealed): a `type` call hands back a cdpType signal and
+// the background types real key events via CDP. `mode` = "focus" (current focus, no click) | "pt" (click a
+// coordinate to focus first) | "sealed" (CDP-resolve a `>>>` field, then click to focus).
+async function driveCdpType({ cdp, mode = "focus", text = "hi", submit = false }) {
+    const keys = [], mouse = [];
+    let toolResult = null, n = 0, bg;
+    const env = mode === "focus" ? { cdpType: { text, submit } }
+        : mode === "pt" ? { cdpType: { x: 120, y: 340, text, submit } }
+        : { cdpType: { selector: "sealed-host >>> .inner", text, submit } };
+    bg = loadBackground({
+        config: baseConfig({ cdp }),
+        onDebuggerCommand: (m, p) => {
+            if (m === "Input.dispatchKeyEvent") { keys.push(p); return undefined; }
+            if (m === "Input.dispatchMouseEvent") { mouse.push(p); return undefined; }
+            return shadowCdp(m, p);   // resolves the sealed selector for mode:"sealed"
+        },
+        onFetch: (call) => {
+            n++;
+            if (n === 1) return jsonResponse({ choices: [{ message: { content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "type", arguments: JSON.stringify({ selector: "@focus", text }) } }] } }] });
+            const tr = [...(call.body?.messages || [])].reverse().find(m => m.role === "tool");
+            toolResult = tr ? (typeof tr.content === "string" ? tr.content : JSON.stringify(tr.content)) : null;
+            return jsonResponse({ choices: [{ message: { content: "done" } }] });
+        },
+        onTabMessage: async (tabId, msg) => {
+            if (msg?.type === "ML_DEBUG_TO_PAGE" && msg.event?.awaitingApproval) {
+                await bg.send({ type: "SET_APPROVAL", payload: { runId: msg.event.id, seq: msg.event.seq, decision: true } });
+            }
+            if (msg?.type === "RUN_TOOL_IN_PAGE" && msg.payload?.name === "type" && !msg.payload?.renderOnly && !msg.payload?.precheck) return env;
+            return undefined;
+        },
+    });
+    await bg.send({ type: "START_RUN", payload: {
+        runId: "ct", task: "type it", systemPrompt: "S",
+        tools: [{ name: "type", requiresApproval: true, description: "", parameters: { type: "object", properties: { selector: { type: "string" }, text: { type: "string" } } }, capabilities: [] }],
+        model: "m", think: null, maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools",
+    } }, { tab: { id: 8 } });
+    await new Promise(r => setTimeout(r, 0));
+    return { toolResult, keys, mouse, attached: bg.debuggerCalls.some(c => c[0] === "attach") };
+}
+
+test("delegated cdpType (focus mode): types real key events into the current focus, no click", async () => {
+    const { toolResult, keys, mouse } = await driveCdpType({ cdp: true, text: "hi", submit: true });
+    assert.equal(mouse.length, 0, "current-focus mode does NOT click");
+    // "hi" = 2 chars × (keyDown+keyUp) + Enter (keyDown+keyUp) = 6 key events.
+    assert.equal(keys.length, 6, "per-char down/up + an Enter for submit");
+    assert.ok(keys.some(k => k.text === "h") && keys.some(k => k.text === "i"), "the characters were dispatched");
+    assert.ok(keys.some(k => k.key === "Enter"), "submit pressed Enter");
+    assert.match(toolResult, /trusted keyboard/i, "the model is told it typed via the debugger");
+});
+
+test("delegated cdpType (@pt mode): clicks the coordinate to focus, THEN types", async () => {
+    const { keys, mouse } = await driveCdpType({ cdp: true, mode: "pt", text: "ab" });
+    assert.equal(mouse.length, 2, "a trusted press+release click focuses the point first");
+    assert.equal(keys.length, 4, "then two chars, down/up each");
+});
+
+test("delegated cdpType (sealed field): CDP-resolves the `>>>` field, focuses it, then types", async () => {
+    const { keys, mouse } = await driveCdpType({ cdp: true, mode: "sealed", text: "x" });
+    assert.equal(mouse.length, 2, "resolved the sealed field then clicked to focus it");
+    assert.equal(keys.length, 2, "one char typed via trusted keyboard");
+});
+
+test("delegated cdpType (OFF): nothing is typed; the model is told to enable CDP", async () => {
+    const { toolResult, keys, attached } = await driveCdpType({ cdp: false, text: "hi" });
+    assert.equal(attached, false, "never attached"); assert.equal(keys.length, 0, "no keys dispatched");
+    assert.match(toolResult, /Trusted keyboard input.*needs a debugger|enable "Debugger/i, "actionable: enable CDP");
 });
 
 test("FETCH_LLM openai schema becomes a json_schema response_format", async () => {

@@ -1409,6 +1409,45 @@ async function cdpShadowResolve(tabId: number, selector: string, cap = 25): Prom
     }
 }
 
+// A "virtual key code" for a character — good enough for letters/digits/space (games/streams read
+// `key`/`keyCode`); punctuation falls back to the char code. Not a full keymap (that's `press`, later).
+const vkFor = (ch: string): number => {
+    if (/[a-z]/i.test(ch)) return ch.toUpperCase().charCodeAt(0);
+    if (/[0-9]/.test(ch)) return ch.charCodeAt(0);
+    if (ch === " ") return 32;
+    return ch.charCodeAt(0) || 0;
+};
+
+/** Type `text` into the tab's CURRENT focus via CDP `Input.dispatchKeyEvent` — REAL (isTrusted) key events a
+ *  canvas / WebGL / remote-desktop surface actually honours (synthetic KeyboardEvents don't fire their input
+ *  paths / are dropped on `isTrusted`). One keyDown (carrying `text`, so the character is produced) + keyUp per
+ *  char; a printable char also reaches a keydown-forwarding remote-desktop listener via `key`/`windowsVirtualKeyCode`.
+ *  `submit` presses Enter after. The caller establishes focus first (a CDP click at an @pt, a resolved sealed
+ *  field, or the ambient focus). Reuses the run's live attachment. */
+async function cdpKeyType(tabId: number, text: string, submit = false): Promise<{ ok: true } | { error: string; needsPermission?: true }> {
+    const at = await ensureDebuggerAttached(tabId);
+    if ("error" in at) return { error: at.error, ...(at.needsPermission ? { needsPermission: true } : {}) };
+    const target: chrome.debugger.Debuggee = { tabId };
+    const key = (params: Record<string, unknown>) => chrome.debugger.sendCommand(target, "Input.dispatchKeyEvent", params);
+    try {
+        for (const ch of String(text)) {
+            const vk = vkFor(ch);
+            // keyDown WITH `text` = the character is inserted (like a real keypress); keyUp completes the stroke.
+            await key({ type: "keyDown", text: ch, key: ch, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk });
+            await key({ type: "keyUp", key: ch, windowsVirtualKeyCode: vk, nativeVirtualKeyCode: vk });
+        }
+        if (submit) {
+            await key({ type: "keyDown", key: "Enter", code: "Enter", text: "\r", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
+            await key({ type: "keyUp", key: "Enter", code: "Enter", windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
+        }
+        return { ok: true };
+    } catch (e) {
+        return { error: `the CDP type failed (${(e as Error)?.message || e}).` };
+    } finally {
+        touchDebugger(tabId);
+    }
+}
+
 /** SSRF denylist for the uncredentialed image fetch: refuse loopback / private / link-local / metadata
  *  hosts (and non-http schemes / unparseable URLs), so a page can't probe the user's internal network
  *  through the extension's `<all_urls>` reach. */
@@ -1939,6 +1978,39 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                             const tail = env.cdpShadowClick.verify ? "" : " Re-run look to see the result.";
                             return { result: `Clicked ${m.line} inside a sealed shadow root via the debugger (at ${m.cx}, ${m.cy}).${tail}${vres}`, image: vimg, imageLabel: vimgLabel, feedback: vfeedback, renderIn: env.renderIn, renderOut: env.renderOut };
                         }
+                        // TRUSTED KEYBOARD: type into a canvas / WebGL / remote-desktop surface or a sealed field
+                        // via CDP (real, isTrusted key events synthetic KeyboardEvents can't produce). Focus modes:
+                        // a sealed `>>>` selector (CDP-resolve → click to focus) · an `@pt` (CDP-click to focus) ·
+                        // or NEITHER (the page's current focus). Same `cdp`-flag gate + verify ring-back as cdpClick.
+                        if (env?.cdpType) {
+                            const cfg = await getConfig();
+                            if (!cfg.cdp) return { result: `${env.result || ""}\n\nTrusted keyboard input (for a canvas / WebGL / remote-desktop / sealed target) needs a debugger (CDP), which is OFF — enable "Debugger-based actions (CDP)" in window.ml Settings → Advanced.`, renderIn: env.renderIn, renderOut: env.renderOut };
+                            const t = env.cdpType;
+                            let fx = t.x, fy = t.y, where = "the page's current focus";
+                            if (t.selector) {
+                                const resolved = await cdpShadowResolve(tabId, t.selector);
+                                if ("error" in resolved) return { result: `${env.result || ""}\n\n${resolved.error}`, renderIn: env.renderIn, renderOut: env.renderOut };
+                                const m = resolved.matches[t.index || 0];
+                                if (!m) return { result: `${env.result || ""}\n\nThe debugger couldn't reach "${t.selector}" inside the sealed shadow root (no match).`, renderIn: env.renderIn, renderOut: env.renderOut };
+                                fx = m.cx; fy = m.cy; where = `${m.line} (sealed shadow root)`;
+                            } else if (typeof fx === "number" && typeof fy === "number") { where = `the target at (${fx}, ${fy})`; }
+                            // Establish focus with a TRUSTED click when we have a coordinate (@pt or a resolved sealed field).
+                            if (typeof fx === "number" && typeof fy === "number") {
+                                const c = await cdpClick(tabId, fx, fy);
+                                if (!("ok" in c)) return { result: (c as { error: string }).error, renderIn: env.renderIn, renderOut: env.renderOut };
+                            }
+                            const typed = await cdpKeyType(tabId, t.text, t.submit);
+                            if (!("ok" in typed)) return { result: (typed as { error: string }).error, renderIn: env.renderIn, renderOut: env.renderOut };
+                            let vres = "", vimg: string | undefined, vimgLabel: string | undefined, vfeedback: import("./contract").ToolFeedback | undefined;
+                            if (t.verify) {
+                                const payload = typeof fx === "number" && typeof fy === "number" ? { runId, verifyAt: { x: fx, y: fy } } : { runId, verifyViewport: true };
+                                const venv = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload }).catch(() => null) as Partial<import("./contract").PageToolEnvelope> | null;
+                                if (venv) { vres = venv.result || ""; vimg = venv.image; vimgLabel = venv.imageLabel; vfeedback = venv.feedback; addSub(venv.subUsage); }
+                            }
+                            const shown = t.text.length > 60 ? t.text.slice(0, 60) + "…" : t.text;
+                            const tail = t.verify ? "" : " Re-run look to see the result.";
+                            return { result: `Typed "${shown}" into ${where} via the debugger (trusted keyboard, additive).${t.submit ? " Submitted (Enter)." : ""}${tail}${vres}`, image: vimg, imageLabel: vimgLabel, feedback: vfeedback, renderIn: env.renderIn, renderOut: env.renderOut };
+                        }
                         // STRICT-PAGE exec: main-world eval was CSP/TT-blocked and the page handed back a cdpExec
                         // signal. UNFORGEABLE: we re-run the exact source the human APPROVED — `args.js`, from the
                         // gate above — NEVER the page-echoed `env.cdpExec.source`, so this can only ever execute
@@ -2356,7 +2428,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     defaultModelVision: config.defaultModelVision,
                     utilityModel: config.utilityModel, utilityNumCtx: config.utilityNumCtx, utilityForceCpu: config.utilityForceCpu,
                     autoApproveReadonly: config.autoApproveReadonly, autoApprovePython: config.autoApprovePython,
-                    pierceClosedShadow: config.pierceClosedShadow,
+                    pierceClosedShadow: config.pierceClosedShadow, cdp: config.cdp,
                     groundingEnabled: config.groundingEnabled, groundingModel: config.groundingModel,
                     groundingRange: config.groundingRange, debugMode: config.debugMode, pageApprovalAllowed,
                 } });

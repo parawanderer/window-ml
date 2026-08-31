@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Canvas Input — a trusted-keyboard / trusted-click demo (remote-desktop mock)</title>
+<style>
+  body { font: 15px system-ui, sans-serif; margin: 28px 32px; color: #111; }
+  h1 { font-size: 18px; margin-bottom: 6px; }
+  p { max-width: 82ch; color: #444; }
+  code { font: 12px ui-monospace, monospace; background: #f0f0f2; padding: 1px 5px; border-radius: 4px; }
+  .screen { display: block; margin: 18px 0; border-radius: 10px; box-shadow: 0 2px 14px rgba(0,0,0,.25);
+    cursor: crosshair; touch-action: none; }
+  .screen:focus { outline: 3px solid #4f7cff; outline-offset: 2px; }
+  .hint { color: #888; font-size: 13px; }
+  b { color: #222; }
+  @media (prefers-color-scheme: dark) {
+    body { background: #1b1b1f; color: #eee; } p { color: #bbb; } code { background: #2a2a30; } b { color: #eee; }
+  }
+</style>
+</head>
+<body>
+  <h1>Canvas Input — remote-desktop / game mock</h1>
+  <p>A bare <code>&lt;canvas&gt;</code> that behaves like a WebGL game, a 2D canvas app, or a streamed remote
+  desktop: it has <b>no DOM text</b> (nothing for <code>findByText</code> to read) and — like real games — it
+  <b>only honours TRUSTED input</b>. It draws every <code>isTrusted</code> key/click it receives onto its own
+  surface and <b>ignores synthetic ones</b> (counting them in the corner). So the only way to confirm input
+  landed is to <b>look</b> at the pixels, and the only way to make it land is a <b>trusted (CDP)</b> event.</p>
+
+  <p><b>Try</b> (turn ON "Debugger-based actions (CDP)" in window.ml Settings &rarr; Advanced first):</p>
+  <p><code>await ml.agent("Click the black screen, type the word HELLO, then press Enter. Confirm by looking that HELLO appears on the screen.", { extraTools: [ml.clickTool(), ml.typeTool(), ml.lookTool(), ml.locateTool()] })</code></p>
+
+  <p class="hint">Inside a run the agent uses <code>type</code> with a special target: <code>{ selector:
+  "@focus", text: "HELLO", submit: true }</code> types into the currently-focused screen, or it
+  <code>locate</code>s a spot and types into the <code>@pt</code> it gets back (which clicks to focus first).
+  With CDP OFF the events are synthetic, so this screen ignores them (the "ignored" counter ticks up) — that's
+  the whole point of the trusted path.</p>
+
+  <canvas id="screen" class="screen" width="640" height="380" tabindex="0"
+    aria-label="A mock remote-desktop screen that accepts keyboard and mouse input"></canvas>
+
+  <!--
+    ANSWER KEY (in a comment, NOT the DOM — the canvas has no readable text, so the model MUST verify visually):
+    • A correct run leaves the word "HELLO" drawn near the top of the screen and a "submitted" line under it.
+    • It records nothing unless the events are isTrusted, so a run that "succeeds" with the ignored-counter
+      climbing and no text on screen means CDP was OFF (synthetic input) — the trusted path wasn't taken.
+    • Programmatic check (dev console): window.__canvasInput → { text, submitted, keys[], clicks[], ignored }.
+      keys/clicks hold ONLY trusted events; `ignored` counts the synthetic ones that were dropped.
+  -->
+
+  <script>
+    const canvas = document.getElementById("screen");
+    const ctx = canvas.getContext("2d");
+    const DPR = Math.min(window.devicePixelRatio || 1, 2);
+    // Scale the backing store for crisp text; keep the CSS size at the attribute px so click coords map 1:1.
+    canvas.width = 640 * DPR; canvas.height = 380 * DPR;
+    canvas.style.width = "640px"; canvas.style.height = "380px";
+    ctx.scale(DPR, DPR);
+
+    // Trusted-input state — mirrored on window for a programmatic (dev / e2e) check. Only isTrusted events land.
+    const state = { text: "", submitted: false, lastClick: null, keys: [], clicks: [], ignored: 0 };
+    window.__canvasInput = state;
+
+    function draw() {
+      ctx.clearRect(0, 0, 640, 380);
+      ctx.fillStyle = "#0c0c12"; ctx.fillRect(0, 0, 640, 380);
+      ctx.fillStyle = "#3a3a46"; ctx.font = "12px ui-monospace, monospace";
+      ctx.fillText("mock remote desktop — trusted input only", 14, 22);
+      // The typed buffer, big and green so `look` can read it.
+      ctx.fillStyle = "#43d675"; ctx.font = "bold 44px ui-monospace, monospace";
+      ctx.fillText(state.text || "▍", 20, 120);
+      if (state.submitted) {
+        ctx.fillStyle = "#9fd0ff"; ctx.font = "16px ui-monospace, monospace";
+        ctx.fillText("submitted ✓  \"" + state.text + "\"", 20, 160);
+      }
+      // Last trusted click marker + coords.
+      if (state.lastClick) {
+        const { x, y } = state.lastClick;
+        ctx.strokeStyle = "#ffcc4d"; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(x - 9, y); ctx.lineTo(x + 9, y); ctx.moveTo(x, y - 9); ctx.lineTo(x, y + 9); ctx.stroke();
+        ctx.fillStyle = "#ffcc4d"; ctx.font = "12px ui-monospace, monospace";
+        ctx.fillText("click " + Math.round(x) + "," + Math.round(y), x + 12, y - 8);
+      }
+      // Synthetic-input counter — climbs only when UNTRUSTED events were dropped (CDP off).
+      if (state.ignored) {
+        ctx.fillStyle = "#ff6b6b"; ctx.font = "12px ui-monospace, monospace";
+        ctx.fillText("ignored " + state.ignored + " untrusted event(s)", 14, 366);
+      }
+    }
+
+    canvas.addEventListener("keydown", (e) => {
+      if (!e.isTrusted) { state.ignored++; draw(); return; }   // a real game drops synthetic keys
+      state.keys.push({ key: e.key, code: e.code });
+      if (e.key === "Enter") { state.submitted = true; }
+      else if (e.key === "Backspace") { state.text = state.text.slice(0, -1); state.submitted = false; }
+      else if (e.key.length === 1) { state.text += e.key; state.submitted = false; }
+      e.preventDefault();
+      draw();
+    });
+
+    function onPointer(e) {
+      if (!e.isTrusted) { state.ignored++; draw(); return; }   // and synthetic clicks
+      const r = canvas.getBoundingClientRect();
+      const x = e.clientX - r.left, y = e.clientY - r.top;
+      state.lastClick = { x, y }; state.clicks.push({ x, y });
+      canvas.focus();   // clicking focuses the screen so a subsequent @focus type lands here
+      draw();
+    }
+    canvas.addEventListener("mousedown", onPointer);
+
+    // Auto-focus so `type("@focus", …)` works without a click first (a stream is "already focused").
+    canvas.focus();
+    draw();
+  </script>
+</body>
+</html>

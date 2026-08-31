@@ -334,7 +334,7 @@ export const detectGroundingModel = (models: string[]): string =>
  *  ml.agent can decide whether to route a run through the unforgeable BACKGROUND loop (design A —
  *  when a debug surface is enabled) or the in-page loop (off). It's UI state, not a secret. */
 export type MlPublicConfig = Pick<MlConfig,
-    "model" | "ocrModel" | "ocrNumCtx" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "autoApprovePython" | "pierceClosedShadow" | "groundingEnabled" | "groundingModel" | "groundingRange" | "debugMode" | "defaultModelVision"> & {
+    "model" | "ocrModel" | "ocrNumCtx" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "autoApprovePython" | "pierceClosedShadow" | "cdp" | "groundingEnabled" | "groundingModel" | "groundingRange" | "debugMode" | "defaultModelVision"> & {
     /** COMPUTED per request (not stored): whether THIS page's origin is on the user's page-approval
      *  whitelist. When true, ml.agent honours the page's own approve()/confirm gate (the user trusts this
      *  domain); otherwise a privileged tool routes to the unforgeable background gate. The raw domain
@@ -471,6 +471,12 @@ export interface ToolResult {
      *  (which pierces closed roots) and click the resolved element by coordinate. `selector` is the `>>>` path,
      *  `index` the Nth match. Background-only, like `cdpClick`. See the CDP shadow resolver in background.ts. */
     cdpShadowClick?: { selector: string; index?: number; verify?: boolean };
+    /** TRUSTED-KEYBOARD signal: type text via CDP `Input.dispatchKeyEvent` (real, isTrusted key events a
+     *  canvas/WebGL/remote-desktop app honours — synthetic KeyboardEvents don't). Three focus modes: a sealed
+     *  `>>>` `selector` (CDP-resolve → focus the field) · an `@pt` `x,y` (CDP-click there first to focus) · or
+     *  NEITHER (type into the page's CURRENT focus — a canvas/stream). `submit` presses Enter after; `append`
+     *  keeps the field's existing value (else clears it first, sealed field only). Background-only, `cdp`-gated. */
+    cdpType?: { text: string; submit?: boolean; append?: boolean; x?: number; y?: number; selector?: string; index?: number; verify?: boolean };
     /** what this tool fed into the model's context (locate's snap-inject); surfaced in the debug render + export */
     feedback?: ToolFeedback;
 }
@@ -962,6 +968,8 @@ export interface RebuildConfig {
     groundingRange: number;
     /** re-apply the closed-shadow-piercing module flag on the new document */
     pierceClosed: boolean;
+    /** re-apply the CDP-trusted-input module flag (trusted click/type for canvas/opaque targets) */
+    cdp: boolean;
     /** may the rebuilt `navigate` tool cross origins? (carried so cross-site nav keeps working after a nav) */
     crossOrigin: boolean;
 }
@@ -1069,6 +1077,10 @@ export interface PageToolEnvelope {
     /** SEALED-SHADOW click: the page-side tool couldn't enter a closed/declarative shadow root to click a `>>>`
      *  target, so the BACKGROUND (trusted) CDP-resolves the selector (piercing the closed root) and clicks it. */
     cdpShadowClick?: { selector: string; index?: number; verify?: boolean };
+    /** TRUSTED-KEYBOARD type: the BACKGROUND types `text` via CDP (real key events) into a sealed `>>>` field
+     *  (`selector`), an `@pt` (`x,y`, clicked first to focus), or the current focus (neither) — for canvas /
+     *  WebGL / remote-desktop targets where synthetic KeyboardEvents don't register. `cdp`-gated. */
+    cdpType?: { text: string; submit?: boolean; append?: boolean; x?: number; y?: number; selector?: string; index?: number; verify?: boolean };
     /** DELEGATED vision sub-call tokens spent BY THIS tool call (look/locate/verify's own ml.chat) — a DELTA
      *  measured around the page-side run, so the background loop can accumulate the per-turn tally its meta
      *  tool + UI report (the page meter, bus.ts, lives page-side and the SW loop can't read it directly). */

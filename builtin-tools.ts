@@ -16,6 +16,13 @@ import { regionLegend, formatLegend, type Box as LegendBox } from "./legend";
 import { settle, VISION_NUM_CTX, cropDataUrl, MIN_SHOT_PX, POINT_RE, PT_LOOK_RADIUS, mintPoint, resolvePoint, nearbyPoint, markSeen, seenNearby, BOX_RE, mintBox, resolveBox, projectShotPoint, projectShotBox } from "./util";
 import { collectCandidates, buildMarks, annotate, formatBox, letterboxToSquare, projectFromSquare, drawGrid, gridDims, validateCells, cellsBox, collectInBox, elementAtPoint, viewportBox, colorWordHues, pickOverlayColor, pickAccentColor, withHiddenSidebar, regionBox, REGION_NAMES, adjacentCells, type RegionName, type MarkFilter, type Box, type Mark } from "./locate";
 
+// CDP-trusted-input flag, set per run from config (like setPierceClosedShadow, threaded in injected.ts). When
+// ON, click/type route canvas / @pt / @focus / sealed targets through the debugger for REAL (isTrusted) events
+// a WebGL / remote-desktop / canvas app honours; OFF → synthetic (fine for most 2D-DOM canvases, but keys don't
+// register in games and some streams drop untrusted clicks). Background-gated too — this only picks the path.
+let cdpEnabled = false;
+export const setCdpEnabled = (on: boolean): void => { cdpEnabled = on; };
+
 // --- Coordinate targets (canvas / WebGL) -----------------------------------
 // A <canvas> has NO sub-node to snap to, so `locate` mints an OPAQUE `@pt:` token (see
 // util.ts) that `click` resolves and `look`/`screenshot` can crop+mark. These helpers add
@@ -1135,12 +1142,18 @@ export const buildClickTool = (ml: MlApi): MlTool => {
                 // synthetic dispatch — hand the executor a CDP-click signal at this coordinate instead. The
                 // executor (page loop / background) gates it on the `cdpClick` flag + permission + approval.
                 const reserved = reservedSurfaceAt(pt.x, pt.y);
-                if (reserved) {
-                    const what = reserved.kind === "iframe" ? `a${reserved.origin ? ` ${reserved.origin}` : "n embedded cross-origin"} iframe` : "a sealed closed shadow root";
+                // A RESERVED surface ALWAYS needs CDP (a synthetic dispatch can't reach it). A plain canvas @pt
+                // goes CDP too WHEN the run enabled it (cdpEnabled) — a TRUSTED click registers in a WebGL /
+                // remote-desktop / game canvas where synthetic clicks are dropped; without CDP it falls to the
+                // synthetic clickAt below (fine for most 2D-DOM canvases).
+                if (reserved || cdpEnabled) {
+                    const what = reserved
+                        ? `inside ${reserved.kind === "iframe" ? `a${reserved.origin ? ` ${reserved.origin}` : "n embedded cross-origin"} iframe` : "a sealed closed shadow root"} — a normal click can't reach it, so this needs a debugger (CDP) click`
+                        : `on a canvas/opaque surface — clicking it with a TRUSTED debugger (CDP) event so it registers in a WebGL / remote-desktop / game canvas`;
                     const hint = repeatPointHint(token);   // the CDP result is built background-side → thread the nudge
                     // verify rides the cdpClick signal: the click is deferred to the background (CDP), so it does
                     // the verify capture AFTER the click (round-trips back to the page's captureVerify at this point).
-                    return { content: `The target at (${pt.x}, ${pt.y}) is inside ${what} — a normal click can't reach it, so this needs a debugger (CDP) click.`, cdpClick: { x: pt.x, y: pt.y, hint: hint || undefined, verify: verify || undefined } };
+                    return { content: `The target at (${pt.x}, ${pt.y}) is ${what}.`, cdpClick: { x: pt.x, y: pt.y, hint: hint || undefined, verify: verify || undefined } };
                 }
                 // A canvas point token → synthesize a click at that coordinate.
                 const before = (typeof location !== "undefined" && location.href) || "";
@@ -1186,8 +1199,14 @@ export const buildTypeTool = (ml: MlApi): MlTool => {
     // Side-effect-free: an error if the field can't resolve (bad selector / no match), else null. Lets
     // the loop skip the approval prompt for a doomed type; run() calls it first so they can't drift.
     const typePrecheck = ({ selector, index = 0 }: { selector: string; index?: number }): string | null => {
+        const s = (selector || "").trim();
+        // Trusted-keyboard targets aren't page-resolvable here — they're never "doomed"; the background types them.
+        if (s === "@focus" || s === "") return null;                          // the page's current focus (canvas/stream)
+        if (BOX_RE.test(s)) return `"${selector}" is an @box region, not a field. Locate a control inside it, or type into an @pt / @focus.`;
+        if (POINT_RE.test(s)) return resolvePoint(selector) ? null : `Unknown point token "${selector}" — it may be stale. Re-run locate.`;
         let el: Element | undefined;
         try { el = queryAll(selector)[index]; } catch (e) { return selectorError(selector, e as Error); }
+        if (!el && firstHopSealed(selector)) return null;                     // sealed `>>>` field → the debugger types it
         return el ? null : `No element matches "${selector}"${index ? ` at index ${index}` : ""}.`;
     };
     return ml.defineTool({
@@ -1203,7 +1222,7 @@ export const buildTypeTool = (ml: MlApi): MlTool => {
         parameters: {
             type: "object",
             properties: {
-                selector: { type: "string", description: "CSS selector of the field." },
+                selector: { type: "string", description: "CSS selector of the field. Also accepts an `@pt:…` point token from locate (types into a canvas/WebGL target after clicking it to focus), or the literal `@focus` to type into whatever the page currently has focused (a remote-desktop / canvas stream) — both need trusted keyboard (CDP)." },
                 text: { type: "string", description: "Text to type in." },
                 index: { type: "integer", description: "Which match (0-based); default 0." },
                 append: { type: "boolean", description: "Append instead of replacing the value." },
@@ -1221,7 +1240,16 @@ export const buildTypeTool = (ml: MlApi): MlTool => {
         run: async ({ selector, text = "", index = 0, append = false, submit = false, verify = false }: { selector: string; text?: string; index?: number; append?: boolean; submit?: boolean; verify?: boolean }, ctx?: ToolContext): Promise<string | ToolResult> => {
             const doomed = typePrecheck({ selector, index });
             if (doomed) return doomed;
-            const el = queryAll(selector)[index]!;   // precheck confirmed it matches
+            const s = (selector || "").trim();
+            // TRUSTED KEYBOARD (canvas / WebGL / remote desktop / sealed field): hand the background a cdpType
+            // signal — it types real (isTrusted) key events synthetic KeyboardEvents can't. `@focus`/empty →
+            // the page's current focus; an `@pt` → click that point to focus, then type; a sealed `>>>` → resolve
+            // + focus + type. Background-gated on the `cdp` flag (it returns an actionable note when off).
+            if (s === "@focus" || s === "") return { content: `Typing "${truncate(text, 60)}" into the page's current focus via trusted keyboard (CDP).`, cdpType: { text, submit: submit || undefined, verify: verify || undefined } };
+            if (POINT_RE.test(s)) { const pt = resolvePoint(s)!; return { content: `Typing "${truncate(text, 60)}" into the target at (${pt.x}, ${pt.y}) via trusted keyboard (CDP).`, cdpType: { x: pt.x, y: pt.y, text, submit: submit || undefined, verify: verify || undefined } }; }
+            const sealed0 = queryAll(selector)[index];
+            if (!sealed0 && firstHopSealed(selector)) return { content: `Typing "${truncate(text, 60)}" into "${selector}" inside a sealed shadow root via the debugger.`, cdpType: { selector, index, text, submit: submit || undefined, verify: verify || undefined } };
+            const el = queryAll(selector)[index]!;   // precheck confirmed it matches (normal DOM field)
             const preCenter = elementCenter(el);   // BEFORE typing/submit, in case submit navigates the field away
             const input = el as HTMLInputElement;
             const editable = "value" in el;
