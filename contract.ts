@@ -86,6 +86,12 @@ export interface MlConfig {
      *  Attaching flashes Chrome's "is debugging" banner — only for these reserved actions, so the flash marks
      *  the risk. Specs: docs/spec/CDP_CLICK.md, docs/spec/EXEC_STRICT_CSP.md. */
     cdp: boolean;
+    /** Advanced, default OFF. When ON, a SAME-ORIGIN fetch that uses the user's cookies/session — a
+     *  `credentials:true` GET, or a `rendered:true` load in a normal (non-incognito) tab — auto-approves
+     *  (no prompt), like a same-origin navigate. OFF → those always ask, so the user stays in charge of when
+     *  their session is spent. NEVER affects CROSS-origin (always asks) or the uncredentialed same-origin free
+     *  path (already free). */
+    autoApproveSameOriginAuth: boolean;
     /** Hostnames the USER has trusted to supply their OWN ml.agent approval gate (a page's
      *  `approve` callback / the page-loop confirm). Empty by default: EVERY other origin's
      *  privileged tool calls route through the unforgeable background gate + trusted surface,
@@ -314,6 +320,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     exportToolDefs: false,
     autoApproveReadonly: true,
     autoApprovePython: true,
+    autoApproveSameOriginAuth: false,   // Advanced, default off: a same-origin as-you fetch always asks
     pierceClosedShadow: true,
     cdp: false,
     pageApprovalDomains: [],
@@ -341,7 +348,7 @@ export const detectGroundingModel = (models: string[]): string =>
  *  ml.agent can decide whether to route a run through the unforgeable BACKGROUND loop (design A —
  *  when a debug surface is enabled) or the in-page loop (off). It's UI state, not a secret. */
 export type MlPublicConfig = Pick<MlConfig,
-    "model" | "ocrModel" | "ocrNumCtx" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "autoApprovePython" | "pierceClosedShadow" | "cdp" | "groundingEnabled" | "groundingModel" | "groundingRange" | "debugMode" | "defaultModelVision"> & {
+    "model" | "ocrModel" | "ocrNumCtx" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "autoApprovePython" | "autoApproveSameOriginAuth" | "pierceClosedShadow" | "cdp" | "groundingEnabled" | "groundingModel" | "groundingRange" | "debugMode" | "defaultModelVision"> & {
     /** COMPUTED per request (not stored): whether THIS page's origin is on the user's page-approval
      *  whitelist. When true, ml.agent honours the page's own approve()/confirm gate (the user trusts this
      *  domain); otherwise a privileged tool routes to the unforgeable background gate. The raw domain
@@ -915,6 +922,9 @@ export interface StartRunPayload {
     stream?: boolean;
     /** trusted config flag → the background may auto-approve readonly python */
     autoApprovePython: boolean;
+    /** config flag → auto-approve a same-origin as-you (credentialed) fetch (the security gate is enforced
+     *  background-side from getConfig too, so a forged value only affects the prompt, never the actual fetch) */
+    autoApproveSameOriginAuth?: boolean;
     /** trusted config flag → the background may auto-approve an in-dialect exec survey */
     autoApproveReadonly: boolean;
     /** headless run: the background refuses (never prompts) any call that reaches the gate */

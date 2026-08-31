@@ -1832,7 +1832,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         if (!resumeMessages) emitLifecycle(startEvent);
         else if (resurrected) fanEvent(startEvent);   // resurrected: no page-side caller emitted a start → fan it ourselves
         runBackgroundAgent(
-            { task: p.task, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, unattended: p.unattended, resumeMessages, images: p.images },
+            { task: p.task, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, autoApproveSameOriginAuth: p.autoApproveSameOriginAuth, unattended: p.unattended, resumeMessages, images: p.images },
             {
                 callModel: async (messages, opts) => {
                     // Thread the run's abort signal so a CANCEL_RUN kills a slow in-flight generation, not
@@ -2282,35 +2282,42 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             if (scheme !== "http:" && scheme !== "https:") { sendResponse({ error: `Refused: ml.fetch supports only http(s) URLs (got "${scheme}").` }); return; }
             const tabId = sender.tab?.id;
             const untrusted = await senderTrust(sender) === "untrusted";
+            // SAME-ORIGIN as the sender's page: a free read (the page can already `fetch()` its own origin, and
+            // navigate there is free) — applies to a plain GET AND a rendered load. Used by the gate below AND
+            // the render dispatch (a same-origin render uses the SESSION tab, not incognito — no leak, you're
+            // already signed in there).
+            const sameOriginAsSender = (() => { try { return !!sender.url && new URL(url, sender.url).origin === new URL(sender.url).origin; } catch { return false; } })();
+            const cfg = await getConfig();   // the same-origin as-you opt-in + the cdp render setting
             // CREDENTIALED (fetch-as-the-user — a raw GET with cookies, OR a rendered load in a NORMAL tab that
             // carries the session) → a "read any URL as you" primitive, so an untrusted page needs a ONE-TIME
-            // per-URL grant (minted by an approved fetch_url, consumed here). execOpen/consent deliberately DON'T
-            // authorize it, so an inline as-you `ml.fetch` in exec is refused. An UNCREDENTIALED rendered fetch
-            // (rendered && !credentials) runs in INCOGNITO — no session — so it's NOT as-you: it takes the
-            // rememberable uncredentialed-consent path below, same as a raw uncredentialed GET.
+            // per-URL grant (minted by an approved fetch_url, consumed here). EXCEPTION: a SAME-ORIGIN as-you fetch
+            // is allowed WITHOUT a grant when the user opted into `autoApproveSameOriginAuth` (Advanced). Cross-
+            // origin always needs the grant; execOpen/consent never authorize the credentialed path.
             if (credentials) {
-                if (untrusted && !takeCredFetch(tabId, url)) {
+                const sameOriginAuthOk = !!cfg.autoApproveSameOriginAuth && sameOriginAsSender;
+                if (untrusted && !sameOriginAuthOk && !takeCredFetch(tabId, url)) {
                     sendResponse({ error: `Refused: an as-you fetch of "${url}" wasn't approved. A fetch AS THE USER (${rendered ? "rendered in your session" : "cookies"}) must be approved per-URL via the fetch_url tool; it can't run inline in exec or reuse a prior grant.` });
                     return;
                 }
             } else {
                 // UNCREDENTIALED: fetchOpen = an approved exec is running (its inline fetches are the human-approved
-                // code); per-URL consent = the human approved EXACTLY this url (and it's remembered). SAME-ORIGIN as
-                // the sender's page is FREE (no grant): the page can already `fetch()` its own origin itself (CORS
-                // permits it; the extension's version is even weaker — no cookies), so gating it protects nothing.
-                // Not for `rendered` (it opens a real tab/window — a heavier action, kept gated).
+                // code); per-URL consent = the human approved EXACTLY this url (and it's remembered). SAME-ORIGIN is
+                // FREE (no grant) — including a same-origin RENDER (it renders in your own session, no more than a
+                // free same-origin navigate). A CROSS-origin uncredentialed render runs in INCOGNITO (no session) and
+                // takes the rememberable consent path, same as a raw cross-origin GET.
                 const execOpen = tabId != null && !!pendingGrants.get(tabId)?.fetchOpen;
-                const sameOriginAsSender = (() => { try { return !!sender.url && new URL(url, sender.url).origin === new URL(sender.url).origin; } catch { return false; } })();
-                if (untrusted && !(sameOriginAsSender && !rendered) && !execOpen && !(tabId != null && fetchConsent.get(tabId)?.has(url))) {
+                if (untrusted && !sameOriginAsSender && !execOpen && !(tabId != null && fetchConsent.get(tabId)?.has(url))) {
                     sendResponse({ error: `Refused: "${url}" hasn't been approved for fetching on this page. Use the fetch_url tool (each new URL is approved once, then remembered for the session), or call ml.fetch inside an approved exec.` });
                     return;
                 }
             }
             const execOpen = tabId != null && !!pendingGrants.get(tabId)?.fetchOpen;
             try {
-                // rendered: normal tab (session) when credentialed, else an incognito window (no session). The
-                // `cdp` setting lets it emulate foreground so a backgrounded tab's focus/visibility-gated loads fire.
-                const data = rendered ? await fetchRenderedContent(url, !credentials, !!(await getConfig()).cdp) : await fetchUrlContent(url, credentials);
+                // rendered: an uncredentialed render is INCOGNITO (session-less — a safe read, which is why a
+                // same-origin one is free); a credentialed render uses the SESSION tab (as-you → always prompts).
+                // A session (non-incognito) render is NEVER free. The `cdp` setting lets it emulate foreground so
+                // a backgrounded tab's gated loads fire.
+                const data = rendered ? await fetchRenderedContent(url, !credentials, !!cfg.cdp) : await fetchUrlContent(url, credentials);
                 // Redirect guard: a per-URL-consented fetch (NOT a surface/whitelisted/exec one) that ends on a
                 // DIFFERENT, un-consented origin followed a redirect off the approved resource — withhold the body
                 // (a consented public URL could redirect to a private/other target). The GET already happened but
@@ -2472,6 +2479,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     defaultModelVision: config.defaultModelVision,
                     utilityModel: config.utilityModel, utilityNumCtx: config.utilityNumCtx, utilityForceCpu: config.utilityForceCpu,
                     autoApproveReadonly: config.autoApproveReadonly, autoApprovePython: config.autoApprovePython,
+                    autoApproveSameOriginAuth: config.autoApproveSameOriginAuth,
                     pierceClosedShadow: config.pierceClosedShadow, cdp: config.cdp,
                     groundingEnabled: config.groundingEnabled, groundingModel: config.groundingModel,
                     groundingRange: config.groundingRange, debugMode: config.debugMode, pageApprovalAllowed,

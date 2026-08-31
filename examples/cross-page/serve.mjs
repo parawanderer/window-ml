@@ -157,7 +157,9 @@ export function startPageServer({ port = 0, crossPort = 0, host = "127.0.0.1" } 
                     res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
                     return res.end(`<!doctype html><meta charset=utf-8><title>slow</title><body><div id=app>EARLY-CONTENT</div>`
                         + `<script>var n=0,iv=setInterval(function(){n++;var d=document.createElement('div');d.textContent='CHUNK-'+n;document.body.appendChild(d);`
-                        + `if(n>=8){clearInterval(iv);var f=document.createElement('div');f.id='done';f.textContent='STREAM-DONE-3377 all chunks loaded';document.body.appendChild(f);}},300)</script>`);
+                        // Dense 150ms ticks (well under the 700ms quiet threshold, even load-stretched) for ~1.8s — past
+                        // the old fixed 1.2s window, so a fixed settle truncates it while the DOM-quiet wait captures it.
+                        + `if(n>=12){clearInterval(iv);var f=document.createElement('div');f.id='done';f.textContent='STREAM-DONE-3377 all chunks loaded';document.body.appendChild(f);}},150)</script>`);
                 }
                 if (p === "/lazy") {   // a widget that only loads when SCROLLED into view (IntersectionObserver, like GitHub's lazy fragments).
                     res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });

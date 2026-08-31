@@ -120,7 +120,7 @@ test("smoke: the extension loads and window.ml runs a one-shot agent", async () 
 // which is OFF for an unpacked extension in the harness, so the render returns ACTIONABLE guidance (walk the
 // user to the toggle) instead of a silent failure. Proves the permission flow fires (and that uncredentialed
 // rendered doesn't fall back to the session).
-(BACKEND ? test.skip : test)("fetch_url rendered (private/incognito): without 'Allow in Incognito' it returns actionable guidance", async () => {
+(BACKEND ? test.skip : test)("fetch_url rendered (private/incognito): a CROSS-ORIGIN render without 'Allow in Incognito' returns actionable guidance", async () => {
     await configureExtension(ext.sw, { debugMode: "devtools", agentHudInDevtools: false });
     const page = await ext.context.newPage();
     const answers = [];
@@ -130,11 +130,13 @@ test("smoke: the extension loads and window.ml runs a one-shot agent", async () 
     await waitForMl(page);
 
     const before = fake.calls().length;
+    // CROSS-ORIGIN + no credentials → the PRIVATE incognito path (a same-origin render uses the session tab, no
+    // incognito). It gates for consent first (cross-origin), then hits the incognito requirement.
     fake.setScript([
-        { tool: "fetch_url", args: { url: site.url + "/spa", rendered: true } },   // no credentials → private/incognito
+        { tool: "fetch_url", args: { url: site.crossOrigin + "/", rendered: true } },
         (reqBody) => ({ content: /incognito/i.test(JSON.stringify(reqBody.messages || [])) ? "NEEDS-INCOGNITO" : "NO-GUIDANCE" }),
     ]);
-    await page.evaluate(() => { window.ml.agent("Render the SPA privately.", { env: false, approvalRouting: "external" }); return true; });
+    await page.evaluate(() => { window.ml.agent("Render the other site privately.", { env: false, approvalRouting: "external" }); return true; });
     await expect.poll(async () => (await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).length, { timeout: 15000 }).toBe(1);
     const [gate] = await ext.sw.evaluate(() => globalThis.__mlApprovals.list());
     await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), gate.key);
@@ -144,36 +146,82 @@ test("smoke: the extension loads and window.ml runs a one-shot agent", async () 
     await configureExtension(ext.sw, { debugMode: "off" });
 });
 
-// A shared driver: render `path` (credentials:true → a normal tab, which works in the headful harness — the
-// private/incognito path needs "Allow in Incognito") and report whether `marker` reached the model.
-async function renderAndCheck(path, marker) {
+// A SAME-ORIGIN rendered fetch is FREE (no prompt) — but it renders in INCOGNITO (session-less), so with
+// "Allow in Incognito" OFF (the harness default) it auto-approves AND then returns the incognito guidance. The
+// FREE part is proven by: approvalRouting "external" + NO approval given → the run still completes (a gate
+// would have blocked at 1 call) and no gate was ever raised. The incognito part by the guidance in the result.
+(BACKEND ? test.skip : test)("fetch_url rendered: a SAME-ORIGIN render is FREE (no prompt) and uses incognito (not the session)", async () => {
     await configureExtension(ext.sw, { debugMode: "devtools", agentHudInDevtools: false });
     const page = await ext.context.newPage();
-    const answers = [];
-    const fn = "__rc_" + marker;
-    await page.exposeFunction(fn, (s) => answers.push(s));
-    await page.addInitScript((f) => { if (window.top === window) window.addEventListener("message", (e) => { if (e.data?.__mlDebug?.kind === "agent-result") window[f](e.data.__mlDebug.summary); }); }, fn);
     await page.goto(site.url + "/");
     await waitForMl(page);
     const before = fake.calls().length;
-    fake.setScript([
-        { tool: "fetch_url", args: { url: site.url + path, rendered: true, credentials: true } },
-        (reqBody) => ({ content: JSON.stringify(reqBody.messages || []).includes(marker) ? "MARKER-PRESENT" : "MARKER-ABSENT" }),
-    ]);
+    fake.setScript([{ tool: "fetch_url", args: { url: site.url + "/spa", rendered: true } }, { content: "ok" }]);   // same-origin, no creds → FREE, incognito
+    await page.evaluate(() => { window.ml.agent("render same-origin", { env: false, approvalRouting: "external" }); return true; });
+    // Completes BOTH turns with no approval → the fetch auto-approved (a gate would have blocked at 1 call).
+    await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(2);
+    expect((await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).length).toBe(0);   // FREE: no gate was raised
+    // …and it took the INCOGNITO path (not the session): the tool result carries the "Allow in Incognito" guidance.
+    expect(/incognito/i.test(JSON.stringify(fake.calls()[before + 1]?.messages || []))).toBe(true);
+    await page.close();
+    await configureExtension(ext.sw, { debugMode: "off" });
+});
+
+// A plain (non-rendered) SAME-ORIGIN fetch is FREE too — the page could `fetch()` its own origin itself. Same
+// proof: external routing + no approval → the run completes, so it auto-approved.
+(BACKEND ? test.skip : test)("fetch_url: a plain SAME-ORIGIN fetch is FREE (no prompt); a CROSS-ORIGIN one gates", async () => {
+    await configureExtension(ext.sw, { debugMode: "devtools", agentHudInDevtools: false });
+    const page = await ext.context.newPage();
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+    // Same-origin plain fetch → auto-approves → the run finishes both turns with no approval given.
+    let before = fake.calls().length;
+    fake.setScript([{ tool: "fetch_url", args: { url: site.url + "/data.json" } }, { content: "done" }]);
+    await page.evaluate(() => { window.ml.agent("read same-origin json", { env: false, approvalRouting: "external" }); return true; });
+    await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(2);
+    expect((await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).length).toBe(0);   // no gate for same-origin
+    // Cross-origin plain fetch → gates (a gate appears in the external channel).
+    before = fake.calls().length;
+    fake.setScript([{ tool: "fetch_url", args: { url: site.crossOrigin + "/data.json" } }, { content: "done" }]);
+    await page.evaluate(() => { window.ml.agent("read cross-origin json", { env: false, approvalRouting: "external" }); return true; });
+    await expect.poll(async () => (await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).length, { timeout: 15000 }).toBe(1);
+    const [gate] = await ext.sw.evaluate(() => globalThis.__mlApprovals.list());
+    expect(String(gate.tool)).toBe("fetch_url");
+    await page.close();
+    await configureExtension(ext.sw, { debugMode: "off" });
+});
+
+// A shared driver: render `path` (credentials:true → a normal session tab, which works in the headful harness
+// — the private/incognito path needs "Allow in Incognito") and report whether `marker` reached the model.
+// Reads the marker straight from the fake-LLM's captured request body (the final call's messages include the
+// tool result) — no dependence on a debug event reaching the page, so it's not flaky under load.
+async function renderAndCheck(path, marker) {
+    await configureExtension(ext.sw, { debugMode: "devtools", agentHudInDevtools: false });
+    const page = await ext.context.newPage();
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+    const before = fake.calls().length;
+    fake.setScript([{ tool: "fetch_url", args: { url: site.url + path, rendered: true, credentials: true } }, { content: "ok" }]);
     await page.evaluate(() => { window.ml.agent("render it", { env: false, approvalRouting: "external" }); return true; });
     await expect.poll(async () => (await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).length, { timeout: 15000 }).toBe(1);
     const [gate] = await ext.sw.evaluate(() => globalThis.__mlApprovals.list());
     await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), gate.key);
-    await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(2);
+    await expect.poll(() => fake.calls().length - before, { timeout: 30000 }).toBe(2);
+    const body = fake.calls()[before + 1];   // the final-answer call — its messages carry the fetch tool result
     await page.close();
     await configureExtension(ext.sw, { debugMode: "off" });
-    return answers.join("|");
+    return JSON.stringify(body?.messages || []).includes(marker) ? "MARKER-PRESENT" : "MARKER-ABSENT";
 }
 
 // The DOM-quiet settle waits for the DOM to stop changing (a network-idle proxy) instead of a fixed delay — so
 // content that STREAMS in past the old ~1.2s window (an SPA hydrating) is captured, not truncated mid-stream.
-(BACKEND ? test.skip : test)("fetch_url rendered: the DOM-quiet settle captures content that streams in after the old fixed delay", async () => {
-    expect(await renderAndCheck("/slow", "STREAM-DONE-3377")).toContain("MARKER-PRESENT");
+// Retried: the fixture's streaming rides background-tab setInterval, which Chrome can throttle under harness
+// load (>700ms gaps let the quiet wait bail early) — it's reliable in isolation, so a couple retries absorb it.
+test.describe(() => {
+    test.describe.configure({ retries: 2 });
+    (BACKEND ? test.skip : test)("fetch_url rendered: the DOM-quiet settle captures content that streams in after the old fixed delay", async () => {
+        expect(await renderAndCheck("/slow", "STREAM-DONE-3377")).toContain("MARKER-PRESENT");
+    });
 });
 
 // The scroll pass trips a viewport-lazy widget (IntersectionObserver, like GitHub's lazy <include-fragment>) —

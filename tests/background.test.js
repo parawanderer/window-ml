@@ -402,6 +402,21 @@ test("GET_CONFIG exposes the utility-model fields", async () => {
     assert.equal(resp.data.utilityModel, "small:0.8b");
     assert.equal(resp.data.utilityNumCtx, 2048);
     assert.equal(resp.data.utilityForceCpu, true);
+    assert.equal(resp.data.autoApproveSameOriginAuth, false, "the same-origin-auth opt-in is exposed (default off)");
+});
+
+test("FETCH_URL: the Advanced same-origin-auth opt-in frees a SAME-ORIGIN credentialed fetch — cross-origin still always asks", async () => {
+    const page = "https://site.example/dashboard";
+    let sentCreds = null;
+    const bg = loadBackground({ config: baseConfig({ autoApproveSameOriginAuth: true }), onFetch: (call) => { sentCreds = call.opts?.credentials; return fetchResponse('{"ok":1}', { contentType: "application/json", url: call.url }); } });
+    const send = (payload) => bg.send({ type: "FETCH_URL", payload }, { tab: { id: 9, url: page }, url: page });
+
+    const same = await send({ url: "https://site.example/me.json", credentials: true });
+    assert.ok(same.data && !same.error, "same-origin credentialed fetch is FREE (no grant) when the opt-in is ON");
+    assert.equal(sentCreds, "include", "…and it spent the user's cookies");
+
+    const cross = await send({ url: "https://other.example/me.json", credentials: true });
+    assert.ok(cross.error && /wasn't approved/i.test(cross.error), "cross-origin credentialed still ALWAYS asks, even with the opt-in");
 });
 
 // ---- GET_INVOCATION (how the user opens the HUD) ----
@@ -624,6 +639,7 @@ test("GET_CONFIG returns the model/ocrModel/apiFormat and withholds the URL and 
     assert.deepEqual(res.data, {
         model: "qwen3:235b", ocrModel: "qwen2.5vl", ocrNumCtx: 8192, apiFormat: "ollama", defaultModelVision: "",
         utilityModel: "", utilityNumCtx: 4096, utilityForceCpu: false, autoApproveReadonly: true, autoApprovePython: true,
+        autoApproveSameOriginAuth: false,
         pierceClosedShadow: true, cdp: false,
         groundingEnabled: false, groundingModel: "", groundingRange: 1000, debugMode: "off",
         // Computed per-origin: no sender.tab in this harness call → not on the whitelist → false. The raw
@@ -2219,10 +2235,10 @@ test("SECURITY (FETCH_URL): an untrusted page with NO consent is refused — loc
     assert.ok(/only http\(s\)/i.test(c.error), "chrome:// refused");
 });
 
-test("FETCH_URL: an untrusted page's UNCREDENTIALED SAME-ORIGIN fetch is FREE — but cross-origin / rendered / credentialed stay gated", async () => {
-    // A same-origin fetch grants nothing the page couldn't do itself (`fetch()` its own origin is CORS-allowed,
-    // and the extension's is even weaker — no cookies), so it needs no grant. Cross-origin, `rendered` (opens a
-    // real tab/window) and `credentials` (as-you) stay gated. sender.url = the requesting FRAME (real Chrome sets it).
+test("FETCH_URL: an untrusted page's UNCREDENTIALED SAME-ORIGIN fetch is FREE (incl. rendered) — cross-origin / credentialed stay gated", async () => {
+    // A same-origin read grants nothing the page couldn't do itself (`fetch()`/navigate its own origin), so it
+    // needs no grant — a plain GET AND a rendered load (which renders in the page's own session, like a
+    // same-origin navigate). Cross-origin and `credentials` (as-you) stay gated. sender.url = the requesting FRAME.
     let fetchedUrl = null;
     const bg = loadBackground({ config: baseConfig(), onFetch: (call) => { fetchedUrl = call.url; return fetchResponse('{"ok":1}', { contentType: "application/json", url: call.url }); } });
     const page = "https://site.example/dashboard";
@@ -2235,8 +2251,12 @@ test("FETCH_URL: an untrusted page's UNCREDENTIALED SAME-ORIGIN fetch is FREE �
     const cross = await send({ url: "https://other.example/x" });
     assert.ok(cross.error && /hasn't been approved/i.test(cross.error), "cross-origin still needs consent");
 
+    // Same-origin RENDERED is FREE now — it passes the gate and takes the INCOGNITO (session-less) render path,
+    // so with no incognito access it fails DOWNSTREAM with the incognito guidance — NOT the "hasn't been
+    // approved" gate error. (Proves both: not gated, AND session-less — a session render would always prompt.)
     const rendered = await send({ url: "https://site.example/spa", rendered: true });
-    assert.ok(rendered.error && /hasn't been approved/i.test(rendered.error), "same-origin RENDERED stays gated (opens a real tab/window)");
+    assert.ok(!(rendered.error && /hasn't been approved/i.test(rendered.error)), "same-origin RENDERED is not gated");
+    assert.ok(rendered.error && /incognito/i.test(rendered.error), "same-origin RENDERED renders in incognito (session-less), not the session");
 
     const cred = await send({ url: "https://site.example/api", credentials: true });
     assert.ok(cred.error && /wasn't approved/i.test(cred.error), "same-origin CREDENTIALED stays locked (as-you)");

@@ -596,6 +596,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             const runModel = model || agentCfg?.model || (await this.config().catch(() => null))?.model || null;
             const autoRO = !!(agentCfg && (agentCfg as { autoApproveReadonly?: boolean }).autoApproveReadonly);
             const autoPy = !!(agentCfg && (agentCfg as { autoApprovePython?: boolean }).autoApprovePython);
+            const autoSOA = !!(agentCfg && (agentCfg as { autoApproveSameOriginAuth?: boolean }).autoApproveSameOriginAuth);
             // Closed-shadow-root piercing (opt-in). Set the dom.ts module flag from THIS run's config before
             // any DOM tool executes — it governs both loop paths (the page loop below AND the background's
             // delegated page-side tool execution, since both call into the same main-world dom.ts). Off →
@@ -850,7 +851,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     const res = await makeBackgroundTaskPromise<AgentResult>("START_RUN_REQUEST", "START_RUN_RESPONSE", {
                         runId: runHash, task, systemPrompt, tools: descriptors,
                         model: runModel, think: (think === true || think === false) ? think : null,
-                        maxSteps, autoApprovePython: autoPy, autoApproveReadonly: autoRO, surface: bgSurface, stream: stream || undefined,
+                        maxSteps, autoApprovePython: autoPy, autoApproveReadonly: autoRO, autoApproveSameOriginAuth: autoSOA, surface: bgSurface, stream: stream || undefined,
                         images: pendingImages,   // native-vision composer attachments for this turn's user message
                         // (OCR fallback for a text-only driver is already folded into `task` above)
                         unattended: unattended || undefined, silent: silent || undefined,
@@ -988,10 +989,15 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     // navigate: SAME-ORIGIN auto-approves (no escalation); a CROSS-ORIGIN nav falls through to
                     // the gate (a page can't silently send the agent to another site). location is authoritative.
                     if (name === "navigate") return sameOriginNav(String((args as { url?: unknown }).url ?? "")) ? "same-origin" : null;
-                    // fetch_url: an UNCREDENTIALED same-origin GET is free (the page could fetch its own origin
-                    // itself) — like a same-origin navigate. Credentialed / rendered fall through to the gate.
-                    if (name === "fetch_url" && !(args as { credentials?: unknown }).credentials && !(args as { rendered?: unknown }).rendered)
-                        return sameOriginFetch(String((args as { url?: unknown }).url ?? "")) ? "same-origin" : null;
+                    // fetch_url: an UNCREDENTIALED same-origin read is free (the page could fetch its own origin
+                    // itself). A CREDENTIALED (as-you) same-origin fetch is free ONLY with the Advanced opt-in;
+                    // otherwise it — and any cross-origin fetch — falls through to the gate.
+                    if (name === "fetch_url") {
+                        const u = String((args as { url?: unknown }).url ?? "");
+                        const so = sameOriginFetch(u);
+                        if ((args as { credentials?: unknown }).credentials) return (agentCfg?.autoApproveSameOriginAuth && so) ? "same-origin" : null;
+                        return so ? "same-origin" : null;
+                    }
                     return null;
                 },
                 // Read-only exec fast-path: the mediated interpreter is side-effect-free, so trying it is safe
@@ -1590,11 +1596,12 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     "Set `rendered: true` when a plain GET returns an EMPTY / skeleton page because the content is " +
                     "drawn by JavaScript (a client-rendered SPA, an infinite-scroll feed's first screen): it opens the " +
                     "URL in a background tab so the page's JS runs, then returns the SETTLED DOM — with cookie/consent/ad " +
-                    "overlays heuristically stripped. By DEFAULT it renders PRIVATELY, in an incognito tab with NO " +
-                    "session/cookies (lower-risk — no logged-in identity), so once you approve a URL it's REMEMBERED for " +
-                    "the session (needs the extension's 'Allow in Incognito' setting on — you'll get a clear message to " +
-                    "enable it if it's off). ADD `credentials: true` to render in the USER'S logged-in session instead " +
-                    "(for a page that only shows content when signed in) — that ALWAYS re-asks and is never remembered. " +
+                    "overlays heuristically stripped. It renders in an INCOGNITO tab (NO session/cookies — a safe read), " +
+                    "so a SAME-ORIGIN render is FREE (no prompt, like a same-origin navigate) and a cross-origin one asks " +
+                    "once then is remembered (both need the extension's 'Allow in Incognito' setting on — you'll get a " +
+                    "clear message if it's off). ADD `credentials: true` to render in the USER'S logged-in SESSION instead " +
+                    "(a normal tab that carries their cookies — for a page that only shows content when signed in); that " +
+                    "runs as-the-user so it ALWAYS re-asks, same-origin or not, and is never remembered. " +
                     "Either way it's slower/heavier than a raw GET; reach for it only when the raw fetch's HTML is clearly " +
                     "unrendered. It waits for the page to settle (not a fixed delay) and scrolls to trip lazy content; a few " +
                     "widgets that only load when signed-in or focused/visible may still not appear in a background render " +
@@ -1619,7 +1626,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                         url: { type: "string", description: "The absolute http(s) URL to fetch." },
                         schema: { type: "boolean", description: "If true, return a compact TS-like SHAPE of the JSON (not the body). Errors if the URL isn't JSON." },
                         credentials: { type: "boolean", description: "If true, fetch AS THE USER (send their cookies) for authenticated data. Always prompts; never cached/remembered." },
-                        rendered: { type: "boolean", description: "If true, load the URL in a background tab so its JavaScript runs, then return the SETTLED DOM — for client-rendered/SPA pages a raw GET returns empty. By default renders PRIVATELY in incognito (no session; remembered per-url once approved; needs 'Allow in Incognito'). Add credentials:true to render in the user's logged-in session (always re-asks). Slower/heavier; never cached." },
+                        rendered: { type: "boolean", description: "If true, load the URL in a background tab so its JavaScript runs, then return the SETTLED DOM — for client-rendered/SPA pages a raw GET returns empty. Renders in INCOGNITO (no session/cookies): same-origin is FREE, cross-origin asks once then remembered (needs 'Allow in Incognito'). Add credentials:true to render in the user's SESSION (a normal tab with cookies) — always re-asks. Slower/heavier; never cached." },
                         ask: { type: "string", description: "If set, a fast reader model reads the fetched content and answers THIS question; you get the answer, not the body (keeps a large page out of your context). Takes precedence over `schema`." },
                         raw: { type: "boolean", description: "If true, return an HTML page's ORIGINAL raw HTML instead of the auto-converted Markdown (HTML is converted to clean Markdown by default for readability; non-HTML is unaffected)." },
                         pipe: { type: "string", description: "Optional. SCAN/FILTER the returned text through a small shell-style pipeline BEFORE it reaches you — so you read only the relevant lines instead of the whole doc (cheaper). It's an interpreted line-based environment (NOT a real shell); supported commands, chained with `|`: grep (flags -i -v -n -c -F -w -o -E, context -A/-B/-C N), head/tail (-n N), wc (-l -w -c), sort (-n -r -u -f), uniq (-c -i). E.g. \"grep -i pricing | head -20\", or \"grep -o '[0-9]+' | sort -n | tail -1\". For anything MORE COMPLEX than this dialect, use exec instead: `const { markdown } = await ml.fetch('<the url>');` then process that string with JS." },

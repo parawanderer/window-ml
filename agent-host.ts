@@ -28,6 +28,7 @@ export interface RunAgentConfig {
     think?: boolean | null;
     maxSteps?: number;
     autoApprovePython?: boolean;   // the trusted config flag, read background-side
+    autoApproveSameOriginAuth?: boolean;   // Advanced opt-in: auto-approve a same-origin as-you (credentialed) fetch
     unattended?: boolean;          // headless run: refuse any call that reaches the human gate (see ml.agent's `unattended`)
     resumeMessages?: NeutralMessage[];   // RESUME: continue this prior history (+ `task` as a new user turn) instead of a fresh system+task
     images?: string[];   // native-vision composer attachments (data URLs) → attached to THIS turn's user message. The OCR fallback for a text-only driver already folded into `task` page-side.
@@ -145,11 +146,15 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
             // GET, or an INCOGNITO rendered load — no session, lower risk) already approved this session
             // auto-approves; a new one gates once, then is remembered.
             if (name === "fetch_url") {
-                if ((args as { credentials?: unknown }).credentials) return null;
                 const url = String((args as { url?: unknown }).url ?? "");
-                // Same-origin uncredentialed fetch → free, like a same-origin navigate (but NOT for `rendered`,
-                // which opens a real tab/window — kept gated).
-                if (!(args as { rendered?: unknown }).rendered && deps.fetchSameOrigin?.(url)) return "same-origin";
+                const sameOrigin = !!deps.fetchSameOrigin?.(url);
+                if ((args as { credentials?: unknown }).credentials) {
+                    // CREDENTIALED (as-you): cross-origin always asks. Same-origin asks too UNLESS the user opted
+                    // into the Advanced "auto-approve same-origin as-you fetches" setting.
+                    return (cfg.autoApproveSameOriginAuth && sameOrigin) ? "same-origin" : null;
+                }
+                // Uncredentialed same-origin → free (a plain GET, or an incognito render). Cross-origin gates.
+                if (sameOrigin) return "same-origin";
                 return deps.fetchNeedsConsent?.(url) ? null : "consented";
             }
             return null;
