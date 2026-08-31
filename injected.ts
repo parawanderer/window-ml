@@ -1631,13 +1631,19 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     // reference for what it's operating on. `pipeStr` is the trimmed pipe (falsy = no pipe).
                     const pipeStr = typeof pipe === "string" && pipe.trim() ? pipe.trim() : "";
                     const nlines = (s: string): number => s === "" ? 0 : s.replace(/\n$/, "").split("\n").length;
-                    const doPipe = (raw: string): { text: string; footer: string; err?: string } => {
-                        if (!pipeStr) return { text: raw, footer: "" };
+                    const doPipe = (src: string): { text: string; footer: string; err?: string } => {
+                        if (!pipeStr) return { text: src, footer: "" };
                         let out: string;
-                        try { out = runPipe(raw, pipeStr); }
+                        try { out = runPipe(src, pipeStr); }
                         // The exec escape-hatch hint only makes sense when `exec` is actually wired this run — gate it.
-                        catch (e) { const escape = ctx?.hasTool("exec") ? ` For anything more complex, use exec: \`const { markdown } = await ml.fetch(${JSON.stringify(r.url)});\` then process the string in JS.` : ""; return { text: raw, footer: "", err: `${head}\n\nPipe error: ${errText(e)}\n\nThe pipe is a small line-scanner (grep · head · tail · wc · sort · uniq), not a real shell.${escape}` }; }
-                        return { text: out, footer: `\n\n(piped through \`${pipeStr}\`: ${nlines(out)} lines, ${out.length.toLocaleString()} chars — filtered from ${nlines(raw)} source lines)` };
+                        catch (e) { const escape = ctx?.hasTool("exec") ? ` For anything more complex, use exec: \`const { markdown } = await ml.fetch(${JSON.stringify(r.url)});\` then process the string in JS.` : ""; return { text: src, footer: "", err: `${head}\n\nPipe error: ${errText(e)}\n\nThe pipe is a small line-scanner (grep · head · tail · wc · sort · uniq), not a real shell.${escape}` }; }
+                        // Minified source (essentially one line, but large) → line tools can't split it usefully. This
+                        // is the RAW-HTML footgun: grep/head over a one-line minified page is near-useless. Nudge to
+                        // drop raw:true (the default HTML→Markdown lines up cleanly) or otherwise reformat first.
+                        const srcLines = nlines(src);
+                        const minified = srcLines <= 2 && src.length > 800;
+                        const warn = minified ? ` — ⚠ the source is ${srcLines} line${srcLines === 1 ? "" : "s"} (minified?), so line tools couldn't split it${r.type === "html" && raw ? "; drop \"raw\": true to pipe the clean Markdown instead" : ""}` : "";
+                        return { text: out, footer: `\n\n(piped through \`${pipeStr}\`: ${nlines(out)} lines, ${out.length.toLocaleString()} chars — filtered from ${srcLines} source lines${warn})` };
                     };
                     // ASK mode: distill the body through a fast reader model (extend:"utility") instead of returning
                     // it — a large page/API answers a question without ever entering the driver's context (the

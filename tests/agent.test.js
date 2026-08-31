@@ -2035,6 +2035,14 @@ test("fetch_url pipe: filters the returned text through the grep/head pipeline (
     const errNoExec = await tool.run({ url, pipe: "sed 's/a/b/'" }, { hasTool: () => false, tools: [], model: null, capabilities: null });
     assert.match(String(errNoExec), /not a real shell/, "still explains the dialect");
     assert.doesNotMatch(String(errNoExec), /use exec/, "no exec suggestion when exec isn't available");
+
+    // Grepping RAW HTML is ALLOWED — but a MINIFIED (one-line) page can't be split by line tools, so nudge.
+    const minifiedHtml = "<html><body>" + "<p>x</p>".repeat(300) + "</body></html>";   // one long line, no newlines
+    fetchResult = { url, status: 200, ok: true, type: "html", contentType: "text/html", text: minifiedHtml };
+    const rawOut = await tool.run({ url, raw: true, pipe: "grep -c x" }, withExec);
+    const rawMd = typeof rawOut === "string" ? rawOut : rawOut.content;
+    assert.match(rawMd, /the source is 1 line \(minified\?\)/, "warns the raw HTML was one line");
+    assert.match(rawMd, /drop "raw": true to pipe the clean Markdown/, "nudges toward the Markdown path");
 });
 
 test("fetch_url: non-HTML content (JSON) is never converted or note-tagged", async () => {

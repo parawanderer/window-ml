@@ -1932,6 +1932,10 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                                         addSub(v.subUsage);
                                     }
                                 }
+                                // `pipe` only filters the TEXT verify — if it was passed WITHOUT verify:"text"/"text-all"
+                                // (a "viewport" screenshot, or no verify at all), say so instead of silently dropping it.
+                                if (navPipe && verify !== "text" && verify !== "text-all" && env)
+                                    env.result = `${env.result || ""}\n\n(Note: your \`pipe\` was NOT applied — it filters only the verify:"text"/"text-all" Markdown. ${verify === "viewport" ? "You requested a \"viewport\" screenshot, which can't be piped." : "You didn't request a text verify."} Re-navigate with verify:"text" to use it.)`;
                             }
                         }
                         // RESERVED-surface click: the page couldn't synth-click a cross-origin iframe / sealed
