@@ -2035,19 +2035,12 @@ class AgentHandle implements MlAgentHandle, AgentControl {
         // Public alias: a shadow/iframe-piercing `document.querySelectorAll` the model can call from
         // `exec` (and the readonly dialect) instead of hand-chaining `.shadowRoot`/`.contentDocument`.
         queryAll,
-        /**
-         * DIAGNOSTIC: list every shadow-root host on the page — WHERE the shadow roots pageInfo counts
-         * actually are, and whether the DOM tools can enter each. Answers "there are N shadow roots I can't
-         * access — where?": returns `{ open, pierced, sealed, empty, hosts }`, where each host is
-         * `{ selector, tag, state }` and `state` is `"open"` (a normal open root, reachable), `"pierced"` (a
-         * PROGRAMMATIC closed root the load-time attachShadow capture grabbed — reachable when piercing is on),
-         * `"sealed"` (renders content behind a boundary a selector can't enter — a DECLARATIVE closed root, or
-         * CSS-painted content; reach it visually with `locate`/`@pt`), or `"empty"` (a hyphenated element
-         * rendering nothing right now — an unopened menu/popover or an emulated-encapsulation host, NOT a
-         * barrier). The sealed/empty split is what a raw "N closed roots" count conflates. Read-only.
-         * @returns {{ open: number, pierced: number, sealed: number, empty: number, hosts: { selector: string, tag: string, state: string }[] }}
-         */
-        shadowRoots: function() { return shadowHostReport(document); },
+        // PRIVATE debug helper (underscore → not in agent_api_docs, the agent never learns of it): list every
+        // shadow-root host + whether the tools can enter it — `{ open, pierced, sealed, empty, hosts }`, each host
+        // `{ selector, tag, state }` with state open / pierced / sealed / empty. Call `ml._shadowRoots()` from the
+        // console to see where the "N closed roots" pageInfo counts actually are (sealed = real barrier; empty =
+        // unopened menu/emulated host, not a barrier). Temporary; keep it OUT of the public MlApi.
+        _shadowRoots: function() { return shadowHostReport(document); },
         _selectorError: selectorError,
         // Parses a structured-output reply, tolerating a stray ```json fence
         // and surfacing the raw text on failure for debugging.

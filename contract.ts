@@ -1400,13 +1400,11 @@ export interface MlApi {
      *  + accessible-name substring + state), `label="Username"` (form control by its label/accessible
      *  name). Use this instead of hand-chaining `.shadowRoot`/`.contentDocument`. Read-only. */
     queryAll(selector: string): Element[];
-    /** DIAGNOSTIC: list every shadow-root host — WHERE the shadow roots pageInfo counts actually are, and
-     *  whether the tools can enter each. `state`: `open` (reachable) · `pierced` (a closed root captured at
-     *  load, reachable when piercing is on) · `sealed` (renders content behind a boundary a selector can't
-     *  enter — reach it visually with locate/@pt) · `empty` (a hyphenated element rendering nothing right now
-     *  — an unopened menu/popover or an emulated-encapsulation host; NOT a barrier). The sealed/empty split is
-     *  what a raw "N closed roots" count conflates. Read-only. */
-    shadowRoots(): { open: number; pierced: number; sealed: number; empty: number; hosts: { selector: string; tag: string; state: "open" | "pierced" | "sealed" | "empty" }[] };
+    /** PRIVATE debug helper (underscore → dropped from agent_api_docs). Lists every shadow-root host + whether
+     *  the tools can enter it — `state`: open (reachable) · pierced (a closed root captured at load) · sealed
+     *  (renders content behind a boundary a selector can't enter) · empty (rendering nothing — an unopened
+     *  menu/emulated host, NOT a barrier). Temporary console-only diagnostic, kept off the agent's radar. */
+    _shadowRoots(): { open: number; pierced: number; sealed: number; empty: number; hosts: { selector: string; tag: string; state: "open" | "pierced" | "sealed" | "empty" }[] };
 
     /* ---- vision / OCR / capture ---- */
     /** OCR/describe an image (element, url or data URL). */

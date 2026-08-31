@@ -371,7 +371,7 @@ test("shadow DOM: scanning tools + describeElement tailor the CLOSED-root steer 
     assert.match(String(tool("describeElement").run({ selector: "sealed-box" }, noLocate).content), /no `locate` tool/, "without locate → says it can't interact");
 
     // pageInfo (orientation) reports shadow roots so a scanning model knows they exist.
-    assert.match(String(tool("pageInfo").run({})), /Shadow DOM.*closed\/empty root/s, "pageInfo counts shadow roots up front");
+    assert.match(String(tool("pageInfo").run({})), /Shadow DOM.*(no light DOM|ml\.shadowRoots)/s, "pageInfo counts shadow roots up front + points at the diagnostic");
 });
 
 test("same-origin iframe: the DOM tools cross it via `>>>` (findByText / describeElement / interactives)", () => {

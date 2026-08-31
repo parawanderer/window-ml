@@ -100,9 +100,13 @@ export const pageContext = (): string => {
     try {
         const s = shadowRootStats();
         if (s.open || s.closed) {
-            parts.push(`Shadow DOM: ${s.open} open shadow root${s.open === 1 ? "" : "s"}` +
-                (s.open ? " (the DOM tools pierce these — references look like `host >>> inner`)" : "") +
-                (s.closed ? `${s.open ? "; " : ", "}${s.closed} Web Component${s.closed === 1 ? "" : "s"} with a closed/empty root (reachable only visually, via locate/@pt)` : "") + ".");
+            parts.push(`Shadow DOM: ${s.open} open/captured shadow root${s.open === 1 ? "" : "s"}` +
+                (s.open ? " (the DOM tools pierce these — reference with `host >>> inner`)" : "") +
+                // The closed count is a rough upper bound — mostly EMPTY custom elements (unopened menus, outlets),
+                // a few may seal content behind a closed root. Don't imply N barriers; anything VISIBLE is reachable
+                // via locate/@pt regardless. (ml._shadowRoots() gives the honest sealed-vs-empty split, but it's a
+                // private console diagnostic — deliberately NOT named here so the model doesn't fixate on it.)
+                (s.closed ? `${s.open ? "; " : ", "}~${s.closed} custom element${s.closed === 1 ? "" : "s"} expose no light DOM (mostly EMPTY — unopened menus/outlets; a few may seal content — reach any visible one with locate/@pt)` : "") + ".");
         }
     } catch {}
     // Iframe orientation: same-origin frames the DOM tools cross (`>>>`); cross-origin ones are SOP-walled.
