@@ -1585,7 +1585,9 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     "enable it if it's off). ADD `credentials: true` to render in the USER'S logged-in session instead " +
                     "(for a page that only shows content when signed in) — that ALWAYS re-asks and is never remembered. " +
                     "Either way it's slower/heavier than a raw GET; reach for it only when the raw fetch's HTML is clearly " +
-                    "unrendered. Never cached. " +
+                    "unrendered. It waits for the page to settle (not a fixed delay) and scrolls to trip lazy content; a few " +
+                    "widgets that only load when signed-in or focused/visible may still not appear in a background render " +
+                    "(credentials:true covers signed-in; enabling CDP in settings lets it emulate foreground). Never cached. " +
                     "Set `ask: \"<question>\"` to have a fast reader model READ the fetched content and answer that " +
                     "question — you get back the ANSWER, not the (possibly huge) body, so a big page/API never floods " +
                     "your context. Use it when you need a FACT out of the content, not the raw bytes to process further. " +

@@ -2295,8 +2295,9 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             }
             const execOpen = tabId != null && !!pendingGrants.get(tabId)?.fetchOpen;
             try {
-                // rendered: normal tab (session) when credentialed, else an incognito window (no session).
-                const data = rendered ? await fetchRenderedContent(url, !credentials) : await fetchUrlContent(url, credentials);
+                // rendered: normal tab (session) when credentialed, else an incognito window (no session). The
+                // `cdp` setting lets it emulate foreground so a backgrounded tab's focus/visibility-gated loads fire.
+                const data = rendered ? await fetchRenderedContent(url, !credentials, !!(await getConfig()).cdp) : await fetchUrlContent(url, credentials);
                 // Redirect guard: a per-URL-consented fetch (NOT a surface/whitelisted/exec one) that ends on a
                 // DIFFERENT, un-consented origin followed a redirect off the approved resource — withhold the body
                 // (a consented public URL could redirect to a private/other target). The GET already happened but
@@ -2775,7 +2776,46 @@ async function fetchUrlContent(url: string, credentials = false): Promise<FetchR
 }
 
 const RENDER_LOAD_TIMEOUT_MS = 15_000;   // max wait for the background tab to reach "complete" before snapshotting anyway
-const RENDER_SETTLE_MS = 1_200;          // then a short settle so a SPA's post-load async data lands in the DOM
+const RENDER_QUIET_MS = 700;             // the DOM must be UNCHANGED this long to count as "settled" (network-idle proxy)
+const RENDER_SETTLE_MAX_MS = 7_000;      // …but never wait longer than this for quiet (a page that never stops mutating)
+const RENDER_POLL_MS = 250;              // how often to re-measure the DOM while waiting for quiet
+/** Poll the rendered page until its DOM stops growing (a network-idle proxy: deferred fetches / lazy widgets
+ *  land, THEN the size holds), bounded by `RENDER_SETTLE_MAX_MS`. First scrolls to the bottom to trip
+ *  viewport-lazy loads (IntersectionObserver `<include-fragment loading="lazy">` etc.), then back to the top so
+ *  the snapshot reads naturally. Best-effort; a broken poll just ends the wait. Beats a fixed delay for a slow
+ *  SPA (waits as long as it needs) AND a fast page (stops early once quiet). */
+async function settleRender(tabId: number): Promise<void> {
+    const measure = async (): Promise<number> => {
+        try { const [r] = await chrome.scripting.executeScript({ target: { tabId }, func: () => document.body?.innerHTML.length || 0 }); return (r?.result as number) || 0; }
+        catch { return -1; }   // page gone / not scriptable → signal "stop"
+    };
+    // Scroll pass — trip anything that lazy-loads on entering the viewport, then return to the top.
+    try { await chrome.scripting.executeScript({ target: { tabId }, func: () => { try { window.scrollTo(0, document.body?.scrollHeight || 0); } catch { /* ignore */ } } }); } catch { /* ignore */ }
+    const start = Date.now();
+    let last = -1, quietSince = 0;
+    while (Date.now() - start < RENDER_SETTLE_MAX_MS) {
+        await new Promise((r) => setTimeout(r, RENDER_POLL_MS));
+        const len = await measure();
+        if (len < 0) break;                                   // page unscriptable → snapshot whatever's there
+        if (len === last) { if (!quietSince) quietSince = Date.now(); if (Date.now() - quietSince >= RENDER_QUIET_MS) break; }
+        else { last = len; quietSince = 0; }
+    }
+    try { await chrome.scripting.executeScript({ target: { tabId }, func: () => { try { window.scrollTo(0, 0); } catch { /* ignore */ } } }); } catch { /* ignore */ }
+}
+/** Make a backgrounded/minimized render tab BELIEVE it's foregrounded, via CDP — so focus/visibility-gated
+ *  deferred loads (a background tab reports `document.hidden`, `hasFocus()===false`, and throttles timers;
+ *  GitHub's release widgets and many SPAs skip work then) still fire, WITHOUT stealing the user's real focus.
+ *  Gated on the `cdp` setting + the debugger permission; best-effort (any failure leaves the render as-is).
+ *  Returns whether the debugger was attached, so the caller detaches it. */
+async function emulateForeground(tabId: number): Promise<boolean> {
+    const at = await ensureDebuggerAttached(tabId);
+    if (!("ok" in at)) return false;
+    try {
+        await chrome.debugger.sendCommand({ tabId }, "Emulation.setFocusEmulationEnabled", { enabled: true });   // hasFocus()=true, focus events fire
+        try { await chrome.debugger.sendCommand({ tabId }, "Page.setWebLifecycleState", { state: "active" }); } catch { /* not on every build */ }   // visibilityState=visible, not throttled
+    } catch { /* best-effort */ }
+    return true;
+}
 /** Resolve when tab `tabId` finishes loading (status "complete"), or after `timeoutMs` — whichever first, so a
  *  page that never fully settles still gets snapshotted. Best-effort; never rejects. */
 function waitForTabComplete(tabId: number, timeoutMs: number): Promise<void> {
@@ -2842,9 +2882,10 @@ function isIncognitoAllowed(): Promise<boolean> {
  *   · incognito=FALSE → a normal background tab: carries the user's session (cookies). Credentialed-weight
  *                       (one-time grant, always-prompt). The snapshot HTML flows through the same
  *                       classify + HTML→Markdown path as a raw fetch either way. */
-async function fetchRenderedContent(url: string, incognito: boolean): Promise<FetchResult> {
+async function fetchRenderedContent(url: string, incognito: boolean, cdp: boolean): Promise<FetchResult> {
     let tabId: number | undefined;
     let windowId: number | undefined;   // set on the incognito path — we remove the whole (minimized) window
+    let emulated = false;               // did we attach the debugger for focus/visibility emulation?
     if (incognito) {
         if (!(await isIncognitoAllowed())) {
             throw new Error(`A private (no-session) rendered fetch needs the extension enabled in Incognito, which is OFF — the browser won't let the extension flip it, so TELL THE USER exactly how: ${incognitoEnableSteps(undefined, chrome.runtime.id)} The toolbar popup's Permissions → "Incognito rendering" also opens that page for them. OR pass credentials:true to render with the user's NORMAL session instead (no Incognito needed).`);
@@ -2862,8 +2903,11 @@ async function fetchRenderedContent(url: string, incognito: boolean): Promise<Fe
     }
     if (tabId == null) throw new Error(`Couldn't open a ${incognito ? "private " : ""}tab to render "${url}".`);
     try {
+        // Before the deferred/lazy widgets fire, make the (backgrounded/minimized) tab believe it's foregrounded
+        // so focus/visibility-gated loads run — only when the user enabled CDP (it attaches the debugger).
+        if (cdp) { try { emulated = await emulateForeground(tabId); } catch { /* best-effort */ } }
         await waitForTabComplete(tabId, RENDER_LOAD_TIMEOUT_MS);
-        await new Promise((r) => setTimeout(r, RENDER_SETTLE_MS));
+        await settleRender(tabId);   // scroll pass + wait for the DOM to go quiet (network-idle proxy)
         let injected: chrome.scripting.InjectionResult[] | undefined;
         try {
             injected = await chrome.scripting.executeScript({ target: { tabId }, func: renderSnapshot });
@@ -2883,6 +2927,7 @@ async function fetchRenderedContent(url: string, incognito: boolean): Promise<Fe
             truncated: truncated || undefined, redirected: (finalUrl !== url) || undefined, rendered: true,
         };
     } finally {
+        if (emulated && tabId != null) releaseDebugger(tabId);   // detach the render-tab debugger before we close it
         if (windowId != null) { try { await chrome.windows.remove(windowId); } catch { /* already closed */ } }
         else if (tabId != null) { try { await chrome.tabs.remove(tabId); } catch { /* already closed */ } }
     }

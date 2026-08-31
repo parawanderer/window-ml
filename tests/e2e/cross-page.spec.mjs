@@ -144,6 +144,44 @@ test("smoke: the extension loads and window.ml runs a one-shot agent", async () 
     await configureExtension(ext.sw, { debugMode: "off" });
 });
 
+// A shared driver: render `path` (credentials:true → a normal tab, which works in the headful harness — the
+// private/incognito path needs "Allow in Incognito") and report whether `marker` reached the model.
+async function renderAndCheck(path, marker) {
+    await configureExtension(ext.sw, { debugMode: "devtools", agentHudInDevtools: false });
+    const page = await ext.context.newPage();
+    const answers = [];
+    const fn = "__rc_" + marker;
+    await page.exposeFunction(fn, (s) => answers.push(s));
+    await page.addInitScript((f) => { if (window.top === window) window.addEventListener("message", (e) => { if (e.data?.__mlDebug?.kind === "agent-result") window[f](e.data.__mlDebug.summary); }); }, fn);
+    await page.goto(site.url + "/");
+    await waitForMl(page);
+    const before = fake.calls().length;
+    fake.setScript([
+        { tool: "fetch_url", args: { url: site.url + path, rendered: true, credentials: true } },
+        (reqBody) => ({ content: JSON.stringify(reqBody.messages || []).includes(marker) ? "MARKER-PRESENT" : "MARKER-ABSENT" }),
+    ]);
+    await page.evaluate(() => { window.ml.agent("render it", { env: false, approvalRouting: "external" }); return true; });
+    await expect.poll(async () => (await ext.sw.evaluate(() => globalThis.__mlApprovals.list())).length, { timeout: 15000 }).toBe(1);
+    const [gate] = await ext.sw.evaluate(() => globalThis.__mlApprovals.list());
+    await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), gate.key);
+    await expect.poll(() => fake.calls().length - before, { timeout: 20000 }).toBe(2);
+    await page.close();
+    await configureExtension(ext.sw, { debugMode: "off" });
+    return answers.join("|");
+}
+
+// The DOM-quiet settle waits for the DOM to stop changing (a network-idle proxy) instead of a fixed delay — so
+// content that STREAMS in past the old ~1.2s window (an SPA hydrating) is captured, not truncated mid-stream.
+(BACKEND ? test.skip : test)("fetch_url rendered: the DOM-quiet settle captures content that streams in after the old fixed delay", async () => {
+    expect(await renderAndCheck("/slow", "STREAM-DONE-3377")).toContain("MARKER-PRESENT");
+});
+
+// The scroll pass trips a viewport-lazy widget (IntersectionObserver, like GitHub's lazy <include-fragment>) —
+// without a scroll it would never enter the viewport in a never-scrolled render tab.
+(BACKEND ? test.skip : test)("fetch_url rendered: the scroll pass trips a viewport-lazy (IntersectionObserver) widget", async () => {
+    expect(await renderAndCheck("/lazy", "LAZY-SCROLL-5591")).toContain("MARKER-PRESENT");
+});
+
 // Continue-past-step-cap: a run that STOPS at its maxSteps cap resumes — via the same __mlContinueRun the
 // "Continue (+N steps)" button posts — with a FRESH step budget, continuing from its stored state (no typed
 // follow-up). We drive a maxSteps:1 run (the first tool call exhausts the cap → hitCap), then fire the
