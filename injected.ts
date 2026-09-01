@@ -1123,7 +1123,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 answerSet.clear();   // the answer set reflects THIS turn's designations only
                 enterAgentRun();   // suppress orphan chat sessions from a tool's internal ml.chat; finally-decremented
                 try {
-                    const r = await runAgentLoop(t, { tools: toolMetas, maxSteps: () => control.maxSteps, signal, unattended, toolTokens, runHash }, deps);
+                    const r = await runAgentLoop(t, { tools: toolMetas, maxSteps: () => control.maxSteps, signal, unattended, toolTokens, runHash, seqBase: control.seqBase }, deps);
                     control.seqBase += turnMaxSeq; turnMaxSeq = 0;   // next turn's step seqs continue past this turn's
                     control.stepBase += turnMaxStep; turnMaxStep = 0;   // …and its step numbers, so turn groups stay distinct
                     // The bottom-of-answer render: the outputs the model DESIGNATED into the answer set, minus

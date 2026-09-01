@@ -78,6 +78,23 @@ test("resolveTokenStep: a tool-name alias resolves to the LAST tokened step of t
     assert.equal(resolveTokenStep("aaaaaa", steps).seq, 1, "an EXACT hex id still resolves precisely (wins over alias)");
 });
 
+test("MULTI-TURN resolution: a HEX citation resolves to its OWN step, and the alias to the LATEST (the reported bug's two flows)", () => {
+    // Two python_exec steps across turns, minted from the GLOBAL seq so their ids DIFFER (the fix). This mirrors
+    // the reported run: turn 1 explored (df.head), turn 2 re-ran with token → the model cited turn 2's id.
+    const t1 = toolToken("abcd1234", 1);   // turn 1, global seq 1 (exploratory)
+    const t2 = toolToken("abcd1234", 2);   // turn 2, global seq 2 (the computation the model cited)
+    assert.notEqual(t1, t2, "distinct global-seq ids (the collision the fix removes)");
+    const steps = [
+        { seq: 1, tool: "python_exec", token: t1, result: "df.head" },
+        { seq: 2, tool: "python_exec", token: t2, result: "the computation" },
+    ];
+    // HASH flow: citing turn 2's hex resolves to turn 2's step — NOT the earlier one (the bug went to step 1).
+    assert.equal(resolveTokenStep(t2, steps).seq, 2, "hex citation → its own (latest) step");
+    assert.equal(resolveTokenStep(t1, steps).seq, 1, "and the earlier hex still resolves to the earlier step");
+    // NON-HASH (alias) flow: @tool:python_exec → the LATEST python_exec step, across turns.
+    assert.equal(resolveTokenStep("python_exec", steps).seq, 2, "tool-name alias → the latest python_exec, across turns");
+});
+
 test("resolveTokenStep: matches by the token the loop MINTED onto the step; null for a hallucinated one", () => {
     // The loop stores the exact minted id on the step; resolution is a direct equality match, NOT a re-derivation.
     const idFor2 = toolToken("abcd1234", 2);

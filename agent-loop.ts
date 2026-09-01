@@ -182,7 +182,11 @@ export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number | (() =
     // Tool tokens: when set (+ a runHash to seed the id), a tool RESULT that has a rich render (renderIn/
     // renderOut — an image/table/code, worth showing verbatim) gets a trailing `@tool:<id>` line, so the model
     // can cite that exact output in its final answer / answer set. Off → no token lines (plain runs unchanged).
-    toolTokens?: boolean; runHash?: string;
+    // `seqBase` offsets the per-turn `seq` so a MULTI-TURN run mints GLOBALLY-unique token ids: the loop restarts
+    // `seq` at 0 each turn, so without the base, turn 2's step 1 and turn 1's step 1 would mint the SAME id and a
+    // citation would resolve to the earlier step. The caller passes its running base (the same one it offsets the
+    // stored step.seq by), so the minted id matches a session-unique step exactly.
+    toolTokens?: boolean; runHash?: string; seqBase?: number;
 }
 
 // Normalize an approval gate's return (boolean OR the rich contract) into a decision. Inlined (not
@@ -373,7 +377,9 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             // model explicitly opted into (`token: true` — e.g. a custom tool that has no param but whose output
             // the model wants to cite). Never a failed call (nothing to cite).
             const citable = (CITABLE_TOOLS.has(call.name) || wantsToken) && !failed;
-            const tokenId = (opts.toolTokens && opts.runHash && citable) ? toolToken(opts.runHash, s) : undefined;
+            // Seed the id from the GLOBAL seq (base + per-turn) so a multi-turn run never mints a colliding id
+            // (turn 2's step 1 vs turn 1's step 1) that a citation would then resolve to the wrong, earlier step.
+            const tokenId = (opts.toolTokens && opts.runHash && citable) ? toolToken(opts.runHash, (opts.seqBase ?? 0) + s) : undefined;
             if (tokenId) tokenRenders.push({ id: tokenId, tool: call.name, render: tr?.renderOut, result });   // → res.outputs (only if CITED)
             const forModel = (tokenId && wantsToken)
                 ? `${result}\n\n[output token @tool:${tokenId} — EMBED this exact output in your final answer with image syntax: ![label](@tool:${tokenId}:out) (use ":in" for the call/code). It expands in place; don't retype it.]`

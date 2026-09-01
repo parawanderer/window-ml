@@ -1142,6 +1142,28 @@ test("res.outputs: an UNCITED computation is NOT surfaced — no auto-promotion 
     assert.ok(!res.outputs, "no structured outputs when the model cited nothing");
 });
 
+test("toolTokens: a MULTI-TURN run mints DISTINCT ids per turn (no cross-turn collision → a citation resolves to the RIGHT step)", async () => {
+    // Regression: the loop restarts `seq` at 0 each turn, so turn 2's step-1 python_exec and turn 1's step-1
+    // python_exec both minted toolToken(runHash, 1) — the SAME id. A citation of turn 2's id then resolved to
+    // turn 1's (earlier) step. The fix seeds the id from the GLOBAL seq (control.seqBase + per-turn seq).
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([
+        toolCall("python_exec", {}, "c1"), reply("turn one"),
+        toolCall("python_exec", {}, "c2"), reply("turn two"),
+    ]) });
+    const win = world.context.window;
+    const tokens = [];
+    win.addEventListener("message", (e) => { const ev = e.data && e.data.__mlDebug; if (ev && ev.kind === "agent-step" && ev.token) tokens.push(ev.token); });
+    win.postMessage({ __mlSidebar: "ready" });
+    await new Promise(r => setTimeout(r, 0));
+    const py = world.ml.defineTool({ name: "python_exec", run: () => ({ content: "df", render: { type: "python-out", df: { columns: ["x"], rows: [[1]] } } }) });
+    const a = world.ml.createAgent({ maxSteps: 4, vision: false, tools: [py], toolTokens: true });
+    await a.run("first");
+    await a.run("second");
+    await new Promise(r => setTimeout(r, 0));
+    assert.equal(tokens.length, 2, "both citable python_exec steps minted a token");
+    assert.equal(new Set(tokens).size, 2, "the two turns' tokens are DISTINCT (no cross-turn collision)");
+});
+
 test("res.outputs: OFF (no tokens) → no outputs; a plain run is unchanged", async () => {
     const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall("python_exec", {}, "c1"), reply("done")]) });
     const py = world.ml.defineTool({ name: "python_exec", run: () => ({ content: "df", render: { type: "python-out", df: { columns: ["x"], rows: [[1]] } } }) });

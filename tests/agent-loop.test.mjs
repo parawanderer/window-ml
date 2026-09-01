@@ -166,6 +166,41 @@ test("a tool step emits a pending START then a DONE with the same seq", async ()
     assert.equal(steps[0].seq, steps[1].seq, "same seq → the sidebar patches the row");
 });
 
+// --- tool-token minting: GLOBAL-seq id, no cross-turn collision (shared by BOTH the page loop and the
+// background host — both thread their running `seqBase` into this same runAgentLoop, so this locks the fix
+// for both "backend" (background) and "non-backend" (page) paths at their common heart). ---------------
+const tokenOfRun = async (seqBase, calls = 1) => {
+    // A run with `calls` citable python_exec steps, at the given seqBase → the tokens its steps mint.
+    const turns = [];
+    for (let i = 0; i < calls; i++) turns.push(toolCall("python_exec", {}, `c${i}`));
+    turns.push(reply("done"));
+    const { deps, calls: c } = makeDeps({ turns });
+    await runAgentLoop("t", { tools: [{ name: "python_exec" }], toolTokens: true, runHash: "abcd1234", seqBase }, deps);
+    return c.emits.filter(e => e.tool === "python_exec" && e.token).map(e => e.token);
+};
+
+test("tool tokens: a citable step's id is seeded by the GLOBAL seq (seqBase + per-turn seq)", async () => {
+    // Turn 1 (seqBase 0) and turn 2 (seqBase 1) each run their FIRST python_exec at per-turn seq 1. Without the
+    // base, both mint toolToken(runHash, 1) — the SAME id — and a hex citation of turn 2's output resolves to
+    // turn 1's earlier step (the reported bug). With the base they DIFFER.
+    const [t0] = await tokenOfRun(0);   // turn 1, step 1
+    const [t1] = await tokenOfRun(1);   // turn 2, step 1
+    assert.ok(t0 && t1, "each turn's citable step mints a token");
+    assert.notEqual(t0, t1, "turn 2's id DIFFERS from turn 1's — no cross-turn collision");
+});
+
+test("tool tokens: the id is DETERMINISTIC and CONTIGUOUS across turns (a re-render/replay resolves the same)", async () => {
+    // Same (runHash, seqBase, seq) → same id, so a persisted/re-adopted transcript still resolves.
+    const [a] = await tokenOfRun(0);
+    const [aAgain] = await tokenOfRun(0);
+    assert.equal(a, aAgain, "same seqBase → same id (deterministic)");
+    // And the global seq is CONTIGUOUS: turn 2's step-1 id (seqBase 1) equals turn 1's step-2 id (seqBase 0,
+    // its second call at per-turn seq 2) — the base picks up exactly where the prior turn left off, no gap/overlap.
+    const twoInTurnOne = await tokenOfRun(0, 2);   // [seq1, seq2]
+    const [turnTwoStepOne] = await tokenOfRun(1);  // seqBase 1 + seq 1
+    assert.equal(turnTwoStepOne, twoInTurnOne[1], "turn 2 step 1 == turn 1 step 2 (contiguous global seq)");
+});
+
 test("token usage is emitted per step (so the background run's usage gauge isn't blank)", async () => {
     // A thought+tool step carries usage on its thought emit; the final-answer step emits usage-only.
     const { deps, calls } = makeDeps({ turns: [
