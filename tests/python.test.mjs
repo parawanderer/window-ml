@@ -27,7 +27,7 @@ before(async () => {
     py = await loadPyodide({ indexURL: PYODIDE_DIR });
     // The PRELUDE imports numpy/PIL/pandas; read_html needs bs4 + html5lib. (scipy is load-only in
     // the real sandbox and unused by the prelude, so it's skipped here.)
-    await py.loadPackage(["numpy", "pillow", "pandas", "beautifulsoup4", "html5lib"]);
+    await py.loadPackage(["numpy", "pillow", "pandas", "beautifulsoup4", "html5lib", "sympy"]);
 }, { timeout: 180000 });
 
 // Mirror offscreen.run(): set the injected globals, (optionally harden), run the wrapped script,
@@ -46,7 +46,9 @@ async function pyRun(code, { tables = null, image = null, hardened = false } = {
     let value; try { value = JSON.parse(jr); } catch { value = jr; }
     const tj = py.globals.get("_json_table");
     let table; if (typeof tj === "string") { try { table = JSON.parse(tj); } catch { /* */ } }
-    return { ok: true, value, stdout, table };
+    const rh = py.globals.get("_json_render");
+    const render = rh === "latex" || rh === "img" ? rh : undefined;
+    return { ok: true, value, stdout, table, render };
 }
 const rows = (name, columns, r) => ({ name, data: { kind: "rows", columns, rows: r } });
 
@@ -328,4 +330,29 @@ return sympy.latex(expr)
     assert.ok(tok, "the citation renders in the UI");
     assert.ok(tok.querySelector(".katex"), `the ACTUAL sympy WASM output typesets via KaTeX: ${latex}`);
     assert.doesNotMatch(tok.textContent, /loaded, reference directly/, "the model-facing prelude is NOT fed to KaTeX");
+});
+
+test("auto-render: a returned sympy expression comes back as its LaTeX + a 'latex' hint (no cast)", { skip }, async () => {
+    // The model returns the sympy EXPRESSION (not sympy.latex(...)) — python-runtime detects the type and
+    // serializes sympy.latex(result) with render:'latex', so a plain `:out` citation typesets with no cast.
+    const r = await pyRun("import sympy as sp\nx = sp.Symbol('x')\nreturn sp.diff(sp.sin(x**2) * sp.exp(3*x), x)");
+    assert.equal(r.render, "latex", "the return type was detected as latex-renderable");
+    assert.equal(typeof r.value, "string", "the value is a LaTeX string");
+    assert.match(r.value, /\\cos|\\left|\^\{/, "it's real LaTeX (commands / superscripts), not the plain str()");
+    assert.doesNotMatch(r.value, /Derivative|sin\(x\*\*2\)/, "not the Python repr");
+});
+
+test("auto-render: a returned PIL Image comes back as a data:image URL + an 'img' hint (no to_base64)", { skip }, async () => {
+    // The model returns a PIL Image directly — python-runtime encodes it as a PNG data: URL with render:'img',
+    // which the tool already auto-shows as an image (the value string starts with data:image/).
+    const r = await pyRun("from PIL import Image\nreturn Image.new('RGB', (4, 4), (255, 0, 0))");
+    assert.equal(r.render, "img", "the return type was detected as an image");
+    assert.match(r.value, /^data:image\/png;base64,/, "the value is a PNG data: URL");
+    assert.ok(r.value.length > 80, "…with real base64 bytes");
+});
+
+test("auto-render: a plain scalar/list return is untouched (no render hint)", { skip }, async () => {
+    const r = await pyRun("return [1, 2, 3]");
+    assert.equal(r.render, undefined, "no auto-render hint for ordinary data");
+    assert.deepEqual(r.value, [1, 2, 3]);
 });

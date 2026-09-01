@@ -4565,6 +4565,28 @@ test("answer render (sidebar): a PRIOR turn's tool-name alias resolves to ITS tu
     assert.match(replies[1].textContent, /CODE_TWO/, "turn 2's answer alias → CODE_TWO");
 });
 
+test("answer render (sidebar): a sympy-AUTO `latex` python-out typesets with NO cast; `| raw` overrides", async () => {
+    // python-runtime detects a sympy return and flags the descriptor `latex:true`, so a plain `:out` citation
+    // typesets WITHOUT the model writing `| latex`. `| raw` still forces the literal string.
+    const autoStep = (hash) => w.dispatch(agentStep(hash, 1, { seq: 1, tool: "python_exec", token: OUT, result: "2 x e^{3 x}",
+        renderOut: { type: "python-out", value: "2 x e^{3 x} \\cos\\left(x^{2}\\right)", latex: true } }));
+    let w = await loadSidebarWorld();
+    await w.dispatch(agentStart("auto", "differentiate"));
+    await autoStep("auto");
+    await w.dispatch({ ...agentResult("auto", "The derivative is ![d](@tool:" + OUT + ":out).", 1), answer: "" });   // NO | latex
+    await openRun(w);
+    let tok = w.shadow.querySelector(".msg.asst .answer-rendered .tok-ref");
+    assert.ok(tok?.querySelector(".katex"), "an auto-latex python-out typesets with NO | latex cast");
+
+    w = await loadSidebarWorld();
+    await w.dispatch(agentStart("auto2", "x"));
+    await autoStep("auto2");
+    await w.dispatch({ ...agentResult("auto2", "Literal: ![d](@tool:" + OUT + ":out | raw)", 1), answer: "" });
+    await openRun(w);
+    tok = w.shadow.querySelector(".msg.asst .answer-rendered .tok-ref");
+    assert.ok(tok && !tok.querySelector(".katex") && tok.querySelector("pre.code"), "| raw overrides the auto-latex → literal text");
+});
+
 test("answer render (sidebar): an INLINE citation expands in the reply, with NO separate Result block", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("inl", "compute it"));

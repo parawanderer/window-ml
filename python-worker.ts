@@ -14,7 +14,7 @@ import { PY_PACKAGE_LOADS } from "./python-env";
 import { wrapUserCode, harden, unharden } from "./python-runtime";
 
 type RunMsg = { id: number; code: string; image: string | null; hardened: boolean; tables: unknown };
-type RunResult = { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] } };
+type RunResult = { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img" };
 
 let pyodideReady: Promise<any> | null = null;
 function getPyodide(): Promise<any> {
@@ -54,9 +54,12 @@ async function run(code: string, image: string | null, hardened: boolean, tables
         let table: RunResult["table"];
         if (typeof tableJson === "string") { try { table = JSON.parse(tableJson); } catch { /* keep text */ } }
         const jsonResult = py.globals.get("_json_result");
+        // Auto-render hint from the return TYPE ('latex' for a sympy expr; 'img' folded into a data: value).
+        const renderHint = py.globals.get("_json_render");
+        const render = renderHint === "latex" || renderHint === "img" ? renderHint : undefined;
         if (typeof jsonResult === "string") {
             let value: unknown; try { value = JSON.parse(jsonResult); } catch { value = jsonResult; }
-            return { ok: true, value, stdout, ...(table ? { table } : {}) };
+            return { ok: true, value, stdout, ...(table ? { table } : {}), ...(render ? { render } : {}) };
         }
         // Fallback for a non-JSON-serializable return (rare — models return images via
         // to_base64): convert via toJs, then destroy the proxy so it can't leak.

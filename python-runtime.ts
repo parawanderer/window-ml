@@ -211,6 +211,21 @@ try:
     _json_result = _json.dumps(result, default=lambda o: o.item() if hasattr(o, 'item') else str(o))
 except Exception:
     _json_result = None
+# Auto-render by RETURN TYPE (no cast needed): a sympy expression becomes its LaTeX (+ a 'latex' hint the UI
+# typesets); a PIL Image becomes a data: URL (which the tool already auto-shows as an image). A model can still
+# override the render with a raw pipe when citing it. Best-effort — any failure leaves the plain result untouched.
+_json_render = None
+try:
+    _rmod = (getattr(type(result), '__module__', '') or '').split('.')[0]
+    if _rmod == 'sympy':
+        import sympy as _sp
+        _json_result = _json.dumps(_sp.latex(result)); _json_render = 'latex'
+    elif _rmod == 'PIL' and hasattr(result, 'save'):
+        import io as _io2, base64 as _b642
+        _pbuf = _io2.BytesIO(); result.save(_pbuf, format='PNG')
+        _json_result = _json.dumps('data:image/png;base64,' + _b642.b64encode(_pbuf.getvalue()).decode()); _json_render = 'img'
+except Exception:
+    _json_render = None
 # If the result is a DataFrame/Series, ALSO serialize it structurally ({columns, rows}) so the UI can
 # render a real table (PyDfTable) instead of a text repr. Capped rows; a Series becomes a 1-col frame.
 _json_table = None

@@ -2934,6 +2934,29 @@ test("python_exec tool: prepends a synthetic 'loaded' log so models know what's 
     assert.match(out.content, /screenshot → `img`/, "notes the pre-loaded image");
 });
 
+test("python_exec tool: an image return keeps base64 OUT of the model's context — it's only in the UI descriptor", async () => {
+    // The model returns a PIL image (python-runtime hands back a data: URL); the base64 must NOT pollute the
+    // model-facing `content` (context/history) — only the render descriptor (UI) carries it.
+    const { ml } = loadDomWorld();
+    const b64 = "data:image/png;base64," + "A".repeat(5000);
+    ml.pythonExec = async () => ({ ok: true, value: b64, stdout: "" });
+    const out = await ml.pythonTool().run({ code: "return img" });
+    assert.match(out.content, /Returned an image\./, "the model-facing content is a short note");
+    assert.ok(!out.content.includes("AAAAA"), "the base64 is NOT in the content the model sees");
+    assert.equal(out.render.image, b64, "the base64 lives only in the UI descriptor");
+});
+
+test("python_exec tool: a render:'latex' return flags the descriptor so the surfaces typeset it (no cast)", async () => {
+    // python-runtime detected a sympy return and set render:'latex'; the tool flags the python-out descriptor
+    // latex:true so a plain `:out` citation typesets with no `| latex`. (The LaTeX string is small — unlike a
+    // base64 image — so it's fine for it to be in `content` too.)
+    const { ml } = loadDomWorld();
+    ml.pythonExec = async () => ({ ok: true, value: "2 x e^{3 x}", stdout: "", render: "latex" });
+    const out = await ml.pythonTool().run({ code: "return sympy.diff(expr, x)" });
+    assert.equal(out.render.latex, true, "the python-out descriptor is flagged latex");
+    assert.equal(out.render.value, "2 x e^{3 x}", "…carrying the LaTeX value");
+});
+
 test("_resolveTable: throws for a selector that matches nothing", () => {
     const { ml } = loadDomWorld(`<div></div>`);
     assert.throws(() => ml._resolveTable("#nope"), /no table element matches/);

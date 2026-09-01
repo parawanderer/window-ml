@@ -117,7 +117,10 @@ function TokenRef({ seg, run, scope, standalone }: { seg: Extract<AnswerSegment,
     // The model's caption. INLINE citation (the value is shown in-line) → the label goes in the TOOLTIP; BLOCK
     // citation (a table/image/code) → the label is a CAPTION under the render, like a figure caption on the web.
     const label = seg.label && seg.label.trim() && seg.label.trim() !== rawText.trim() ? seg.label.trim() : "";
-    const isLatex = seg.fmt === "latex" && !!rawText;
+    // A python_exec that returned a sympy expression auto-flags `latex` on the descriptor (python-runtime
+    // detected the type), so a plain `:out` citation typesets WITHOUT a `| latex` cast. An explicit fmt wins.
+    const autoLatex = !seg.fmt && d?.type === "python-out" && !!d.latex;
+    const isLatex = (seg.fmt === "latex" || autoLatex) && !!rawText;
     const isRaw = seg.fmt === "raw" && !!rawText;   // `| raw` — force the literal value, no table/image/latex render
     // `| img` — render the tool's OWN image output (the descriptor's captured image, else a data:/base64 value).
     // An external http(s) URL is deliberately NOT turned into an <img> (that would beacon the viewer); it falls

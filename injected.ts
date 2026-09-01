@@ -1912,7 +1912,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             // → tables['current']): a model that passed `"tables": "current"` naturally reaches for
             // tables['current'], not the internal `df` name. Accommodate it (string sources only).
             const r = await makeBackgroundTaskPromise("PYTHON_EXEC_REQUEST", "PYTHON_EXEC_RESPONSE",
-                { code, image: img, hardened: mode !== "full", tables: loaded.map((l, i) => ({ name: l.name, data: l.data, alias: typeof specs[i].src === "string" ? specs[i].src as string : null })) }) as { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] } };
+                { code, image: img, hardened: mode !== "full", tables: loaded.map((l, i) => ({ name: l.name, data: l.data, alias: typeof specs[i].src === "string" ? specs[i].src as string : null })) }) as { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img" };
             const extra: { inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; resultTable?: { columns: string[]; rows: (string | number | null)[][] } } = {};
             if (img) extra.inputImage = img;
             if (imageBox) extra.imageBox = imageBox;   // for cast:'pt'/'box' → project image px → viewport

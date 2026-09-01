@@ -1411,8 +1411,10 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             "done in Python than JS — pixel-mask & centroid a target, count regions, BFS a maze, or SUM/AVG/GROUP a " +
             "table. It's ONE cell of a live Jupyter notebook: your inputs are ALREADY loaded — `image`→`img`/`img_np` " +
             "(PIL + H×W×3 uint8), `tables`→DataFrame(s) — so reference them directly, never re-open/parse/read_csv " +
-            "them. `return` a value → comes back as TEXT (or set `cast` to mint a clickable @pt/@box; a to_base64() " +
-            "image is shown). Each call is STATELESS — a fresh namespace, nothing persists between calls. In scope: " +
+            "them. `return` a value → comes back as TEXT (or set `cast` to mint a clickable @pt/@box). RETURN TYPE " +
+            "auto-renders: a sympy expression → typeset LaTeX, a PIL Image (or to_base64()) → an image, a DataFrame " +
+            "→ a table — so just `return sympy.diff(...)` / `return img` and cite `![…](@tool:…:out)` (no cast; add " +
+            "`| raw` to force the literal text). Each call is STATELESS — a fresh namespace, nothing persists. In scope: " +
             PY_PACKAGE_LABELS + " + stdlib (io, math, collections, itertools…). `mode` 'readonly' (default) is a pure " +
             "function over the inputs (may be auto-approved); 'full' enables network but ALWAYS asks the user." +
             currentHint,
@@ -1571,6 +1573,9 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             const nullWarn = (v === null || v === undefined) && stdoutClipped
                 ? "\n\n⚠ Your code RETURNED null (None) — you printed to stdout but didn't RETURN a value, so there's nothing to cite. Whatever the user should SEE, RETURN it (a pandas DataFrame renders as a readable table; a dict/number is fine); stdout is just a debug log."
                 : "";
+            // A sympy expression return auto-rendered to LaTeX (python-runtime detected the type): flag the
+            // descriptor so the surfaces typeset it — no `| latex` cast needed. `| raw` still overrides.
+            if (r.render === "latex") return done(`${pre}${text}`, { value: text, latex: true });
             return done(`${pre}${text}${castHint}${nullWarn}`, { value: text });
         },
     });

@@ -230,7 +230,9 @@ function PythonOutRender({ d }: { d: Extract<RenderDescriptor, { type: "python-o
             {d.token ? <PyOutSection label="token" cls="r-py-token"><code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code></PyOutSection> : null}
             {d.error ? <PyOutSection label="error" cls="r-py-err"><Code text={d.error} lang="text" /></PyOutSection> : null}
             {d.df && !d.error ? <PyOutSection label="value (DataFrame)" cls="r-py-val"><PyDfTable columns={d.df.columns} rows={d.df.rows} /></PyOutSection> : null}
-            {d.value != null && !d.image && !d.token && !d.error && !d.df ? <PyOutSection label="value" cls="r-py-val"><Code text={d.value} lang="json" /></PyOutSection> : null}
+            {/* A sympy return auto-flagged `latex` → typeset the value (display mode), not a raw code block. */}
+            {d.latex && d.value != null && !d.image && !d.token && !d.error && !d.df ? <PyOutSection label="value (LaTeX)" cls="r-py-val"><div class="md" dangerouslySetInnerHTML={{ __html: markdown(`\\[${d.value}\\]`, { math: true }) }} /></PyOutSection> : null}
+            {d.value != null && !d.latex && !d.image && !d.token && !d.error && !d.df ? <PyOutSection label="value" cls="r-py-val"><Code text={d.value} lang="json" /></PyOutSection> : null}
         </div>
     );
 }

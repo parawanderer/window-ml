@@ -510,8 +510,14 @@ conventions all work (`wrapUserCode` builds `_user`'s body at runtime via `ast`)
 uses; the code is parsed inside a `def _user()` wrapper so a top-level `return` stays legal, and
 its trailing `ast.Expr` is rewritten to a `Return`). Returns come back as **text by default**; `cast:"pt"`/`"box"` validate the return
 and mint a clickable `@pt`/`@box` (mismatch → an honest error, never a guess), and a
-`to_base64(...)` image return is always shown. The debug render is the two-slot
-`python-in`/`python-out` (above).
+`to_base64(...)` image return is always shown. **Auto-render by RETURN TYPE** (the serialization epilogue in
+`python-runtime.ts` sets a `_json_render` hint → `PyResult.render` → the descriptor): a **sympy** expression is
+serialized as `sympy.latex(...)` with `render:"latex"` (the descriptor's `latex:true` → the surfaces typeset it,
+and a plain `:out` citation renders as math with **no `| latex` cast** — `| raw` overrides); a **PIL Image** is
+encoded to a `data:image/png;base64,…` value with `render:"img"`, which rides the existing image path. Crucially
+this keeps **base64 OUT of the model's context** — the model returns the OBJECT (`return img`), WE convert it, and
+the tool's model-facing `content` stays a short `"Returned an image."` while the base64 lives only in the UI
+descriptor (never re-fed to the model). The debug render is the two-slot `python-in`/`python-out` (above).
 
 **Two capability modes (agent-declared) + auto-approve.** The tool takes `mode`:
 `"readonly"` (default) **hardens** the offscreen sandbox for that run — unregisters *and*
