@@ -108,9 +108,10 @@ export const TOOLTOKENS_CLAUSE =
     "steps. Embed any computed/looked-up figure you want the user to see — nothing is shown unless you cite it, so " +
     "an uncited computation stays hidden; a pure-prose answer needs none. EXPLAINING CODE YOU RAN: embed " +
     "`![the code](@tool:<id>:in)`, THEN explain it. Write executed code " +
-    "to be read (clear names, a short comment per step) so `:in` reads well. FORMAT OVERRIDE: append a pipe to " +
-    "control the render — `| latex` typesets a math value/expression (e.g. a `sympy.latex(...)` string), `| img` " +
-    "renders a base64 image the tool returned, `| raw` forces the literal text. E.g. `![derivative](@tool:<id>:out | latex)`.";
+    "to be read (clear names, a short comment per step) so `:in` reads well. RENDER: a python_exec that returns a " +
+    "sympy expression / a `sympy.latex(...)` string / an image ALREADY auto-typesets (or shows the image) when " +
+    "cited — NO pipe needed. A pipe only OVERRIDES: `| latex` forces typesetting, `| img` forces an image, `| raw` " +
+    "forces the literal text. E.g. `![derivative](@tool:<id>:out)` typesets a sympy result on its own.";
 export const SHADOW_CLAUSE =
     "\n\nShadow DOM: the DOM tools (findByText / interactives / describeElement / ancestors / countMatches / " +
     "sampleText / click / type / wait / answer) pierce OPEN shadow roots automatically. A control inside one " +

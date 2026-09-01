@@ -45,6 +45,7 @@ deterministic output instead of hallucinated re-typing.
       URL or a bare base64 blob. Deliberately STRICT — no `svg`, no `data:text/html`, no `javascript:`,
       and NO external http(s) URL (that would beacon the viewer); anything else falls back to text.
     - `raw` — force the LITERAL value as a plain text/code block (skip any table/image/latex derivation).
+    - AUTO: a python_exec that returns a sympy expression / a `sympy.latex(...)` string / an image already renders typeset (or as an image) with NO pipe — the descriptor carries a `latex:true` / an image, and a plain `:out` cite honors it. A pipe only OVERRIDES.
 - A token resolves **only within its own run**. Unknown/foreign/garbled → an "unresolved ref" chip,
   never a crash.
 - **Tool-name alias.** An id that is a **tool name** instead of a 6-hex id — `@tool:python_exec:out` —
