@@ -10,6 +10,7 @@
 // Includes a tiny dependency-free store-method ZIP writer (PNGs are already
 // deflated). Extracted from app.tsx.
 import atomOneLight from "highlight.js/styles/atom-one-light.css";
+import katexCss from "katex/dist/katex.min.css";
 import { sessionMap, turnsRun, config } from "./store";
 import type { Session, AgentStep } from "./store";
 import { pretty, fullStamp, beautifyJs, escapeHtml, highlight, markdown } from "./format";
@@ -73,7 +74,11 @@ function writeAnswer(text: string, s: Session, d: Sink, muted = false, rawLabel 
         // model-facing prelude). Mirrors the sidebar; keeps the prelude out of an inline value / `| latex` block.
         const raw = seg.slot === "in" ? (step.arguments ? pretty(step.arguments) : "")
             : (desc?.type === "python-out" ? (desc.value ?? desc.stdout ?? step.result ?? "") : (step.result ?? ""));
-        if (seg.fmt === "latex" && raw) { buf += ` $${raw}$ `; continue; }   // static export: keep raw math notation
+        // Typeset an explicit `| latex` OR an auto-latex python-out (sympy return, no pipe) — wrap in `$…$` so
+        // the HTML/PDF sink's KaTeX renders it (the `.md` sink keeps the `$…$` literal, which is what a coding
+        // assistant wants). Mirrors the sidebar's autoLatex.
+        const isLatex = raw && (seg.fmt === "latex" || (!seg.fmt && desc?.type === "python-out" && !!desc.latex));
+        if (isLatex) { buf += ` $${raw}$ `; continue; }
         if (desc && ["image", "look", "table", "code", "python-in", "python-out"].includes(desc.type)) {
             flush(); emitTokenBlock(step, seg.slot, d);
             if (seg.label && seg.label.trim()) d.note(seg.label.trim());   // the model's caption, like a figure caption
@@ -190,7 +195,7 @@ function htmlSink() {
         meta: (pairs) => o.push(`<dl class="meta">${pairs.map(([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(v)}</dd>`).join("")}</dl>`),
         head: (t) => o.push(`<h2>${escapeHtml(t)}</h2>`),
         sub: (t) => o.push(`<h3>${escapeHtml(t)}</h3>`),
-        prose: (t, muted) => o.push(muted ? `<p>${em(t, true)}</p>` : `<div class="md">${markdown(t)}</div>`),
+        prose: (t, muted) => o.push(muted ? `<p>${em(t, true)}</p>` : `<div class="md">${markdown(t, { math: true })}</div>`),
         note: (t, plain) => o.push(`<p class="note">${plain ? escapeHtml(t) : `<em>${escapeHtml(t)}</em>`}</p>`),
         code: (t, lang) => o.push(pre(t, lang)),
         block: (label, t, lang) => o.push(`<p class="lbl">${escapeHtml(label)}:</p>`, pre(t, lang)),
@@ -513,12 +518,22 @@ table { border-collapse: collapse; }
 
 // A full standalone HTML document for the session. The <title> matters: Chrome
 // seeds the "Save as PDF" filename from it.
+// KaTeX ships its CSS with RELATIVE font URLs (`url(fonts/KaTeX_*.woff2)`). The print doc is a self-contained
+// srcdoc iframe whose base URL isn't `dist/`, so those relatives wouldn't resolve — rewrite them to ABSOLUTE
+// extension URLs (`fonts/*` is web-accessible, already used by the overlay). Falls back to the literal path in a
+// non-extension context (tests), where fonts don't matter.
+function katexStyle(): string {
+    const base = (typeof chrome !== "undefined" && chrome?.runtime?.getURL) ? chrome.runtime.getURL("fonts/") : "fonts/";
+    return katexCss.replace(/url\((['"]?)fonts\//g, (_m, q: string) => `url(${q}${base}`);
+}
+
 export function sessionToHtml(s: Session, docTitle: string): string {
     const { sink, done } = htmlSink();
     writeSession(s, sink);
     return `<!doctype html>
 <html><head><meta charset="utf-8"><title>${escapeHtml(docTitle)}</title>
 <style>${atomOneLight}</style>
+<style>${katexStyle()}</style>
 <style>${PRINT_CSS}</style>
 </head><body><div class="doc">
 ${done()}

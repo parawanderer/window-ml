@@ -108,6 +108,28 @@ test("a step's model-facing Out (with an @tool token line) stays recoverable in 
     }
 });
 
+test("PDF/HTML sink TYPESETS math (prose $…$/$$…$$ + a | latex / auto-latex citation); .md keeps it raw", async () => {
+    const { toolToken } = await import("../util.ts");
+    const hash = "mathrun1";
+    const id = toolToken(hash, 1);
+    const s = {
+        hash, kind: "agent", model: "gemma", tag: "session", createdTs: 1, lastTs: 2, status: "ok", turns: [], answers: [],
+        // prose display + inline math, an explicit `| latex` cite, AND an auto-latex cite (python-out latex flag, no pipe).
+        summary: "With root $r = 2$:\n\n$$y_h(x) = C_1 x^2$$\n\nThe derivative is ![d](@tool:" + id + ":out | latex) and also ![a](@tool:" + id + ":out).",
+        steps: [{ step: 1, seq: 1, tool: "python_exec", token: id, result: "x^{2} e^{x}",
+            renderOut: { type: "python-out", value: "x^{2} e^{x}", latex: true } }],
+    };
+    const html = sessionToHtml(s, "run");
+    // KaTeX ran: rendered spans present, and the raw TeX source is NOT sitting as literal text in the body.
+    assert.match(html, /class="katex/, "the PDF/HTML sink renders KaTeX for prose math + latex citations");
+    const bodyText = html.slice(html.indexOf('<div class="doc"')).replace(/<[^>]+>/g, "");
+    assert.ok(!bodyText.includes("$$y_h(x)"), "the raw $$…$$ prose is typeset, not shown literally");
+    // The .md sink keeps the math notation literal (a coding assistant reads raw TeX).
+    const { md } = serializeSession(s);
+    assert.match(md, /\$\$y_h\(x\) = C_1 x\^2\$\$/, ".md keeps the display-math source literal");
+    assert.ok(!md.includes("class=\"katex"), ".md does not run KaTeX");
+});
+
 import { config } from "../sidebar/store.ts";
 import { BUILD_INFO } from "../build-info.gen.ts";
 
