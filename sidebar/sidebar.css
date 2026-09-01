@@ -1399,8 +1399,10 @@ html[data-surface="card"] .appr-btn.no:hover {
    table/image/code; inline for a short cited value so the prose flows around it. */
 .answer-rendered .tok-ref { cursor: pointer; border-radius: 2px; }
 .answer-rendered .tok-block { display: block; margin: 6px 0; padding-left: 8px; border-left: 2px solid var(--ok); }
-.answer-rendered .tok-inline { border-bottom: 1px dashed var(--ok); }
-.answer-rendered .tok-inline .tok-val { background: color-mix(in srgb, var(--ok) 12%, transparent); padding: 0 3px; border-radius: 3px; }
+/* Every inline citation — a plain value OR a typeset `| latex` formula — gets the green underline + a slightly
+   lighter tinted box, so an inline math cite reads as a highlighted tool output, not model prose. The box is on
+   the container so KaTeX (which isn't a .tok-val) is boxed too. */
+.answer-rendered .tok-inline { border-bottom: 1px dashed var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); padding: 0 3px; border-radius: 3px; }
 .answer-rendered .tok-ref:hover { background: color-mix(in srgb, var(--ok) 10%, transparent); }
 .answer-rendered .tok-ref:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .answer-rendered .tok-ref { position: relative; }
