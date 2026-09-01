@@ -1755,6 +1755,25 @@ test("START_RUN (surface 'devtools') fans a background run's step events to the 
     assert.ok(steps.some(s => s.__mlDebug.usage && s.__mlDebug.usage.totalTokens === 12), "the usage step fanned to the panel");
 });
 
+test("START_RUN (surface 'off'/card) ALSO fans steps AND the result to a CONNECTED panel (no more 'stopped updating')", async () => {
+    // Regression: an off/card background run gated its panel fan on surface==='devtools', so a user who ALSO
+    // had a DevTools panel open saw only the connect-time replay and the panel "stopped updating". A connected
+    // panel must get the run's live steps AND its agent-result regardless of the run's surface — exactly once.
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: () => jsonResponse({ choices: [{ message: { content: "done" } }], usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 } }),
+    });
+    const panel = bg.connect("ml-devtools");
+    panel.send({ type: "ml-devtools-init", tabId: 7 });
+    await bg.send({ type: "START_RUN", payload: {
+        runId: "runoff", task: "x", systemPrompt: "sys", tools: [], model: "m", think: null,
+        maxSteps: 5, autoApprovePython: false, autoApproveReadonly: false, surface: "off",
+    } }, { tab: { id: 7 } });
+    const kinds = (k) => panel.messages.filter(m => m.__mlDebug && m.__mlDebug.kind === k);
+    assert.ok(kinds("agent-step").length >= 1, "an OFF run's steps reach a connected panel too");
+    assert.equal(kinds("agent-result").length, 1, "…and its agent-result reaches the panel EXACTLY ONCE (no double)");
+});
+
 test("START_RUN (stream:true) streams reasoning LIVE and accumulates fragmented tool_calls from the stream", async () => {
     // Opt-in streaming: the model call uses streamAgentTurn — it fans reasoning deltas (agent-stream) so a long
     // think shows live, AND accumulates the OpenAI-style fragmented tool_call (id + name + arguments-string

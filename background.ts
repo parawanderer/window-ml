@@ -1810,7 +1810,11 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             // page fan lets the optional corner card coexist with the panel (agentHudInDevtools); the
             // shell drops the page copy when no card is mounted, and never loops it back to the panel.
             chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => { /* tab gone / no receiver */ });
-            if (p.surface === "devtools") relayDebugEvent(tabId, event);
+            // ALWAYS feed a connected DevTools panel (no-op if none). A background-hosted run is the SOLE source
+            // of its events — the shell tags them __mlFromBg and never re-forwards them as ML_DEBUG_EVENT, so
+            // this can't double-relay. Gating on `surface === "devtools"` left an off/card run's panel (if the
+            // user also has one open) stuck on the connect-time replay — the "panel stopped updating" bug.
+            relayDebugEvent(tabId, event);
             // Cross-page: remember this step so a fresh page after a nav can rebuild the card mid-run.
             if (p.crossPage !== false) bufferReplay(tabId, event);
         };
@@ -1819,7 +1823,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         const fanEvent = (event: Record<string, unknown>): void => {
             if (abortCtl.signal.aborted) return;
             chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => {});
-            if (p.surface === "devtools") relayDebugEvent(tabId, event);
+            relayDebugEvent(tabId, event);   // always feed a connected panel (see emitStep — no double, no-op if none)
             if (p.crossPage !== false) bufferReplay(tabId, event);
         };
         // OFF mode: the corner card is fed ENTIRELY by this background stream, because the page's own
@@ -1833,16 +1837,16 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             // the start event a re-adopted card can't rebuild the session.
             if (p.crossPage !== false) bufferReplay(tabId, event);
             // "off": the page-side caller emits nothing, so the background always fans lifecycle events.
-            // overlay/devtools: the caller normally emits them page-side — EXCEPT once the run has navigated,
-            // when that caller's context is gone, so the background fans them to the destination page instead.
+            // overlay/devtools: the caller normally emits them page-side (incl. the panel, via the shell
+            // forwarder) — EXCEPT once the run has navigated, when that caller's context is gone, so the
+            // background fans to the destination page instead. UNLIKE per-step events (background-only source),
+            // lifecycle is ALSO emitted page-side here, so relaying it below early would DOUBLE in the panel.
             if (p.surface !== "off" && !hasNavigated) return;
             chrome.tabs.sendMessage(tabId, { type: "ML_DEBUG_TO_PAGE", event }).catch(() => {});
-            // DEVTOOLS after a nav: the page-side caller that normally feeds the panel (via the shell forwarder)
-            // is GONE, and the shell drops __mlFromBg events for the panel (dedup) — so fan lifecycle straight to
-            // the panel port too, mirroring emitStep. Without this a navigated devtools run never gets its
-            // agent-result → the panel sticks on "running" with no answer (the HUD, page-fed, had it). Only fires
-            // when we actually fan (off, or overlay/devtools post-nav), so a pre-nav result can't double up.
-            if (p.surface === "devtools") relayDebugEvent(tabId, event);
+            // We're the SOLE fanner in this branch (off, or overlay/devtools post-nav), so feed a connected panel
+            // too — regardless of surface. Gating on `devtools` left an off/card run's answer never reaching a
+            // connected panel (stuck on "running"). No double (page-side isn't fanning here); no-op without a panel.
+            relayDebugEvent(tabId, event);
         };
         // Only a FRESH run announces the session start; a RESUME continues an existing sidebar/card
         // session (re-emitting `agent` would wipe its accumulated steps), so it streams new steps + a
