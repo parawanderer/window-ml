@@ -35,6 +35,8 @@ const ENTRIES = {
     // background (see sidebar/panel.ts).
     "devtools": "sidebar/devtools.ts",
     "panel": "sidebar/panel.ts",
+    // Standalone PDF-print tab (window.print() is suppressed inside docked DevTools; a real tab isn't).
+    "print": "sidebar/print.ts",
 };
 
 // [source, dist-relative dest] — copied verbatim next to the bundles.
@@ -45,6 +47,7 @@ const ASSETS = [
     ["sidebar/sidebar.css", "sidebar.css"],
     ["sidebar/devtools.html", "devtools.html"],
     ["sidebar/panel.html", "panel.html"],
+    ["sidebar/print.html", "print.html"],
     ["offscreen.html", "offscreen.html"],
 ];
 

@@ -2682,16 +2682,14 @@ async function captureExport(w) {
 const plainText = (html) => html.replace(/<[^>]*>/g, "")
     .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&");
 
-// Capture the printable document the "PDF" item builds: it loads an offscreen
-// iframe from a Blob URL, so stub createObjectURL and read the HTML back.
+// Capture the printable document the "PDF" item builds. printSession routes the rendered doc to the
+// background (PRINT_SESSION), which prints it from a real tab — window.print() is suppressed for a frame
+// inside docked DevTools. The mock records the PRINT_SESSION payload, so read the HTML back from there.
 async function capturePrint(w) {
-    let blob = null;
-    w.window.URL.createObjectURL = (b) => { blob = b; return "blob:mock-print"; };
-    w.window.URL.revokeObjectURL = () => {};
     (await openExportMenu(w, "PDF")).click();
     await w.tick();
-    const frame = w.window.document.querySelector("iframe.printframe");
-    return { frame, html: blob ? await blob.text() : null };
+    const last = w.printCalls[w.printCalls.length - 1];
+    return { html: last ? last.html : null };
 }
 
 test("export: an image-free agent run downloads a plain markdown log", async () => {
@@ -2978,7 +2976,7 @@ test("export menu: Escape closes it without exporting", async () => {
     assert.ok(!w.shadow.querySelector(".menu"), "Escape dismisses the menu");
 });
 
-test("export → PDF: builds a self-contained printable document in an offscreen frame", async () => {
+test("export → PDF: builds a self-contained printable document routed to the background print tab", async () => {
     const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
     const src = "data:image/png;base64," + PNG;
     const w = await loadSidebarWorld();
@@ -2989,9 +2987,8 @@ test("export → PDF: builds a self-contained printable document in an offscreen
     w.shadow.querySelector(".row").click();
     await w.tick();
 
-    const { frame, html } = await capturePrint(w);
-    assert.ok(frame, "an offscreen print frame is appended");
-    assert.equal(frame.getAttribute("src"), "blob:mock-print", "loaded from the document blob");
+    const { html } = await capturePrint(w);
+    assert.ok(html, "the rendered doc is posted to the background (PRINT_SESSION)");
     assert.match(html, /^<!doctype html>/);
     // Chrome seeds the "Save as PDF" filename from the title.
     assert.match(html, /<title>ml-agent-expp<\/title>/, "titled like the .md export, for the PDF filename");

@@ -1469,6 +1469,16 @@ function isBlockedFetchTarget(rawUrl: string): boolean {
     return false;
 }
 
+// PDF-export docs awaiting their print.html tab (key → rendered HTML + its TTL timer). Kept out of the URL
+// because a session doc with inlined screenshots is large; the tab fetches it by key, and it's deleted on
+// read (the timer cleared then) or after a TTL so a dismissed export never leaks.
+const pendingPrints = new Map<string, { html: string; timer: ReturnType<typeof setTimeout> }>();
+const PRINT_DOC_TTL_MS = 60_000;
+function dropPrintDoc(key: string): void {
+    const e = pendingPrints.get(key);
+    if (e) { clearTimeout(e.timer); pendingPrints.delete(key); }
+}
+
 chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     // The content-script shell forwards each __mlDebug event here so a DevTools panel
     // (which can't see page window-messages) can mirror the overlay's stream. Fire-and-
@@ -1491,6 +1501,30 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     // so it can't forge this. Same relay shape as ML_HL_REMOTE.
     if (message.type === "ML_SESSION_REMOTE" && typeof message.tabId === "number") {
         try { void chrome.tabs.sendMessage(message.tabId, { type: "ML_SESSION_TO_PAGE", action: message.action, hash: message.hash, text: message.text, images: message.images }).catch(() => {}); } catch { /* tab gone */ }
+        return;
+    }
+    // PDF export prints from a REAL browser tab, not the sidebar app's own frame: window.print() is
+    // suppressed for a frame inside DOCKED DevTools (the panel surface), so PDF export there silently did
+    // nothing (markdown export worked — it downloads via <a download>). The app (either surface) posts its
+    // rendered doc here; we stash it and open a bundled print.html tab keyed to it, which renders + prints +
+    // closes itself. A page can't usefully abuse this — it prints an extension-rendered doc into its OWN tab.
+    if (message.type === "PRINT_SESSION" && typeof message.payload?.html === "string") {
+        const key = Math.random().toString(36).slice(2, 10);
+        const timer = setTimeout(() => pendingPrints.delete(key), PRINT_DOC_TTL_MS);   // never leak a doc whose tab never fetched it
+        pendingPrints.set(key, { html: message.payload.html, timer });
+        chrome.tabs.create({ url: chrome.runtime.getURL(`print.html?k=${key}`), active: true }).catch(() => dropPrintDoc(key));
+        return;
+    }
+    // print.html fetches its doc ONCE, by key (deleted on read, TTL timer cleared — one tab, one fetch).
+    if (message.type === "GET_PRINT_DOC" && typeof message.k === "string") {
+        const entry = pendingPrints.get(message.k);
+        dropPrintDoc(message.k);
+        sendResponse({ html: entry ? entry.html : null });
+        return;   // synchronous response
+    }
+    // print.html closes its own tab after printing (belt-and-suspenders to its window.close()).
+    if (message.type === "CLOSE_PRINT_TAB") {
+        if (sender.tab?.id != null) chrome.tabs.remove(sender.tab.id).catch(() => {});
         return;
     }
     if (message.type === "SET_APPROVAL") {

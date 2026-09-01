@@ -2858,3 +2858,33 @@ test("LLM_STREAM: disconnecting the Port aborts the streaming fetch (ml.chat's s
     assert.equal(sawSignal, true, "the streaming fetch received an AbortSignal");
     assert.equal(aborted, true, "disconnecting the port aborted the fetch");
 });
+
+test("PDF print: PRINT_SESSION opens a print.html tab; GET_PRINT_DOC serves the doc once; CLOSE_PRINT_TAB removes it", async () => {
+    const bg = loadBackground({ config: baseConfig() });
+    const html = "<!doctype html><title>ml-agent-abc123</title><body>hi</body>";
+    // The sidebar app posts its rendered doc; the background stashes it and opens a keyed print tab.
+    // PRINT_SESSION is fire-and-forget (no sendResponse) — the mock's tabs.create records synchronously.
+    bg.send({ type: "PRINT_SESSION", payload: { html } });
+    assert.equal(bg.tabsCreated.length, 1, "one print tab opened");
+    const url = bg.tabsCreated[0].url;
+    const m = url.match(/print\.html\?k=([a-z0-9]+)$/);
+    assert.ok(m, `print tab url is print.html?k=… (got ${url})`);
+    const key = m[1];
+
+    // The print tab fetches its doc by key — served verbatim, and DELETED on read (its TTL timer cleared,
+    // so no leak). This one DOES respond, so it's awaited.
+    const first = await bg.send({ type: "GET_PRINT_DOC", k: key }, { tab: { id: 77 } });
+    assert.deepEqual(first, { html }, "the exact doc is returned");
+    const second = await bg.send({ type: "GET_PRINT_DOC", k: key }, { tab: { id: 77 } });
+    assert.deepEqual(second, { html: null }, "a second fetch gets nothing (one tab, one fetch)");
+
+    // After printing, the tab asks to be closed — the background removes it by sender.tab.id (fire-and-forget).
+    bg.send({ type: "CLOSE_PRINT_TAB" }, { tab: { id: 77 } });
+    assert.deepEqual(bg.tabsRemoved, [77], "the print tab is removed by its own id");
+});
+
+test("PDF print: GET_PRINT_DOC for an unknown key returns null (no crash)", async () => {
+    const bg = loadBackground({ config: baseConfig() });
+    const resp = await bg.send({ type: "GET_PRINT_DOC", k: "deadbeef" }, { tab: { id: 5 } });
+    assert.deepEqual(resp, { html: null });
+});

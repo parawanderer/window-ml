@@ -603,7 +603,23 @@ const PRINT_CLEANUP_MS = 120_000;
 export function printSession(hash: string): void {
     const s = sessionMap.get(hash);
     if (!s) return;
-    const url = URL.createObjectURL(new Blob([sessionToHtml(s, baseName(s))], { type: "text/html" }));
+    const html = sessionToHtml(s, baseName(s));
+    // Print from a REAL browser tab via the background, NOT this app's own frame: window.print() is
+    // suppressed for a frame inside DOCKED DevTools (the panel surface), so PDF export silently did nothing
+    // there (markdown export worked — it downloads via <a download>). chrome.runtime.sendMessage reaches the
+    // background from BOTH surfaces, so no surface detection is needed; the background opens print.html in a
+    // normal tab that renders + prints + closes itself. Fall back to the in-frame print only if the runtime
+    // channel is unavailable (e.g. a degraded/test context).
+    if (typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
+        try { chrome.runtime.sendMessage({ type: "PRINT_SESSION", payload: { html } }); return; }
+        catch { /* fall through to the in-frame print */ }
+    }
+    printInFrame(html);
+}
+// The legacy in-frame print — render the doc into an offscreen iframe and print it. Works in the in-page
+// overlay and an UNDOCKED DevTools window; kept as a fallback for when the background channel is absent.
+function printInFrame(html: string): void {
+    const url = URL.createObjectURL(new Blob([html], { type: "text/html" }));
     const frame = document.createElement("iframe");
     frame.className = "printframe";
     frame.setAttribute("aria-hidden", "true");

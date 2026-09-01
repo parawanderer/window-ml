@@ -587,18 +587,24 @@ own way. A third format = a third sink, not a third walker.
   filesystem, so it downloads via a `Blob` + `<a download>` click.
 - **PDF** (`htmlSink` → `sessionToHtml` → `printSession`). A self-contained
   light-themed HTML doc (inline `PRINT_CSS` + the bundled Atom One *light* hljs
-  theme, images inlined — a print doc has nowhere to put sidecars), loaded into an
-  **offscreen iframe** (`.printframe`, off-page rather than `display:none`, which
-  wouldn't lay out) from a Blob URL, then `contentWindow.print()` → the user picks
-  "Save as PDF". Chrome seeds that **filename from the doc's `<title>`**, so it's
-  set to the same `ml-agent-<hash>` base as the `.md` (a blank title falls back to
-  the `blob:` URL). `@page` margins + `break-inside: avoid` on images/code/notes
-  are the reason this isn't just the sidebar's stylesheet. The doc renders at the
-  **extension's origin**, so the HTML sink pushes every dynamic string through
-  `escapeHtml`/`markdown()`/`highlight()` (all three escape) — a hostile tool
-  result or model reply can never inject markup. Disclosures are `<details open>`:
-  a collapsed one prints as just its summary. Cleanup rides `afterprint` plus a
-  long fallback timer, so a dismissed dialog can't leak the frame.
+  theme, images inlined — a print doc has nowhere to put sidecars). `printSession`
+  **routes the doc to the background** (`PRINT_SESSION` → `chrome.runtime.sendMessage`,
+  which reaches it from BOTH surfaces), which opens a bundled **`print.html` tab**
+  (`sidebar/print.ts`) that fetches the doc by key (`GET_PRINT_DOC`, one-shot),
+  drops it into an iframe, prints THAT, and closes itself (`CLOSE_PRINT_TAB`). This
+  is because `window.print()` is **SUPPRESSED for a frame inside DOCKED DevTools**
+  (the panel surface) — a real top-level tab prints fine; markdown export was
+  unaffected (it downloads via `<a download>`). The background stashes the doc in a
+  `pendingPrints` map with a TTL timer (cleared on fetch) so a dismissed export
+  never leaks. A `printInFrame` fallback (the old offscreen `.printframe` +
+  `contentWindow.print()`) remains for when the runtime channel is absent. Chrome
+  seeds the **filename from the printed doc's `<title>`**, so it's set to the same
+  `ml-agent-<hash>` base as the `.md`. `@page` margins + `break-inside: avoid` on
+  images/code/notes are the reason this isn't just the sidebar's stylesheet. The
+  doc renders at the **extension's origin**, so the HTML sink pushes every dynamic
+  string through `escapeHtml`/`markdown()`/`highlight()` (all three escape) — a
+  hostile tool result or model reply can never inject markup. Disclosures are
+  `<details open>`: a collapsed one prints as just its summary.
 
 **Two surfaces (in-page overlay + DevTools panel).** The same `sidebar-app` bundle runs
 in two places: the in-page **overlay** (a content-script shadow-root shell, `shell.ts`,

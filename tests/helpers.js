@@ -100,6 +100,8 @@ function loadBackground({ config = {}, local = {}, onFetch, onCaptureTab, onPyRu
     const calls = [];
     const captures = [];        // captureVisibleTab arg lists, for screenshot tests
     const tabMessages = [];     // chrome.tabs.sendMessage arg lists, for reverse-channel tests
+    const tabsCreated = [];     // chrome.tabs.create props, for the PDF-print tab flow
+    const tabsRemoved = [];     // chrome.tabs.remove ids
     const pyRuns = [];          // PY_RUN payloads relayed to the offscreen doc (for python_exec tests)
     const debuggerCalls = [];   // chrome.debugger attach/sendCommand/detach, for CDP_CLICK tests
     let permsHeld = new Set(debuggerPermission ? ["debugger"] : []);
@@ -205,6 +207,9 @@ function loadBackground({ config = {}, local = {}, onFetch, onCaptureTab, onPyRu
                 // Records (tabId, message); onTabMessage (if given) can inspect it AND drive side effects —
                 // e.g. simulate the page tool calling FETCH_SHEET back during a RUN_TOOL_IN_PAGE delegation.
                 sendMessage: async (...args) => { tabMessages.push(args); return onTabMessage ? await onTabMessage(...args) : undefined; },
+                // The PDF-print flow opens a print.html tab and later removes it by id.
+                create: async (props) => { tabsCreated.push(props); return { id: 4242 + tabsCreated.length }; },
+                remove: async (id) => { tabsRemoved.push(id); },
             }
         }
     };
@@ -215,6 +220,8 @@ function loadBackground({ config = {}, local = {}, onFetch, onCaptureTab, onPyRu
         calls,
         captures,
         tabMessages,
+        tabsCreated,
+        tabsRemoved,
         pyRuns,
         debuggerCalls,
         stored,
@@ -451,6 +458,7 @@ function closeSidebarWorlds() {
 async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaModels = null, fetchLlm = () => ({ data: "OK" }), vram = [], psError = null, caps = null, pythonExec = null, listModels = null } = {}) {
     const unloadCalls = [];
     const pyCalls = [];   // PYTHON_EXEC payloads the app sent (the bench)
+    const printCalls = [];   // PRINT_SESSION payloads (the PDF export routes its rendered doc to the background)
     let psVram = vram;   // mutable so a test can change the resident set mid-run (setVram)
     const dom = new JSDOM(`<!doctype html><html><body><div id="root"></div></body></html>`, { runScripts: "outside-only", pretendToBeVisual: true });
     const win = dom.window;
@@ -471,6 +479,7 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaMode
             getURL: (f) => f,
             lastError: undefined,
             sendMessage: (msg, cb) => {
+                if (msg && msg.type === "PRINT_SESSION") { printCalls.push(msg.payload); return; }   // fire-and-forget → the background opens a print tab
                 if (!cb) return;
                 const type = msg && msg.type;
                 if (type === "LIST_MODELS") cb(listModels ? listModels(msg.payload) : { data: models, ollamaModels });
@@ -508,7 +517,7 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaMode
     // has run, then flush the resulting async state update + re-render.
     const flush = async () => { await new Promise((r) => win.setTimeout(r, 30)); await tick(); };
     const setVram = (v) => { psVram = v; };   // change the resident set a later poll will see
-    return { window: win, shadow: win.document, dispatch, raw, tick, flush, changeListeners, syncStore, localStore, unloadCalls, pyCalls, setVram };
+    return { window: win, shadow: win.document, dispatch, raw, tick, flush, changeListeners, syncStore, localStore, unloadCalls, pyCalls, printCalls, setVram };
 }
 
 module.exports = { jsonResponse, htmlResponse, streamResponse, loadBackground, loadPageWorld, loadDomWorld, loadSidebarWorld, closeSidebarWorlds, loadDotEnv };
