@@ -33,7 +33,7 @@ test("writeBuildInfo stamps a BUILD_INFO module with the provenance fields", () 
     const out = writeBuildInfo();
     const src = readFileSync(out, "utf8");
     assert.match(src, /export const BUILD_INFO =/);
-    for (const key of ["commit", "shortCommit", "dirty", "dirtyFiles", "commitDate", "repoUrl", "commitUrl", "buildTime"])
+    for (const key of ["commit", "shortCommit", "dirty", "dirtyFiles", "dirtyDiff", "commitDate", "repoUrl", "commitUrl", "buildTime"])
         assert.match(src, new RegExp(`"${key}":`), `BUILD_INFO carries ${key}`);
     // buildTime is a real ISO timestamp; dirty is a boolean (uncommitted-changes flag).
     assert.match(src, /"buildTime": "\d{4}-\d{2}-\d{2}T[\d:.]+Z"/);

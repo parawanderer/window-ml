@@ -63,11 +63,20 @@ export function writeBuildInfo() {
     // The FILES that don't match `commit` in THIS build — so an agent reading the repo at that commit
     // (via agent_api_docs' source link) knows exactly which files won't match what's checked out here.
     const dirtyFiles = dirtyPathsFromStatus(status);
+    // The EXACT diff of those changes — served by agent_api_docs ONLY on `{ diff: true }` (never by default),
+    // so the agent can see precisely what differs from `commit` without a token cost on every call. Captured at
+    // build time (the extension can't run git live). Capped so a big WIP can't bloat the bundle; empty when clean.
+    const DIFF_CAP = 16000;
+    const rawDiff = dirty ? git("diff HEAD") : "";
+    const dirtyDiff = rawDiff.length > DIFF_CAP
+        ? rawDiff.slice(0, DIFF_CAP) + `\n\n[diff truncated at ${DIFF_CAP} chars — ${dirtyFiles.length} file(s) changed; read them at the repo/commit for the rest]`
+        : rawDiff;
     const info = {
         commit,
         shortCommit: git("rev-parse --short HEAD"),
         dirty,   // true = built with uncommitted changes on top of `commit` (not a reproducible build)
         dirtyFiles,   // which files those changes are in (empty when clean / no git)
+        dirtyDiff,   // the exact `git diff HEAD` (capped) — served by agent_api_docs only on { diff: true }
         commitDate: git("show -s --format=%cI HEAD"),   // ISO-8601 committer date (when the commit was made)
         repoUrl: url,
         commitUrl: url && commit ? `${url}/commit/${commit}` : "",

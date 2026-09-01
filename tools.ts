@@ -137,6 +137,17 @@ const sourceSection = (): string => {
         ...lines].join("\n");
 };
 
+/** The `agent_api_docs({ diff: true })` section: this build's EXACT uncommitted diff (captured at build time,
+ *  the extension can't run git live). Kept behind an explicit arg — it's large and rarely needed. */
+const dirtyDiffSection = (): string => {
+    const b = BUILD_INFO as { dirty?: boolean; shortCommit?: string; dirtyDiff?: string };
+    if (!b.dirty) return `This build is a CLEAN checkout of \`${b.shortCommit || "its commit"}\` — no uncommitted changes, so the repo at that commit matches exactly.`;
+    if (!b.dirtyDiff) return `This build has uncommitted changes, but no diff was captured (a git-less build). See the file list in the source section.`;
+    return ["## Local changes (uncommitted diff vs `" + (b.shortCommit || "commit") + "`)", "",
+        "This is exactly what differs in THIS build from the repo at its commit — everything else matches.",
+        "", "```diff", b.dirtyDiff, "```"].join("\n");
+};
+
 const firstOfNote = (selector: string, count: number): string =>
     count > 1 ? `⚠ "${selector}" matched ${count} elements — using the FIRST (#0). Narrow it (an id, or :nth-of-type(N)), or countMatches to list them.\n\n` : "";
 
@@ -673,6 +684,12 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                         description: "If you used this tool before but you critically need to re-read a definition, " +
                             "set this to force a fresh full re-print. Do NOT set it if you recently checked the " +
                             "definitions you need (repeats within a dig are collapsed to save space). Default off."
+                    },
+                    diff: {
+                        type: "boolean",
+                        description: "Return the EXACT local diff of this build's uncommitted changes (vs its commit) " +
+                            "— use it after the source section tells you the build is dirty, to see precisely what " +
+                            "differs from the repo at that commit. Standalone; ignores the other args. Default off."
                     }
                 }
             },
@@ -681,7 +698,8 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
             // handed to the slicer as searchable env sections. Resolved for the default view (which shows them) and
             // for a `search` (the model hunts the HUD shortcut via search, as observed) — but NOT for a member/type
             // drill, which shouldn't pay two background round-trips for context it didn't ask for.
-            run: async (args: ApiDocsQuery = {}, ctx?: ToolContext): Promise<string> => {
+            run: async (args: ApiDocsQuery & { diff?: boolean } = {}, ctx?: ToolContext): Promise<string> => {
+                if (args.diff) return dirtyDiffSection();   // explicit: the exact local diff (never in the default view)
                 const wantEnv = isDefaultQuery(args) || !!(args.search && args.search.trim());
                 const env = wantEnv
                     ? [
