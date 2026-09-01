@@ -28,7 +28,7 @@ Configure everything with **env vars** (all optional):
 | `TOOLS=findByText,answer` | Limit to a subset of `ml.domTools` — smaller system prompt + fewer schemas = far fewer tokens/turn. |
 | `WARM=0` | Skip the VRAM warm-up. A **local** model wants it warmed (omit `WARM=0`); the fake/API don't need it. |
 | `APPROVE=<policy>` | How the built-in approval poller resolves a gate the run halts on: `auto` (default), `deny`, `readonly` (approve exec + readonly python only), `hold` (log but don't resolve — for manual clicking in WATCH). Every gate + decision is logged, so a run never hangs silently. |
-| `WATCH=1` | Headful watch-along: fires the run non-blocking, opens the overlay sidebar at HALF width, focuses the live session, and HOLDS the browser open (close the window / Ctrl+C to exit). |
+| `WATCH=1` | HOLD the browser open at the end (close the window / Ctrl+C to exit) instead of tearing down — for inspecting a finished run. (The sidebar auto-opens + focuses on the session by DEFAULT, so a watching human never clicks; `WATCH` only adds the hold.) |
 | `RUN_LABEL=my-run` | Names the artifact dir (else a timestamp). Use stable labels to diff before/after a fix. |
 
 ## Read the artifacts
@@ -48,7 +48,8 @@ Written to `tests/e2e/artifacts/<RUN_LABEL|timestamp>/` (gitignored):
 - **Real-model check:** `USE_ENV=1 E2E_MODEL=gemma4:31b TOOLTOKENS=1 PYTHON=1 TASK="…" node --import tsx tests/e2e/observe.mjs`
 - **Rule-adherence sweep:** run the same TASK across several `E2E_MODEL`s, compare the `run.md` answers
   (does it cite `![…](@tool:…)`, use `:in`, avoid retyping?). Inspect `events.json` for `summary`/`answer`.
-- **Watch live:** add `WATCH=1` and view the run in the real sidebar.
+- **Watch live:** every run auto-opens the sidebar focused on the session, so you can review it AS it runs;
+  add `WATCH=1` to keep the browser open after it finishes.
 
 ## Gotchas
 

@@ -161,7 +161,7 @@ async function openSidebarAndFocus(page) {
     await row.click({ timeout: 8000 }).catch(() => console.log("  (watch: no session row to click yet)"));
     await new Promise((r) => setTimeout(r, 600));   // let the detail view paint
     await page.screenshot({ path: path.join(ART, "watch-2-detail.png") }).catch(() => {});
-    console.log("  watch: sidebar open at half width, focused on the session — the browser will stay open.");
+    console.log("  sidebar: opened at half width, focused on the session.");
 }
 
 // Approval handling. A background-hosted run BLOCKS on a privileged gate (a mutating/non-readonly exec, a
@@ -267,7 +267,7 @@ const main = async () => {
     let result, error;
     const t0 = Date.now();
     try {
-        result = await page.evaluate(({ task, toolNames, toolTokens, python, watch }) => {
+        result = await page.evaluate(({ task, toolNames, toolTokens, python }) => {
             const opts = {
                 toolTokens,
                 approvalRouting: "both",   // gates show in the UI AND are resolvable via the __mlApprovals channel (the harness's approval poller)
@@ -288,19 +288,19 @@ const main = async () => {
             // PYTHON=1 → add python_exec (for a `{ tables }` → DataFrame probe on e.g. /spreadsheet). It's an
             // extraTool, so it survives the TOOLS subset filter above.
             if (python) opts.extraTools = [window.ml.pythonTool()];
-            // WATCH mode: DON'T block on the run — kick it off, stash the promise, and return immediately so the
-            // harness can open the sidebar and click into the live session while it runs. The result is picked up
-            // from the event stream (hasResult) either way, so nothing is lost by not awaiting here.
-            const p = window.ml.agent(task, opts);
-            if (watch) { window.__mlWatchRun = p; return null; }
-            return p;
-        }, { task: TASK, toolNames: TOOLS, toolTokens: !!process.env.TOOLTOKENS, python: !!process.env.PYTHON, watch: !!process.env.WATCH });
+            // ALWAYS fire the run NON-blocking — stash the promise, return immediately — so the harness can open
+            // the sidebar and click into the live session WHILE it runs (the default; a human watching never has
+            // to click). The result is picked up from the event stream (hasResult), so nothing is lost by not
+            // awaiting here.
+            window.__mlObsRun = window.ml.agent(task, opts);
+            return null;
+        }, { task: TASK, toolNames: TOOLS, toolTokens: !!process.env.TOOLTOKENS, python: !!process.env.PYTHON });
     } catch (e) { error = String(e); }
 
-    // WATCH=1 → open the overlay sidebar at HALF the page width and click into the just-launched session, so a
-    // human can watch the run unfold in the real UI. Everything below the run-start is unchanged; this is a
-    // pure add-on driven off the same open shadow root the extension mounts.
-    if (process.env.WATCH) await openSidebarAndFocus(page).catch((e) => console.log(`  (watch setup: ${e})`));
+    // DEFAULT: open the overlay sidebar at HALF the page width and click into the just-launched session, so the
+    // run is always focused in the real UI without a manual click. (WATCH=1 additionally HOLDS the browser open
+    // at the end; see below.) Best-effort — a failure here never fails the run.
+    await openSidebarAndFocus(page).catch((e) => console.log(`  (sidebar focus: ${e})`));
 
     // A cross-page / background run's ml.agent() promise dies with the navigated-away page context (that's
     // the caught error), but the run carries on in the BACKGROUND. Wait for its terminal agent-result event

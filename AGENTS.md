@@ -765,9 +765,11 @@ thing. The parts:
     all), `deny`, `readonly` (approve exec + readonly python, deny the rest), `hold` (log but DON'T
     resolve — leave it for a manual click in WATCH). Every gate + decision is logged, so a run never
     hangs silently at an approval.
-  - **`WATCH=1`** — headful watch-along: fires the run non-blocking, slides the overlay sidebar open at
-    HALF the viewport width, clicks into the live session, and HOLDS the browser open (close the window
-    / Ctrl+C to exit) so a human can watch the run unfold in the real UI.
+  - **Sidebar focus is the DEFAULT:** every run fires non-blocking and the harness opens the overlay
+    sidebar at HALF the viewport width + clicks into the live session, so a watching human never has to
+    click. **`WATCH=1`** additionally HOLDS the browser open at the end (close the window / Ctrl+C to
+    exit) instead of tearing down — for inspecting a finished run; without it the browser closes when the
+    run completes.
 - **`approval-demo.mjs`** — a **narrated demo, not a test**: `npm run build && node --import tsx
   tests/e2e/approval-demo.mjs` opens a headful browser and walks the approval-over-IPC flow (idea #2)
   three times — a manual APPROVE, a manual REJECT, and a POLICY driver that auto-approves read-only
