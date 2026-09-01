@@ -276,3 +276,16 @@ test("loader: patched loaders see the CURRENT run's data across runs (no stale c
     assert.equal(a.value, 5);
     assert.equal(b.value, 9);
 });
+
+test("sympy: loadable + sympy.latex(expr) yields a LaTeX string (the `| latex` companion)", { skip }, async () => {
+    await py.loadPackage("sympy");
+    const r = await pyRun(`
+import sympy
+x = sympy.symbols('x')
+roots = sympy.solve(x**2 + 2*x + 5, x)   # complex-conjugate pair -1 ± 2i
+return sympy.latex(roots[0])
+`);
+    assert.ok(r.ok, r.error);
+    assert.match(String(r.value), /i/, "a symbolic complex root serializes to a LaTeX string with the imaginary unit");
+    assert.match(String(r.value), /2/, "and the coefficient");
+});

@@ -16,6 +16,10 @@ export const PY_PACKAGES: PyPackage[] = [
     // `from scipy import ndimage` etc. only when it needs it, e.g. connected-components /
     // blob detection over a screenshot, so a quick coord/table run pays nothing).
     { load: "scipy", prelude: "", label: "scipy (import scipy)" },
+    // sympy: loaded + advertised, NOT pre-imported (heavy import). The natural source for a `| latex`
+    // citation — `import sympy; sympy.latex(expr)` turns a symbolic result (a solved equation, an exact
+    // root, a simplified expression) into a LaTeX string you embed with `![…](@tool:…:out | latex)`.
+    { load: "sympy", prelude: "", label: "sympy (symbolic math; `import sympy; sympy.latex(expr)` → a `| latex` string)" },
     // Load-only + hidden: pandas.read_html needs a parser for the `table` DOM→df HTML
     // fallback. bs4 + html5lib are pure-Python (light) vs lxml's heavy WASM C-extension.
     { load: "beautifulsoup4", prelude: "", label: "" },
