@@ -7,7 +7,7 @@ import { splitAnswer, hasTokens, resolveTokenStep } from "../answer-tokens";
 import type { AnswerSegment } from "../answer-tokens";
 import type { Session, AgentStep } from "./store";
 import { cardShowWorkHash, revealSeq } from "./store";
-import { pretty, markdown } from "./format";
+import { pretty, markdown, inlineMarkdown } from "./format";
 import { IconChevron, IconEye, IconCheck } from "./icons";
 import { ClickableImg, Code, SheetChip } from "./ui-kit";
 import { RenderPanel, PyDfTable } from "./render-panel";
@@ -149,7 +149,7 @@ function TokenRef({ seg, run, scope, standalone }: { seg: Extract<AnswerSegment,
         {/* The caption is model-authored prose — render it as markdown+math (a lone wrapping <p> stripped) so a
             model that writes inline `$…$`/`\(…\)` in the label typesets it. markdown() escapes HTML, so this is
             as safe as the answer prose. */}
-        {block && label ? <div class="tok-anno" dangerouslySetInnerHTML={{ __html: markdown(label, { math: true }).replace(/^<p>([\s\S]*)<\/p>\s*$/, "$1") }} /> : null}
+        {block && label ? <div class="tok-anno" dangerouslySetInnerHTML={{ __html: inlineMarkdown(label) }} /> : null}
         <span class="tok-tip" role="tooltip">{tip}</span>
     </span>;
 }

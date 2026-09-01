@@ -4,7 +4,7 @@
 import { useState, useEffect, useRef } from "preact/hooks";
 import type { Session, AgentStep } from "./store";
 import { rev, cardShowWorkHash, revealSeq } from "./store";
-import { markdown } from "./format";
+import { markdown, inlineMarkdown } from "./format";
 import { IconChevron } from "./icons";
 import { ClickableImg, inlineText } from "./ui-kit";
 import { exportSession, printSession } from "./export";
@@ -140,8 +140,11 @@ export function RunTaskBlockView({ run, block, index, last }: { run: Session; bl
             {/* Toggling clears the reveal-forced open so a collapse actually collapses (else `stuckOpen` re-opens). */}
             <button class="run-block-head" onClick={() => { setUserOpen(!open); setStuckOpen(false); }}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
+                {/* The summary is utility-model prose that often carries inline `$…$` (e.g. "derivative of
+                    $\sin^2(x)$") — render it markdown+math so it typesets instead of showing literal syntax. */}
                 <span class={`run-block-sum${summary ? " ml-reveal" : ""}`}
-                    title={summary ? `${summary}\n\nRequest: ${block.prompt}` : block.prompt}>{header}</span>
+                    title={summary ? `${summary}\n\nRequest: ${block.prompt}` : block.prompt}
+                    dangerouslySetInnerHTML={{ __html: inlineMarkdown(header) }} />
                 <span class="sp" />
                 <span class="run-block-n">{block.turns.length} {block.turns.length === 1 ? "step" : "steps"}</span>
             </button>

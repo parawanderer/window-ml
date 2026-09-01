@@ -251,6 +251,12 @@ export function markdown(src: string, opts: { math?: boolean } = {}): string {
         .replace(/@@CODE(\d+)@@/g, (_, i: string) => codeBlocks[+i]);
 }
 
+// A ONE-LINE label rendered as markdown+math with the lone wrapping <p> stripped — for a caption / summary /
+// header where a model may write inline `$…$` LaTeX (or `**bold**`) that must TYPESET, not show as literal
+// syntax. markdown() escapes HTML, so the result is safe for dangerouslySetInnerHTML. Reused across the
+// citation caption, the Show-work block header, etc. — one place so an inline-math label never regresses.
+export const inlineMarkdown = (t: string): string => markdown(t || "", { math: true }).replace(/^<p>([\s\S]*)<\/p>\s*$/, "$1");
+
 export function lastUser(messages: NeutralMessage[]): string {
     for (let i = messages.length - 1; i >= 0; i--) {
         if (messages[i].role === "user") { const c = messages[i].content; return typeof c === "string" ? c : pretty(c); }

@@ -3569,6 +3569,28 @@ test("card Show-work: a single-task run is NOT segmented (flat trace, no blocks)
     assert.ok(w.window.document.querySelector(".card-work-trace"), "the flat trace still renders");
 });
 
+test("card Show-work: a block header renders inline `$…$` math (summaries/prompts carry latex)", async () => {
+    // The block header is utility-model / prompt prose that often carries inline `$…$` (e.g. "derivative of
+    // $\sin^2(x)$"); it must typeset via markdown+math, not show literal `$…$`. (No utilityModel here → the
+    // header is the prompt fallback, which is enough to exercise the render.)
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    w.window.postMessage = () => {};
+    await w.raw({ __mlSidebarSurface: "card" });
+    const hash = "blkmath";
+    await w.dispatch(agentStart(hash, "Find the derivative of $\\sin^2(x)$", "m"));
+    await w.dispatch(agentStep(hash, 1, { seq: 1, tool: "findByText", arguments: { text: "x" }, result: "ok" }));
+    await w.dispatch(agentResult(hash, "done", 1));
+    await w.dispatch({ kind: "agent-say", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text: "again" });
+    await w.dispatch(agentStep(hash, 2, { seq: 2, tool: "findByText", arguments: { text: "y" }, result: "ok" }));
+    await w.dispatch(agentResult(hash, "done2", 2));
+    await w.flush();
+    w.window.document.querySelector(".card-work-toggle").click(); await w.tick();
+    const sum = w.window.document.querySelectorAll(".run-block-sum")[0];
+    assert.ok(sum, "block 0 has a header");
+    assert.ok(sum.querySelector(".katex"), "inline $…$ in the block header typesets via KaTeX");
+    assert.ok(!sum.textContent.includes("$"), "no literal $ delimiters remain in the header");
+});
+
 test("card Show-work: the utility model summarises each block (lazy on open, replaces the prompt, cached)", async () => {
     let calls = 0;
     const w = await loadSidebarWorld({
