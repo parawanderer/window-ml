@@ -170,16 +170,25 @@ export function AnswerBody({ text, run, cls = "card-answer", scope }: { text: st
     };
     if (!hasTokens(text, aliasOf(run))) return <div class={`${cls} md`} dangerouslySetInnerHTML={mdHtml(text)} />;
     const segs = splitAnswer(text, aliasOf(run));
-    // A citation is STANDALONE (its own PARAGRAPH → a display block) only when a BLANK LINE separates it from the
-    // prose on both sides (or it's at the very start/end). This matches real markdown: a single newline is a SOFT
-    // break (same paragraph → the citation stays INLINE), and only a blank line starts a new paragraph. A model
-    // that soft-wraps a mid-sentence citation onto its own line must still render inline. Otherwise → inline.
+    // A citation is STANDALONE (its own line → a display block) when it sits ALONE on its own line AND at least
+    // one side is a real paragraph break (a blank line, or the very start/end). Two signals, both needed:
+    //   • ALONE-ON-LINE — only whitespace between the citation and a newline/boundary on each side. A citation
+    //     with prose on the SAME line (`the result is ![x].`) is mid-sentence → always INLINE.
+    //   • PARAGRAPH BREAK on ≥1 side — a blank line (or a boundary) before OR after. This is what separates a
+    //     model's "label:\n![cite]\n\n…" block (a labelled result on its own line, blank line after) from a
+    //     soft-WRAPPED inline citation (`The derivative is\n![x]\n, computed.` — single newlines, no blank,
+    //     a wrapped sentence that must stay inline). The old rule demanded a blank on BOTH sides, so the common
+    //     one-sided-blank block rendered inline — the "why do I need newlines top AND bottom" surprise.
+    // A neighbouring TOKEN (prev/next === null) contributes no prose, so it can't force inline or supply a break.
     const standaloneAt = (i: number): boolean => {
         const prev = i === 0 ? "" : (segs[i - 1].kind === "prose" ? (segs[i - 1] as { text: string }).text : null);
         const next = i === segs.length - 1 ? "" : (segs[i + 1].kind === "prose" ? (segs[i + 1] as { text: string }).text : null);
-        const okBefore = prev === "" || (prev != null && /\n[ \t]*\n[ \t]*$/.test(prev));
-        const okAfter = next === "" || (next != null && /^[ \t]*\n[ \t]*\n/.test(next));
-        return okBefore && okAfter;
+        const aloneBefore = prev === "" || (prev != null && /\n[ \t]*$/.test(prev));
+        const aloneAfter = next === "" || (next != null && /^[ \t]*\n/.test(next));
+        if (!(aloneBefore && aloneAfter)) return false;   // prose on the same line → mid-sentence → inline
+        const blankBefore = prev === "" || (prev != null && /\n[ \t]*\n[ \t]*$/.test(prev));
+        const blankAfter = next === "" || (next != null && /^[ \t]*\n[ \t]*\n/.test(next));
+        return blankBefore || blankAfter;   // a real paragraph break on ≥1 side (else a soft-wrapped inline cite)
     };
     return <div class={`${cls} md answer-rendered`}>{segs.map((seg, i) => seg.kind === "prose"
         ? <span key={i} dangerouslySetInnerHTML={proseHtml(seg.text)} />

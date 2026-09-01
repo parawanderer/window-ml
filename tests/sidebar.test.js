@@ -4685,6 +4685,50 @@ test("answer render: a SINGLE-newline-wrapped citation is INLINE (soft break); a
     assert.ok(tok?.classList.contains("tok-block") && tok.querySelector(".katex-display"), "blank line → DISPLAY block");
 });
 
+// Reproduces the "why do I need a newline top AND bottom" surprise (gemma4 rendering-variation runs): the model
+// writes a labelled block as `No pipe:\n![cite]\n\nWith…` — the citation is ALONE on its own line with a blank
+// line only AFTER it. The old rule demanded a blank on BOTH sides, so this rendered inline (crammed). Now a
+// one-sided paragraph break is enough → DISPLAY block. A soft-WRAPPED inline cite (single newlines, no blank)
+// must still stay inline. Parity across both surfaces.
+const oneSidedBlockText = "No pipe:\n![no pipe](@tool:" + OUT + ":out)\n\nDone.";
+const softWrapInlineText = "The derivative is\n![d](@tool:" + OUT + ":out)\n, computed.";
+async function oneSidedBlockRun(w, hash, text) {
+    await w.dispatch(agentStart(hash, "diff"));
+    await w.dispatch(agentStep(hash, 1, { seq: 1, tool: "python_exec", token: OUT, result: "x",
+        renderOut: { type: "python-out", value: "x^{2} + 2x", latex: true } }));
+    await w.dispatch(agentResult(hash, text, 1));
+    await w.flush();
+}
+function firstTok(root) {
+    const answers = [...root.querySelectorAll(".answer-rendered")];
+    return answers[answers.length - 1]?.querySelector(".tok-ref");
+}
+test("answer render (DevTools): a one-sided-blank citation (`label:\\n![cite]\\n\\n…`) is a DISPLAY block", async () => {
+    const w = await loadSidebarWorld();
+    await oneSidedBlockRun(w, "osb", oneSidedBlockText);
+    await openRun(w);
+    const tok = firstTok(w.shadow);
+    assert.ok(tok?.classList.contains("tok-block") && tok.querySelector(".katex-display"),
+        "alone on its own line + a blank line on ONE side → DISPLAY block (no double-blank needed)");
+});
+test("answer render (HUD card): the SAME one-sided-blank citation is a DISPLAY block — parity", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    w.window.postMessage = () => {};
+    await w.raw({ __mlSidebarSurface: "card" });
+    await oneSidedBlockRun(w, "osb", oneSidedBlockText);
+    const tok = firstTok(w.window.document);
+    assert.ok(tok?.classList.contains("tok-block") && tok.querySelector(".katex-display"),
+        "HUD card renders the one-sided-blank citation as a DISPLAY block too");
+});
+test("answer render: a soft-wrapped citation (single newlines, NO blank line) stays INLINE", async () => {
+    const w = await loadSidebarWorld();
+    await oneSidedBlockRun(w, "sw", softWrapInlineText);
+    await openRun(w);
+    const tok = firstTok(w.shadow);
+    assert.ok(tok && !tok.classList.contains("tok-block") && !tok.querySelector(".katex-display"),
+        "no paragraph break on either side → a soft-wrapped inline cite, not a display block");
+});
+
 test("answer render (DevTools): an inline `| latex` cite of a PRIOR turn's hex token resolves + renders inline", async () => {
     const w = await loadSidebarWorld();
     await inlineHexLatexRun(w);
