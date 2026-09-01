@@ -11,8 +11,9 @@
 // deflated). Extracted from app.tsx.
 import atomOneLight from "highlight.js/styles/atom-one-light.css";
 import { sessionMap, turnsRun, config } from "./store";
-import type { Session } from "./store";
+import type { Session, AgentStep } from "./store";
 import { pretty, fullStamp, beautifyJs, escapeHtml, highlight, markdown } from "./format";
+import { splitAnswer, hasTokens, resolveTokenStep } from "../answer-tokens";
 import { BUILD_INFO } from "../build-info.gen";
 
 // A rough token estimate for a string — the ubiquitous ~4-chars/token heuristic (good enough to gauge how much
@@ -46,6 +47,36 @@ interface Sink {
     details(summary: string, body: () => void): void;          // collapsed disclosure
     table(columns: string[], rows: (string | number | null)[][]): void;   // a real data table (df preview)
     divider(text: string): void;                     // a labelled section break (a page-transition marker)
+}
+
+// Write an answer, resolving any `@tool:<id>` citation to the ACTUAL output of the step it references —
+// inlined via the sink's own verbs (a real table/image/code), like the live card does with RenderPanel. A
+// hallucinated / unresolvable id → a visible note (never dropped). Then, per the raw-view rule, a collapsed
+// disclosure keeps the model's LITERAL answer (links unresolved) recoverable. No tokens → just the prose.
+function writeAnswer(text: string, s: Session, d: Sink, muted = false): void {
+    if (!text || !hasTokens(text)) { d.prose(text || "(no answer)", muted); return; }
+    for (const seg of splitAnswer(text)) {
+        if (seg.kind === "prose") { if (seg.text.trim()) d.prose(seg.text); continue; }
+        const step = resolveTokenStep(seg.id, s.steps || [], s.hash) as AgentStep | null;
+        if (!step) { d.note(`⟨unresolved @tool:${seg.id} — no such step in this run⟩`); continue; }
+        emitTokenOut(step, seg.slot, d);
+    }
+    d.details("Answer · raw (as the model wrote it)", () => d.prose(text));
+}
+
+// Inline a cited step's In/Out as the actual output (a data table / image / code), else the raw text it saw.
+function emitTokenOut(step: AgentStep, slot: "in" | "out", d: Sink): void {
+    const desc = slot === "in" ? step.renderIn : step.renderOut;
+    const base = `tok-${step.step}`;
+    if (desc?.type === "image") { d.image(desc.src, base, desc.label || `step ${step.step}`); return; }
+    if (desc?.type === "look") { d.image(desc.image, base, desc.label || "look"); return; }
+    if (desc?.type === "table") { d.table(desc.columns, desc.rows); return; }
+    if (desc?.type === "code") { d.block("", desc.format ? beautifyJs(desc.text) : desc.text, desc.lang || "javascript"); return; }
+    if (desc?.type === "python-out" && desc.df) { d.table(desc.df.columns, desc.df.rows); return; }
+    if (desc?.type === "python-out" && desc.image) { d.image(desc.image, base, "returned image"); return; }
+    // Fallback: the raw text the model saw for that slot (args for :in, the result for :out).
+    const raw = slot === "in" ? (step.arguments ? pretty(step.arguments) : "") : (step.modelResult ?? step.result ?? "");
+    if (raw) d.block("", raw);
 }
 
 // A fenced block whose fence is longer than any backtick run inside it.
@@ -206,7 +237,8 @@ function writeAgent(s: Session, d: Sink): void {
         if ("say" in x) { d.head("User Asked"); (x.sayImages || []).forEach((img, k) => d.image(img, `say-${x.sayIdx}-img-${k + 1}`, `follow-up image ${k + 1}`)); d.prose(x.say || ""); return; }
         const a = x.answer;
         d.head(x.last ? (a.hitCap ? "Stopped (step cap)" : a.cancelled ? "Cancelled" : a.error ? "Error" : "Answer") : "Answered");
-        d.prose(a.error || a.text || "(no answer)", !a.text && !a.error);
+        if (a.error) d.prose(a.error);
+        else writeAnswer(a.text || "(no answer)", s, d, !a.text);
     };
     const flush = (before: number) => { while (ii < inter.length && inter[ii].pos < before) emitInter(inter[ii++]); };
 
@@ -350,7 +382,7 @@ function writeAgent(s: Session, d: Sink): void {
     // No per-turn answers recorded (a run still in flight, or an older session) → the single-answer tail.
     if (answers.length === 0) {
         d.head(s.hitCap ? "Stopped (step cap)" : "Answer");
-        d.prose(s.summary || "(no answer — run did not complete)", !s.summary);
+        writeAnswer(s.summary || "(no answer — run did not complete)", s, d, !s.summary);
     }
 }
 

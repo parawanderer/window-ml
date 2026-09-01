@@ -20,6 +20,7 @@ import { isBackendUnreachable, resolveOutputCap } from "../contract";
 import type { ReusedGrant, PersistGrant } from "../contract";
 import type { Status, Turn, AgentStep, Session } from "./store";
 import { pretty, shortStamp, fullStamp, truncate, collapsedPreview, highlight, beautifyJs, htmlLines, markdown, stripFormatting, lastUser, rollupStatus } from "./format";
+import { splitAnswer, hasTokens, resolveTokenStep } from "../answer-tokens";
 import { annotatedConfig, turnProfile, shownModel, sessionProfile } from "./model";
 import { exportSession, printSession } from "./export";
 import { applyTheme, applyFont, applyCodePrefs, initThemeStyle } from "./prefs";
@@ -1056,6 +1057,54 @@ function RenderPanel({ d }: { d: RenderDescriptor }) {
     }
 }
 
+// Scroll the transcript to the step that minted a @tool token + pulse it green — the provenance click.
+// No-op when the step row isn't rendered in this view (e.g. a collapsed run); the hover chip still names it.
+function scrollToStepSeq(seq?: number): void {
+    if (seq == null) return;
+    const el = document.querySelector(`[data-astep-seq="${seq}"]`);
+    if (!el) return;
+    el.scrollIntoView({ block: "center", behavior: "smooth" });
+    el.classList.add("astep-pulse");
+    setTimeout(() => el.classList.remove("astep-pulse"), 1400);
+}
+
+// One embedded @tool reference in an answer, resolved to the step it cites. Renders that step's In/Out
+// descriptor (RenderPanel) — the ACTUAL output the model saw — with a provenance chip (deterministic ·
+// step N · tool) and click-to-step. A token that matches no step (hallucinated / foreign) → a visible
+// "unresolved" chip, never a crash. A resolvable step with an empty slot → the raw args/result text.
+function TokenRef({ seg, run }: { seg: Extract<import("../answer-tokens").AnswerSegment, { kind: "token" }>; run: Session }) {
+    const step = resolveTokenStep(seg.id, run.steps || [], run.hash) as AgentStep | null;
+    if (!step) return <span class="tok-ref tok-unresolved" title={`No step in this run produced @tool:${seg.id} — the model may have invented it.`}>⟨unresolved @tool:{seg.id}⟩</span>;
+    const d = seg.slot === "in" ? step.renderIn : step.renderOut;
+    const rawText = seg.slot === "in" ? (step.arguments ? pretty(step.arguments) : "") : (step.modelResult ?? step.result ?? "");
+    const chip = `deterministic · step ${step.localStep ?? step.step} · ${step.tool || "tool"} (@tool:${seg.id}:${seg.slot})`;
+    return <span class="tok-ref" title={chip} role="button" tabIndex={0}
+        onClick={() => scrollToStepSeq(step.seq)} onKeyDown={(e) => { if (e.key === "Enter") scrollToStepSeq(step.seq); }}>
+        {d ? <RenderPanel d={d} /> : <Code text={rawText} lang="text" />}
+    </span>;
+}
+
+// The agent's final ANSWER, with any `@tool:<id>` citations RESOLVED to the actual tool output they
+// reference (RenderPanel), inline in the prose. A rendered⇄raw toggle keeps the model's LITERAL text
+// (links unresolved) always available — the answer's own version of the tool In/Out raw-view rule. No
+// tokens → just the markdown, no toggle.
+function AnswerBody({ text, run, cls = "card-answer" }: { text: string; run: Session; cls?: string }) {
+    const [showRaw, setShowRaw] = useState(false);
+    const mdHtml = (t: string) => ({ __html: markdown(t, { math: true }) });
+    if (!hasTokens(text)) return <div class={`${cls} md`} dangerouslySetInnerHTML={mdHtml(text)} />;
+    return <div class={cls}>
+        <div class="answer-toggle io-toggle">
+            <span class="tt"><button class={showRaw ? "" : "on"} onClick={() => setShowRaw(false)}>rendered</button><span class="tt-pop left" role="tooltip">Tool citations resolved to the actual output.</span></span>
+            <span class="tt"><button class={showRaw ? "on" : ""} onClick={() => setShowRaw(true)}>raw</button><span class="tt-pop left" role="tooltip">The model's literal answer — exactly what it wrote.</span></span>
+        </div>
+        {showRaw
+            ? <div class="md" dangerouslySetInnerHTML={mdHtml(text)} />
+            : <div class="md answer-rendered">{splitAnswer(text).map((seg, i) => seg.kind === "prose"
+                ? <span key={i} dangerouslySetInnerHTML={mdHtml(seg.text)} />
+                : <TokenRef key={i} seg={seg} run={run} />)}</div>}
+    </div>;
+}
+
 // "Sent to the model" — what a tool fed straight INTO the model's context (locate's snap-inject: a
 // marked crop for a vision driver, a delegated description for a text-only one), plus WHY it was sent
 // (a point is automatic; a selector/@box only with verify:true). This is distinct from Out (which the
@@ -1351,7 +1400,7 @@ function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
     const sheetGrants = awaiting ? externalSheetGrant(st.arguments) : [];
     const showGrants = awaiting && hasPersistGrants(st.grants);
     return (
-        <div class={`astep tool${open ? " open" : ""}${st.pending ? " pending" : ""}${awaiting ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : (st.approval === "skipped" || st.approval === "cancelled") ? " appr-skip" : " appr-yes") : ""}`}>
+        <div data-astep-seq={st.seq} class={`astep tool${open ? " open" : ""}${st.pending ? " pending" : ""}${awaiting ? " awaiting" : ""}${st.approval ? (st.approval === "denied" ? " appr-no" : (st.approval === "skipped" || st.approval === "cancelled") ? " appr-skip" : " appr-yes") : ""}`}>
             <button class="astep-head" onClick={() => setExpanded(v => !v)}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
                 <Dot status={st.pending ? "pending" : toolFailed(st.result) ? "err" : "ok"} />
@@ -3419,7 +3468,7 @@ function CardApp() {
                             {run.error
                                 ? <div class={`card-error${offline ? " card-error-offline" : ""}`}>{offline ? <><IconWarn /> </> : null}{run.error}</div>
                                 : (run.summary || "").trim()
-                                    ? <div class="card-answer md" dangerouslySetInnerHTML={{ __html: markdown(run.summary || "", { math: true }) }} />
+                                    ? <AnswerBody text={run.summary || ""} run={run} />
                                     : <div class="card-answer dim card-answer-empty">{run.cancelled ? "Run cancelled — the agent returned no text." : "The run finished without a text reply."}</div>}
                             {/* answer-designated element visuals — the user-facing deliverable (HUD-only; the debug
                                 sidebar deliberately doesn't render these). Click to lightbox. */}

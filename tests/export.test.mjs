@@ -49,6 +49,23 @@ test("fetch_url `ask`: the question + who-answered + tokens export in BOTH Markd
     }
 });
 
+test("@tool citations in an answer RESOLVE to the cited step's output; unresolved ones show a note; raw kept", async () => {
+    const { toolToken } = await import("../util.ts");
+    const hash = "run12345";
+    const id = toolToken(hash, 1);   // the token for step seq 1
+    const s = {
+        hash, kind: "agent", model: "qwen3", tag: "session", createdTs: 1, lastTs: 2, status: "ok", turns: [], answers: [],
+        summary: `The count is [n](@tool:${id}:out) and a bogus [x](@tool:beefee:out).`,
+        steps: [{ step: 1, seq: 1, tool: "exec", arguments: { js: "x" }, result: "9",
+            renderOut: { type: "code", text: "COUNT_RESULT_42", lang: "text" } }],
+    };
+    const { md } = serializeSession(s);
+    assert.match(md, /COUNT_RESULT_42/, "the cited step's Out is inlined at the token");
+    assert.match(md, /⟨unresolved @tool:beefee/, "a hallucinated token shows a visible unresolved note");
+    assert.match(md, /Answer · raw \(as the model wrote it\)/, "the literal answer stays recoverable");
+    assert.match(md, new RegExp(`@tool:${id}:out`), "the raw disclosure keeps the literal link");
+});
+
 test("a step's model-facing Out (with an @tool token line) stays recoverable in BOTH sinks (raw-view rule)", () => {
     const s = {
         hash: "tt1", kind: "agent", model: "qwen3", tag: "session", createdTs: 1, lastTs: 2, status: "ok",

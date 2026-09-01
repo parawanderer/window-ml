@@ -1388,3 +1388,21 @@ html[data-surface="card"] .appr-btn.no:hover {
     border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; line-height: 1; }
 .perm-x:hover { background: var(--panel-2-hover); color: var(--err); }
 .perm-ok { color: var(--ok); font-weight: 600; }
+
+/* ---- @tool token citations in an answer (AnswerBody / TokenRef) ---- */
+/* A resolved citation: the actual tool output rendered inline, subtly marked as deterministic + clickable. */
+.answer-rendered .tok-ref { display: block; margin: 6px 0; padding-left: 8px; border-left: 2px solid var(--ok);
+    cursor: pointer; border-radius: 2px; }
+.answer-rendered .tok-ref:hover { background: color-mix(in srgb, var(--ok) 10%, transparent); }
+.answer-rendered .tok-ref:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* A hallucinated / unresolvable token — visible, never silent. */
+.tok-unresolved { display: inline-block; padding: 0 5px; border: 1px dashed var(--err);
+    color: var(--err); border-radius: 3px; font-size: 0.85em; font-family: ui-monospace, monospace; cursor: help; }
+/* The prose spans between citations flow inline; a bare block token gets its own line. */
+.answer-rendered > span { }
+.answer-toggle { margin-bottom: 4px; }
+/* Click-to-step: pulse the cited step green when you jump to it. */
+@keyframes astepPulse { 0% { background: color-mix(in srgb, var(--ok) 45%, transparent); }
+    100% { background: transparent; } }
+.astep-pulse { animation: astepPulse 1.4s ease-out; }
+@media (prefers-reduced-motion: reduce) { .astep-pulse { animation: none; outline: 2px solid var(--ok); } }
