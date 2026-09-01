@@ -4611,3 +4611,19 @@ test("answer render (sidebar): LINK form `[label](@tool:…)` renders a clickabl
     assert.doesNotMatch(reply.textContent, /COMPUTED_TABLE/, "the output is NOT expanded inline — a link references it, an embed shows it");
     assert.ok(!reply.querySelector(".tok-ref"), "no embed citation present");
 });
+
+test("answer render (sidebar): a sympy.latex() output cited `| latex` typesets via KaTeX (commands render; no prelude)", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("sym", "solve x^2+2x+5=0 symbolically"));
+    // What a real `python_exec` returning `sympy.latex(root)` looks like: the model-facing result carries the
+    // prelude, but the descriptor `value` is the clean LaTeX string (with real commands: \frac, \sqrt).
+    await w.dispatch(agentStep("sym", 1, { seq: 1, tool: "python_exec", token: OUT,
+        result: "[loaded, reference directly] a DataFrame → `df`.\n\n- 1 + 2 i",
+        renderOut: { type: "python-out", value: "- \\frac{1}{2} + \\frac{\\sqrt{19} i}{2}" } }));
+    await w.dispatch({ ...agentResult("sym", `The root is ![root](@tool:${OUT}:out | latex).`, 1), answer: "" });
+    await openRun(w);
+    const tok = w.shadow.querySelector(".msg.asst .answer-rendered .tok-ref");
+    assert.ok(tok, "the citation renders");
+    assert.ok(tok.querySelector(".katex"), "the sympy.latex output (with \\frac/\\sqrt) typesets via KaTeX");
+    assert.doesNotMatch(tok.textContent, /loaded, reference directly/, "the model-facing prelude is NOT fed to KaTeX");
+});

@@ -1137,7 +1137,11 @@ function TokenRef({ seg, run }: { seg: Extract<import("../answer-tokens").Answer
             onClick={(e) => { e.preventDefault(); jump(); }} onKeyDown={(e) => { if (e.key === "Enter") jump(); }}>{linkLabel}</a>;
     }
     const d = seg.slot === "in" ? step.renderIn : step.renderOut;
-    const rawText = seg.slot === "in" ? (step.arguments ? pretty(step.arguments) : "") : (step.result ?? "");
+    // The clean textual value of the cited slot. For a python-out SCALAR, prefer the descriptor's `value`/`stdout`
+    // over `step.result` — the result string carries a model-facing prelude ("[loaded, reference directly] … df.")
+    // that must NOT leak into an inline value or (worse) a `| latex` render (it isn't valid LaTeX).
+    const rawText = seg.slot === "in" ? (step.arguments ? pretty(step.arguments) : "")
+        : (d?.type === "python-out" ? (d.value ?? d.stdout ?? step.result ?? "") : (step.result ?? ""));
     // The model's caption. INLINE citation (the value is shown in-line) → the label goes in the TOOLTIP; BLOCK
     // citation (a table/image/code) → the label is a CAPTION under the render, like a figure caption on the web.
     const label = seg.label && seg.label.trim() && seg.label.trim() !== rawText.trim() ? seg.label.trim() : "";

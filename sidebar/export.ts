@@ -68,7 +68,10 @@ function writeAnswer(text: string, s: Session, d: Sink, muted = false, rawLabel 
         // form `![…]` expands the output here.
         if (!seg.embed) { buf += seg.label && seg.label.trim() ? seg.label.trim() : `@tool:${seg.id}`; continue; }
         const desc = seg.slot === "in" ? step.renderIn : step.renderOut;
-        const raw = seg.slot === "in" ? (step.arguments ? pretty(step.arguments) : "") : (step.result ?? "");
+        // Clean value of the slot — a python-out scalar's descriptor value, NOT `step.result` (which carries the
+        // model-facing prelude). Mirrors the sidebar; keeps the prelude out of an inline value / `| latex` block.
+        const raw = seg.slot === "in" ? (step.arguments ? pretty(step.arguments) : "")
+            : (desc?.type === "python-out" ? (desc.value ?? desc.stdout ?? step.result ?? "") : (step.result ?? ""));
         if (seg.fmt === "latex" && raw) { buf += ` $${raw}$ `; continue; }   // static export: keep raw math notation
         if (desc && ["image", "look", "table", "code", "python-in", "python-out"].includes(desc.type)) {
             flush(); emitTokenBlock(step, seg.slot, d);
