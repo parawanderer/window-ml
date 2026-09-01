@@ -19,6 +19,24 @@
 
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
+import { readFileSync, readdirSync } from "node:fs";
+
+// Every example page (all self-contained — inline CSS/JS, data-URL images) served straight off disk, so the
+// harness can drive the EXACT pages a human uses for real tasks (spreadsheet / find-waldo / canvas-input / …)
+// and pick up edits live (re-read per request). The set is a WHITELIST snapshotted at startup — bare basenames,
+// no path separators — so this can't be walked into an arbitrary-file read. Reachable at `/<name>` and
+// `/<name>.html`; `GET /examples` lists them.
+const EXAMPLES_DIR = fileURLToPath(new URL("..", import.meta.url));
+const EXAMPLE_PAGES = new Set(readdirSync(EXAMPLES_DIR).filter((f) => f.endsWith(".html")));
+const exampleFileFor = (p) => {
+    const name = p.replace(/^\//, "");
+    const file = EXAMPLE_PAGES.has(name) ? name : EXAMPLE_PAGES.has(`${name}.html`) ? `${name}.html` : null;
+    return file && !file.includes("/") ? file : null;
+};
+const sendExampleFile = (res, file) => {
+    res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+    res.end(readFileSync(fileURLToPath(new URL(`../${file}`, import.meta.url)), "utf8"));
+};
 
 // One editable template for every page: a heading, an origin/path badge, some body copy, and (usually) a
 // big obvious link to the next step. `next` is the href+label of the forward link (null on a leaf).
@@ -182,6 +200,10 @@ export function startPageServer({ port = 0, crossPort = 0, host = "127.0.0.1" } 
                         + rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join("")}</tr>`).join("") + `</tbody></table>`);
                 }
                 if (RAW[p]) return sendRaw(res, RAW[p]);          // raw JSON/CSV/code endpoints (ml.fetch e2e)
+                if (p === "/examples") return send(res, `<!doctype html><meta charset=utf-8><title>examples</title>`
+                    + `<h1>Example pages</h1><ul>${[...EXAMPLE_PAGES].sort().map((f) => `<li><a href="/${f.replace(/\.html$/, "")}">${f}</a></li>`).join("")}</ul>`);
+                const ex = exampleFileFor(p);                    // the real example .html pages, served off disk
+                if (ex) return sendExampleFile(res, ex);
                 const r = routes(crossOrigin);
                 if (r[p]) return send(res, r[p]);
                 send(res, page({ badge: "404", title: "No such page", body: `<p>Try <a class="x" href="/">the start</a>.</p>`, next: null }), 404);
@@ -204,5 +226,6 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     console.log(`  START HERE  →  ${s.url}   ← open this (window.ml active)`);
     console.log(`  chain: /  →  /step2  →  /step3  (all same origin, full reloads)`);
     console.log(`  cross-domain    →  ${s.crossOrigin}/   (Variant B — a different origin)`);
+    console.log(`  example pages   →  ${s.url}/examples   (spreadsheet, find-waldo, canvas-input, …)`);
     console.log(`\n  Ctrl+C to stop.\n`);
 }

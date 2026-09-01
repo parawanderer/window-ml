@@ -38,6 +38,9 @@ async function resolveBackend() {
 }
 
 const TASK = process.env.TASK || "What code is shown on this page? Use findByText to locate it, then answer with just the code.";
+// The start route on the test site. Besides the cross-page chain (/, /step2, /step3) and the /slow, /lazy,
+// /table … fixtures, EVERY real example page is served (START=/spreadsheet, /find-waldo, /canvas-input, … —
+// see GET /examples for the list), so a probe can drive the exact page a human uses.
 const START = process.env.START || "/step3";
 // TOOLS=findByText,answer → run the agent with only that subset of the default domTools (shrinks the
 // system prompt + schemas; useful under a tight free-tier token/min limit). Unset → the full default kit.
@@ -192,7 +195,7 @@ const main = async () => {
     let result, error;
     const t0 = Date.now();
     try {
-        result = await page.evaluate(({ task, toolNames, toolTokens }) => {
+        result = await page.evaluate(({ task, toolNames, toolTokens, python }) => {
             const opts = {
                 toolTokens,
                 onStep: (s) => window.__obsStep({
@@ -209,8 +212,11 @@ const main = async () => {
                 opts.tools = (window.ml.domTools || []).filter((t) => toolNames.includes(t.name));
                 opts.vision = false;
             }
+            // PYTHON=1 → add python_exec (for a `{ tables }` → DataFrame probe on e.g. /spreadsheet). It's an
+            // extraTool, so it survives the TOOLS subset filter above.
+            if (python) opts.extraTools = [window.ml.pythonTool()];
             return window.ml.agent(task, opts);
-        }, { task: TASK, toolNames: TOOLS, toolTokens: !!process.env.TOOLTOKENS });
+        }, { task: TASK, toolNames: TOOLS, toolTokens: !!process.env.TOOLTOKENS, python: !!process.env.PYTHON });
     } catch (e) { error = String(e); }
     // A cross-page / background run's ml.agent() promise dies with the navigated-away page context (that's
     // the caught error), but the run carries on in the BACKGROUND. Wait for its terminal agent-result event
