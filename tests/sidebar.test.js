@@ -4606,7 +4606,9 @@ test("answer render (sidebar): a sympy-AUTO `latex` python-out typesets with NO 
     await w.dispatch({ ...agentResult("auto2", "Literal: ![d](@tool:" + OUT + ":out | raw)", 1), answer: "" });
     await openRun(w);
     tok = w.shadow.querySelector(".msg.asst .answer-rendered .tok-ref");
-    assert.ok(tok && !tok.querySelector(".katex") && tok.querySelector("pre.code"), "| raw overrides the auto-latex → literal text");
+    // Mid-sentence `| raw` → inline <code> literal (not a katex render, not a boxed block).
+    assert.ok(tok && !tok.querySelector(".katex") && tok.querySelector("code.tok-val") && !tok.querySelector("pre.code"),
+        "| raw overrides the auto-latex → inline literal text");
 });
 
 // Reproduces run 200d7599: turn 1 mints @tool:239987 on a python_exec; a FOLLOW-UP turn cites that SAME hex
@@ -4666,32 +4668,30 @@ test("answer render: an inline latex citation has NO wrapping <p> (KaTeX flows i
     assert.ok(tok.querySelector(".katex") && !tok.querySelector(".katex-display"), "inline-mode KaTeX (not display)");
 });
 
-test("answer render: a SINGLE-newline-wrapped citation is INLINE (soft break); a BLANK line is a DISPLAY block", async () => {
+test("answer render: a citation ALONE on its own line is a DISPLAY block; SAME-line prose keeps it INLINE", async () => {
     const step = (w2, h) => w2.dispatch(agentStep(h, 1, { seq: 1, tool: "python_exec", token: OUT, result: "x",
         renderOut: { type: "python-out", value: "x^{2}", latex: true } }));
-    // SINGLE newlines around it (a markdown SOFT break, same paragraph) → INLINE.
+    // ALONE on its own line (single newlines each side, no blank) → DISPLAY block. The model's line placement IS
+    // the intent ("on its own line → block"); the line-based markdown makes it the sole child of its own <p>.
     let w = await loadSidebarWorld();
     await w.dispatch(agentStart("sn", "diff")); await step(w, "sn");
-    await w.dispatch(agentResult("sn", "The derivative is\n![d](@tool:" + OUT + ":out)\n, computed.", 1));
+    await w.dispatch(agentResult("sn", "The derivative:\n![d](@tool:" + OUT + ":out)\nDone.", 1));
     await openRun(w);
     let tok = w.shadow.querySelector(".msg.asst .answer-rendered .tok-ref");
-    assert.ok(tok && !tok.classList.contains("tok-block") && !tok.querySelector(".katex-display"), "single-newline (soft break) → INLINE");
-    // BLANK line (paragraph break) → DISPLAY block.
+    assert.ok(tok?.classList.contains("tok-block") && tok.querySelector(".katex-display"), "alone on its own line → DISPLAY block");
+    // SAME line as prose (mid-sentence) → INLINE.
     w = await loadSidebarWorld();
     await w.dispatch(agentStart("bl", "diff")); await step(w, "bl");
-    await w.dispatch(agentResult("bl", "The derivative is:\n\n![d](@tool:" + OUT + ":out)\n\ndone.", 1));
+    await w.dispatch(agentResult("bl", "The derivative is ![d](@tool:" + OUT + ":out) exactly.", 1));
     await openRun(w);
     tok = w.shadow.querySelector(".msg.asst .answer-rendered .tok-ref");
-    assert.ok(tok?.classList.contains("tok-block") && tok.querySelector(".katex-display"), "blank line → DISPLAY block");
+    assert.ok(tok && !tok.classList.contains("tok-block") && !tok.querySelector(".katex-display"), "prose on the same line → INLINE");
 });
 
-// Reproduces the "why do I need a newline top AND bottom" surprise (gemma4 rendering-variation runs): the model
-// writes a labelled block as `No pipe:\n![cite]\n\nWith…` — the citation is ALONE on its own line with a blank
-// line only AFTER it. The old rule demanded a blank on BOTH sides, so this rendered inline (crammed). Now a
-// one-sided paragraph break is enough → DISPLAY block. A soft-WRAPPED inline cite (single newlines, no blank)
-// must still stay inline. Parity across both surfaces.
+// The "why do I need a newline top AND bottom" surprise (gemma4 rendering-variation runs): the model writes a
+// labelled block as `No pipe:\n![cite]\n\nWith…` — the citation is ALONE on its own line. The line-based
+// markdown() makes it the sole child of its own <p> → a DISPLAY block, no blank line needed on both sides.
 const oneSidedBlockText = "No pipe:\n![no pipe](@tool:" + OUT + ":out)\n\nDone.";
-const softWrapInlineText = "The derivative is\n![d](@tool:" + OUT + ":out)\n, computed.";
 async function oneSidedBlockRun(w, hash, text) {
     await w.dispatch(agentStart(hash, "diff"));
     await w.dispatch(agentStep(hash, 1, { seq: 1, tool: "python_exec", token: OUT, result: "x",
@@ -4699,34 +4699,62 @@ async function oneSidedBlockRun(w, hash, text) {
     await w.dispatch(agentResult(hash, text, 1));
     await w.flush();
 }
-function firstTok(root) {
+function lastAnswer(root) {
     const answers = [...root.querySelectorAll(".answer-rendered")];
-    return answers[answers.length - 1]?.querySelector(".tok-ref");
+    return answers[answers.length - 1];
 }
-test("answer render (DevTools): a one-sided-blank citation (`label:\\n![cite]\\n\\n…`) is a DISPLAY block", async () => {
+function firstTok(root) { return lastAnswer(root)?.querySelector(".tok-ref"); }
+test("answer render (DevTools): a citation on its own line (`label:\\n![cite]`) is a DISPLAY block", async () => {
     const w = await loadSidebarWorld();
     await oneSidedBlockRun(w, "osb", oneSidedBlockText);
     await openRun(w);
     const tok = firstTok(w.shadow);
     assert.ok(tok?.classList.contains("tok-block") && tok.querySelector(".katex-display"),
-        "alone on its own line + a blank line on ONE side → DISPLAY block (no double-blank needed)");
+        "alone on its own line → DISPLAY block (no double-blank needed)");
 });
-test("answer render (HUD card): the SAME one-sided-blank citation is a DISPLAY block — parity", async () => {
+test("answer render (HUD card): the SAME own-line citation is a DISPLAY block — parity", async () => {
     const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
     w.window.postMessage = () => {};
     await w.raw({ __mlSidebarSurface: "card" });
     await oneSidedBlockRun(w, "osb", oneSidedBlockText);
     const tok = firstTok(w.window.document);
     assert.ok(tok?.classList.contains("tok-block") && tok.querySelector(".katex-display"),
-        "HUD card renders the one-sided-blank citation as a DISPLAY block too");
+        "HUD card renders the own-line citation as a DISPLAY block too");
 });
-test("answer render: a soft-wrapped citation (single newlines, NO blank line) stays INLINE", async () => {
+
+// The list-item regression: a citation INSIDE a `- ` list item must stay INSIDE the <li>, with the trailing
+// text on the SAME line as part of the same item. The old split-per-fragment renderer ran each prose run as its
+// OWN markdown block, so `- No pipe: the result is ` became a CLOSED <ul>, the token landed AFTER it, and the
+// trailing `.` orphaned into its own paragraph. The single-pass renderer keeps the list intact.
+const listItemText = [
+    "Results:",
+    "- No pipe: the result is ![no pipe](@tool:" + OUT + ":out).",
+    "- With raw: the value is ![v](@tool:" + OUT + ":out|raw).",
+].join("\n");
+function assertListIntact(root) {
+    const ans = lastAnswer(root);
+    assert.ok(ans, "the answer renders");
+    const items = [...ans.querySelectorAll("ul > li")];
+    assert.equal(items.length, 2, "both citations stay as list items (the <ul> isn't split apart)");
+    // The token lives INSIDE its <li> and the trailing period is in the SAME item (not orphaned after the list).
+    assert.ok(items[0].querySelector(".tok-ref"), "the citation is INSIDE the list item, not a sibling after the <ul>");
+    assert.match(items[0].textContent.replace(/\s+/g, " ").trim(), /No pipe: the result is .*\.$/, "the item keeps its lead-in AND its trailing period");
+    assert.ok(!ans.querySelector(".tok-ref")?.classList.contains("tok-block"), "an in-sentence list citation renders INLINE, not a display block");
+    // No stray lone-period paragraph orphaned out of the list.
+    assert.ok(![...ans.children].some((c) => c.tagName === "P" && c.textContent.trim() === "."), "no orphaned `.` paragraph");
+}
+test("answer render (DevTools): an inline citation inside a `- ` list item keeps the list intact", async () => {
     const w = await loadSidebarWorld();
-    await oneSidedBlockRun(w, "sw", softWrapInlineText);
+    await oneSidedBlockRun(w, "li1", listItemText);
     await openRun(w);
-    const tok = firstTok(w.shadow);
-    assert.ok(tok && !tok.classList.contains("tok-block") && !tok.querySelector(".katex-display"),
-        "no paragraph break on either side → a soft-wrapped inline cite, not a display block");
+    assertListIntact(w.shadow);
+});
+test("answer render (HUD card): the SAME list-item citation keeps the list intact — parity", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    w.window.postMessage = () => {};
+    await w.raw({ __mlSidebarSurface: "card" });
+    await oneSidedBlockRun(w, "li1", listItemText);
+    assertListIntact(w.window.document);
 });
 
 test("answer render (DevTools): an inline `| latex` cite of a PRIOR turn's hex token resolves + renders inline", async () => {
@@ -4900,9 +4928,23 @@ test("answer render (sidebar): `| raw` forces the literal value (no table/latex/
     await w.dispatch({ ...agentResult("rw", "Raw: ![v](@tool:" + OUT + ":out | raw)", 1), answer: "" });
     await openRun(w);
     const tok = w.shadow.querySelector(".msg.asst .answer-rendered .tok-ref");
-    assert.ok(tok?.querySelector("pre.code"), "| raw renders the value as a plain code/text block");
+    // Mid-sentence, short value → inline <code> (not a boxed block); still a literal (no table derivation).
+    assert.ok(tok?.querySelector("code.tok-val") && !tok.querySelector("pre.code"), "| raw renders the value as inline literal code");
     assert.match(tok.textContent, /the-literal-value/, "the literal value is shown verbatim");
     assert.ok(!tok.querySelector(".katex"), "no latex typesetting for a | raw citation");
+});
+
+test("answer render (sidebar): a STANDALONE (own-line) `| raw` citation is a code BLOCK", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("rwb", "compute"));
+    await w.dispatch(agentStep("rwb", 1, { seq: 1, tool: "python_exec", token: OUT, result: "x^{2} e^{x}",
+        renderOut: { type: "python-out", value: "x^{2} e^{x}" } }));
+    // Alone on its own line → a boxed code block (contrast with the mid-sentence inline <code> above).
+    await w.dispatch({ ...agentResult("rwb", "Raw:\n\n![v](@tool:" + OUT + ":out | raw)\n\ndone.", 1), answer: "" });
+    await openRun(w);
+    const tok = w.shadow.querySelector(".msg.asst .answer-rendered .tok-ref");
+    assert.ok(tok?.classList.contains("tok-block") && tok.querySelector("pre.code") && !tok.querySelector("code.tok-val"),
+        "standalone | raw → a code BLOCK, not inline <code>");
 });
 
 test("answer render (sidebar): `| img` renders a base64 value as an image; an external URL stays non-image (beacon-safe)", async () => {

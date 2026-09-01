@@ -2,6 +2,7 @@
 // actual (focused) tool output, the provenance jump (click a citation → its source step, pulsed green), and
 // the bottom-of-answer Result / Feedback / Reused blocks. Extracted from app.tsx; sits above ./render-panel.
 import type { ComponentChildren } from "preact";
+import { h } from "preact";
 import type { RenderDescriptor, ToolFeedback, ReusedGrant } from "../contract";
 import { splitAnswer, hasTokens, resolveTokenStep } from "../answer-tokens";
 import type { AnswerSegment } from "../answer-tokens";
@@ -130,10 +131,14 @@ function TokenRef({ seg, run, scope, standalone }: { seg: Extract<AnswerSegment,
     // through to the normal render. So `| img` only ever shows extension-produced pixels.
     const descImg = d?.type === "image" ? d.src : (d?.type === "python-out" || d?.type === "look") ? d.image : undefined;
     const imgSrc = seg.fmt === "img" ? (descImg || dataImageFrom(rawText)) : null;
+    // `| raw` follows the same inline/block heuristic as a plain value: a STANDALONE (own-line) or long/multiline
+    // value is a code BLOCK; a short mid-sentence one stays inline `<code>` (so `the result is ![v](…|raw).` flows
+    // in the sentence instead of breaking to a boxed block).
+    const rawBlock = !!standalone || rawText.length > 80 || /\n/.test(rawText);
     const { node, block } = imgSrc
         ? { node: <ClickableImg src={imgSrc} alt={label || "image"} />, block: true }
         : isRaw
-            ? { node: <Code text={rawText} lang="text" />, block: true }
+            ? { node: rawBlock ? <Code text={rawText} lang="text" /> : <code class="tok-val">{rawText}</code>, block: rawBlock }
             : isLatex
                 // Use EXPLICIT delimiters, not `$…$` — single-`$` inline math only typesets when the content
                 // carries a math signal, so a bare value like `5` would render as the literal text "$5$". The
@@ -160,39 +165,72 @@ function TokenRef({ seg, run, scope, standalone }: { seg: Extract<AnswerSegment,
 // export's disclosure. No tokens → plain markdown.
 export function AnswerBody({ text, run, cls = "card-answer", scope }: { text: string; run: Session; cls?: string; scope?: readonly AgentStep[] }) {
     const mdHtml = (t: string) => ({ __html: markdown(t, { math: true }) });
-    // Between citations: strip a lone wrapping <p> so an inline citation flows in the same line — but markdown
-    // trims a paragraph's boundary whitespace, so RE-ADD a space when the prose had one (else "table" + inline
-    // token collide as "tablenull"). A multi-paragraph chunk keeps its <p>s (block structure around a block token).
-    const proseHtml = (t: string) => {
-        const h = markdown(t, { math: true });
-        const m = h.match(/^<p>([\s\S]*)<\/p>\s*$/);
-        return { __html: m ? (/^\s/.test(t) ? " " : "") + m[1] + (/\s$/.test(t) ? " " : "") : h };
-    };
     if (!hasTokens(text, aliasOf(run))) return <div class={`${cls} md`} dangerouslySetInnerHTML={mdHtml(text)} />;
     const segs = splitAnswer(text, aliasOf(run));
-    // A citation is STANDALONE (its own line → a display block) when it sits ALONE on its own line AND at least
-    // one side is a real paragraph break (a blank line, or the very start/end). Two signals, both needed:
-    //   • ALONE-ON-LINE — only whitespace between the citation and a newline/boundary on each side. A citation
-    //     with prose on the SAME line (`the result is ![x].`) is mid-sentence → always INLINE.
-    //   • PARAGRAPH BREAK on ≥1 side — a blank line (or a boundary) before OR after. This is what separates a
-    //     model's "label:\n![cite]\n\n…" block (a labelled result on its own line, blank line after) from a
-    //     soft-WRAPPED inline citation (`The derivative is\n![x]\n, computed.` — single newlines, no blank,
-    //     a wrapped sentence that must stay inline). The old rule demanded a blank on BOTH sides, so the common
-    //     one-sided-blank block rendered inline — the "why do I need newlines top AND bottom" surprise.
-    // A neighbouring TOKEN (prev/next === null) contributes no prose, so it can't force inline or supply a break.
+    // A citation is STANDALONE (a display block) when it sits ALONE on its own source line — only whitespace
+    // between it and a newline/boundary on each side. A citation that SHARES its line with prose
+    // (`the result is ![x].`, or a list item `- foo ![x].`) is mid-sentence → INLINE. This mirrors exactly what
+    // the line-based markdown() does with the token below: an own-line token becomes the sole child of its own
+    // <p> (block); a token sharing a line flows inside that line's <p>/<li> (inline). No blank-line heuristic —
+    // the model's line placement IS the intent ("on its own line → block; in a sentence → inline").
     const standaloneAt = (i: number): boolean => {
         const prev = i === 0 ? "" : (segs[i - 1].kind === "prose" ? (segs[i - 1] as { text: string }).text : null);
         const next = i === segs.length - 1 ? "" : (segs[i + 1].kind === "prose" ? (segs[i + 1] as { text: string }).text : null);
         const aloneBefore = prev === "" || (prev != null && /\n[ \t]*$/.test(prev));
         const aloneAfter = next === "" || (next != null && /^[ \t]*\n/.test(next));
-        if (!(aloneBefore && aloneAfter)) return false;   // prose on the same line → mid-sentence → inline
-        const blankBefore = prev === "" || (prev != null && /\n[ \t]*\n[ \t]*$/.test(prev));
-        const blankAfter = next === "" || (next != null && /^[ \t]*\n[ \t]*\n/.test(next));
-        return blankBefore || blankAfter;   // a real paragraph break on ≥1 side (else a soft-wrapped inline cite)
+        return aloneBefore && aloneAfter;
     };
-    return <div class={`${cls} md answer-rendered`}>{segs.map((seg, i) => seg.kind === "prose"
-        ? <span key={i} dangerouslySetInnerHTML={proseHtml(seg.text)} />
-        : <TokenRef key={i} seg={seg} run={run} scope={scope} standalone={standaloneAt(i)} />)}</div>;
+    // ONE markdown pass over the whole answer, tokens spliced back in as real components. Each token is
+    // replaced in the source by a private-use SENTINEL that survives markdown escaping (it's not `&<>`); we then
+    // render, parse the HTML, and walk only the subtrees that contain a sentinel — so a list / blockquote /
+    // paragraph that CONTAINS a citation stays intact (the old split-per-fragment approach rendered each prose
+    // run as its OWN markdown block, which closed a list before the token and orphaned the trailing text).
+    const toks: { seg: Extract<AnswerSegment, { kind: "token" }>; standalone: boolean }[] = [];
+    let src = "";
+    segs.forEach((seg, i) => {
+        if (seg.kind === "prose") { src += seg.text; return; }
+        toks.push({ seg, standalone: standaloneAt(i) });
+        src += `${toks.length - 1}`;
+    });
+    return <div class={`${cls} md answer-rendered`}>{hydrateAnswer(markdown(src, { math: true }), toks, run, scope)}</div>;
+}
+
+// Splice real <TokenRef> components into rendered answer markdown at the sentinel positions its tokens left
+// behind. Parses the HTML into a template and walks it: a TEXT node is split on any sentinels into
+// text-run + <TokenRef> pieces; an ELEMENT with NO sentinel anywhere below is kept as raw innerHTML (cheap, and
+// preserves KaTeX / nested markup verbatim); an element that DOES contain one is recreated as a vnode with its
+// children walked. Because a <TokenRef> is always a <span>, splicing it inside a <p>/<li> is valid nesting.
+// The parsed HTML is our OWN markdown() output (user content already escaped), so recreating tags + copying
+// attributes introduces no injection surface.
+const SENTINEL_RE = /(\d+)/g;
+function hydrateAnswer(html: string, toks: { seg: Extract<AnswerSegment, { kind: "token" }>; standalone: boolean }[], run: Session, scope?: readonly AgentStep[]): ComponentChildren {
+    const tmpl = document.createElement("template");
+    tmpl.innerHTML = html;
+    let key = 0;
+    const conv = (node: Node): ComponentChildren => {
+        if (node.nodeType === 3) {   // text — cut out any sentinels, replacing each with its TokenRef
+            const text = node.nodeValue ?? "";
+            if (!text.includes("")) return text;
+            const out: ComponentChildren[] = [];
+            let last = 0; let m: RegExpExecArray | null; SENTINEL_RE.lastIndex = 0;
+            while ((m = SENTINEL_RE.exec(text))) {
+                if (m.index > last) out.push(text.slice(last, m.index));
+                const t = toks[Number(m[1])];
+                if (t) out.push(<TokenRef key={key++} seg={t.seg} run={run} scope={scope} standalone={t.standalone} />);
+                last = m.index + m[0].length;
+            }
+            if (last < text.length) out.push(text.slice(last));
+            return out;
+        }
+        if (node.nodeType !== 1) return null;
+        const el = node as Element;
+        const props: Record<string, unknown> = { key: key++ };
+        for (const a of Array.from(el.attributes)) props[a.name] = a.value;
+        // No token below → keep the whole subtree as raw HTML (preserves KaTeX etc. without re-vnoding it).
+        if (!(el.textContent || "").includes("")) { props.dangerouslySetInnerHTML = { __html: el.innerHTML }; return h(el.tagName.toLowerCase(), props); }
+        return h(el.tagName.toLowerCase(), props, Array.from(el.childNodes).map(conv));
+    };
+    return Array.from(tmpl.content.childNodes).map(conv);
 }
 
 // The bottom-of-answer RESULT block: the run's designated (ml.answer) + auto-appended tool outputs, rendered
