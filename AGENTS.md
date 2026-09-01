@@ -680,6 +680,16 @@ it per format: `params.think` (openai) vs a top-level `think` (ollama native).
 
 ## Conventions
 
+**RULE — self-tools get a skill + an AGENTS.md mention, and you keep both current — WITHOUT asking.**
+Any time you (or any model working on this repo) build a TOOL FOR YOURSELF — a harness, wrapper, driver,
+or script you'll re-use to develop/debug/benchmark the extension (e.g. `tests/e2e/observe.mjs`) — you MUST
+(1) write a **Claude skill** (`.claude/skills/<name>/SKILL.md`) documenting exactly how it's used (invocation,
+env knobs, when to reach for it, gotchas), and (2) add a **brief mention** of it in AGENTS.md so the next
+agent discovers it. Keeping AGENTS.md, your skill files, and the scripts they describe **in sync and up to
+date is YOUR responsibility** — every time you change a self-tool's behaviour, update its skill + the AGENTS.md
+mention in the same change. Do this proactively, never ask the user whether to. (Skills live in
+`.claude/skills/`; the `observe` skill is the reference example.)
+
 - **Plain JS in docs/examples** — `document.querySelector`, never jQuery-style
   `$`/`$$` (those are devtools-only and read as dated).
 - **Document functions with JSDoc** (`/** … */`, `@param`/`@returns` where useful),
@@ -735,15 +745,29 @@ thing. The parts:
 - **`cross-page.spec.mjs`** — a `smoke` (extension loads + one-shot agent) + a `sanity` (agent
   reads a page value via a DOM tool and answers it) that run under BOTH the fake and a real
   backend, plus the skipped cross-page acceptance test (see `tmp/cross-page-agent.md`).
-- **`observe.mjs`** — a **debug tool, not a test**: `node --import tsx tests/e2e/observe.mjs`
-  drives a run and writes ARTIFACTS to `tests/e2e/artifacts/<timestamp>/` (gitignored):
-  **`run.md`** = the extension's OWN canonical markdown (it captures the `__mlDebug` event
-  stream off the page window under `debugMode:"overlay"`, rebuilds a `Session`, and runs
-  `serializeSession`), plus a screenshot per step (`look`/`locate` sidecars included), timing,
-  and `events.json`. Knobs: `TASK`, `START`, `TOOLS=findByText,answer` (limit to a subset of
-  `ml.domTools` — a smaller system prompt + fewer schemas = far fewer tokens/turn), `WARM=0`
-  (skip model warm-up), `RUN_LABEL`. This is how an agent debugs the extension itself: run →
-  read `run.md` + screenshots → diff run dirs before/after a fix.
+- **`observe.mjs`** — a **debug/observation wrapper, not a test** (see the `observe` skill for the
+  full playbook): `node --import tsx tests/e2e/observe.mjs` drives ONE agent run in a real Chromium
+  and writes ARTIFACTS to `tests/e2e/artifacts/<RUN_LABEL|timestamp>/` (gitignored): **`run.md`** =
+  the extension's OWN canonical markdown (captures the `__mlDebug` stream under `debugMode:"overlay"`,
+  rebuilds a `Session`, runs `serializeSession`), a screenshot per step (`look`/`locate` sidecars
+  included), `events.json`, `transcript.txt`. This is how a model debugs the extension itself: run →
+  read `run.md` + screenshots → diff run dirs before/after a fix, and sweep rule-adherence across
+  models. Knobs (env vars):
+  - `TASK` — the agent task; `START` — the start route (any served example page: `/spreadsheet`,
+    `/find-waldo`, `/canvas-input`, … or the cross-page chain `/`, `/step2`, `/step3` — `GET /examples`).
+  - **Real model:** `USE_ENV=1` reads `OPENWEBUI_URL/KEY/MODEL` from `.env`; `E2E_MODEL=<id>` overrides
+    the model (e.g. `deepseek.deepseek-v4-pro`, `gemma4:31b`); no vars → the deterministic fake-LLM.
+  - `TOOLTOKENS=1` enables tool tokens · `PYTHON=1` wires `python_exec` · `TOOLS=findByText,answer`
+    limits to a domTools subset (smaller prompt/schemas = far fewer tokens/turn) · `WARM=0` skips the
+    VRAM warm-up (a local model wants it warmed; the fake/API don't).
+  - **`APPROVE=<policy>`** — how the built-in approval poller resolves a gate the run halts on (via the
+    SW-only `__mlApprovals` channel; the run passes `approvalRouting:"both"`): `auto` (default, approve
+    all), `deny`, `readonly` (approve exec + readonly python, deny the rest), `hold` (log but DON'T
+    resolve — leave it for a manual click in WATCH). Every gate + decision is logged, so a run never
+    hangs silently at an approval.
+  - **`WATCH=1`** — headful watch-along: fires the run non-blocking, slides the overlay sidebar open at
+    HALF the viewport width, clicks into the live session, and HOLDS the browser open (close the window
+    / Ctrl+C to exit) so a human can watch the run unfold in the real UI.
 - **`approval-demo.mjs`** — a **narrated demo, not a test**: `npm run build && node --import tsx
   tests/e2e/approval-demo.mjs` opens a headful browser and walks the approval-over-IPC flow (idea #2)
   three times — a manual APPROVE, a manual REJECT, and a POLICY driver that auto-approves read-only
