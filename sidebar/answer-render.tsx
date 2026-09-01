@@ -139,8 +139,9 @@ function TokenRef({ seg, run, scope, standalone }: { seg: Extract<AnswerSegment,
                 // carries a math signal, so a bare value like `5` would render as the literal text "$5$". The
                 // model's POSITION is the intent: a citation ALONE on its own line/paragraph is a standalone
                 // formula → a green tool-output BLOCK in DISPLAY mode (`\[…\]`, centered, full-size); one written
-                // mid-sentence stays INLINE (`\(…\)`). (`standalone` is computed from the neighbouring prose.)
-                ? { node: <span dangerouslySetInnerHTML={{ __html: markdown(standalone ? `\\[${rawText}\\]` : `\\(${rawText}\\)`, { math: true }) }} />, block: !!standalone }
+                // mid-sentence stays INLINE (`\(…\)`). Use inlineMarkdown so the lone wrapping <p> is STRIPPED —
+                // that block-level <p> was forcing an inline formula onto its own line (the "inline is broken" bug).
+                ? { node: <span dangerouslySetInnerHTML={{ __html: inlineMarkdown(standalone ? `\\[${rawText}\\]` : `\\(${rawText}\\)`) }} />, block: !!standalone }
                 : tokenRender(d, rawText);
     const tip = (label && !block ? `${label} · ` : "") + provenance;   // inline → prepend the label to the tooltip
     return <span class={`tok-ref ${block ? "tok-block" : "tok-inline"}`} role="button" tabIndex={0}
@@ -169,15 +170,15 @@ export function AnswerBody({ text, run, cls = "card-answer", scope }: { text: st
     };
     if (!hasTokens(text, aliasOf(run))) return <div class={`${cls} md`} dangerouslySetInnerHTML={mdHtml(text)} />;
     const segs = splitAnswer(text, aliasOf(run));
-    // A citation is STANDALONE (its own line/paragraph → a display block) when only whitespace separates it from
-    // a paragraph break on BOTH sides: the prose before ends at a newline (or it's the very start), and the prose
-    // after starts with a newline (or it's the very end). Otherwise it's mid-sentence → inline. This reads the
-    // model's INTENT from layout, exactly like real markdown (`$…$` inline vs a formula on its own line).
+    // A citation is STANDALONE (its own PARAGRAPH → a display block) only when a BLANK LINE separates it from the
+    // prose on both sides (or it's at the very start/end). This matches real markdown: a single newline is a SOFT
+    // break (same paragraph → the citation stays INLINE), and only a blank line starts a new paragraph. A model
+    // that soft-wraps a mid-sentence citation onto its own line must still render inline. Otherwise → inline.
     const standaloneAt = (i: number): boolean => {
         const prev = i === 0 ? "" : (segs[i - 1].kind === "prose" ? (segs[i - 1] as { text: string }).text : null);
         const next = i === segs.length - 1 ? "" : (segs[i + 1].kind === "prose" ? (segs[i + 1] as { text: string }).text : null);
-        const okBefore = prev === "" || (prev != null && /\n[ \t]*$/.test(prev));
-        const okAfter = next === "" || (next != null && /^[ \t]*\n/.test(next));
+        const okBefore = prev === "" || (prev != null && /\n[ \t]*\n[ \t]*$/.test(prev));
+        const okAfter = next === "" || (next != null && /^[ \t]*\n[ \t]*\n/.test(next));
         return okBefore && okAfter;
     };
     return <div class={`${cls} md answer-rendered`}>{segs.map((seg, i) => seg.kind === "prose"

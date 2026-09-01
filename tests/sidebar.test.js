@@ -4650,6 +4650,41 @@ test("answer render: a comma-inline `| latex` cite (no newlines) is INLINE, not 
     assert.ok(tok.querySelector(".katex") && !tok.querySelector(".katex-display"), "inline-mode KaTeX (not a display block)");
 });
 
+test("answer render: an inline latex citation has NO wrapping <p> (KaTeX flows inline, not on its own line)", async () => {
+    // The real "inline is broken" bug: markdown() wraps the inline `\(…\)` KaTeX in a block-level <p>, which
+    // forced the formula onto its own line even though it was mid-sentence. inlineMarkdown strips that <p>.
+    // Uses AUTO-latex (a python-out flagged latex, NO pipe) — the exact observe repro (run cbb2b8).
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("nop", "diff"));
+    await w.dispatch(agentStep("nop", 1, { seq: 1, tool: "python_exec", token: OUT, result: "x",
+        renderOut: { type: "python-out", value: "x^{2} \\cos{\\left(x \\right)} + 2 x \\sin{\\left(x \\right)}", latex: true } }));
+    await w.dispatch(agentResult("nop", "The derivative is ![result](@tool:" + OUT + ":out), as computed.", 1));
+    await openRun(w);
+    const tok = w.shadow.querySelector(".msg.asst .answer-rendered .tok-ref");
+    assert.ok(tok?.classList.contains("tok-inline"), "a mid-sentence auto-latex cite is inline");
+    assert.equal(tok.querySelector("p"), null, "NO block <p> wrapper — the KaTeX flows in the sentence");
+    assert.ok(tok.querySelector(".katex") && !tok.querySelector(".katex-display"), "inline-mode KaTeX (not display)");
+});
+
+test("answer render: a SINGLE-newline-wrapped citation is INLINE (soft break); a BLANK line is a DISPLAY block", async () => {
+    const step = (w2, h) => w2.dispatch(agentStep(h, 1, { seq: 1, tool: "python_exec", token: OUT, result: "x",
+        renderOut: { type: "python-out", value: "x^{2}", latex: true } }));
+    // SINGLE newlines around it (a markdown SOFT break, same paragraph) → INLINE.
+    let w = await loadSidebarWorld();
+    await w.dispatch(agentStart("sn", "diff")); await step(w, "sn");
+    await w.dispatch(agentResult("sn", "The derivative is\n![d](@tool:" + OUT + ":out)\n, computed.", 1));
+    await openRun(w);
+    let tok = w.shadow.querySelector(".msg.asst .answer-rendered .tok-ref");
+    assert.ok(tok && !tok.classList.contains("tok-block") && !tok.querySelector(".katex-display"), "single-newline (soft break) → INLINE");
+    // BLANK line (paragraph break) → DISPLAY block.
+    w = await loadSidebarWorld();
+    await w.dispatch(agentStart("bl", "diff")); await step(w, "bl");
+    await w.dispatch(agentResult("bl", "The derivative is:\n\n![d](@tool:" + OUT + ":out)\n\ndone.", 1));
+    await openRun(w);
+    tok = w.shadow.querySelector(".msg.asst .answer-rendered .tok-ref");
+    assert.ok(tok?.classList.contains("tok-block") && tok.querySelector(".katex-display"), "blank line → DISPLAY block");
+});
+
 test("answer render (DevTools): an inline `| latex` cite of a PRIOR turn's hex token resolves + renders inline", async () => {
     const w = await loadSidebarWorld();
     await inlineHexLatexRun(w);
