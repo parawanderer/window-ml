@@ -38,9 +38,13 @@ deterministic output instead of hallucinated re-typing.
   - `@tool:35bf1f:out | latex` — pipe the value through a **format override**: interpret it as
     **LaTeX** and render as math. The `|` reads like a filter pipe (Jinja/shell), which models know;
     whitespace around it is optional (`…:out|latex` ≡ `…:out | latex`). Format is extensible (default
-    = the descriptor's natural render); `latex` is the first, for a scalar/expression shown as a
-    formula. Others (`code`, `json`, `text`) can follow; an unknown format falls back to the natural
-    render.
+    = the descriptor's natural render); an unknown format falls back to the natural render. Shipped:
+    - `latex` — a scalar/expression rendered as a formula (KaTeX). An `![…]` EMBED renders as a green
+      tool-output BLOCK (marker + caption), like a non-latex output; a `[…]` link stays inline.
+    - `img` — render the tool's OWN image bytes: a raster `data:image/(png|jpe?g|gif|webp);base64,…`
+      URL or a bare base64 blob. Deliberately STRICT — no `svg`, no `data:text/html`, no `javascript:`,
+      and NO external http(s) URL (that would beacon the viewer); anything else falls back to text.
+    - `raw` — force the LITERAL value as a plain text/code block (skip any table/image/latex derivation).
 - A token resolves **only within its own run**. Unknown/foreign/garbled → an "unresolved ref" chip,
   never a crash.
 - **Tool-name alias.** An id that is a **tool name** instead of a 6-hex id — `@tool:python_exec:out` —

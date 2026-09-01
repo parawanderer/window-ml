@@ -4673,6 +4673,93 @@ test("answer render (sidebar): a result cited with `| latex` renders as a KaTeX 
     assert.match(tok.querySelector(".tok-tip")?.textContent || "", /step 1 · python_exec/, "the hover tooltip names the source compute step");
 });
 
+test("answer render (sidebar): a `| latex` EMBED renders as a green tool-output block with its caption", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("lxb", "differentiate"));
+    await w.dispatch(agentStep("lxb", 1, { seq: 1, tool: "python_exec", token: OUT, result: "\\frac{1}{2}",
+        renderOut: { type: "python-out", value: "\\frac{1}{2}" } }));
+    // An EMBED (`![…]`) latex citation — should be a BLOCK (green marker), not inline in the prose.
+    await w.dispatch({ ...agentResult("lxb", "The derivative is ![Derivative](@tool:" + OUT + ":out | latex)", 1), answer: "" });
+    await openRun(w);
+    const tok = w.shadow.querySelector(".msg.asst .answer-rendered .tok-ref");
+    assert.ok(tok?.classList.contains("tok-block"), "the latex embed renders as a tok-block (green tool-output marker)");
+    assert.ok(tok.querySelector(".katex"), "…and still typesets via KaTeX");
+    assert.match(tok.querySelector(".tok-anno")?.textContent || "", /Derivative/, "the model's label shows as the block caption");
+});
+
+test("answer render (sidebar): `| raw` forces the literal value (no table/latex/image derivation)", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("rw", "compute"));
+    // renderOut is a python-out df — WITHOUT | raw it'd render a table; | raw shows the literal value string.
+    await w.dispatch(agentStep("rw", 1, { seq: 1, tool: "python_exec", token: OUT, result: "the-literal-value",
+        renderOut: { type: "python-out", value: "the-literal-value" } }));
+    await w.dispatch({ ...agentResult("rw", "Raw: ![v](@tool:" + OUT + ":out | raw)", 1), answer: "" });
+    await openRun(w);
+    const tok = w.shadow.querySelector(".msg.asst .answer-rendered .tok-ref");
+    assert.ok(tok?.querySelector("pre.code"), "| raw renders the value as a plain code/text block");
+    assert.match(tok.textContent, /the-literal-value/, "the literal value is shown verbatim");
+    assert.ok(!tok.querySelector(".katex"), "no latex typesetting for a | raw citation");
+});
+
+test("answer render (sidebar): `| img` renders a base64 value as an image; an external URL stays non-image (beacon-safe)", async () => {
+    const w = await loadSidebarWorld();
+    const B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+    await w.dispatch(agentStart("im", "make a chart"));
+    await w.dispatch(agentStep("im", 1, { seq: 1, tool: "python_exec", token: OUT, result: B64,
+        renderOut: { type: "python-out", value: B64 } }));
+    await w.dispatch({ ...agentResult("im", "Chart: ![chart](@tool:" + OUT + ":out | img)", 1), answer: "" });
+    await openRun(w);
+    const img = w.shadow.querySelector(".msg.asst .answer-rendered .tok-ref img.zoomable");
+    assert.ok(img, "| img renders the base64 value as an <img>");
+    assert.match(img.getAttribute("src") || "", /^data:image\/png;base64,iVBOR/, "bare base64 is wrapped as a data: URL");
+
+    // An external URL cited `| img` must NOT become an <img> (that would beacon the viewer) — it falls back.
+    const w2 = await loadSidebarWorld();
+    await w2.dispatch(agentStart("im2", "x"));
+    await w2.dispatch(agentStep("im2", 1, { seq: 1, tool: "python_exec", token: OUT, result: "https://evil.example/x.png",
+        renderOut: { type: "python-out", value: "https://evil.example/x.png" } }));
+    await w2.dispatch({ ...agentResult("im2", "Look: ![x](@tool:" + OUT + ":out | img)", 1), answer: "" });
+    await w2.dispatch({ __mlDebug: undefined });
+    w2.shadow.querySelector(".row").click(); await w2.tick();
+    const tok2 = w2.shadow.querySelector(".msg.asst .answer-rendered .tok-ref");
+    assert.ok(tok2 && !tok2.querySelector("img"), "an external URL is NOT rendered as an <img> (no beacon)");
+});
+
+test("answer render (sidebar): `| img` is HARDENED against abuse (external/js/html/svg/attr-breakout)", async () => {
+    // `| img` renders a MODEL-controlled value, so it must never become a beacon or a script surface. Each
+    // hostile value must render as text (no <img>, no <script>). dataImageFrom accepts only raster data:image
+    // + clean base64.
+    const citeImg = async (val) => {
+        const w = await loadSidebarWorld();
+        await w.dispatch(agentStart("adv", "x"));
+        await w.dispatch(agentStep("adv", 1, { seq: 1, tool: "python_exec", token: OUT, result: val,
+            renderOut: { type: "python-out", value: val } }));
+        await w.dispatch({ ...agentResult("adv", "Look: ![x](@tool:" + OUT + ":out | img)", 1), answer: "" });
+        w.shadow.querySelector(".row").click(); await w.tick();
+        return w.shadow.querySelector(".msg.asst .answer-rendered .tok-ref");
+    };
+    const hostile = [
+        "https://evil.example/beacon.png",                             // external URL → IP beacon
+        "http://evil.example/x",                                       // external http
+        "//evil.example/x.png",                                       // protocol-relative
+        "javascript:alert(1)",                                        // js scheme
+        "data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==", // data:text/html carrying a <script>
+        "data:image/svg+xml;base64,PHN2ZyBvbmxvYWQ9YWxlcnQoMSk+",     // svg (onload) — rejected as a surface
+        'data:image/png;base64,AAAA" onerror="alert(1)',              // attribute-breakout attempt
+        "data:image/png;base64,AA<script>alert(1)</script>",          // markup in the "base64"
+        "not base64 at all !!! $$$",                                  // junk
+    ];
+    for (const v of hostile) {
+        const tok = await citeImg(v);
+        assert.ok(tok, `citation still renders (as text) for: ${v.slice(0, 28)}`);
+        assert.equal(tok.querySelector("img"), null, `NO <img> for hostile value: ${v.slice(0, 28)}`);
+        assert.equal(tok.querySelector("script"), null, "never a <script> element");
+    }
+    // Positive control: a clean raster data URL DOES render as an image.
+    const ok = await citeImg("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==");
+    assert.ok(ok.querySelector("img.zoomable"), "a clean data:image/png;base64 DOES render as an <img>");
+});
+
 test("answer render (sidebar): a `| latex` citation renders an IMAGINARY / complex result too", async () => {
     const w = await loadSidebarWorld();
     // sqrt(-9) → a complex root the python step computed; the model formats it for math (2 + 3i).

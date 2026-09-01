@@ -48,6 +48,20 @@ const tryPrettyJson = (t: string): string | null => {
     return null;
 };
 
+// A `| img` citation renders the tool's OWN image bytes — a RASTER `data:image` URL or a bare base64 blob
+// (safe: no network, no script). Deliberately STRICT to keep a model-controlled value from becoming an
+// attack: only png/jpeg/gif/webp with clean base64 (no `svg` — an <svg> is script-inert in an <img> but
+// still an unnecessary surface; no `data:text/html`; no `javascript:`; no external http(s) URL that would
+// beacon the viewer). The clean-base64 tail also blocks any `"`/`<`/space attribute-breakout. Anything else
+// returns null → the citation falls back to its normal (text) render, never an <img>.
+const dataImageFrom = (t: string): string | null => {
+    const s = (t || "").trim();
+    if (/^data:image\/(?:png|jpe?g|gif|webp);base64,[A-Za-z0-9+/]+={0,2}$/i.test(s)) return s;
+    const b = s.replace(/\s+/g, "");
+    if (/^[A-Za-z0-9+/]+={0,2}$/.test(b) && b.length > 64) return `data:image/png;base64,${b}`;
+    return null;
+};
+
 // The tool-name-ALIAS gate for splitAnswer/hasTokens: a non-hex `@tool:<name>` is a real citation only when this
 // run actually has a tokened step for that tool (so `@tool:python_exec` resolves; a garbled `@tool:nothex` stays
 // prose). Custom tools are covered for free — it reads the run's own steps.
@@ -104,11 +118,23 @@ function TokenRef({ seg, run, scope }: { seg: Extract<AnswerSegment, { kind: "to
     // citation (a table/image/code) → the label is a CAPTION under the render, like a figure caption on the web.
     const label = seg.label && seg.label.trim() && seg.label.trim() !== rawText.trim() ? seg.label.trim() : "";
     const isLatex = seg.fmt === "latex" && !!rawText;
-    const { node, block } = isLatex
-        // Use EXPLICIT `\(…\)` delimiters, not `$…$` — single-`$` inline math only typesets when the content
-        // carries a math signal (`\`/`^`/`_`), so a bare value like `5` would render as the literal text "$5$".
-        ? { node: <span dangerouslySetInnerHTML={{ __html: markdown(`\\(${rawText}\\)`, { math: true }) }} />, block: false }
-        : tokenRender(d, rawText);
+    const isRaw = seg.fmt === "raw" && !!rawText;   // `| raw` — force the literal value, no table/image/latex render
+    // `| img` — render the tool's OWN image output (the descriptor's captured image, else a data:/base64 value).
+    // An external http(s) URL is deliberately NOT turned into an <img> (that would beacon the viewer); it falls
+    // through to the normal render. So `| img` only ever shows extension-produced pixels.
+    const descImg = d?.type === "image" ? d.src : (d?.type === "python-out" || d?.type === "look") ? d.image : undefined;
+    const imgSrc = seg.fmt === "img" ? (descImg || dataImageFrom(rawText)) : null;
+    const { node, block } = imgSrc
+        ? { node: <ClickableImg src={imgSrc} alt={label || "image"} />, block: true }
+        : isRaw
+            ? { node: <Code text={rawText} lang="text" />, block: true }
+            : isLatex
+                // Use EXPLICIT `\(…\)` delimiters, not `$…$` — single-`$` inline math only typesets when the content
+                // carries a math signal (`\`/`^`/`_`), so a bare value like `5` would render as the literal text "$5$".
+                // An EMBED (`![…]`) renders as a BLOCK so it gets the green tool-output marker + its label caption
+                // (like a non-latex output); a link-form citation stays inline in the prose.
+                ? { node: <span dangerouslySetInnerHTML={{ __html: markdown(`\\(${rawText}\\)`, { math: true }) }} />, block: seg.embed }
+                : tokenRender(d, rawText);
     const tip = (label && !block ? `${label} · ` : "") + provenance;   // inline → prepend the label to the tooltip
     return <span class={`tok-ref ${block ? "tok-block" : "tok-inline"}`} role="button" tabIndex={0}
         onClick={jump} onKeyDown={(e) => { if (e.key === "Enter") jump(); }}>
