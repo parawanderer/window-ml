@@ -7,6 +7,7 @@
 const { test } = require("node:test");
 const assert = require("node:assert");
 const { loadDomWorld, loadPageWorld } = require("./helpers");
+const { AnswerSet } = require("../answer-set.ts");
 
 // ---- truncate ----
 
@@ -1072,6 +1073,37 @@ test("toolTokens: an opted-in python_exec that ERRORS mints NO token — even wh
     const msg = world.runtimeCalls.at(-1).payload.messages.find(m => m.tool_call_id === "c1");
     assert.doesNotMatch(msg.content, /@tool:/, "no token for a failed python run (caught by the render's error flag)");
     assert.ok(!res.answer || !/@tool:/.test(res.answer), "and no auto-append of the errored computation");
+});
+
+test("res.outputs: a surfaced DataFrame comes back as a { kind:'table', columns, rows } 2D matrix (headless scripting)", async () => {
+    // python_exec is an auto-candidate, so a computed DataFrame the model didn't explicitly cite is auto-appended
+    // to the answer — and res.outputs hands the CALLER the real 2D data, not a `[caption](@tool:…)` markdown string.
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall("python_exec", {}, "c1"), reply("The totals are computed.")]) });
+    const py = world.ml.defineTool({ name: "python_exec", run: () => ({ content: "a DataFrame", render: { type: "python-out", df: { columns: ["Rep", "Total"], rows: [["Gia", 850], ["Kim", 810]] } } }) });
+    const res = await world.ml.agent("t", { tools: [py], toolTokens: true });
+    assert.ok(res.outputs && res.outputs.length === 1, "one structured output on the result");
+    assert.equal(res.outputs[0].kind, "table");
+    assert.deepEqual(res.outputs[0].columns, ["Rep", "Total"]);
+    assert.deepEqual(res.outputs[0].rows, [["Gia", 850], ["Kim", 810]], "the DataFrame is handed back as a 2D matrix");
+});
+
+test("res.outputs: OFF (no tokens) → no outputs; a plain run is unchanged", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall("python_exec", {}, "c1"), reply("done")]) });
+    const py = world.ml.defineTool({ name: "python_exec", run: () => ({ content: "df", render: { type: "python-out", df: { columns: ["x"], rows: [[1]] } } }) });
+    const res = await world.ml.agent("t", { tools: [py] });   // toolTokens off (default)
+    assert.ok(!res.outputs, "no structured outputs when the feature is off");
+});
+
+test("answer(selector) ≡ ml.queryAll(selector): the designated nodes are EXACTLY the selector's live matches", async () => {
+    // The `answer` tool's `selector` path must hand the caller the same live nodes `ml.queryAll(selector)` returns
+    // in exec — so res.elements is that node set. (It literally calls queryAll, so this pins the equivalence.)
+    const { ml } = loadDomWorld(`<div class="card">A</div><div class="card">B</div><p>x</p>`);
+    const set = new AnswerSet();
+    const answer = ml.domTools.find(t => t.name === "answer");
+    await answer.run({ selector: ".card" }, { answer: set });
+    const expected = ml.queryAll(".card");
+    assert.equal(expected.length, 2, "sanity: two .card nodes");
+    assert.deepEqual(set.elements(), expected, "res.elements would be EXACTLY ml.queryAll('.card')");
 });
 
 test("agent: a pre-aborted signal cancels before any model call (resolves, doesn't reject)", async () => {

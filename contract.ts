@@ -754,11 +754,32 @@ export interface AgentResult {
     cancelled?: boolean;
     /** the run's session hash — pass to ml.agent(task, { resume }) to continue it */
     hash: string;
-    /** INTERNAL (not part of the public result — stripped before ml.agent resolves): the citable outputs the
-     *  loop produced, so finalizeAnswer can AUTO-APPEND the run's primary output when the model neither cited nor
-     *  designated one. See answer-set.ts AnswerCandidate. */
+    /** Structured, ready-to-use JS data for every tool output the model surfaced in its final answer (cited
+     *  inline, designated into `ml.answer`, or auto-appended) — so `ml.agent()` works for HEADLESS SCRIPTING,
+     *  not just prose. A python DataFrame → `{ kind:"table", columns, rows }` (a 2D matrix); a python dict/list
+     *  return → `{ kind:"value", value }` with the PARSED object; an image → a data URL; code → its text. In
+     *  answer order, deduped. (`elements` designations also come back live in `.elements`, ≡ ml.queryAll.) */
+    outputs?: AgentOutput[];
+    /** INTERNAL (stripped before ml.agent resolves): the citable outputs the loop produced, so finalizeAnswer
+     *  can AUTO-APPEND the run's primary output when the model neither cited nor designated one. */
     answerCandidates?: import("./answer-set").AnswerCandidate[];
+    /** INTERNAL (stripped before ml.agent resolves): per-step render data, so the outputs resolver can turn a
+     *  cited/designated token into its structured value. */
+    tokenRenders?: TokenRender[];
 }
+
+/** Structured data for one tool output surfaced in an agent's answer — the headless-scripting payload. */
+export type AgentOutput = { id: string; tool: string } & (
+    | { kind: "table"; columns: string[]; rows: (string | number | null)[][] }   // a DataFrame / DOM table → a 2D matrix + its header
+    | { kind: "value"; value: unknown }        // a scalar / a python dict-or-list (PARSED to the real JS object when it was JSON)
+    | { kind: "image"; dataUrl: string }       // a screenshot / returned image, as a data: URL
+    | { kind: "code"; text: string; lang?: string }             // the executed source (a `:in` citation)
+    | { kind: "elements"; items: { path: string; text?: string }[] }   // serialized element previews (live nodes are in AgentResult.elements)
+);
+
+/** INTERNAL: a citable step's render + raw result, carried out of the loop so the outputs resolver can build
+ *  {@link AgentOutput}s from the tokens the answer actually cites. */
+export interface TokenRender { id: string; tool: string; render?: RenderDescriptor; result?: string }
 
 /** One live tracer event from ml.agent's `onStep` (a transcript entry + the
  *  step index). Also the shape ml._logStep consumes. */

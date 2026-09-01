@@ -4551,3 +4551,34 @@ test("answer render (sidebar): a cited exec output that returned ELEMENTS render
     assert.ok(rb, "the Result block renders");
     assert.match(rb.textContent, /div\.card#a|Card A/, "the returned elements render as a list of previews");
 });
+
+test("answer render (sidebar): a result cited with `| latex` renders as a KaTeX equation — a REAL number", async () => {
+    const w = await loadSidebarWorld();
+    // python_exec evaluated an equation to a real number; the model cites it with the latex format so it
+    // typesets as math, not plain text. `| latex` renders the step's RESULT (rawText) via KaTeX.
+    await w.dispatch(agentStart("lxr", "evaluate the discriminant"));
+    await w.dispatch(agentStep("lxr", 1, { seq: 1, tool: "python_exec", token: OUT, result: "5", renderOut: { type: "python-out", value: "5" } }));
+    await w.dispatch({ ...agentResult("lxr", `Solving b^2-4ac gives [discriminant](@tool:${OUT}:out | latex).`, 1), answer: "" });
+    await openRun(w);
+    const reply = w.shadow.querySelector(".msg.asst .answer-rendered");
+    assert.ok(reply, "the answer renders with the citation");
+    assert.ok(reply.querySelector(".katex"), "the `| latex` result typesets via KaTeX");
+    assert.match(reply.textContent, /5/, "the computed value is present");
+    // A latex citation is STILL a provenance ref: the KaTeX sits inside a clickable .tok-ref with a tooltip
+    // that names the source step (clicking jumps to the compute step that produced the value).
+    const tok = reply.querySelector(".tok-ref");
+    assert.ok(tok && tok.querySelector(".katex"), "the typeset value is INSIDE the clickable citation");
+    assert.match(tok.querySelector(".tok-tip")?.textContent || "", /step 1 · python_exec/, "the hover tooltip names the source compute step");
+});
+
+test("answer render (sidebar): a `| latex` citation renders an IMAGINARY / complex result too", async () => {
+    const w = await loadSidebarWorld();
+    // sqrt(-9) → a complex root the python step computed; the model formats it for math (2 + 3i).
+    await w.dispatch(agentStart("lxi", "solve x^2 + 9 = 0"));
+    await w.dispatch(agentStep("lxi", 1, { seq: 1, tool: "python_exec", token: OUT, result: "2 + 3i", renderOut: { type: "python-out", value: "2 + 3i" } }));
+    await w.dispatch({ ...agentResult("lxi", `The complex root is [root](@tool:${OUT}:out | latex).`, 1), answer: "" });
+    await openRun(w);
+    const reply = w.shadow.querySelector(".msg.asst .answer-rendered");
+    assert.ok(reply.querySelector(".katex"), "the complex result typesets via KaTeX (no throw on `i`)");
+    assert.match(reply.textContent, /3/, "the imaginary component is present");
+});

@@ -11,7 +11,7 @@
 // This module is pure (no DOM/chrome calls of its own): element previews and media are computed by
 // the caller and handed in, so it unit-tests standalone. Nodes ride along as opaque values.
 
-import type { AnswerMedia } from "./contract";
+import type { AnswerMedia, AgentOutput, TokenRender } from "./contract";
 import { tokenIdsIn } from "./answer-tokens";
 
 /** One item in the answer set. `element` carries live nodes (page-side only) + a serialized preview
@@ -63,6 +63,46 @@ export function finalizeAnswer(set: AnswerSet, summary: string, candidates: Answ
         items.push({ kind: "token", ref: `@tool:${c.token}:out`, preview: c.label || "computed result" });
     }
     return itemsToMarkdown(items);
+}
+
+/** If a string is a JSON object/array, PARSE it to the real JS value (a python dict/list return comes back as a
+ *  json.dumps'd string) — so a headless caller gets `{a:1}` / `[1,2]`, not `"{\"a\":1}"`. Non-JSON → the string. */
+const parseMaybe = (s: string): unknown => {
+    const t = (s || "").trim();
+    if (t.startsWith("{") || t.startsWith("[")) { try { return JSON.parse(t); } catch { /* not json */ } }
+    return s;
+};
+
+/** Turn one citable step's render (+ raw result) into a structured {@link AgentOutput} for `res.outputs`. */
+function toOutput(r: TokenRender): AgentOutput {
+    const base = { id: r.id, tool: r.tool };
+    const d = r.render;
+    if (d?.type === "python-out") {
+        if (d.df) return { ...base, kind: "table", columns: d.df.columns, rows: d.df.rows };
+        if (d.image) return { ...base, kind: "image", dataUrl: d.image };
+        if (d.value != null) return { ...base, kind: "value", value: parseMaybe(d.value) };
+    }
+    if (d?.type === "table") return { ...base, kind: "table", columns: d.columns, rows: d.rows };
+    if (d?.type === "elements") return { ...base, kind: "elements", items: d.items.map(i => ({ path: i.path, ...(i.text != null ? { text: i.text } : {}) })) };
+    if (d?.type === "image") return { ...base, kind: "image", dataUrl: d.src };
+    if (d?.type === "look") return { ...base, kind: "image", dataUrl: d.image };
+    if (d?.type === "code") return { ...base, kind: "code", text: d.text, ...(d.lang ? { lang: d.lang } : {}) };
+    return { ...base, kind: "value", value: parseMaybe(r.result ?? "") };   // no rich render → the raw result (parsed if JSON)
+}
+
+/**
+ * Resolve the run's answer to STRUCTURED OUTPUTS for headless scripting: every `@tool:<id>` the final answer
+ * actually cites — inline in `summary` (prose) OR at the bottom (`answerMd`: designated + auto-fallback) — mapped
+ * to its step's data via `renders`. Appearance order (prose first), deduped. An id with no matching render is
+ * skipped (a hallucinated token → nothing to hand back).
+ */
+export function resolveOutputs(answerMd: string, summary: string, renders: TokenRender[]): AgentOutput[] {
+    const ids: string[] = [];
+    for (const id of tokenIdsIn(summary)) if (!ids.includes(id)) ids.push(id);
+    for (const id of tokenIdsIn(answerMd)) if (!ids.includes(id)) ids.push(id);
+    const out: AgentOutput[] = [];
+    for (const id of ids) { const r = renders.find(x => x.id === id); if (r) out.push(toOutput(r)); }
+    return out;
 }
 
 /** Serialize answer-set items to markdown (shared by AnswerSet.toMarkdown + finalizeAnswer). Text verbatim;

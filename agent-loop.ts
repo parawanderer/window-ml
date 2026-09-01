@@ -14,6 +14,7 @@
 
 import type { AgentResult, AgentTranscriptEntry, ApprovalDecision, ToolCall, RenderDescriptor, ToolFeedback, SubcallUsage } from "./contract";
 import type { AnswerCandidate } from "./answer-set";
+import type { TokenRender } from "./contract";
 import { UNATTENDED_REFUSAL } from "./prompts";
 import { toolToken } from "./util";
 
@@ -211,12 +212,15 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     // Citable outputs this run produced (a python_exec computation, or any opted-in citable step), carried out so
     // the answer's AUTO-FALLBACK can surface the run's PRIMARY output if the model neither cited nor designated one.
     const answerCandidates: AnswerCandidate[] = [];
+    // Per-step render data for citable steps, so the outputs resolver can turn a cited/designated token into its
+    // structured value (res.outputs — the headless-scripting payload).
+    const tokenRenders: TokenRender[] = [];
     let seq = 0;
     // Live token stats for the chat_metadata tool: promptLast = the last call's prompt tokens (current
     // context occupancy), genTotal = completion tokens summed across the run. Accurate on both worlds since
     // the loop is shared. `calls` = model turns so far.
     let promptLast = 0, genTotal = 0, modelCalls = 0;
-    const cancelled = (steps: number): Omit<AgentResult, "hash"> => ({ summary: "Cancelled by the caller.", steps, transcript, elements: [], cancelled: true, answerCandidates });
+    const cancelled = (steps: number): Omit<AgentResult, "hash"> => ({ summary: "Cancelled by the caller.", steps, transcript, elements: [], cancelled: true, answerCandidates, tokenRenders });
 
     for (let step = 1; step <= maxSteps(); step++) {
         if (signal?.aborted) return cancelled(step - 1);
@@ -246,7 +250,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             const reasoningText = typeof msg.reasoning === "string" ? msg.reasoning.trim() : "";
             const answer = (msg.content || "").trim() || reasoningText;
             if (answer) transcript.push({ assistant: answer });
-            return { summary: answer, steps: step - 1, transcript, elements: [], answerCandidates };
+            return { summary: answer, steps: step - 1, transcript, elements: [], answerCandidates, tokenRenders };
         }
         // The step's prose (content), token usage, and the separate reasoning channel ride one emit
         // (or a usage/reasoning-only emit when there's no prose — a model that thinks in reasoning_content
@@ -377,6 +381,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             // A candidate for the auto-appended "primary output": a python_exec computation always, or ANY
             // opted-in citable step (the model flagged it as a result). Exploratory exec/surveys don't qualify.
             if (tokenId && (call.name === "python_exec" || wantsToken)) answerCandidates.push({ token: tokenId, tool: call.name, seq: s });
+            if (tokenId) tokenRenders.push({ id: tokenId, tool: call.name, render: tr?.renderOut, result });   // → res.outputs
             const forModel = (tokenId && wantsToken)
                 ? `${result}\n\n[output token @tool:${tokenId} — cite this exact result in your final answer (or add to ml.answer) as a markdown link, e.g. [label](@tool:${tokenId}:out); use ":in" for the call/code]`
                 : result;
@@ -395,5 +400,5 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         // next step reasons over the real pixels (the native `look` path; a text-only driver omits the dep).
         if (pendingImages.length) deps.pushToolImages?.(messages, pendingImages);
     }
-    return { summary: `Stopped at the ${maxSteps()}-step cap without finishing.`, steps: maxSteps(), transcript, elements: [], hitCap: true, answerCandidates };
+    return { summary: `Stopped at the ${maxSteps()}-step cap without finishing.`, steps: maxSteps(), transcript, elements: [], hitCap: true, answerCandidates, tokenRenders };
 }

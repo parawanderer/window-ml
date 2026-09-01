@@ -1136,7 +1136,9 @@ function TokenRef({ seg, run }: { seg: Extract<import("../answer-tokens").Answer
     const label = seg.label && seg.label.trim() && seg.label.trim() !== rawText.trim() ? seg.label.trim() : "";
     const isLatex = seg.fmt === "latex" && !!rawText;
     const { node, block } = isLatex
-        ? { node: <span dangerouslySetInnerHTML={{ __html: markdown(`$${rawText}$`, { math: true }) }} />, block: false }
+        // Use EXPLICIT `\(…\)` delimiters, not `$…$` — single-`$` inline math only typesets when the content
+        // carries a math signal (`\`/`^`/`_`), so a bare value like `5` would render as the literal text "$5$".
+        ? { node: <span dangerouslySetInnerHTML={{ __html: markdown(`\\(${rawText}\\)`, { math: true }) }} />, block: false }
         : tokenRender(d, rawText);
     const tip = (label && !block ? `${label} · ` : "") + provenance;   // inline → prepend the label to the tooltip
     return <span class={`tok-ref ${block ? "tok-block" : "tok-inline"}`} role="button" tabIndex={0}

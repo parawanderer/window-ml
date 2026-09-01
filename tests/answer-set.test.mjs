@@ -1,7 +1,7 @@
 // The pure answer-set core (answer-set.ts): the ordered, curatable user-facing result of a run.
 import { test } from "node:test";
 import assert from "node:assert";
-import { AnswerSet, answerItemFromString, TOOL_TOKEN_PREFIX, makeAnswerFacade, finalizeAnswer } from "../answer-set.ts";
+import { AnswerSet, answerItemFromString, TOOL_TOKEN_PREFIX, makeAnswerFacade, finalizeAnswer, resolveOutputs } from "../answer-set.ts";
 
 const el = (nodes, preview, extra = {}) => ({ kind: "element", nodes, preview, ...extra });
 const txt = (text) => ({ kind: "text", text });
@@ -180,4 +180,47 @@ test("finalizeAnswer: MULTIPLE designated outputs all render, stacked, each dedu
 test("answerItemFromString: a note becomes the token caption; plain text ignores note", () => {
     assert.deepEqual(answerItemFromString("@tool:aaaaaa:out", "cap"), { kind: "token", ref: "@tool:aaaaaa:out", preview: "cap" });
     assert.deepEqual(answerItemFromString("hello", "cap"), { kind: "text", text: "hello" });
+});
+
+// --- resolveOutputs: the structured JS payload (res.outputs) for HEADLESS scripting ---------------------
+test("resolveOutputs: a designated DataFrame → a { kind:'table', columns, rows } 2D matrix", () => {
+    const renders = [{ id: "aaaaaa", tool: "python_exec", render: { type: "python-out", df: { columns: ["Rep", "Total"], rows: [["Gia", 850], ["Kim", 810]] } } }];
+    const outs = resolveOutputs("[top reps](@tool:aaaaaa:out)", "The top rep is Gia.", renders);
+    assert.deepEqual(outs, [{ id: "aaaaaa", tool: "python_exec", kind: "table", columns: ["Rep", "Total"], rows: [["Gia", 850], ["Kim", 810]] }]);
+});
+
+test("resolveOutputs: a python dict/list value is PARSED to the real JS object (not a stringified blob)", () => {
+    const renders = [{ id: "bbbbbb", tool: "python_exec", render: { type: "python-out", value: '{"grand": 6260, "regions": ["East", "West"]}' } }];
+    const outs = resolveOutputs("[stats](@tool:bbbbbb:out)", "done", renders);
+    assert.deepEqual(outs[0], { id: "bbbbbb", tool: "python_exec", kind: "value", value: { grand: 6260, regions: ["East", "West"] } });
+    // a NON-json value stays a string
+    assert.equal(resolveOutputs("[v](@tool:cccccc:out)", "", [{ id: "cccccc", tool: "exec", result: "just text" }])[0].value, "just text");
+});
+
+test("resolveOutputs: INLINE cites + BOTTOM designations both resolve, in appearance order, deduped", () => {
+    const renders = [
+        { id: "aaaaaa", tool: "exec", result: "42" },
+        { id: "bbbbbb", tool: "python_exec", render: { type: "python-out", df: { columns: ["x"], rows: [[1]] } } },
+    ];
+    // inline cite of aaaaaa in the prose; bbbbbb designated at the bottom.
+    const outs = resolveOutputs("[table](@tool:bbbbbb:out)", "The count is [n](@tool:aaaaaa:out).", renders);
+    assert.deepEqual(outs.map(o => o.id), ["aaaaaa", "bbbbbb"], "prose (inline) first, then the bottom; deduped by id");
+    assert.equal(outs[0].kind, "value"); assert.equal(outs[0].value, "42");
+    assert.equal(outs[1].kind, "table");
+});
+
+test("resolveOutputs: an ELEMENTS output → serialized item previews (live nodes stay in res.elements)", () => {
+    const renders = [{ id: "cccccc", tool: "exec", render: { type: "elements", items: [{ path: "div#a", text: "A" }, { path: "div#b" }] } }];
+    assert.deepEqual(resolveOutputs("[els](@tool:cccccc:out)", "found", renders)[0],
+        { id: "cccccc", tool: "exec", kind: "elements", items: [{ path: "div#a", text: "A" }, { path: "div#b" }] });
+});
+
+test("resolveOutputs: an image → a data URL; code → its text; a hallucinated id is skipped", () => {
+    const renders = [
+        { id: "dddddd", tool: "look", render: { type: "look", image: "data:image/png;base64,AAAA" } },
+        { id: "eeeeee", tool: "exec", render: { type: "code", text: "1 + 1", lang: "javascript" } },
+    ];
+    assert.deepEqual(resolveOutputs("[shot](@tool:dddddd:out)", "", renders)[0], { id: "dddddd", tool: "look", kind: "image", dataUrl: "data:image/png;base64,AAAA" });
+    assert.deepEqual(resolveOutputs("[src](@tool:eeeeee:in)", "", renders)[0], { id: "eeeeee", tool: "exec", kind: "code", text: "1 + 1", lang: "javascript" });
+    assert.deepEqual(resolveOutputs("[gone](@tool:zzzzzz:out)", "", []), [], "a hallucinated token → nothing, no crash");
 });
