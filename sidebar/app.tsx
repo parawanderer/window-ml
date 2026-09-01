@@ -1324,6 +1324,7 @@ const APPROVAL = {
     sandbox: { label: "auto-approved", tip: "Auto-approved by the python_exec setting — a readonly-mode run is isolated by construction (no network / JS scope / DOM / filesystem)." },
     "same-origin": { label: "auto-approved", tip: "Same-site action — a navigation or an uncredentialed fetch to this origin (or one you already allowed this run). The page could do it itself, so no prompt." },
     consented: { label: "auto-approved", tip: "A URL you already approved fetching this session — no re-prompt." },
+    "self-source": { label: "auto-approved", tip: "An uncredentialed read of the agent's OWN repo source (code / structural API, not issues or other user-generated prose) — free via the Self-source setting." },
     user: { label: "approved", tip: "Approved by you." },
     denied: { label: "denied", tip: "Denied by you." },
     skipped: { label: "skipped", tip: "No prompt needed — the target didn't resolve (no element / stale @pt / bad selector), so the action could only fail. It never ran." },

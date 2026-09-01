@@ -18,7 +18,7 @@ import type { TokenRender } from "./contract";
 import { UNATTENDED_REFUSAL } from "./prompts";
 import { toolToken } from "./util";
 
-export type Approval = "readonly" | "sandbox" | "same-origin" | "consented" | "user" | "denied" | "skipped" | "cancelled";
+export type Approval = "readonly" | "sandbox" | "same-origin" | "consented" | "self-source" | "user" | "denied" | "skipped" | "cancelled";
 export interface ToolMeta { name: string; requiresApproval?: boolean; capabilities?: string[]; }
 // The tool's serializable result. `renderIn`/`renderOut` are the debug-render slots computed by the
 // executor's world (page-side for the delegated path) so the emitter can show a rendered In/Out.

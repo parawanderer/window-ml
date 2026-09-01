@@ -639,7 +639,7 @@ test("GET_CONFIG returns the model/ocrModel/apiFormat and withholds the URL and 
     assert.deepEqual(res.data, {
         model: "qwen3:235b", ocrModel: "qwen2.5vl", ocrNumCtx: 8192, apiFormat: "ollama", defaultModelVision: "",
         utilityModel: "", utilityNumCtx: 4096, utilityForceCpu: false, autoApproveReadonly: true, autoApprovePython: true,
-        autoApproveSameOriginAuth: false,
+        autoApproveSameOriginAuth: false, autoApproveSelfSource: true,
         pierceClosedShadow: true, cdp: false,
         groundingEnabled: false, groundingModel: "", groundingRange: 1000, debugMode: "off",
         // Computed per-origin: no sender.tab in this harness call → not on the whitelist → false. The raw

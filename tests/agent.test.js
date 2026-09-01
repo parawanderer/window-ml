@@ -1136,6 +1136,28 @@ test("answer(selector) ≡ ml.queryAll(selector): the designated nodes are EXACT
     assert.deepEqual(set.elements(), expected, "res.elements would be EXACTLY ml.queryAll('.card')");
 });
 
+test("autoApproveSelfSource: an uncredentialed read of the OWN repo source auto-approves; an issue / OFF gates", async () => {
+    // The repo is BUILD_INFO.repoUrl (parawanderer/window-ml). A raw committed file auto-approves when the flag
+    // is on; a user-prose endpoint (an issue) always gates; and the flag OFF gates even the source read.
+    const SELF = "https://raw.githubusercontent.com/parawanderer/window-ml/main/injected.ts";
+    const ISSUE = "https://api.github.com/repos/parawanderer/window-ml/issues/1";
+    const gateCount = async (url, selfSource) => {
+        const model = scriptedModel([toolCall("fetch_url", { url }, "c1"), reply("done")]);
+        let gates = 0;
+        const world = loadPageWorld({
+            config: { autoApproveSelfSource: selfSource },
+            onRuntimeMessage: (m) => m.type === "FETCH_URL"
+                ? { data: { url: m.payload.url, ok: true, status: 200, type: "text", text: "…source…" } }
+                : model(m),
+        });
+        await world.ml.agent("read my source", { tools: [world.ml.fetchTool()], approve: () => { gates++; return true; } });
+        return gates;
+    };
+    assert.equal(await gateCount(SELF, true), 0, "a self-repo SOURCE read auto-approves (no gate) when the flag is on");
+    assert.equal(await gateCount(ISSUE, true), 1, "a self-repo ISSUE (user prose) still GATES");
+    assert.equal(await gateCount(SELF, false), 1, "the flag OFF gates even the source read");
+});
+
 test("agent: a pre-aborted signal cancels before any model call (resolves, doesn't reject)", async () => {
     const ac = new AbortController();
     ac.abort();

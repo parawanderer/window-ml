@@ -16,6 +16,8 @@ import { runAgentLoop, shotTurnMessage } from "./agent-loop";
 import type { ToolMeta, AgentLoopDeps, ToolRunResult } from "./agent-loop";
 import { autoApprovePython } from "./auto-approve";
 import { externalSheetIds } from "./dom";
+import { isSelfSourceUrl } from "./self-source";
+import { BUILD_INFO } from "./build-info.gen";
 
 /** The run's resolved setup, sent from ml.agent's START_RUN shim. The system prompt is built PAGE-SIDE
  *  (it needs page context + the vision/answer/compute clauses + the toolset), so the background receives
@@ -29,6 +31,7 @@ export interface RunAgentConfig {
     maxSteps?: number;
     autoApprovePython?: boolean;   // the trusted config flag, read background-side
     autoApproveSameOriginAuth?: boolean;   // Advanced opt-in: auto-approve a same-origin as-you (credentialed) fetch
+    autoApproveSelfSource?: boolean;       // default on: auto-approve an uncredentialed read of the agent's OWN repo source
     unattended?: boolean;          // headless run: refuse any call that reaches the human gate (see ml.agent's `unattended`)
     toolTokens?: boolean;          // surface `@tool:<id>` on rich tool results (see ml.agent's `toolTokens`)
     runId?: string;                // the run's hash — seeds the deterministic tool-token ids
@@ -157,6 +160,9 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
                 }
                 // Uncredentialed same-origin → free (a plain GET, or an incognito render). Cross-origin gates.
                 if (sameOrigin) return "same-origin";
+                // ...UNLESS it's an uncredentialed read of the agent's OWN repo source (code / structural API,
+                // NOT a prose endpoint) — free via the Self-source setting. Plain GET only (a rendered load asks).
+                if (cfg.autoApproveSelfSource && !(args as { rendered?: unknown }).rendered && isSelfSourceUrl(url, BUILD_INFO.repoUrl)) return "self-source";
                 return deps.fetchNeedsConsent?.(url) ? null : "consented";
             }
             return null;

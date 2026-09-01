@@ -96,6 +96,12 @@ export interface MlConfig {
      *  their session is spent. NEVER affects CROSS-origin (always asks) or the uncredentialed same-origin free
      *  path (already free). */
     autoApproveSameOriginAuth: boolean;
+    /** Default ON. When ON, an UNCREDENTIALED `fetch_url`/`ml.fetch` GET of the agent's OWN repo SOURCE —
+     *  committed files (raw.githubusercontent) or structural/code API endpoints (api.github /repos), locked to
+     *  `BUILD_INFO.repoUrl` — auto-approves (no prompt), so the agent can read its own code. Never applies to
+     *  user-generated PROSE endpoints (issues/pulls/comments/discussions/reviews/releases — a prompt-injection
+     *  surface) or a credentialed fetch: those still ask. See self-source.ts. */
+    autoApproveSelfSource: boolean;
     /** Hostnames the USER has trusted to supply their OWN ml.agent approval gate (a page's
      *  `approve` callback / the page-loop confirm). Empty by default: EVERY other origin's
      *  privileged tool calls route through the unforgeable background gate + trusted surface,
@@ -339,6 +345,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     autoApproveReadonly: true,
     autoApprovePython: true,
     autoApproveSameOriginAuth: false,   // Advanced, default off: a same-origin as-you fetch always asks
+    autoApproveSelfSource: true,        // default on: an uncredentialed read of the agent's OWN repo source is free
     pierceClosedShadow: true,
     cdp: false,
     pageApprovalDomains: [],
@@ -366,7 +373,7 @@ export const detectGroundingModel = (models: string[]): string =>
  *  ml.agent can decide whether to route a run through the unforgeable BACKGROUND loop (design A —
  *  when a debug surface is enabled) or the in-page loop (off). It's UI state, not a secret. */
 export type MlPublicConfig = Pick<MlConfig,
-    "model" | "ocrModel" | "ocrNumCtx" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "autoApprovePython" | "autoApproveSameOriginAuth" | "pierceClosedShadow" | "cdp" | "groundingEnabled" | "groundingModel" | "groundingRange" | "debugMode" | "defaultModelVision"> & {
+    "model" | "ocrModel" | "ocrNumCtx" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "autoApprovePython" | "autoApproveSameOriginAuth" | "autoApproveSelfSource" | "pierceClosedShadow" | "cdp" | "groundingEnabled" | "groundingModel" | "groundingRange" | "debugMode" | "defaultModelVision"> & {
     /** COMPUTED per request (not stored): whether THIS page's origin is on the user's page-approval
      *  whitelist. When true, ml.agent honours the page's own approve()/confirm gate (the user trusts this
      *  domain); otherwise a privileged tool routes to the unforgeable background gate. The raw domain
@@ -1016,6 +1023,8 @@ export interface StartRunPayload {
     /** config flag → auto-approve a same-origin as-you (credentialed) fetch (the security gate is enforced
      *  background-side from getConfig too, so a forged value only affects the prompt, never the actual fetch) */
     autoApproveSameOriginAuth?: boolean;
+    /** config flag → auto-approve an uncredentialed read of the agent's OWN repo source (self-source.ts) */
+    autoApproveSelfSource?: boolean;
     /** trusted config flag → the background may auto-approve an in-dialect exec survey */
     autoApproveReadonly: boolean;
     /** agent option → surface `@tool:<id>` tokens on rich tool results (so the model can cite exact outputs) */
@@ -1408,7 +1417,7 @@ export interface DebugAgentStep extends DebugBase {
     /** How an approval-gated tool call was decided (undefined for tools that don't
      *  require approval). The sidebar renders it as a green/red provenance badge —
      *  and it's the slot a future interactive-approval control resolves into. */
-    approval?: "readonly" | "sandbox" | "same-origin" | "consented" | "user" | "denied" | "skipped" | "cancelled";
+    approval?: "readonly" | "sandbox" | "same-origin" | "consented" | "self-source" | "user" | "denied" | "skipped" | "cancelled";
     /** button #3: the persistable egress grants this call would establish (its `ml.fetch` literal URLs),
      *  extracted background-side. Present on a pending approval step when there's ≥1 — the sidebar/HUD then
      *  offer an "Approve + remember" control and unfurl exactly this list (what's shown IS what persists). */
