@@ -4636,6 +4636,20 @@ function assertInlineResolved(root) {
     assert.ok(tok.querySelector(".katex") && !tok.querySelector(".katex-display"), "…inline-mode KaTeX");
 }
 
+test("answer render: a comma-inline `| latex` cite (no newlines) is INLINE, not a display block — run 918874", async () => {
+    // The EXACT text the model wrote: the citation is mid-sentence (comma right after, no blank line), so it
+    // must render INLINE. (A stale `!`-embed build rendered every `![…]` as a display block — this guards it.)
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("ex", "differentiate"));
+    await w.dispatch(agentStep("ex", 1, { seq: 1, tool: "python_exec", token: "918874", result: "3x^2",
+        renderOut: { type: "python-out", value: "3x^{2} + 4x - 5", latex: true } }));
+    await w.dispatch(agentResult("ex", "The derivative is ![result](@tool:918874:out | latex), which is typeset inline.", 1));
+    w.shadow.querySelector(".row").click(); await w.tick();
+    const tok = w.shadow.querySelector(".msg.asst .answer-rendered .tok-ref");
+    assert.ok(tok?.classList.contains("tok-inline") && !tok.classList.contains("tok-block"), "a comma-inline citation is INLINE");
+    assert.ok(tok.querySelector(".katex") && !tok.querySelector(".katex-display"), "inline-mode KaTeX (not a display block)");
+});
+
 test("answer render (DevTools): an inline `| latex` cite of a PRIOR turn's hex token resolves + renders inline", async () => {
     const w = await loadSidebarWorld();
     await inlineHexLatexRun(w);

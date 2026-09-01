@@ -1573,9 +1573,12 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             const nullWarn = (v === null || v === undefined) && stdoutClipped
                 ? "\n\n⚠ Your code RETURNED null (None) — you printed to stdout but didn't RETURN a value, so there's nothing to cite. Whatever the user should SEE, RETURN it (a pandas DataFrame renders as a readable table; a dict/number is fine); stdout is just a debug log."
                 : "";
-            // A sympy expression return auto-rendered to LaTeX (python-runtime detected the type): flag the
-            // descriptor so the surfaces typeset it — no `| latex` cast needed. `| raw` still overrides.
-            if (r.render === "latex") return done(`${pre}${text}`, { value: text, latex: true });
+            // Auto-typeset a LaTeX return, no `| latex` cast needed (`| raw` overrides). Two ways it's detected:
+            // (1) python-runtime saw a sympy TYPE and set r.render; (2) the value is a LaTeX STRING — a braced
+            // sub/superscript or a LaTeX command — which catches a model that returns `sympy.latex(expr)` (a
+            // string) rather than the expression. The pattern is specific enough to skip ordinary text.
+            const looksLatex = typeof v === "string" && /[\^_]\{|\\(frac|sqrt|left|right|cdot|times|div|sum|prod|int|sin|cos|tan|log|ln|exp|lim|infty|partial|nabla|alpha|beta|gamma|delta|theta|lambda|mu|sigma|pi|begin)\b/.test(v);
+            if (r.render === "latex" || looksLatex) return done(`${pre}${text}`, { value: text, latex: true });
             return done(`${pre}${text}${castHint}${nullWarn}`, { value: text });
         },
     });

@@ -2957,6 +2957,18 @@ test("python_exec tool: a render:'latex' return flags the descriptor so the surf
     assert.equal(out.render.value, "2 x e^{3 x}", "…carrying the LaTeX value");
 });
 
+test("python_exec tool: a LaTeX-STRING value auto-flags latex (a sympy.latex() return typesets with no cast)", async () => {
+    // A model that returns `sympy.latex(expr)` hands back a STRING (no sympy type for python-runtime to catch);
+    // the tool detects it looks like LaTeX and flags the descriptor so `:out` typesets without `| latex`.
+    const { ml } = loadDomWorld();
+    ml.pythonExec = async () => ({ ok: true, value: "3 x^{2} + 4 x - 5", stdout: "" });
+    assert.equal((await ml.pythonTool().run({ code: "return sympy.latex(df)" })).render.latex, true, "a LaTeX-looking string auto-flags latex");
+    // An ordinary string is NOT treated as latex.
+    ml.pythonExec = async () => ({ ok: true, value: "the grand total is 42", stdout: "" });
+    const out = await ml.pythonTool().run({ code: "return summary" });
+    assert.ok(!out.render || !out.render.latex, "an ordinary string is NOT auto-latex");
+});
+
 test("_resolveTable: throws for a selector that matches nothing", () => {
     const { ml } = loadDomWorld(`<div></div>`);
     assert.throws(() => ml._resolveTable("#nope"), /no table element matches/);
