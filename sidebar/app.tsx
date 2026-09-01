@@ -19,10 +19,10 @@ import { OptionsBlock, MessageTurn, ProfileBadge, SessionRow, AgentBadge } from 
 import { AgentRunView } from "./agent-detail";
 import { Composer } from "./composer";
 import { fetchModels, pollPs, pollBackendHealth, VramPanel, PythonBench, ModelStatusDot, BACKEND_HEALTH_MS, VRAM_POLL_MS } from "./vram";
+import { CardApp, endActiveCardDrag } from "./hud-card";
 import {
-    CardApp, composerOpen, composerElement, composerTarget, selectedRun, cardSteerHash,
-    setCardCollapsed, endActiveCardDrag,
-} from "./hud-card";
+    composerOpen, composerElement, composerTarget, selectedRun, cardSteerHash, setCardCollapsed,
+} from "./card-state";
 import { shownModel, sessionProfile } from "./model";
 import { exportSession, printSession } from "./export";
 import { applyTheme, applyFont, applyCodePrefs, initThemeStyle } from "./prefs";
