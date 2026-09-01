@@ -97,6 +97,11 @@ function emitTokenBlock(step: AgentStep, slot: "in" | "out", d: Sink): void {
     if (desc?.type === "python-in") { d.code(desc.code, "python"); return; }   // just the code, not the input table
     if (desc?.type === "python-out" && desc.df) { d.table(desc.df.columns, desc.df.rows); return; }
     if (desc?.type === "python-out" && desc.image) { d.image(desc.image, base, "returned image"); return; }
+    // A python-out SCALAR: render the CLEAN structured field (value/stdout), NOT `step.result` — the model-facing
+    // result string carries a prelude ("[loaded, reference directly] a … DataFrame → `df`.") meant for the model,
+    // which the descriptor's own `value`/`stdout` never contains. Mirrors the sidebar's tokenRender; using the
+    // structured field (not a regex on the string) stays correct as more model-facing hints are added over time.
+    if (desc?.type === "python-out" && (desc.value != null || desc.stdout != null)) { d.code(desc.value ?? desc.stdout ?? ""); return; }
     const raw = slot === "in" ? (step.arguments ? pretty(step.arguments) : "") : (step.result ?? "");
     if (raw) d.code(raw);
 }

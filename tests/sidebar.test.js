@@ -4582,3 +4582,17 @@ test("answer render (sidebar): a `| latex` citation renders an IMAGINARY / compl
     assert.ok(reply.querySelector(".katex"), "the complex result typesets via KaTeX (no throw on `i`)");
     assert.match(reply.textContent, /3/, "the imaginary component is present");
 });
+
+test("answer render (sidebar): a :out citation of a python SCALAR shows the CLEAN value, not the model-facing prelude", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("pys", "compute the total"));
+    // result carries the model-facing prelude; renderOut.value is the clean "6260" (the citation must use the latter).
+    await w.dispatch(agentStep("pys", 1, { seq: 1, tool: "python_exec", token: OUT,
+        result: "[loaded, reference directly] a 12×6 DataFrame → `df`.\n\n6260", renderOut: { type: "python-out", value: "6260" } }));
+    await w.dispatch({ ...agentResult("pys", `The grand total is [total](@tool:${OUT}:out).`, 1), answer: "" });
+    await openRun(w);
+    const tok = w.shadow.querySelector(".msg.asst .answer-rendered .tok-ref");
+    assert.ok(tok, "the citation renders");
+    assert.match(tok.textContent, /6260/, "the clean value shows");
+    assert.doesNotMatch(tok.textContent, /loaded, reference directly/, "the model-facing prelude is NOT in the citation");
+});

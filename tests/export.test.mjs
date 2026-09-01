@@ -66,6 +66,27 @@ test("@tool citations in an answer RESOLVE to the cited step's output; unresolve
     assert.match(md, new RegExp(`@tool:${id}:out`), "the raw disclosure keeps the literal link");
 });
 
+test("@tool :out of a python SCALAR renders the CLEAN value in the ANSWER, not the model-facing prelude", async () => {
+    // The python result string carries a model-facing prelude ("[loaded, reference directly] … df."); the
+    // structured descriptor's `value` is the clean "6260". The citation must render the CLEAN value — via the
+    // descriptor field, not a regex, and not `step.result`. (The step TRACE keeps the model-facing result per the
+    // raw-view rule, so we isolate the ANSWER section.)
+    const { toolToken } = await import("../util.ts");
+    const hash = "pyrun01";
+    const id = toolToken(hash, 1);
+    const s = {
+        hash, kind: "agent", model: "qwen", tag: "session", createdTs: 1, lastTs: 2, status: "ok", turns: [], answers: [],
+        summary: `The grand total is [total](@tool:${id}:out).`,
+        steps: [{ step: 1, seq: 1, tool: "python_exec", token: id,
+            result: "[loaded, reference directly] a 12×6 DataFrame → `df`.\n\n6260",
+            renderOut: { type: "python-out", value: "6260" } }],
+    };
+    const { md } = serializeSession(s);
+    const answerPart = md.slice(md.indexOf("## Answer"));   // the trace (with the model-facing result) is above this
+    assert.match(answerPart, /6260/, "the clean value is rendered at the citation");
+    assert.doesNotMatch(answerPart, /loaded, reference directly/, "the model-facing prelude is NOT in the citation render");
+});
+
 test("a step's model-facing Out (with an @tool token line) stays recoverable in BOTH sinks (raw-view rule)", () => {
     const s = {
         hash: "tt1", kind: "agent", model: "qwen3", tag: "session", createdTs: 1, lastTs: 2, status: "ok",
