@@ -139,13 +139,13 @@ export function markdown(src: string, opts: { math?: boolean } = {}): string {
         .replace(/\$\$([\s\S]+?)\$\$/g, (_, t: string) => stashMath(t, true))
         .replace(/\\\[([\s\S]+?)\\\]/g, (_, t: string) => stashMath(t, true))
         .replace(/\\\(([\s\S]+?)\\\)/g, (_, t: string) => stashMath(t, false))
-        // Single-$ inline math. The regex enforces no-space-adjacency (open `$` not followed by space, close
-        // `$` not preceded by space, not escaped, close not followed by a digit) — that alone rules out
-        // "$5 or $10" currency and "$ x $". We render when EITHER the content carries a math signal
-        // (`\`/`^`/`_` → `$6 \times 7$`, `$mc^2$`) OR it has NO internal whitespace (`$x$`, `$a+b$`, `$x_1$`) —
-        // the latter is the fix for a bare `$x$` (was left literal), while a whitespace-y prose span that
-        // happens to pair two `$` (the "FY sales ($k)". This …($k)" slop) still stays literal.
-        .replace(/(?<![\\$])\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\d)/g, (m: string, t: string) => /[\\^_]/.test(t) || !/\s/.test(t) ? stashMath(t, false) : m);
+        // Single-$ inline math — the canonical Pandoc/KaTeX-auto-render DELIMITER rule, NOT a content sniff:
+        // a `$` opens math when it's not escaped (`\$`), not part of `$$`, and NOT followed by a space; it
+        // closes at the next `$` that is NOT preceded by a space and NOT followed by a digit (which rules out
+        // "$5 or $10" currency and "$ x $"). Real renderers don't inspect the CONTENT (no "needs a `\`/`^`")
+        // — so `$r = 2$`, `$y(x) = u(t)$`, `$y(x) =$` all typeset. The only cost is a rare prose span that
+        // pairs two `$` around spaced text (e.g. `…($k)". …($k)`) rendering as math — an accepted edge case.
+        .replace(/(?<![\\$])\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\d)/g, (_m: string, t: string) => stashMath(t, false));
     const text = escapeHtml(mathed);
     // Recursively resolve emphasis so it NESTS: `**a _b_ c**` → <strong>a <em>b</em> c</strong>. Each match
     // re-runs emph on its own inner content, so an italic inside a bold (or vice-versa) still resolves — the old

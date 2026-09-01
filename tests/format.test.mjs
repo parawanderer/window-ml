@@ -88,10 +88,14 @@ test("blockquote: consecutive `>` lines join; a blank quoted line splits paragra
         "<blockquote><p>para one</p><p>para two</p></blockquote>");
 });
 
-// --- inline single-$ math (space-adjacency rule) ---
-test("inline $x$ (no internal space) typesets; currency / spaced $…$ does not", () => {
+// --- inline single-$ math (Pandoc/KaTeX delimiter rule — space-adjacency, NOT a content sniff) ---
+test("inline $…$ typesets by the delimiter rule (spaced expressions included); currency does not", () => {
     assert.ok(markdown("the variable $x$ here", { math: true }).includes("katex"), "$x$ renders as math");
     assert.ok(markdown("$a+b$ and $mc^2$", { math: true }).includes("katex"), "$a+b$ / $mc^2$ render");
+    // Spaced expressions with NO backslash/caret must render too — the reason we dropped the content sniff.
+    assert.ok(markdown("With the double root $r = 2$, done.", { math: true }).includes("katex"), "$r = 2$ (spaced, no signal) renders");
+    assert.ok(markdown("and $y(x) = u(t)$ transforms", { math: true }).includes("katex"), "$y(x) = u(t)$ renders");
+    assert.ok(markdown("the solution is $y(x) =$ next", { math: true }).includes("katex"), "$y(x) =$ (trailing =) renders");
+    // Currency stays literal purely via the space-adjacency guard (closing $ is preceded by a space / no close).
     assert.ok(!markdown("It costs $5 or $10.", { math: true }).includes("katex"), "currency is not math");
-    assert.ok(!markdown('"FY sales ($k)". Also "FY sales ($k)".', { math: true }).includes("katex"), "spaced prose $…$ is not math");
 });

@@ -156,16 +156,19 @@ test("assistant markdown renders LaTeX math via KaTeX ($…$ inline, $$…$$ dis
     assert.match(body.textContent, /It costs \$5 or \$10\./, "currency stays literal, not math");
 });
 
-test("inline $…$ with NO math signal (dollars in prose) is NOT rendered as math — the 'FY sales ($k)' slop", async () => {
+test("inline $…$ follows the delimiter rule: currency stays literal; a rare paired-prose span is the accepted edge case", async () => {
+    // We render inline `$…$` by the standard Pandoc/KaTeX DELIMITER rule (space-adjacency), not a content
+    // sniff — so spaced math like `$r = 2$` typesets (see tests/format.test.mjs). The accepted cost is that a
+    // rare prose span pairing two `$` around spaced text (`($k)". … ($k)`) renders as math. CURRENCY still
+    // stays literal, because the closing `$` is preceded by a space / has no valid close.
     const w = await loadSidebarWorld();
-    await w.dispatch(chatStart("slop", 0, "q"));
-    // Two $k) in prose used to pair into a giant italic math span.
-    await w.dispatch(chatResult("slop", 0, 'A table titled "FY sales ($k)". This looks like the "FY sales ($k)" big one.'));
+    await w.dispatch(chatStart("cur", 0, "q"));
+    await w.dispatch(chatResult("cur", 0, "The item costs $5 or $10 depending."));
     w.shadow.querySelector(".row").click();
     await w.tick();
     const body = w.shadow.querySelector(".msg.asst .md");
-    assert.equal(body.querySelector(".katex"), null, "no KaTeX — the $…$ has no math signal (\\, ^, _)");
-    assert.match(body.textContent, /FY sales \(\$k\)". This looks like the "FY sales \(\$k\)"/, "prose stays literal");
+    assert.equal(body.querySelector(".katex"), null, "currency is not math (space-adjacency guard)");
+    assert.match(body.textContent, /costs \$5 or \$10 depending/, "currency prose stays literal");
 });
 
 test("composer usage gauge: fills against the loaded model's context window (occupancy = latest turn, not a sum)", async () => {
