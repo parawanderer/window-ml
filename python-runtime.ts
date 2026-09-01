@@ -186,6 +186,7 @@ result = None
 _ml_src = ${JSON.stringify(code)}
 _out = io.StringIO()
 _err = None
+_ml_ret_latex = False
 with contextlib.redirect_stdout(_out), contextlib.redirect_stderr(_out):
     try:
         import ast as _ast, textwrap as _tw
@@ -197,6 +198,17 @@ with contextlib.redirect_stdout(_out), contextlib.redirect_stderr(_out):
         if isinstance(_ml_body[-1], _ast.Expr):
             _ml_body[-1] = _ast.copy_location(_ast.Return(_ml_body[-1].value), _ml_body[-1])
             _ast.fix_missing_locations(_ml_tree)
+        # If the RETURNED value is a latex(...) call (sympy.latex / sp.latex / a bare latex from
+        # "from sympy import latex"), the string it produces IS LaTeX — remember it so the epilogue flags the
+        # render (typeset, no pipe cast) even for a plain scalar like sympy.latex(5) == "5". Covers a
+        # trailing expr, an explicit return, and a result = ... assignment.
+        def _ml_is_latex_call(_n):
+            return isinstance(_n, _ast.Call) and ((isinstance(_n.func, _ast.Attribute) and _n.func.attr == "latex") or (isinstance(_n.func, _ast.Name) and _n.func.id == "latex"))
+        for _n in _ast.walk(_ml_tree):
+            if isinstance(_n, _ast.Return) and _n.value is not None and _ml_is_latex_call(_n.value):
+                _ml_ret_latex = True
+            elif isinstance(_n, _ast.Assign) and _ml_is_latex_call(_n.value) and any(isinstance(_t, _ast.Name) and _t.id == "result" for _t in _n.targets):
+                _ml_ret_latex = True
         exec(compile(_ml_tree, "<python_exec>", "exec"), globals())
         _ret = _user()
         if _ret is not None:
@@ -224,6 +236,9 @@ try:
         import io as _io2, base64 as _b642
         _pbuf = _io2.BytesIO(); result.save(_pbuf, format='PNG')
         _json_result = _json.dumps('data:image/png;base64,' + _b642.b64encode(_pbuf.getvalue()).decode()); _json_render = 'img'
+    # The code RETURNED a latex(...) call's string (AST-detected above) — typeset it, even a bare "5".
+    elif _ml_ret_latex and isinstance(result, str):
+        _json_render = 'latex'
 except Exception:
     _json_render = None
 # If the result is a DataFrame/Series, ALSO serialize it structurally ({columns, rows}) so the UI can

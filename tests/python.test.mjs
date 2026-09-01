@@ -356,3 +356,17 @@ test("auto-render: a plain scalar/list return is untouched (no render hint)", { 
     assert.equal(r.render, undefined, "no auto-render hint for ordinary data");
     assert.deepEqual(r.value, [1, 2, 3]);
 });
+
+test("auto-render: a sympy.latex(...) return is flagged latex by the CODE (AST), even a bare scalar", { skip }, async () => {
+    // The model returns the STRING from sympy.latex() (not the expression). The wrapper's AST sees the latex()
+    // call in the return and flags render:'latex' — so it typesets even a "5" that a string-shape heuristic misses.
+    const r = await pyRun("import sympy as sp\nx = sp.Symbol('x')\nreturn sp.latex(sp.diff(sp.sin(x**2), x))");
+    assert.equal(r.render, "latex", "a sympy.latex(...) return is flagged latex");
+    assert.equal(typeof r.value, "string");
+    const scalar = await pyRun("import sympy as sp\nreturn sp.latex(sp.Integer(5))");
+    assert.equal(scalar.render, "latex", "sympy.latex(scalar) → '5' is still flagged latex (AST, not string shape)");
+    assert.equal(scalar.value, "5");
+    // A non-latex string call is NOT flagged.
+    const plain = await pyRun("return str(5)");
+    assert.equal(plain.render, undefined, "str(5) is not a latex() call → not flagged");
+});
