@@ -142,6 +142,7 @@ const main = async () => {
         utilityModel: backend?.utilityModel || "",
         ocrModel: backend?.visionModel || "",
         modelFilter: "",
+        autoApprovePython: true,   // wire python_exec (auto-approve readonly) so a DataFrame/table probe can run
         debugMode: "overlay",   // so injected emitDebug posts the event stream to the page window
     });
     if (fake) fake.setScript(SCRIPT);

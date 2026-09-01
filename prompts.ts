@@ -92,16 +92,18 @@ export const ANSWER_CLAUSE =
     "it here so the real node reaches the caller. You can also curate it from `exec` for free via " +
     "`ml.answer` (`.add(el | \"text\")`, `.remove(i)`, `.clear()`, `.length`) — no approval.";
 export const TOOLTOKENS_CLAUSE =
-    "\n\nSome tool results end with an `@tool:<id>` token — that means the output (an image, a table, code, a " +
-    "value) is ADDRESSABLE. In your FINAL answer, embed the EXACT output instead of re-typing it: write a markdown " +
-    "link whose URL is the token — e.g. `[the result](@tool:35bf1f:out)`, or `:in` for the call/code. COPY the id " +
-    "verbatim from the result; never invent one. IMPORTANT: any figure or fact in your answer that came from a " +
-    "TOOL or a COMPUTATION — a number you calculated, a table, a value you looked up — should CITE its token, so " +
-    "the human can see the work behind it and trust it rather than take your word. A pure prose answer (nothing " +
-    "computed or fetched) needs no citation. The link's text is a caption, so label it well (e.g. `[per-rep totals](@tool:…:out)`). " +
-    "Do NOT also PASTE the code or the output as prose — a `:in` citation injects your EXACT code verbatim, and " +
-    "`:out` the exact result; cite it once, don't repeat it in the text. Because a `:in` shows the user your " +
-    "code, ALWAYS write it to be read: clear variable names and a short comment on each step's purpose.";
+    "\n\nSome tool results end with an `@tool:<id>` token: that output (image, table, code, value) is ADDRESSABLE. " +
+    "`@tool:<id>` is NOT a hyperlink — it's a MACRO. Where you drop `[caption](@tool:35bf1f:out)` in your FINAL " +
+    "answer, it AUTO-EXPANDS IN PLACE into the ACTUAL output for the reader (the real table / image / value, or the " +
+    "code for `:in`). You are not linking to something they click — you are INSERTING the real output into your text " +
+    "at that exact spot. So write the sentence around the expansion (e.g. `Per-region totals:` then " +
+    "`[per-region totals](@tool:…:out)` on its own line), NEVER `see [the table](…)`. COPY the id verbatim from the " +
+    "result; never invent one. IMPORTANT: any figure or fact from a TOOL or a COMPUTATION — a number you computed, a " +
+    "table, a value you looked up — should CITE its token, so the human sees the work behind it and trusts it instead " +
+    "of taking your word. A pure-prose answer (nothing computed or fetched) needs no citation. The `caption` is a " +
+    "short label shown with the expansion, so name it well. Do NOT also PASTE the code or output as prose — a `:in` " +
+    "injects your EXACT code, `:out` the exact result; cite ONCE. Since `:in` shows the user your code, write it to " +
+    "be READ: clear names + a short comment on each step.";
 export const SHADOW_CLAUSE =
     "\n\nShadow DOM: the DOM tools (findByText / interactives / describeElement / ancestors / countMatches / " +
     "sampleText / click / type / wait / answer) pierce OPEN shadow roots automatically. A control inside one " +
@@ -173,10 +175,11 @@ export const PYTHON_CLAUSE =
     "Instead WRITE A SCRIPT and run it (readonly mode) to get the exact, deterministic answer, " +
     "then report what it computed. Same for pixel/array/spatial work over a screenshot (pass " +
     "`image`). Reserve `full` mode (network) for when you genuinely need it — it always asks the " +
-    "user first. When a result is meant for the USER, prefer RETURNING it as a pandas DataFrame — it " +
-    "renders as a readable table. Keep purely internal/intermediate results as JSON/dicts (cheaper); " +
-    "if a value you computed as JSON turns out to be worth showing the user, just re-run and return a " +
-    "DataFrame.";
+    "user first. The RETURN value — a SINGLE object (a DataFrame, dict, or number) — is the tool's citable " +
+    "output; `print()` only produces a stdout debug log, so a script that prints but RETURNS nothing yields " +
+    "`null` (nothing to cite). When a result is meant for the USER, prefer RETURNING a pandas DataFrame — it " +
+    "renders as a readable table. Keep purely internal/intermediate results as JSON/dicts (cheaper); if a value " +
+    "you computed as JSON turns out to be worth showing the user, just re-run and return a DataFrame.";
 
 // Appended when ml.agent({ unattended: true }) — a headless/scripting run with no human to approve.
 export const UNATTENDED_CLAUSE =

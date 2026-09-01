@@ -1114,15 +1114,22 @@ function TokenRef({ seg, run }: { seg: Extract<import("../answer-tokens").Answer
     if (!step) return <span class="tok-ref tok-unresolved" title={`No step in this run produced @tool:${seg.id} — the model may have invented it.`}>⟨unresolved @tool:{seg.id}⟩</span>;
     const d = seg.slot === "in" ? step.renderIn : step.renderOut;
     const rawText = seg.slot === "in" ? (step.arguments ? pretty(step.arguments) : "") : (step.result ?? "");
-    const tip = `Click to see the exact operation that produced this — step ${step.localStep ?? step.step} · ${step.tool || "tool"}`;
     const jump = () => scrollToStepSeq(step.seq, run.hash);
-    if (seg.fmt === "latex" && rawText)   // render the cited value as math
-        return <span class="tok-ref tok-inline" title={tip} role="button" tabIndex={0} onClick={jump} onKeyDown={(e) => e.key === "Enter" && jump()} dangerouslySetInnerHTML={{ __html: markdown(`$${rawText}$`, { math: true }) }} />;
-    const { node, block } = tokenRender(d, rawText);
-    // The model's link text → a caption on a block citation (the "reps"/"regions" labels).
-    const anno = block && seg.label && seg.label.trim() && seg.label.trim() !== rawText.trim() ? <div class="tok-anno">{seg.label}</div> : null;
-    return <span class={`tok-ref ${block ? "tok-block" : "tok-inline"}`} title={tip} role="button" tabIndex={0}
-        onClick={jump} onKeyDown={(e) => { if (e.key === "Enter") jump(); }}>{node}{anno}</span>;
+    const provenance = `Click to see the exact operation that produced this — step ${step.localStep ?? step.step} · ${step.tool || "tool"}`;
+    // The model's caption. INLINE citation (the value is shown in-line) → the label goes in the TOOLTIP; BLOCK
+    // citation (a table/image/code) → the label is a CAPTION under the render, like a figure caption on the web.
+    const label = seg.label && seg.label.trim() && seg.label.trim() !== rawText.trim() ? seg.label.trim() : "";
+    const isLatex = seg.fmt === "latex" && !!rawText;
+    const { node, block } = isLatex
+        ? { node: <span dangerouslySetInnerHTML={{ __html: markdown(`$${rawText}$`, { math: true }) }} />, block: false }
+        : tokenRender(d, rawText);
+    const tip = (label && !block ? `${label} · ` : "") + provenance;   // inline → prepend the label to the tooltip
+    return <span class={`tok-ref ${block ? "tok-block" : "tok-inline"}`} role="button" tabIndex={0}
+        onClick={jump} onKeyDown={(e) => { if (e.key === "Enter") jump(); }}>
+        {node}
+        {block && label ? <div class="tok-anno">{label}</div> : null}
+        <span class="tok-tip" role="tooltip">{tip}</span>
+    </span>;
 }
 
 // The agent's final ANSWER, with @tool citations RESOLVED to the actual (focused) tool output inline. NO toggle
@@ -1130,8 +1137,14 @@ function TokenRef({ seg, run }: { seg: Extract<import("../answer-tokens").Answer
 // export's disclosure. No tokens → plain markdown.
 function AnswerBody({ text, run, cls = "card-answer" }: { text: string; run: Session; cls?: string }) {
     const mdHtml = (t: string) => ({ __html: markdown(t, { math: true }) });
-    // Between citations: strip a lone wrapping <p> so an inline citation flows in the same line.
-    const proseHtml = (t: string) => { const h = markdown(t, { math: true }); const m = h.match(/^<p>([\s\S]*)<\/p>\s*$/); return { __html: m ? m[1] : h }; };
+    // Between citations: strip a lone wrapping <p> so an inline citation flows in the same line — but markdown
+    // trims a paragraph's boundary whitespace, so RE-ADD a space when the prose had one (else "table" + inline
+    // token collide as "tablenull"). A multi-paragraph chunk keeps its <p>s (block structure around a block token).
+    const proseHtml = (t: string) => {
+        const h = markdown(t, { math: true });
+        const m = h.match(/^<p>([\s\S]*)<\/p>\s*$/);
+        return { __html: m ? (/^\s/.test(t) ? " " : "") + m[1] + (/\s$/.test(t) ? " " : "") : h };
+    };
     if (!hasTokens(text)) return <div class={`${cls} md`} dangerouslySetInnerHTML={mdHtml(text)} />;
     return <div class={`${cls} md answer-rendered`}>{splitAnswer(text).map((seg, i) => seg.kind === "prose"
         ? <span key={i} dangerouslySetInnerHTML={proseHtml(seg.text)} />

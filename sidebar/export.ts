@@ -66,7 +66,11 @@ function writeAnswer(text: string, s: Session, d: Sink, muted = false): void {
         const desc = seg.slot === "in" ? step.renderIn : step.renderOut;
         const raw = seg.slot === "in" ? (step.arguments ? pretty(step.arguments) : "") : (step.result ?? "");
         if (seg.fmt === "latex" && raw) { buf += ` $${raw}$ `; continue; }   // static export: keep raw math notation
-        if (desc && ["image", "look", "table", "code", "python-in", "python-out"].includes(desc.type)) { flush(); emitTokenBlock(step, seg.slot, d); continue; }
+        if (desc && ["image", "look", "table", "code", "python-in", "python-out"].includes(desc.type)) {
+            flush(); emitTokenBlock(step, seg.slot, d);
+            if (seg.label && seg.label.trim()) d.note(seg.label.trim());   // the model's caption, like a figure caption
+            continue;
+        }
         if (raw && (raw.length > 80 || /\n/.test(raw))) { flush(); d.code(raw); continue; }   // long → its own block
         buf += "`" + raw + "`";   // short scalar → inline code, flows in the sentence
     }

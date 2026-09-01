@@ -1565,7 +1565,13 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             // A returned DataFrame/Series → render a real table (the sidebar draws PyDfTable); the model
             // still gets the text repr in `content` for reasoning. Applies to both the agent run and the bench.
             if (r.resultTable) return done(`${pre}${text}`, { value: text, df: r.resultTable });
-            return done(`${pre}${text}${castHint}`, { value: text });
+            // Returned None but PRINTED — a common miss: the model logs to stdout but returns nothing, so the
+            // result is `null` and there's nothing meaningful to CITE. Nudge it to RETURN the value (a DataFrame
+            // renders as a table). Gated on stdout so a script that legitimately returns nothing isn't nagged.
+            const nullWarn = (v === null || v === undefined) && stdoutClipped
+                ? "\n\n⚠ Your code RETURNED null (None) — you printed to stdout but didn't RETURN a value, so there's nothing to cite. Whatever the user should SEE, RETURN it (a pandas DataFrame renders as a readable table; a dict/number is fine); stdout is just a debug log."
+                : "";
+            return done(`${pre}${text}${castHint}${nullWarn}`, { value: text });
         },
     });
 };

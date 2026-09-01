@@ -172,6 +172,15 @@ export function startPageServer({ port = 0, crossPort = 0, host = "127.0.0.1" } 
                     return res.end(`<!doctype html><meta charset=utf-8><title>hidden</title><style>.gone{display:none}</style>`
                         + `<body><main><p>VISIBLE-CONTENT-1</p><div class="gone"><h3>CSS-HIDDEN-JUNK-4242</h3><p>should not reach the markdown</p></div></main>`);
                 }
+                if (p === "/table") {   // a DATA TABLE (reps × quarters) — for python_exec `{ tables }` → DataFrame probes.
+                    res.writeHead(200, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" });
+                    const rows = [["Ada", "North", 120, 150, 130, 160], ["Ben", "South", 90, 110, 95, 105], ["Cara", "East", 200, 180, 210, 190],
+                        ["Dan", "West", 75, 80, 85, 90], ["Eve", "North", 140, 160, 155, 165], ["Finn", "South", 100, 120, 110, 130],
+                        ["Gia", "East", 210, 220, 205, 215], ["Hal", "West", 60, 70, 65, 75]];
+                    return res.end(`<!doctype html><meta charset=utf-8><title>sales</title><body><h1>Quarterly sales</h1>`
+                        + `<table id="sales"><thead><tr><th>Rep</th><th>Region</th><th>Q1</th><th>Q2</th><th>Q3</th><th>Q4</th></tr></thead><tbody>`
+                        + rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join("")}</tr>`).join("") + `</tbody></table>`);
+                }
                 if (RAW[p]) return sendRaw(res, RAW[p]);          // raw JSON/CSV/code endpoints (ml.fetch e2e)
                 const r = routes(crossOrigin);
                 if (r[p]) return send(res, r[p]);
