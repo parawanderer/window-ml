@@ -819,46 +819,46 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
             ): Promise<string | ToolResult> => {
                 const set = ctx?.answer;
                 if (!set) return "Error: no active run to answer into.";
-
                 if (clear) { set.clear(); return "Answer cleared.\n  (empty)"; }
+
+                // Apply every op the call carries, in order — models naturally send `{ text, selector }` to add
+                // BOTH at once, so don't make them do two round-trips. A bad selector is NOTED, not fatal (any
+                // text still lands). `clear` above is exclusive.
+                const notes: string[] = [];
                 if (remove != null) {
                     const idxs = Array.isArray(remove) ? remove : [remove];
                     let removed = 0;
                     for (const i of idxs.slice().sort((a, b) => b - a)) removed += set.remove(i);   // high→low: indices stay valid
-                    return `Removed ${removed} item(s). Answer set (${set.length}):\n${answerEcho(set)}`;
+                    notes.push(`removed ${removed}`);
                 }
                 if (text != null) {
                     set.add(answerItemFromString(text));   // a @tool: string → token (step 3), else literal text
-                    return `Added. Answer set (${set.length}):\n${answerEcho(set)}`;
+                    notes.push("added text");
                 }
+                let elements: Element[] | undefined, media: AnswerMedia[] | undefined;
                 if (selector != null) {
-                    let els: Element[];
-                    try { els = queryAll(selector); }
-                    catch (e) { return selectorError(selector, e as Error); }
-                    if (index != null) {
-                        const el = els[index];
-                        if (!el) return `No element at index ${index} for "${selector}" (${els.length} match(es)).`;
-                        els = [el];
+                    let els: Element[] | null = null;
+                    try { els = queryAll(selector); } catch (e) { notes.push(`selector error: ${(e as Error).message}`); }
+                    if (els) {
+                        if (index != null) els = els[index] ? [els[index]] : [];
+                        if (!els.length) notes.push(`"${selector}" matched nothing`);
+                        else {
+                            const kept = els.slice(0, 50);
+                            const preview = kept.slice(0, 5).map(elLine).join("; ");
+                            // Screenshot-crop each designated element for the HUD card. Best-effort — a failed
+                            // capture just omits the media; the answer still stands.
+                            if (captureAnswer) { try { media = await captureAnswer(kept, note, show); } catch { /* no media */ } }
+                            set.add({ kind: "element", nodes: kept, preview, ...(media && media.length ? { media } : {}), ...(note ? { note } : {}) });
+                            elements = kept;
+                            notes.push(`added ${els.length} element(s)${note ? ` — ${note}` : ""}`);
+                        }
                     }
-                    if (!els.length) return `No element matches "${selector}".`;
-                    const kept = els.slice(0, 50);
-                    const preview = kept.slice(0, 5).map(elLine).join("; ");
-                    // Serialize a screenshot-crop of each designated element for the HUD completion card (user-facing
-                    // output). Best-effort — a failed capture just omits the media; the answer still stands.
-                    let media: AnswerMedia[] | undefined;
-                    if (captureAnswer) { try { media = await captureAnswer(kept, note, show); } catch { /* no media */ } }
-                    set.add({ kind: "element", nodes: kept, preview, ...(media && media.length ? { media } : {}), ...(note ? { note } : {}) });
-                    return {
-                        // Return this op's elements/media too: the debug render shows them, and the background
-                        // delegation crosses the media to the HUD card. The SET (ctx.answer) is the source of
-                        // truth — `answerManaged` tells the loop NOT to auto-accumulate these again.
-                        content: `Added ${els.length} element(s)${note ? ` — ${note}` : ""}. Answer set (${set.length}):\n${answerEcho(set)}`,
-                        elements: kept,
-                        ...(media && media.length ? { answerMedia: media } : {}),
-                        answerManaged: true,
-                    };
                 }
-                return `Answer set (${set.length}):\n${answerEcho(set)}`;   // no op → just view it
+                const content = `${notes.length ? notes.join("; ") + ". " : ""}Answer set (${set.length}):\n${answerEcho(set)}`;
+                // Return the element(s)/media only when a selector added them: the debug render shows them and the
+                // delegation crosses the media to the HUD card; `answerManaged` tells the loop not to re-accumulate.
+                if (elements) return { content, elements, ...(media && media.length ? { answerMedia: media } : {}), answerManaged: true };
+                return content;
             }
         })
     ];

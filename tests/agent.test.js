@@ -851,21 +851,24 @@ test("answer tool curates the answer set (add element/text, remove, clear)", asy
     const call = (args) => ml.domTools.find(t => t.name === "answer").run(args, ctx);
 
     const one = await call({ selector: "#banner", note: "the banner" });
-    assert.match(one.content, /Added 1 element.*the banner/);
+    assert.match(one.content, /added 1 element.*the banner/i);
     assert.equal(one.elements[0].id, "banner");
     assert.equal(one.answerManaged, true, "the built-in answer tool self-manages the set");
     assert.equal((await call({ selector: "p.x" })).elements.length, 2);
-    assert.match(await call({ selector: ".nope" }), /No element matches/);
+    assert.match(await call({ selector: ".nope" }), /matched nothing/);      // a miss is noted, not fatal
     assert.equal((await call({ selector: "p.x", index: 1 })).elements[0].textContent, "b");
-    assert.match(await call({ selector: "p.x", index: 9 }), /No element at index 9/);
+    assert.match(await call({ selector: "p.x", index: 9 }), /matched nothing/);
 
-    // text add, and curation
-    await call({ text: "the answer is 42" });
-    assert.match(await call({}), /the answer is 42/);                        // no-op → echo shows it
-    const before = set.length;
+    // text + selector in ONE call adds BOTH (models send them together)
+    set.clear();
+    const both = await call({ text: "the total is 42", selector: "#banner" });
+    assert.match(both.content, /added text; added 1 element/i);
+    assert.deepEqual(set.items.map(i => i.kind), ["text", "element"]);
+
+    // no-op echo shows the set; clear empties it
+    assert.match(await call({}), /the total is 42/);
     await call({ clear: true });
     assert.equal(set.length, 0, "clear empties the set");
-    assert.ok(before > 0);
 });
 
 test("pageInfo grounds time/locale for time-relative tasks", () => {
