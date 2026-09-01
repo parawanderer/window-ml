@@ -1,7 +1,7 @@
 // The pure answer-set core (answer-set.ts): the ordered, curatable user-facing result of a run.
 import { test } from "node:test";
 import assert from "node:assert";
-import { AnswerSet, answerItemFromString, TOOL_TOKEN_PREFIX, makeAnswerFacade } from "../answer-set.ts";
+import { AnswerSet, answerItemFromString, TOOL_TOKEN_PREFIX, makeAnswerFacade, finalizeAnswer } from "../answer-set.ts";
 
 const el = (nodes, preview, extra = {}) => ({ kind: "element", nodes, preview, ...extra });
 const txt = (text) => ({ kind: "text", text });
@@ -113,4 +113,71 @@ test("makeAnswerFacade: an array of elements becomes ONE element item", () => {
     assert.equal(set.length, 1);
     assert.equal(set.items[0].kind, "element");
     assert.equal(set.items[0].nodes.length, 2);
+});
+
+// --- finalizeAnswer: the bottom-of-answer render (designate + auto-fallback, dedup vs inline) -----------
+test("finalizeAnswer: a DESIGNATED token renders at the bottom (with the model's caption)", () => {
+    const set = new AnswerSet();
+    set.add(answerItemFromString("@tool:aaaaaa:out", "per-region totals"));
+    // No inline citation in the prose → the designated output stays.
+    const md = finalizeAnswer(set, "Here are the numbers.", []);
+    assert.equal(md, "[per-region totals](@tool:aaaaaa:out)");
+});
+
+test("finalizeAnswer: DEDUP — a token cited INLINE in the prose is dropped from the bottom", () => {
+    const set = new AnswerSet();
+    set.add(answerItemFromString("@tool:aaaaaa:out", "totals"));
+    // The model already expanded @tool:aaaaaa inline → don't ALSO append it (redundant).
+    const md = finalizeAnswer(set, "The totals are [totals](@tool:aaaaaa:out).", []);
+    assert.equal(md, "", "the inline-cited output is not repeated at the bottom");
+});
+
+test("finalizeAnswer: a DESIGNATED token NOT cited inline still renders (only the cited one dedupes)", () => {
+    const set = new AnswerSet();
+    set.add(answerItemFromString("@tool:aaaaaa:out", "A"));
+    set.add(answerItemFromString("@tool:bbbbbb:out", "B"));
+    const md = finalizeAnswer(set, "See [A](@tool:aaaaaa:out).", []);
+    assert.equal(md, "[B](@tool:bbbbbb:out)", "A dedupes (inline), B stays (bottom)");
+});
+
+test("finalizeAnswer: AUTO-FALLBACK — no designation + no inline cite + a candidate → the primary output is appended", () => {
+    const set = new AnswerSet();
+    const cands = [{ token: "cccccc", tool: "python_exec", seq: 1 }, { token: "dddddd", tool: "python_exec", seq: 3, label: "top 5 reps" }];
+    // The model wrote a prose answer and cited nothing → surface its LAST computed output.
+    const md = finalizeAnswer(set, "The top rep is Gia with 850.", cands);
+    assert.equal(md, "[top 5 reps](@tool:dddddd:out)", "the LAST candidate is the run's answer");
+});
+
+test("finalizeAnswer: NO auto-fallback when the model cited inline (it already surfaced its output)", () => {
+    const set = new AnswerSet();
+    const cands = [{ token: "cccccc", tool: "python_exec", seq: 1 }];
+    const md = finalizeAnswer(set, "Result: [it](@tool:cccccc:out).", cands);
+    assert.equal(md, "", "an inline cite suppresses the auto-fallback");
+});
+
+test("finalizeAnswer: NO auto-fallback when the model DESIGNATED an output (its choice wins)", () => {
+    const set = new AnswerSet();
+    set.add(answerItemFromString("@tool:aaaaaa:out", "the table"));
+    const cands = [{ token: "cccccc", tool: "python_exec", seq: 9 }];
+    const md = finalizeAnswer(set, "Done.", cands);
+    assert.equal(md, "[the table](@tool:aaaaaa:out)", "designation wins; the fallback candidate is not also appended");
+});
+
+test("finalizeAnswer: pure-prose answer with NO candidates → empty (nothing hidden, nothing invented)", () => {
+    assert.equal(finalizeAnswer(new AnswerSet(), "It's a login page.", []), "");
+});
+
+test("finalizeAnswer: MULTIPLE designated outputs all render, stacked, each deduped vs inline", () => {
+    const set = new AnswerSet();
+    set.add(answerItemFromString("@tool:aaaaaa:out", "sales"));
+    set.add(answerItemFromString("@tool:bbbbbb:out", "regions"));
+    set.add({ kind: "text", text: "Summary: two tables." });
+    // bbbbbb is inline-cited → only aaaaaa + the text stay at the bottom.
+    const md = finalizeAnswer(set, "Regions here [r](@tool:bbbbbb:out).", []);
+    assert.equal(md, "[sales](@tool:aaaaaa:out)\n\nSummary: two tables.");
+});
+
+test("answerItemFromString: a note becomes the token caption; plain text ignores note", () => {
+    assert.deepEqual(answerItemFromString("@tool:aaaaaa:out", "cap"), { kind: "token", ref: "@tool:aaaaaa:out", preview: "cap" });
+    assert.deepEqual(answerItemFromString("hello", "cap"), { kind: "text", text: "hello" });
 });

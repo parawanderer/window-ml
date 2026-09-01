@@ -13,6 +13,7 @@
 // model / executor / gate in tests/agent-loop.test.js.
 
 import type { AgentResult, AgentTranscriptEntry, ApprovalDecision, ToolCall, RenderDescriptor, ToolFeedback, SubcallUsage } from "./contract";
+import type { AnswerCandidate } from "./answer-set";
 import { UNATTENDED_REFUSAL } from "./prompts";
 import { toolToken } from "./util";
 
@@ -172,6 +173,11 @@ function formatChatMeta(
  *  loop and the background host so the two can't drift. */
 export const shotTurnMessage = (labels: string, count: number): string => `[Screenshot${count > 1 ? "s" : ""}: ${labels}]`;
 
+// The tools whose output is CITABLE with an `@tool:` token — they expose the opt-in `token` param, and (when
+// tool tokens are on) get a stable id minted onto every non-failed call so the answer renderer can resolve a
+// reference to it. Shared with injected.ts's per-call param injection so the two can't drift.
+export const CITABLE_TOOLS = new Set(["exec", "python_exec", "look", "locate", "fetch_url"]);
+
 export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number | (() => number); signal?: AbortSignal | null; unattended?: boolean;
     // Tool tokens: when set (+ a runHash to seed the id), a tool RESULT that has a rich render (renderIn/
     // renderOut — an image/table/code, worth showing verbatim) gets a trailing `@tool:<id>` line, so the model
@@ -202,12 +208,15 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     const byName = new Map(tools.map(t => [t.name, t]));
     const messages = deps.buildMessages(task);
     const transcript: AgentTranscriptEntry[] = [];
+    // Citable outputs this run produced (a python_exec computation, or any opted-in citable step), carried out so
+    // the answer's AUTO-FALLBACK can surface the run's PRIMARY output if the model neither cited nor designated one.
+    const answerCandidates: AnswerCandidate[] = [];
     let seq = 0;
     // Live token stats for the chat_metadata tool: promptLast = the last call's prompt tokens (current
     // context occupancy), genTotal = completion tokens summed across the run. Accurate on both worlds since
     // the loop is shared. `calls` = model turns so far.
     let promptLast = 0, genTotal = 0, modelCalls = 0;
-    const cancelled = (steps: number): Omit<AgentResult, "hash"> => ({ summary: "Cancelled by the caller.", steps, transcript, elements: [], cancelled: true });
+    const cancelled = (steps: number): Omit<AgentResult, "hash"> => ({ summary: "Cancelled by the caller.", steps, transcript, elements: [], cancelled: true, answerCandidates });
 
     for (let step = 1; step <= maxSteps(); step++) {
         if (signal?.aborted) return cancelled(step - 1);
@@ -237,7 +246,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             const reasoningText = typeof msg.reasoning === "string" ? msg.reasoning.trim() : "";
             const answer = (msg.content || "").trim() || reasoningText;
             if (answer) transcript.push({ assistant: answer });
-            return { summary: answer, steps: step - 1, transcript, elements: [] };
+            return { summary: answer, steps: step - 1, transcript, elements: [], answerCandidates };
         }
         // The step's prose (content), token usage, and the separate reasoning channel ride one emit
         // (or a usage/reasoning-only emit when there's no prose — a model that thinks in reasoning_content
@@ -341,13 +350,34 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             // keeping the model from being spammed with tokens it won't use. NOT on a FAILED call either: a token
             // pointing at "not a valid selector" is pointless; the model should fix + retry. Deterministic id so
             // the answer/final-text renderer re-derives it from `seq`.
-            const failed = /^(Error:|Denied|Python error:)/.test(result);
+            // A token points at a REAL, usable output — so never mint one for a call that didn't produce one:
+            //  · BLOCKED — the gate was denied / cancelled / skipped, so the tool never ran (no output at all).
+            //  · ERRORED — it ran but failed: an `Error:`/`Denied` string, OR (robust to any prefix, e.g. a
+            //    ">1 table matched" note the python tool prepends) the python render's own `error` flag.
+            const blocked = approval === "denied" || approval === "cancelled" || approval === "skipped";
+            // Match the error marker at a LINE start, not just string start — `exec` prepends any `console.log`
+            // output (`console:\n…\n\nError: …`) and `python_exec` can prepend a table note, so `^Error:` alone
+            // misses a logged-then-failed call. Biasing toward "failed" is the safe direction: a false positive
+            // just withholds a token (degrades to plain prose); a false negative would cite an ERROR as an answer.
+            const failed = blocked
+                || /(^|\n)(Error:|Denied|Python error:)/.test(result)
+                || (tr?.renderOut?.type === "python-out" && !!tr.renderOut.error);
             const wantsToken = (args as Record<string, unknown>)?.token === true;
-            // Mint the id ONCE and CARRY it on the step (below) — the answer renderer matches this stored id
-            // EXACTLY, never re-derives it from runHash:seq (a re-derivation mismatch/collision would resolve a
-            // citation to the WRONG step).
-            const tokenId = (opts.toolTokens && opts.runHash && wantsToken && !failed) ? toolToken(opts.runHash, s) : undefined;
-            const forModel = tokenId
+            // Mint a stable id onto EVERY non-failed citable step (when the feature's on) and CARRY it on the step
+            // — the answer renderer matches this stored id EXACTLY (never re-derives runHash:seq, which could
+            // resolve a citation to the WRONG step). The id is INVISIBLE to the model unless it opted IN
+            // (`token: true`): only then is the `@tool:` line appended to what the model sees (`forModel`), so it
+            // isn't spammed with ids on every intermediate call — while the id still lets the answer's
+            // auto-fallback surface an output the model DIDN'T explicitly cite.
+            // Citable = a builtin whose output is worth citing (always minted, for the auto-fallback + inline), OR
+            // ANY call the model explicitly opted into (`token: true` — e.g. a custom tool that has no param but
+            // whose output the model wants to cite). Never a failed call (nothing to cite).
+            const citable = (CITABLE_TOOLS.has(call.name) || wantsToken) && !failed;
+            const tokenId = (opts.toolTokens && opts.runHash && citable) ? toolToken(opts.runHash, s) : undefined;
+            // A candidate for the auto-appended "primary output": a python_exec computation always, or ANY
+            // opted-in citable step (the model flagged it as a result). Exploratory exec/surveys don't qualify.
+            if (tokenId && (call.name === "python_exec" || wantsToken)) answerCandidates.push({ token: tokenId, tool: call.name, seq: s });
+            const forModel = (tokenId && wantsToken)
                 ? `${result}\n\n[output token @tool:${tokenId} — cite this exact result in your final answer (or add to ml.answer) as a markdown link, e.g. [label](@tool:${tokenId}:out); use ":in" for the call/code]`
                 : result;
             // The DONE event carries the clean `result` for the pretty Out AND — when a token line was appended —
@@ -365,5 +395,5 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         // next step reasons over the real pixels (the native `look` path; a text-only driver omits the dep).
         if (pendingImages.length) deps.pushToolImages?.(messages, pendingImages);
     }
-    return { summary: `Stopped at the ${maxSteps()}-step cap without finishing.`, steps: maxSteps(), transcript, elements: [], hitCap: true };
+    return { summary: `Stopped at the ${maxSteps()}-step cap without finishing.`, steps: maxSteps(), transcript, elements: [], hitCap: true, answerCandidates };
 }

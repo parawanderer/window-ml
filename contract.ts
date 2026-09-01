@@ -754,6 +754,10 @@ export interface AgentResult {
     cancelled?: boolean;
     /** the run's session hash — pass to ml.agent(task, { resume }) to continue it */
     hash: string;
+    /** INTERNAL (not part of the public result — stripped before ml.agent resolves): the citable outputs the
+     *  loop produced, so finalizeAnswer can AUTO-APPEND the run's primary output when the model neither cited nor
+     *  designated one. See answer-set.ts AnswerCandidate. */
+    answerCandidates?: import("./answer-set").AnswerCandidate[];
 }
 
 /** One live tracer event from ml.agent's `onStep` (a transcript entry + the

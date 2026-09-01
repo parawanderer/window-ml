@@ -1401,6 +1401,10 @@ html[data-surface="card"] .appr-btn.no:hover {
 .answer-rendered .tok-ref { position: relative; }
 /* The model's caption → a small caption under a block citation (the "reps"/"regions"/"totals & breakdown" labels). */
 .answer-rendered .tok-anno { font-size: 0.8em; color: var(--fg-faint); margin-top: 2px; padding-left: 8px; font-style: italic; }
+/* The bottom-of-answer RESULT block (ResultBlock — the designated/auto-appended tool outputs, both surfaces). Its
+   label is CHROME, not prose: muted + uppercase + tracked, so it reads as an extension-added section divider. */
+.card-result { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--line, var(--border, rgba(128,128,128,.2))); }
+.card-result .result-label { font-size: 0.7em; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em; color: var(--fg-faint); margin-bottom: 4px; }
 /* A pretty (non-native) hover tooltip for a citation — explains it's a deterministic, clickable provenance ref. */
 .answer-rendered .tok-tip {
     position: absolute; bottom: calc(100% + 5px); left: 0; z-index: 12;

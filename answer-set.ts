@@ -12,6 +12,7 @@
 // the caller and handed in, so it unit-tests standalone. Nodes ride along as opaque values.
 
 import type { AnswerMedia } from "./contract";
+import { tokenIdsIn } from "./answer-tokens";
 
 /** One item in the answer set. `element` carries live nodes (page-side only) + a serialized preview
  *  and optional media; `text` is literal markdown; `token` (step 3) references a tool step's output. */
@@ -31,8 +32,49 @@ export const TOOL_TOKEN_PREFIX = "@tool:";
  * the model passes real Elements (already resolved via `ml.queryAll`), so there's no selector-string
  * to disambiguate; selectors only reach the `answer` TOOL, via its explicit `selector` param.
  */
-export const answerItemFromString = (s: string): AnswerItem =>
-    s.startsWith(TOOL_TOKEN_PREFIX) ? { kind: "token", ref: s } : { kind: "text", text: s };
+export const answerItemFromString = (s: string, note?: string): AnswerItem =>
+    s.startsWith(TOOL_TOKEN_PREFIX) ? { kind: "token", ref: s, ...(note ? { preview: note } : {}) } : { kind: "text", text: s };
+
+/** The 6-hex id inside a `@tool:<id>[:in|:out]` ref, or null if it isn't one. */
+const idOfRef = (ref: string): string | null => ref.match(/^@tool:([0-9a-f]{6})/)?.[1] ?? null;
+
+/** A citable tool output the loop produced (a computed result or an opted-in step), carried out of the loop so
+ *  the AUTO-FALLBACK can surface the run's PRIMARY output when the model neither cited nor designated one.
+ *  `token` is the id minted onto the step; `label` a short caption for the appended render. */
+export interface AnswerCandidate { token: string; tool: string; seq: number; label?: string }
+
+/**
+ * Resolve the run's BOTTOM-OF-ANSWER markdown — the tool outputs that render UNDER the model's prose reply.
+ * Two mechanisms feed it, with a dedup:
+ *   1. DESIGNATED — token/text/element items the model curated into the answer set (ml.answer / the answer tool).
+ *   2. AUTO-FALLBACK — if the model designated NO tool output AND cited none inline, surface the run's PRIMARY
+ *      computed output (the last candidate) so the real table/value still reaches the user.
+ * DEDUP: a token already cited INLINE in `summary` is dropped here (it's expanded in place; a second copy at the
+ * bottom is redundant). Element/text items always stay. Returns "" when there's nothing to append.
+ */
+export function finalizeAnswer(set: AnswerSet, summary: string, candidates: AnswerCandidate[] = []): string {
+    const inline = tokenIdsIn(summary);
+    // Keep every item EXCEPT a token the prose already expands inline.
+    const items = set.items.filter(it => !(it.kind === "token" && (() => { const id = idOfRef(it.ref); return id != null && inline.has(id); })()));
+    const hasDesignatedToken = items.some(it => it.kind === "token");
+    // Auto-fallback: nothing designated, nothing cited inline, but the run DID compute a primary output → append it.
+    if (!hasDesignatedToken && inline.size === 0 && candidates.length) {
+        const c = candidates[candidates.length - 1];   // the run's LAST computed output = its answer
+        items.push({ kind: "token", ref: `@tool:${c.token}:out`, preview: c.label || "computed result" });
+    }
+    return itemsToMarkdown(items);
+}
+
+/** Serialize answer-set items to markdown (shared by AnswerSet.toMarkdown + finalizeAnswer). Text verbatim;
+ *  token → its `@tool:` link (a later pass inlines the real output); element → a bullet with its note/preview. */
+function itemsToMarkdown(items: readonly AnswerItem[]): string {
+    if (!items.length) return "";
+    return items.map(it => {
+        if (it.kind === "text") return it.text;
+        if (it.kind === "token") return `[${it.preview || "result"}](${it.ref})`;
+        return `- ${it.note ? `${it.note}: ` : ""}${it.preview}`;
+    }).join("\n\n");
+}
 
 /** A compact, serializable view of one item — what `ml.answer` dumps and what a background run can
  *  cross the bus with (no live nodes). */
@@ -109,12 +151,7 @@ export class AnswerSet {
      * (step 3's mdSink) can inline the real output. Empty set → "".
      */
     toMarkdown(): string {
-        if (!this.items.length) return "";
-        return this.items.map(it => {
-            if (it.kind === "text") return it.text;
-            if (it.kind === "token") return `[${it.preview || "result"}](${it.ref})`;
-            return `- ${it.note ? `${it.note}: ` : ""}${it.preview}`;
-        }).join("\n\n");
+        return itemsToMarkdown(this.items);
     }
 }
 

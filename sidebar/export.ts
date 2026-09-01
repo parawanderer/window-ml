@@ -53,7 +53,7 @@ interface Sink {
 // inlined via the sink's own verbs (a real table/image/code), like the live card does with RenderPanel. A
 // hallucinated / unresolvable id → a visible note (never dropped). Then, per the raw-view rule, a collapsed
 // disclosure keeps the model's LITERAL answer (links unresolved) recoverable. No tokens → just the prose.
-function writeAnswer(text: string, s: Session, d: Sink, muted = false): void {
+function writeAnswer(text: string, s: Session, d: Sink, muted = false, rawLabel = "Answer"): void {
     if (!text || !hasTokens(text)) { d.prose(text || "(no answer)", muted); return; }
     // Accumulate prose + INLINE (short-scalar / latex) citations into a running paragraph; FLUSH it before a
     // BLOCK citation (a table/image/code) so blocks stand alone while inline values flow in the sentence.
@@ -75,7 +75,15 @@ function writeAnswer(text: string, s: Session, d: Sink, muted = false): void {
         buf += "`" + raw + "`";   // short scalar → inline code, flows in the sentence
     }
     flush();
-    d.details("Answer · raw (as the model wrote it)", () => d.prose(text));
+    d.details(`${rawLabel} · raw (as the model wrote it)`, () => d.prose(text));
+}
+
+// The bottom-of-answer RESULT block (the run's designated + auto-appended tool outputs) — mirrors the sidebar/HUD
+// ResultBlock so the export carries the same deliverable. Only when the finalized answer set has a @tool output.
+function writeResult(s: Session, d: Sink): void {
+    if (!s.answer || !hasTokens(s.answer)) return;
+    d.head("Result");
+    writeAnswer(s.answer, s, d, false, "Result");
 }
 
 // A BLOCK citation: the cited step's In/Out as a real table / image / code.
@@ -253,6 +261,7 @@ function writeAgent(s: Session, d: Sink): void {
         d.head(x.last ? (a.hitCap ? "Stopped (step cap)" : a.cancelled ? "Cancelled" : a.error ? "Error" : "Answer") : "Answered");
         if (a.error) d.prose(a.error);
         else writeAnswer(a.text || "(no answer)", s, d, !a.text);
+        if (x.last && !a.error) writeResult(s, d);   // the bottom-of-answer tool outputs, after the latest answer
     };
     const flush = (before: number) => { while (ii < inter.length && inter[ii].pos < before) emitInter(inter[ii++]); };
 
@@ -397,6 +406,7 @@ function writeAgent(s: Session, d: Sink): void {
     if (answers.length === 0) {
         d.head(s.hitCap ? "Stopped (step cap)" : "Answer");
         writeAnswer(s.summary || "(no answer — run did not complete)", s, d, !s.summary);
+        writeResult(s, d);
     }
 }
 

@@ -42,6 +42,14 @@ export function splitAnswer(md: string): AnswerSegment[] {
 /** Does this answer contain at least one real `@tool` token? (Lets a surface skip the split/toggle entirely.) */
 export const hasTokens = (md: string): boolean => tokenLinkRe().test(md);
 
+/** The set of tool-output ids CITED INLINE in a piece of markdown (the model's final answer). Used to DEDUP the
+ *  bottom-of-answer render: an output already expanded inline shouldn't also be appended at the bottom. */
+export function tokenIdsIn(md: string): Set<string> {
+    const ids = new Set<string>();
+    for (const m of (md || "").matchAll(tokenLinkRe())) ids.add(m[2]);
+    return ids;
+}
+
 /**
  * Find the step a token id refers to by the token the loop MINTED onto that step (`st.token`). The loop stores the
  * exact id it handed the model, so this is a direct equality match — no re-derivation, so it can't drift from what

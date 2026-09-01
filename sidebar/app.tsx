@@ -642,12 +642,13 @@ function CopyModel({ model }: { model: string }) {
 // timestamp) over the body (markdown ⇄ raw, collapsible), with optional thinking
 // and sources. No "assistant"/"answer" word — the header controls carry the
 // meaning; `label` appears only for an exceptional state (e.g. an agent step-cap).
-function ReplyBubble({ content, status, model, profile, ts, reasoning = null, sources = null, error, label, capped, initialRaw, resumeCap, streaming, tokenRun }: {
+function ReplyBubble({ content, status, model, profile, ts, reasoning = null, sources = null, error, label, capped, initialRaw, resumeCap, streaming, tokenRun, latest }: {
     content: string; status: Status; model: string | null; profile: "utility" | "default" | null; ts: number;
     reasoning?: string | null; sources?: unknown[] | null; error?: string; label?: string; capped?: boolean; initialRaw?: boolean;
     resumeCap?: { hash: string; steps: number };   // a step-capped run → a "Continue (+N steps)" button (resume, fresh budget)
     streaming?: boolean;   // the answer is STREAMING live — same bubble as the finished reply (model chip + content) with a live pulse, no copy/raw/stamp yet
     tokenRun?: Session;   // an agent ANSWER: resolve its @tool citations against this run (chat replies pass none). The existing [raw] shows the literal markdown.
+    latest?: boolean;   // this is the run's LATEST answer → render the bottom-of-answer ResultBlock here (s.answer holds only the latest, so earlier turns must not show it)
 }) {
     const [showRaw, setShowRaw] = useState(!!initialRaw);
     const [collapsed, setCollapsed] = useState(false);
@@ -699,6 +700,9 @@ function ReplyBubble({ content, status, model, profile, ts, reasoning = null, so
                             : tokenRun && hasTokens(content)
                                 ? <AnswerBody text={content} run={tokenRun} cls="asst-answer" />
                                 : <div class="md" dangerouslySetInnerHTML={{ __html: markdown(content, { math: true }) }} />}
+            {/* Bottom-of-answer tool outputs — SAME ResultBlock the HUD card renders (parity). Only on the
+                run's latest answer (s.answer is single-valued) and only in the normal, expanded view. */}
+            {hasReply && !collapsed && !showRaw && latest && tokenRun ? <ResultBlock run={tokenRun} /> : null}
             {/* A step-capped run stopped mid-task — one click resumes it with a fresh N-step budget (no need to
                 type a follow-up). Resuming re-enters the SAME run by hash from its stored state. */}
             {resumeCap && !collapsed
@@ -1062,10 +1066,14 @@ function RenderPanel({ d }: { d: RenderDescriptor }) {
 }
 
 // Scroll the transcript to the step that minted a @tool token + pulse it green — the provenance click. In the
-// HUD it first EXPANDS "Show work" (the step row is otherwise not rendered), then scrolls once it's on screen.
+// HUD it first EXPANDS "Show work" (the step row is otherwise not rendered); in a MULTI-TASK run the step also
+// lives inside a per-task BLOCK that may be collapsed, so it sets `revealSeq` to force THAT block open too (the
+// bug: it only worked when the run wasn't segmented into blocks). Then it retries the scroll for a few frames,
+// since the block open → re-render → paint is async.
 function scrollToStepSeq(seq?: number, hash?: string): void {
     if (seq == null) return;
     if (hash) cardShowWorkHash.value = hash;   // open the HUD "Show work" so the step exists to scroll to
+    revealSeq.value = seq;                      // force-open the per-task block that holds this step (if collapsed)
     const doScroll = (): boolean => {
         const el = document.querySelector(`[data-astep-seq="${seq}"]`);
         if (!el) return false;
@@ -1074,7 +1082,14 @@ function scrollToStepSeq(seq?: number, hash?: string): void {
         setTimeout(() => el.classList.remove("astep-pulse"), 1400);
         return true;
     };
-    if (!doScroll()) requestAnimationFrame(() => requestAnimationFrame(() => { doScroll(); }));   // after Show work paints
+    // Retry across a handful of frames: expanding Show-work AND a collapsed block are async re-renders, so the
+    // row may not exist on the first (or second) tick.
+    let tries = 0;
+    const attempt = (): void => { if (doScroll() || tries++ > 8) { return; } requestAnimationFrame(attempt); };
+    attempt();
+    // Release the force-open after the pulse so the user can re-collapse the block, and a RE-click of the same
+    // token (same seq) re-triggers the block's open effect (a stale value would make the dep look unchanged).
+    setTimeout(() => { if (revealSeq.value === seq) revealSeq.value = null; }, 1700);
 }
 
 // A JSON value → pretty-printed, so a computed dict/list reads as a block instead of one dense line; null if it
@@ -1149,6 +1164,16 @@ function AnswerBody({ text, run, cls = "card-answer" }: { text: string; run: Ses
     return <div class={`${cls} md answer-rendered`}>{splitAnswer(text).map((seg, i) => seg.kind === "prose"
         ? <span key={i} dangerouslySetInnerHTML={proseHtml(seg.text)} />
         : <TokenRef key={i} seg={seg} run={run} />)}</div>;
+}
+
+// The bottom-of-answer RESULT block: the run's designated (ml.answer) + auto-appended tool outputs, rendered
+// UNDER the model's prose reply. Shared by the HUD completion card AND the DevTools/sidebar reply bubble so the
+// two stay in parity (same "one render, both surfaces" rule as everything else). Only shows when the answer set
+// carries a @tool OUTPUT (a table/image/value the prose can't render) — a text-only set would just echo the prose.
+// The label is chrome (muted + uppercase), so it reads as an extension-added section, not the model's own words.
+function ResultBlock({ run }: { run: Session }) {
+    if (!run.answer || !hasTokens(run.answer)) return null;
+    return <div class="card-result"><div class="result-label">Result</div><AnswerBody text={run.answer} run={run} /></div>;
 }
 
 // "Sent to the model" — what a tool fed straight INTO the model's context (locate's snap-inject: a
@@ -1749,7 +1774,7 @@ function AgentRunView({ s }: { s: Session }) {
     const answer = (a: NonNullable<Session["answers"]>[number], key: string) =>
         a.error
             ? <ReplyBubble key={key} content="" status="err" model={s.model} profile={sessionProfile(s)} ts={a.ts} error={a.error} label="run failed" />
-            : <ReplyBubble key={key} content={a.text} status={a.status} model={s.model} profile={sessionProfile(s)} ts={a.ts} tokenRun={s}
+            : <ReplyBubble key={key} content={a.text} status={a.status} model={s.model} profile={sessionProfile(s)} ts={a.ts} tokenRun={s} latest={a.ts === lastAnswerTs}
                 label={a.cancelled ? "cancelled" : a.hitCap ? "stopped (step cap)" : undefined} capped={a.hitCap || a.cancelled}
                 // Only the LATEST answer, and only a step-cap stop (not a cancel/error), offers Continue — resuming
                 // an old buried answer would be confusing, and a live run has nothing to resume.
@@ -2438,6 +2463,9 @@ const dismissCardRun = (h: string): void => {
 // first painted with the PREVIOUS run's trace expanded (tall) then collapsed (the "opens huge then shrinks"
 // glitch). "" = nothing open. Also naturally scopes to the active run once the card has tabs.
 const cardShowWorkHash = signal<string>("");
+// A provenance click (a @tool citation → its source step) sets this to the target step's `seq`, so the per-task
+// BLOCK that holds it force-opens even if collapsed (scrollToStepSeq). Cleared shortly after the scroll.
+const revealSeq = signal<number | null>(null);
 const cardMaximizedHash = signal<string>("");   // the run whose card is MAXIMISED (a near-full-page corner window)
 const composerOpen = signal(false);          // the Spotlight composer — the HUD morphs into a task input
 const composerElement = signal<ElementContext | null>(null);   // right-click "ask about this" → the element pill's context
@@ -2943,14 +2971,24 @@ function CardTraceMsg({ label, text, cls, images, steer }: { label: string; text
 // block is expanded by default; priors collapse. Card-only (the debug sidebar shows the full flat trace).
 function RunTaskBlockView({ run, block, index, last }: { run: Session; block: RunTaskBlock; index: number; last: boolean }) {
     const rv = rev.value;   // subscribe → re-render when the lazy summary lands (retained via data-rev)
-    const [open, setOpen] = useState(last);   // latest expanded, priors collapsed
+    const [userOpen, setUserOpen] = useState(last);   // latest expanded, priors collapsed
+    // A provenance click (a bottom-answer citation) sets revealSeq to a step; if that step is in THIS block,
+    // force it open so scrollToStepSeq can reach the row. Derived DURING RENDER (a signal read, so the component
+    // re-renders when revealSeq changes) into a sticky `stuckOpen` — NOT a useEffect, because a signal-driven
+    // re-render doesn't reconcile effect deps (the effect never re-ran → the collapsed block stayed shut, the
+    // bug). `stuckOpen` persists after revealSeq auto-clears so the block stays open + collapsible.
+    const [stuckOpen, setStuckOpen] = useState(false);
+    const reveal = revealSeq.value;
+    if (reveal != null && !stuckOpen && block.turns.some(t => t.tools.some(s => s.seq === reveal))) setStuckOpen(true);
+    const open = userOpen || stuckOpen;
     // This component only MOUNTS when Show-work is open, so firing here = fire-on-open (lazy). Cached by key.
     useEffect(() => { ensureBlockSummary(run.hash, index, block.prompt, block.answer?.text || ""); }, [run.hash, index]);
     const summary = blockSummaries.get(blockKey(run.hash, index));
     const header = summary || inlineText(block.prompt) || "(task)";
     return (
-        <div class="run-block" data-rev={rv}>
-            <button class="run-block-head" onClick={() => setOpen(v => !v)}>
+        <div class="run-block" data-rev={rv} data-reveal={reveal ?? ""}>
+            {/* Toggling clears the reveal-forced open so a collapse actually collapses (else `stuckOpen` re-opens). */}
+            <button class="run-block-head" onClick={() => { setUserOpen(!open); setStuckOpen(false); }}>
                 <span class={`tri${open ? " open" : ""}`} aria-hidden="true"><IconChevron /></span>
                 <span class={`run-block-sum${summary ? " ml-reveal" : ""}`}
                     title={summary ? `${summary}\n\nRequest: ${block.prompt}` : block.prompt}>{header}</span>
@@ -3519,10 +3557,9 @@ function CardApp() {
                             {/* answer-designated element visuals — the user-facing deliverable (HUD-only; the debug
                                 sidebar deliberately doesn't render these). Click to lightbox. */}
                             {run.answerMedia && run.answerMedia.length ? <AnswerMediaGallery media={run.answerMedia} /> : null}
-                            {/* The curated answer SET, but ONLY when it designates a tool output (a @tool citation —
-                                a table/image the plain summary can't render); a text-only set would just echo the
-                                summary. AnswerBody resolves the citation to the real output. */}
-                            {run.answer && hasTokens(run.answer) ? <div class="card-result"><div class="io-label">Result</div><AnswerBody text={run.answer} run={run} /></div> : null}
+                            {/* The curated answer SET's tool outputs (designated + auto-appended), rendered under
+                                the summary — see ResultBlock (shared with the DevTools reply for parity). */}
+                            <ResultBlock run={run} />
                             {/* Step-capped stop → one click resumes with a fresh N-step budget (no need to type
                                 a follow-up in the composer). Not shown for a cancel/error. */}
                             {run.hitCap && !run.cancelled

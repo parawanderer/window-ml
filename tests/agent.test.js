@@ -1032,6 +1032,48 @@ test("toolTokens: an ERROR result gets NO token, even when the model opted in (n
     assert.doesNotMatch(msg.content, /@tool:/, "but no token is minted for a failed call");
 });
 
+test("toolTokens: a DENIED opted-in call mints NO token (the tool never ran → nothing to cite, nothing auto-appended)", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall("danger", { token: true }, "c1"), reply("done")]) });
+    const danger = world.ml.defineTool({ name: "danger", requiresApproval: true, run: () => "did it" });
+    const res = await world.ml.agent("t", { tools: [danger], toolTokens: true, approve: () => false });
+    const msg = world.runtimeCalls.at(-1).payload.messages.find(m => m.tool_call_id === "c1");
+    assert.match(msg.content, /Denied/, "the denial reaches the model");
+    assert.doesNotMatch(msg.content, /@tool:/, "no token minted for a denied call");
+    assert.ok(!res.answer || !/@tool:/.test(res.answer), "and nothing auto-appended to the answer");
+});
+
+test("toolTokens: a CANCELLED opted-in gate mints NO token, and nothing is auto-appended", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall("danger", { token: true }, "c1"), reply("done")]) });
+    const danger = world.ml.defineTool({ name: "danger", requiresApproval: true, run: () => "did it" });
+    const res = await world.ml.agent("t", { tools: [danger], toolTokens: true, approve: () => ({ cancelled: true }) });
+    // Whether the gate routes as cancel or deny, the invariant is the same: the tool didn't run, so no token.
+    const msg = world.runtimeCalls.at(-1).payload.messages.find(m => m.tool_call_id === "c1");
+    assert.doesNotMatch(msg?.content || "", /@tool:/, "no token minted for a cancelled/denied gate");
+    assert.ok(!res.answer || !/@tool:/.test(res.answer), "no token auto-appended either");
+});
+
+test("toolTokens: a logged-THEN-errored exec mints NO token — the Error is detected past the console prefix", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall("exec", { token: true }, "c1"), reply("done")]) });
+    // exec prepends captured console output, so a failed run is `console:\n…\n\nError: …` — NOT starting with "Error:".
+    const ex = world.ml.defineTool({ name: "exec", run: () => "console:\nchecking rows\n\nError: rows is not defined" });
+    const res = await world.ml.agent("t", { tools: [ex], toolTokens: true });
+    const msg = world.runtimeCalls.at(-1).payload.messages.find(m => m.tool_call_id === "c1");
+    assert.doesNotMatch(msg.content, /@tool:/, "no token — the Error after the console output is still detected");
+    assert.ok(!res.answer || !/@tool:/.test(res.answer), "and nothing auto-appended");
+});
+
+test("toolTokens: an opted-in python_exec that ERRORS mints NO token — even when a note PREFIXES the error string", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall("python_exec", { token: true }, "c1"), reply("done")]) });
+    // The content has a table-note PREFIX, so it doesn't start with "Python error:"; the failure is detected via
+    // the python render's own `error` flag instead (robust to any prefix). python_exec is normally an auto-candidate,
+    // so this also proves an ERRORED python doesn't get auto-appended.
+    const py = world.ml.defineTool({ name: "python_exec", run: () => ({ content: "note: >1 table matched\n\nPython error: NameError: x", render: { type: "python-out", error: "NameError: x" } }) });
+    const res = await world.ml.agent("t", { tools: [py], toolTokens: true });
+    const msg = world.runtimeCalls.at(-1).payload.messages.find(m => m.tool_call_id === "c1");
+    assert.doesNotMatch(msg.content, /@tool:/, "no token for a failed python run (caught by the render's error flag)");
+    assert.ok(!res.answer || !/@tool:/.test(res.answer), "and no auto-append of the errored computation");
+});
+
 test("agent: a pre-aborted signal cancels before any model call (resolves, doesn't reject)", async () => {
     const ac = new AbortController();
     ac.abort();

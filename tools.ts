@@ -821,7 +821,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
             parameters: {
                 type: "object",
                 properties: {
-                    text: { type: "string", description: "Add a text/markdown result line (a fact, a summary, the answer)." },
+                    text: { type: "string", description: "Add a text/markdown result line (a fact, a summary, the answer) — OR a `@tool:<id>:out` output token to show that tool's ACTUAL output (a table/image/value) at the bottom of your answer, with `note` as its caption. Don't re-type an output you can designate." },
                     selector: { type: "string", description: "Add element(s) as a result — CSS selector (supports :contains()/:has-text())." },
                     index: { type: "integer", description: "With `selector`: designate one specific match (0-based); omit to add all matches." },
                     note: { type: "string", description: "Optional note about what the added element(s) are." },
@@ -850,8 +850,10 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                     notes.push(`removed ${removed}`);
                 }
                 if (text != null) {
-                    set.add(answerItemFromString(text));   // a @tool: string → token (step 3), else literal text
-                    notes.push("added text");
+                    // A `@tool:` string → a token designation (its output renders at the BOTTOM of the answer);
+                    // `note` becomes its caption there. Anything else → a literal text line.
+                    set.add(answerItemFromString(text, note));
+                    notes.push(text.startsWith("@tool:") ? "added output" : "added text");
                 }
                 let elements: Element[] | undefined, media: AnswerMedia[] | undefined;
                 if (selector != null) {

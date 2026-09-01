@@ -16,7 +16,8 @@ import { executeTool, toolContext, answerSetFor } from "./tool-exec";
 import { captureVerify, captureVerifyElement } from "./builtin-tools";
 import { htmlToMarkdown } from "./html-to-md";
 import { clipOut, elLine, errText } from "./dom";
-import { makeAnswerFacade } from "./answer-set";
+import { makeAnswerFacade, finalizeAnswer } from "./answer-set";
+import type { AnswerCandidate } from "./answer-set";
 import { runPipe } from "./text-pipe";
 import { descriptorFor } from "./render-descriptor";
 import { evalReadonly } from "./readonly-exec";
@@ -53,10 +54,12 @@ export interface PageRun {
 }
 
 /** Assemble a delegated run's page-side answer, from its (page-side) AnswerSet: the live nodes →
- *  AgentResult.elements, the captured visuals → the HUD card, the set → markdown for AgentResult.answer. */
-export function runAnswer(run: PageRun): { elements: Node[]; media: AnswerMedia[]; answer: string } {
+ *  AgentResult.elements, the captured visuals → the HUD card, the set → markdown for AgentResult.answer.
+ *  `summary`/`candidates` (from the background loop's result) drive finalizeAnswer's dedup + auto-fallback —
+ *  omitted (a cancel path with no result) → the plain designated set. */
+export function runAnswer(run: PageRun, summary = "", candidates: AnswerCandidate[] = []): { elements: Node[]; media: AnswerMedia[]; answer: string } {
     const set = answerSetFor(run.byName);
-    return { elements: set.elements() as Node[], media: set.media(), answer: set.toMarkdown() };
+    return { elements: set.elements() as Node[], media: set.media(), answer: finalizeAnswer(set, summary, candidates) };
 }
 
 const runs = new Map<string, PageRun>();

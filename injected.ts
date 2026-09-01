@@ -37,7 +37,7 @@ import { evalReadonly } from "./readonly-exec";
 import { htmlToMarkdown } from "./html-to-md";
 import { runPipe } from "./text-pipe";
 import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement, navTarget, clipOut, askReaderNumCtx, jsonShape, shadowHostReport, clickSelector, elLine } from "./dom";
-import { makeAnswerFacade } from "./answer-set";
+import { makeAnswerFacade, finalizeAnswer } from "./answer-set";
 import { accessibleName, roleOf, ariaState } from "./a11y";
 import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, TOOLTOKENS_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_NOTE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_EXEC_NOTE, IFRAME_CLAUSE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, EXEC_RANGE_CLAUSE, NAV_OFF_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, askAboutTask } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, markSeen, PT_LOOK_RADIUS, BOX_RE, resolveBox, agentState, mlRange } from "./util";
@@ -53,7 +53,7 @@ import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPyt
 import { pyVarNameError } from "./python-env";
 import { autoApprovePython } from "./auto-approve";
 import { executeTool, toolContext, currentAnswer } from "./tool-exec";
-import { runAgentLoop, shotTurnMessage } from "./agent-loop";
+import { runAgentLoop, shotTurnMessage, CITABLE_TOOLS } from "./agent-loop";
 import type { AgentLoopDeps } from "./agent-loop";
 
 /** The mutable state of ONE agent session, shared between ml.agent's page loop and (for a handle) the
@@ -718,8 +718,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             // The model sets `token: true` on a call whose output it intends to CITE; the loop surfaces the
             // @tool:<id> only for those (see agent-loop). Clone the shared defs; don't mutate them.
             if (toolTokens) {
-                const CITABLE = new Set(["exec", "python_exec", "look", "locate", "fetch_url"]);
-                toolset = toolset.map(t => CITABLE.has(t.name)
+                toolset = toolset.map(t => CITABLE_TOOLS.has(t.name)
                     ? { ...t, parameters: { ...t.parameters, properties: { ...(t.parameters as { properties?: Record<string, unknown> }).properties,
                         token: { type: "boolean", description: "Set true ONLY when this call's output is a result you'll CITE in your final answer — it mints an @tool:<id> you reference with a markdown link (the macro expands to this exact output for the user). Leave off for exploratory/intermediate steps." } } } }
                     : t);
@@ -847,9 +846,10 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                         try {
                             const res = await makeBackgroundTaskPromise<AgentResult>("RESUME_RUN_REQUEST", "RESUME_RUN_RESPONSE", { runId: runHash, task: t }, undefined, signal);
                             const run = endRun(runHash);
-                            const a = run ? runAnswer(run) : { elements: [], media: [], answer: "" };
+                            const { answerCandidates, ...resClean } = res;   // loop-internal — don't leak to the caller
+                            const a = run ? runAnswer(run, res.summary, answerCandidates) : { elements: [], media: [], answer: "" };
                             emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: res.steps }, summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled, ...(a.media.length ? { answerMedia: a.media } : {}), ...(a.answer ? { answer: a.answer } : {}) });
-                            return { ...res, elements: a.elements, ...(a.media.length ? { answerMedia: a.media } : {}), ...(a.answer ? { answer: a.answer } : {}), hash: runHash };
+                            return { ...resClean, elements: a.elements, ...(a.media.length ? { answerMedia: a.media } : {}), ...(a.answer ? { answer: a.answer } : {}), hash: runHash };
                         } catch (e) {
                             // Mirror the START path: an aborted resume resolves as a clean cancel; any other failure
                             // (e.g. the background was evicted and can't rehydrate the run) surfaces to the card as a
@@ -910,8 +910,9 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     // The real DOM nodes an answer-capable tool returned stayed page-side (they can't cross
                     // the bus) — assemble AgentResult.elements from the page-side run record here.
                     const run = endRun(runHash);
-                    const a = run ? runAnswer(run) : { elements: [], media: [], answer: "" };
-                    const full: AgentResult = { ...res, elements: a.elements, ...(a.media.length ? { answerMedia: a.media } : {}), ...(a.answer ? { answer: a.answer } : {}), hash: runHash };
+                    const { answerCandidates, ...resClean } = res;   // loop-internal — don't leak to the caller
+                    const a = run ? runAnswer(run, res.summary, answerCandidates) : { elements: [], media: [], answer: "" };
+                    const full: AgentResult = { ...resClean, elements: a.elements, ...(a.media.length ? { answerMedia: a.media } : {}), ...(a.answer ? { answer: a.answer } : {}), hash: runHash };
                     emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: res.steps }, summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled, ...(a.media.length ? { answerMedia: a.media } : {}), ...(a.answer ? { answer: a.answer } : {}) });
                     return full;
                 } catch (e) {
@@ -1116,9 +1117,13 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     const r = await runAgentLoop(t, { tools: toolMetas, maxSteps: () => control.maxSteps, signal, unattended, toolTokens, runHash }, deps);
                     control.seqBase += turnMaxSeq; turnMaxSeq = 0;   // next turn's step seqs continue past this turn's
                     control.stepBase += turnMaxStep; turnMaxStep = 0;   // …and its step numbers, so turn groups stay distinct
-                    const media = answerSet.media(); const answer = answerSet.toMarkdown();
+                    // The bottom-of-answer render: designated outputs + an auto-fallback to the run's primary
+                    // computed output, minus anything the model already cited INLINE in its reply. `answerCandidates`
+                    // is loop-internal — strip it from the result ml.agent() resolves to the caller.
+                    const { answerCandidates, ...rr } = r;
+                    const media = answerSet.media(); const answer = finalizeAnswer(answerSet, r.summary, answerCandidates);
                     emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: r.steps }, summary: r.summary, steps: r.steps, hitCap: !!r.hitCap, cancelled: !!r.cancelled, ...(media.length ? { answerMedia: media } : {}), ...(answer ? { answer } : {}) });
-                    return { ...r, elements: answerSet.elements() as Node[], ...(media.length ? { answerMedia: media } : {}), ...(answer ? { answer } : {}), hash: runHash };
+                    return { ...rr, elements: answerSet.elements() as Node[], ...(media.length ? { answerMedia: media } : {}), ...(answer ? { answer } : {}), hash: runHash };
                 } catch (e) {
                     // A FATAL error escaped the loop — surface it so the sidebar doesn't hang as "running",
                     // then re-throw so ml.agent() still rejects. (An abort already resolved cleanly inside.)
@@ -1835,9 +1840,10 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     try {
                         const res = await makeBackgroundTaskPromise<AgentResult>("RESUME_RUN_REQUEST", "RESUME_RUN_RESPONSE", { runId, task: t });
                         const run = endRun(runId);
-                        const a = run ? runAnswer(run) : { elements: [], media: [], answer: "" };
+                        const { answerCandidates, ...resClean } = res;   // loop-internal — don't leak to the caller
+                        const a = run ? runAnswer(run, res.summary, answerCandidates) : { elements: [], media: [], answer: "" };
                         emitDebug({ kind: "agent-result", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: res.steps }, summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled, ...(a.media.length ? { answerMedia: a.media } : {}), ...(a.answer ? { answer: a.answer } : {}) });
-                        return { ...res, elements: a.elements, ...(a.media.length ? { answerMedia: a.media } : {}), ...(a.answer ? { answer: a.answer } : {}), hash: runId };
+                        return { ...resClean, elements: a.elements, ...(a.media.length ? { answerMedia: a.media } : {}), ...(a.answer ? { answer: a.answer } : {}), hash: runId };
                     } finally { exitAgentRun(); }
                 },
             });

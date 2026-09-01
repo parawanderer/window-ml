@@ -4455,3 +4455,99 @@ test("agent-step: a step's delegated sub-call tokens surface as the '+N sub' usa
     assert.match(sub.textContent, /sub/, "labelled as sub-call spend");
     assert.match(sub.querySelector(".tt-pop").textContent, /2,860 tokens over 2 delegated/, "tooltip has the total + call count");
 });
+
+// --- Tool-token ANSWER render: the bottom "Result" block + inline citations (see docs/spec/TOOL_TOKENS.md).
+// Three ways an output reaches the answer: (1) inline @tool cite (expands in the reply), (2) designated into the
+// answer set, (3) auto-fallback (the loop's primary output, appended when neither of the above). The reducer
+// stores ev.answer (the finalized bottom markdown) + the step's minted `token`; the render resolves it.
+const OUT = "abcdef";
+const compStep = (hash) => agentStep(hash, 1, { seq: 1, tool: "python_exec", token: OUT, result: "COMPUTED_TABLE",
+    renderOut: { type: "code", text: "COMPUTED_TABLE", lang: "text" } });
+const openRun = async (w) => { w.shadow.querySelector(".row").click(); await w.tick(); };
+
+test("answer render (sidebar): AUTO-FALLBACK output shows in a RESULT block under the prose", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("af", "compute it"));
+    await w.dispatch(compStep("af"));
+    // prose summary (no inline cite), answer = the auto-appended token (finalizeAnswer's output)
+    await w.dispatch({ ...agentResult("af", "The total is 42.", 1), answer: `[computed result](@tool:${OUT}:out)` });
+    await openRun(w);
+    const rb = w.shadow.querySelector(".card-result");
+    assert.ok(rb, "a Result block renders under the answer");
+    assert.match(rb.querySelector(".result-label").textContent, /result/i, "the label is the muted 'Result'");
+    assert.match(rb.textContent, /COMPUTED_TABLE/, "the cited step's output is inlined into the block");
+});
+
+test("answer render (sidebar): an INLINE citation expands in the reply, with NO separate Result block", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("inl", "compute it"));
+    await w.dispatch(compStep("inl"));
+    // cited inline → finalizeAnswer dedups it out of the bottom (answer = "")
+    await w.dispatch({ ...agentResult("inl", `The total is [it](@tool:${OUT}:out).`, 1), answer: "" });
+    await openRun(w);
+    assert.ok(!w.shadow.querySelector(".card-result"), "no bottom Result block when the output is cited inline");
+    const reply = w.shadow.querySelector(".msg.asst .answer-rendered");
+    assert.ok(reply && /COMPUTED_TABLE/.test(reply.textContent), "the output expands inline in the reply body");
+});
+
+test("answer render (sidebar): a DESIGNATED output shows in the Result block, with the model's caption", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("dsg", "compute it"));
+    await w.dispatch(compStep("dsg"));
+    await w.dispatch({ ...agentResult("dsg", "Done.", 1), answer: `[the sales table](@tool:${OUT}:out)` });
+    await openRun(w);
+    const rb = w.shadow.querySelector(".card-result");
+    assert.ok(rb && /COMPUTED_TABLE/.test(rb.textContent), "the designated output renders at the bottom");
+    assert.match([...rb.querySelectorAll(".tok-anno")].map(n => n.textContent).join(" "), /the sales table/, "the model's caption shows under the block");
+});
+
+test("answer render (sidebar): the Result block ONLY renders on the run's LATEST answer (single-valued s.answer)", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("mt", "compute it"));
+    await w.dispatch(compStep("mt"));
+    await w.dispatch({ ...agentResult("mt", "First.", 1), answer: `[a](@tool:${OUT}:out)` });
+    // a follow-up turn (a new answer) — s.answer now reflects the LATEST turn only
+    await w.dispatch({ kind: "agent-say", id: "mt", ts: Date.now() + 50, save: false, session: { hash: "mt", turn: 1 }, text: "again" });
+    await w.dispatch({ ...agentResult("mt", "Second.", 1), answer: `[b](@tool:${OUT}:out)` });
+    await openRun(w);
+    const results = w.shadow.querySelectorAll(".card-result");
+    assert.equal(results.length, 1, "exactly one Result block — on the latest answer, not every turn");
+});
+
+test("HUD card: clicking a bottom-answer citation OPENS the collapsed block holding its source step (the group-reveal fix)", async () => {
+    const w = await loadSidebarWorld();
+    w.window.Element.prototype.scrollIntoView = function () {};       // jsdom has no scroll
+    w.window.requestAnimationFrame = () => 0;                         // no-op: the block opens via the reveal EFFECT, not the scroll retry (and this avoids a post-teardown timer)
+    await w.raw({ __mlSidebarSurface: "card" });                      // the HUD card surface
+    // Turn 1: a computation (seq 1, token OUT). Turn 2 (a follow-up) cites that earlier output at the bottom —
+    // so its SOURCE step lives in the PRIOR, collapsed block. This is the multi-task shape that segments into
+    // collapsible blocks (the bug: the citation opened Show-work but not the collapsed GROUP).
+    await w.dispatch(agentStart("blk", "compute the totals"));
+    await w.dispatch(agentStep("blk", 1, { seq: 1, tool: "python_exec", token: OUT, result: "COMPUTED_TABLE", renderOut: { type: "code", text: "COMPUTED_TABLE", lang: "text" } }));
+    await w.dispatch({ ...agentResult("blk", "The total is 42.", 1), answer: "" });
+    await w.dispatch({ kind: "agent-say", id: "blk", ts: Date.now() + 50, save: false, session: { hash: "blk", turn: 1 }, text: "show me that table again" });
+    await w.dispatch({ kind: "agent-step", id: "blk", ts: Date.now() + 60, save: false, session: { hash: "blk", turn: 2 }, step: 2, seq: 2, thought: "reusing the earlier result" });
+    await w.dispatch({ ...agentResult("blk", "Here it is.", 2), answer: `[the table](@tool:${OUT}:out)` });
+    await w.tick();
+    // Open "Show work" → the run is multi-task, so it segments into blocks: the PRIOR one collapsed.
+    w.shadow.querySelector(".card-work-toggle").click(); await w.tick();
+    assert.ok(!w.shadow.querySelector('[data-astep-seq="1"]'), "the prior block is collapsed → the source step row isn't rendered yet");
+    // Click the bottom Result citation (source = seq 1, in the collapsed prior block).
+    const tok = w.shadow.querySelector(".card-result .tok-ref");
+    assert.ok(tok, "the bottom Result citation is present in the card");
+    tok.click(); await w.tick(); await w.tick(); await w.tick();
+    assert.ok(w.shadow.querySelector('[data-astep-seq="1"]'), "clicking the citation force-opened the collapsed block → the source step is now shown");
+});
+
+test("answer render (sidebar): a cited exec output that returned ELEMENTS renders as an element list", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("els", "find the cards"));
+    // exec that returned nodes → an `elements` renderOut (serialized path/text previews; live nodes can't cross the bus).
+    await w.dispatch(agentStep("els", 1, { seq: 1, tool: "exec", token: OUT, result: "3 element(s)",
+        renderOut: { type: "elements", items: [{ path: "div.card#a", text: "Card A" }, { path: "div.card#b", text: "Card B" }] } }));
+    await w.dispatch({ ...agentResult("els", "Found 3 cards.", 1), answer: `[the cards](@tool:${OUT}:out)` });
+    await openRun(w);
+    const rb = w.shadow.querySelector(".card-result");
+    assert.ok(rb, "the Result block renders");
+    assert.match(rb.textContent, /div\.card#a|Card A/, "the returned elements render as a list of previews");
+});

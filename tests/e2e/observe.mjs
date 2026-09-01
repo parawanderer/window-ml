@@ -98,6 +98,7 @@ function buildSession(events) {
             const status = (ev.error || ev.hitCap || ev.cancelled) ? "err" : "ok";
             s.answers = [...(s.answers || []), { text: ev.summary, ts: ev.ts, atStep: maxStep(s), status, hitCap: ev.hitCap, cancelled: !!ev.cancelled, error: ev.error || undefined }];
             s.summary = ev.summary; s.hitCap = ev.hitCap; s.error = ev.error || undefined; s.cancelled = !!ev.cancelled; s.status = status; s.lastTs = ev.ts; s.ended = true; s.endedStep = maxStep(s);
+            s.answer = ev.answer || undefined; s.answerMedia = (ev.answerMedia && ev.answerMedia.length) ? ev.answerMedia : undefined;   // the bottom-of-answer Result block + card media
         } else if (ev.kind === "agent-say" && s) {
             s.says = [...(s.says || []), { text: ev.text, ts: ev.ts, atStep: maxStep(s), images: ev.images }]; s.status = "pending"; s.ended = false; s.lastTs = ev.ts;
         } else if (ev.kind === "agent-cap" && s) {
@@ -163,6 +164,41 @@ async function openSidebarAndFocus(page) {
     console.log("  watch: sidebar open at half width, focused on the session — the browser will stay open.");
 }
 
+// Approval handling. A background-hosted run BLOCKS on a privileged gate (a mutating/non-readonly exec, a
+// python_exec `full` run, an external fetch/sheet). The harness would otherwise hang there silently (the
+// "did not complete" bug). So it watches the SW-only `__mlApprovals` channel (the same door approval.spec.mjs
+// drives), LOGS every gate the moment a run halts on one, and resolves it per the APPROVE policy:
+//   APPROVE=auto (default) approve everything · deny  deny everything · readonly  approve exec + readonly
+//   python, deny the rest · hold  LOG but DON'T resolve (leave it for a manual click — WATCH mode review).
+// Gates are only visible/resolvable because the run opts in with approvalRouting:"both" (below).
+const APPROVE = (process.env.APPROVE || "auto").toLowerCase();
+const approvalLog = [];
+let approvalLoopOn = true;
+function decideApproval(d) {
+    if (APPROVE === "deny") return false;
+    if (APPROVE === "readonly") return d.tool === "exec" || (d.tool === "python_exec" && d.arguments?.mode !== "full");
+    return true;   // auto
+}
+async function runApprovalLoop(sw) {
+    const seen = new Set();
+    while (approvalLoopOn) {
+        let gates = [];
+        try { gates = await sw.evaluate(() => globalThis.__mlApprovals?.list?.() ?? []); } catch { /* SW asleep / navigating */ }
+        for (const g of gates) {
+            if (seen.has(g.key)) continue;
+            seen.add(g.key);
+            const argstr = JSON.stringify(g.arguments ?? {}).slice(0, 200);
+            if (APPROVE === "hold") { console.log(`  ⏸ APPROVAL GATE (step ${g.step}) — ${g.tool}(${argstr})  [APPROVE=hold → left for a manual click]`); approvalLog.push({ tool: g.tool, arguments: g.arguments, decision: "held", step: g.step }); continue; }
+            const decision = decideApproval(g);
+            console.log(`  ⏸ APPROVAL GATE (step ${g.step}) — ${g.tool}(${argstr}) → ${decision ? "APPROVE" : "DENY"}  [APPROVE=${APPROVE}]`);
+            approvalLog.push({ tool: g.tool, arguments: g.arguments, decision: decision ? "approved" : "denied", step: g.step });
+            try { await sw.evaluate(({ key, d }) => globalThis.__mlApprovals.resolve(key, d), { key: g.key, d: decision }); }
+            catch (e) { console.log(`  (approval resolve failed: ${String(e).slice(0, 80)})`); }
+        }
+        await new Promise((r) => setTimeout(r, 350));
+    }
+}
+
 const main = async () => {
     await mkdir(ART, { recursive: true });   // never rm the root — keep prior runs to diff
 
@@ -221,9 +257,12 @@ const main = async () => {
         console.log(`  step ${n}: ${step.tool ? `tool ${step.tool}` : "thought"}${step.result ? ` → ${String(step.result).slice(0, 70)}` : ""}  @ ${url}`);
     });
 
-    console.log(`\n  observing: "${TASK}"\n  start: ${site.url}${START}   backend: ${backend ? backend.chatUrl + ` (model ${backend.model})` : "fake-LLM"}\n`);
+    console.log(`\n  observing: "${TASK}"\n  start: ${site.url}${START}   backend: ${backend ? backend.chatUrl + ` (model ${backend.model})` : "fake-LLM"}   approvals: ${APPROVE}\n`);
     await page.goto(site.url + START);
     await waitForMl(page);
+
+    // Watch for + resolve approval gates the whole time the run is in flight (a gate can appear at any step).
+    const approvalTask = runApprovalLoop(ext.sw);
 
     let result, error;
     const t0 = Date.now();
@@ -231,6 +270,7 @@ const main = async () => {
         result = await page.evaluate(({ task, toolNames, toolTokens, python, watch }) => {
             const opts = {
                 toolTokens,
+                approvalRouting: "both",   // gates show in the UI AND are resolvable via the __mlApprovals channel (the harness's approval poller)
                 onStep: (s) => window.__obsStep({
                     tool: s.tool || null, thought: s.thought || null,
                     args: s.arguments ? JSON.parse(JSON.stringify(s.arguments)) : null,
@@ -270,6 +310,7 @@ const main = async () => {
         const deadline = Date.now() + 120000;
         while (Date.now() < deadline && !hasResult()) await new Promise((r) => setTimeout(r, 500));
     }
+    approvalLoopOn = false; await approvalTask.catch(() => {});   // stop watching for gates
     const runMs = Date.now() - t0;   // wall time of the agent run only (warm-up excluded)
     // The expected nav teardown of the caller's context isn't a failure once the run finished — surface the
     // model's summary (from the terminal event) instead of the "context destroyed" noise.
@@ -291,6 +332,10 @@ const main = async () => {
 
     await writeFile(path.join(ARTROOT, "latest.txt"), RUN);   // pointer to the newest run dir
     console.log(`\n  → ${error ? `ERROR: ${error}` : "done"} in ${(runMs / 1000).toFixed(1)}s (run only). final url: ${page.url()}, ${n} steps, ${events.length} events.`);
+    if (approvalLog.length) {
+        const by = approvalLog.reduce((m, a) => ((m[a.decision] = (m[a.decision] || 0) + 1), m), {});
+        console.log(`  approvals: ${approvalLog.length} gate(s) — ${Object.entries(by).map(([k, v]) => `${v} ${k}`).join(", ")} (policy: ${APPROVE})`);
+    }
     console.log(`  artifacts: ${path.relative(process.cwd(), ART)}/  (run.md, transcript.txt, events.json, step-*.png)\n`);
 
     // WATCH=1 → leave the browser + servers UP so you can inspect the session in the sidebar. Hold until the
