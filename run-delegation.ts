@@ -10,9 +10,9 @@
 // stay page-side, accumulated in the run record so ml.agent can assemble AgentResult.elements once the
 // background reports the run finished. This is the transport half of design A; the loop that drives it
 // is `runAgentLoop` (agent-loop.ts), assembled background-side in a later slice.
-import type { MlTool, PageToolEnvelope, SubcallUsage } from "./contract";
+import type { MlTool, PageToolEnvelope, SubcallUsage, AnswerMedia } from "./contract";
 import { outputCapEscalated } from "./contract";
-import { executeTool, toolContext } from "./tool-exec";
+import { executeTool, toolContext, answerSetFor } from "./tool-exec";
 import { captureVerify, captureVerifyElement } from "./builtin-tools";
 import { htmlToMarkdown } from "./html-to-md";
 import { clipOut, elLine, errText } from "./dom";
@@ -42,14 +42,20 @@ async function withSubUsage<T extends PageToolEnvelope>(fn: () => Promise<T>): P
     return env;
 }
 
-/** One active agent run's page-side state: its toolset by name, and the DOM nodes designated by
- *  answer-capable tools (assembled into AgentResult.elements — nodes can't cross the bus). */
+/** One active agent run's page-side state: its toolset by name. The designated answer (nodes, media,
+ *  text) lives in the run's AnswerSet, keyed off `byName` (see `runAnswer`) — nodes can't cross the bus. */
 export interface PageRun {
     byName: Record<string, MlTool>;
-    answered: Node[];
     model?: string | null;         // the run's driver model, for the tools' ToolContext (background-delegated path)
     driverSees?: boolean;          // does the driver see natively (native vs delegated look/locate feedback)
     visionModel?: string | null;   // the resolved vision reader — both carried onto the delegated ToolContext
+}
+
+/** Assemble a delegated run's page-side answer, from its (page-side) AnswerSet: the live nodes →
+ *  AgentResult.elements, the captured visuals → the HUD card, the set → markdown for AgentResult.answer. */
+export function runAnswer(run: PageRun): { elements: Node[]; media: AnswerMedia[]; answer: string } {
+    const set = answerSetFor(run.byName);
+    return { elements: set.elements() as Node[], media: set.media(), answer: set.toMarkdown() };
 }
 
 const runs = new Map<string, PageRun>();
@@ -58,7 +64,7 @@ const runs = new Map<string, PageRun>();
  *  `visionModel` feed the ToolContext a delegated tool's run(args, ctx) receives (the page loop builds its own
  *  ctx directly, from the SAME values) — so a background-hosted locate reads the same vision facts. */
 export function registerRun(runId: string, tools: MlTool[], model: string | null = null, driverSees = false, visionModel: string | null = null): PageRun {
-    const run: PageRun = { byName: Object.fromEntries(tools.map(t => [t.name, t])), answered: [], model, driverSees, visionModel };
+    const run: PageRun = { byName: Object.fromEntries(tools.map(t => [t.name, t])), model, driverSees, visionModel };
     runs.set(runId, run);
     return run;
 }
@@ -182,11 +188,12 @@ export async function runDelegatedTool(runId: string, name: string, args: Record
     // meter their spend as a delta so the background loop can tally it (the page meter it can't read).
     return withSubUsage(async () => {
         const env = await executeTool(tool, args, toolContext(run.byName, run.model ?? null, null, run.driverSees ?? false, run.visionModel ?? null));
-        // An answer-capable tool designates the caller-facing result node(s) → stash them page-side; only
-        // the COUNT crosses to the background (the nodes reach the caller via AgentResult.elements).
-        if (env.elements && env.elements.length && tool.capabilities && tool.capabilities.includes("answer")) {
-            run.answered.push(...env.elements);
-        }
+        // An answer-capable tool's result node(s) go into the run's answer SET (page-side); the live nodes stay
+        // here (they can't cross the bus), only the COUNT crosses. The built-in `answer` tool curates the set
+        // itself (`answerManaged`); a CUSTOM answer tool just returns nodes → accumulate them here. The caller
+        // assembles AgentResult.elements/answer from that set (see `runAnswer`).
+        if (env.elements && env.elements.length && tool.capabilities && tool.capabilities.includes("answer") && !env.answerManaged)
+            answerSetFor(run.byName).add({ kind: "element", nodes: env.elements, preview: `${env.elements.length} element(s)` });
         // Compute the debug-render slots HERE (page-side) — the tool's render() method + its live nodes
         // live here, so the background emits the same rendered In/Out the page loop would.
         const { in: renderIn, out: renderOut } = descriptorFor(tool, env, args);

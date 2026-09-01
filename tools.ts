@@ -26,6 +26,12 @@ import { ML_READONLY_METHODS } from "./readonly-exec";
 import { resolveOutputCap, outputCapPrecheck } from "./contract";
 import { ML_API_PARTS } from "./api-docs.gen";
 import { queryApiDocs, isDefaultQuery, type ApiDocsQuery } from "./api-docs-query";
+import { answerItemFromString, type AnswerSet } from "./answer-set";
+
+/** A compact, model-facing echo of the current answer set (indexed, clamped previews — never the
+ *  heavy media/nodes). Shown after every `answer` op so the model can see what it's curating. */
+const answerEcho = (set: AnswerSet): string =>
+    set.length ? set.dump().map(d => `  [${d.i}] ${d.kind}: ${d.preview}`).join("\n") : "  (empty)";
 import { BUILD_INFO } from "./build-info.gen";
 
 // A single-element tool (describeElement/ancestors) uses the FIRST of N matches — say so, so
@@ -782,44 +788,73 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
         }),
         T({
             name: "answer",
-            summary: "Marks the final answer / result elements.",
+            summary: "Curates the run's user-facing result.",
             capabilities: ["answer"],
-            description: "Return specific element(s) as your RESULT — use this when the task asks " +
-                "you to find / locate / return an element rather than change the page. Pass the CSS " +
-                "selector (supports :contains()/:has-text()); pass `index` to designate one specific " +
-                "match (0-based) — call it once per item to collect several. The element(s) are handed " +
-                "back to the caller (and are hoverable in the console).",
+            description: "Curate the run's ANSWER — what the USER sees as the result. It's a small ordered " +
+                "set you manage: KEEP IT MINIMAL and matched to what the user actually asked for, not a dump of " +
+                "everything you touched. Add a result: `text` (a fact/summary line), or `selector` (+`index`) to " +
+                "designate element(s) (handed back to the caller, hoverable, shown in the card). Manage it: " +
+                "`remove` an item by its index (from the echo), or `clear` to start over. Each call echoes the " +
+                "current set so you can see what's in it. Call with no fields to just view it.",
             parameters: {
                 type: "object",
                 properties: {
-                    selector: { type: "string", description: "CSS selector for the answer element(s)." },
-                    index: { type: "integer", description: "Designate one specific match (0-based); omit to return all matches." },
-                    note: { type: "string", description: "Optional note about what these are." },
-                    show: { type: "string", enum: ["inline", "highlight"], description: "How the HUD shows it to the user: 'inline' renders the image/screenshot in the card; 'highlight' shows a compact chip that spotlights the live element on the page. Default: an <img> → inline (show the picture), any other element → highlight (point at it). Hovering either highlights it on the page." }
-                },
-                required: ["selector"]
-            },
-            run: async ({ selector, index, note, show }: { selector: string; index?: number; note?: string; show?: "inline" | "highlight" }): Promise<string | ToolResult> => {
-                let els: Element[];
-                try { els = queryAll(selector); }
-                catch (e) { return selectorError(selector, e as Error); }
-                if (index != null) {
-                    const el = els[index];
-                    if (!el) return `No element at index ${index} for "${selector}" (${els.length} match(es)).`;
-                    els = [el];
+                    text: { type: "string", description: "Add a text/markdown result line (a fact, a summary, the answer)." },
+                    selector: { type: "string", description: "Add element(s) as a result — CSS selector (supports :contains()/:has-text())." },
+                    index: { type: "integer", description: "With `selector`: designate one specific match (0-based); omit to add all matches." },
+                    note: { type: "string", description: "Optional note about what the added element(s) are." },
+                    show: { type: "string", enum: ["inline", "highlight"], description: "How the HUD shows an added element: 'inline' renders its image/screenshot in the card; 'highlight' shows a chip that spotlights the live element. Default: <img> → inline, else highlight." },
+                    remove: { type: ["integer", "array"], items: { type: "integer" }, description: "Remove item(s) from the set by index (from the echo). A single index or a list." },
+                    clear: { type: "boolean", description: "Empty the answer set." }
                 }
-                if (!els.length) return `No element matches "${selector}".`;
-                const kept = els.slice(0, 50);
-                const preview = kept.slice(0, 5).map(elLine).join("; ");
-                // Serialize a screenshot-crop of each designated element for the HUD completion card (user-facing
-                // output). Best-effort — a failed capture just omits the media; the answer still stands.
-                let answerMedia: AnswerMedia[] | undefined;
-                if (captureAnswer) { try { answerMedia = await captureAnswer(kept, note, show); } catch { /* no media */ } }
-                return {
-                    content: `Answer: ${els.length} element(s)${note ? ` — ${note}` : ""}: ${preview}`,
-                    elements: kept,
-                    ...(answerMedia && answerMedia.length ? { answerMedia } : {}),
-                };
+            },
+            run: async (
+                { selector, index, note, show, text, remove, clear }:
+                    { selector?: string; index?: number; note?: string; show?: "inline" | "highlight"; text?: string; remove?: number | number[]; clear?: boolean },
+                ctx?: ToolContext
+            ): Promise<string | ToolResult> => {
+                const set = ctx?.answer;
+                if (!set) return "Error: no active run to answer into.";
+
+                if (clear) { set.clear(); return "Answer cleared.\n  (empty)"; }
+                if (remove != null) {
+                    const idxs = Array.isArray(remove) ? remove : [remove];
+                    let removed = 0;
+                    for (const i of idxs.slice().sort((a, b) => b - a)) removed += set.remove(i);   // high→low: indices stay valid
+                    return `Removed ${removed} item(s). Answer set (${set.length}):\n${answerEcho(set)}`;
+                }
+                if (text != null) {
+                    set.add(answerItemFromString(text));   // a @tool: string → token (step 3), else literal text
+                    return `Added. Answer set (${set.length}):\n${answerEcho(set)}`;
+                }
+                if (selector != null) {
+                    let els: Element[];
+                    try { els = queryAll(selector); }
+                    catch (e) { return selectorError(selector, e as Error); }
+                    if (index != null) {
+                        const el = els[index];
+                        if (!el) return `No element at index ${index} for "${selector}" (${els.length} match(es)).`;
+                        els = [el];
+                    }
+                    if (!els.length) return `No element matches "${selector}".`;
+                    const kept = els.slice(0, 50);
+                    const preview = kept.slice(0, 5).map(elLine).join("; ");
+                    // Serialize a screenshot-crop of each designated element for the HUD completion card (user-facing
+                    // output). Best-effort — a failed capture just omits the media; the answer still stands.
+                    let media: AnswerMedia[] | undefined;
+                    if (captureAnswer) { try { media = await captureAnswer(kept, note, show); } catch { /* no media */ } }
+                    set.add({ kind: "element", nodes: kept, preview, ...(media && media.length ? { media } : {}), ...(note ? { note } : {}) });
+                    return {
+                        // Return this op's elements/media too: the debug render shows them, and the background
+                        // delegation crosses the media to the HUD card. The SET (ctx.answer) is the source of
+                        // truth — `answerManaged` tells the loop NOT to auto-accumulate these again.
+                        content: `Added ${els.length} element(s)${note ? ` — ${note}` : ""}. Answer set (${set.length}):\n${answerEcho(set)}`,
+                        elements: kept,
+                        ...(media && media.length ? { answerMedia: media } : {}),
+                        answerManaged: true,
+                    };
+                }
+                return `Answer set (${set.length}):\n${answerEcho(set)}`;   // no op → just view it
             }
         })
     ];

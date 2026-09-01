@@ -4,6 +4,7 @@
 // the page) will call the SAME function — so the two paths can't drift. Page-side (a tool's run()
 // touches the DOM and may return real Nodes); the delegation layer reduces `elements` to a count.
 import type { MlTool, ToolResult, RenderDescriptor, ToolContext, ToolFeedback, DocsMemory } from "./contract";
+import { AnswerSet } from "./answer-set";
 import { validateArgs } from "./validate";
 import { errText } from "./dom";
 
@@ -11,6 +12,16 @@ import { errText } from "./dom";
 // background-delegated call (run-delegation.ts) — so it can't be created here per call. Keyed off the run's
 // `byName` map (the one object both loop paths hold stable for the whole run) it's created once and reused.
 const docsMemories = new WeakMap<object, DocsMemory>();
+
+// Same idea for the run's curated answer set: one instance per run, keyed by the toolset, so the `answer`
+// tool and `ml.answer` mutate the SAME set whether the tool runs inline (page loop) or delegated (background).
+const answerSets = new WeakMap<object, AnswerSet>();
+/** The run's answer set for this toolset (created once per run). Exposed so the loop can read it at assembly. */
+export function answerSetFor(byName: object): AnswerSet {
+    let a = answerSets.get(byName);
+    if (!a) { a = new AnswerSet(); answerSets.set(byName, a); }
+    return a;
+}
 
 // How many NON-docs tool calls may fall between two `agent_api_docs` calls before the dig counts as "over" and
 // the shown-set is purged. 1 = tolerate a single quick detour (an `exec` check) mid-dig without re-printing;
@@ -23,7 +34,7 @@ const DOCS_STREAK_LENIENCY = 1;
 export function toolContext(byName: Record<string, MlTool>, model: string | null = null, capabilities: string[] | null = null, driverSees = false, visionModel: string | null = null): ToolContext {
     let docsMemory = docsMemories.get(byName);
     if (!docsMemory) { docsMemory = { shown: new Set(), sinceDocs: 0 }; docsMemories.set(byName, docsMemory); }
-    return { tools: Object.keys(byName), hasTool: (n) => n in byName, model, capabilities, driverSees, visionModel, docsMemory };
+    return { tools: Object.keys(byName), hasTool: (n) => n in byName, model, capabilities, driverSees, visionModel, docsMemory, answer: answerSetFor(byName) };
 }
 
 export interface ToolEnvelope {
@@ -47,6 +58,8 @@ export interface ToolEnvelope {
     cdpType?: { text: string; submit?: boolean; append?: boolean; x?: number; y?: number; selector?: string; index?: number; verify?: boolean; verifyElement?: string; verifyFocus?: boolean };
     /** what the tool fed into the model's context (locate's snap-inject) → surfaced in the debug render + export */
     feedback?: ToolFeedback;
+    /** the built-in `answer` tool already added these to the run's answer set — the loop must not re-add them */
+    answerManaged?: boolean;
 }
 
 export async function executeTool(tool: MlTool, args: Record<string, unknown>, ctx?: ToolContext): Promise<ToolEnvelope> {
@@ -75,7 +88,7 @@ export async function executeTool(tool: MlTool, args: Record<string, unknown>, c
         // also hand back real DOM nodes / a screenshot (routed to onStep/the transcript, never the model).
         if (raw && typeof raw === "object" && typeof (raw as ToolResult).content === "string") {
             const r = raw as ToolResult;
-            return { result: r.content + note, elements: r.elements, answerMedia: r.answerMedia, image: r.image, imageLabel: r.imageLabel, images: r.images, render: r.render, renderIn: r.renderIn, cdpClick: r.cdpClick, cdpExec: r.cdpExec, cdpShadowClick: r.cdpShadowClick, cdpType: r.cdpType, feedback: r.feedback };
+            return { result: r.content + note, elements: r.elements, answerMedia: r.answerMedia, answerManaged: r.answerManaged, image: r.image, imageLabel: r.imageLabel, images: r.images, render: r.render, renderIn: r.renderIn, cdpClick: r.cdpClick, cdpExec: r.cdpExec, cdpShadowClick: r.cdpShadowClick, cdpType: r.cdpType, feedback: r.feedback };
         }
         return { result: String(raw) + note };
     } catch (e) { return { result: `Error: ${errText(e)}` + note }; }

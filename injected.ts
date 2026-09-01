@@ -69,7 +69,7 @@ interface AgentControl {
     stepBase: number;             // monotonic STEP base so turn groups stay distinct in the sidebar across turns
     bg?: boolean;                 // the CURRENT run routed to the background → a mid-run say() steers via INJECT_MESSAGE
 }
-import { installToolDelegation, registerRun, endRun } from "./run-delegation";
+import { installToolDelegation, registerRun, endRun, runAnswer } from "./run-delegation";
 import { descriptorFor } from "./render-descriptor";
 
 // Monotonic id per mid-run steer (a.say()), so the "seen" indicator can key an `agent-say-seen` event
@@ -744,8 +744,8 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                 const ctx = pageContext();
                 if (ctx) systemPrompt += `\n\nCurrent page context:\n${ctx}`;
             }
-            const answered: Node[] = [];   // element(s) an `answer`-capable tool designated (returned as AgentResult.elements)
-            const answerMedia: AnswerMedia[] = [];   // their serialized visuals → the HUD completion card (page loop)
+            // The run's curated answer set lives on the ToolContext (built at `toolCtx` below); the loop reads
+            // `answerSet.elements()` / `.media()` / `.toMarkdown()` at assembly. (Was two accumulator arrays.)
             // Debug sidebar: announce the run + each step. Its own session hash
             // (an agent run isn't a createChat). elements can't cross the window
             // bus — send a count; real nodes still reach onStep/the console.
@@ -825,8 +825,9 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                         try {
                             const res = await makeBackgroundTaskPromise<AgentResult>("RESUME_RUN_REQUEST", "RESUME_RUN_RESPONSE", { runId: runHash, task: t }, undefined, signal);
                             const run = endRun(runHash);
-                            emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: res.steps }, summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled, ...(res.answerMedia ? { answerMedia: res.answerMedia } : {}) });
-                            return { ...res, elements: run ? run.answered : [], hash: runHash };
+                            const a = run ? runAnswer(run) : { elements: [], media: [], answer: "" };
+                            emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: res.steps }, summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled, ...(a.media.length ? { answerMedia: a.media } : {}), ...(a.answer ? { answer: a.answer } : {}) });
+                            return { ...res, elements: a.elements, ...(a.media.length ? { answerMedia: a.media } : {}), ...(a.answer ? { answer: a.answer } : {}), hash: runHash };
                         } catch (e) {
                             // Mirror the START path: an aborted resume resolves as a clean cancel; any other failure
                             // (e.g. the background was evicted and can't rehydrate the run) surfaces to the card as a
@@ -834,7 +835,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                             const run = endRun(runHash);
                             if (signal?.aborted) {
                                 emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, summary: "Cancelled by the caller.", steps: 0, hitCap: false, cancelled: true });
-                                return { summary: "Cancelled by the caller.", steps: 0, transcript: [], elements: run ? run.answered : [], cancelled: true, hash: runHash };
+                                return { summary: "Cancelled by the caller.", steps: 0, transcript: [], elements: run ? runAnswer(run).elements : [], cancelled: true, hash: runHash };
                             }
                             emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, summary: "", steps: 0, hitCap: false, error: (e as Error)?.message || String(e) });
                             throw e;
@@ -887,8 +888,9 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     // The real DOM nodes an answer-capable tool returned stayed page-side (they can't cross
                     // the bus) — assemble AgentResult.elements from the page-side run record here.
                     const run = endRun(runHash);
-                    const full: AgentResult = { ...res, elements: run ? run.answered : [], hash: runHash };
-                    emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: res.steps }, summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled, ...(res.answerMedia ? { answerMedia: res.answerMedia } : {}) });
+                    const a = run ? runAnswer(run) : { elements: [], media: [], answer: "" };
+                    const full: AgentResult = { ...res, elements: a.elements, ...(a.media.length ? { answerMedia: a.media } : {}), ...(a.answer ? { answer: a.answer } : {}), hash: runHash };
+                    emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: res.steps }, summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled, ...(a.media.length ? { answerMedia: a.media } : {}), ...(a.answer ? { answer: a.answer } : {}) });
                     return full;
                 } catch (e) {
                     const run = endRun(runHash);
@@ -896,7 +898,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     // not throw) with the partial run. (The background fetch isn't killed yet — v1 caveat.)
                     if (signal?.aborted) {
                         emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, summary: "Cancelled by the caller.", steps: 0, hitCap: false, cancelled: true });
-                        return { summary: "Cancelled by the caller.", steps: 0, transcript: [], elements: run ? run.answered : [], cancelled: true, hash: runHash };
+                        return { summary: "Cancelled by the caller.", steps: 0, transcript: [], elements: run ? runAnswer(run).elements : [], cancelled: true, hash: runHash };
                     }
                     // A FATAL error (e.g. the model call failed) — surface it so the sidebar/card don't hang
                     // as "running", then re-throw so ml.agent() still rejects. (No-op in off mode, where the
@@ -959,12 +961,18 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             // The runtime ToolContext for this run — built once from the finalised toolset (byName) + model,
             // so a tool's run(args, ctx) can adapt to which companion tools are wired (e.g. `locate`).
             const toolCtx = toolContext(byName, runModel, null, driverSees, runVisionModel);
+            // The run's curated answer set (created per run on the ToolContext). The `answer` tool mutates it
+            // directly — no per-call accumulation here — and the loop reads it at assembly.
+            const answerSet = toolCtx.answer!;
             const runToolDep = async (name: string, args: Record<string, unknown>) => {
                 const tool = byName[name];
                 const env = await executeTool(tool, args, toolCtx);
                 const { in: renderIn, out: renderOut } = descriptorFor(tool, env, args);
-                if (tool && tool.capabilities && tool.capabilities.includes("answer") && env.elements && env.elements.length) answered.push(...env.elements as Node[]);
-                if (env.answerMedia && env.answerMedia.length) answerMedia.push(...env.answerMedia);
+                // A CUSTOM answer-capable tool just returns nodes (it doesn't know about the answer set) →
+                // accumulate them for the user. The built-in `answer` tool curates the set itself and flags
+                // `answerManaged`, so it's skipped here (no double-count).
+                if (tool && tool.capabilities && tool.capabilities.includes("answer") && env.elements && env.elements.length && !env.answerManaged)
+                    answerSet.add({ kind: "element", nodes: env.elements as Node[], preview: `${env.elements.length} element(s)`, ...(env.answerMedia && env.answerMedia.length ? { media: env.answerMedia } : {}) });
                 return { result: String(env.result), elements: env.elements, renderIn, renderOut, image: env.image, imageLabel: env.imageLabel, images: env.images, feedback: env.feedback };
             };
 
@@ -1080,14 +1088,15 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             // buildMessages continues the live history, and maxSteps is read fresh each step (handle can
             // raise it mid-run). answered resets per turn; the seq base advances so steps stay session-unique.
             const drive = async (t: string): Promise<AgentResult> => {
-                answered.length = 0; answerMedia.length = 0;   // both reflect THIS turn's answers only (mirror each other)
+                answerSet.clear();   // the answer set reflects THIS turn's designations only
                 enterAgentRun();   // suppress orphan chat sessions from a tool's internal ml.chat; finally-decremented
                 try {
                     const r = await runAgentLoop(t, { tools: toolMetas, maxSteps: () => control.maxSteps, signal, unattended }, deps);
                     control.seqBase += turnMaxSeq; turnMaxSeq = 0;   // next turn's step seqs continue past this turn's
                     control.stepBase += turnMaxStep; turnMaxStep = 0;   // …and its step numbers, so turn groups stay distinct
-                    emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: r.steps }, summary: r.summary, steps: r.steps, hitCap: !!r.hitCap, cancelled: !!r.cancelled, ...(answerMedia.length ? { answerMedia } : {}) });
-                    return { ...r, elements: answered, ...(answerMedia.length ? { answerMedia } : {}), hash: runHash };
+                    const media = answerSet.media(); const answer = answerSet.toMarkdown();
+                    emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: r.steps }, summary: r.summary, steps: r.steps, hitCap: !!r.hitCap, cancelled: !!r.cancelled, ...(media.length ? { answerMedia: media } : {}), ...(answer ? { answer } : {}) });
+                    return { ...r, elements: answerSet.elements() as Node[], ...(media.length ? { answerMedia: media } : {}), ...(answer ? { answer } : {}), hash: runHash };
                 } catch (e) {
                     // A FATAL error escaped the loop — surface it so the sidebar doesn't hang as "running",
                     // then re-throw so ml.agent() still rejects. (An abort already resolved cleanly inside.)
@@ -1804,8 +1813,9 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     try {
                         const res = await makeBackgroundTaskPromise<AgentResult>("RESUME_RUN_REQUEST", "RESUME_RUN_RESPONSE", { runId, task: t });
                         const run = endRun(runId);
-                        emitDebug({ kind: "agent-result", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: res.steps }, summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled, ...(res.answerMedia ? { answerMedia: res.answerMedia } : {}) });
-                        return { ...res, elements: run ? run.answered : [], hash: runId };
+                        const a = run ? runAnswer(run) : { elements: [], media: [], answer: "" };
+                        emitDebug({ kind: "agent-result", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: res.steps }, summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled, ...(a.media.length ? { answerMedia: a.media } : {}), ...(a.answer ? { answer: a.answer } : {}) });
+                        return { ...res, elements: a.elements, ...(a.media.length ? { answerMedia: a.media } : {}), ...(a.answer ? { answer: a.answer } : {}), hash: runId };
                     } finally { exitAgentRun(); }
                 },
             });

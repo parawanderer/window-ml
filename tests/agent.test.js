@@ -841,18 +841,31 @@ test("selector tools accept end-position :contains/:has-text and explain mid-sel
     assert.match(run(ml, "countMatches", { selector: "((" }), /Invalid selector: /);
 });
 
-test("answer tool returns the designated element(s) as the result", async () => {
-    // `answer` is async now (it screenshots each designated element for the HUD completion card; the crop is
-    // best-effort and absent in jsdom, so only content/elements are asserted here).
+test("answer tool curates the answer set (add element/text, remove, clear)", async () => {
+    // `answer` needs a ToolContext carrying the run's AnswerSet (the loop provides it). It screenshots each
+    // element for the HUD card — best-effort, absent in jsdom, so only content/elements/set are asserted.
+    const { AnswerSet } = require("../answer-set.ts");
     const { ml } = loadDomWorld('<div id="banner">Ad</div><p class="x">a</p><p class="x">b</p>');
-    const one = await run(ml, "answer", { selector: "#banner", note: "the banner" });
-    assert.match(one.content, /Answer: 1 element.*the banner/);
+    const set = new AnswerSet();
+    const ctx = { answer: set, hasTool: () => false, tools: [], model: null, capabilities: null, driverSees: false, visionModel: null };
+    const call = (args) => ml.domTools.find(t => t.name === "answer").run(args, ctx);
+
+    const one = await call({ selector: "#banner", note: "the banner" });
+    assert.match(one.content, /Added 1 element.*the banner/);
     assert.equal(one.elements[0].id, "banner");
-    assert.equal((await run(ml, "answer", { selector: "p.x" })).elements.length, 2);
-    assert.match(await run(ml, "answer", { selector: ".nope" }), /No element matches/);
-    // index designates one specific match (call repeatedly to collect several)
-    assert.equal((await run(ml, "answer", { selector: "p.x", index: 1 })).elements[0].textContent, "b");
-    assert.match(await run(ml, "answer", { selector: "p.x", index: 9 }), /No element at index 9/);
+    assert.equal(one.answerManaged, true, "the built-in answer tool self-manages the set");
+    assert.equal((await call({ selector: "p.x" })).elements.length, 2);
+    assert.match(await call({ selector: ".nope" }), /No element matches/);
+    assert.equal((await call({ selector: "p.x", index: 1 })).elements[0].textContent, "b");
+    assert.match(await call({ selector: "p.x", index: 9 }), /No element at index 9/);
+
+    // text add, and curation
+    await call({ text: "the answer is 42" });
+    assert.match(await call({}), /the answer is 42/);                        // no-op → echo shows it
+    const before = set.length;
+    await call({ clear: true });
+    assert.equal(set.length, 0, "clear empties the set");
+    assert.ok(before > 0);
 });
 
 test("pageInfo grounds time/locale for time-relative tasks", () => {
@@ -2313,7 +2326,7 @@ test("agent adds tool-aware clauses to the DEFAULT prompt (vision/answer), not a
 
     await world.ml.agent("t", { tools: [look, answer] });       // default system → clauses added
     assert.match(seen[0], /VISION tool/);
-    assert.match(seen[0], /answer tool/);
+    assert.match(seen[0], /`answer` tool curates/);
 
     await world.ml.agent("t", { tools: [plain] });              // no vision/answer capability
     assert.doesNotMatch(seen[1], /VISION tool/);

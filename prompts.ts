@@ -85,9 +85,11 @@ export const HUD_PROSE_QUIET =
     " The user has the HUD in QUIET mode and will NOT see anything you say between steps — so don't narrate " +
     "your progress at all. Work silently, thinking as needed, and put your entire response in the FINAL answer.";
 export const ANSWER_CLAUSE =
-    "\n\nIf the task asks you to FIND / LOCATE / return an element (rather than change " +
-    "the page), designate it with the answer tool (by selector) so the actual element " +
-    "is handed back to the caller.";
+    "\n\nThe `answer` tool curates the run's RESULT — what the user sees. Keep it MINIMAL and matched to " +
+    "what they asked for, not a dump of everything you touched. Add a `text` line for a fact/summary, or a " +
+    "`selector` to hand back the actual element(s) (hoverable, shown in the card). Manage it as you go: " +
+    "`remove` an item by index, or `clear` and redo. If the task is to FIND / LOCATE an element, designate " +
+    "it here so the real node reaches the caller.";
 export const SHADOW_CLAUSE =
     "\n\nShadow DOM: the DOM tools (findByText / interactives / describeElement / ancestors / countMatches / " +
     "sampleText / click / type / wait / answer) pierce OPEN shadow roots automatically. A control inside one " +

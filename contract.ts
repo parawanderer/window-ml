@@ -5,6 +5,10 @@
  * Import with `import type { ... } from "./contract"` so nothing survives to JS.
  */
 
+// Type-only (erased): the curated answer-set class, referenced by ToolContext.answer. answer-set.ts
+// imports AnswerMedia back from here — a type-only cycle, which is fine.
+import type { AnswerSet } from "./answer-set";
+
 /* ------------------------------- config ------------------------------- */
 
 export type ApiFormat = "openai" | "ollama";
@@ -473,6 +477,10 @@ export interface ToolResult {
     elements?: Node[];
     /** answer's serialized element visuals → the HUD completion card (see AnswerMedia). */
     answerMedia?: AnswerMedia[];
+    /** Set by the built-in `answer` tool: it curated the run's answer set ITSELF, so the loop must NOT
+     *  also auto-accumulate these `elements` into it (that path is for OTHER answer-capable tools, which
+     *  just return nodes and don't know about the set). */
+    answerManaged?: boolean;
     image?: string;
     imageLabel?: string;
     /** MULTIPLE inline-vision images from ONE tool call, injected as separate images on the driver's next
@@ -635,6 +643,9 @@ export interface ToolContext {
      *  contiguous dig doesn't re-print them (see DocsMemory). Persisted per run (keyed by the toolset) and
      *  reset by `executeTool` once the model breaks the docs streak; a tool that doesn't use it ignores it. */
     docsMemory?: DocsMemory;
+    /** The run's curated user-facing answer set — the `answer` tool adds/removes/clears it, `ml.answer`
+     *  mirrors it, and the loop reads it to assemble AgentResult. Per run (keyed by the toolset). */
+    answer?: AnswerSet;
 }
 
 /** `agent_api_docs`'s per-run memory: which reference chunks have been shown in the CURRENT burst of docs
@@ -734,6 +745,10 @@ export interface AgentResult {
     elements: Node[];
     /** serialized visuals of the designated elements — for the HUD completion card (see AnswerMedia). */
     answerMedia?: AnswerMedia[];
+    /** the curated answer SET resolved to markdown (text items verbatim, elements as bullets, tool
+     *  tokens as links) — a self-contained representation of the run's user-facing result. "" / omitted
+     *  when nothing was designated. */
+    answer?: string;
     hitCap?: boolean;
     /** the caller aborted via opts.signal (partial transcript preserved) */
     cancelled?: boolean;

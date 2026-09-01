@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
-import { registerRun, runDelegatedTool, endRun, getRun } from "../run-delegation.ts";
+import { registerRun, runDelegatedTool, endRun, getRun, runAnswer } from "../run-delegation.ts";
 import { loadPageWorld } from "./helpers.js";
 
 const tool = (over = {}) => ({
@@ -31,17 +31,19 @@ test("real DOM nodes are reduced to a COUNT (they can't cross the window bus)", 
     endRun("r2");
 });
 
-test("an answer-capable tool's nodes are STASHED page-side for AgentResult.elements", async () => {
+test("the answer tool curates the run's AnswerSet page-side (via ctx.answer); runAnswer reads it", async () => {
     const n1 = {}, n2 = {};
     registerRun("r3", [
-        tool({ name: "answer", capabilities: ["answer"], run: async () => ({ content: "picked", elements: [n1, n2] }) }),
+        // The real answer tool curates ctx.answer itself; a stub does the same here. A plain tool that merely
+        // RETURNS elements must NOT land in the answer (delegation no longer auto-stashes).
+        tool({ name: "answer", capabilities: ["answer"], run: async (_a, ctx) => { ctx.answer.add({ kind: "element", nodes: [n1, n2], preview: "picked" }); return "picked"; } }),
         tool({ name: "plain", run: async () => ({ content: "seen", elements: [{}] }) }),
     ]);
     await runDelegatedTool("r3", "answer", {});
     await runDelegatedTool("r3", "plain", {});
     const run = getRun("r3");
-    assert.deepEqual(run.answered, [n1, n2], "only the answer-capable tool's nodes accumulate");
-    // endRun hands back the record so ml.agent can assemble AgentResult.elements after the run finishes.
+    assert.deepEqual(runAnswer(run).elements, [n1, n2], "only what the answer tool designated is in the set");
+    // endRun hands back the record so ml.agent can assemble AgentResult.elements/answer after the run finishes.
     assert.strictEqual(endRun("r3"), run);
     assert.equal(getRun("r3"), undefined, "the run is gone after endRun");
 });
