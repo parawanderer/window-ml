@@ -4587,6 +4587,20 @@ test("answer render (sidebar): a sympy-AUTO `latex` python-out typesets with NO 
     assert.ok(tok && !tok.querySelector(".katex") && tok.querySelector("pre.code"), "| raw overrides the auto-latex → literal text");
 });
 
+test("answer render (sidebar): a citation CAPTION renders inline `$…$` math (models write latex in labels)", async () => {
+    // Regression: the .tok-anno caption showed the model's label as raw text, so an inline `$\sin^2(x)$` in a
+    // caption displayed the literal `$…$`. The caption is model prose → render it markdown+math.
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("cap", "compute"));
+    await w.dispatch(compStep("cap"));   // a block citation (renderOut code) → the label becomes a caption
+    await w.dispatch({ ...agentResult("cap", "See:\n\n![Derivative of $\\sin^2(x) + e^x$](@tool:" + OUT + ":out)", 1), answer: "" });
+    await openRun(w);
+    const anno = w.shadow.querySelector(".msg.asst .answer-rendered .tok-anno");
+    assert.ok(anno, "the block citation shows its caption");
+    assert.ok(anno.querySelector(".katex"), "inline $…$ in the caption typesets via KaTeX");
+    assert.ok(!anno.textContent.includes("$"), "no literal $ delimiters remain in the caption");
+});
+
 test("answer render (sidebar): an INLINE citation expands in the reply, with NO separate Result block", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("inl", "compute it"));

@@ -143,7 +143,10 @@ function TokenRef({ seg, run, scope, standalone }: { seg: Extract<AnswerSegment,
     return <span class={`tok-ref ${block ? "tok-block" : "tok-inline"}`} role="button" tabIndex={0}
         onClick={jump} onKeyDown={(e) => { if (e.key === "Enter") jump(); }}>
         {node}
-        {block && label ? <div class="tok-anno">{label}</div> : null}
+        {/* The caption is model-authored prose — render it as markdown+math (a lone wrapping <p> stripped) so a
+            model that writes inline `$…$`/`\(…\)` in the label typesets it. markdown() escapes HTML, so this is
+            as safe as the answer prose. */}
+        {block && label ? <div class="tok-anno" dangerouslySetInnerHTML={{ __html: markdown(label, { math: true }).replace(/^<p>([\s\S]*)<\/p>\s*$/, "$1") }} /> : null}
         <span class="tok-tip" role="tooltip">{tip}</span>
     </span>;
 }
