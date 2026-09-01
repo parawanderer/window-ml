@@ -139,23 +139,34 @@ export function markdown(src: string, opts: { math?: boolean } = {}): string {
         .replace(/\$\$([\s\S]+?)\$\$/g, (_, t: string) => stashMath(t, true))
         .replace(/\\\[([\s\S]+?)\\\]/g, (_, t: string) => stashMath(t, true))
         .replace(/\\\(([\s\S]+?)\\\)/g, (_, t: string) => stashMath(t, false))
-        // Single-$ inline is ambiguous with currency/prose ("FY sales ($k)". This …" would pair two
-        // $k as math). Only treat it as math when the content carries a real math signal (a LaTeX
-        // command `\`, a superscript `^`, or a subscript `_`) — so `$6 \times 7$` / `$mc^2$` render,
-        // but dollar amounts and prose don't. $$…$$ / \(…\) / \[…\] are explicit → always rendered.
-        .replace(/(?<![\\$])\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\d)/g, (m: string, t: string) => /[\\^_]/.test(t) ? stashMath(t, false) : m);
+        // Single-$ inline math. The regex enforces no-space-adjacency (open `$` not followed by space, close
+        // `$` not preceded by space, not escaped, close not followed by a digit) — that alone rules out
+        // "$5 or $10" currency and "$ x $". We render when EITHER the content carries a math signal
+        // (`\`/`^`/`_` → `$6 \times 7$`, `$mc^2$`) OR it has NO internal whitespace (`$x$`, `$a+b$`, `$x_1$`) —
+        // the latter is the fix for a bare `$x$` (was left literal), while a whitespace-y prose span that
+        // happens to pair two `$` (the "FY sales ($k)". This …($k)" slop) still stays literal.
+        .replace(/(?<![\\$])\$(?!\s)([^$\n]+?)(?<!\s)\$(?!\d)/g, (m: string, t: string) => /[\\^_]/.test(t) || !/\s/.test(t) ? stashMath(t, false) : m);
     const text = escapeHtml(mathed);
+    // Recursively resolve emphasis so it NESTS: `**a _b_ c**` → <strong>a <em>b</em> c</strong>. Each match
+    // re-runs emph on its own inner content, so an italic inside a bold (or vice-versa) still resolves — the old
+    // flat passes left the inner literal. Bold (`**`/`__`) before italic (`*`/`_`) so `**` isn't eaten as two
+    // `*`. `_`/`*` italic only at a WORD BOUNDARY (lookarounds), so snake_case / 2*3 / a_b don't become emphasis.
+    const emph = (s: string): string => s
+        .replace(/\*\*([\s\S]+?)\*\*/g, (_m, c: string) => `<strong>${emph(c)}</strong>`)
+        .replace(/(?<![A-Za-z0-9_])__([\s\S]+?)__(?![A-Za-z0-9_])/g, (_m, c: string) => `<strong>${emph(c)}</strong>`)
+        .replace(/(?<![*\w])\*(?!\s)([\s\S]+?)(?<!\s)\*(?![*\w])/g, (_m, c: string) => `<em>${emph(c)}</em>`)
+        .replace(/(?<![_\w])_(?!\s)([\s\S]+?)(?<!\s)_(?![_\w])/g, (_m, c: string) => `<em>${emph(c)}</em>`);
     const inline = (t: string): string => {
-        // Stash inline code FIRST, so the bold/italic/link passes never see its contents. Otherwise a `*`
-        // inside code got eaten: `<code>*</code> … <code>*</code>` looks like an italic `*…*` run to the
-        // italic regex, which wrapped the middle in <em> and deleted both asterisks. (Content is already
-        // HTML-escaped upstream, so <code>${c}</code> is safe — same as before.)
-        const codeSpans: string[] = [];
-        return t.replace(/`([^`]+)`/g, (_, c: string) => { codeSpans.push(`<code>${c}</code>`); return `@@IC${codeSpans.length - 1}@@`; })
-            .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-            .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>")
-            .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
-            .replace(/@@IC(\d+)@@/g, (_, i: string) => codeSpans[+i]);
+        // Stash inline code AND links FIRST, so the emphasis pass never mangles their contents — a `*`/`_`
+        // inside `<code>` or a URL (e.g. `…/foo_bar_baz`) must stay literal. Link TEXT is still emph'd. (Content
+        // is HTML-escaped upstream, so the stashed HTML is safe.)
+        const spans: string[] = [];
+        const stash = (html: string): string => { spans.push(html); return `@@IS${spans.length - 1}@@`; };
+        const staged = t
+            .replace(/`([^`]+)`/g, (_, c: string) => stash(`<code>${c}</code>`))
+            .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, (_, txt: string, url: string) =>
+                stash(`<a href="${url}" target="_blank" rel="noopener">${emph(txt)}</a>`));
+        return emph(staged).replace(/@@IS(\d+)@@/g, (_, i: string) => spans[+i]);
     };
     // GFM table helpers. Cells are already-escaped `text` (never raw source), so
     // inline() on a cell is as safe as anywhere else. Leading/trailing pipes optional.
@@ -218,6 +229,19 @@ export function markdown(src: string, opts: { math?: boolean } = {}): string {
         if (/^\s{0,3}(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { flush(); out.push("<hr>"); }   // thematic break
         else if (h) { flush(); out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`); }
         else if (li) { (items ??= []).push({ indent: li[1].replace(/\t/g, "  ").length, ordered: /\d/.test(line.trimStart()[0]), text: li[2] }); }
+        else if (/^\s{0,3}&gt;/.test(line)) {
+            // Blockquote: gather consecutive `>` lines, strip the marker, split into paragraphs on a blank
+            // quoted line, and inline each. (Nested lists/quotes inside a quote are rarer — inline is enough.)
+            // The block loop runs on ESCAPED text, so the `>` marker is `&gt;` here.
+            flush();
+            const q: string[] = [];
+            for (; i < lines.length && /^\s{0,3}&gt;/.test(lines[i].trimEnd()); i++) q.push(lines[i].replace(/^\s{0,3}&gt;\s?/, ""));
+            i--;   // step back onto the last quote line (the loop re-increments)
+            const paras: string[] = []; let cur: string[] = [];
+            for (const ql of q) { if (ql.trim()) cur.push(ql); else if (cur.length) { paras.push(cur.join(" ")); cur = []; } }
+            if (cur.length) paras.push(cur.join(" "));
+            out.push(`<blockquote>${paras.map(p => `<p>${inline(p)}</p>`).join("")}</blockquote>`);
+        }
         else if (!line.trim()) { flush(); }
         else { flush(); out.push(`<p>${inline(line)}</p>`); }
     }

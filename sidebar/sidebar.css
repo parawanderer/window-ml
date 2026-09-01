@@ -830,6 +830,8 @@ details.io[open] > summary .io-preview { display: none; }
 .md ul ul, .md ol ol, .md ul ol, .md ol ul { margin: 1px 0; }   /* tighter nested lists */
 .md li { margin: 1px 0; }
 .md hr { border: none; border-top: 1px solid var(--border); margin: 10px 0; }
+.md blockquote { margin: 6px 0; padding: 2px 0 2px 12px; border-left: 3px solid var(--border); color: var(--fg-dim); }
+.md blockquote p { margin: 0 0 4px; } .md blockquote p:last-child { margin-bottom: 0; }
 .md a { color: var(--accent); }
 .md code { background: var(--panel-2); border-radius: 3px; padding: 0 3px; font: 0.92em ui-monospace, SFMono-Regular, Menlo, monospace; }
 

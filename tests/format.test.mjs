@@ -53,3 +53,45 @@ test("inline code protects its contents from bold/italic (the `*` bug)", () => {
     // Underscores/asterisks inside code are literal, not emphasis.
     assert.equal(markdown("`a_b_c` and `x**y**z`"), "<p><code>a_b_c</code> and <code>x**y**z</code></p>");
 });
+
+// --- inline emphasis: nesting + `_` italic (the flat passes left inner emphasis literal) ---
+test("nested emphasis: an italic inside a bold resolves (both markers)", () => {
+    assert.equal(markdown("This **line does not _work_, only some** of it"),
+        "<p>This <strong>line does not <em>work</em>, only some</strong> of it</p>");
+    assert.equal(markdown("**a _b_ c**"), "<p><strong>a <em>b</em> c</strong></p>");
+    assert.equal(markdown("*a **b** c*"), "<p><em>a <strong>b</strong> c</em></p>");
+});
+
+test("`_underscores_` are italic at a word boundary, but intraword `_` is literal", () => {
+    assert.equal(markdown("an _emphasised_ word"), "<p>an <em>emphasised</em> word</p>");
+    assert.equal(markdown("call python_exec now"), "<p>call python_exec now</p>");   // snake_case untouched
+    assert.equal(markdown("a `code_with_underscores` span").includes("<em>"), false);   // underscores in code stay literal
+});
+
+test("emphasis never mangles a URL with underscores", () => {
+    assert.equal(markdown("see [docs](https://x.com/a_b_c_d) now"),
+        '<p>see <a href="https://x.com/a_b_c_d" target="_blank" rel="noopener">docs</a> now</p>');
+});
+
+// --- blockquotes (`>`) ---
+test("blockquote: a `>` line renders a <blockquote> with inline formatting", () => {
+    assert.equal(markdown("> Insanity is doing the same thing"),
+        "<blockquote><p>Insanity is doing the same thing</p></blockquote>");
+    assert.equal(markdown("before\n\n> a **bold** quote\n\nafter"),
+        "<p>before</p><blockquote><p>a <strong>bold</strong> quote</p></blockquote><p>after</p>");
+});
+
+test("blockquote: consecutive `>` lines join; a blank quoted line splits paragraphs", () => {
+    assert.equal(markdown("> line one\n> line two"),
+        "<blockquote><p>line one line two</p></blockquote>");
+    assert.equal(markdown("> para one\n>\n> para two"),
+        "<blockquote><p>para one</p><p>para two</p></blockquote>");
+});
+
+// --- inline single-$ math (space-adjacency rule) ---
+test("inline $x$ (no internal space) typesets; currency / spaced $…$ does not", () => {
+    assert.ok(markdown("the variable $x$ here", { math: true }).includes("katex"), "$x$ renders as math");
+    assert.ok(markdown("$a+b$ and $mc^2$", { math: true }).includes("katex"), "$a+b$ / $mc^2$ render");
+    assert.ok(!markdown("It costs $5 or $10.", { math: true }).includes("katex"), "currency is not math");
+    assert.ok(!markdown('"FY sales ($k)". Also "FY sales ($k)".', { math: true }).includes("katex"), "spaced prose $…$ is not math");
+});
