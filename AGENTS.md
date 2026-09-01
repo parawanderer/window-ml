@@ -553,6 +553,19 @@ and the single-element `describeElement`/`ancestors` via `firstOfNote`) so a wro
 silent. `examples/spreadsheet.html` is a table demo (a small static table + a toggleable
 **Ridiculous mode**: a 40×12 dirty scrolling table) — both with comment-hidden answer keys.
 
+**RULE — the log/export ALWAYS carries what the MODEL actually saw.** The exports (Markdown +
+PDF) and the DevTools/debug log exist for DEBUGGABILITY: there must ALWAYS be a view of the raw
+model-facing INPUT *and* OUTPUT of every step — the exact args the model sent and the exact tool
+result it received — even if collapsed behind a `<details>`. The default human-facing view may be
+pretty and omit spam (a rendered table instead of raw HTML; a clean result instead of the
+plumbing/token lines the model was fed), but the raw view must NEVER be *unavailable*. The
+precedent is the tool call's raw-JSON-args disclosure that sits beside its rendered In (a static
+export shows both since it can't toggle). **So whenever a rendered/pretty view DIFFERS from what
+the model actually saw, add the raw view too** — in the sidebar (a rendered⇄raw toggle or a
+disclosure) AND both exports. E.g. when a tool result carries an appended `@tool:<id>` token line,
+that model-facing result — token line included — must be recoverable in the log, not silently
+dropped for the clean render.
+
 **Export log.** The detail-view header has an "Export log" button opening a small
 menu with two formats (chat and agent both). It serialises the in-memory session
 (options, turns/steps, exec JS beautified, results, model provenance, timestamps)
