@@ -4673,18 +4673,29 @@ test("answer render (sidebar): a result cited with `| latex` renders as a KaTeX 
     assert.match(tok.querySelector(".tok-tip")?.textContent || "", /step 1 · python_exec/, "the hover tooltip names the source compute step");
 });
 
-test("answer render (sidebar): a `| latex` EMBED renders as a green tool-output block with its caption", async () => {
-    const w = await loadSidebarWorld();
-    await w.dispatch(agentStart("lxb", "differentiate"));
-    await w.dispatch(agentStep("lxb", 1, { seq: 1, tool: "python_exec", token: OUT, result: "\\frac{1}{2}",
+test("answer render (sidebar): a STANDALONE `| latex` citation → a green DISPLAY block; an INLINE one → inline", async () => {
+    const latexStep = (hash) => w.dispatch(agentStep(hash, 1, { seq: 1, tool: "python_exec", token: OUT, result: "\\frac{1}{2}",
         renderOut: { type: "python-out", value: "\\frac{1}{2}" } }));
-    // An EMBED (`![…]`) latex citation — should be a BLOCK (green marker), not inline in the prose.
-    await w.dispatch({ ...agentResult("lxb", "The derivative is ![Derivative](@tool:" + OUT + ":out | latex)", 1), answer: "" });
+    // STANDALONE — the citation sits alone in its own paragraph (blank lines around it) → display block + outline.
+    let w = await loadSidebarWorld();
+    await w.dispatch(agentStart("lxd", "differentiate"));
+    await latexStep("lxd");
+    await w.dispatch({ ...agentResult("lxd", "The derivative is:\n\n![Derivative](@tool:" + OUT + ":out | latex)\n\nDone.", 1), answer: "" });
     await openRun(w);
-    const tok = w.shadow.querySelector(".msg.asst .answer-rendered .tok-ref");
-    assert.ok(tok?.classList.contains("tok-block"), "the latex embed renders as a tok-block (green tool-output marker)");
-    assert.ok(tok.querySelector(".katex"), "…and still typesets via KaTeX");
-    assert.match(tok.querySelector(".tok-anno")?.textContent || "", /Derivative/, "the model's label shows as the block caption");
+    let tok = w.shadow.querySelector(".msg.asst .answer-rendered .tok-ref");
+    assert.ok(tok?.classList.contains("tok-block"), "a standalone latex citation is a tok-block (green outline)");
+    assert.ok(tok.querySelector(".katex-display"), "…in DISPLAY mode (centered, full-size)");
+    assert.match(tok.querySelector(".tok-anno")?.textContent || "", /Derivative/, "the label shows as the block caption");
+
+    // INLINE — the same citation written MID-SENTENCE → inline, no block outline, inline-mode KaTeX.
+    w = await loadSidebarWorld();
+    await w.dispatch(agentStart("lxi2", "differentiate"));
+    await latexStep("lxi2");
+    await w.dispatch({ ...agentResult("lxi2", "The derivative is ![d](@tool:" + OUT + ":out | latex) exactly.", 1), answer: "" });
+    await openRun(w);
+    tok = w.shadow.querySelector(".msg.asst .answer-rendered .tok-ref");
+    assert.ok(tok && !tok.classList.contains("tok-block"), "a mid-sentence latex citation stays inline (no block outline)");
+    assert.ok(tok.querySelector(".katex") && !tok.querySelector(".katex-display"), "…inline-mode KaTeX, not display");
 });
 
 test("answer render (sidebar): `| raw` forces the literal value (no table/latex/image derivation)", async () => {

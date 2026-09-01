@@ -96,7 +96,7 @@ function tokenRender(d: RenderDescriptor | undefined, rawText: string): { node: 
 // `scope` narrows which steps a tool-name ALIAS (`@tool:python_exec`) resolves against — pass a single
 // turn/block's steps so a PRIOR answer's alias points at THAT turn's call, not a later turn's (an exact hex
 // id is anchored per-step and needs no scoping). Defaults to the whole run (correct for the latest answer).
-function TokenRef({ seg, run, scope }: { seg: Extract<AnswerSegment, { kind: "token" }>; run: Session; scope?: readonly AgentStep[] }) {
+function TokenRef({ seg, run, scope, standalone }: { seg: Extract<AnswerSegment, { kind: "token" }>; run: Session; scope?: readonly AgentStep[]; standalone?: boolean }) {
     const step = resolveTokenStep(seg.id, scope ?? run.steps ?? []) as AgentStep | null;
     if (!step) return <span class="tok-ref tok-unresolved" title={`No step in this run produced @tool:${seg.id} — the model may have invented it.`}>⟨unresolved @tool:{seg.id}⟩</span>;
     const jump = () => scrollToStepSeq(step.seq, run.hash);
@@ -129,11 +129,12 @@ function TokenRef({ seg, run, scope }: { seg: Extract<AnswerSegment, { kind: "to
         : isRaw
             ? { node: <Code text={rawText} lang="text" />, block: true }
             : isLatex
-                // Use EXPLICIT `\(…\)` delimiters, not `$…$` — single-`$` inline math only typesets when the content
-                // carries a math signal (`\`/`^`/`_`), so a bare value like `5` would render as the literal text "$5$".
-                // An EMBED (`![…]`) renders as a BLOCK so it gets the green tool-output marker + its label caption
-                // (like a non-latex output); a link-form citation stays inline in the prose.
-                ? { node: <span dangerouslySetInnerHTML={{ __html: markdown(`\\(${rawText}\\)`, { math: true }) }} />, block: seg.embed }
+                // Use EXPLICIT delimiters, not `$…$` — single-`$` inline math only typesets when the content
+                // carries a math signal, so a bare value like `5` would render as the literal text "$5$". The
+                // model's POSITION is the intent: a citation ALONE on its own line/paragraph is a standalone
+                // formula → a green tool-output BLOCK in DISPLAY mode (`\[…\]`, centered, full-size); one written
+                // mid-sentence stays INLINE (`\(…\)`). (`standalone` is computed from the neighbouring prose.)
+                ? { node: <span dangerouslySetInnerHTML={{ __html: markdown(standalone ? `\\[${rawText}\\]` : `\\(${rawText}\\)`, { math: true }) }} />, block: !!standalone }
                 : tokenRender(d, rawText);
     const tip = (label && !block ? `${label} · ` : "") + provenance;   // inline → prepend the label to the tooltip
     return <span class={`tok-ref ${block ? "tok-block" : "tok-inline"}`} role="button" tabIndex={0}
@@ -158,9 +159,21 @@ export function AnswerBody({ text, run, cls = "card-answer", scope }: { text: st
         return { __html: m ? (/^\s/.test(t) ? " " : "") + m[1] + (/\s$/.test(t) ? " " : "") : h };
     };
     if (!hasTokens(text, aliasOf(run))) return <div class={`${cls} md`} dangerouslySetInnerHTML={mdHtml(text)} />;
-    return <div class={`${cls} md answer-rendered`}>{splitAnswer(text, aliasOf(run)).map((seg, i) => seg.kind === "prose"
+    const segs = splitAnswer(text, aliasOf(run));
+    // A citation is STANDALONE (its own line/paragraph → a display block) when only whitespace separates it from
+    // a paragraph break on BOTH sides: the prose before ends at a newline (or it's the very start), and the prose
+    // after starts with a newline (or it's the very end). Otherwise it's mid-sentence → inline. This reads the
+    // model's INTENT from layout, exactly like real markdown (`$…$` inline vs a formula on its own line).
+    const standaloneAt = (i: number): boolean => {
+        const prev = i === 0 ? "" : (segs[i - 1].kind === "prose" ? (segs[i - 1] as { text: string }).text : null);
+        const next = i === segs.length - 1 ? "" : (segs[i + 1].kind === "prose" ? (segs[i + 1] as { text: string }).text : null);
+        const okBefore = prev === "" || (prev != null && /\n[ \t]*$/.test(prev));
+        const okAfter = next === "" || (next != null && /^[ \t]*\n/.test(next));
+        return okBefore && okAfter;
+    };
+    return <div class={`${cls} md answer-rendered`}>{segs.map((seg, i) => seg.kind === "prose"
         ? <span key={i} dangerouslySetInnerHTML={proseHtml(seg.text)} />
-        : <TokenRef key={i} seg={seg} run={run} scope={scope} />)}</div>;
+        : <TokenRef key={i} seg={seg} run={run} scope={scope} standalone={standaloneAt(i)} />)}</div>;
 }
 
 // The bottom-of-answer RESULT block: the run's designated (ml.answer) + auto-appended tool outputs, rendered
