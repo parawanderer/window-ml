@@ -178,8 +178,11 @@ export const stepKey = (hash: string, seq: number) => `${hash}:${seq}`;
 // No tooltip here on purpose: `cursor: zoom-in` is the standard affordance for
 // "click to enlarge", and a pop anchored under a full-width screenshot (locate
 // renders stack several) would land far from the pointer and just add noise.
+// stopPropagation so clicking the IMAGE only opens the lightbox — it must NOT also fire an ancestor's click
+// (a citation's `.tok-ref` jumps to its source step; without this the DevTools answer both zoomed AND scrolled
+// away to the producing step). Clicking the container's padding/background still reaches that ancestor handler.
 export const ClickableImg = ({ src, alt }: { src: string; alt?: string }) =>
-    <img class="zoomable" src={src} alt={alt} onClick={() => openLightbox(src)} />;
+    <img class="zoomable" src={src} alt={alt} onClick={(e) => { e.stopPropagation(); openLightbox(src); }} />;
 
 // The HUD completion card's answer-media gallery — the user-facing deliverable. Each item HOVER-HIGHLIGHTS
 // the live element on the page (the same debug highlighter the sidebar uses), via its captured `selector`.

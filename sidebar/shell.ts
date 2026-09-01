@@ -44,6 +44,30 @@ const HIGHLIGHT_CSS = `
 // something to show. The iframe is transparent so the acrylic (a blurred translucent surface here in
 // the shell's shadow root) shows through; the app draws its content over it. Three states drive the
 // size/reveal, transitioned for a soft expand: hidden (gone) · toast (collapsed) · expanded.
+// Full-window image lightbox rules — shared by the overlay shadow root AND the corner-card shadow root, so an
+// image click opens the lightbox in card-only modes (off / devtools) too, where the overlay isn't mounted.
+const LIGHTBOX_CSS = `
+#${SB_LIGHTBOX} { position: fixed; inset: 0; z-index: 2147483001; background: rgba(0,0,0,.82);
+  display: flex; align-items: center; justify-content: center; padding: 28px; cursor: zoom-out; }
+#${SB_LIGHTBOX} img { max-width: 100%; max-height: 100%; border-radius: 6px; box-shadow: 0 10px 50px rgba(0,0,0,.6); cursor: default; }
+#${SB_LIGHTBOX_X} { position: fixed; top: 12px; right: 16px; width: 32px; height: 32px; border-radius: 7px;
+  border: 1px solid rgba(255,255,255,.35); background: rgba(0,0,0,.5); color: #fff; font: 16px system-ui; cursor: pointer; }
+#${SB_LIGHTBOX_X}:hover { background: rgba(0,0,0,.85); }
+/* Tooltip primitive (shared with the overlay chrome) — size/typography pinned, never inherited. */
+.ml-tt { position: relative; }
+.ml-tt-pop {
+    position: absolute; z-index: 1; background: #1f2937; color: #f3f4f6;
+    border: 1px solid rgba(255,255,255,.16); border-radius: 5px; padding: 4px 7px;
+    box-shadow: 0 2px 8px rgba(0,0,0,.45); opacity: 0; pointer-events: none;
+    transition: opacity .12s; white-space: nowrap;
+    font: 400 11px/1.35 system-ui, -apple-system, sans-serif;
+    writing-mode: horizontal-tb; text-orientation: mixed; letter-spacing: normal;
+    text-transform: none; font-style: normal;
+}
+.ml-tt:hover .ml-tt-pop { opacity: 1; }
+#${SB_LIGHTBOX_X} .ml-tt-pop { top: calc(100% + 6px); right: 0; }
+`;
+
 const CARD_CSS = `
 #${SB_CARD}-wrap {
   position: fixed; z-index: 2147483000;
@@ -200,32 +224,13 @@ const SHELL_CSS = `
 #${SB_FRAME} { display: block; width: 100%; height: 100%; border: 0; }
 /* Full-window image lightbox (a sibling of the panel, so no transformed
    ancestor — position:fixed maps to the whole viewport). */
-#${SB_LIGHTBOX} { position: fixed; inset: 0; z-index: 2147483001; background: rgba(0,0,0,.82);
-  display: flex; align-items: center; justify-content: center; padding: 28px; cursor: zoom-out; }
-#${SB_LIGHTBOX} img { max-width: 100%; max-height: 100%; border-radius: 6px; box-shadow: 0 10px 50px rgba(0,0,0,.6); cursor: default; }
-#${SB_LIGHTBOX_X} { position: fixed; top: 12px; right: 16px; width: 32px; height: 32px; border-radius: 7px;
-  border: 1px solid rgba(255,255,255,.35); background: rgba(0,0,0,.5); color: #fff; font: 16px system-ui; cursor: pointer; }
-#${SB_LIGHTBOX_X}:hover { background: rgba(0,0,0,.85); }
+${LIGHTBOX_CSS}
 ${HIGHLIGHT_CSS}
-/* Tooltip primitive — a copy of the app's (sidebar.css), because this shell lives in
-   its own shadow root in the PAGE and shares no stylesheet with the iframe. Same rule
-   applies: size and typography are pinned absolutely, never inherited — the tab is
-   writing-mode: vertical-rl, which would otherwise render its tooltip sideways. */
-.ml-tt { position: relative; }
-.ml-tt-pop {
-    position: absolute; z-index: 1; background: #1f2937; color: #f3f4f6;
-    border: 1px solid rgba(255,255,255,.16); border-radius: 5px; padding: 4px 7px;
-    box-shadow: 0 2px 8px rgba(0,0,0,.45); opacity: 0; pointer-events: none;
-    transition: opacity .12s; white-space: nowrap;
-    font: 400 11px/1.35 system-ui, -apple-system, sans-serif;
-    writing-mode: horizontal-tb; text-orientation: mixed; letter-spacing: normal;
-    text-transform: none; font-style: normal;
-}
-.ml-tt:hover .ml-tt-pop { opacity: 1; }
-/* The tab sits at the panel's left edge, vertically centred — put its pop to the left. */
+/* The tooltip primitive (.ml-tt / .ml-tt-pop) is defined in LIGHTBOX_CSS (shared with the card shadow).
+   These are the position-specific overrides for the overlay's own chrome — the tab sits at the panel's
+   left edge, vertically centred, so its pop goes to the left. */
 #${SB_TAB} .ml-tt-pop { right: calc(100% + 8px); top: 50%; transform: translateY(-50%); }
 #ml-sb-resize .ml-tt-pop { right: calc(100% + 8px); top: 50%; transform: translateY(-50%); }
-#${SB_LIGHTBOX_X} .ml-tt-pop { top: calc(100% + 6px); right: 0; }
 `;
 
 let shellHost: HTMLElement | null = null;   // shadow host in the page's light DOM
@@ -236,6 +241,7 @@ let lightbox: HTMLElement | null = null;
 
 // --- off-mode approval card (see CARD_CSS) ---
 let cardHost: HTMLElement | null = null;    // separate shadow host for the corner card
+let cardRoot: ShadowRoot | null = null;     // its shadow root — where the lightbox draws when no overlay is mounted
 let cardWrap: HTMLElement | null = null;    // the acrylic container (its data-state drives size/reveal)
 let cardReady = false;                       // the card iframe app has handshaked (safe to post events)
 let overlayReady = false;                    // the OVERLAY iframe app has handshaked — until then, buffer debug
@@ -498,7 +504,11 @@ function onLightboxKey(e: KeyboardEvent): void { if (e.key === "Escape") hideLig
 // Full-window image lightbox (from the app's ClickableImg → __mlLightbox). Lives
 // in the shell so it fills the whole browser, not the ~sidebar-width iframe.
 function showLightbox(src: string): void {
-    if (!shadowRoot) return;
+    // Prefer the overlay shadow root; fall back to the corner card's (off / devtools-HUD modes draw no overlay,
+    // so without this an image click in the HUD card posted __mlLightbox but had nowhere to render — the
+    // "not clickable in the HUD" bug). Both stylesheets carry LIGHTBOX_CSS.
+    const root = shadowRoot || cardRoot;
+    if (!root) return;
     hideLightbox();
     lightbox = document.createElement("div");
     lightbox.id = SB_LIGHTBOX;
@@ -512,7 +522,7 @@ function showLightbox(src: string): void {
     x.append(tip("Close (Esc)"));
     x.addEventListener("click", hideLightbox);
     lightbox.append(x, img);
-    shadowRoot.append(lightbox);
+    root.append(lightbox);
     window.addEventListener("keydown", onLightboxKey);
 }
 
@@ -1013,8 +1023,9 @@ function mountCard(): void {
     cardHost.id = SB_CARD;
     cardHost.style.cssText = "all: initial;";
     const root = cardHost.attachShadow({ mode: "open" });
+    cardRoot = root;
     const style = document.createElement("style");
-    style.textContent = CARD_CSS;
+    style.textContent = CARD_CSS + LIGHTBOX_CSS;   // the card shadow also styles the lightbox (drawn here in card-only modes)
     root.append(style);
 
     cardWrap = document.createElement("div");
@@ -1041,6 +1052,7 @@ function unmountCard(): void {
     hideCornerMenu();
     cardHost.remove();
     cardHost = cardWrap = frame = null;   // `frame` is the card iframe in off mode
+    cardRoot = null;
     cardReady = false;
     composerPendingOpen = false;
     composerPendingCtx = null;

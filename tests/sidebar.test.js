@@ -4937,6 +4937,45 @@ test("answer render (sidebar): `| raw` forces the literal value (no table/latex/
     assert.ok(!tok.querySelector(".katex"), "no latex typesetting for a | raw citation");
 });
 
+// Clicking a citation IMAGE must open the lightbox and NOT also fire the citation's jump-to-step (which
+// scrolls the panel away — the DevTools "click the image and it scrolls to the python function" bug). The img
+// stops propagation; the surrounding tok-ref padding still jumps. Parity across the sidebar/DevTools + HUD card.
+async function imageCiteRun(w, hash) {
+    w.window.HTMLElement.prototype.scrollIntoView = function () {};   // jsdom stub; make the jump path clean
+    await w.dispatch(agentStart(hash, "draw a fractal"));
+    await w.dispatch(agentStep(hash, 1, { seq: 1, tool: "python_exec", token: OUT, result: "Returned an image.",
+        renderOut: { type: "python-out", image: "data:image/png;base64,PIC" } }));
+    await w.dispatch(agentResult(hash, "Here is the fractal:\n\n![Mandelbrot](@tool:" + OUT + ":out)", 1));
+}
+test("answer render (sidebar): clicking a citation IMAGE opens the lightbox and does NOT jump to the step", async () => {
+    const posted = [];
+    const w = await loadSidebarWorld();
+    w.window.postMessage = (d) => posted.push(d);   // window.parent === window in jsdom → captures openLightbox
+    await imageCiteRun(w, "imgc");
+    await openRun(w);
+    const img = w.shadow.querySelector(".msg.asst .answer-rendered .tok-ref img.zoomable");
+    const step = w.shadow.querySelector('[data-astep-seq="1"]');
+    assert.ok(img && step, "the citation renders a zoomable image and the source step row exists");
+    img.click(); await w.tick();
+    assert.ok(posted.some(d => d.__mlLightbox === "data:image/png;base64,PIC"), "the image click posts __mlLightbox (opens the lightbox)");
+    assert.ok(!step.classList.contains("astep-pulse"), "the image click did NOT bubble to the citation jump (no scroll/pulse)");
+    // Positive control: clicking the citation BACKGROUND (not the image) still jumps to the source step.
+    const tok = w.shadow.querySelector(".msg.asst .answer-rendered .tok-ref");
+    tok.click(); await w.tick();
+    assert.ok(step.classList.contains("astep-pulse"), "clicking the citation background still jumps to the step");
+});
+test("answer render (HUD card): the SAME image click opens the lightbox without jumping — parity", async () => {
+    const posted = [];
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    w.window.postMessage = (d) => posted.push(d);
+    await w.raw({ __mlSidebarSurface: "card" });
+    await imageCiteRun(w, "imgc");
+    const img = w.window.document.querySelector(".answer-rendered .tok-ref img.zoomable");
+    assert.ok(img, "the HUD card renders the zoomable citation image");
+    img.click(); await w.tick();
+    assert.ok(posted.some(d => d.__mlLightbox === "data:image/png;base64,PIC"), "the HUD image click posts __mlLightbox too");
+});
+
 test("answer render (sidebar): a STANDALONE (own-line) `| raw` citation is a code BLOCK", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("rwb", "compute"));
