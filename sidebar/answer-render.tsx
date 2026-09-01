@@ -79,8 +79,11 @@ function tokenRender(d: RenderDescriptor | undefined, rawText: string): { node: 
 // One embedded @tool citation, resolved to the step it cites — rendered as the ACTUAL (focused) output, with a
 // caption (the model's link text) and a provenance click (deterministic; opens "Show work" at that step + green
 // pulse). An unresolvable id → a visible chip, never a crash.
-function TokenRef({ seg, run }: { seg: Extract<AnswerSegment, { kind: "token" }>; run: Session }) {
-    const step = resolveTokenStep(seg.id, run.steps || []) as AgentStep | null;
+// `scope` narrows which steps a tool-name ALIAS (`@tool:python_exec`) resolves against — pass a single
+// turn/block's steps so a PRIOR answer's alias points at THAT turn's call, not a later turn's (an exact hex
+// id is anchored per-step and needs no scoping). Defaults to the whole run (correct for the latest answer).
+function TokenRef({ seg, run, scope }: { seg: Extract<AnswerSegment, { kind: "token" }>; run: Session; scope?: readonly AgentStep[] }) {
+    const step = resolveTokenStep(seg.id, scope ?? run.steps ?? []) as AgentStep | null;
     if (!step) return <span class="tok-ref tok-unresolved" title={`No step in this run produced @tool:${seg.id} — the model may have invented it.`}>⟨unresolved @tool:{seg.id}⟩</span>;
     const jump = () => scrollToStepSeq(step.seq, run.hash);
     const provenance = `Click to see the exact operation that produced this — step ${step.localStep ?? step.step} · ${step.tool || "tool"}`;
@@ -118,7 +121,7 @@ function TokenRef({ seg, run }: { seg: Extract<AnswerSegment, { kind: "token" }>
 // The agent's final ANSWER, with @tool citations RESOLVED to the actual (focused) tool output inline. NO toggle
 // — the HUD is a minimal surface; the raw markdown stays available in the DevTools bubble's [raw] and the
 // export's disclosure. No tokens → plain markdown.
-export function AnswerBody({ text, run, cls = "card-answer" }: { text: string; run: Session; cls?: string }) {
+export function AnswerBody({ text, run, cls = "card-answer", scope }: { text: string; run: Session; cls?: string; scope?: readonly AgentStep[] }) {
     const mdHtml = (t: string) => ({ __html: markdown(t, { math: true }) });
     // Between citations: strip a lone wrapping <p> so an inline citation flows in the same line — but markdown
     // trims a paragraph's boundary whitespace, so RE-ADD a space when the prose had one (else "table" + inline
@@ -131,7 +134,7 @@ export function AnswerBody({ text, run, cls = "card-answer" }: { text: string; r
     if (!hasTokens(text, aliasOf(run))) return <div class={`${cls} md`} dangerouslySetInnerHTML={mdHtml(text)} />;
     return <div class={`${cls} md answer-rendered`}>{splitAnswer(text, aliasOf(run)).map((seg, i) => seg.kind === "prose"
         ? <span key={i} dangerouslySetInnerHTML={proseHtml(seg.text)} />
-        : <TokenRef key={i} seg={seg} run={run} />)}</div>;
+        : <TokenRef key={i} seg={seg} run={run} scope={scope} />)}</div>;
 }
 
 // The bottom-of-answer RESULT block: the run's designated (ml.answer) + auto-appended tool outputs, rendered

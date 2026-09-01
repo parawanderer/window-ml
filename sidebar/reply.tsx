@@ -5,7 +5,7 @@
 import { useState } from "preact/hooks";
 import type { ExtendProfile } from "../contract";
 import { view } from "./store";
-import type { Session, Turn, Status } from "./store";
+import type { Session, Turn, Status, AgentStep } from "./store";
 import { pretty, truncate, collapsedPreview, markdown } from "./format";
 import { annotatedConfig, turnProfile } from "./model";
 import { IconChevron } from "./icons";
@@ -56,12 +56,13 @@ export function OptionsBlock({ s }: { s: Session }) {
 // timestamp) over the body (markdown ⇄ raw, collapsible), with optional thinking
 // and sources. No "assistant"/"answer" word — the header controls carry the
 // meaning; `label` appears only for an exceptional state (e.g. an agent step-cap).
-export function ReplyBubble({ content, status, model, profile, ts, reasoning = null, sources = null, error, label, capped, initialRaw, resumeCap, streaming, tokenRun, latest }: {
+export function ReplyBubble({ content, status, model, profile, ts, reasoning = null, sources = null, error, label, capped, initialRaw, resumeCap, streaming, tokenRun, tokenScope, latest }: {
     content: string; status: Status; model: string | null; profile: "utility" | "default" | null; ts: number;
     reasoning?: string | null; sources?: unknown[] | null; error?: string; label?: string; capped?: boolean; initialRaw?: boolean;
     resumeCap?: { hash: string; steps: number };   // a step-capped run → a "Continue (+N steps)" button (resume, fresh budget)
     streaming?: boolean;   // the answer is STREAMING live — same bubble as the finished reply (model chip + content) with a live pulse, no copy/raw/stamp yet
     tokenRun?: Session;   // an agent ANSWER: resolve its @tool citations against this run (chat replies pass none). The existing [raw] shows the literal markdown.
+    tokenScope?: readonly AgentStep[];   // narrow a tool-name ALIAS to THIS turn's steps, so a prior answer's `@tool:python_exec` doesn't drift to a later turn's call
     latest?: boolean;   // this is the run's LATEST answer → render the bottom-of-answer ResultBlock here (s.answer holds only the latest, so earlier turns must not show it)
 }) {
     const [showRaw, setShowRaw] = useState(!!initialRaw);
@@ -112,7 +113,7 @@ export function ReplyBubble({ content, status, model, profile, ts, reasoning = n
                         : showRaw
                             ? <Code text={content} lang="markdown" />
                             : tokenRun && hasTokens(content, aliasOf(tokenRun))
-                                ? <AnswerBody text={content} run={tokenRun} cls="asst-answer" />
+                                ? <AnswerBody text={content} run={tokenRun} cls="asst-answer" scope={tokenScope} />
                                 : <div class="md" dangerouslySetInnerHTML={{ __html: markdown(content, { math: true }) }} />}
             {/* Bottom-of-answer tool outputs — SAME ResultBlock the HUD card renders (parity). Only on the
                 run's latest answer (s.answer is single-valued) and only in the normal, expanded view. */}

@@ -527,10 +527,19 @@ export function AgentRunView({ s }: { s: Session }) {
     // with the turn step-groups, ordered by step position. `atStep + fraction` slots an answer just after
     // its turn's steps, and a following user message just after that.
     const lastAnswerTs = (s.answers && s.answers.length) ? s.answers[s.answers.length - 1].ts : -1;
-    const answer = (a: NonNullable<Session["answers"]>[number], key: string) =>
+    const answers = s.answers || [];
+    // A tool-name ALIAS (`@tool:python_exec`) in answer i must resolve within THAT turn's steps, not the whole
+    // run — else a prior answer's alias drifts to a later turn's call. The turn's steps are the groups between
+    // the previous answer's boundary and this one's (mirrors buildRunBlocks' segmentation).
+    const scopeFor = (i: number): AgentStep[] => {
+        const lo = i > 0 ? answers[i - 1].atStep : -Infinity;
+        const hi = answers[i].atStep;
+        return groups.filter(g => g.step > lo && g.step <= hi).flatMap(g => g.tools);
+    };
+    const answer = (a: NonNullable<Session["answers"]>[number], key: string, i: number) =>
         a.error
             ? <ReplyBubble key={key} content="" status="err" model={s.model} profile={sessionProfile(s)} ts={a.ts} error={a.error} label="run failed" />
-            : <ReplyBubble key={key} content={a.text} status={a.status} model={s.model} profile={sessionProfile(s)} ts={a.ts} tokenRun={s} latest={a.ts === lastAnswerTs}
+            : <ReplyBubble key={key} content={a.text} status={a.status} model={s.model} profile={sessionProfile(s)} ts={a.ts} tokenRun={s} tokenScope={scopeFor(i)} latest={a.ts === lastAnswerTs}
                 label={a.cancelled ? "cancelled" : a.hitCap ? "stopped (step cap)" : undefined} capped={a.hitCap || a.cancelled}
                 // Only the LATEST answer, and only a step-cap stop (not a cancel/error), offers Continue — resuming
                 // an old buried answer would be confusing, and a live run has nothing to resume.
@@ -546,7 +555,7 @@ export function AgentRunView({ s }: { s: Session }) {
         // page didn't actually change). Sits at step+0.3: after the navigate group, before its next turn/answer.
         ...(s.steps || []).filter(st => st.tool === "navigate" && st.approval !== "denied" && !!st.result && !st.result.startsWith("Error") && !!navTargetOf(st))
             .map((st, i) => ({ pos: (st.step || 0) + 0.3, ts: 0, el: <NavDivider key={`nav${i}-${st.seq ?? st.step}`} url={navTargetOf(st)} /> })),
-        ...(s.answers || []).map((a, i) => ({ pos: a.atStep + 0.5, ts: a.ts, el: answer(a, `a${i}`) })),
+        ...(s.answers || []).map((a, i) => ({ pos: a.atStep + 0.5, ts: a.ts, el: answer(a, `a${i}`, i) })),
         ...(s.says || []).map((sy, i) => ({ pos: sy.atStep + 0.5, ts: sy.ts, el: <UserBubble key={`s${i}`} text={sy.text} ts={sy.ts} images={sy.images} steer={sy.id ? { seen: sy.seen } : undefined} /> })),
     ].sort((a, b) => a.pos - b.pos || a.ts - b.ts);
     return (

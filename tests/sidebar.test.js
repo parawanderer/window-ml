@@ -4488,6 +4488,83 @@ test("answer render (sidebar): a TOOL-NAME alias (@tool:python_exec) resolves to
     assert.ok(rb && /COMPUTED_TABLE/.test(rb.textContent), "the tool-name alias resolves to the python_exec step's output");
 });
 
+test("answer render (HUD card): a PRIOR Show-work block's answer resolves its @tool citation, not raw markdown", async () => {
+    // Regression: the multi-task HUD trace rendered a prior block's answer via plain markdown, so a
+    // `![Calculations](@tool:…)` citation showed as literal text (bug). It must resolve like the card body /
+    // sidebar reply — via AnswerBody — so the cited output renders instead.
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    w.window.postMessage = () => {};
+    await w.raw({ __mlSidebarSurface: "card" });   // off-mode corner card
+    const hash = "blkcite";
+    await w.dispatch(agentStart(hash, "compute totals", "m"));
+    await w.dispatch(agentStep(hash, 1, { seq: 1, tool: "python_exec", token: "aa11bb", result: "COMPUTED_TABLE",
+        renderOut: { type: "code", text: "COMPUTED_TABLE", lang: "text" } }));
+    // The FIRST task's answer cites that step inline (the summary carries the ![…](@tool:…)).
+    await w.dispatch(agentResult(hash, "The total is 42. ![Calculations](@tool:aa11bb:out)", 1));
+    // A follow-up task → a second block, so the run SEGMENTS and block 0 becomes a PRIOR (CardTraceMsg-rendered).
+    await w.dispatch({ kind: "agent-say", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text: "again" });
+    await w.dispatch(agentStep(hash, 2, { seq: 2, tool: "findByText", arguments: { text: "x" }, result: "ok" }));
+    await w.dispatch(agentResult(hash, "Done.", 2));
+    await w.flush();
+    w.window.document.querySelector(".card-work-toggle").click(); await w.tick();   // open Show work
+    const block0 = w.window.document.querySelectorAll(".run-block")[0];
+    block0.querySelector(".run-block-head").click(); await w.tick();                 // expand the prior block
+    const answered = block0.querySelector(".acard-ans");
+    answered.querySelector(".astep-head").click(); await w.tick();                   // expand its "answered" disclosure
+    assert.ok(answered.querySelector(".tok-ref"), "the @tool citation resolves to a token render");
+    assert.match(answered.textContent, /COMPUTED_TABLE/, "the cited step's output is inlined");
+    assert.doesNotMatch(answered.innerHTML, /@tool:aa11bb/, "the raw @tool markdown is NOT shown");
+});
+
+test("answer render (HUD card): a TOOL-NAME alias in a PRIOR block resolves to THAT block's tool call, not a later turn's", async () => {
+    // The alias `@tool:python_exec` means "that tool's latest call" — unambiguous within a turn, but a PRIOR
+    // turn's answer must NOT drift to a LATER turn's call once it runs. Turn 1 and turn 2 each run python_exec
+    // (CODE_ONE / CODE_TWO) and each answer cites `@tool:python_exec:in`; block 0's answer must still show
+    // CODE_ONE after turn 2's CODE_TWO exists. (The hex id is anchored per-step; this guards the alias.)
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    w.window.postMessage = () => {};
+    await w.raw({ __mlSidebarSurface: "card" });
+    const hash = "aliasdrift";
+    await w.dispatch(agentStart(hash, "compute", "m"));
+    await w.dispatch(agentStep(hash, 1, { seq: 1, tool: "python_exec", token: "aaa111",
+        renderIn: { type: "python-in", code: "CODE_ONE", mode: "script" }, result: "out1" }));
+    await w.dispatch(agentResult(hash, "First: ![the code](@tool:python_exec:in)", 1));
+    await w.dispatch({ kind: "agent-say", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text: "again" });
+    await w.dispatch(agentStep(hash, 2, { seq: 2, tool: "python_exec", token: "bbb222",
+        renderIn: { type: "python-in", code: "CODE_TWO", mode: "script" }, result: "out2" }));
+    await w.dispatch(agentResult(hash, "Second: ![the code](@tool:python_exec:in)", 2));
+    await w.flush();
+    w.window.document.querySelector(".card-work-toggle").click(); await w.tick();
+    const block0 = w.window.document.querySelectorAll(".run-block")[0];
+    block0.querySelector(".run-block-head").click(); await w.tick();
+    const answered = block0.querySelector(".acard-ans");
+    answered.querySelector(".astep-head").click(); await w.tick();
+    assert.match(answered.textContent, /CODE_ONE/, "block 0's alias resolves to ITS OWN python_exec (CODE_ONE)");
+    assert.doesNotMatch(answered.textContent, /CODE_TWO/, "it did NOT drift to turn 2's later python_exec");
+});
+
+test("answer render (sidebar): a PRIOR turn's tool-name alias resolves to ITS turn's call, not a later turn's", async () => {
+    // The DevTools/overlay chat log (AgentRunView) renders each turn's answer via ReplyBubble; a prior turn's
+    // `@tool:python_exec` alias must stay pinned to that turn's call as later turns run the same tool.
+    const w = await loadSidebarWorld();
+    const hash = "sbalias";
+    await w.dispatch(agentStart(hash, "compute", "m"));
+    await w.dispatch(agentStep(hash, 1, { seq: 1, tool: "python_exec", token: "aaa111",
+        renderIn: { type: "python-in", code: "CODE_ONE", mode: "script" }, result: "out1" }));
+    await w.dispatch(agentResult(hash, "First: ![the code](@tool:python_exec:in)", 1));
+    await w.dispatch({ kind: "agent-say", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text: "again" });
+    await w.dispatch(agentStep(hash, 2, { seq: 2, tool: "python_exec", token: "bbb222",
+        renderIn: { type: "python-in", code: "CODE_TWO", mode: "script" }, result: "out2" }));
+    await w.dispatch(agentResult(hash, "Second: ![the code](@tool:python_exec:in)", 2));
+    await w.flush();
+    w.shadow.querySelector(".row").click(); await w.tick();
+    const replies = [...w.shadow.querySelectorAll(".msg.asst .answer-rendered")];
+    assert.ok(replies.length >= 2, "both answers render as token-resolved bodies");
+    assert.match(replies[0].textContent, /CODE_ONE/, "turn 1's answer alias → CODE_ONE (its own call)");
+    assert.doesNotMatch(replies[0].textContent, /CODE_TWO/, "…and does NOT drift to turn 2's later call");
+    assert.match(replies[1].textContent, /CODE_TWO/, "turn 2's answer alias → CODE_TWO");
+});
+
 test("answer render (sidebar): an INLINE citation expands in the reply, with NO separate Result block", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("inl", "compute it"));

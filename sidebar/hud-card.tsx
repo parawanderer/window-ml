@@ -362,7 +362,7 @@ export function ShowWork({ run }: { run: Session }) {
 // styled like the thinking block, so Show-work reads as a scannable conversation SHAPE (ask → work → answer
 // → ask → …). Collapsed with a one-line preview; expand for the full text. This is how a multi-turn HUD run
 // stays legible: you can tell which steps belonged to which of your prompts.
-export function CardTraceMsg({ label, text, cls, images, steer }: { label: string; text: string; cls: string; images?: string[]; steer?: { seen?: boolean } }) {
+export function CardTraceMsg({ label, text, cls, images, steer, run, scope }: { label: string; text: string; cls: string; images?: string[]; steer?: { seen?: boolean }; run?: Session; scope?: readonly AgentStep[] }) {
     const [open, setOpen] = useState(false);
     return (
         <div class={`athought ${cls}`}>
@@ -373,7 +373,14 @@ export function CardTraceMsg({ label, text, cls, images, steer }: { label: strin
                 {!open ? <span class="astep-preview">{inlineText(text || "")}</span> : null}
             </button>
             {images?.length ? <div class="thumbs">{images.map((src, i) => <ClickableImg key={i} src={src} />)}</div> : null}
-            {open && text ? <div class="md astep-body" dangerouslySetInnerHTML={{ __html: markdown(text || "", { math: true }) }} /> : null}
+            {/* A PAST ANSWER (given `run`) resolves its @tool citations via AnswerBody — same as the card body /
+                sidebar reply — so a `![…](@tool:…)` renders the actual output, not raw markdown. A user prompt
+                (no `run`) is plain text. AnswerBody handles the no-token case, so passing `run` is always safe. */}
+            {open && text
+                ? (run
+                    ? <AnswerBody text={text} run={run} cls="astep-body" scope={scope} />
+                    : <div class="md astep-body" dangerouslySetInnerHTML={{ __html: markdown(text || "", { math: true }) }} />)
+                : null}
         </div>
     );
 }
@@ -417,7 +424,9 @@ export function RunTaskBlockView({ run, block, index, last }: { run: Session; bl
                         ...block.turns.map(t => ({ pos: t.step, el: <AgentTurn key={`t${t.step}`} turn={t} max={run.maxSteps} hash={run.hash} /> })),
                         ...block.steers.map((s, k) => ({ pos: s.atStep + 0.5, el: <CardTraceMsg key={`st${k}`} label="you asked" text={s.text} cls="acard-you" images={s.images} steer={s.id ? { seen: s.seen } : undefined} /> })),
                     ].sort((a, b) => a.pos - b.pos).map(x => x.el)}
-                    {block.answer && !last ? <CardTraceMsg label={block.answer.cancelled ? "cancelled" : block.answer.hitCap ? "stopped early" : "answered"} text={block.answer.text || "(no reply)"} cls="acard-ans" /> : null}
+                    {/* Scope the answer's @tool aliases to THIS block's steps so a prior block's `@tool:python_exec`
+                        points at its OWN call, not a later turn's (buildRunBlocks already split the turns per task). */}
+                    {block.answer && !last ? <CardTraceMsg label={block.answer.cancelled ? "cancelled" : block.answer.hitCap ? "stopped early" : "answered"} text={block.answer.text || "(no reply)"} cls="acard-ans" run={run} scope={block.turns.flatMap(t => t.tools)} /> : null}
                 </div>
             ) : null}
         </div>
