@@ -70,18 +70,23 @@ export function tokenIdsIn(md: string): Set<string> {
  * naming `@tool:python_exec` = "the last python_exec output" — a friendly reference whose intent is unambiguous
  * (it never saw the hex id). Returns null when nothing matches — a hallucinated ref → an "unresolved" chip.
  */
-export function resolveToken<T>(ref: string, items: readonly T[], idOf: (t: T) => string | undefined, toolOf: (t: T) => string | undefined): T | null {
-    for (const it of items) if (idOf(it) === ref) return it;   // exact minted id
+export function resolveToken<T>(ref: string, items: readonly T[], idOf: (t: T) => string | undefined, toolOf: (t: T) => string | undefined, aliasScope?: readonly T[]): T | null {
+    // An EXACT minted id anchors ONE specific step — search the WHOLE run, since a hex id is a permanent
+    // reference that a LATER turn's answer can legitimately point back at (it never drifts). Only the coarse
+    // tool-name ALIAS ("that tool's latest call") is narrowed by `aliasScope` (a single turn/block's steps), so
+    // a prior answer's alias resolves within its own turn instead of drifting to a later call.
+    for (const it of items) if (idOf(it) === ref) return it;
     let alias: T | null = null;
-    for (const it of items) if (idOf(it) && toolOf(it) === ref) alias = it;   // LAST tool-name match that has a token
+    for (const it of (aliasScope ?? items)) if (idOf(it) && toolOf(it) === ref) alias = it;   // LAST tool-name match that has a token
     return alias;
 }
 
 /**
  * Find the step a token id refers to by the token the loop MINTED onto that step (`st.token`), or — for a
- * tool-name alias — the LAST step of that tool. Run-scoped (only this run's steps are passed in). Returns null
- * when nothing matches. (See {@link resolveToken}.)
+ * tool-name alias — the LAST step of that tool. An exact hex id is matched against ALL `steps` (it anchors a
+ * specific step in any turn); a tool-name alias is narrowed to `aliasScope` when given (the citing turn's
+ * steps), so it doesn't drift to a later turn's call. Returns null when nothing matches. (See {@link resolveToken}.)
  */
-export function resolveTokenStep<T extends { token?: string; tool?: string }>(id: string, steps: readonly T[]): T | null {
-    return resolveToken(id, steps, s => s.token, s => s.tool);
+export function resolveTokenStep<T extends { token?: string; tool?: string }>(id: string, steps: readonly T[], aliasScope?: readonly T[]): T | null {
+    return resolveToken(id, steps, s => s.token, s => s.tool, aliasScope);
 }

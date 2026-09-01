@@ -97,7 +97,10 @@ function tokenRender(d: RenderDescriptor | undefined, rawText: string): { node: 
 // turn/block's steps so a PRIOR answer's alias points at THAT turn's call, not a later turn's (an exact hex
 // id is anchored per-step and needs no scoping). Defaults to the whole run (correct for the latest answer).
 function TokenRef({ seg, run, scope, standalone }: { seg: Extract<AnswerSegment, { kind: "token" }>; run: Session; scope?: readonly AgentStep[]; standalone?: boolean }) {
-    const step = resolveTokenStep(seg.id, scope ?? run.steps ?? []) as AgentStep | null;
+    // Exact hex → the WHOLE run (a hex anchors a specific step in ANY turn); a tool-name alias → `scope` (this
+    // turn's steps) so it doesn't drift to a later call. Passing scope as run.steps here was the bug that made a
+    // prior turn's hex citation show "unresolved" in the per-turn-scoped surfaces (the DevTools reply).
+    const step = resolveTokenStep(seg.id, run.steps ?? [], scope) as AgentStep | null;
     if (!step) return <span class="tok-ref tok-unresolved" title={`No step in this run produced @tool:${seg.id} — the model may have invented it.`}>⟨unresolved @tool:{seg.id}⟩</span>;
     const jump = () => scrollToStepSeq(step.seq, run.hash);
     const provenance = `Click to see the exact operation that produced this — step ${step.localStep ?? step.step} · ${step.tool || "tool"}`;

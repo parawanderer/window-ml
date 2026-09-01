@@ -4587,6 +4587,48 @@ test("answer render (sidebar): a sympy-AUTO `latex` python-out typesets with NO 
     assert.ok(tok && !tok.querySelector(".katex") && tok.querySelector("pre.code"), "| raw overrides the auto-latex → literal text");
 });
 
+// Reproduces run 200d7599: turn 1 mints @tool:239987 on a python_exec; a FOLLOW-UP turn cites that SAME hex
+// token INLINE, mid-sentence, with `| latex`. It must (a) RESOLVE (a hex anchors any turn — the per-turn scope
+// broke it → "unresolved" in the DevTools reply) and (b) render INLINE, not a display block. Both surfaces
+// must agree (parity).
+async function inlineHexLatexRun(w) {
+    const hash = "xt";
+    await w.dispatch(agentStart(hash, "differentiate", "gemma4:31b"));
+    await w.dispatch(agentStep(hash, 1, { seq: 1, tool: "python_exec", token: "239987", result: "e^{x} + 2",
+        renderOut: { type: "python-out", value: "e^{x} + 2 \\sin{\\left(x \\right)} \\cos{\\left(x \\right)}", latex: true } }));
+    await w.dispatch(agentResult(hash, "On its own line:\n\n![deriv](@tool:239987:out | latex)", 1));   // turn 1: standalone
+    await w.dispatch({ kind: "agent-say", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text: "inline please" });
+    // turn 2: cite the SAME token INLINE, mid-sentence — NO python_exec step in this turn.
+    await w.dispatch(agentResult(hash, "The derivative of $x$ is ![deriv](@tool:239987:out | latex), which renders inline.", 2));
+    await w.flush();
+    return hash;
+}
+// The rendered LATEST answer's citation must be resolved + inline in whichever surface's container is passed.
+function assertInlineResolved(root) {
+    const answers = [...root.querySelectorAll(".answer-rendered")];
+    const latest = answers[answers.length - 1];
+    const tok = latest.querySelector(".tok-ref");
+    assert.ok(tok, "the latest answer's citation renders");
+    assert.ok(!tok.classList.contains("tok-unresolved"), "a hex citation to a PRIOR turn RESOLVES (not unresolved)");
+    assert.ok(tok.classList.contains("tok-inline") && !tok.classList.contains("tok-block"), "a mid-sentence citation is INLINE (green tok-inline), not a display block");
+    assert.ok(tok.querySelector(".katex") && !tok.querySelector(".katex-display"), "…inline-mode KaTeX");
+}
+
+test("answer render (DevTools): an inline `| latex` cite of a PRIOR turn's hex token resolves + renders inline", async () => {
+    const w = await loadSidebarWorld();
+    await inlineHexLatexRun(w);
+    w.shadow.querySelector(".row").click(); await w.tick();
+    assertInlineResolved(w.shadow.querySelector(".view") || w.shadow);
+});
+
+test("answer render (HUD card): the SAME inline cite resolves + renders inline — parity with DevTools", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    w.window.postMessage = () => {};
+    await w.raw({ __mlSidebarSurface: "card" });
+    await inlineHexLatexRun(w);
+    assertInlineResolved(w.window.document);
+});
+
 test("answer render (sidebar): a citation CAPTION renders inline `$…$` math (models write latex in labels)", async () => {
     // Regression: the .tok-anno caption showed the model's label as raw text, so an inline `$\sin^2(x)$` in a
     // caption displayed the literal `$…$`. The caption is model prose → render it markdown+math.
