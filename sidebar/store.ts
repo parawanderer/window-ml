@@ -96,3 +96,10 @@ export const cardShowWorkHash = signal<string>("");
 // A provenance click (a @tool citation → its source step) sets this to the target step's `seq`, so the per-task
 // BLOCK that holds it force-opens even if collapsed (scrollToStepSeq). Cleared shortly after the scroll.
 export const revealSeq = signal<number | null>(null);
+// Whether the detail log is scrolled to the bottom (stick-to-bottom intent). Module-level so the per-step
+// approval reveal (agent-detail's ToolStep) and App's scroll logic share ONE truth — a single App instance.
+export const atBottom = { v: true };
+// Which surface this app instance is rendering as: the full "panel" (overlay / DevTools) or the off-mode
+// "card" (a transparent, curated HUD). The shell sets it via __mlSidebarSurface; components read it to drop
+// debug chrome in the card. Cross-cutting (read by the agent-detail views + the HUD), so it lives here.
+export const surface = signal<"panel" | "card">("panel");
