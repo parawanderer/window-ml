@@ -38,6 +38,10 @@ async function resolveBackend() {
 }
 
 const TASK = process.env.TASK || "What code is shown on this page? Use findByText to locate it, then answer with just the code.";
+// FOLLOWUP="…" → a SECOND turn in the SAME session (createAgent + two run()s, so both turns share the run
+// hash). Reproduces multi-turn behaviour a single ml.agent() call can't — e.g. the cross-turn token-id
+// collision (turn 1 computes uncited; the follow-up asks to "show the work" and cites it).
+const FOLLOWUP = process.env.FOLLOWUP || "";
 // The start route on the test site. Besides the cross-page chain (/, /step2, /step3) and the /slow, /lazy,
 // /table … fixtures, EVERY real example page is served (START=/spreadsheet, /find-waldo, /canvas-input, … —
 // see GET /examples for the list), so a probe can drive the exact page a human uses.
@@ -154,14 +158,30 @@ async function openSidebarAndFocus(page) {
         }
         throw new Error("sidebar iframe never appeared");
     })();
-    // Prefer the AGENT session row (it carries the `.agent-badge`); fall back to the first row.
+    // Prefer the AGENT session row (it carries the `.agent-badge`); fall back to the first row. POLL until a row
+    // actually renders — the run's `agent` start event has to reach the app first, so a single early click would
+    // miss it and leave the sidebar open but the run UNFOCUSED (the observed flake). Retry the click until the
+    // detail view shows (a `.detail`/`.card-app` mounts), for up to ~12s.
     const agentRow = frame.locator("button.row:has(.agent-badge)").first();
-    const row = (await agentRow.count()) ? agentRow : frame.locator("button.row").first();
+    const anyRow = frame.locator("button.row").first();
+    // The "Back to sessions" nav button renders only in the DETAIL view (never the list) → a reliable signal
+    // we actually navigated INTO the run, not just that the list is showing.
+    const inDetail = async () => (await frame.locator('button.nav[aria-label="Back to sessions"]').count()) > 0;
     await page.screenshot({ path: path.join(ART, "watch-1-list.png") }).catch(() => {});
-    await row.click({ timeout: 8000 }).catch(() => console.log("  (watch: no session row to click yet)"));
-    await new Promise((r) => setTimeout(r, 600));   // let the detail view paint
+    let focused = false;
+    for (let i = 0; i < 60 && !page.isClosed() && !focused; i++) {
+        const row = (await agentRow.count()) ? agentRow : ((await anyRow.count()) ? anyRow : null);
+        if (row) {
+            await row.click({ timeout: 2000 }).catch(() => {});
+            await new Promise((r) => setTimeout(r, 250));
+            if (await inDetail().catch(() => false)) { focused = true; break; }
+        }
+        await new Promise((r) => setTimeout(r, 200));
+    }
+    await new Promise((r) => setTimeout(r, 400));   // let the detail view paint
     await page.screenshot({ path: path.join(ART, "watch-2-detail.png") }).catch(() => {});
-    console.log("  sidebar: opened at half width, focused on the session.");
+    console.log(focused ? "  sidebar: opened at half width, focused on the session."
+        : "  sidebar: opened, but no session row appeared to focus (run may not have started yet).");
 }
 
 // Approval handling. A background-hosted run BLOCKS on a privileged gate (a mutating/non-readonly exec, a
@@ -231,8 +251,8 @@ const main = async () => {
 
     const page = await ext.context.newPage();
     const transcript = [];
-    page.on("console", (m) => transcript.push({ kind: "console", type: m.type(), text: m.text() }));
-    page.on("pageerror", (e) => transcript.push({ kind: "pageerror", text: String(e) }));
+    page.on("console", (m) => { transcript.push({ kind: "console", type: m.type(), text: m.text() }); if (m.type() === "error") console.log(`  [page console.error] ${m.text().slice(0, 300)}`); });
+    page.on("pageerror", (e) => { transcript.push({ kind: "pageerror", text: String(e) }); console.log(`  [pageerror] ${String(e).slice(0, 300)}`); });
 
     // Collect the extension's debug event stream NODE-side, via a bridge re-attached on EVERY document
     // (addInitScript) so it survives a cross-page navigation — a page-context array would be wiped each
@@ -267,7 +287,7 @@ const main = async () => {
     let result, error;
     const t0 = Date.now();
     try {
-        result = await page.evaluate(({ task, toolNames, toolTokens, python }) => {
+        result = await page.evaluate(({ task, followup, toolNames, toolTokens, python }) => {
             const opts = {
                 toolTokens,
                 approvalRouting: "both",   // gates show in the UI AND are resolvable via the __mlApprovals channel (the harness's approval poller)
@@ -292,29 +312,41 @@ const main = async () => {
             // the sidebar and click into the live session WHILE it runs (the default; a human watching never has
             // to click). The result is picked up from the event stream (hasResult), so nothing is lost by not
             // awaiting here.
-            window.__mlObsRun = window.ml.agent(task, opts);
+            if (followup) {
+                // Two turns in ONE session (same run hash: createAgent persists the handle across run()s) — turn 1,
+                // then the follow-up as a continuation. This is how a multi-turn "…now show the work" run behaves.
+                const a = window.ml.createAgent(opts);
+                window.__mlObsRun = (async () => { await a.run(task); return a.run(followup); })()
+                    .catch((e) => { window.__obsErr = String((e && e.stack) || e); });
+            } else {
+                window.__mlObsRun = window.ml.agent(task, opts);
+            }
             return null;
-        }, { task: TASK, toolNames: TOOLS, toolTokens: !!process.env.TOOLTOKENS, python: !!process.env.PYTHON });
+        }, { task: TASK, followup: FOLLOWUP, toolNames: TOOLS, toolTokens: !!process.env.TOOLTOKENS, python: !!process.env.PYTHON });
     } catch (e) { error = String(e); }
+    if (error) console.log(`  [launch error] ${error.slice(0, 400)}`);
 
     // DEFAULT: open the overlay sidebar at HALF the page width and click into the just-launched session, so the
     // run is always focused in the real UI without a manual click. (WATCH=1 additionally HOLDS the browser open
     // at the end; see below.) Best-effort — a failure here never fails the run.
     await openSidebarAndFocus(page).catch((e) => console.log(`  (sidebar focus: ${e})`));
+    const obsErr = await page.evaluate(() => window.__obsErr || null).catch(() => null);
+    if (obsErr) console.log(`  ⚠ run threw: ${obsErr.slice(0, 400)}`);
 
     // A cross-page / background run's ml.agent() promise dies with the navigated-away page context (that's
     // the caught error), but the run carries on in the BACKGROUND. Wait for its terminal agent-result event
     // (via the init-script bridge, which re-attaches each document) before we snapshot final state.
-    const hasResult = () => collected.some((e) => e.kind === "agent-result");
+    const need = FOLLOWUP ? 2 : 1;   // a follow-up run emits a SECOND agent-result — wait for both turns
+    const hasResult = () => collected.filter((e) => e.kind === "agent-result").length >= need;
     if (!hasResult()) {
-        const deadline = Date.now() + 120000;
+        const deadline = Date.now() + (FOLLOWUP ? 240000 : 120000);
         while (Date.now() < deadline && !hasResult()) await new Promise((r) => setTimeout(r, 500));
     }
     approvalLoopOn = false; await approvalTask.catch(() => {});   // stop watching for gates
     const runMs = Date.now() - t0;   // wall time of the agent run only (warm-up excluded)
     // The expected nav teardown of the caller's context isn't a failure once the run finished — surface the
     // model's summary (from the terminal event) instead of the "context destroyed" noise.
-    const done = collected.find((e) => e.kind === "agent-result");
+    const done = [...collected].reverse().find((e) => e.kind === "agent-result");   // the LAST turn's result (→ the follow-up's, when present)
     if (done && error && /context was destroyed|Execution context/i.test(error)) error = null;
     if (result == null && done) result = { summary: done.summary, steps: done.steps, cancelled: done.cancelled };
 
