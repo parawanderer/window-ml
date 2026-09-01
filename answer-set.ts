@@ -117,3 +117,49 @@ export class AnswerSet {
         }).join("\n\n");
     }
 }
+
+/* --------------------------- the model-facing facade --------------------------- */
+
+/** The RESTRICTED view of the answer set the model gets as `ml.answer` — curate only. Deliberately
+ *  a small surface: NO `elements()`/`media()`/`items` (those hand back live nodes / base64, an escape
+ *  + context-spam risk); dumping yields only the compact indexed previews. */
+export interface AnswerFacade {
+    /** Add a result: a live Element (or array of them), a `@tool:` token string, or literal text. Returns the index. */
+    add(x: unknown): number;
+    /** Remove an item by index, or by a `@tool:` ref / exact text. Returns how many were removed. */
+    remove(which: number | string): number;
+    /** Empty the set. */
+    clear(): void;
+    /** The compact indexed view (never nodes/media/content) — what inspecting `ml.answer` shows. */
+    dump(): AnswerItemView[];
+    /** How many items are in the set. */
+    readonly length: number;
+}
+
+/** A DOM element, by duck-type (nodeType 1) — no `Element` import, works in jsdom + real DOM. */
+const isElement = (x: unknown): boolean => !!x && typeof x === "object" && (x as { nodeType?: number }).nodeType === 1;
+
+/**
+ * Build the `ml.answer` facade over a set. `previewEl` renders a live element to a short preview (the caller
+ * injects a DOM-aware one, e.g. `elLine`); media isn't captured here (that's async — an `ml.answer.add(el)`
+ * stores the node for the HUD highlight, the screenshot crop only comes via the `answer` TOOL path).
+ *
+ * Null-prototype + a `toJSON` that returns the compact dump, so returning `ml.answer` bare from `exec`
+ * serializes to the indexed previews — never the heavy nodes/media.
+ */
+export function makeAnswerFacade(set: AnswerSet, previewEl: (el: any) => string = () => "element"): AnswerFacade {
+    const f = Object.create(null) as AnswerFacade & { toJSON(): AnswerItemView[] };
+    f.add = (x: unknown): number => {
+        if (typeof x === "string") return set.add(answerItemFromString(x));
+        const arr = Array.isArray(x) ? x : [x];
+        if (arr.length && arr.every(isElement))
+            return set.add({ kind: "element", nodes: arr, preview: arr.length === 1 ? previewEl(arr[0]) : `${arr.length} element(s)` });
+        return set.add({ kind: "text", text: String(x) });   // anything else (a number, …) → literal text
+    };
+    f.remove = (which: number | string): number => set.remove(which);
+    f.clear = (): void => { set.clear(); };
+    f.dump = (): AnswerItemView[] => set.dump();
+    f.toJSON = (): AnswerItemView[] => set.dump();
+    Object.defineProperty(f, "length", { get: () => set.length, enumerable: true });
+    return f;
+}

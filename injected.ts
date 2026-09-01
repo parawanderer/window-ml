@@ -36,11 +36,12 @@ import { detectGroundingModel, DEFAULT_GROUNDING_RANGE, outputCapEscalated } fro
 import { evalReadonly } from "./readonly-exec";
 import { htmlToMarkdown } from "./html-to-md";
 import { runPipe } from "./text-pipe";
-import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement, navTarget, clipOut, askReaderNumCtx, jsonShape, shadowHostReport, clickSelector } from "./dom";
+import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement, navTarget, clipOut, askReaderNumCtx, jsonShape, shadowHostReport, clickSelector, elLine } from "./dom";
+import { makeAnswerFacade } from "./answer-set";
 import { accessibleName, roleOf, ariaState } from "./a11y";
 import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_NOTE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_EXEC_NOTE, IFRAME_CLAUSE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, EXEC_RANGE_CLAUSE, NAV_OFF_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, askAboutTask } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, markSeen, PT_LOOK_RADIUS, BOX_RE, resolveBox, agentState, mlRange } from "./util";
-import type { ShotBox, ServerTool, VisionMemory, RebuildConfig, AnswerMedia } from "./contract";
+import type { ShotBox, ServerTool, VisionMemory, RebuildConfig, AnswerMedia, MlAnswer } from "./contract";
 import { annotate, pickAccentColorForTarget } from "./locate";
 import { suspiciousArgsWarning, suspiciousChars } from "./security";
 import { emitDebug, debugId, shortHash, sessionRegistry, agentRegistry, handleRegistry, enterAgentRun, exitAgentRun, resetSubcallUsage, subcallUsage } from "./bus";
@@ -51,7 +52,7 @@ import { renderArgs, logStep, defaultApprove, normalizeApproval, formatReadonlyE
 import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPythonTool, targetRender, captureVerify, lookViews, BOX_OVER_TEXT_TIP, VIEWS_PARAM, legendFor, setCdpEnabled } from "./builtin-tools";
 import { pyVarNameError } from "./python-env";
 import { autoApprovePython } from "./auto-approve";
-import { executeTool, toolContext } from "./tool-exec";
+import { executeTool, toolContext, currentAnswer } from "./tool-exec";
 import { runAgentLoop, shotTurnMessage } from "./agent-loop";
 import type { AgentLoopDeps } from "./agent-loop";
 
@@ -217,6 +218,14 @@ class AgentHandle implements MlAgentHandle, AgentControl {
          *  page kernel: stash reusable functions/results here and pick them up on a later call. Page-lifetime,
          *  shared across runs. A GETTER (no setter) so it can't be reassigned/clobbered — mutate its props. */
         get state(): Record<string, unknown> { return agentState; },
+        /** The CURRENT run's user-facing answer set — a run-bound collection (add/remove/clear/length/dump).
+         *  A GETTER, so it always targets the run whose tool is executing; from the console outside a run it
+         *  THROWS (a clear message beats a baffling failure on the next `.add`). Free to curate from `exec`. */
+        get answer(): MlAnswer {
+            const set = currentAnswer();
+            if (!set) throw new Error("ml.answer is only live inside an ml.agent run (it curates that run's user-facing answer).");
+            return makeAnswerFacade(set, elLine);
+        },
         /**
          * Create a stateful multi-turn chat session.
          *
@@ -1016,7 +1025,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     if (name !== "exec" || typeof (args as { js?: unknown }).js !== "string") return null;
                     if (outputCapEscalated("exec", args)) return null;   // a raised output cap must hit the human gate, never auto-approve
                     try {
-                        const ro = await evalReadonly((args as { js: string }).js, document, this);
+                        const ro = await evalReadonly((args as { js: string }).js, document, this, makeAnswerFacade(answerSet, elLine));
                         const { result, elements } = formatReadonlyExec(ro.value, ro.logs);
                         const { in: renderIn, out: renderOut } = descriptorFor(byName[name], { result, elements }, args);
                         // Cached ml.fetch URLs this survey re-read → a "reused a grant you approved" note (transparency).

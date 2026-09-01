@@ -612,6 +612,11 @@ const SAFE_CONSTRUCTORS: Record<string, new (...a: any[]) => unknown> = {
 // only the survey's local accumulators (`(o[k] = o[k] || []).push(x)`, `new Set()`, `new Map()`) can.
 const MUTATING_METHODS = new Set(["push", "pop", "shift", "unshift", "splice", "sort", "reverse", "fill", "add", "set", "delete", "clear"]);
 
+// The ONLY methods callable on the `ml.answer` facade (curate the run's own user-facing answer). Kept
+// local so this interpreter stays dependency-free; must match makeAnswerFacade's surface in answer-set.ts.
+// Deliberately NOT in ALLOWED_METHODS — so `x.remove()`/`x.dump()` on any OTHER object stays out of dialect.
+const ANSWER_METHODS = new Set(["add", "remove", "clear", "dump"]);
+
 // The `window.ml` methods this dialect may call — side-effect-free reads: no privilege, no page
 // mutation, no tokens/VRAM. Everything else is simply ABSENT from the facade we build, so it can't
 // be reached: setModel/unload MUTATE (setModel would re-point the model the run itself is using),
@@ -629,7 +634,7 @@ export const ML_READONLY_METHODS = ["getModel", "config", "models", "capabilitie
 /** Build the `ml` object the dialect sees: ONLY {@link ML_READONLY_METHODS}, bound to the real API.
  *  A purpose-built facade rather than `window.ml` itself, so the free set is enforced by what exists,
  *  not only by a name check. Returns null when there's no ml (→ `ml` isn't in scope at all). */
-function mlFacade(ml: unknown, reused?: string[]): Record<string, unknown> | null {
+function mlFacade(ml: unknown, reused?: string[], answerFacade?: unknown): Record<string, unknown> | null {
     if (!ml || typeof ml !== "object") return null;
     const out: Record<string, unknown> = Object.create(null);
     for (const name of ML_READONLY_METHODS) {
@@ -654,6 +659,12 @@ function mlFacade(ml: unknown, reused?: string[]): Record<string, unknown> | nul
             return r;
         };
     }
+    // `ml.answer` — the run's curated answer set (a curate-only facade: add/remove/clear/dump/length, built by
+    // the CALLER via makeAnswerFacade so this interpreter stays dependency-free + DOM-free). Mutating your OWN
+    // user-facing answer is a safe terminating operation (the dialect already builds + mutates script-local
+    // arrays/Sets), so it's free here — the FIRST mutating facade member. It grants nothing: the facade exposes
+    // no nodes/media, and the page can already call ml.answer from its own console.
+    if (answerFacade && typeof answerFacade === "object") out.answer = answerFacade;
     return Object.keys(out).length ? out : null;
 }
 
@@ -965,12 +976,20 @@ class Evaluator {
             // so "is it on the facade" is the whole check. Their names deliberately never join
             // ALLOWED_METHODS, which is keyed by NAME across every object in scope.
             const onMl = this.ml !== null && obj === this.ml;
-            if (onMl ? !Object.prototype.hasOwnProperty.call(this.ml, key) : !ALLOWED_METHODS.has(key)) {
+            // `ml.answer` is a curate-only facade with its OWN allowlist (ANSWER_METHODS), identified by identity
+            // like `onMl` — so add/remove/clear/dump run on IT, and nothing else. Its methods deliberately never
+            // join ALLOWED_METHODS (so `x.remove()`/`x.dump()` on a page object stay out of dialect).
+            const onAnswer = this.ml !== null && obj != null && obj === (this.ml as Record<string, unknown>).answer;
+            if (onMl ? !Object.prototype.hasOwnProperty.call(this.ml, key)
+                : onAnswer ? !ANSWER_METHODS.has(key)
+                    : !ALLOWED_METHODS.has(key)) {
                 throw new NotInDialect(`method '${key}' not allowed`);
             }
             // An in-place MUTATOR (push/sort/…) may run ONLY on a container the script itself created — never an
             // array reached off a page value. So `pageState.items.push(x)` / `.sort()` can't mutate page data.
-            if (MUTATING_METHODS.has(key) && !this.owned.has(obj))
+            // The answer facade is EXEMPT: curating your own answer is the point, and its methods touch only the
+            // run's answer set (no nodes/media/realm reachable through them).
+            if (MUTATING_METHODS.has(key) && !this.owned.has(obj) && !onAnswer)
                 throw new Denied(`'${key}' can only mutate an array you created, not one reached from the page`);
             // `x.then(cb)` where x is NOT a thenable — the shape models write over the ml reads
             // (`ml.getModel().then(m => …)`), which auto-await left a plain value. Apply the callback
@@ -1054,11 +1073,11 @@ function runSync(gen: Ev): unknown {
  * program value plus any captured console output. Rejects with NotInDialect / Denied on
  * anything outside the dialect or blocked — callers fall back to approval+eval.
  */
-export async function evalReadonly(code: string, doc: Document, ml?: unknown): Promise<{ value: unknown; logs: string[]; reused: string[] }> {
+export async function evalReadonly(code: string, doc: Document, ml?: unknown, answerFacade?: unknown): Promise<{ value: unknown; logs: string[]; reused: string[] }> {
     const logs: string[] = [];
     const rec = (...a: unknown[]) => logs.push(a.map(x => typeof x === "string" ? x : safeStr(x)).join(" "));
     const reused: string[] = [];   // ml.fetch cache hits — URLs this survey re-read from a prior approval
-    const facade = mlFacade(ml, reused);
+    const facade = mlFacade(ml, reused, answerFacade);
     const root: Record<string, unknown> = Object.create(null);
     Object.assign(root, {
         document: doc, Array, Object, JSON, Math, String, Number, Boolean, Promise,

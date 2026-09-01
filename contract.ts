@@ -762,6 +762,21 @@ export interface AgentStepEvent extends AgentTranscriptEntry {
     step: number;
 }
 
+/** The run-bound `ml.answer` collection — curate the run's user-facing result. */
+export interface MlAnswer {
+    /** Add a result: a live Element (or array of them → hoverable/highlighted), a `@tool:` output token
+     *  (from a tool result), or literal text/markdown. Returns the new item's index. */
+    add(x: Element | Element[] | string): number;
+    /** Remove an item by index (from a dump), or by a `@tool:` ref / exact text. Returns how many were removed. */
+    remove(which: number | string): number;
+    /** Empty the answer. */
+    clear(): void;
+    /** A compact indexed view of the set — `{ i, kind, preview }` per item (never nodes/media/full content). */
+    dump(): { i: number; kind: "text" | "token" | "element"; preview: string }[];
+    /** How many items are in the answer. */
+    readonly length: number;
+}
+
 /** Options for the low-level ml.step turn. */
 export interface StepOptions {
     /** client-side tool definitions */
@@ -1409,6 +1424,12 @@ export interface MlApi {
      *  lexical `state` variable. Stash reusable functions/results across `exec` calls (the Jupyter/kernel
      *  paradigm). Page-lifetime, shared across runs; read-only binding (mutate its properties). */
     readonly state: Record<string, unknown>;
+    /** Curate the CURRENT run's user-facing answer (what the user sees as the result). A run-bound collection —
+     *  valid only WHILE your run is executing; from the console outside a run it throws. Free to call from
+     *  `exec` (no approval — curating your own answer is a safe operation). Keep it MINIMAL and matched to the
+     *  ask. `add` a live element (→ hoverable/highlighted), a `@tool:` output token, or text; `remove` by index,
+     *  `clear`, `length`; the bare object dumps a compact index (never the heavy media). */
+    readonly answer: MlAnswer;
     /* ---- chat ---- */
     /** Create a stateful multi-turn chat session. Same raw-model contract as ml.chat —
      *  the turns accumulate, but the model still never sees the page. */

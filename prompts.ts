@@ -89,7 +89,8 @@ export const ANSWER_CLAUSE =
     "what they asked for, not a dump of everything you touched. Add a `text` line for a fact/summary, or a " +
     "`selector` to hand back the actual element(s) (hoverable, shown in the card). Manage it as you go: " +
     "`remove` an item by index, or `clear` and redo. If the task is to FIND / LOCATE an element, designate " +
-    "it here so the real node reaches the caller.";
+    "it here so the real node reaches the caller. You can also curate it from `exec` for free via " +
+    "`ml.answer` (`.add(el | \"text\")`, `.remove(i)`, `.clear()`, `.length`) — no approval.";
 export const SHADOW_CLAUSE =
     "\n\nShadow DOM: the DOM tools (findByText / interactives / describeElement / ancestors / countMatches / " +
     "sampleText / click / type / wait / answer) pierce OPEN shadow roots automatically. A control inside one " +

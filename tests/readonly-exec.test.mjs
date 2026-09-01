@@ -830,3 +830,71 @@ test("blessed primitive: ml.a11y ADVERSARIAL — object can't reach a realm, fac
     await assert.rejects(run(`ml.setModel("x")`, doc, ml), outOfDialect);
     await assert.rejects(run(`ml.screenshot("@pt:0")`, doc, ml), outOfDialect);
 });
+
+/* ---------------------- ml.answer (the curate-only facade) ---------------------- */
+// The FIRST mutating facade member. Per the repo RULE, extending the dialect requires ADVERSARIAL tests:
+// prove the new surface can only curate the run's own answer and can't be abused to reach a node/the realm.
+import { AnswerSet, makeAnswerFacade } from "../answer-set.ts";
+const runAns = (js, set = new AnswerSet(), doc = world()) =>
+    evalReadonly(js, doc, ML, makeAnswerFacade(set, el => el.id || el.tagName));
+
+test("ml.answer: add text / @tool token, remove, clear run FREE in the dialect (no approval)", async () => {
+    const set = new AnswerSet();
+    await runAns(`ml.answer.add("Total: 42")`, set);
+    await runAns(`ml.answer.add("@tool:35bf1f:out")`, set);
+    assert.deepEqual(set.items.map(i => i.kind), ["text", "token"], "text vs @tool: classified");
+    assert.equal((await runAns(`ml.answer.length`, set)).value, 2);
+    await runAns(`ml.answer.remove(0)`, set);
+    assert.equal(set.length, 1, "removed by index");
+    await runAns(`ml.answer.clear()`, set);
+    assert.equal(set.length, 0, "cleared");
+});
+
+test("ml.answer.dump() is compact — indexed previews, NEVER nodes/media/content", async () => {
+    const set = new AnswerSet();
+    await runAns(`ml.answer.add(document.getElementById("a"))`, set);
+    assert.equal(set.items[0].kind, "element", "a live element was designated");
+    const { value } = await runAns(`ml.answer.dump()`, set);
+    assert.deepEqual(value, [{ i: 0, kind: "element", preview: "a" }]);
+    assert.ok(!JSON.stringify(value).includes("nodeType"), "the live node never appears in a dump");
+});
+
+test("ml.answer.add(element) returns an INDEX, not the node — no node handed back to the survey", async () => {
+    const set = new AnswerSet();
+    const { value } = await runAns(`ml.answer.add(document.getElementById("a"))`, set);
+    assert.equal(value, 0, "add returns the item index (a number), never the element");
+});
+
+test("ml.answer: no elements()/media()/items surface — the stored nodes can't be walked back to the realm", async () => {
+    const set = new AnswerSet();
+    set.add({ kind: "element", nodes: [{ nodeType: 1 }], preview: "x" });
+    // None of the node-bearing accessors exist on the facade → undefined, so there's no path to a node → window.
+    assert.equal((await runAns(`ml.answer.items`, set)).value, undefined);
+    assert.equal((await runAns(`ml.answer.elements`, set)).value, undefined);
+    assert.equal((await runAns(`ml.answer.media`, set)).value, undefined);
+    assert.equal((await runAns(`ml.answer.toMarkdown`, set)).value?.name ?? undefined, undefined, "toMarkdown isn't exposed");
+});
+
+test("ml.answer: a method can't be EXTRACTED and called indirectly (METHOD_REF sentinel)", async () => {
+    const set = new AnswerSet();
+    await assert.rejects(runAns(`const f = ml.answer.add; f("sneaky")`, set), outOfDialect);
+    assert.equal(set.length, 0, "the indirect call never mutated the set");
+});
+
+test("ml.answer: constructor / __proto__ are denied (no prototype-walk off the facade)", async () => {
+    const set = new AnswerSet();
+    await assert.rejects(runAns(`ml.answer.constructor`, set), outOfDialect);
+    await assert.rejects(runAns(`ml.answer.__proto__`, set), outOfDialect);
+    await assert.rejects(runAns(`ml.answer.constructor("return this")()`, set), outOfDialect);
+});
+
+test("the answer methods did NOT leak globally — remove()/dump() on any other object stay out of dialect", async () => {
+    await assert.rejects(runAns(`[1,2,3].remove(0)`), outOfDialect, "remove is not a global allowed method");
+    await assert.rejects(runAns(`[1,2,3].dump()`), outOfDialect, "dump is not a global allowed method");
+});
+
+test("the owned-mutation guard is INTACT — add/clear on a page object stay Denied (only the answer facade is exempt)", async () => {
+    // classList.add is reached off a page node, not the answer facade → still refused. Proves `!onAnswer` only
+    // exempted the answer facade, not `add`/`clear` everywhere.
+    await assert.rejects(runAns(`document.body.classList.add("x")`), outOfDialect);
+});

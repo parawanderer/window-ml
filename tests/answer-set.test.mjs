@@ -1,7 +1,7 @@
 // The pure answer-set core (answer-set.ts): the ordered, curatable user-facing result of a run.
 import { test } from "node:test";
 import assert from "node:assert";
-import { AnswerSet, answerItemFromString, TOOL_TOKEN_PREFIX } from "../answer-set.ts";
+import { AnswerSet, answerItemFromString, TOOL_TOKEN_PREFIX, makeAnswerFacade } from "../answer-set.ts";
 
 const el = (nodes, preview, extra = {}) => ({ kind: "element", nodes, preview, ...extra });
 const txt = (text) => ({ kind: "text", text });
@@ -85,4 +85,32 @@ test("toMarkdown: text verbatim, element as a bullet, token as a link; empty →
     assert.match(md, /The total is 42\./);
     assert.match(md, /- the sales table: table#sales/);
     assert.match(md, /\[DataFrame\]\(@tool:35bf1f:out\)/);
+});
+
+test("makeAnswerFacade: classifies element vs @tool vs text; dump/toJSON are compact; length reflects", () => {
+    const set = new AnswerSet();
+    const el = { nodeType: 1, id: "banner" };
+    const f = makeAnswerFacade(set, e => e.id || "el");
+    assert.equal(f.add(el), 0);                       // an Element → element item
+    assert.equal(f.add("@tool:ab12:out"), 1);         // @tool: string → token
+    assert.equal(f.add("plain text"), 2);             // other string → text
+    assert.equal(f.add(42), 3);                       // non-string/element → coerced to text
+    assert.equal(f.length, 4);
+    assert.deepEqual(set.items.map(i => i.kind), ["element", "token", "text", "text"]);
+    // toJSON (returning `ml.answer` bare) === dump; both compact, no nodes/media
+    assert.deepEqual(f.dump(), f.toJSON());
+    assert.equal(f.dump()[0].preview, "banner");
+    assert.ok(!JSON.stringify(f).includes("nodeType"), "serializing the facade never leaks the node");
+    // curation
+    assert.equal(f.remove(0), 1); assert.equal(f.length, 3);
+    f.clear(); assert.equal(f.length, 0);
+});
+
+test("makeAnswerFacade: an array of elements becomes ONE element item", () => {
+    const set = new AnswerSet();
+    const f = makeAnswerFacade(set);
+    f.add([{ nodeType: 1 }, { nodeType: 1 }]);
+    assert.equal(set.length, 1);
+    assert.equal(set.items[0].kind, "element");
+    assert.equal(set.items[0].nodes.length, 2);
 });

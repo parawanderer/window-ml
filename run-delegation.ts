@@ -16,6 +16,7 @@ import { executeTool, toolContext, answerSetFor } from "./tool-exec";
 import { captureVerify, captureVerifyElement } from "./builtin-tools";
 import { htmlToMarkdown } from "./html-to-md";
 import { clipOut, elLine, errText } from "./dom";
+import { makeAnswerFacade } from "./answer-set";
 import { runPipe } from "./text-pipe";
 import { descriptorFor } from "./render-descriptor";
 import { evalReadonly } from "./readonly-exec";
@@ -177,7 +178,7 @@ export async function runDelegatedTool(runId: string, name: string, args: Record
         if (name !== "exec" || typeof (args as { js?: unknown }).js !== "string") return { result: "", readonly: false };
         if (outputCapEscalated("exec", args)) return { result: "", readonly: false };   // a raised output cap must hit the human gate
         try {
-            const ro = await evalReadonly((args as { js: string }).js, document, typeof window !== "undefined" ? window.ml : null);
+            const ro = await evalReadonly((args as { js: string }).js, document, typeof window !== "undefined" ? window.ml : null, makeAnswerFacade(answerSetFor(run.byName), elLine));
             const { result, elements } = formatReadonlyExec(ro.value, ro.logs);
             const { in: renderIn, out: renderOut } = descriptorFor(tool, { result, elements }, args);
             const urls = [...new Set(ro.reused)];   // cached ml.fetch URLs this survey reused → the "reused a grant" note
