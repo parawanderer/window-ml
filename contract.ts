@@ -1362,7 +1362,12 @@ export interface DebugAgentStep extends DebugBase {
     awaitingApproval?: boolean;
     /** `thought` = the assistant's user-facing PROSE (content); `reasoning` = its separate thinking
      *  channel (reasoning_content / message.thinking), rendered as a collapsible "think" section. */
-    thought?: string; reasoning?: string | null; tool?: string; arguments?: Record<string, unknown>; result?: string; elements?: number;
+    thought?: string; reasoning?: string | null; tool?: string; arguments?: Record<string, unknown>; result?: string;
+    /** What the model ACTUALLY saw as the tool result when it differs from `result` — i.e. `result` PLUS an
+     *  appended `@tool:<id>` token line. Kept so the log's raw view stays complete (the AGENTS raw-view rule);
+     *  the pretty Out shows `result`, a collapsed "raw · as the model saw it" shows this. */
+    modelResult?: string;
+    elements?: number;
     /** rich render for the In slot (the call) — else the raw args */
     renderIn?: RenderDescriptor;
     /** rich render for the Out slot (the result) — else the raw result */

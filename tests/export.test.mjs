@@ -49,6 +49,27 @@ test("fetch_url `ask`: the question + who-answered + tokens export in BOTH Markd
     }
 });
 
+test("a step's model-facing Out (with an @tool token line) stays recoverable in BOTH sinks (raw-view rule)", () => {
+    const s = {
+        hash: "tt1", kind: "agent", model: "qwen3", tag: "session", createdTs: 1, lastTs: 2, status: "ok",
+        turns: [], task: "count elements", answers: [{ text: "9", ts: 9, atStep: 1, status: "ok" }],
+        steps: [{
+            step: 1, localStep: 1, seq: 1, tool: "exec",
+            arguments: { js: "document.querySelectorAll('*').length" },
+            result: "9",   // the CLEAN Out (pretty view)
+            // what the model ACTUALLY saw — the clean result PLUS the appended token line
+            modelResult: "9\n\n[output token @tool:e7ed9f — cite this exact result …]",
+            renderIn: { type: "code", text: "document.querySelectorAll('*').length", lang: "javascript" },
+        }],
+    };
+    const { md } = serializeSession(s);
+    const htmlText = sessionToHtml(s, "run").replace(/<[^>]+>/g, "").replace(/&quot;/g, '"');
+    for (const [fmt, out] of [["markdown", md], ["pdf/html", htmlText]]) {
+        assert.match(out, /Out · raw \(as the model saw it\)/, `${fmt} discloses the model-facing Out`);
+        assert.match(out, /@tool:e7ed9f/, `${fmt} keeps the token line the model saw`);
+    }
+});
+
 import { config } from "../sidebar/store.ts";
 import { BUILD_INFO } from "../build-info.gen.ts";
 

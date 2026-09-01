@@ -327,6 +327,9 @@ function writeAgent(s: Session, d: Sink): void {
         }
         if (st.result != null && st.result !== "") d.block("Out", st.result);
         else if (st.elements != null) d.inline("Out", `${st.elements} element(s)`);
+        // The AGENTS raw-view rule: when the model was fed MORE than the clean Out (an appended `@tool:<id>`
+        // token line), the exact text it saw must stay recoverable — a collapsed disclosure beside the clean Out.
+        if (st.modelResult && st.modelResult !== st.result) d.details("Out · raw (as the model saw it)", () => d.block("", st.modelResult!));
         // What the tool fed straight INTO the model's context (locate's snap-inject) — a marked crop the
         // model SAW, or a delegated description it received. A static export can't toggle, so show both the
         // reason and the payload.
