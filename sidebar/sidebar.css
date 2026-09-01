@@ -102,6 +102,9 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .set-section[open] { gap: 13px; }
 /* The last section in a tab has nothing after it — drop the trailing divider + extra padding. */
 .set-body > .set-section:last-child { border-bottom: none; padding-bottom: 2px; }
+/* Permission-enable button rows (Google Sheets / Incognito) — give the button breathing room from the
+   section edge (the last-child section drops padding-bottom to 2px, leaving it flush otherwise). */
+.free-row { margin: 2px 0 8px; }
 .set-section > summary.set-group { display: flex; align-items: center; gap: 6px; margin: 8px 2px 2px; cursor: pointer; list-style: none; user-select: none; }
 .set-section > summary.set-group::-webkit-details-marker { display: none; }
 .set-section > summary.set-group::before { content: ""; flex: none; width: 0; height: 0;

@@ -877,7 +877,9 @@ export function Settings() {
                         onChange={(e: any) => setField("autoApprovePython", e.target.checked)} />
                     <Lbl tip={TIP.autoApprovePython}>Auto-approve readonly python_exec calls</Lbl>
                 </label>
+                </Section>
 
+                <Section id="fetch" title="Fetching (fetch_url / ml.fetch)">
                 <div class="set-note">Auto-approve a <b>same-origin</b> fetch that spends your <b>session</b> — a <code>fetch_url</code> with <code>credentials:true</code>, or a <code>rendered:true</code> load in a normal (non-incognito) tab — on the page you're already on. OFF (default) means those always ask, so you stay in charge of when your cookies are used. <b>Never</b> affects cross-origin fetches (always ask) or the already-free uncredentialed same-origin reads.</div>
                 <label class="set-check">
                     <input type="checkbox" checked={c.autoApproveSameOriginAuth}
