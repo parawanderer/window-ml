@@ -64,7 +64,7 @@ export interface AgentLoopDeps {
     // `elements` carries the tool's real result nodes on a DONE (page-side only — nodes can't cross the
     // bus, so the background path leaves it undefined and assembles answer nodes separately). The page's
     // emit uses them for onStep + the debug event's element COUNT.
-    emit?(ev: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: unknown; tool?: string; arguments?: Record<string, unknown>; result?: string; modelResult?: string; approval?: Approval; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; usage?: unknown; elements?: unknown[]; reused?: import("./contract").ReusedGrant[] }): void;
+    emit?(ev: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: unknown; tool?: string; arguments?: Record<string, unknown>; result?: string; modelResult?: string; token?: string; approval?: Approval; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; usage?: unknown; elements?: unknown[]; reused?: import("./contract").ReusedGrant[] }): void;
     // Mid-run STEERING (a.say()): drained at each step boundary (before the model call) — returns any user
     // messages queued since the last step, injected via pushUser so the model sees them on its next turn.
     // Omit → no steering. The queue lives in the caller's world (page handle / SW inbox).
@@ -335,15 +335,24 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             if (tr?.elements && tr.elements.length) entry.elements = tr.elements as AgentTranscriptEntry["elements"];
             transcript.push(entry);
             // Tool token: surface an `@tool:<id>` line ONLY when this step has a rich render (renderIn/renderOut —
-            // something worth citing verbatim: an image/table/code). Plain-text results (findByText/scroll) get
-            // none — nothing to embed, and it keeps the model from over-referencing. Deterministic id so the
-            // answer/final-text renderer re-derives it from `seq`.
-            const forModel = (opts.toolTokens && opts.runHash && (tr?.renderIn || tr?.renderOut))
-                ? `${result}\n\n[output token @tool:${toolToken(opts.runHash, s)} — cite this exact result in your final answer (or add to ml.answer) as a markdown link, e.g. [label](@tool:${toolToken(opts.runHash, s)}:out); use ":in" for the call/code]`
+            // OPT-IN: the model asks for a token by setting `token: true` on a call whose output it intends to
+            // CITE (exec/python_exec/look/locate/fetch_url expose the param). So exploratory/intermediate steps —
+            // and inspection tools (describeElement/sampleText/…) that never expose the param — produce none,
+            // keeping the model from being spammed with tokens it won't use. NOT on a FAILED call either: a token
+            // pointing at "not a valid selector" is pointless; the model should fix + retry. Deterministic id so
+            // the answer/final-text renderer re-derives it from `seq`.
+            const failed = /^(Error:|Denied|Python error:)/.test(result);
+            const wantsToken = (args as Record<string, unknown>)?.token === true;
+            // Mint the id ONCE and CARRY it on the step (below) — the answer renderer matches this stored id
+            // EXACTLY, never re-derives it from runHash:seq (a re-derivation mismatch/collision would resolve a
+            // citation to the WRONG step).
+            const tokenId = (opts.toolTokens && opts.runHash && wantsToken && !failed) ? toolToken(opts.runHash, s) : undefined;
+            const forModel = tokenId
+                ? `${result}\n\n[output token @tool:${tokenId} — cite this exact result in your final answer (or add to ml.answer) as a markdown link, e.g. [label](@tool:${tokenId}:out); use ":in" for the call/code]`
                 : result;
             // The DONE event carries the clean `result` for the pretty Out AND — when a token line was appended —
             // `modelResult` (what the model ACTUALLY saw), so the log's raw view stays complete (the AGENTS rule).
-            deps.emit?.({ step, seq: s, tool: call.name, arguments: args, result, ...(forModel !== result ? { modelResult: forModel } : {}), approval, renderIn: tr?.renderIn, renderOut: tr?.renderOut, feedback: tr?.feedback, elements: tr?.elements, reused: tr?.reused });   // DONE (patches the START)
+            deps.emit?.({ step, seq: s, tool: call.name, arguments: args, result, ...(tokenId ? { token: tokenId } : {}), ...(forModel !== result ? { modelResult: forModel } : {}), approval, renderIn: tr?.renderIn, renderOut: tr?.renderOut, feedback: tr?.feedback, elements: tr?.elements, reused: tr?.reused });   // DONE (patches the START)
             deps.pushToolResult(messages, call, forModel);
             if (tr?.image) pendingImages.push({ image: tr.image, label: tr.imageLabel || "screenshot" });
             // Multiple images from one call (look's overlay + no-overlay) → each becomes its own inline image.

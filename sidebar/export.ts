@@ -61,7 +61,7 @@ function writeAnswer(text: string, s: Session, d: Sink, muted = false): void {
     const flush = () => { if (buf.trim()) d.prose(buf); buf = ""; };
     for (const seg of splitAnswer(text)) {
         if (seg.kind === "prose") { buf += seg.text; continue; }
-        const step = resolveTokenStep(seg.id, s.steps || [], s.hash) as AgentStep | null;
+        const step = resolveTokenStep(seg.id, s.steps || []) as AgentStep | null;
         if (!step) { buf += ` ⟨unresolved @tool:${seg.id}⟩ `; continue; }
         const desc = seg.slot === "in" ? step.renderIn : step.renderOut;
         const raw = seg.slot === "in" ? (step.arguments ? pretty(step.arguments) : "") : (step.result ?? "");

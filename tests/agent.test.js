@@ -1001,23 +1001,35 @@ test("agent runs a tool, feeds the result back, and stops on a plain reply", asy
     assert.deepEqual(sent.at(-1), { role: "tool", tool_call_id: "c1", content: "pong1" });
 });
 
-test("toolTokens: surfaces an @tool: line on a RICH result, not a plain one; and only when enabled", async () => {
-    const script = () => scriptedModel([toolCall("rich", {}, "c1"), toolCall("plain", {}, "c2"), reply("done")]);
-    const richTool = () => ({ name: "rich", run: () => ({ content: "found", image: "data:image/png;base64,AAAA" }) });   // image → rich renderOut
-    const plainTool = () => ({ name: "plain", run: () => "just text" });                                                 // plain string → no render
+test("toolTokens: opt-in — a token is minted ONLY when the model sets token:true, and only when enabled", async () => {
+    // OPT-IN: the loop mints a token for a call ONLY when the model passed `token:true` on it (so it isn't
+    // spammed with tokens on every exec/inspection call). `wants` asks; `skip` doesn't; a token line appears
+    // solely on `wants`.
+    const script = () => scriptedModel([toolCall("wants", { token: true }, "c1"), toolCall("skip", {}, "c2"), reply("done")]);
+    const tool = (name) => ({ name, run: () => "a computed result" });
 
-    // ON: the rich result carries a copyable @tool:<id>:out; the plain one doesn't.
+    // ON: the opted-in call carries a copyable @tool:<id>:out; the one that didn't ask doesn't.
     let world = loadPageWorld({ onRuntimeMessage: script() });
-    await world.ml.agent("t", { tools: [world.ml.defineTool(richTool()), world.ml.defineTool(plainTool())], toolTokens: true });
+    await world.ml.agent("t", { tools: [world.ml.defineTool(tool("wants")), world.ml.defineTool(tool("skip"))], toolTokens: true });
     let msgs = world.runtimeCalls.at(-1).payload.messages;
-    assert.match(msgs.find(m => m.tool_call_id === "c1").content, /@tool:[0-9a-f]{6}:out/, "rich result gets a token");
-    assert.doesNotMatch(msgs.find(m => m.tool_call_id === "c2").content, /@tool:/, "a plain-text result gets none");
+    assert.match(msgs.find(m => m.tool_call_id === "c1").content, /@tool:[0-9a-f]{6}:out/, "the opted-in call gets a token");
+    assert.doesNotMatch(msgs.find(m => m.tool_call_id === "c2").content, /@tool:/, "a call that didn't ask gets none");
 
-    // OFF (default): no token line even on the rich result — a normal run is byte-identical.
+    // OFF (default): no token line even on the opted-in call — a normal run is byte-identical.
     world = loadPageWorld({ onRuntimeMessage: script() });
-    await world.ml.agent("t", { tools: [world.ml.defineTool(richTool()), world.ml.defineTool(plainTool())] });
+    await world.ml.agent("t", { tools: [world.ml.defineTool(tool("wants")), world.ml.defineTool(tool("skip"))] });
     msgs = world.runtimeCalls.at(-1).payload.messages;
     assert.doesNotMatch(msgs.find(m => m.tool_call_id === "c1").content, /@tool:/, "tokens off by default");
+});
+
+test("toolTokens: an ERROR result gets NO token, even when the model opted in (nothing to cite)", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall("boom", { token: true }, "c1"), reply("done")]) });
+    // The model asked for a token, but the call FAILED — a failed call has nothing worth citing.
+    const boom = world.ml.defineTool({ name: "boom", run: () => "Error: '\"table#sales\"' is not a valid selector." });
+    await world.ml.agent("t", { tools: [boom], toolTokens: true });
+    const msg = world.runtimeCalls.at(-1).payload.messages.find(m => m.tool_call_id === "c1");
+    assert.match(msg.content, /not a valid selector/, "the error still reaches the model");
+    assert.doesNotMatch(msg.content, /@tool:/, "but no token is minted for a failed call");
 });
 
 test("agent: a pre-aborted signal cancels before any model call (resolves, doesn't reject)", async () => {

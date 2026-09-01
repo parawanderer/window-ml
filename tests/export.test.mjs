@@ -56,7 +56,7 @@ test("@tool citations in an answer RESOLVE to the cited step's output; unresolve
     const s = {
         hash, kind: "agent", model: "qwen3", tag: "session", createdTs: 1, lastTs: 2, status: "ok", turns: [], answers: [],
         summary: `The count is [n](@tool:${id}:out) and a bogus [x](@tool:beefee:out).`,
-        steps: [{ step: 1, seq: 1, tool: "exec", arguments: { js: "x" }, result: "9",
+        steps: [{ step: 1, seq: 1, tool: "exec", token: id, arguments: { js: "x" }, result: "9",
             renderOut: { type: "code", text: "COUNT_RESULT_42", lang: "text" } }],
     };
     const { md } = serializeSession(s);

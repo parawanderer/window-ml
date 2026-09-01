@@ -713,6 +713,17 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     return [t];
                 });
             }
+            // Tool tokens (opt-in): expose a `token` param ONLY on the result-producing tools, and ONLY when the
+            // run has tokens enabled — so a normal run's schemas aren't cluttered with a param that does nothing.
+            // The model sets `token: true` on a call whose output it intends to CITE; the loop surfaces the
+            // @tool:<id> only for those (see agent-loop). Clone the shared defs; don't mutate them.
+            if (toolTokens) {
+                const CITABLE = new Set(["exec", "python_exec", "look", "locate", "fetch_url"]);
+                toolset = toolset.map(t => CITABLE.has(t.name)
+                    ? { ...t, parameters: { ...t.parameters, properties: { ...(t.parameters as { properties?: Record<string, unknown> }).properties,
+                        token: { type: "boolean", description: "Set true ONLY when this call's output is a result you'll CITE in your final answer — it mints an @tool:<id> you reference with a markdown link (the macro expands to this exact output for the user). Leave off for exploratory/intermediate steps." } } } }
+                    : t);
+            }
             const byName = Object.fromEntries(toolset.map(t => [t.name, t]));
             const toolDefs = toolset.map(t => ({
                 type: "function",
@@ -933,7 +944,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             // Enrich the loop's event with the page-only bits: argIssues, the element COUNT for the debug
             // event + the real nodes for onStep, and a best-effort In/Out render for a step the executor
             // DIDN'T run (pending START / denied / skipped), preferring the executor's own render when present.
-            const emit = (ev: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: unknown; tool?: string; arguments?: Record<string, unknown>; result?: string; modelResult?: string; approval?: "readonly" | "sandbox" | "user" | "denied" | "skipped" | "cancelled"; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; usage?: unknown; elements?: unknown[]; reused?: import("./contract").ReusedGrant[] }) => {
+            const emit = (ev: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: unknown; tool?: string; arguments?: Record<string, unknown>; result?: string; modelResult?: string; token?: string; approval?: "readonly" | "sandbox" | "user" | "denied" | "skipped" | "cancelled"; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; usage?: unknown; elements?: unknown[]; reused?: import("./contract").ReusedGrant[] }) => {
                 const tool = ev.tool ? byName[ev.tool] : undefined;
                 const nodes = ev.elements as Node[] | undefined;
                 const argIssues = ev.tool && tool ? validateArgs(tool.parameters, ev.arguments || {}) : undefined;
@@ -955,7 +966,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     kind: "agent-step", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: step },
                     step, localStep: ev.step, seq, pending: ev.pending || undefined,
                     thought: ev.thought, reasoning: (ev.reasoning as string | null) || undefined, tool: ev.tool, arguments: ev.arguments,
-                    result: ev.result, modelResult: ev.modelResult, elements: nodes ? nodes.length : undefined,
+                    result: ev.result, modelResult: ev.modelResult, token: ev.token, elements: nodes ? nodes.length : undefined,
                     renderIn, renderOut, feedback: ev.feedback, reused: ev.reused,
                     argIssues: argIssues && argIssues.length ? argIssues : undefined,
                     approval: ev.approval, usage: (ev.usage as TokenUsage | null) || undefined,
@@ -1938,7 +1949,18 @@ class AgentHandle implements MlAgentHandle, AgentControl {
          * html }` (the element's outerHTML) for `pd.read_html`. Page-side.
          */
         _resolveTable: function(target: string | Element, raw = false): { kind: "rows"; columns: string[]; rows: (string | number | null)[][] } | { kind: "html"; html: string } {
-            const el = typeof target === "string" ? queryAll(target)[0] : target;
+            let el: Element | undefined;
+            if (typeof target === "string") {
+                try { el = queryAll(target)[0]; }
+                catch {
+                    // Invalid CSS selector — almost always the model wrapped it in extra quotes ("table#sales"
+                    // instead of table#sales), producing a raw, opaque querySelectorAll SyntaxError. ACCOMMODATE:
+                    // strip surrounding quotes and retry; only if THAT still fails, give a clear, actionable error.
+                    const bare = target.replace(/^\s*['"`]+|['"`]+\s*$/g, "").trim();
+                    try { if (bare && bare !== target) el = queryAll(bare)[0]; } catch { /* still invalid */ }
+                    if (!isElement(el)) throw new Error(`ml.pythonExec tables: "${target}" is not a valid CSS selector. Pass a BARE selector (e.g. \`#sales\` or \`table#sales\`), NOT a quoted string.`);
+                }
+            } else el = target;
             if (!isElement(el)) throw new Error(`ml.pythonExec: no table element matches "${String(target)}".`);
             const t = extractTable(el);
             if (!t) {

@@ -92,7 +92,10 @@ export const ANSWER_CLAUSE =
     "it here so the real node reaches the caller. You can also curate it from `exec` for free via " +
     "`ml.answer` (`.add(el | \"text\")`, `.remove(i)`, `.clear()`, `.length`) — no approval.";
 export const TOOLTOKENS_CLAUSE =
-    "\n\nSome tool results end with an `@tool:<id>` token: that output (image, table, code, value) is ADDRESSABLE. " +
+    "\n\nCITING TOOL OUTPUTS. To show the user a tool's ACTUAL output in your answer, first REQUEST a token: set " +
+    "`token: true` on the call (exec / python_exec / look / locate / fetch_url) whose output you intend to cite — " +
+    "its result then ends with an `@tool:<id>`. Do this ONLY for a result you'll actually show (usually your final " +
+    "computation), NOT for exploratory or intermediate steps — don't spam yourself with tokens you won't use. " +
     "`@tool:<id>` is NOT a hyperlink — it's a MACRO. Where you drop `[caption](@tool:35bf1f:out)` in your FINAL " +
     "answer, it AUTO-EXPANDS IN PLACE into the ACTUAL output for the reader (the real table / image / value, or the " +
     "code for `:in`). You are not linking to something they click — you are INSERTING the real output into your text " +

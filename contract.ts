@@ -1367,6 +1367,9 @@ export interface DebugAgentStep extends DebugBase {
      *  appended `@tool:<id>` token line. Kept so the log's raw view stays complete (the AGENTS raw-view rule);
      *  the pretty Out shows `result`, a collapsed "raw · as the model saw it" shows this. */
     modelResult?: string;
+    /** the `@tool:<id>` this step was MINTED (opt-in `token:true` on a citable call). The answer renderer matches
+     *  it EXACTLY to resolve a `[label](@tool:<id>)` citation — no re-derivation, so it can't drift. */
+    token?: string;
     elements?: number;
     /** rich render for the In slot (the call) — else the raw args */
     renderIn?: RenderDescriptor;

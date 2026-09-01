@@ -46,14 +46,13 @@ test("hasTokens: true only when a real token is present", () => {
     assert.equal(hasTokens("plain text"), false);
 });
 
-test("resolveTokenStep: matches a real step by re-derived id; null for a hallucinated one", () => {
-    const runHash = "abcd1234";
-    const steps = [{ seq: 1, tool: "exec" }, { seq: 2, tool: "look" }, { seq: 3, tool: "findByText" }];
-    const idFor2 = toolToken(runHash, 2);
-    assert.strictEqual(resolveTokenStep(idFor2, steps, runHash), steps[1], "resolves to the step whose token matches");
-    assert.equal(resolveTokenStep("zzzzzz", steps, runHash), null, "a hallucinated id resolves to nothing");
-    // wrong run → no match (run-scoped)
-    assert.equal(resolveTokenStep(idFor2, steps, "wrongrun"), null, "a token from another run doesn't resolve here");
-    // a thought step (no seq) can't be a token target
-    assert.equal(resolveTokenStep(toolToken(runHash, 9), [{ tool: "x" }], runHash), null);
+test("resolveTokenStep: matches by the token the loop MINTED onto the step; null for a hallucinated one", () => {
+    // The loop stores the exact minted id on the step; resolution is a direct equality match, NOT a re-derivation.
+    const idFor2 = toolToken("abcd1234", 2);
+    const steps = [{ seq: 1, tool: "exec" }, { seq: 2, tool: "look", token: idFor2 }, { seq: 3, tool: "findByText" }];
+    assert.strictEqual(resolveTokenStep(idFor2, steps), steps[1], "resolves to the step whose stored token matches");
+    assert.equal(resolveTokenStep("zzzzzz", steps), null, "a hallucinated id resolves to nothing");
+    // a step with NO minted token (thought, un-tokened tool call) is never a target, even if its seq would derive it
+    assert.equal(resolveTokenStep(toolToken("abcd1234", 1), steps), null, "an un-tokened step can't be cited");
+    assert.equal(resolveTokenStep(idFor2, [{ tool: "x" }]), null, "no tokens at all → null");
 });

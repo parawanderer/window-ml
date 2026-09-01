@@ -5,12 +5,10 @@
 // card, the sidebar, the export sinks) shares:
 //   • splitAnswer  — cut the answer markdown into prose + token segments, GRAMMAR-GATED so only a real token is
 //                    ever special-cased (a garbled / hallucinated-looking link just stays prose = ordinary markdown).
-//   • resolveTokenStep — map a token id back to THIS run's step (re-derive each step's deterministic id), or null
+//   • resolveTokenStep — map a token id back to THIS run's step by the token the loop MINTED onto it, or null
 //                    for an id that matches nothing (a hallucinated / foreign token → the caller shows an
 //                    "unresolved" chip; never a crash, never a silent drop).
 // The descriptor picking + actual rendering (RenderPanel / mdSink) live in the surfaces; this stays DOM-free.
-
-import { toolToken } from "./util";
 
 /** One piece of a split answer: literal markdown, or a resolved-later token reference. */
 export type AnswerSegment =
@@ -45,10 +43,12 @@ export function splitAnswer(md: string): AnswerSegment[] {
 export const hasTokens = (md: string): boolean => tokenLinkRe().test(md);
 
 /**
- * Find the step a token id refers to: re-derive each step's deterministic `hash(runHash:seq)` and match. Run-scoped
- * (a token can only resolve to THIS run's steps). Returns null when nothing matches — a hallucinated or foreign id.
+ * Find the step a token id refers to by the token the loop MINTED onto that step (`st.token`). The loop stores the
+ * exact id it handed the model, so this is a direct equality match — no re-derivation, so it can't drift from what
+ * was minted (a runHash mismatch or a hash collision used to resolve the WRONG step). Run-scoped (only this run's
+ * steps are passed in). Returns null when nothing matches — a hallucinated or foreign id → an "unresolved" chip.
  */
-export function resolveTokenStep<T extends { seq?: number }>(id: string, steps: readonly T[], runHash: string): T | null {
-    for (const st of steps) if (st.seq != null && toolToken(runHash, st.seq) === id) return st;
+export function resolveTokenStep<T extends { token?: string }>(id: string, steps: readonly T[]): T | null {
+    for (const st of steps) if (st.token === id) return st;
     return null;
 }
