@@ -1076,7 +1076,9 @@ function TokenRef({ seg, run }: { seg: Extract<import("../answer-tokens").Answer
     const step = resolveTokenStep(seg.id, run.steps || [], run.hash) as AgentStep | null;
     if (!step) return <span class="tok-ref tok-unresolved" title={`No step in this run produced @tool:${seg.id} — the model may have invented it.`}>⟨unresolved @tool:{seg.id}⟩</span>;
     const d = seg.slot === "in" ? step.renderIn : step.renderOut;
-    const rawText = seg.slot === "in" ? (step.arguments ? pretty(step.arguments) : "") : (step.modelResult ?? step.result ?? "");
+    // Clean fallback text: args for :in, the plain result for :out — NOT modelResult (its appended token line
+    // would recurse into the citation). The raw-view toggle above still shows the model's literal answer.
+    const rawText = seg.slot === "in" ? (step.arguments ? pretty(step.arguments) : "") : (step.result ?? "");
     const chip = `deterministic · step ${step.localStep ?? step.step} · ${step.tool || "tool"} (@tool:${seg.id}:${seg.slot})`;
     return <span class="tok-ref" title={chip} role="button" tabIndex={0}
         onClick={() => scrollToStepSeq(step.seq)} onKeyDown={(e) => { if (e.key === "Enter") scrollToStepSeq(step.seq); }}>

@@ -71,12 +71,13 @@ function emitTokenOut(step: AgentStep, slot: "in" | "out", d: Sink): void {
     if (desc?.type === "image") { d.image(desc.src, base, desc.label || `step ${step.step}`); return; }
     if (desc?.type === "look") { d.image(desc.image, base, desc.label || "look"); return; }
     if (desc?.type === "table") { d.table(desc.columns, desc.rows); return; }
-    if (desc?.type === "code") { d.block("", desc.format ? beautifyJs(desc.text) : desc.text, desc.lang || "javascript"); return; }
+    if (desc?.type === "code") { d.code(desc.format ? beautifyJs(desc.text) : desc.text, desc.lang || "javascript"); return; }
     if (desc?.type === "python-out" && desc.df) { d.table(desc.df.columns, desc.df.rows); return; }
     if (desc?.type === "python-out" && desc.image) { d.image(desc.image, base, "returned image"); return; }
-    // Fallback: the raw text the model saw for that slot (args for :in, the result for :out).
-    const raw = slot === "in" ? (step.arguments ? pretty(step.arguments) : "") : (step.modelResult ?? step.result ?? "");
-    if (raw) d.block("", raw);
+    // Fallback: the CLEAN text for that slot — args for :in, the plain result for :out (NOT modelResult, whose
+    // appended token line would recurse into the resolved output). The raw-view disclosure has the full model text.
+    const raw = slot === "in" ? (step.arguments ? pretty(step.arguments) : "") : (step.result ?? "");
+    if (raw) d.code(raw);
 }
 
 // A fenced block whose fence is longer than any backtick run inside it.
