@@ -130,6 +130,39 @@ function dumpArtifacts(events) {
     return dumpChain;
 }
 
+// WATCH mode: slide the overlay sidebar open, size it to HALF the viewport, and click into the session that
+// was just launched — so you can watch the run in the real extension UI. The shell mounts an OPEN shadow root
+// (#ml-sb-root), so the top frame can reach the panel (#ml-sb-host) + iframe (#ml-sb-frame); the app inside the
+// iframe is a normal Playwright frame, so its session row (button.row) is clickable.
+async function openSidebarAndFocus(page) {
+    // 1. Open the panel + set width to half the page, and tell the iframe app it's open (it gates polling on that).
+    await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot?.getElementById("ml-sb-host"), null, { timeout: 10000 });
+    await page.evaluate(() => {
+        const root = document.getElementById("ml-sb-root").shadowRoot;
+        const panel = root.getElementById("ml-sb-host");
+        panel.style.width = `${Math.round(window.innerWidth / 2)}px`;
+        panel.classList.add("open");
+        root.getElementById("ml-sb-frame")?.contentWindow?.postMessage({ __mlSidebarOpen: true }, "*");
+    });
+    // 2. Click into the run's session row inside the app iframe (poll until the agent event has rendered it).
+    const frame = await (async () => {
+        for (let i = 0; i < 40 && !page.isClosed(); i++) {
+            const f = page.frames().find((fr) => /sidebar\.html/.test(fr.url()));
+            if (f) return f;
+            await new Promise((r) => setTimeout(r, 100));
+        }
+        throw new Error("sidebar iframe never appeared");
+    })();
+    // Prefer the AGENT session row (it carries the `.agent-badge`); fall back to the first row.
+    const agentRow = frame.locator("button.row:has(.agent-badge)").first();
+    const row = (await agentRow.count()) ? agentRow : frame.locator("button.row").first();
+    await page.screenshot({ path: path.join(ART, "watch-1-list.png") }).catch(() => {});
+    await row.click({ timeout: 8000 }).catch(() => console.log("  (watch: no session row to click yet)"));
+    await new Promise((r) => setTimeout(r, 600));   // let the detail view paint
+    await page.screenshot({ path: path.join(ART, "watch-2-detail.png") }).catch(() => {});
+    console.log("  watch: sidebar open at half width, focused on the session — the browser will stay open.");
+}
+
 const main = async () => {
     await mkdir(ART, { recursive: true });   // never rm the root — keep prior runs to diff
 
@@ -195,7 +228,7 @@ const main = async () => {
     let result, error;
     const t0 = Date.now();
     try {
-        result = await page.evaluate(({ task, toolNames, toolTokens, python }) => {
+        result = await page.evaluate(({ task, toolNames, toolTokens, python, watch }) => {
             const opts = {
                 toolTokens,
                 onStep: (s) => window.__obsStep({
@@ -215,9 +248,20 @@ const main = async () => {
             // PYTHON=1 → add python_exec (for a `{ tables }` → DataFrame probe on e.g. /spreadsheet). It's an
             // extraTool, so it survives the TOOLS subset filter above.
             if (python) opts.extraTools = [window.ml.pythonTool()];
-            return window.ml.agent(task, opts);
-        }, { task: TASK, toolNames: TOOLS, toolTokens: !!process.env.TOOLTOKENS, python: !!process.env.PYTHON });
+            // WATCH mode: DON'T block on the run — kick it off, stash the promise, and return immediately so the
+            // harness can open the sidebar and click into the live session while it runs. The result is picked up
+            // from the event stream (hasResult) either way, so nothing is lost by not awaiting here.
+            const p = window.ml.agent(task, opts);
+            if (watch) { window.__mlWatchRun = p; return null; }
+            return p;
+        }, { task: TASK, toolNames: TOOLS, toolTokens: !!process.env.TOOLTOKENS, python: !!process.env.PYTHON, watch: !!process.env.WATCH });
     } catch (e) { error = String(e); }
+
+    // WATCH=1 → open the overlay sidebar at HALF the page width and click into the just-launched session, so a
+    // human can watch the run unfold in the real UI. Everything below the run-start is unchanged; this is a
+    // pure add-on driven off the same open shadow root the extension mounts.
+    if (process.env.WATCH) await openSidebarAndFocus(page).catch((e) => console.log(`  (watch setup: ${e})`));
+
     // A cross-page / background run's ml.agent() promise dies with the navigated-away page context (that's
     // the caught error), but the run carries on in the BACKGROUND. Wait for its terminal agent-result event
     // (via the init-script bridge, which re-attaches each document) before we snapshot final state.
@@ -249,6 +293,12 @@ const main = async () => {
     console.log(`\n  → ${error ? `ERROR: ${error}` : "done"} in ${(runMs / 1000).toFixed(1)}s (run only). final url: ${page.url()}, ${n} steps, ${events.length} events.`);
     console.log(`  artifacts: ${path.relative(process.cwd(), ART)}/  (run.md, transcript.txt, events.json, step-*.png)\n`);
 
+    // WATCH=1 → leave the browser + servers UP so you can inspect the session in the sidebar. Hold until the
+    // window is closed (or Ctrl+C). Otherwise tear everything down as usual.
+    if (process.env.WATCH) {
+        console.log(`\n  WATCH: browser is open — inspect the run in the sidebar. Close the window (or Ctrl+C) to exit.\n`);
+        await new Promise((resolve) => { ext.context.on("close", resolve); process.on("SIGINT", resolve); });
+    }
     await ext.close(); await fake?.stop(); await site.stop();
 };
 
