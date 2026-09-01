@@ -43,6 +43,18 @@ deterministic output instead of hallucinated re-typing.
     render.
 - A token resolves **only within its own run**. Unknown/foreign/garbled → an "unresolved ref" chip,
   never a crash.
+- **Tool-name alias.** An id that is a **tool name** instead of a 6-hex id — `@tool:python_exec:out` —
+  resolves to **that tool's LAST tokened step** in the run. Models routinely reference "the last
+  python_exec output" by name (they never saw the hidden hex id — a citable builtin mints its token
+  without the model opting in), so this accommodates the natural idiom. Two anchoring granularities: the
+  **hex id** is a permanent anchor to **one specific call**; the **alias** is a coarser anchor to **the
+  tool's most recent call** — and it lets the model cite an output *after the fact*, without having set
+  `token: true` beforehand. Grammar-gated: a non-hex id is treated as a token ONLY when the surface
+  confirms a step of that tool actually ran (`isAlias`), so a genuinely garbled `@tool:nothex` still
+  stays prose. Resolution: `resolveToken` tries an exact minted-id match first, then the alias
+  (`resolveTokenStep` / the `res.outputs` resolver both use it). Works for the 5 citable **builtins**
+  always; a **custom** tool's alias resolves only if the model opted in with `token: true` (only then is
+  its token minted).
 
 ## Surfacing the token to the model (flag: `toolTokens`)
 
@@ -190,7 +202,9 @@ Keep the return object a **good representation of the result, with no rendering 
 A terse clause (like `SELF_CLAUSE`), appended **only when `toolTokens` is on**, teaching: outputs are
 addressable; each result prints its `@tool:id`; reference one in the final answer with a markdown
 link `[label](@tool:id:out)` (`:in` for the call, `:out | latex` to render a value as math); **copy the
-id, never invent it**; and that the **`answer` set is what the user sees — keep it minimal and matched
+hex id verbatim** OR cite a **builtin's latest output by tool NAME** (`@tool:python_exec:out`) without
+opting in — the hex points at a specific call, the name at the tool's most recent one; and that the
+**`answer` set is what the user sees — keep it minimal and matched
 to the ask** — curate it with `answer({ add/remove/clear })` or the free `ml.answer(...)`, and a tool
 output can *be* the answer (a table, an image) by adding its token. Kept out of the system prompt on
 every run because it's only true when the flag is set, matching the `SELF_CLAUSE`/HUD-hint pattern.

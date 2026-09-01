@@ -49,6 +49,35 @@ test("hasTokens: true only when a real token is present", () => {
     assert.equal(hasTokens("plain text"), false);
 });
 
+test("TOOL-NAME ALIAS: a non-hex `@tool:<name>` is a token ONLY when isAlias confirms that tool ran", () => {
+    // Models routinely write `@tool:python_exec` (the tool NAME) instead of the hidden hex id — accommodate it,
+    // but ONLY when that tool actually ran this run; otherwise it's ordinary markdown (the grammar gate holds).
+    // No predicate → stays prose (default strict behaviour, unchanged).
+    assert.ok(splitAnswer("![r](@tool:python_exec:out)").every(s => s.kind === "prose"), "no predicate → prose");
+    // A predicate that knows python_exec ran → it becomes a real token (embed + slot preserved).
+    assert.deepEqual(
+        splitAnswer("![r](@tool:python_exec:out)", (n) => n === "python_exec")[0],
+        { kind: "token", embed: true, label: "r", id: "python_exec", slot: "out" });
+    // A predicate that DOESN'T know the tool → still prose (a hallucinated tool name isn't promoted).
+    assert.ok(splitAnswer("![r](@tool:python_exec:out)", (n) => n === "exec").every(s => s.kind === "prose"));
+    // hasTokens follows the same gate.
+    assert.equal(hasTokens("![r](@tool:python_exec:out)"), false);
+    assert.equal(hasTokens("![r](@tool:python_exec:out)", (n) => n === "python_exec"), true);
+});
+
+test("resolveTokenStep: a tool-name alias resolves to the LAST tokened step of that tool", () => {
+    const steps = [
+        { seq: 1, tool: "python_exec", token: "aaaaaa" },
+        { seq: 2, tool: "exec", token: "bbbbbb" },
+        { seq: 3, tool: "python_exec", token: "cccccc" },   // the LAST python_exec that has a token
+        { seq: 4, tool: "python_exec" },                     // ran but no token minted → never a target
+    ];
+    assert.equal(resolveTokenStep("python_exec", steps).seq, 3, "alias → last python_exec WITH a token");
+    assert.equal(resolveTokenStep("exec", steps).token, "bbbbbb", "alias → the exec step");
+    assert.equal(resolveTokenStep("look", steps), null, "a tool that never ran → null (no promotion)");
+    assert.equal(resolveTokenStep("aaaaaa", steps).seq, 1, "an EXACT hex id still resolves precisely (wins over alias)");
+});
+
 test("resolveTokenStep: matches by the token the loop MINTED onto the step; null for a hallucinated one", () => {
     // The loop stores the exact minted id on the step; resolution is a direct equality match, NOT a re-derivation.
     const idFor2 = toolToken("abcd1234", 2);

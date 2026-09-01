@@ -963,6 +963,20 @@ const scriptedModel = (turns) => {
 const toolCall = (name, args = {}, id = "c") => ({ content: "", tool_calls: [{ id, name, arguments: args }] });
 const reply = (content) => ({ content, tool_calls: [] });
 
+// A model that runs `toolName` (opting into a token) then CITES the minted id in its reply — exactly what a real
+// model does after reading the `@tool:<id>` line off the tool result. Used to exercise the cited → res.outputs
+// path. There is NO auto-fallback, so an output reaches the answer ONLY when the model cites it like this.
+const citeToolOutput = (toolName, id = "c1") => {
+    let turn = 0;
+    return (m) => {
+        if (m.type === "GET_CONFIG" || m.type === "MODEL_CAPS") return undefined;
+        if (++turn === 1) return { data: toolCall(toolName, { token: true }, id) };
+        const tm = (m.payload?.messages || []).find((x) => x.tool_call_id === id);
+        const tid = String(tm?.content || "").match(/@tool:([0-9a-f]{6})/)?.[1] || "000000";
+        return { data: reply(`The result: ![out](@tool:${tid}:out).`) };
+    };
+};
+
 test("createAgent: a 2nd run CONTINUES the session (agent-say, not a fresh `agent`) even when messages didn't sync — cancel-then-resume wipe fix", async () => {
     // Regression (DevTools/background path): a CANCELLED turn never syncs control.messages back, so the handle
     // keeps its hash but an EMPTY message list. The next run must still be a CONTINUATION (`agent-say`) —
@@ -1066,8 +1080,8 @@ test("toolTokens: a logged-THEN-errored exec mints NO token — the Error is det
 test("toolTokens: an opted-in python_exec that ERRORS mints NO token — even when a note PREFIXES the error string", async () => {
     const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall("python_exec", { token: true }, "c1"), reply("done")]) });
     // The content has a table-note PREFIX, so it doesn't start with "Python error:"; the failure is detected via
-    // the python render's own `error` flag instead (robust to any prefix). python_exec is normally an auto-candidate,
-    // so this also proves an ERRORED python doesn't get auto-appended.
+    // the python render's own `error` flag instead (robust to any prefix). A failed step mints no token, so the
+    // model never even sees a `@tool:` line to cite — an errored computation can't reach the answer.
     const py = world.ml.defineTool({ name: "python_exec", run: () => ({ content: "note: >1 table matched\n\nPython error: NameError: x", render: { type: "python-out", error: "NameError: x" } }) });
     const res = await world.ml.agent("t", { tools: [py], toolTokens: true });
     const msg = world.runtimeCalls.at(-1).payload.messages.find(m => m.tool_call_id === "c1");
@@ -1105,16 +1119,27 @@ test("toolTokens OFF: passing token:true is a harmless NO-OP (no token minted, n
     assert.ok(!res.outputs, "no structured outputs when off");
 });
 
-test("res.outputs: a surfaced DataFrame comes back as a { kind:'table', columns, rows } 2D matrix (headless scripting)", async () => {
-    // python_exec is an auto-candidate, so a computed DataFrame the model didn't explicitly cite is auto-appended
-    // to the answer — and res.outputs hands the CALLER the real 2D data, not a `[caption](@tool:…)` markdown string.
-    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall("python_exec", {}, "c1"), reply("The totals are computed.")]) });
+test("res.outputs: a CITED DataFrame comes back as a { kind:'table', columns, rows } 2D matrix (headless scripting)", async () => {
+    // The model runs python_exec (opting in) then CITES the minted token in its reply — so finalizeAnswer keeps the
+    // citation and res.outputs hands the CALLER the real 2D data, not a `[caption](@tool:…)` markdown string.
+    const world = loadPageWorld({ onRuntimeMessage: citeToolOutput("python_exec") });
     const py = world.ml.defineTool({ name: "python_exec", run: () => ({ content: "a DataFrame", render: { type: "python-out", df: { columns: ["Rep", "Total"], rows: [["Gia", 850], ["Kim", 810]] } } }) });
     const res = await world.ml.agent("t", { tools: [py], toolTokens: true });
     assert.ok(res.outputs && res.outputs.length === 1, "one structured output on the result");
     assert.equal(res.outputs[0].kind, "table");
     assert.deepEqual(res.outputs[0].columns, ["Rep", "Total"]);
     assert.deepEqual(res.outputs[0].rows, [["Gia", 850], ["Kim", 810]], "the DataFrame is handed back as a 2D matrix");
+});
+
+test("res.outputs: an UNCITED computation is NOT surfaced — no auto-promotion into the answer or outputs", async () => {
+    // The invariant the user asked for: a python_exec scratchpad calc the model NEVER cited must not be promoted to
+    // a user-facing Result. The model just answers in prose → the bottom answer is empty AND res.outputs is absent,
+    // even though a token was minted for the step (a real model would have to `![…](@tool:…)` it to surface it).
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall("python_exec", {}, "c1"), reply("The top rep is Gia with 850.")]) });
+    const py = world.ml.defineTool({ name: "python_exec", run: () => ({ content: "a DataFrame", render: { type: "python-out", df: { columns: ["Rep", "Total"], rows: [["Gia", 850], ["Kim", 810]] } } }) });
+    const res = await world.ml.agent("t", { tools: [py], toolTokens: true });
+    assert.ok(!res.answer || !/@tool:/.test(res.answer), "nothing auto-appended to the bottom answer");
+    assert.ok(!res.outputs, "no structured outputs when the model cited nothing");
 });
 
 test("res.outputs: OFF (no tokens) → no outputs; a plain run is unchanged", async () => {
@@ -1331,6 +1356,22 @@ test("createAgent: run() twice = two turns in one session; say() idle appends to
     assert.equal(last[0].role, "system", "the system prompt heads the continued history");
     assert.ok(last.some(m => m.content === "preamble"), "the idle say() message is in the continued context");
     assert.equal(last.at(-1).content, "more", "the new turn's task is the last user message");
+});
+
+test("follow-up run: the answer set is CLEARED between turns — a 2nd turn that designates nothing carries no stale answer", async () => {
+    // The purge invariant (page loop): turn 1 designates a text answer via the `answer` tool → res.answer is
+    // non-empty. Turn 2 designates NOTHING; the loop clears the answer set at the turn boundary (answerSet.clear()),
+    // so res.answer is empty and res.outputs absent — the prior turn's answer never bleeds into the follow-up.
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([
+        toolCall("answer", { text: "the grand total is 6260" }, "a1"),
+        reply("done turn one"),
+        reply("just chatting now"),
+    ]) });
+    const a = world.ml.createAgent({ maxSteps: 4, vision: false });
+    const r1 = await a.run("compute it");
+    assert.match(r1.answer || "", /grand total is 6260/, "turn 1 surfaces the designated answer");
+    const r2 = await a.run("thanks");
+    assert.ok(!r2.answer, "turn 2 designates nothing → the prior turn's answer is cleared, not carried over");
 });
 
 test("resumeAgent: re-acquires a run's handle by hash → read messages + continue it", async () => {

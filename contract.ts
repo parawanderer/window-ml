@@ -762,14 +762,11 @@ export interface AgentResult {
     /** the run's session hash — pass to ml.agent(task, { resume }) to continue it */
     hash: string;
     /** Structured, ready-to-use JS data for every tool output the model surfaced in its final answer (cited
-     *  inline, designated into `ml.answer`, or auto-appended) — so `ml.agent()` works for HEADLESS SCRIPTING,
-     *  not just prose. A python DataFrame → `{ kind:"table", columns, rows }` (a 2D matrix); a python dict/list
-     *  return → `{ kind:"value", value }` with the PARSED object; an image → a data URL; code → its text. In
-     *  answer order, deduped. (`elements` designations also come back live in `.elements`, ≡ ml.queryAll.) */
+     *  inline or designated into `ml.answer`) — so `ml.agent()` works for HEADLESS SCRIPTING, not just prose.
+     *  A python DataFrame → `{ kind:"table", columns, rows }` (a 2D matrix); a python dict/list return →
+     *  `{ kind:"value", value }` with the PARSED object; an image → a data URL; code → its text. In answer
+     *  order, deduped. (`elements` designations also come back live in `.elements`, ≡ ml.queryAll.) */
     outputs?: AgentOutput[];
-    /** INTERNAL (stripped before ml.agent resolves): the citable outputs the loop produced, so finalizeAnswer
-     *  can AUTO-APPEND the run's primary output when the model neither cited nor designated one. */
-    answerCandidates?: import("./answer-set").AnswerCandidate[];
     /** INTERNAL (stripped before ml.agent resolves): per-step render data, so the outputs resolver can turn a
      *  cited/designated token into its structured value. */
     tokenRenders?: TokenRender[];

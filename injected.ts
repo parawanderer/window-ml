@@ -849,8 +849,8 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                         try {
                             const res = await makeBackgroundTaskPromise<AgentResult>("RESUME_RUN_REQUEST", "RESUME_RUN_RESPONSE", { runId: runHash, task: t }, undefined, signal);
                             const run = endRun(runHash);
-                            const { answerCandidates, tokenRenders, ...resClean } = res;   // loop-internal — don't leak to the caller
-                            const a = run ? runAnswer(run, res.summary, answerCandidates) : { elements: [], media: [], answer: "" };
+                            const { tokenRenders, ...resClean } = res;   // loop-internal — don't leak to the caller
+                            const a = run ? runAnswer(run, res.summary) : { elements: [], media: [], answer: "" };
                     const outputs = resolveOutputs(a.answer, res.summary, tokenRenders || []);   // structured data → res.outputs (headless)
                             emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: res.steps }, summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled, ...(a.media.length ? { answerMedia: a.media } : {}), ...(a.answer ? { answer: a.answer } : {}) });
                             return { ...resClean, elements: a.elements, ...(a.media.length ? { answerMedia: a.media } : {}), ...(a.answer ? { answer: a.answer } : {}), ...(outputs.length ? { outputs } : {}), hash: runHash };
@@ -914,8 +914,8 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     // The real DOM nodes an answer-capable tool returned stayed page-side (they can't cross
                     // the bus) — assemble AgentResult.elements from the page-side run record here.
                     const run = endRun(runHash);
-                    const { answerCandidates, tokenRenders, ...resClean } = res;   // loop-internal — don't leak to the caller
-                    const a = run ? runAnswer(run, res.summary, answerCandidates) : { elements: [], media: [], answer: "" };
+                    const { tokenRenders, ...resClean } = res;   // loop-internal — don't leak to the caller
+                    const a = run ? runAnswer(run, res.summary) : { elements: [], media: [], answer: "" };
                     const outputs = resolveOutputs(a.answer, res.summary, tokenRenders || []);   // structured data → res.outputs (headless)
                     const full: AgentResult = { ...resClean, elements: a.elements, ...(a.media.length ? { answerMedia: a.media } : {}), ...(a.answer ? { answer: a.answer } : {}), ...(outputs.length ? { outputs } : {}), hash: runHash };
                     emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: res.steps }, summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled, ...(a.media.length ? { answerMedia: a.media } : {}), ...(a.answer ? { answer: a.answer } : {}) });
@@ -1126,11 +1126,11 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     const r = await runAgentLoop(t, { tools: toolMetas, maxSteps: () => control.maxSteps, signal, unattended, toolTokens, runHash }, deps);
                     control.seqBase += turnMaxSeq; turnMaxSeq = 0;   // next turn's step seqs continue past this turn's
                     control.stepBase += turnMaxStep; turnMaxStep = 0;   // …and its step numbers, so turn groups stay distinct
-                    // The bottom-of-answer render: designated outputs + an auto-fallback to the run's primary
-                    // computed output, minus anything the model already cited INLINE in its reply. `answerCandidates`
-                    // is loop-internal — strip it from the result ml.agent() resolves to the caller.
-                    const { answerCandidates, tokenRenders, ...rr } = r;
-                    const media = answerSet.media(); const answer = finalizeAnswer(answerSet, r.summary, answerCandidates);
+                    // The bottom-of-answer render: the outputs the model DESIGNATED into the answer set, minus
+                    // anything it already cited INLINE in its reply (no auto-fallback — nothing uncited is promoted).
+                    // `tokenRenders` is loop-internal — strip it from the result ml.agent() resolves to the caller.
+                    const { tokenRenders, ...rr } = r;
+                    const media = answerSet.media(); const answer = finalizeAnswer(answerSet, r.summary);
                     const outputs = resolveOutputs(answer, r.summary, tokenRenders || []);   // structured data → res.outputs (headless)
                     emitDebug({ kind: "agent-result", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: r.steps }, summary: r.summary, steps: r.steps, hitCap: !!r.hitCap, cancelled: !!r.cancelled, ...(media.length ? { answerMedia: media } : {}), ...(answer ? { answer } : {}) });
                     return { ...rr, elements: answerSet.elements() as Node[], ...(media.length ? { answerMedia: media } : {}), ...(answer ? { answer } : {}), ...(outputs.length ? { outputs } : {}), hash: runHash };
@@ -1850,8 +1850,8 @@ class AgentHandle implements MlAgentHandle, AgentControl {
                     try {
                         const res = await makeBackgroundTaskPromise<AgentResult>("RESUME_RUN_REQUEST", "RESUME_RUN_RESPONSE", { runId, task: t });
                         const run = endRun(runId);
-                        const { answerCandidates, tokenRenders, ...resClean } = res;   // loop-internal — don't leak to the caller
-                        const a = run ? runAnswer(run, res.summary, answerCandidates) : { elements: [], media: [], answer: "" };
+                        const { tokenRenders, ...resClean } = res;   // loop-internal — don't leak to the caller
+                        const a = run ? runAnswer(run, res.summary) : { elements: [], media: [], answer: "" };
                     const outputs = resolveOutputs(a.answer, res.summary, tokenRenders || []);   // structured data → res.outputs (headless)
                         emitDebug({ kind: "agent-result", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: res.steps }, summary: res.summary, steps: res.steps, hitCap: !!res.hitCap, cancelled: !!res.cancelled, ...(a.media.length ? { answerMedia: a.media } : {}), ...(a.answer ? { answer: a.answer } : {}) });
                         return { ...resClean, elements: a.elements, ...(a.media.length ? { answerMedia: a.media } : {}), ...(a.answer ? { answer: a.answer } : {}), ...(outputs.length ? { outputs } : {}), hash: runId };

@@ -4457,25 +4457,38 @@ test("agent-step: a step's delegated sub-call tokens surface as the '+N sub' usa
 });
 
 // --- Tool-token ANSWER render: the bottom "Result" block + inline citations (see docs/spec/TOOL_TOKENS.md).
-// Three ways an output reaches the answer: (1) inline @tool cite (expands in the reply), (2) designated into the
-// answer set, (3) auto-fallback (the loop's primary output, appended when neither of the above). The reducer
-// stores ev.answer (the finalized bottom markdown) + the step's minted `token`; the render resolves it.
+// Two ways an output reaches the answer, BOTH explicit (no auto-fallback): (1) inline @tool cite (expands in the
+// reply), (2) designated into the answer set (ml.answer / the answer tool). The reducer stores ev.answer (the
+// finalized bottom markdown) + the step's minted `token`; the render resolves it.
 const OUT = "abcdef";
 const compStep = (hash) => agentStep(hash, 1, { seq: 1, tool: "python_exec", token: OUT, result: "COMPUTED_TABLE",
     renderOut: { type: "code", text: "COMPUTED_TABLE", lang: "text" } });
 const openRun = async (w) => { w.shadow.querySelector(".row").click(); await w.tick(); };
 
-test("answer render (sidebar): AUTO-FALLBACK output shows in a RESULT block under the prose", async () => {
+test("answer render (sidebar): a bottom-of-answer output shows in a RESULT block under the prose", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("af", "compute it"));
     await w.dispatch(compStep("af"));
-    // prose summary (no inline cite), answer = the auto-appended token (finalizeAnswer's output)
+    // prose summary (no inline cite) + a designated bottom token (what finalizeAnswer emits for ml.answer.add)
     await w.dispatch({ ...agentResult("af", "The total is 42.", 1), answer: `![computed result](@tool:${OUT}:out)` });
     await openRun(w);
     const rb = w.shadow.querySelector(".card-result");
     assert.ok(rb, "a Result block renders under the answer");
     assert.match(rb.querySelector(".result-label").textContent, /result/i, "the label is the muted 'Result'");
     assert.match(rb.textContent, /COMPUTED_TABLE/, "the cited step's output is inlined into the block");
+});
+
+test("answer render (sidebar): a TOOL-NAME alias (@tool:python_exec) resolves to that tool's last step", async () => {
+    // The real hallucination case: the model never set token:true (so it never saw the hex id) and cited the tool
+    // by NAME — `![results](@tool:python_exec:out)`. compStep is a python_exec step with a minted token, so the
+    // alias must resolve to it and the Result block must expand its output (proves aliasOf is threaded to the render).
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("al", "compute it"));
+    await w.dispatch(compStep("al"));   // tool: python_exec, token: OUT
+    await w.dispatch({ ...agentResult("al", "Here are the results.", 1), answer: "![results](@tool:python_exec:out)" });
+    await openRun(w);
+    const rb = w.shadow.querySelector(".card-result");
+    assert.ok(rb && /COMPUTED_TABLE/.test(rb.textContent), "the tool-name alias resolves to the python_exec step's output");
 });
 
 test("answer render (sidebar): an INLINE citation expands in the reply, with NO separate Result block", async () => {
@@ -4512,6 +4525,21 @@ test("answer render (sidebar): the Result block ONLY renders on the run's LATEST
     await openRun(w);
     const results = w.shadow.querySelectorAll(".card-result");
     assert.equal(results.length, 1, "exactly one Result block — on the latest answer, not every turn");
+});
+
+test("answer render (sidebar): a follow-up that designates NOTHING clears the prior Result block (no stale answer)", async () => {
+    // The purge invariant: turn 1 surfaces a Result; a follow-up turn that designates/cites nothing arrives with NO
+    // `answer` field, and the reducer REPLACES (s.answer = ev.answer || undefined) — so the stale block disappears.
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("clr", "compute it"));
+    await w.dispatch(compStep("clr"));
+    await w.dispatch({ ...agentResult("clr", "The total is 42.", 1), answer: `![computed result](@tool:${OUT}:out)` });
+    await openRun(w);
+    assert.ok(w.shadow.querySelector(".card-result"), "turn 1's Result block renders");
+    // Follow-up turn: a plain prose reply, no `answer` field (nothing designated).
+    await w.dispatch({ kind: "agent-say", id: "clr", ts: Date.now() + 50, save: false, session: { hash: "clr", turn: 1 }, text: "thanks" });
+    await w.dispatch(agentResult("clr", "You're welcome.", 2));   // NO answer field
+    assert.ok(!w.shadow.querySelector(".card-result"), "the stale Result block is cleared after a designation-free follow-up");
 });
 
 test("HUD card: clicking a bottom-answer citation OPENS the collapsed block holding its source step (the group-reveal fix)", async () => {

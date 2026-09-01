@@ -697,7 +697,7 @@ function ReplyBubble({ content, status, model, profile, ts, reasoning = null, so
                         ? <div class="asst-collapsed" onClick={() => setCollapsed(false)}>{preview!.text}{preview!.more ? <span class="more"> …</span> : null}</div>
                         : showRaw
                             ? <Code text={content} lang="markdown" />
-                            : tokenRun && hasTokens(content)
+                            : tokenRun && hasTokens(content, aliasOf(tokenRun))
                                 ? <AnswerBody text={content} run={tokenRun} cls="asst-answer" />
                                 : <div class="md" dangerouslySetInnerHTML={{ __html: markdown(content, { math: true }) }} />}
             {/* Bottom-of-answer tool outputs — SAME ResultBlock the HUD card renders (parity). Only on the
@@ -1101,6 +1101,11 @@ const tryPrettyJson = (t: string): string | null => {
     return null;
 };
 
+// The tool-name-ALIAS gate for splitAnswer/hasTokens: a non-hex `@tool:<name>` is a real citation only when this
+// run actually has a tokened step for that tool (so `@tool:python_exec` resolves; a garbled `@tool:nothex` stays
+// prose). Custom tools are covered for free — it reads the run's own steps.
+const aliasOf = (run: Session) => (name: string): boolean => (run.steps || []).some(s => s.tool === name && !!s.token);
+
 // A FOCUSED, answer-appropriate render of a cited slot: the CODE for :in, the table/image/value for :out — NOT
 // the full tool-step In/Out render (which carries debug chrome, e.g. python's input table). Reuses RenderPanel
 // ONLY for pure data (image/table/elements), so the tool-step rendering is untouched (the constraint).
@@ -1111,7 +1116,10 @@ function tokenRender(d: RenderDescriptor | undefined, rawText: string): { node: 
         case "code": return { node: <Code text={d.text} lang={d.lang} format={d.format} />, block: true };
         case "python-in": return { node: <Code text={d.code} lang="python" />, block: true };   // just the code, not the input table
         case "python-out":
-            if (d.df) return { node: <RenderTable columns={d.df.columns} rows={d.df.rows} />, block: true };
+            // Use the SAME rich DataFrame renderer the python step shows (index gutter / sort / resize /
+            // copy-CSV / hide), not the bare RenderTable — a cited/auto-appended df should read identically
+            // to its step's Out, so the bottom-of-answer table keeps its affordances.
+            if (d.df) return { node: <PyDfTable columns={d.df.columns} rows={d.df.rows} />, block: true };
             if (d.image) return { node: <ClickableImg src={d.image} alt="output" />, block: true };
             rawText = d.value ?? d.stdout ?? rawText; break;
     }
@@ -1173,8 +1181,8 @@ function AnswerBody({ text, run, cls = "card-answer" }: { text: string; run: Ses
         const m = h.match(/^<p>([\s\S]*)<\/p>\s*$/);
         return { __html: m ? (/^\s/.test(t) ? " " : "") + m[1] + (/\s$/.test(t) ? " " : "") : h };
     };
-    if (!hasTokens(text)) return <div class={`${cls} md`} dangerouslySetInnerHTML={mdHtml(text)} />;
-    return <div class={`${cls} md answer-rendered`}>{splitAnswer(text).map((seg, i) => seg.kind === "prose"
+    if (!hasTokens(text, aliasOf(run))) return <div class={`${cls} md`} dangerouslySetInnerHTML={mdHtml(text)} />;
+    return <div class={`${cls} md answer-rendered`}>{splitAnswer(text, aliasOf(run)).map((seg, i) => seg.kind === "prose"
         ? <span key={i} dangerouslySetInnerHTML={proseHtml(seg.text)} />
         : <TokenRef key={i} seg={seg} run={run} />)}</div>;
 }
@@ -1185,7 +1193,7 @@ function AnswerBody({ text, run, cls = "card-answer" }: { text: string; run: Ses
 // carries a @tool OUTPUT (a table/image/value the prose can't render) — a text-only set would just echo the prose.
 // The label is chrome (muted + uppercase), so it reads as an extension-added section, not the model's own words.
 function ResultBlock({ run }: { run: Session }) {
-    if (!run.answer || !hasTokens(run.answer)) return null;
+    if (!run.answer || !hasTokens(run.answer, aliasOf(run))) return null;
     return <div class="card-result"><div class="result-label">Result</div><AnswerBody text={run.answer} run={run} /></div>;
 }
 

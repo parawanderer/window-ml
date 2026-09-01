@@ -1,7 +1,9 @@
 // tool-tokens.spec.mjs — validates the tool-token answer pipeline END-TO-END in a REAL browser: the actual
-// agent loop mints a token, finalizeAnswer auto-embeds the computed output (image syntax), and resolveOutputs
-// hands the caller structured data (res.outputs) — the whole chain jsdom can't run (it feeds synthetic events
-// rather than executing the real loop / finalize / resolve). Deterministic via the scriptable fake-LLM.
+// agent loop mints a token, the model CITES it (embed / image syntax), finalizeAnswer keeps that designation,
+// and resolveOutputs hands the caller structured data (res.outputs) — the whole chain jsdom can't run (it feeds
+// synthetic events rather than executing the real loop / finalize / resolve). Deterministic via the scriptable
+// fake-LLM, whose final step reads the minted id out of the tool result and cites it — exactly what a real model
+// does (there is NO auto-fallback: an uncited output is never surfaced).
 import { test, expect } from "@playwright/test";
 import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
@@ -27,11 +29,16 @@ test("tool tokens e2e: a computed output flows through the REAL loop → res.ans
     await page.goto(site.url + "/");
     await waitForMl(page);
 
-    // A tool that returns a table render, opted into a token; the model then answers WITHOUT citing → the
-    // auto-fallback must EMBED the output at the bottom (image syntax) and res.outputs must carry the 2D data.
+    // A tool that returns a table render, opted into a token; the final step is REACTIVE — it reads the minted
+    // `@tool:<id>` out of the tool-result message and EMBEDS it (image syntax), exactly as a real model would.
+    // finalizeAnswer keeps that designated citation and res.outputs carries the 2D data.
     fake.setScript([
         { tool: "compute", args: { token: true } },
-        { content: "The totals are computed." },
+        (reqBody) => {
+            const toolMsg = [...(reqBody.messages || [])].reverse().find((m) => m.role === "tool");
+            const id = String(toolMsg?.content || "").match(/@tool:([0-9a-f]{6})/)?.[1];
+            return { content: `The totals are ![the totals](@tool:${id}:out).` };
+        },
     ]);
     const res = await page.evaluate(() => {
         const tool = window.ml.defineTool({
@@ -43,8 +50,10 @@ test("tool tokens e2e: a computed output flows through the REAL loop → res.ans
         return window.ml.agent("compute the totals", { tools: [tool], toolTokens: true });
     });
 
-    // The answer EMBEDS the output with IMAGE syntax (`![…](@tool:<id>:out)`), not a link.
-    expect(res.answer).toMatch(/!\[[^\]]*\]\(@tool:[0-9a-f]{6}:out\)/);
+    // The model's reply EMBEDS the output inline with IMAGE syntax (`![…](@tool:<id>:out)`), not a link — and
+    // because it's cited inline, finalizeAnswer dedups it out of the bottom `answer` block (no double render).
+    expect(res.summary).toMatch(/!\[[^\]]*\]\(@tool:[0-9a-f]{6}:out\)/);
+    expect(res.answer || "").not.toMatch(/@tool:/);
     // And res.outputs hands the CALLER the structured 2D data — the headless-scripting payload.
     expect(res.outputs).toHaveLength(1);
     expect(res.outputs[0].kind).toBe("table");

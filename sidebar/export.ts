@@ -54,12 +54,13 @@ interface Sink {
 // hallucinated / unresolvable id → a visible note (never dropped). Then, per the raw-view rule, a collapsed
 // disclosure keeps the model's LITERAL answer (links unresolved) recoverable. No tokens → just the prose.
 function writeAnswer(text: string, s: Session, d: Sink, muted = false, rawLabel = "Answer"): void {
-    if (!text || !hasTokens(text)) { d.prose(text || "(no answer)", muted); return; }
+    const isAlias = (name: string): boolean => (s.steps || []).some((st: AgentStep) => st.tool === name && !!st.token);
+    if (!text || !hasTokens(text, isAlias)) { d.prose(text || "(no answer)", muted); return; }
     // Accumulate prose + INLINE (short-scalar / latex) citations into a running paragraph; FLUSH it before a
     // BLOCK citation (a table/image/code) so blocks stand alone while inline values flow in the sentence.
     let buf = "";
     const flush = () => { if (buf.trim()) d.prose(buf); buf = ""; };
-    for (const seg of splitAnswer(text)) {
+    for (const seg of splitAnswer(text, isAlias)) {
         if (seg.kind === "prose") { buf += seg.text; continue; }
         const step = resolveTokenStep(seg.id, s.steps || []) as AgentStep | null;
         if (!step) { buf += ` ⟨unresolved @tool:${seg.id}⟩ `; continue; }
@@ -85,10 +86,11 @@ function writeAnswer(text: string, s: Session, d: Sink, muted = false, rawLabel 
     d.details(`${rawLabel} · raw (as the model wrote it)`, () => d.prose(text));
 }
 
-// The bottom-of-answer RESULT block (the run's designated + auto-appended tool outputs) — mirrors the sidebar/HUD
+// The bottom-of-answer RESULT block (the run's designated tool outputs) — mirrors the sidebar/HUD
 // ResultBlock so the export carries the same deliverable. Only when the finalized answer set has a @tool output.
 function writeResult(s: Session, d: Sink): void {
-    if (!s.answer || !hasTokens(s.answer)) return;
+    const isAlias = (name: string): boolean => (s.steps || []).some((st: AgentStep) => st.tool === name && !!st.token);
+    if (!s.answer || !hasTokens(s.answer, isAlias)) return;
     d.head("Result");
     writeAnswer(s.answer, s, d, false, "Result");
 }

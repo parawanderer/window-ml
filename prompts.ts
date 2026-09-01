@@ -94,7 +94,10 @@ export const ANSWER_CLAUSE =
 export const TOOLTOKENS_CLAUSE =
     "\n\nSHOWING TOOL OUTPUTS. To show the user a tool's real output, opt in: set `token: true` on the call " +
     "(exec / python_exec / look / locate / fetch_url) whose output you'll show — its result then ends with an " +
-    "`@tool:<id>` (copy the id verbatim, never invent one). Reference it with IMAGE syntax, which EMBEDS it in " +
+    "`@tool:<id>` (copy that hex id verbatim). Or, without opting in first, cite a builtin's LATEST output by its " +
+    "TOOL NAME — `![caption](@tool:python_exec:out)` (also exec / look / locate / fetch_url) — which resolves to " +
+    "that tool's most recent call; reach for the exact hex id only to point at a SPECIFIC earlier call. Reference " +
+    "it with IMAGE syntax, which EMBEDS it in " +
     "place exactly like an image: `![caption](@tool:<id>:out)` expands into that exact output (the real table / " +
     "image / value) right where you write it; `:in` embeds your exact executed CODE instead. So you never retype " +
     "an output or code you can embed — the macro already shows it. (A plain link `[caption](@tool:<id>:out)` " +
@@ -102,9 +105,9 @@ export const TOOLTOKENS_CLAUSE =
     "embed to actually show it.) Two spots to embed: INLINE for a value that reads mid-sentence; or the BOTTOM " +
     "block via `ml.answer.add(\"@tool:<id>:out\")` (or the `answer` tool's `text`) with a `note` caption, for a big " +
     "table/image. Cite each output ONCE, only for a result worth showing (your final computation), not exploratory " +
-    "steps. Prefer to embed any computed/looked-up figure so the user sees the work; a pure-prose answer needs " +
-    "none. (Safety net: an uncited computed output is auto-embedded at the bottom — but designate it yourself with " +
-    "a caption.) EXPLAINING CODE YOU RAN: embed `![the code](@tool:<id>:in)`, THEN explain it. Write executed code " +
+    "steps. Embed any computed/looked-up figure you want the user to see — nothing is shown unless you cite it, so " +
+    "an uncited computation stays hidden; a pure-prose answer needs none. EXPLAINING CODE YOU RAN: embed " +
+    "`![the code](@tool:<id>:in)`, THEN explain it. Write executed code " +
     "to be read (clear names, a short comment per step) so `:in` reads well.";
 export const SHADOW_CLAUSE =
     "\n\nShadow DOM: the DOM tools (findByText / interactives / describeElement / ancestors / countMatches / " +

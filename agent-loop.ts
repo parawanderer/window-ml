@@ -13,7 +13,6 @@
 // model / executor / gate in tests/agent-loop.test.js.
 
 import type { AgentResult, AgentTranscriptEntry, ApprovalDecision, ToolCall, RenderDescriptor, ToolFeedback, SubcallUsage } from "./contract";
-import type { AnswerCandidate } from "./answer-set";
 import type { TokenRender } from "./contract";
 import { UNATTENDED_REFUSAL } from "./prompts";
 import { toolToken } from "./util";
@@ -209,9 +208,6 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     const byName = new Map(tools.map(t => [t.name, t]));
     const messages = deps.buildMessages(task);
     const transcript: AgentTranscriptEntry[] = [];
-    // Citable outputs this run produced (a python_exec computation, or any opted-in citable step), carried out so
-    // the answer's AUTO-FALLBACK can surface the run's PRIMARY output if the model neither cited nor designated one.
-    const answerCandidates: AnswerCandidate[] = [];
     // Per-step render data for citable steps, so the outputs resolver can turn a cited/designated token into its
     // structured value (res.outputs — the headless-scripting payload).
     const tokenRenders: TokenRender[] = [];
@@ -220,7 +216,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     // context occupancy), genTotal = completion tokens summed across the run. Accurate on both worlds since
     // the loop is shared. `calls` = model turns so far.
     let promptLast = 0, genTotal = 0, modelCalls = 0;
-    const cancelled = (steps: number): Omit<AgentResult, "hash"> => ({ summary: "Cancelled by the caller.", steps, transcript, elements: [], cancelled: true, answerCandidates, tokenRenders });
+    const cancelled = (steps: number): Omit<AgentResult, "hash"> => ({ summary: "Cancelled by the caller.", steps, transcript, elements: [], cancelled: true, tokenRenders });
 
     for (let step = 1; step <= maxSteps(); step++) {
         if (signal?.aborted) return cancelled(step - 1);
@@ -250,7 +246,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             const reasoningText = typeof msg.reasoning === "string" ? msg.reasoning.trim() : "";
             const answer = (msg.content || "").trim() || reasoningText;
             if (answer) transcript.push({ assistant: answer });
-            return { summary: answer, steps: step - 1, transcript, elements: [], answerCandidates, tokenRenders };
+            return { summary: answer, steps: step - 1, transcript, elements: [], tokenRenders };
         }
         // The step's prose (content), token usage, and the separate reasoning channel ride one emit
         // (or a usage/reasoning-only emit when there's no prose — a model that thinks in reasoning_content
@@ -371,17 +367,14 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             // — the answer renderer matches this stored id EXACTLY (never re-derives runHash:seq, which could
             // resolve a citation to the WRONG step). The id is INVISIBLE to the model unless it opted IN
             // (`token: true`): only then is the `@tool:` line appended to what the model sees (`forModel`), so it
-            // isn't spammed with ids on every intermediate call — while the id still lets the answer's
-            // auto-fallback surface an output the model DIDN'T explicitly cite.
-            // Citable = a builtin whose output is worth citing (always minted, for the auto-fallback + inline), OR
-            // ANY call the model explicitly opted into (`token: true` — e.g. a custom tool that has no param but
-            // whose output the model wants to cite). Never a failed call (nothing to cite).
+            // isn't spammed with ids on every intermediate call. Nothing is EVER auto-surfaced from a minted id:
+            // an output reaches the answer only if the model explicitly cites it (inline or via `answer`).
+            // Citable = a builtin whose output is worth citing (minted so the model CAN cite it), OR ANY call the
+            // model explicitly opted into (`token: true` — e.g. a custom tool that has no param but whose output
+            // the model wants to cite). Never a failed call (nothing to cite).
             const citable = (CITABLE_TOOLS.has(call.name) || wantsToken) && !failed;
             const tokenId = (opts.toolTokens && opts.runHash && citable) ? toolToken(opts.runHash, s) : undefined;
-            // A candidate for the auto-appended "primary output": a python_exec computation always, or ANY
-            // opted-in citable step (the model flagged it as a result). Exploratory exec/surveys don't qualify.
-            if (tokenId && (call.name === "python_exec" || wantsToken)) answerCandidates.push({ token: tokenId, tool: call.name, seq: s });
-            if (tokenId) tokenRenders.push({ id: tokenId, tool: call.name, render: tr?.renderOut, result });   // → res.outputs
+            if (tokenId) tokenRenders.push({ id: tokenId, tool: call.name, render: tr?.renderOut, result });   // → res.outputs (only if CITED)
             const forModel = (tokenId && wantsToken)
                 ? `${result}\n\n[output token @tool:${tokenId} — EMBED this exact output in your final answer with image syntax: ![label](@tool:${tokenId}:out) (use ":in" for the call/code). It expands in place; don't retype it.]`
                 : result;
@@ -400,5 +393,5 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         // next step reasons over the real pixels (the native `look` path; a text-only driver omits the dep).
         if (pendingImages.length) deps.pushToolImages?.(messages, pendingImages);
     }
-    return { summary: `Stopped at the ${maxSteps()}-step cap without finishing.`, steps: maxSteps(), transcript, elements: [], hitCap: true, answerCandidates, tokenRenders };
+    return { summary: `Stopped at the ${maxSteps()}-step cap without finishing.`, steps: maxSteps(), transcript, elements: [], hitCap: true, tokenRenders };
 }
