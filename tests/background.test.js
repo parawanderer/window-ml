@@ -2261,6 +2261,31 @@ test("SECURITY (FETCH_URL): an untrusted page with NO consent is refused — loc
     assert.ok(/only http\(s\)/i.test(c.error), "chrome:// refused");
 });
 
+test("SECURITY (FETCH_URL): self-source is enforced BACKGROUND-side — own-repo SOURCE is free from an untrusted page; an issue / non-self / rendered / flag-off still gate", async () => {
+    // The bug this pins: the client autoApprove skipped the PROMPT, but the background still refused (no per-URL
+    // grant). The background is the authority — it must allow an uncredentialed self-source read itself. repoUrl
+    // is BUILD_INFO's (parawanderer/window-ml). The untrusted sender is a hostile cross-origin page.
+    const REPO = "https://raw.githubusercontent.com/parawanderer/window-ml/main/README.md";
+    const ISSUE = "https://api.github.com/repos/parawanderer/window-ml/issues/1";   // user prose → NOT self-source
+    const OTHER = "https://public.example/data.json";
+    const untrusted = { tab: { id: 9, url: "https://evil.example/" } };
+
+    let fetched = null;
+    const bg = loadBackground({ config: baseConfig({ autoApproveSelfSource: true }), onFetch: (c) => { fetched = c.url; return fetchResponse("# window.ml", { contentType: "text/plain", url: c.url }); } });
+    const r = await bg.send({ type: "FETCH_URL", payload: { url: REPO } }, untrusted);
+    assert.ok(!r.error, `own-repo source should be allowed WITHOUT a grant: ${r.error}`);
+    assert.equal(fetched, REPO, "the fetch actually ran");
+
+    fetched = null;
+    assert.match((await bg.send({ type: "FETCH_URL", payload: { url: ISSUE } }, untrusted)).error, /hasn't been approved/i, "a self-repo ISSUE (prose) is NOT self-source — still gated");
+    assert.equal(fetched, null, "no request sent for the gated issue");
+    assert.match((await bg.send({ type: "FETCH_URL", payload: { url: OTHER } }, untrusted)).error, /hasn't been approved/i, "a non-self URL still gates");
+    assert.match((await bg.send({ type: "FETCH_URL", payload: { url: REPO, rendered: true } }, untrusted)).error, /hasn't been approved/i, "a RENDERED self-source load isn't covered — still gates");
+
+    const bgOff = loadBackground({ config: baseConfig({ autoApproveSelfSource: false }), onFetch: (c) => fetchResponse("x", { url: c.url }) });
+    assert.match((await bgOff.send({ type: "FETCH_URL", payload: { url: REPO } }, untrusted)).error, /hasn't been approved/i, "flag OFF → even the source read gates");
+});
+
 test("FETCH_URL: an untrusted page's UNCREDENTIALED SAME-ORIGIN fetch is FREE (incl. rendered) — cross-origin / credentialed stay gated", async () => {
     // A same-origin read grants nothing the page couldn't do itself (`fetch()`/navigate its own origin), so it
     // needs no grant — a plain GET AND a rendered load (which renders in the page's own session, like a

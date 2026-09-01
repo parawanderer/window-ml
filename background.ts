@@ -10,6 +10,8 @@ import { externalSheetIds, googleSheetId, classifyContent, jsonShape, clipOut } 
 import { extractGrants } from "./grant-extract";   // button #3: static egress-grant extraction for "Approve + remember"
 import type { FetchResult } from "./contract";
 import { createNavBarrier } from "./nav-barrier";   // cross-page persistence: hold delegated tools while a run's tab navigates
+import { isSelfSourceUrl } from "./self-source";   // trusted-side enforcement of the self-source auto-approve (uncredentialed own-repo reads)
+import { BUILD_INFO } from "./build-info.gen";
 import { incognitoEnableSteps, browserInfo } from "./util";   // browser-specific "Allow in Incognito" steps + the fork's settings scheme
 
 // The wire body we assemble for a chat request (grows per format/options).
@@ -2306,7 +2308,12 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 // free same-origin navigate). A CROSS-origin uncredentialed render runs in INCOGNITO (no session) and
                 // takes the rememberable consent path, same as a raw cross-origin GET.
                 const execOpen = tabId != null && !!pendingGrants.get(tabId)?.fetchOpen;
-                if (untrusted && !sameOriginAsSender && !execOpen && !(tabId != null && fetchConsent.get(tabId)?.has(url))) {
+                // SELF-SOURCE: an uncredentialed, non-rendered read of the agent's OWN repo source (committed files
+                // / structural API, NOT a prose endpoint) is allowed WITHOUT a per-URL grant, gated on the config
+                // flag. Enforced HERE, trusted-side (the client autoApprove only skips the prompt; the background is
+                // the authority — a forged "self-source" can't make this true for a non-self URL). See self-source.ts.
+                const selfSrc = !!cfg.autoApproveSelfSource && !rendered && isSelfSourceUrl(url, BUILD_INFO.repoUrl);
+                if (untrusted && !sameOriginAsSender && !execOpen && !selfSrc && !(tabId != null && fetchConsent.get(tabId)?.has(url))) {
                     sendResponse({ error: `Refused: "${url}" hasn't been approved for fetching on this page. Use the fetch_url tool (each new URL is approved once, then remembered for the session), or call ml.fetch inside an approved exec.` });
                     return;
                 }
