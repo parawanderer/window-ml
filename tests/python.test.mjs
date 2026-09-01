@@ -4,13 +4,17 @@
 // fallback, return/stdout/traceback capture, per-run isolation) is verified against actual pandas —
 // not a re-implementation. Opt-in: needs the bundled wheels (dist/pyodide/, from `npm run
 // fetch-pyodide`); self-SKIPS when absent (so a bundle-less `npm test` stays green). CI fetches them.
-import { test, before } from "node:test";
+import { test, before, after } from "node:test";
 import assert from "node:assert";
 import path from "node:path";
 import fs from "node:fs";
+import { createRequire } from "node:module";
 // Static (not conditional-require) — python-runtime.ts is chrome-free and side-effect-free,
 // so importing it costs nothing when the wheels are absent; `skip` still gates every test.
 import { wrapUserCode, harden, unharden } from "../python-runtime.ts";
+// For the sympy→UI INTEGRATION test: the sidebar app (jsdom) to render the real WASM output. CommonJS helper.
+const { loadSidebarWorld, closeSidebarWorlds } = createRequire(import.meta.url)("./helpers");
+after(closeSidebarWorlds);   // close jsdom windows so their timers don't keep the runner alive (the leak gotcha)
 
 const PYODIDE_DIR = path.resolve(import.meta.dirname, "../dist/pyodide");
 const hasPyodide = fs.existsSync(path.join(PYODIDE_DIR, "pyodide.mjs"));
@@ -288,4 +292,40 @@ return sympy.latex(roots[0])
     assert.ok(r.ok, r.error);
     assert.match(String(r.value), /i/, "a symbolic complex root serializes to a LaTeX string with the imaginary unit");
     assert.match(String(r.value), /2/, "and the coefficient");
+});
+
+// INTEGRATION: run sympy in the REAL WASM sandbox (the shipped wrapUserCode path), then render its ACTUAL
+// LaTeX output through the UI's `| latex` citation → KaTeX. This ties the two halves so a change to sympy's
+// output format OR to the render can't silently break the pipeline (which unit tests, mocking each half,
+// would miss). Self-skips with the rest when the wheels are absent.
+const agentStart = (h, t) => ({ kind: "agent", id: h, ts: Date.now(), save: false, session: { hash: h, turn: 0 }, task: t, model: "m", maxSteps: 10, config: null });
+const agentStep = (h, step, f) => ({ kind: "agent-step", id: h, ts: Date.now() + step, save: false, session: { hash: h, turn: step }, step, ...f });
+const agentResult = (h, s, steps) => ({ kind: "agent-result", id: h, ts: Date.now() + 100, save: false, session: { hash: h, turn: steps }, summary: s, steps, hitCap: false });
+
+test("INTEGRATION: sympy runs in WASM → its actual LaTeX renders via the UI `| latex` citation (KaTeX)", { skip }, async () => {
+    // 1) REAL sympy in the sandbox → the actual LaTeX string (not a hand-written one).
+    await py.loadPackage("sympy");
+    py.globals.set("INJECTED_IMAGE_B64", null);
+    py.globals.set("INJECTED_TABLES_JSON", null);
+    await py.runPythonAsync(wrapUserCode(`
+import sympy
+x = sympy.Symbol('x')
+# an equation with irrational + complex parts, so the LaTeX carries real commands (\\frac, \\sqrt, i)
+expr = sympy.integrate(sympy.sqrt(x), x) + sympy.Rational(1, 2) + 2 * sympy.I
+return sympy.latex(expr)
+`, false));
+    assert.ok(!py.globals.get("_err"), `sympy run errored: ${py.globals.get("_err")}`);
+    const latex = JSON.parse(String(py.globals.get("_json_result")));
+    assert.match(latex, /\\frac|\\sqrt/, `sympy emitted LaTeX with commands: ${latex}`);
+
+    // 2) Feed THAT exact output into the sidebar as a python-out.value, cite it `| latex`, assert KaTeX renders it.
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("symint", "compute symbolically"));
+    await w.dispatch(agentStep("symint", 1, { seq: 1, tool: "python_exec", token: "abcdef", result: `[loaded, reference directly] a df.\n\n${latex}`, renderOut: { type: "python-out", value: latex } }));
+    await w.dispatch({ ...agentResult("symint", `The result is ![result](@tool:abcdef:out | latex).`, 1), answer: "" });
+    w.shadow.querySelector(".row").click(); await w.tick();
+    const tok = w.shadow.querySelector(".msg.asst .answer-rendered .tok-ref");
+    assert.ok(tok, "the citation renders in the UI");
+    assert.ok(tok.querySelector(".katex"), `the ACTUAL sympy WASM output typesets via KaTeX: ${latex}`);
+    assert.doesNotMatch(tok.textContent, /loaded, reference directly/, "the model-facing prelude is NOT fed to KaTeX");
 });
