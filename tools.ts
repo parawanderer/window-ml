@@ -126,6 +126,10 @@ const sourceSection = (): string => {
     const lines: string[] = [];
     if (b.repoUrl) lines.push(`- Public repository: ${b.repoUrl}`);
     if (b.shortCommit) lines.push(`- This harness is built from commit \`${b.shortCommit}\`${(b as { dirty?: boolean }).dirty ? " PLUS uncommitted local changes (NOT a clean build of that commit — the source at this commit won't match exactly)" : ""}${b.commitDate ? ` (committed ${b.commitDate})` : ""}${b.commitUrl ? ` — ${b.commitUrl}` : ""}`);
+    // The specific files that differ from `commit` in THIS build — so if you read the repo at that commit,
+    // you know which files won't match what's actually running here (the rest DO match the commit).
+    const dirtyFiles = (b as { dirtyFiles?: readonly string[] }).dirtyFiles;
+    if (dirtyFiles && dirtyFiles.length) lines.push(`- Files changed since that commit in this build (so they WON'T match the repo at \`${b.shortCommit}\`): ${dirtyFiles.map(f => `\`${f}\``).join(", ")}`);
     if (b.buildTime) lines.push(`- Built: ${b.buildTime}`);
     if (!lines.length) return "";
     return ["## My source", "",

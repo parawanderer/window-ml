@@ -34,6 +34,22 @@ function repoUrl() {
     return normalizeRepoUrl(git("config --get remote.origin.url"));
 }
 
+/**
+ * The changed file paths from `git status --porcelain` output. Porcelain v1 is `XY <path>` (rename:
+ * `old -> new` — take the new). Strips the status code + whitespace with a REGEX, not a fixed slice(3),
+ * because our `git()` helper `.trim()`s the whole output and eats the FIRST line's leading status space
+ * (a real bug: `scripts/x` → `cripts/x`). Capped so a big WIP can't bloat the doc. Pure — unit-tested.
+ * @param {string} status `git status --porcelain` output.
+ * @returns {string[]} changed paths (the new path for renames), max 100.
+ */
+export function dirtyPathsFromStatus(status) {
+    if (!status) return [];
+    return status.split("\n")
+        .map(l => l.replace(/^\s*\S+\s+/, "").split(" -> ").pop().replace(/^"|"$/g, ""))
+        .filter(Boolean)
+        .slice(0, 100);
+}
+
 /** Regenerate build-info.gen.ts in place. Called by build.mjs + npm scripts. */
 export function writeBuildInfo() {
     const commit = git("rev-parse HEAD");
@@ -42,11 +58,16 @@ export function writeBuildInfo() {
     // `status --porcelain` prints one line per change, so any output = dirty. A build FROM a clean checkout is
     // exactly `commit`; a dev build usually isn't, and the export should say so (so a logged "91f98a1" is
     // trustworthy only when clean). Empty (no git) → false, same soft-fail as the rest.
-    const dirty = git("status --porcelain") !== "";
+    const status = git("status --porcelain");
+    const dirty = status !== "";
+    // The FILES that don't match `commit` in THIS build — so an agent reading the repo at that commit
+    // (via agent_api_docs' source link) knows exactly which files won't match what's checked out here.
+    const dirtyFiles = dirtyPathsFromStatus(status);
     const info = {
         commit,
         shortCommit: git("rev-parse --short HEAD"),
         dirty,   // true = built with uncommitted changes on top of `commit` (not a reproducible build)
+        dirtyFiles,   // which files those changes are in (empty when clean / no git)
         commitDate: git("show -s --format=%cI HEAD"),   // ISO-8601 committer date (when the commit was made)
         repoUrl: url,
         commitUrl: url && commit ? `${url}/commit/${commit}` : "",

@@ -99,6 +99,13 @@ way but via `ABORT_TASK` → the `inflight` `FETCH_LLM` controller (no port). Bo
 in sync** (popup.js has a comment saying so). `popup.js` `FIELDS` must list
 every editable key.
 
+**RULE — a new settings flag goes in the DevTools Settings panel, ALWAYS.** The
+**DevTools Settings panel is the SUPERSET** of the toolbar popup: every user-editable
+config surfaces there. The popup is a curated subset (the common knobs). So when you
+add a config flag: it MUST appear in DevTools Settings; adding it to the popup too is
+optional (only for a common knob). Never add a flag to the popup WITHOUT also adding it
+to DevTools Settings — that would make the popup the superset, inverting the rule.
+
 ## API formats
 
 `API_FORMATS` in `background.js` maps each backend to `{ buildMessage,
