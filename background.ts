@@ -1832,7 +1832,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         if (!resumeMessages) emitLifecycle(startEvent);
         else if (resurrected) fanEvent(startEvent);   // resurrected: no page-side caller emitted a start → fan it ourselves
         runBackgroundAgent(
-            { task: p.task, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, autoApproveSameOriginAuth: p.autoApproveSameOriginAuth, unattended: p.unattended, resumeMessages, images: p.images },
+            { task: p.task, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, autoApproveSameOriginAuth: p.autoApproveSameOriginAuth, unattended: p.unattended, toolTokens: p.toolTokens, runId, resumeMessages, images: p.images },
             {
                 callModel: async (messages, opts) => {
                     // Thread the run's abort signal so a CANCEL_RUN kills a slow in-flight generation, not

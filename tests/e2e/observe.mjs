@@ -191,8 +191,9 @@ const main = async () => {
     let result, error;
     const t0 = Date.now();
     try {
-        result = await page.evaluate(({ task, toolNames }) => {
+        result = await page.evaluate(({ task, toolNames, toolTokens }) => {
             const opts = {
+                toolTokens,
                 onStep: (s) => window.__obsStep({
                     tool: s.tool || null, thought: s.thought || null,
                     args: s.arguments ? JSON.parse(JSON.stringify(s.arguments)) : null,
@@ -208,7 +209,7 @@ const main = async () => {
                 opts.vision = false;
             }
             return window.ml.agent(task, opts);
-        }, { task: TASK, toolNames: TOOLS });
+        }, { task: TASK, toolNames: TOOLS, toolTokens: !!process.env.TOOLTOKENS });
     } catch (e) { error = String(e); }
     // A cross-page / background run's ml.agent() promise dies with the navigated-away page context (that's
     // the caught error), but the run carries on in the BACKGROUND. Wait for its terminal agent-result event

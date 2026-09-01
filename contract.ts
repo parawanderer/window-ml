@@ -810,6 +810,10 @@ export interface AgentOptions {
     vision?: boolean | string | null;
     /** install the built-in console tracer */
     logDebug?: boolean;
+    /** TOOL TOKENS: a tool result with a rich render (an image/table/code) gets a trailing `@tool:<id>` line,
+     *  so the model can cite that EXACT output in its final answer / answer set instead of re-typing it.
+     *  Default false; a HUD-started run turns it on (that's where the rich answer card is shown). */
+    toolTokens?: boolean;
     /** abort the loop between steps → resolves { cancelled: true } with the partial run */
     signal?: AbortSignal | null;
     /** continue the run with this hash: append `task` as a follow-up turn (same session) */
@@ -989,6 +993,8 @@ export interface StartRunPayload {
     autoApproveSameOriginAuth?: boolean;
     /** trusted config flag → the background may auto-approve an in-dialect exec survey */
     autoApproveReadonly: boolean;
+    /** agent option → surface `@tool:<id>` tokens on rich tool results (so the model can cite exact outputs) */
+    toolTokens?: boolean;
     /** headless run: the background refuses (never prompts) any call that reaches the gate */
     unattended?: boolean;
     /** scripting run: the off-mode HUD card stays hidden for it (no working orb, no answer card). The

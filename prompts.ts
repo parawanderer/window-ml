@@ -91,6 +91,12 @@ export const ANSWER_CLAUSE =
     "`remove` an item by index, or `clear` and redo. If the task is to FIND / LOCATE an element, designate " +
     "it here so the real node reaches the caller. You can also curate it from `exec` for free via " +
     "`ml.answer` (`.add(el | \"text\")`, `.remove(i)`, `.clear()`, `.length`) — no approval.";
+export const TOOLTOKENS_CLAUSE =
+    "\n\nSome tool results end with an `@tool:<id>` token — that means the output (an image, a table, code) is " +
+    "ADDRESSABLE. In your FINAL answer (or when you add to `ml.answer`), you can embed the EXACT output instead " +
+    "of re-typing it from memory: write a markdown link whose URL is the token — e.g. `[the result](@tool:35bf1f:out)`, " +
+    "or `:in` for the call/code. COPY the id verbatim from the result; never invent one. Only do this when showing " +
+    "the actual output helps the user (a table, an image, the exact code/value) — for a plain step, just answer normally.";
 export const SHADOW_CLAUSE =
     "\n\nShadow DOM: the DOM tools (findByText / interactives / describeElement / ancestors / countMatches / " +
     "sampleText / click / type / wait / answer) pierce OPEN shadow roots automatically. A control inside one " +

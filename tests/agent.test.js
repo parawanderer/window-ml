@@ -1001,6 +1001,25 @@ test("agent runs a tool, feeds the result back, and stops on a plain reply", asy
     assert.deepEqual(sent.at(-1), { role: "tool", tool_call_id: "c1", content: "pong1" });
 });
 
+test("toolTokens: surfaces an @tool: line on a RICH result, not a plain one; and only when enabled", async () => {
+    const script = () => scriptedModel([toolCall("rich", {}, "c1"), toolCall("plain", {}, "c2"), reply("done")]);
+    const richTool = () => ({ name: "rich", run: () => ({ content: "found", image: "data:image/png;base64,AAAA" }) });   // image → rich renderOut
+    const plainTool = () => ({ name: "plain", run: () => "just text" });                                                 // plain string → no render
+
+    // ON: the rich result carries a copyable @tool:<id>:out; the plain one doesn't.
+    let world = loadPageWorld({ onRuntimeMessage: script() });
+    await world.ml.agent("t", { tools: [world.ml.defineTool(richTool()), world.ml.defineTool(plainTool())], toolTokens: true });
+    let msgs = world.runtimeCalls.at(-1).payload.messages;
+    assert.match(msgs.find(m => m.tool_call_id === "c1").content, /@tool:[0-9a-f]{6}:out/, "rich result gets a token");
+    assert.doesNotMatch(msgs.find(m => m.tool_call_id === "c2").content, /@tool:/, "a plain-text result gets none");
+
+    // OFF (default): no token line even on the rich result — a normal run is byte-identical.
+    world = loadPageWorld({ onRuntimeMessage: script() });
+    await world.ml.agent("t", { tools: [world.ml.defineTool(richTool()), world.ml.defineTool(plainTool())] });
+    msgs = world.runtimeCalls.at(-1).payload.messages;
+    assert.doesNotMatch(msgs.find(m => m.tool_call_id === "c1").content, /@tool:/, "tokens off by default");
+});
+
 test("agent: a pre-aborted signal cancels before any model call (resolves, doesn't reject)", async () => {
     const ac = new AbortController();
     ac.abort();

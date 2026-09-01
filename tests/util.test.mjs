@@ -155,3 +155,12 @@ test("markSeen: rounds coordinates and is a no-op on a null memory", () => {
     assert.deepEqual(mem.seen, [{ x: 13, y: 40 }]);
     markSeen(null, 1, 1);   // no throw
 });
+
+test("toolToken: deterministic 6-hex id from (runHash, seq); opaque + varies", async () => {
+    const { toolToken } = await import("../util.ts");
+    const t = toolToken("abcd1234", 3);
+    assert.match(t, /^[0-9a-f]{6}$/, "6 hex");
+    assert.equal(toolToken("abcd1234", 3), t, "deterministic — same inputs, same id (survives replay)");
+    assert.notEqual(toolToken("abcd1234", 4), t, "differs by seq");
+    assert.notEqual(toolToken("wxyz9999", 3), t, "differs by run");
+});

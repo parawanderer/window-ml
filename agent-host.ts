@@ -30,6 +30,8 @@ export interface RunAgentConfig {
     autoApprovePython?: boolean;   // the trusted config flag, read background-side
     autoApproveSameOriginAuth?: boolean;   // Advanced opt-in: auto-approve a same-origin as-you (credentialed) fetch
     unattended?: boolean;          // headless run: refuse any call that reaches the human gate (see ml.agent's `unattended`)
+    toolTokens?: boolean;          // surface `@tool:<id>` on rich tool results (see ml.agent's `toolTokens`)
+    runId?: string;                // the run's hash — seeds the deterministic tool-token ids
     resumeMessages?: NeutralMessage[];   // RESUME: continue this prior history (+ `task` as a new user turn) instead of a fresh system+task
     images?: string[];   // native-vision composer attachments (data URLs) → attached to THIS turn's user message. The OCR fallback for a text-only driver already folded into `task` page-side.
 }
@@ -175,6 +177,6 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
         chatMeta: deps.chatMeta,   // resolve model/caps/window SW-side (background provides the caches)
         subcallTokens: deps.subcallTokens,   // this turn's delegated vision sub-call tally (background-accumulated)
     };
-    return runAgentLoop(cfg.task, { tools: cfg.tools, maxSteps: cfg.maxSteps, signal: deps.signal, unattended: cfg.unattended }, loopDeps)
+    return runAgentLoop(cfg.task, { tools: cfg.tools, maxSteps: cfg.maxSteps, signal: deps.signal, unattended: cfg.unattended, toolTokens: cfg.toolTokens, runHash: cfg.runId }, loopDeps)
         .then(result => ({ result, messages: built }));
 }

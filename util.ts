@@ -307,3 +307,16 @@ export const projectShotBox = (b: PtBox, t: ShotBox): PtBox => ({
     left: t.left + b.left / (t.dpr || 1), top: t.top + b.top / (t.dpr || 1),
     right: t.left + b.right / (t.dpr || 1), bottom: t.top + b.bottom / (t.dpr || 1),
 });
+/**
+ * A stable, opaque TOOL TOKEN id for a tool step — `hash(runHash:seq)` as 6 hex. Deterministic (a
+ * replay / re-render of the same run mints the same id, so a persisted transcript still resolves) yet
+ * opaque to the model, so it must COPY the token from a result, not guess it (a guessed id won't match
+ * the hash → a visible "unresolved" chip rather than the wrong step). The `@tool:` prefix is added by the
+ * caller. FNV-1a — dependency-free, good enough for a per-run collision-resistant short id.
+ */
+export const toolToken = (runHash: string, seq: number): string => {
+    let h = 0x811c9dc5;
+    const s = `${runHash}:${seq}`;
+    for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+    return (h >>> 0).toString(16).padStart(8, "0").slice(0, 6);
+};
