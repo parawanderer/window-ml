@@ -43,6 +43,27 @@ test("deep nesting closes correctly on dedent", () => {
     assert.equal(html, "<ul><li>1<ul><li>1a<ul><li>1a-i</li></ul></li></ul></li><li>2</li></ul>");
 });
 
+test("ordered list with indented continuation + blank lines stays ONE <ol> (numbering doesn't reset to 1.)", () => {
+    // The Solution-Steps bug: each item had indented paragraphs / display math and blank lines between items,
+    // which used to FLUSH the list — so every item became a fresh <ol> restarting at 1. The item now OWNS its
+    // continuation content, so a single <ol> numbers 1,2,3 correctly.
+    const src = "1. **First:**\n   some text\n   $$a=b$$\n\n2. **Second:**\n   more text\n\n3. **Third:**\n   done";
+    const html = markdown(src, { math: true });
+    assert.equal((html.match(/<ol>/g) || []).length, 1, "exactly ONE <ol> (not one per item)");
+    assert.equal((html.match(/<li>/g) || []).length, 3, "three <li> items in that one list");
+    // The lead label sits inline in the <li>, its continuation paragraph inside the SAME item.
+    assert.match(html, /<li><strong>First:<\/strong><p>some text<\/p>/, "item keeps its indented continuation inside the <li>");
+    assert.ok(html.includes("katex"), "the indented $$…$$ inside an item still typesets");
+});
+
+test("blank-separated simple list stays tight (no <p> spacing) but a multi-line item keeps its blocks", () => {
+    // A model that puts a blank line between simple one-line bullets should NOT get loose <p>-wrapped items.
+    assert.equal(markdown("- a\n\n- b\n\n- c"), "<ul><li>a</li><li>b</li><li>c</li></ul>", "blank-separated one-liners stay tight");
+    // But an item with its own extra paragraph keeps it (inside the <li>).
+    assert.equal(markdown("- lead\n  second line\n- next"),
+        "<ul><li>lead<p>second line</p></li><li>next</li></ul>", "continuation paragraph lands inside the item");
+});
+
 test("inline code protects its contents from bold/italic (the `*` bug)", () => {
     // Two `*` code spans used to look like an italic run → both asterisks eaten.
     assert.equal(markdown("`*` >>> `*`"), "<p><code>*</code> &gt;&gt;&gt; <code>*</code></p>");

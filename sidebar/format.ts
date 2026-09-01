@@ -184,69 +184,89 @@ export function markdown(src: string, opts: { math?: boolean } = {}): string {
     const isSep = (l: string): boolean => { const c = splitRow(l); return c.length > 0 && c.every(x => alignOf(x) !== null); };
     const cell = (c: string, tag: string, a: string | null) =>
         `<${tag}${a ? ` style="text-align:${a}"` : ""}>${inline(c)}</${tag}>`;
-    // Build nested <ul>/<ol> from a flat list of items with indent depths (2 spaces / a tab per level).
-    // A stack of open lists: deeper indent opens a nested list INSIDE the current <li>; a shallower one
-    // closes back down. The list TYPE (ul vs ol) is decided by the first item at each level.
-    type Item = { indent: number; ordered: boolean; text: string };
-    const buildList = (items: Item[]): string => {
-        let html = "";
-        const stack: { ordered: boolean; indent: number }[] = [];
-        for (const it of items) {
-            if (!stack.length || it.indent > stack[stack.length - 1].indent) {
-                html += it.ordered ? "<ol>" : "<ul>";
-                stack.push({ ordered: it.ordered, indent: it.indent });
-            } else {
-                while (stack.length > 1 && it.indent < stack[stack.length - 1].indent) { const t = stack.pop()!; html += t.ordered ? "</li></ol>" : "</li></ul>"; }
-                html += "</li>";   // close the previous sibling <li>
+    const indentOf = (l: string): number => (l.match(/^[ \t]*/)?.[0].replace(/\t/g, "  ").length ?? 0);
+    // A list item: leading indent (nesting) + a `-`/`*`/`+` bullet OR an ordered `1.` / `1)` marker.
+    const markerRe = /^([ \t]*)(?:[-*+]|\d+[.)])\s+(.*)$/;
+    // Render a gathered list block. Each item OWNS its indented continuation lines (further paragraphs, display
+    // math, nested lists) + any internal blank lines — so an item's extra content stays INSIDE its <li> instead
+    // of flushing the list and restarting the numbering (the "every step shows 1." bug). Each item's content is
+    // rendered RECURSIVELY (nesting falls out for free), dedented by the item's own content column. The lead
+    // paragraph's <p> wrapper is stripped so a simple `1. text` stays `<li>text</li>` (and a `- a\n\n- b`
+    // blank-separated list stays tight), matching how the old renderer output looked for the common case.
+    const renderList = (block: string[], base: number): string => {
+        type It = { ordered: boolean; offset: number; content: string[] };
+        const items: It[] = [];
+        for (const raw of block) {
+            const m = raw.match(markerRe);
+            if (m && indentOf(raw) === base) {                                  // a new sibling item at this level
+                items.push({ ordered: /\d/.test(raw.trimStart()[0]), offset: raw.length - m[2].length, content: [m[2]] });
+            } else if (items.length) {                                          // continuation of the current item
+                const cur = items[items.length - 1];
+                cur.content.push(raw.trim() === "" ? "" : raw.replace(new RegExp(`^[ \\t]{0,${cur.offset}}`), ""));
             }
-            html += `<li>${inline(it.text)}`;
         }
-        while (stack.length) { const t = stack.pop()!; html += t.ordered ? "</li></ol>" : "</li></ul>"; }
-        return html;
+        const lis = items.map((it) => `<li>${renderBlocks(it.content).replace(/^<p>([\s\S]*?)<\/p>/, "$1")}</li>`).join("");
+        return items[0]?.ordered ? `<ol>${lis}</ol>` : `<ul>${lis}</ul>`;
     };
-    const out: string[] = [];
-    let items: Item[] | null = null;
-    const flush = () => { if (items) { out.push(buildList(items)); items = null; } };
-    const lines = text.split("\n");
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].trimEnd();
-        // Table = a pipe header row immediately followed by a separator row.
-        if (line.includes("|") && i + 1 < lines.length && isSep(lines[i + 1])) {
-            flush();
-            const aligns = splitRow(lines[i + 1]).map(alignOf);
-            const head = splitRow(line).map((c, j) => cell(c, "th", aligns[j] || null)).join("");
-            const body: string[] = [];
-            i += 2;                                             // consume header + separator
-            for (; i < lines.length && lines[i].includes("|"); i++)
-                body.push("<tr>" + splitRow(lines[i]).map((c, j) => cell(c, "td", aligns[j] || null)).join("") + "</tr>");
-            i--;                                                // step back onto the last consumed row (loop re-increments)
-            out.push(`<div class="md-table-wrap"><table class="md-table"><thead><tr>${head}</tr></thead><tbody>${body.join("")}</tbody></table></div>`);
-            continue;
+    // The block-level renderer, factored out so a list item can recurse on its own content. Operates on the
+    // ALREADY-escaped, math/code-STASHED lines (placeholders resolve once at the very end).
+    const renderBlocks = (ls: string[]): string => {
+        const out: string[] = [];
+        for (let i = 0; i < ls.length; i++) {
+            const line = ls[i].trimEnd();
+            // Table = a pipe header row immediately followed by a separator row.
+            if (line.includes("|") && i + 1 < ls.length && isSep(ls[i + 1])) {
+                const aligns = splitRow(ls[i + 1]).map(alignOf);
+                const head = splitRow(line).map((c, j) => cell(c, "th", aligns[j] || null)).join("");
+                const body: string[] = [];
+                i += 2;                                             // consume header + separator
+                for (; i < ls.length && ls[i].includes("|"); i++)
+                    body.push("<tr>" + splitRow(ls[i]).map((c, j) => cell(c, "td", aligns[j] || null)).join("") + "</tr>");
+                i--;                                                // step back onto the last consumed row (loop re-increments)
+                out.push(`<div class="md-table-wrap"><table class="md-table"><thead><tr>${head}</tr></thead><tbody>${body.join("")}</tbody></table></div>`);
+                continue;
+            }
+            const h = line.match(/^(#{1,6})\s+(.*)$/);
+            const li = line.match(markerRe);
+            if (/^\s{0,3}(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { out.push("<hr>"); }   // thematic break
+            else if (h) { out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`); }
+            else if (li) {
+                // Gather the whole list block: sibling markers, deeper (nested) markers, indented continuation
+                // lines, and internal blanks (kept only when the list actually continues past them).
+                const b = indentOf(line);
+                const block: string[] = [];
+                let j = i;
+                for (; j < ls.length; j++) {
+                    const r = ls[j].trimEnd();
+                    if (r.trim() === "") {
+                        let k = j + 1; while (k < ls.length && ls[k].trim() === "") k++;
+                        if (k < ls.length && (markerRe.test(ls[k]) ? indentOf(ls[k]) >= b : indentOf(ls[k]) > b)) { block.push(""); continue; }
+                        break;   // a blank followed by a dedented non-list line ends the list
+                    }
+                    if (markerRe.test(r) ? indentOf(r) >= b : indentOf(r) > b) { block.push(r); continue; }
+                    break;       // a dedented non-list line ends the list
+                }
+                i = j - 1;       // step back onto the last consumed line (the loop re-increments)
+                out.push(renderList(block, b));
+            }
+            else if (/^\s{0,3}&gt;/.test(line)) {
+                // Blockquote: gather consecutive `>` lines, strip the marker, split into paragraphs on a blank
+                // quoted line, and inline each. (Nested lists/quotes inside a quote are rarer — inline is enough.)
+                // The block loop runs on ESCAPED text, so the `>` marker is `&gt;` here.
+                const q: string[] = [];
+                for (; i < ls.length && /^\s{0,3}&gt;/.test(ls[i].trimEnd()); i++) q.push(ls[i].replace(/^\s{0,3}&gt;\s?/, ""));
+                i--;   // step back onto the last quote line (the loop re-increments)
+                const paras: string[] = []; let cur: string[] = [];
+                for (const ql of q) { if (ql.trim()) cur.push(ql); else if (cur.length) { paras.push(cur.join(" ")); cur = []; } }
+                if (cur.length) paras.push(cur.join(" "));
+                out.push(`<blockquote>${paras.map(p => `<p>${inline(p)}</p>`).join("")}</blockquote>`);
+            }
+            else if (!line.trim()) { /* blank between top-level blocks — nothing to emit */ }
+            else { out.push(`<p>${inline(line)}</p>`); }
         }
-        const h = line.match(/^(#{1,6})\s+(.*)$/);
-        // A list item: leading indent (nesting) + a `-`/`*`/`+` bullet OR an ordered `1.` / `1)` marker.
-        const li = line.match(/^([ \t]*)(?:[-*+]|\d+[.)])\s+(.*)$/);
-        if (/^\s{0,3}(?:-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { flush(); out.push("<hr>"); }   // thematic break
-        else if (h) { flush(); out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`); }
-        else if (li) { (items ??= []).push({ indent: li[1].replace(/\t/g, "  ").length, ordered: /\d/.test(line.trimStart()[0]), text: li[2] }); }
-        else if (/^\s{0,3}&gt;/.test(line)) {
-            // Blockquote: gather consecutive `>` lines, strip the marker, split into paragraphs on a blank
-            // quoted line, and inline each. (Nested lists/quotes inside a quote are rarer — inline is enough.)
-            // The block loop runs on ESCAPED text, so the `>` marker is `&gt;` here.
-            flush();
-            const q: string[] = [];
-            for (; i < lines.length && /^\s{0,3}&gt;/.test(lines[i].trimEnd()); i++) q.push(lines[i].replace(/^\s{0,3}&gt;\s?/, ""));
-            i--;   // step back onto the last quote line (the loop re-increments)
-            const paras: string[] = []; let cur: string[] = [];
-            for (const ql of q) { if (ql.trim()) cur.push(ql); else if (cur.length) { paras.push(cur.join(" ")); cur = []; } }
-            if (cur.length) paras.push(cur.join(" "));
-            out.push(`<blockquote>${paras.map(p => `<p>${inline(p)}</p>`).join("")}</blockquote>`);
-        }
-        else if (!line.trim()) { flush(); }
-        else { flush(); out.push(`<p>${inline(line)}</p>`); }
-    }
-    flush();
-    return out.join("")
+        return out.join("");
+    };
+    return renderBlocks(text.split("\n"))
         .replace(/@@MATH(\d+)@@/g, (_, i: string) => mathBlocks[+i])
         .replace(/@@CODE(\d+)@@/g, (_, i: string) => codeBlocks[+i]);
 }
