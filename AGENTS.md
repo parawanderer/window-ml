@@ -759,7 +759,9 @@ thing. The parts:
     the model (e.g. `deepseek.deepseek-v4-pro`, `gemma4:31b`); no vars → the deterministic fake-LLM.
   - `TOOLTOKENS=1` enables tool tokens · `PYTHON=1` wires `python_exec` · `TOOLS=findByText,answer`
     limits to a domTools subset (smaller prompt/schemas = far fewer tokens/turn) · `WARM=0` skips the
-    VRAM warm-up (a local model wants it warmed; the fake/API don't).
+    VRAM warm-up (a local model wants it warmed; the fake/API don't) · `FOLLOWUP="…"` runs a SECOND turn
+    in the SAME session (createAgent + two run()s, same run hash) to reproduce multi-turn behaviour a
+    single `ml.agent()` can't (a "…now show the work" follow-up; the cross-turn token-id collision).
   - **`APPROVE=<policy>`** — how the built-in approval poller resolves a gate the run halts on (via the
     SW-only `__mlApprovals` channel; the run passes `approvalRouting:"both"`): `auto` (default, approve
     all), `deny`, `readonly` (approve exec + readonly python, deny the rest), `hold` (log but DON'T

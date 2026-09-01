@@ -26,6 +26,7 @@ Configure everything with **env vars** (all optional):
 | `TOOLTOKENS=1` | Enable tool tokens (the `@tool:` embed/answer feature). |
 | `PYTHON=1` | Wire `python_exec` (for `{ tables }`→DataFrame / sympy / numpy work). |
 | `TOOLS=findByText,answer` | Limit to a subset of `ml.domTools` — smaller system prompt + fewer schemas = far fewer tokens/turn. |
+| `FOLLOWUP="…"` | Run a SECOND turn in the SAME session (via `createAgent` + two `run()`s, so both turns share the run hash). Reproduces multi-turn behaviour a single `ml.agent()` can't — e.g. a "…now show the work" follow-up, or the cross-turn token-id collision. `TASK` is turn 1, `FOLLOWUP` is turn 2. |
 | `WARM=0` | Skip the VRAM warm-up. A **local** model wants it warmed (omit `WARM=0`); the fake/API don't need it. |
 | `APPROVE=<policy>` | How the built-in approval poller resolves a gate the run halts on: `auto` (default), `deny`, `readonly` (approve exec + readonly python only), `hold` (log but don't resolve — for manual clicking in WATCH). Every gate + decision is logged, so a run never hangs silently. |
 | `WATCH=1` | HOLD the browser open at the end (close the window / Ctrl+C to exit) instead of tearing down — for inspecting a finished run. (The sidebar auto-opens + focuses on the session by DEFAULT, so a watching human never clicks; `WATCH` only adds the hold.) |
