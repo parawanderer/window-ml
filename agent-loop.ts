@@ -383,7 +383,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             if (tokenId && (call.name === "python_exec" || wantsToken)) answerCandidates.push({ token: tokenId, tool: call.name, seq: s });
             if (tokenId) tokenRenders.push({ id: tokenId, tool: call.name, render: tr?.renderOut, result });   // → res.outputs
             const forModel = (tokenId && wantsToken)
-                ? `${result}\n\n[output token @tool:${tokenId} — cite this exact result in your final answer (or add to ml.answer) as a markdown link, e.g. [label](@tool:${tokenId}:out); use ":in" for the call/code]`
+                ? `${result}\n\n[output token @tool:${tokenId} — EMBED this exact output in your final answer with image syntax: ![label](@tool:${tokenId}:out) (use ":in" for the call/code). It expands in place; don't retype it.]`
                 : result;
             // The DONE event carries the clean `result` for the pretty Out AND — when a token line was appended —
             // `modelResult` (what the model ACTUALLY saw), so the log's raw view stays complete (the AGENTS rule).

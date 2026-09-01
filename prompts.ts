@@ -92,19 +92,20 @@ export const ANSWER_CLAUSE =
     "it here so the real node reaches the caller. You can also curate it from `exec` for free via " +
     "`ml.answer` (`.add(el | \"text\")`, `.remove(i)`, `.clear()`, `.length`) — no approval.";
 export const TOOLTOKENS_CLAUSE =
-    "\n\nCITING TOOL OUTPUTS — show real outputs by REFERENCE, never by retyping. To opt in, set `token: true` on the " +
-    "call (exec / python_exec / look / locate / fetch_url) whose output you'll show — its result then ends with an " +
-    "`@tool:<id>` (copy the id verbatim, never invent one). Do this only for a result worth showing (usually your " +
-    "final computation), not exploratory steps. `[caption](@tool:<id>:out)` is a MACRO, not a link: wherever you " +
-    "write it, it EXPANDS IN PLACE into that exact output for the reader (`:in` expands your exact executed CODE " +
-    "instead). So NEVER also paste that output or code as prose — the macro already shows it; a copy just duplicates " +
-    "it. Cite each output ONCE. Write the sentence around the expansion (`Totals: [totals](@tool:…:out)`), never " +
-    "`see [the table](…)`. Two spots: drop the macro INLINE for a value that reads mid-sentence; or send it to the " +
-    "BOTTOM block via `ml.answer.add(\"@tool:<id>:out\")` (or the `answer` tool's `text`) with a caption, for a big " +
-    "table/image that would break your flow. Prefer to cite any computed/looked-up figure so the user sees the work; " +
-    "a pure-prose answer needs none. (Safety net: an uncited computed output is auto-appended at the bottom — but " +
-    "designate it yourself with a caption.) EXPLAINING CODE YOU RAN: drop `[the code](@tool:<id>:in)`, THEN explain " +
-    "it — don't retype it. Write executed code to be read (clear names, a short comment per step) so `:in` reads well.";
+    "\n\nSHOWING TOOL OUTPUTS. To show the user a tool's real output, opt in: set `token: true` on the call " +
+    "(exec / python_exec / look / locate / fetch_url) whose output you'll show — its result then ends with an " +
+    "`@tool:<id>` (copy the id verbatim, never invent one). Reference it with IMAGE syntax, which EMBEDS it in " +
+    "place exactly like an image: `![caption](@tool:<id>:out)` expands into that exact output (the real table / " +
+    "image / value) right where you write it; `:in` embeds your exact executed CODE instead. So you never retype " +
+    "an output or code you can embed — the macro already shows it. (A plain link `[caption](@tool:<id>:out)` " +
+    "instead renders as a LINK that jumps to the output — use it only to REFERENCE the output; prefer the `![…]` " +
+    "embed to actually show it.) Two spots to embed: INLINE for a value that reads mid-sentence; or the BOTTOM " +
+    "block via `ml.answer.add(\"@tool:<id>:out\")` (or the `answer` tool's `text`) with a `note` caption, for a big " +
+    "table/image. Cite each output ONCE, only for a result worth showing (your final computation), not exploratory " +
+    "steps. Prefer to embed any computed/looked-up figure so the user sees the work; a pure-prose answer needs " +
+    "none. (Safety net: an uncited computed output is auto-embedded at the bottom — but designate it yourself with " +
+    "a caption.) EXPLAINING CODE YOU RAN: embed `![the code](@tool:<id>:in)`, THEN explain it. Write executed code " +
+    "to be read (clear names, a short comment per step) so `:in` reads well.";
 export const SHADOW_CLAUSE =
     "\n\nShadow DOM: the DOM tools (findByText / interactives / describeElement / ancestors / countMatches / " +
     "sampleText / click / type / wait / answer) pierce OPEN shadow roots automatically. A control inside one " +

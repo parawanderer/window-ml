@@ -121,7 +121,7 @@ test("finalizeAnswer: a DESIGNATED token renders at the bottom (with the model's
     set.add(answerItemFromString("@tool:aaaaaa:out", "per-region totals"));
     // No inline citation in the prose → the designated output stays.
     const md = finalizeAnswer(set, "Here are the numbers.", []);
-    assert.equal(md, "[per-region totals](@tool:aaaaaa:out)");
+    assert.equal(md, "![per-region totals](@tool:aaaaaa:out)");
 });
 
 test("finalizeAnswer: DEDUP — a token cited INLINE in the prose is dropped from the bottom", () => {
@@ -137,7 +137,7 @@ test("finalizeAnswer: a DESIGNATED token NOT cited inline still renders (only th
     set.add(answerItemFromString("@tool:aaaaaa:out", "A"));
     set.add(answerItemFromString("@tool:bbbbbb:out", "B"));
     const md = finalizeAnswer(set, "See [A](@tool:aaaaaa:out).", []);
-    assert.equal(md, "[B](@tool:bbbbbb:out)", "A dedupes (inline), B stays (bottom)");
+    assert.equal(md, "![B](@tool:bbbbbb:out)", "A dedupes (inline), B stays (bottom)");
 });
 
 test("finalizeAnswer: AUTO-FALLBACK — no designation + no inline cite + a candidate → the primary output is appended", () => {
@@ -145,7 +145,7 @@ test("finalizeAnswer: AUTO-FALLBACK — no designation + no inline cite + a cand
     const cands = [{ token: "cccccc", tool: "python_exec", seq: 1 }, { token: "dddddd", tool: "python_exec", seq: 3, label: "top 5 reps" }];
     // The model wrote a prose answer and cited nothing → surface its LAST computed output.
     const md = finalizeAnswer(set, "The top rep is Gia with 850.", cands);
-    assert.equal(md, "[top 5 reps](@tool:dddddd:out)", "the LAST candidate is the run's answer");
+    assert.equal(md, "![top 5 reps](@tool:dddddd:out)", "the LAST candidate is the run's answer");
 });
 
 test("finalizeAnswer: NO auto-fallback when the model cited inline (it already surfaced its output)", () => {
@@ -160,7 +160,7 @@ test("finalizeAnswer: NO auto-fallback when the model DESIGNATED an output (its 
     set.add(answerItemFromString("@tool:aaaaaa:out", "the table"));
     const cands = [{ token: "cccccc", tool: "python_exec", seq: 9 }];
     const md = finalizeAnswer(set, "Done.", cands);
-    assert.equal(md, "[the table](@tool:aaaaaa:out)", "designation wins; the fallback candidate is not also appended");
+    assert.equal(md, "![the table](@tool:aaaaaa:out)", "designation wins; the fallback candidate is not also appended");
 });
 
 test("finalizeAnswer: pure-prose answer with NO candidates → empty (nothing hidden, nothing invented)", () => {
@@ -174,7 +174,7 @@ test("finalizeAnswer: MULTIPLE designated outputs all render, stacked, each dedu
     set.add({ kind: "text", text: "Summary: two tables." });
     // bbbbbb is inline-cited → only aaaaaa + the text stay at the bottom.
     const md = finalizeAnswer(set, "Regions here [r](@tool:bbbbbb:out).", []);
-    assert.equal(md, "[sales](@tool:aaaaaa:out)\n\nSummary: two tables.");
+    assert.equal(md, "![sales](@tool:aaaaaa:out)\n\nSummary: two tables.");
 });
 
 test("answerItemFromString: a note becomes the token caption; plain text ignores note", () => {

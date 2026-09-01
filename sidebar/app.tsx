@@ -1127,10 +1127,17 @@ function tokenRender(d: RenderDescriptor | undefined, rawText: string): { node: 
 function TokenRef({ seg, run }: { seg: Extract<import("../answer-tokens").AnswerSegment, { kind: "token" }>; run: Session }) {
     const step = resolveTokenStep(seg.id, run.steps || []) as AgentStep | null;
     if (!step) return <span class="tok-ref tok-unresolved" title={`No step in this run produced @tool:${seg.id} — the model may have invented it.`}>⟨unresolved @tool:{seg.id}⟩</span>;
-    const d = seg.slot === "in" ? step.renderIn : step.renderOut;
-    const rawText = seg.slot === "in" ? (step.arguments ? pretty(step.arguments) : "") : (step.result ?? "");
     const jump = () => scrollToStepSeq(step.seq, run.hash);
     const provenance = `Click to see the exact operation that produced this — step ${step.localStep ?? step.step} · ${step.tool || "tool"}`;
+    // LINK form `[label](@tool:…)` — a clickable JUMP to the output (the source step), NOT an inline expansion
+    // (that's the `![…]` embed form below). `label` is the link text.
+    if (!seg.embed) {
+        const linkLabel = seg.label && seg.label.trim() ? seg.label.trim() : `@tool:${seg.id}`;
+        return <a class="tok-link" role="button" tabIndex={0} title={provenance}
+            onClick={(e) => { e.preventDefault(); jump(); }} onKeyDown={(e) => { if (e.key === "Enter") jump(); }}>{linkLabel}</a>;
+    }
+    const d = seg.slot === "in" ? step.renderIn : step.renderOut;
+    const rawText = seg.slot === "in" ? (step.arguments ? pretty(step.arguments) : "") : (step.result ?? "");
     // The model's caption. INLINE citation (the value is shown in-line) → the label goes in the TOOLTIP; BLOCK
     // citation (a table/image/code) → the label is a CAPTION under the render, like a figure caption on the web.
     const label = seg.label && seg.label.trim() && seg.label.trim() !== rawText.trim() ? seg.label.trim() : "";

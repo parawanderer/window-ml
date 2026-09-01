@@ -65,6 +65,18 @@ export function finalizeAnswer(set: AnswerSet, summary: string, candidates: Answ
     return itemsToMarkdown(items);
 }
 
+/** Serialize answer-set items to markdown (shared by AnswerSet.toMarkdown + finalizeAnswer). Text verbatim;
+ *  a token → the EMBED form `![preview](@tool:…)` so the bottom render EXPANDS the real output (a later pass
+ *  inlines it); element → a bullet with its note/preview. */
+function itemsToMarkdown(items: readonly AnswerItem[]): string {
+    if (!items.length) return "";
+    return items.map(it => {
+        if (it.kind === "text") return it.text;
+        if (it.kind === "token") return `![${it.preview || "result"}](${it.ref})`;
+        return `- ${it.note ? `${it.note}: ` : ""}${it.preview}`;
+    }).join("\n\n");
+}
+
 /** If a string is a JSON object/array, PARSE it to the real JS value (a python dict/list return comes back as a
  *  json.dumps'd string) — so a headless caller gets `{a:1}` / `[1,2]`, not `"{\"a\":1}"`. Non-JSON → the string. */
 const parseMaybe = (s: string): unknown => {
@@ -103,17 +115,6 @@ export function resolveOutputs(answerMd: string, summary: string, renders: Token
     const out: AgentOutput[] = [];
     for (const id of ids) { const r = renders.find(x => x.id === id); if (r) out.push(toOutput(r)); }
     return out;
-}
-
-/** Serialize answer-set items to markdown (shared by AnswerSet.toMarkdown + finalizeAnswer). Text verbatim;
- *  token → its `@tool:` link (a later pass inlines the real output); element → a bullet with its note/preview. */
-function itemsToMarkdown(items: readonly AnswerItem[]): string {
-    if (!items.length) return "";
-    return items.map(it => {
-        if (it.kind === "text") return it.text;
-        if (it.kind === "token") return `[${it.preview || "result"}](${it.ref})`;
-        return `- ${it.note ? `${it.note}: ` : ""}${it.preview}`;
-    }).join("\n\n");
 }
 
 /** A compact, serializable view of one item — what `ml.answer` dumps and what a background run can

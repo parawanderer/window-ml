@@ -5,18 +5,21 @@ import assert from "node:assert";
 import { splitAnswer, hasTokens, resolveTokenStep } from "../answer-tokens.ts";
 import { toolToken } from "../util.ts";
 
-test("splitAnswer: a token link splits into prose + token + prose; default slot is out", () => {
+test("splitAnswer: a token link splits into prose + token + prose; default slot is out; embed vs link", () => {
+    // LINK form `[…]` → embed:false (renders as a clickable jump).
     const segs = splitAnswer("The count is [9](@tool:e7ed9f:out) total.");
     assert.equal(segs.length, 3);
     assert.deepEqual(segs[0], { kind: "prose", text: "The count is " });
-    assert.deepEqual(segs[1], { kind: "token", label: "9", id: "e7ed9f", slot: "out" });
+    assert.deepEqual(segs[1], { kind: "token", embed: false, label: "9", id: "e7ed9f", slot: "out" });
     assert.deepEqual(segs[2], { kind: "prose", text: " total." });
 
+    // IMAGE form `![…]` → embed:true (expands the output in place).
+    assert.deepEqual(splitAnswer("![9](@tool:e7ed9f:out)")[0], { kind: "token", embed: true, label: "9", id: "e7ed9f", slot: "out" });
     // bare @tool:id defaults to :out
-    assert.deepEqual(splitAnswer("[x](@tool:abc123)")[0], { kind: "token", label: "x", id: "abc123", slot: "out" });
+    assert.deepEqual(splitAnswer("[x](@tool:abc123)")[0], { kind: "token", embed: false, label: "x", id: "abc123", slot: "out" });
     // :in and a piped format
-    assert.deepEqual(splitAnswer("[c](@tool:abc123:in)")[0], { kind: "token", label: "c", id: "abc123", slot: "in" });
-    assert.deepEqual(splitAnswer("[e](@tool:abc123:out | latex)")[0], { kind: "token", label: "e", id: "abc123", slot: "out", fmt: "latex" });
+    assert.deepEqual(splitAnswer("![c](@tool:abc123:in)")[0], { kind: "token", embed: true, label: "c", id: "abc123", slot: "in" });
+    assert.deepEqual(splitAnswer("![e](@tool:abc123:out | latex)")[0], { kind: "token", embed: true, label: "e", id: "abc123", slot: "out", fmt: "latex" });
 });
 
 test("splitAnswer: an answer with no tokens is a single prose segment (verbatim)", () => {

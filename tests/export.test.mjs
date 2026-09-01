@@ -55,7 +55,7 @@ test("@tool citations in an answer RESOLVE to the cited step's output; unresolve
     const id = toolToken(hash, 1);   // the token for step seq 1
     const s = {
         hash, kind: "agent", model: "qwen3", tag: "session", createdTs: 1, lastTs: 2, status: "ok", turns: [], answers: [],
-        summary: `The count is [n](@tool:${id}:out) and a bogus [x](@tool:beefee:out).`,
+        summary: `The count is ![n](@tool:${id}:out) and a bogus ![x](@tool:beefee:out).`,
         steps: [{ step: 1, seq: 1, tool: "exec", token: id, arguments: { js: "x" }, result: "9",
             renderOut: { type: "code", text: "COUNT_RESULT_42", lang: "text" } }],
     };
@@ -76,7 +76,7 @@ test("@tool :out of a python SCALAR renders the CLEAN value in the ANSWER, not t
     const id = toolToken(hash, 1);
     const s = {
         hash, kind: "agent", model: "qwen", tag: "session", createdTs: 1, lastTs: 2, status: "ok", turns: [], answers: [],
-        summary: `The grand total is [total](@tool:${id}:out).`,
+        summary: `The grand total is ![total](@tool:${id}:out).`,
         steps: [{ step: 1, seq: 1, tool: "python_exec", token: id,
             result: "[loaded, reference directly] a 12×6 DataFrame → `df`.\n\n6260",
             renderOut: { type: "python-out", value: "6260" } }],

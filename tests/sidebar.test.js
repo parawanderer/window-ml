@@ -4470,7 +4470,7 @@ test("answer render (sidebar): AUTO-FALLBACK output shows in a RESULT block unde
     await w.dispatch(agentStart("af", "compute it"));
     await w.dispatch(compStep("af"));
     // prose summary (no inline cite), answer = the auto-appended token (finalizeAnswer's output)
-    await w.dispatch({ ...agentResult("af", "The total is 42.", 1), answer: `[computed result](@tool:${OUT}:out)` });
+    await w.dispatch({ ...agentResult("af", "The total is 42.", 1), answer: `![computed result](@tool:${OUT}:out)` });
     await openRun(w);
     const rb = w.shadow.querySelector(".card-result");
     assert.ok(rb, "a Result block renders under the answer");
@@ -4483,7 +4483,7 @@ test("answer render (sidebar): an INLINE citation expands in the reply, with NO 
     await w.dispatch(agentStart("inl", "compute it"));
     await w.dispatch(compStep("inl"));
     // cited inline → finalizeAnswer dedups it out of the bottom (answer = "")
-    await w.dispatch({ ...agentResult("inl", `The total is [it](@tool:${OUT}:out).`, 1), answer: "" });
+    await w.dispatch({ ...agentResult("inl", `The total is ![it](@tool:${OUT}:out).`, 1), answer: "" });
     await openRun(w);
     assert.ok(!w.shadow.querySelector(".card-result"), "no bottom Result block when the output is cited inline");
     const reply = w.shadow.querySelector(".msg.asst .answer-rendered");
@@ -4494,7 +4494,7 @@ test("answer render (sidebar): a DESIGNATED output shows in the Result block, wi
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("dsg", "compute it"));
     await w.dispatch(compStep("dsg"));
-    await w.dispatch({ ...agentResult("dsg", "Done.", 1), answer: `[the sales table](@tool:${OUT}:out)` });
+    await w.dispatch({ ...agentResult("dsg", "Done.", 1), answer: `![the sales table](@tool:${OUT}:out)` });
     await openRun(w);
     const rb = w.shadow.querySelector(".card-result");
     assert.ok(rb && /COMPUTED_TABLE/.test(rb.textContent), "the designated output renders at the bottom");
@@ -4505,10 +4505,10 @@ test("answer render (sidebar): the Result block ONLY renders on the run's LATEST
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("mt", "compute it"));
     await w.dispatch(compStep("mt"));
-    await w.dispatch({ ...agentResult("mt", "First.", 1), answer: `[a](@tool:${OUT}:out)` });
+    await w.dispatch({ ...agentResult("mt", "First.", 1), answer: `![a](@tool:${OUT}:out)` });
     // a follow-up turn (a new answer) — s.answer now reflects the LATEST turn only
     await w.dispatch({ kind: "agent-say", id: "mt", ts: Date.now() + 50, save: false, session: { hash: "mt", turn: 1 }, text: "again" });
-    await w.dispatch({ ...agentResult("mt", "Second.", 1), answer: `[b](@tool:${OUT}:out)` });
+    await w.dispatch({ ...agentResult("mt", "Second.", 1), answer: `![b](@tool:${OUT}:out)` });
     await openRun(w);
     const results = w.shadow.querySelectorAll(".card-result");
     assert.equal(results.length, 1, "exactly one Result block — on the latest answer, not every turn");
@@ -4527,7 +4527,7 @@ test("HUD card: clicking a bottom-answer citation OPENS the collapsed block hold
     await w.dispatch({ ...agentResult("blk", "The total is 42.", 1), answer: "" });
     await w.dispatch({ kind: "agent-say", id: "blk", ts: Date.now() + 50, save: false, session: { hash: "blk", turn: 1 }, text: "show me that table again" });
     await w.dispatch({ kind: "agent-step", id: "blk", ts: Date.now() + 60, save: false, session: { hash: "blk", turn: 2 }, step: 2, seq: 2, thought: "reusing the earlier result" });
-    await w.dispatch({ ...agentResult("blk", "Here it is.", 2), answer: `[the table](@tool:${OUT}:out)` });
+    await w.dispatch({ ...agentResult("blk", "Here it is.", 2), answer: `![the table](@tool:${OUT}:out)` });
     await w.tick();
     // Open "Show work" → the run is multi-task, so it segments into blocks: the PRIOR one collapsed.
     w.shadow.querySelector(".card-work-toggle").click(); await w.tick();
@@ -4545,7 +4545,7 @@ test("answer render (sidebar): a cited exec output that returned ELEMENTS render
     // exec that returned nodes → an `elements` renderOut (serialized path/text previews; live nodes can't cross the bus).
     await w.dispatch(agentStep("els", 1, { seq: 1, tool: "exec", token: OUT, result: "3 element(s)",
         renderOut: { type: "elements", items: [{ path: "div.card#a", text: "Card A" }, { path: "div.card#b", text: "Card B" }] } }));
-    await w.dispatch({ ...agentResult("els", "Found 3 cards.", 1), answer: `[the cards](@tool:${OUT}:out)` });
+    await w.dispatch({ ...agentResult("els", "Found 3 cards.", 1), answer: `![the cards](@tool:${OUT}:out)` });
     await openRun(w);
     const rb = w.shadow.querySelector(".card-result");
     assert.ok(rb, "the Result block renders");
@@ -4558,7 +4558,7 @@ test("answer render (sidebar): a result cited with `| latex` renders as a KaTeX 
     // typesets as math, not plain text. `| latex` renders the step's RESULT (rawText) via KaTeX.
     await w.dispatch(agentStart("lxr", "evaluate the discriminant"));
     await w.dispatch(agentStep("lxr", 1, { seq: 1, tool: "python_exec", token: OUT, result: "5", renderOut: { type: "python-out", value: "5" } }));
-    await w.dispatch({ ...agentResult("lxr", `Solving b^2-4ac gives [discriminant](@tool:${OUT}:out | latex).`, 1), answer: "" });
+    await w.dispatch({ ...agentResult("lxr", `Solving b^2-4ac gives ![discriminant](@tool:${OUT}:out | latex).`, 1), answer: "" });
     await openRun(w);
     const reply = w.shadow.querySelector(".msg.asst .answer-rendered");
     assert.ok(reply, "the answer renders with the citation");
@@ -4576,7 +4576,7 @@ test("answer render (sidebar): a `| latex` citation renders an IMAGINARY / compl
     // sqrt(-9) → a complex root the python step computed; the model formats it for math (2 + 3i).
     await w.dispatch(agentStart("lxi", "solve x^2 + 9 = 0"));
     await w.dispatch(agentStep("lxi", 1, { seq: 1, tool: "python_exec", token: OUT, result: "2 + 3i", renderOut: { type: "python-out", value: "2 + 3i" } }));
-    await w.dispatch({ ...agentResult("lxi", `The complex root is [root](@tool:${OUT}:out | latex).`, 1), answer: "" });
+    await w.dispatch({ ...agentResult("lxi", `The complex root is ![root](@tool:${OUT}:out | latex).`, 1), answer: "" });
     await openRun(w);
     const reply = w.shadow.querySelector(".msg.asst .answer-rendered");
     assert.ok(reply.querySelector(".katex"), "the complex result typesets via KaTeX (no throw on `i`)");
@@ -4589,10 +4589,25 @@ test("answer render (sidebar): a :out citation of a python SCALAR shows the CLEA
     // result carries the model-facing prelude; renderOut.value is the clean "6260" (the citation must use the latter).
     await w.dispatch(agentStep("pys", 1, { seq: 1, tool: "python_exec", token: OUT,
         result: "[loaded, reference directly] a 12×6 DataFrame → `df`.\n\n6260", renderOut: { type: "python-out", value: "6260" } }));
-    await w.dispatch({ ...agentResult("pys", `The grand total is [total](@tool:${OUT}:out).`, 1), answer: "" });
+    await w.dispatch({ ...agentResult("pys", `The grand total is ![total](@tool:${OUT}:out).`, 1), answer: "" });
     await openRun(w);
     const tok = w.shadow.querySelector(".msg.asst .answer-rendered .tok-ref");
     assert.ok(tok, "the citation renders");
     assert.match(tok.textContent, /6260/, "the clean value shows");
     assert.doesNotMatch(tok.textContent, /loaded, reference directly/, "the model-facing prelude is NOT in the citation");
+});
+
+test("answer render (sidebar): LINK form `[label](@tool:…)` renders a clickable link, NOT an inline expansion", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("lnk", "compute"));
+    await w.dispatch(agentStep("lnk", 1, { seq: 1, tool: "python_exec", token: OUT, result: "COMPUTED_TABLE", renderOut: { type: "code", text: "COMPUTED_TABLE", lang: "text" } }));
+    // LINK form (no `!`) → a jump-to-output link, not the expanded output.
+    await w.dispatch({ ...agentResult("lnk", `See the [full table](@tool:${OUT}:out) for details.`, 1), answer: "" });
+    await openRun(w);
+    const reply = w.shadow.querySelector(".msg.asst .answer-rendered");
+    const link = reply.querySelector(".tok-link");
+    assert.ok(link, "renders a .tok-link (not an embed)");
+    assert.match(link.textContent, /full table/, "the label is the link text");
+    assert.doesNotMatch(reply.textContent, /COMPUTED_TABLE/, "the output is NOT expanded inline — a link references it, an embed shows it");
+    assert.ok(!reply.querySelector(".tok-ref"), "no embed citation present");
 });

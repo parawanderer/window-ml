@@ -63,6 +63,10 @@ function writeAnswer(text: string, s: Session, d: Sink, muted = false, rawLabel 
         if (seg.kind === "prose") { buf += seg.text; continue; }
         const step = resolveTokenStep(seg.id, s.steps || []) as AgentStep | null;
         if (!step) { buf += ` ⟨unresolved @tool:${seg.id}⟩ `; continue; }
+        // LINK form `[label](@tool:…)` — a jump-to-output in the live UI; a static export can't jump, so it
+        // renders the label as plain text (the output itself is in the step trace, recoverable). Only the EMBED
+        // form `![…]` expands the output here.
+        if (!seg.embed) { buf += seg.label && seg.label.trim() ? seg.label.trim() : `@tool:${seg.id}`; continue; }
         const desc = seg.slot === "in" ? step.renderIn : step.renderOut;
         const raw = seg.slot === "in" ? (step.arguments ? pretty(step.arguments) : "") : (step.result ?? "");
         if (seg.fmt === "latex" && raw) { buf += ` $${raw}$ `; continue; }   // static export: keep raw math notation

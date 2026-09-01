@@ -1401,6 +1401,11 @@ html[data-surface="card"] .appr-btn.no:hover {
 .answer-rendered .tok-ref { position: relative; }
 /* The model's caption → a small caption under a block citation (the "reps"/"regions"/"totals & breakdown" labels). */
 .answer-rendered .tok-anno { font-size: 0.8em; color: var(--fg-faint); margin-top: 2px; padding-left: 8px; font-style: italic; }
+/* LINK-form citation `[label](@tool:…)` — a clickable jump to the output's source step (vs the `![…]` embed which
+   expands in place). Styled like an in-text link; the click scrolls to + pulses the step. */
+.answer-rendered .tok-link { color: var(--accent, #6366f1); text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.answer-rendered .tok-link:hover { text-decoration-thickness: 2px; }
+.answer-rendered .tok-link:focus-visible { outline: 2px solid var(--accent, #6366f1); outline-offset: 1px; border-radius: 2px; }
 /* The bottom-of-answer RESULT block (ResultBlock — the designated/auto-appended tool outputs, both surfaces). Its
    label is CHROME, not prose: muted + uppercase + tracked, so it reads as an extension-added section divider. */
 .card-result { margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--line, var(--border, rgba(128,128,128,.2))); }

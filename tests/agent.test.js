@@ -1075,6 +1075,36 @@ test("toolTokens: an opted-in python_exec that ERRORS mints NO token — even wh
     assert.ok(!res.answer || !/@tool:/.test(res.answer), "and no auto-append of the errored computation");
 });
 
+test("toolTokens OFF (default): NO `token` param on any tool schema, and NO token guidance in the system prompt", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("done")]) });
+    const py = world.ml.defineTool({ name: "python_exec", run: () => "x" });
+    const ex = world.ml.defineTool({ name: "exec", run: () => "x" });
+    await world.ml.agent("t", { tools: [py, ex] });   // toolTokens off (default)
+    const payload = world.runtimeCalls.find(c => c.payload && c.payload.tools).payload;
+    for (const t of payload.tools) assert.ok(!t.function.parameters?.properties?.token, `${t.function.name} must NOT expose a token param when tokens are off`);
+    const sys = payload.messages.find(m => m.role === "system")?.content || "";
+    assert.doesNotMatch(sys, /@tool:|SHOWING TOOL OUTPUTS/, "no token-feature text in the system prompt when off");
+});
+
+test("toolTokens ON: the CITABLE tools expose a `token` param + the system prompt carries the clause", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([reply("done")]) });
+    const py = world.ml.defineTool({ name: "python_exec", run: () => "x" });
+    await world.ml.agent("t", { tools: [py], toolTokens: true });
+    const payload = world.runtimeCalls.find(c => c.payload && c.payload.tools).payload;
+    const pyTool = payload.tools.find(t => t.function.name === "python_exec");
+    assert.ok(pyTool.function.parameters.properties.token, "python_exec exposes the token param when on");
+    assert.match(payload.messages.find(m => m.role === "system").content, /SHOWING TOOL OUTPUTS/, "the clause is in the prompt when on");
+});
+
+test("toolTokens OFF: passing token:true is a harmless NO-OP (no token minted, no outputs)", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: scriptedModel([toolCall("python_exec", { token: true }, "c1"), reply("done")]) });
+    const py = world.ml.defineTool({ name: "python_exec", run: () => ({ content: "df", render: { type: "python-out", df: { columns: ["x"], rows: [[1]] } } }) });
+    const res = await world.ml.agent("t", { tools: [py] });   // OFF — token:true is just an unknown arg
+    const msg = world.runtimeCalls.at(-1).payload.messages.find(m => m.tool_call_id === "c1");
+    assert.doesNotMatch(msg.content, /@tool:/, "token:true is ignored when the feature is off — no @tool line");
+    assert.ok(!res.outputs, "no structured outputs when off");
+});
+
 test("res.outputs: a surfaced DataFrame comes back as a { kind:'table', columns, rows } 2D matrix (headless scripting)", async () => {
     // python_exec is an auto-candidate, so a computed DataFrame the model didn't explicitly cite is auto-appended
     // to the answer — and res.outputs hands the CALLER the real 2D data, not a `[caption](@tool:…)` markdown string.

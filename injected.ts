@@ -720,7 +720,7 @@ class AgentHandle implements MlAgentHandle, AgentControl {
             if (toolTokens) {
                 toolset = toolset.map(t => CITABLE_TOOLS.has(t.name)
                     ? { ...t, parameters: { ...t.parameters, properties: { ...(t.parameters as { properties?: Record<string, unknown> }).properties,
-                        token: { type: "boolean", description: "Set true ONLY when this call's output is a result you'll CITE in your final answer — it mints an @tool:<id> you reference with a markdown link (the macro expands to this exact output for the user). Leave off for exploratory/intermediate steps." } } } }
+                        token: { type: "boolean", description: "Set true if you'll SHOW this call's output in your answer — it mints an @tool:<id> you embed with `![caption](@tool:<id>:out)` (expands to this exact output). Off for exploratory steps." } } } }
                     : t);
             }
             const byName = Object.fromEntries(toolset.map(t => [t.name, t]));
