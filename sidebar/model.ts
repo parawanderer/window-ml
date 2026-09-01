@@ -51,3 +51,12 @@ export function sessionProfile(s: Session): "utility" | "default" | null {
     const last = s.turns[s.turns.length - 1];
     return last ? turnProfile(last) : null;
 }
+
+// The ":latest" tag is implicit — normalise it off so a model id matches its resident/config form.
+export const normModel = (m: string): string => m.replace(/:latest$/, "");
+// The context window we last OBSERVED each model loaded with (from /api/ps). A model's window is a
+// property of the model, not of whether it's resident right now — so the usage gauge keeps measuring
+// occupancy after the model is evicted from VRAM instead of flipping to a different metric. Overwritten
+// every poll (a mid-run reload at a new num_ctx is picked up); live-resident always wins, this is only the
+// fallback while evicted (last-observed — can be stale, which is fine).
+export const seenContext = new Map<string, number>();

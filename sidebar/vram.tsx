@@ -1,0 +1,320 @@
+// Model / VRAM diagnostics — the server model-list fetch, the Ollama /api/ps VRAM monitor panel + its
+// polling, per-model load-state, backend-health probing, and the Python sandbox bench. A separate,
+// self-contained surface from the run views. Extracted from app.tsx.
+import { useState, useEffect, useRef } from "preact/hooks";
+import type { RenderDescriptor } from "../contract";
+import { fmtCtx, isBackendUnreachable } from "../contract";
+import { signal } from "@preact/signals";
+import {
+    config, models, ollamaIds, loadedModels, psError, vramOpen, backendError, rev, sessionMap,
+    sidebarOpen, view,
+} from "./store";
+import { truncate } from "./format";
+import { normModel, seenContext } from "./model";
+import { IconVram, IconEye, IconEyeOff, IconBench } from "./icons";
+import { RenderPanel } from "./render-panel";
+
+// Fetch the server's model list via the background worker (privileged fetch);
+// degrade silently if unreachable. Populates the datalists.
+export function fetchModels(): void {
+    chrome.runtime.sendMessage({ type: "LIST_MODELS", payload: {} }, (resp: any) => {
+        if (chrome.runtime.lastError || !resp || resp.error) return;
+        models.value = resp.data || [];
+        ollamaIds.value = resp.ollamaModels ?? null;   // null = provenance unknown (skip cloud detection)
+    });
+}
+
+
+// --- VRAM monitor ---
+export const VRAM_COLORS = ["#6366f1", "#22c55e", "#f59e0b", "#ec4899", "#06b6d4", "#a855f7", "#ef4444", "#84cc16"];
+export const colorFor = (name: string) => VRAM_COLORS[[...name].reduce((a, c) => a + c.charCodeAt(0), 0) % VRAM_COLORS.length];
+export const VRAM_HISTORY = 45, VRAM_POLL_MS = 2000;
+// Models the user has hidden from the totals/graph (session-only; a signal so it
+// survives VramPanel remounts). Immutable Set updates so the signal notifies.
+export const hiddenModels = signal<Set<string>>(new Set());
+export const toggleHidden = (model: string): void => {
+    const next = new Set(hiddenModels.value);
+    next.has(model) ? next.delete(model) : next.add(model);
+    hiddenModels.value = next;
+};
+
+// Poll Ollama's resident-model set (/api/ps) into the shared signals, for BOTH
+// the VRAM panel and the header status dot. Gated so it never hammers Ollama in
+// the background: only while the shell is slid open AND something needs it (the
+// panel is up, or a detail header — the only place a status dot shows).
+export function pollPs(): void {
+    if (!sidebarOpen.value) return;
+    if (!vramOpen.value && view.value.name !== "detail") return;
+    chrome.runtime.sendMessage({ type: "OLLAMA_PS", payload: {} }, (resp: any) => {
+        if (chrome.runtime.lastError || (resp && resp.error)) {
+            psError.value = (resp && resp.error) || chrome.runtime.lastError?.message || "unavailable";
+            loadedModels.value = []; return;
+        }
+        psError.value = null;
+        const loaded = resp.data || [];
+        // Remember each resident model's window (overwrite → tracks a mid-run reload).
+        for (const m of loaded) if (typeof m.contextLength === "number") seenContext.set(normModel(m.model), m.contextLength);
+        loadedModels.value = loaded;
+    });
+}
+
+// --- proactive backend-health probe (drives the offline banner + the HUD card's offline state) ---
+// A run/chat failure isn't the only way to learn the box is down — probe the CHAT backend DIRECTLY so a dead
+// box surfaces even before/without a run, and AUTO-RECOVERS when it's back. LIST_MODELS hits the configured
+// chatUrl (backend-agnostic; it throws a network error when unreachable, an HTTP/"no models" error when it's
+// up). A HANGING box (packets dropped, not refused) never calls back — so a no-RESPONSE within the window
+// ALSO counts as unreachable (the "stuck on Starting…" case the user hit). Sets/clears `backendError`.
+export const BACKEND_HEALTH_MS = 6000;          // probe cadence while the app is mounted
+export const BACKEND_HEALTH_TIMEOUT_MS = 6000;  // no response by here → treat as unreachable (a hanging box)
+let healthInFlight = false;
+export function pollBackendHealth(): void {
+    if (healthInFlight) return;   // one in flight at a time; the timeout guarantees it always settles
+    healthInFlight = true;
+    let settled = false;
+    const finish = (unreachable: string | null): void => {
+        if (settled) return;
+        settled = true; healthInFlight = false;
+        backendError.value = unreachable || "";
+    };
+    const timer = setTimeout(
+        () => finish(`Couldn't reach the server at ${config.value.chatUrl || "the configured URL"} — no response. Is it running?`),
+        BACKEND_HEALTH_TIMEOUT_MS);
+    try {
+        chrome.runtime.sendMessage({ type: "LIST_MODELS", payload: {} }, (resp: { error?: string } | undefined) => {
+            clearTimeout(timer);
+            const err = chrome.runtime.lastError?.message || resp?.error || "";
+            // Only a NETWORK-level failure means "the box is gone". An HTTP / "no models installed" error means
+            // the server ANSWERED → reachable (clear). Any data likewise → reachable.
+            finish(err && isBackendUnreachable(err) ? err : null);
+        });
+    } catch { clearTimeout(timer); finish(null); }   // extension context gone → don't nag
+}
+
+// "expires in Xs/Xm" from an /api/ps expires_at ISO stamp (Ollama's TTL).
+export function expiresIn(expiresAt: string | null): string | null {
+    if (!expiresAt) return null;
+    const ms = new Date(expiresAt).getTime() - Date.now();
+    if (isNaN(ms) || ms <= 0) return null;
+    const s = Math.round(ms / 1000);
+    return s < 90 ? `expires in ${s}s` : `expires in ${Math.round(s / 60)}m`;
+}
+
+// Live keep-alive countdown from an /api/ps expires_at stamp, as a compact
+// two-unit d/h/m/s string ("2d 3h", "5m 12s", "44s") for the VRAM row. Ollama
+// evicts a model once this hits zero; each use resets it (Ollama recomputes
+// expires_at). Returns null when there's no stamp or it's already elapsed.
+export function fmtTTL(expiresAt: string | null): string | null {
+    if (!expiresAt) return null;
+    const ms = new Date(expiresAt).getTime() - Date.now();
+    if (isNaN(ms) || ms <= 0) return null;
+    let s = Math.floor(ms / 1000);
+    const d = Math.floor(s / 86400); s -= d * 86400;
+    const h = Math.floor(s / 3600); s -= h * 3600;
+    const m = Math.floor(s / 60); s -= m * 60;
+    if (d) return `${d}d ${h}h`;
+    if (h) return `${h}h ${m}m`;
+    if (m) return `${m}m ${s}s`;
+    return `${s}s`;
+}
+
+// Live model-load state for the header's "responds-next" model, from /api/ps
+// (resident) + the installed list + our own in-flight flag. Five states, detail
+// in the tooltip (see SIDEBAR_UI_FEEDBACK.md). Reads signals directly so it
+// updates on each poll; model/inFlight arrive as plain props.
+export type LoadState = "loaded" | "cold" | "inflight" | "unavailable" | "cloud" | "unknown";
+export function modelLoadState(model: string, inFlight: boolean): { state: LoadState; tip: string } {
+    const ps = psError.value ? null : loadedModels.value;
+    // Match the FULL tagged name (only normalising :latest). A base-name match
+    // ("gemma4") picks the wrong variant when a family has several tags loaded
+    // — e.g. gemma4:31b would grab gemma4:e2b's (CPU, no-VRAM) row.
+    const norm = (m: string) => m.replace(/:latest$/, "");
+    const resident = ps?.find(m => m.model === model || norm(m.model) === norm(model)) || null;
+    if (inFlight) return { state: "inflight", tip: resident ? "Generating a response…" : "Loading the model into VRAM…" };
+    if (psError.value) return { state: "unknown", tip: "Load state unknown — no Ollama backend responding." };
+    if (ps == null) return { state: "unknown", tip: "Checking load state…" };
+    if (resident) {
+        // size_vram (vramGB) vs size (sizeGB) → fully-CPU / partial-offload / full-GPU.
+        const v = resident.vramGB, sz = resident.sizeGB;
+        const where = !v
+            ? (sz ? `on CPU (${sz} GB RAM)` : "on CPU (RAM)")
+            : (sz && v < sz - 0.1 ? `${v} of ${sz} GB in VRAM — partial CPU offload (slower)` : `${v} GB VRAM`);
+        const bits = [where, expiresIn(resident.expiresAt)].filter(Boolean);
+        return { state: "loaded", tip: `Loaded — ${bits.join(" · ")}.` };
+    }
+    // Not resident. An external (non-Ollama) model has no local load state at all.
+    const listed = models.value.includes(model);
+    const ollama = ollamaIds.value;   // null = provenance unknown → don't guess cloud
+    if (ollama && listed && !ollama.includes(model))
+        return { state: "cloud", tip: "External API model — runs remotely; no local VRAM or load state." };
+    if (listed) return { state: "cold", tip: "Idle — installed but not resident; loads on next use." };
+    if (models.value.length) return { state: "unavailable", tip: "Unavailable — the server doesn't list this model (not installed?)." };
+    return { state: "unknown", tip: "Load state unknown." };
+}
+
+
+export function ModelStatusDot({ model, inFlight }: { model: string; inFlight: boolean }) {
+    const { state, tip } = modelLoadState(model, inFlight);
+    return (
+        <span class="tt">
+            <span class={`dot ${state}`} />
+            <span class="tt-pop left" role="tooltip">{tip}</span>
+        </span>
+    );
+}
+
+// Live VRAM: a sparkline of total usage over time + a per-model legend with
+// evict controls. Reads the shared OLLAMA_PS signals (polled at App level while
+// the sidebar is open) and accumulates the sparkline history locally.
+export function VramPanel() {
+    const loaded = loadedModels.value;
+    const hidden = hiddenModels.value;
+    const err = psError.value;
+    // Per-model snapshots (not pre-summed totals) so hiding/showing a model
+    // redraws the WHOLE line against the current visibility set, not just new
+    // points. (This is also the per-model VRAM log panel-v2 will build on.)
+    const [history, setHistory] = useState<Record<string, number>[]>([]);
+    const sumVisible = (snap: Record<string, number>) =>
+        Object.entries(snap).reduce((s, [m, v]) => s + (hidden.has(m) ? 0 : v), 0);
+    // Tick once a second so the TTL countdowns tick down smoothly between the
+    // slower /api/ps polls (VRAM_POLL_MS). Cleared on unmount (the panel is only
+    // mounted while open) so it never keeps a jsdom test window alive.
+    const [, tick] = useState(0);
+    useEffect(() => { const id = setInterval(() => tick(t => t + 1), 1000); return () => clearInterval(id); }, []);
+    useEffect(() => { pollPs(); }, []);   // immediate poll on open (don't wait for the interval)
+    useEffect(() => {
+        if (!loaded) return;
+        const snap: Record<string, number> = {};
+        for (const m of loaded) snap[m.model] = m.vramGB || 0;
+        setHistory(h => [...h, snap].slice(-VRAM_HISTORY));
+    }, [loaded]);
+
+    const evict = (model?: string) =>
+        chrome.runtime.sendMessage({ type: "OLLAMA_UNLOAD", payload: model ? { model } : {} }, () => pollPs());
+
+    if (err) return <div class="vram"><div class="vram-empty">VRAM unavailable — no Ollama backend.</div></div>;
+
+    // Total is the CURRENT visible resident set — read it straight from `loaded`,
+    // not the sparkline history (which lags a render and resets to 0 on reopen).
+    const total = loaded ? loaded.reduce((s, m) => s + (hidden.has(m.model) ? 0 : (m.vramGB || 0)), 0) : 0;
+    // Stable order so rows don't reshuffle as models load/evict.
+    const rows = loaded ? [...loaded].sort((a, b) => a.model.localeCompare(b.model)) : [];
+    // Recompute every point's visible-total each render, so toggling redraws the
+    // full line retroactively (not just going forward).
+    const series = history.map(sumVisible);
+    const W = 240, H = 34;
+    const yMax = Math.max(1, ...series) * 1.15;
+    const pts = series.length > 1
+        ? series.map((v, i) => `${((i / (series.length - 1)) * W).toFixed(1)},${(H - (v / yMax) * H).toFixed(1)}`).join(" ")
+        : "";
+    return (
+        <div class="vram">
+            <div class="vram-head">
+                <span class="vram-total">{total.toFixed(1)} GB in use</span>
+                <span class="sp" />
+                {rows.length ? <button class="vram-free" onClick={() => evict()}>Free VRAM</button> : null}
+            </div>
+            <svg class="vram-spark" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
+                {pts ? <polyline points={pts} fill="none" stroke="var(--accent)" stroke-width="1.5" /> : null}
+            </svg>
+            {rows.length
+                ? rows.map(m => {
+                    const off = hidden.has(m.model);
+                    return (
+                        <div class={`vram-row${off ? " off" : ""}`} key={m.model}>
+                            <button class="vram-dot" style={{ background: off ? "var(--fg-faint)" : colorFor(m.model) }}
+                                title={off ? "Show in totals" : "Hide from totals"} onClick={() => toggleHidden(m.model)} />
+                            <span class="vram-name">{m.model}</span>
+                            {m.contextLength ? (
+                                <span class="tt vram-ctx">{fmtCtx(m.contextLength)}
+                                    <span class="tt-pop left" role="tooltip">Loaded with a {m.contextLength.toLocaleString()}-token context window. Ollama preallocates the KV cache for the FULL window, even when your prompts are short. Load with a smaller <code>num_ctx</code> to reclaim it.</span>
+                                </span>
+                            ) : null}
+                            {fmtTTL(m.expiresAt) ? (
+                                <span class="tt vram-ttl">{fmtTTL(m.expiresAt)}
+                                    <span class="tt-pop left" role="tooltip">Keep-alive TTL — Ollama evicts this model from {m.vramGB ? "VRAM" : "memory"} when the countdown reaches zero (expires {new Date(m.expiresAt!).toLocaleTimeString()}). Each use resets it. Set <code>keep_alive</code> to change how long it lingers.</span>
+                                </span>
+                            ) : null}
+                            <span class="sp" />
+                            <span class="vram-gb">{m.vramGB != null ? `${m.vramGB} GB` : m.sizeGB != null ? `${m.sizeGB} GB (CPU)` : "?"}</span>
+                            <button class="tt vram-x" aria-label="Evict from VRAM" onClick={() => evict(m.model)}>✕<span class="tt-pop" role="tooltip">Evict from VRAM</span></button>
+                        </div>
+                    );
+                })
+                : <div class="vram-empty">Nothing loaded.</div>}
+        </div>
+    );
+}
+
+// Shape a raw PYTHON_EXEC response into a `python-out` descriptor for RenderPanel.
+export function pyBenchDescriptor(r: { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] } }): RenderDescriptor {
+    const stdout = r.stdout || undefined;
+    if (!r.ok) return { type: "python-out", stdout, error: r.error || "error" };
+    if (r.table) return { type: "python-out", stdout, df: r.table };   // a returned DataFrame → real table
+    const v = r.value;
+    if (typeof v === "string" && /^data:image\//.test(v)) return { type: "python-out", stdout, image: v };
+    const value = v == null ? undefined : (typeof v === "string" ? v : JSON.stringify(v, null, 2));
+    return { type: "python-out", stdout, value };
+}
+// A standalone Python workbench: run scripts against the SAME sandbox the python_exec tool uses
+// (offscreen → worker → Pyodide) with a readonly/full mode selector, for debugging. Code-only — no
+// page image/tables (the sidebar iframe can't screenshot the page). The sidebar already talks to the
+// background directly (LIST_MODELS/OLLAMA_PS), so this is just one more message. Script + mode persist
+// in localStorage so they survive navigation. A full-mode run here is USER-initiated in the trusted
+// UI, so it just runs — no approval prompt (you are the approver).
+// Guarded localStorage — the bench persists its script/mode there, but an opaque origin (jsdom, or a
+// locked-down context) throws SecurityError on access, so degrade to no-persist instead of crashing.
+export const lsGet = (k: string): string | null => { try { return localStorage.getItem(k); } catch { return null; } };
+export const lsSet = (k: string, v: string): void => { try { localStorage.setItem(k, v); } catch { /* opaque origin — skip */ } };
+export function PythonBench() {
+    const [code, setCode] = useState(() => lsGet("ml_bench_code") ?? "import numpy as np\nreturn int(np.arange(10).sum())");
+    const [mode, setMode] = useState<"readonly" | "full">(() => (lsGet("ml_bench_mode") === "full" ? "full" : "readonly"));
+    const [running, setRunning] = useState(false);
+    const [result, setResult] = useState<{ ok: boolean; value?: unknown; stdout: string; error?: string } | null>(null);
+    const taRef = useRef<HTMLTextAreaElement>(null);
+    const run = () => {
+        if (running || !code.trim()) return;
+        setRunning(true); setResult(null);
+        lsSet("ml_bench_code", code); lsSet("ml_bench_mode", mode);
+        try {
+            chrome.runtime.sendMessage({ type: "PYTHON_EXEC", payload: { code, hardened: mode === "readonly", image: null, tables: null } },
+                (resp: any) => {
+                    // The background wraps the offscreen result: { data: PyResult } | { error }.
+                    const r = resp?.data ?? (resp?.error ? { ok: false, stdout: "", error: resp.error } : null);
+                    setResult(r || { ok: false, stdout: "", error: "No response from the sandbox." });
+                    setRunning(false);
+                });
+        } catch (e) { setResult({ ok: false, stdout: "", error: String(e) }); setRunning(false); }
+    };
+    // Tab inserts spaces (don't escape the field); Cmd/Ctrl+Enter runs.
+    const onKey = (e: KeyboardEvent) => {
+        const ta = taRef.current;
+        if (e.key === "Tab" && ta) {
+            e.preventDefault();
+            const s = ta.selectionStart, en = ta.selectionEnd;
+            setCode(code.slice(0, s) + "    " + code.slice(en));
+            requestAnimationFrame(() => { ta.selectionStart = ta.selectionEnd = s + 4; });
+        } else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); run(); }
+    };
+    const outD = result ? pyBenchDescriptor(result) : null;
+    const empty = result?.ok && !result.stdout && result.value == null;
+    return (
+        <div class="bench">
+            <textarea ref={taRef} class="bench-code code" spellcheck={false} value={code} onInput={e => setCode((e.target as HTMLTextAreaElement).value)} onKeyDown={onKey} placeholder="return 6 * 7" />
+            <div class="bench-bar">
+                <span class="tt bench-info" aria-label="about the bench">ⓘ<span class="tt-pop wrap left" role="tooltip">Runs against the SAME sandbox python_exec uses (offscreen → worker → Pyodide). Code-only — no page image/tables. `return` a value (or end with a bare expression, Jupyter-style); print() is captured. 15s cap.</span></span>
+                <label class="bench-mode">mode
+                    <select value={mode} onChange={e => setMode((e.target as HTMLSelectElement).value === "full" ? "full" : "readonly")}>
+                        <option value="readonly">readonly (sandboxed)</option>
+                        <option value="full">full (network)</option>
+                    </select>
+                </label>
+                <span class="sp" />
+                <span class="bench-kbd dim">⌘/Ctrl+↵</span>
+                <button class="bench-run" disabled={running || !code.trim()} onClick={run}>{running ? "running…" : "Run"}</button>
+            </div>
+            {outD
+                ? <div class="bench-out"><div class="io-label">Out:</div>{empty ? <span class="dim">(ran — no output, no return)</span> : <RenderPanel d={outD} />}</div>
+                : running ? <div class="bench-out dim">running…</div> : null}
+        </div>
+    );
+}
