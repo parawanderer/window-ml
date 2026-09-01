@@ -86,3 +86,13 @@ export const sidebarOpen = signal(false);                 // is the shell slid o
 export const backendError = signal("");
 export const loadedModels = signal<LoadedModel[] | null>(null);   // OLLAMA_PS resident set (null until first poll)
 export const psError = signal<string | null>(null);               // OLLAMA_PS failure (no Ollama backend)
+
+// --- cross-surface HUD signals (read by the answer-render provenance jump AND the HUD card) ---
+// "Show work" open-state, keyed by the run's HASH (not a global boolean). A new run's hash won't match, so
+// its trace is COLLAPSED by default with NO post-render reset — the reset-as-effect was why a fast/quiet run
+// first painted with the PREVIOUS run's trace expanded (tall) then collapsed (the "opens huge then shrinks"
+// glitch). "" = nothing open. Also naturally scopes to the active run once the card has tabs.
+export const cardShowWorkHash = signal<string>("");
+// A provenance click (a @tool citation → its source step) sets this to the target step's `seq`, so the per-task
+// BLOCK that holds it force-opens even if collapsed (scrollToStepSeq). Cleared shortly after the scroll.
+export const revealSeq = signal<number | null>(null);
