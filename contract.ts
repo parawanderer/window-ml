@@ -1402,7 +1402,10 @@ export interface DebugAgentStep extends DebugBase {
  *  `byModel` breaks the aggregate down per vision model, for chat_metadata's "which model cost what". */
 export interface SubcallUsageByModel { model: string; prompt: number; completion: number; calls: number; }
 export interface SubcallUsage { prompt: number; completion: number; calls: number; byModel?: SubcallUsageByModel[]; }
-export interface DebugAgentResult extends DebugBase { kind: "agent-result"; summary: string; steps: number; hitCap: boolean; cancelled?: boolean; error?: string | null; answerMedia?: AnswerMedia[]; }
+export interface DebugAgentResult extends DebugBase { kind: "agent-result"; summary: string; steps: number; hitCap: boolean; cancelled?: boolean; error?: string | null; answerMedia?: AnswerMedia[];
+    /** the curated answer SET resolved to markdown (AgentResult.answer) — the card renders it when it carries a
+     *  `@tool:` citation (a designated tool output, e.g. a table/image), which the plain summary can't show. */
+    answer?: string; }
 
 /** A handle raised the step cap mid-run (a.maxSteps = N) — the sidebar/HUD updates its "STEP x/N" display. */
 export interface DebugAgentCap extends DebugBase { kind: "agent-cap"; maxSteps: number; }

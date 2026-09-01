@@ -42,6 +42,7 @@ export interface Session {
     steps?: AgentStep[];
     summary?: string;
     answerMedia?: AnswerMedia[];   // serialized visuals of `answer`-designated elements → the HUD completion card (NOT the debug sidebar)
+    answer?: string;   // the curated answer SET resolved to markdown — the card renders it when it cites a @tool output
     error?: string;   // a FATAL run error (model call failed / unexpected throw) — distinct from a tool's Error result
     hitCap?: boolean;
     cancelled?: boolean;   // the run was aborted (HUD "Cancel agent run" / opts.signal) — partial transcript kept

@@ -55,27 +55,36 @@ interface Sink {
 // disclosure keeps the model's LITERAL answer (links unresolved) recoverable. No tokens → just the prose.
 function writeAnswer(text: string, s: Session, d: Sink, muted = false): void {
     if (!text || !hasTokens(text)) { d.prose(text || "(no answer)", muted); return; }
+    // Accumulate prose + INLINE (short-scalar / latex) citations into a running paragraph; FLUSH it before a
+    // BLOCK citation (a table/image/code) so blocks stand alone while inline values flow in the sentence.
+    let buf = "";
+    const flush = () => { if (buf.trim()) d.prose(buf); buf = ""; };
     for (const seg of splitAnswer(text)) {
-        if (seg.kind === "prose") { if (seg.text.trim()) d.prose(seg.text); continue; }
+        if (seg.kind === "prose") { buf += seg.text; continue; }
         const step = resolveTokenStep(seg.id, s.steps || [], s.hash) as AgentStep | null;
-        if (!step) { d.note(`⟨unresolved @tool:${seg.id} — no such step in this run⟩`); continue; }
-        emitTokenOut(step, seg.slot, d);
+        if (!step) { buf += ` ⟨unresolved @tool:${seg.id}⟩ `; continue; }
+        const desc = seg.slot === "in" ? step.renderIn : step.renderOut;
+        const raw = seg.slot === "in" ? (step.arguments ? pretty(step.arguments) : "") : (step.result ?? "");
+        if (seg.fmt === "latex" && raw) { buf += ` $${raw}$ `; continue; }   // static export: keep raw math notation
+        if (desc && ["image", "look", "table", "code", "python-in", "python-out"].includes(desc.type)) { flush(); emitTokenBlock(step, seg.slot, d); continue; }
+        if (raw && (raw.length > 80 || /\n/.test(raw))) { flush(); d.code(raw); continue; }   // long → its own block
+        buf += "`" + raw + "`";   // short scalar → inline code, flows in the sentence
     }
+    flush();
     d.details("Answer · raw (as the model wrote it)", () => d.prose(text));
 }
 
-// Inline a cited step's In/Out as the actual output (a data table / image / code), else the raw text it saw.
-function emitTokenOut(step: AgentStep, slot: "in" | "out", d: Sink): void {
+// A BLOCK citation: the cited step's In/Out as a real table / image / code.
+function emitTokenBlock(step: AgentStep, slot: "in" | "out", d: Sink): void {
     const desc = slot === "in" ? step.renderIn : step.renderOut;
     const base = `tok-${step.step}`;
     if (desc?.type === "image") { d.image(desc.src, base, desc.label || `step ${step.step}`); return; }
     if (desc?.type === "look") { d.image(desc.image, base, desc.label || "look"); return; }
     if (desc?.type === "table") { d.table(desc.columns, desc.rows); return; }
     if (desc?.type === "code") { d.code(desc.format ? beautifyJs(desc.text) : desc.text, desc.lang || "javascript"); return; }
+    if (desc?.type === "python-in") { d.code(desc.code, "python"); return; }   // just the code, not the input table
     if (desc?.type === "python-out" && desc.df) { d.table(desc.df.columns, desc.df.rows); return; }
     if (desc?.type === "python-out" && desc.image) { d.image(desc.image, base, "returned image"); return; }
-    // Fallback: the CLEAN text for that slot — args for :in, the plain result for :out (NOT modelResult, whose
-    // appended token line would recurse into the resolved output). The raw-view disclosure has the full model text.
     const raw = slot === "in" ? (step.arguments ? pretty(step.arguments) : "") : (step.result ?? "");
     if (raw) d.code(raw);
 }

@@ -142,6 +142,7 @@ function onDebug(ev: MlDebugEvent): void {
         // REPLACE (not merge): each turn's result carries THIS turn's answer media, so a new round that
         // designates nothing CLEARS the old answer (resets to 0) — the card never shows a stale prior answer.
         s.answerMedia = (ev.answerMedia && ev.answerMedia.length) ? ev.answerMedia : undefined;   // HUD card only
+        s.answer = ev.answer || undefined;   // the curated answer-set markdown → the card renders it when it cites a @tool
         s.status = status; s.lastTs = ev.ts;
         // A finished run has no in-flight step: clear any lingering pending/awaiting flags so a straggler START
         // that arrived BEFORE this result (a background run's late tool fan) doesn't render a phantom "running…"
@@ -641,11 +642,12 @@ function CopyModel({ model }: { model: string }) {
 // timestamp) over the body (markdown ⇄ raw, collapsible), with optional thinking
 // and sources. No "assistant"/"answer" word — the header controls carry the
 // meaning; `label` appears only for an exceptional state (e.g. an agent step-cap).
-function ReplyBubble({ content, status, model, profile, ts, reasoning = null, sources = null, error, label, capped, initialRaw, resumeCap, streaming }: {
+function ReplyBubble({ content, status, model, profile, ts, reasoning = null, sources = null, error, label, capped, initialRaw, resumeCap, streaming, tokenRun }: {
     content: string; status: Status; model: string | null; profile: "utility" | "default" | null; ts: number;
     reasoning?: string | null; sources?: unknown[] | null; error?: string; label?: string; capped?: boolean; initialRaw?: boolean;
     resumeCap?: { hash: string; steps: number };   // a step-capped run → a "Continue (+N steps)" button (resume, fresh budget)
     streaming?: boolean;   // the answer is STREAMING live — same bubble as the finished reply (model chip + content) with a live pulse, no copy/raw/stamp yet
+    tokenRun?: Session;   // an agent ANSWER: resolve its @tool citations against this run (chat replies pass none). The existing [raw] shows the literal markdown.
 }) {
     const [showRaw, setShowRaw] = useState(!!initialRaw);
     const [collapsed, setCollapsed] = useState(false);
@@ -694,7 +696,9 @@ function ReplyBubble({ content, status, model, profile, ts, reasoning = null, so
                         ? <div class="asst-collapsed" onClick={() => setCollapsed(false)}>{preview!.text}{preview!.more ? <span class="more"> …</span> : null}</div>
                         : showRaw
                             ? <Code text={content} lang="markdown" />
-                            : <div class="md" dangerouslySetInnerHTML={{ __html: markdown(content, { math: true }) }} />}
+                            : tokenRun && hasTokens(content)
+                                ? <AnswerBody text={content} run={tokenRun} cls="asst-answer" />
+                                : <div class="md" dangerouslySetInnerHTML={{ __html: markdown(content, { math: true }) }} />}
             {/* A step-capped run stopped mid-task — one click resumes it with a fresh N-step budget (no need to
                 type a follow-up). Resuming re-enters the SAME run by hash from its stored state. */}
             {resumeCap && !collapsed
@@ -1057,54 +1061,81 @@ function RenderPanel({ d }: { d: RenderDescriptor }) {
     }
 }
 
-// Scroll the transcript to the step that minted a @tool token + pulse it green — the provenance click.
-// No-op when the step row isn't rendered in this view (e.g. a collapsed run); the hover chip still names it.
-function scrollToStepSeq(seq?: number): void {
+// Scroll the transcript to the step that minted a @tool token + pulse it green — the provenance click. In the
+// HUD it first EXPANDS "Show work" (the step row is otherwise not rendered), then scrolls once it's on screen.
+function scrollToStepSeq(seq?: number, hash?: string): void {
     if (seq == null) return;
-    const el = document.querySelector(`[data-astep-seq="${seq}"]`);
-    if (!el) return;
-    el.scrollIntoView({ block: "center", behavior: "smooth" });
-    el.classList.add("astep-pulse");
-    setTimeout(() => el.classList.remove("astep-pulse"), 1400);
+    if (hash) cardShowWorkHash.value = hash;   // open the HUD "Show work" so the step exists to scroll to
+    const doScroll = (): boolean => {
+        const el = document.querySelector(`[data-astep-seq="${seq}"]`);
+        if (!el) return false;
+        el.scrollIntoView({ block: "center", behavior: "smooth" });
+        el.classList.add("astep-pulse");
+        setTimeout(() => el.classList.remove("astep-pulse"), 1400);
+        return true;
+    };
+    if (!doScroll()) requestAnimationFrame(() => requestAnimationFrame(() => { doScroll(); }));   // after Show work paints
 }
 
-// One embedded @tool reference in an answer, resolved to the step it cites. Renders that step's In/Out
-// descriptor (RenderPanel) — the ACTUAL output the model saw — with a provenance chip (deterministic ·
-// step N · tool) and click-to-step. A token that matches no step (hallucinated / foreign) → a visible
-// "unresolved" chip, never a crash. A resolvable step with an empty slot → the raw args/result text.
+// A JSON value → pretty-printed, so a computed dict/list reads as a block instead of one dense line; null if it
+// isn't JSON.
+const tryPrettyJson = (t: string): string | null => {
+    const s = (t || "").trim();
+    if (!(s.startsWith("{") || s.startsWith("["))) return null;
+    try { const v = JSON.parse(s); if (v && typeof v === "object") return JSON.stringify(v, null, 2); } catch { /* not json */ }
+    return null;
+};
+
+// A FOCUSED, answer-appropriate render of a cited slot: the CODE for :in, the table/image/value for :out — NOT
+// the full tool-step In/Out render (which carries debug chrome, e.g. python's input table). Reuses RenderPanel
+// ONLY for pure data (image/table/elements), so the tool-step rendering is untouched (the constraint).
+function tokenRender(d: RenderDescriptor | undefined, rawText: string): { node: ComponentChildren; block: boolean } {
+    switch (d?.type) {
+        case "image": case "table": case "elements": return { node: <RenderPanel d={d} />, block: true };
+        case "look": return { node: <ClickableImg src={d.image} alt={d.label || "look"} />, block: true };
+        case "code": return { node: <Code text={d.text} lang={d.lang} format={d.format} />, block: true };
+        case "python-in": return { node: <Code text={d.code} lang="python" />, block: true };   // just the code, not the input table
+        case "python-out":
+            if (d.df) return { node: <RenderTable columns={d.df.columns} rows={d.df.rows} />, block: true };
+            if (d.image) return { node: <ClickableImg src={d.image} alt="output" />, block: true };
+            rawText = d.value ?? d.stdout ?? rawText; break;
+    }
+    const j = tryPrettyJson(rawText);
+    if (j) return { node: <Code text={j} lang="json" />, block: true };
+    const block = !!rawText && (rawText.length > 80 || /\n/.test(rawText));
+    return { node: block ? <Code text={rawText} lang="text" /> : <code class="tok-val">{rawText}</code>, block };
+}
+
+// One embedded @tool citation, resolved to the step it cites — rendered as the ACTUAL (focused) output, with a
+// caption (the model's link text) and a provenance click (deterministic; opens "Show work" at that step + green
+// pulse). An unresolvable id → a visible chip, never a crash.
 function TokenRef({ seg, run }: { seg: Extract<import("../answer-tokens").AnswerSegment, { kind: "token" }>; run: Session }) {
     const step = resolveTokenStep(seg.id, run.steps || [], run.hash) as AgentStep | null;
     if (!step) return <span class="tok-ref tok-unresolved" title={`No step in this run produced @tool:${seg.id} — the model may have invented it.`}>⟨unresolved @tool:{seg.id}⟩</span>;
     const d = seg.slot === "in" ? step.renderIn : step.renderOut;
-    // Clean fallback text: args for :in, the plain result for :out — NOT modelResult (its appended token line
-    // would recurse into the citation). The raw-view toggle above still shows the model's literal answer.
     const rawText = seg.slot === "in" ? (step.arguments ? pretty(step.arguments) : "") : (step.result ?? "");
-    const chip = `deterministic · step ${step.localStep ?? step.step} · ${step.tool || "tool"} (@tool:${seg.id}:${seg.slot})`;
-    return <span class="tok-ref" title={chip} role="button" tabIndex={0}
-        onClick={() => scrollToStepSeq(step.seq)} onKeyDown={(e) => { if (e.key === "Enter") scrollToStepSeq(step.seq); }}>
-        {d ? <RenderPanel d={d} /> : <Code text={rawText} lang="text" />}
-    </span>;
+    const tip = `Click to see the exact operation that produced this — step ${step.localStep ?? step.step} · ${step.tool || "tool"}`;
+    const jump = () => scrollToStepSeq(step.seq, run.hash);
+    if (seg.fmt === "latex" && rawText)   // render the cited value as math
+        return <span class="tok-ref tok-inline" title={tip} role="button" tabIndex={0} onClick={jump} onKeyDown={(e) => e.key === "Enter" && jump()} dangerouslySetInnerHTML={{ __html: markdown(`$${rawText}$`, { math: true }) }} />;
+    const { node, block } = tokenRender(d, rawText);
+    // The model's link text → a caption on a block citation (the "reps"/"regions" labels).
+    const anno = block && seg.label && seg.label.trim() && seg.label.trim() !== rawText.trim() ? <div class="tok-anno">{seg.label}</div> : null;
+    return <span class={`tok-ref ${block ? "tok-block" : "tok-inline"}`} title={tip} role="button" tabIndex={0}
+        onClick={jump} onKeyDown={(e) => { if (e.key === "Enter") jump(); }}>{node}{anno}</span>;
 }
 
-// The agent's final ANSWER, with any `@tool:<id>` citations RESOLVED to the actual tool output they
-// reference (RenderPanel), inline in the prose. A rendered⇄raw toggle keeps the model's LITERAL text
-// (links unresolved) always available — the answer's own version of the tool In/Out raw-view rule. No
-// tokens → just the markdown, no toggle.
+// The agent's final ANSWER, with @tool citations RESOLVED to the actual (focused) tool output inline. NO toggle
+// — the HUD is a minimal surface; the raw markdown stays available in the DevTools bubble's [raw] and the
+// export's disclosure. No tokens → plain markdown.
 function AnswerBody({ text, run, cls = "card-answer" }: { text: string; run: Session; cls?: string }) {
-    const [showRaw, setShowRaw] = useState(false);
     const mdHtml = (t: string) => ({ __html: markdown(t, { math: true }) });
+    // Between citations: strip a lone wrapping <p> so an inline citation flows in the same line.
+    const proseHtml = (t: string) => { const h = markdown(t, { math: true }); const m = h.match(/^<p>([\s\S]*)<\/p>\s*$/); return { __html: m ? m[1] : h }; };
     if (!hasTokens(text)) return <div class={`${cls} md`} dangerouslySetInnerHTML={mdHtml(text)} />;
-    return <div class={cls}>
-        <div class="answer-toggle io-toggle">
-            <span class="tt"><button class={showRaw ? "" : "on"} onClick={() => setShowRaw(false)}>rendered</button><span class="tt-pop left" role="tooltip">Tool citations resolved to the actual output.</span></span>
-            <span class="tt"><button class={showRaw ? "on" : ""} onClick={() => setShowRaw(true)}>raw</button><span class="tt-pop left" role="tooltip">The model's literal answer — exactly what it wrote.</span></span>
-        </div>
-        {showRaw
-            ? <div class="md" dangerouslySetInnerHTML={mdHtml(text)} />
-            : <div class="md answer-rendered">{splitAnswer(text).map((seg, i) => seg.kind === "prose"
-                ? <span key={i} dangerouslySetInnerHTML={mdHtml(seg.text)} />
-                : <TokenRef key={i} seg={seg} run={run} />)}</div>}
-    </div>;
+    return <div class={`${cls} md answer-rendered`}>{splitAnswer(text).map((seg, i) => seg.kind === "prose"
+        ? <span key={i} dangerouslySetInnerHTML={proseHtml(seg.text)} />
+        : <TokenRef key={i} seg={seg} run={run} />)}</div>;
 }
 
 // "Sent to the model" — what a tool fed straight INTO the model's context (locate's snap-inject: a
@@ -1705,7 +1736,7 @@ function AgentRunView({ s }: { s: Session }) {
     const answer = (a: NonNullable<Session["answers"]>[number], key: string) =>
         a.error
             ? <ReplyBubble key={key} content="" status="err" model={s.model} profile={sessionProfile(s)} ts={a.ts} error={a.error} label="run failed" />
-            : <ReplyBubble key={key} content={a.text} status={a.status} model={s.model} profile={sessionProfile(s)} ts={a.ts}
+            : <ReplyBubble key={key} content={a.text} status={a.status} model={s.model} profile={sessionProfile(s)} ts={a.ts} tokenRun={s}
                 label={a.cancelled ? "cancelled" : a.hitCap ? "stopped (step cap)" : undefined} capped={a.hitCap || a.cancelled}
                 // Only the LATEST answer, and only a step-cap stop (not a cancel/error), offers Continue — resuming
                 // an old buried answer would be confusing, and a live run has nothing to resume.
@@ -3475,6 +3506,10 @@ function CardApp() {
                             {/* answer-designated element visuals — the user-facing deliverable (HUD-only; the debug
                                 sidebar deliberately doesn't render these). Click to lightbox. */}
                             {run.answerMedia && run.answerMedia.length ? <AnswerMediaGallery media={run.answerMedia} /> : null}
+                            {/* The curated answer SET, but ONLY when it designates a tool output (a @tool citation —
+                                a table/image the plain summary can't render); a text-only set would just echo the
+                                summary. AnswerBody resolves the citation to the real output. */}
+                            {run.answer && hasTokens(run.answer) ? <div class="card-result"><div class="io-label">Result</div><AnswerBody text={run.answer} run={run} /></div> : null}
                             {/* Step-capped stop → one click resumes with a fresh N-step budget (no need to type
                                 a follow-up in the composer). Not shown for a cancel/error. */}
                             {run.hitCap && !run.cancelled

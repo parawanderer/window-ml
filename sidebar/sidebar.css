@@ -1390,17 +1390,19 @@ html[data-surface="card"] .appr-btn.no:hover {
 .perm-ok { color: var(--ok); font-weight: 600; }
 
 /* ---- @tool token citations in an answer (AnswerBody / TokenRef) ---- */
-/* A resolved citation: the actual tool output rendered inline, subtly marked as deterministic + clickable. */
-.answer-rendered .tok-ref { display: block; margin: 6px 0; padding-left: 8px; border-left: 2px solid var(--ok);
-    cursor: pointer; border-radius: 2px; }
+/* A resolved citation: the actual tool output, subtly marked as deterministic + clickable. Block for a
+   table/image/code; inline for a short cited value so the prose flows around it. */
+.answer-rendered .tok-ref { cursor: pointer; border-radius: 2px; }
+.answer-rendered .tok-block { display: block; margin: 6px 0; padding-left: 8px; border-left: 2px solid var(--ok); }
+.answer-rendered .tok-inline { border-bottom: 1px dashed var(--ok); }
+.answer-rendered .tok-inline .tok-val { background: color-mix(in srgb, var(--ok) 12%, transparent); padding: 0 3px; border-radius: 3px; }
 .answer-rendered .tok-ref:hover { background: color-mix(in srgb, var(--ok) 10%, transparent); }
 .answer-rendered .tok-ref:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* The model's link text → a small caption under a block citation (the "reps"/"regions" labels). */
+.answer-rendered .tok-anno { font-size: 0.8em; color: var(--fg-faint); margin-top: 2px; padding-left: 8px; font-style: italic; }
 /* A hallucinated / unresolvable token — visible, never silent. */
 .tok-unresolved { display: inline-block; padding: 0 5px; border: 1px dashed var(--err);
     color: var(--err); border-radius: 3px; font-size: 0.85em; font-family: ui-monospace, monospace; cursor: help; }
-/* The prose spans between citations flow inline; a bare block token gets its own line. */
-.answer-rendered > span { }
-.answer-toggle { margin-bottom: 4px; }
 /* Click-to-step: pulse the cited step green when you jump to it. */
 @keyframes astepPulse { 0% { background: color-mix(in srgb, var(--ok) 45%, transparent); }
     100% { background: transparent; } }

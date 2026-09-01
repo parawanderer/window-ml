@@ -92,11 +92,16 @@ export const ANSWER_CLAUSE =
     "it here so the real node reaches the caller. You can also curate it from `exec` for free via " +
     "`ml.answer` (`.add(el | \"text\")`, `.remove(i)`, `.clear()`, `.length`) — no approval.";
 export const TOOLTOKENS_CLAUSE =
-    "\n\nSome tool results end with an `@tool:<id>` token — that means the output (an image, a table, code) is " +
-    "ADDRESSABLE. In your FINAL answer (or when you add to `ml.answer`), you can embed the EXACT output instead " +
-    "of re-typing it from memory: write a markdown link whose URL is the token — e.g. `[the result](@tool:35bf1f:out)`, " +
-    "or `:in` for the call/code. COPY the id verbatim from the result; never invent one. Only do this when showing " +
-    "the actual output helps the user (a table, an image, the exact code/value) — for a plain step, just answer normally.";
+    "\n\nSome tool results end with an `@tool:<id>` token — that means the output (an image, a table, code, a " +
+    "value) is ADDRESSABLE. In your FINAL answer, embed the EXACT output instead of re-typing it: write a markdown " +
+    "link whose URL is the token — e.g. `[the result](@tool:35bf1f:out)`, or `:in` for the call/code. COPY the id " +
+    "verbatim from the result; never invent one. IMPORTANT: any figure or fact in your answer that came from a " +
+    "TOOL or a COMPUTATION — a number you calculated, a table, a value you looked up — should CITE its token, so " +
+    "the human can see the work behind it and trust it rather than take your word. A pure prose answer (nothing " +
+    "computed or fetched) needs no citation. The link's text is a caption, so label it well (e.g. `[per-rep totals](@tool:…:out)`). " +
+    "Do NOT also PASTE the code or the output as prose — a `:in` citation injects your EXACT code verbatim, and " +
+    "`:out` the exact result; cite it once, don't repeat it in the text. Because a `:in` shows the user your " +
+    "code, ALWAYS write it to be read: clear variable names and a short comment on each step's purpose.";
 export const SHADOW_CLAUSE =
     "\n\nShadow DOM: the DOM tools (findByText / interactives / describeElement / ancestors / countMatches / " +
     "sampleText / click / type / wait / answer) pierce OPEN shadow roots automatically. A control inside one " +
@@ -168,7 +173,10 @@ export const PYTHON_CLAUSE =
     "Instead WRITE A SCRIPT and run it (readonly mode) to get the exact, deterministic answer, " +
     "then report what it computed. Same for pixel/array/spatial work over a screenshot (pass " +
     "`image`). Reserve `full` mode (network) for when you genuinely need it — it always asks the " +
-    "user first.";
+    "user first. When a result is meant for the USER, prefer RETURNING it as a pandas DataFrame — it " +
+    "renders as a readable table. Keep purely internal/intermediate results as JSON/dicts (cheaper); " +
+    "if a value you computed as JSON turns out to be worth showing the user, just re-run and return a " +
+    "DataFrame.";
 
 // Appended when ml.agent({ unattended: true }) — a headless/scripting run with no human to approve.
 export const UNATTENDED_CLAUSE =
