@@ -411,24 +411,32 @@ export function OutputCell({ children }: { children: ComponentChildren }) {
             paintFind(rs, rs.length ? rs[Math.min(idx, rs.length - 1)] : null);
         } catch (e) { console.error("ml find:", e); setCount(0); }
     });
+    useEffect(() => {
+        const el = box.current;
+        if (!findOpen || !q || !el) return;
+        const rs = rangesFor(el, q, cs);
+        const r = rs[Math.min(idx, Math.max(rs.length - 1, 0))];
+        if (!r) return;
+        follow.current = false;   // the reader is navigating; don't yank them back to the tail
+        reveal(el, r);
+    }, [q, cs, idx, findOpen]);
     useEffect(() => () => { if (findOwner.value === id) { findOwner.value = 0; clearFindPaint(); } }, []);   // unmount → drop the paint
 
+    // Park a match about a third of the way down THIS container. scrollIntoView would also scroll the panel
+    // and the page (and no-ops at `nearest` when the match is already visible), so do the arithmetic here.
+    const reveal = (el: HTMLDivElement, r: Range): void => {
+        // Purely an affordance: where there's no layout to measure (jsdom) or the range went stale mid-stream,
+        // skip it. Never let it throw — the match is still painted and counted, and a broken reveal used to
+        // take the whole search effect down with it (count stuck at 0).
+        if (typeof (r as { getBoundingClientRect?: unknown }).getBoundingClientRect !== "function") return;
+        try {
+            const box0 = el.getBoundingClientRect(), hit = r.getBoundingClientRect();
+            el.scrollTop += (hit.top - box0.top) - el.clientHeight / 3;
+        } catch { /* detached range → nothing to scroll to */ }
+    };
     const jump = (delta: number): void => {
-        const el = box.current;
-        if (!el || !count) return;
-        const next = (idx + delta + count) % count;
-        setIdx(next);
-        const rs = rangesFor(el, q, cs);
-        const r = rs[next];
-        if (!r) return;
-        paintFind(rs, r);
-        // Stepping through matches means the reader took control — stop tail-following, or the next streamed
-        // delta would immediately yank them back to the bottom (why the arrows "didn't scroll" before).
-        follow.current = false;
-        // Scroll THIS container only (scrollIntoView would also scroll the panel/page, and `nearest` no-ops
-        // when the match is already on screen). Park the match about a third of the way down.
-        const box0 = el.getBoundingClientRect(), hit = r.getBoundingClientRect();
-        el.scrollTop += (hit.top - box0.top) - el.clientHeight / 3;
+        if (!count) return;
+        setIdx((idx + delta + count) % count);   // the reveal effect below scrolls to whatever becomes current
     };
     const closeFind = (): void => { findOwner.value = 0; clearFindPaint(); setQ(""); setCount(0); setIdx(0); };
     const onKey = (e: any): void => {

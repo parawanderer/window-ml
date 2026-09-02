@@ -5363,3 +5363,28 @@ test("rendered/raw toggle: reserved (disabled) while streaming, live once the st
     assert.doesNotMatch(settled.className, /reserved/);
     assert.ok([...settled.querySelectorAll("button")].every(b => !b.disabled), "both buttons work once it settles");
 });
+
+// NON-streaming runs must keep working exactly as before: no live output, the step just says "running…" and
+// then shows the full result when it lands. (Streaming is opt-in; this is the path most runs take.)
+test("non-streaming run: the step waits with 'running…' and then shows the full result", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("nostream", "run it"));
+    await w.dispatch(agentStep("nostream", 1, { seq: 1, pending: true, tool: "exec", arguments: { js: "work()" } }));
+    await openRun(w);
+    // Collapsed preview says running…; no live block, and no reserved toggle (nothing is streaming).
+    assert.match(w.shadow.querySelector(".astep-preview").textContent, /running…/);
+    assert.equal(w.shadow.querySelector(".astep-streaming"), null, "no live output block without streaming");
+    w.shadow.querySelector(".astep.tool .astep-head").click(); await w.tick();
+    assert.equal(w.shadow.querySelector(".rr-toggle.reserved"), null, "nothing reserved — no descriptor is pending");
+    const outBlock = () => [...w.shadow.querySelectorAll(".io")].find(io => /^Out/.test(io.querySelector(".io-label").textContent));
+    assert.match(outBlock().textContent, /running…/, "the Out waits");
+    // The DONE brings everything at once.
+    await w.dispatch(agentStep("nostream", 1, { seq: 1, tool: "exec", arguments: { js: "work()" }, result: "console:\nall of it\n\nvalue: 42",
+        renderOut: { type: "exec-out", stdout: "all of it", value: "42" } }));
+    await w.dispatch(agentResult("nostream", "done", 1));
+    await w.tick();
+    const out = outBlock();
+    assert.match(out.textContent, /all of it/, "the full captured output appears on completion");
+    assert.match(out.textContent, /42/, "…and the returned value");
+    assert.equal(w.shadow.querySelector(".r-ts"), null, "no timestamp gutter — nothing streamed, so there are no marks");
+});

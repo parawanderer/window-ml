@@ -119,6 +119,22 @@ test("output cell: tail-follows at the bottom, holds still when scrolled up", as
         expect(await frame.locator(".r-find").count(), "the find bar opened").toBeGreaterThan(0);
         expect(Math.abs((await cell.evaluate((el) => el.scrollTop)) - beforeFind),
             "opening find left the scroll position alone").toBeLessThanOrEqual(2);
+        // 3c. Find must BRING THE MATCH INTO VIEW — typing alone, not only the arrows. Park at the very top,
+        //     search for a line near the bottom, and the cell must scroll to it.
+        await scrollTo(cell, () => 0);
+        await page.keyboard.type("scroll-line 55");
+        await sleep(500);
+        const afterType = await cell.evaluate((el) => el.scrollTop);
+        expect(afterType, "typing scrolled the match into view (no need to press the arrow first)").toBeGreaterThan(20);
+        // The match itself must be inside the visible band, not merely 'somewhere scrolled'.
+        const visible = await cell.evaluate((el) => {
+            const hit = el.querySelector("*") && document.getSelection ? null : null;   // (paint is CSS-only; measure by text)
+            const rows = [...el.querySelectorAll("*")].filter(n => /scroll-line 55/.test(n.textContent || "") && !n.children.length);
+            if (!rows.length) return false;
+            const r = rows[0].getBoundingClientRect(), b = el.getBoundingClientRect();
+            return r.top >= b.top - 2 && r.bottom <= b.bottom + 2;
+        });
+        expect(visible, "the matched line is on screen inside the cell").toBe(true);
         await page.keyboard.press("Escape");
         await sleep(200);
 
