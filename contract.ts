@@ -423,6 +423,12 @@ export interface TokenUsage {
     evalMs?: number;
 }
 
+/** How much captured tool output the UI keeps. Deliberately FAR larger than the model-facing cap: the model's
+ *  clip protects its context budget, but the human watching a stream shouldn't see the output SHRINK when the
+ *  step finishes. The surplus is shown MARKED as "captured, but not sent to the model" (see `seen`), so the two
+ *  views never get confused. Shared by exec / python_exec and the loop's live-stream fan so live == final. */
+export const UI_OUT_CAP = 12000;
+
 /** Whole-run token accounting, cumulative across every model call — the numbers API consumers care about
  *  (spend) plus a generation rate. Computed by {@link runStats} and shared by the DevTools bottom bar, the
  *  chat_metadata tool, and the exports so all three agree. */
@@ -639,7 +645,10 @@ export type RenderDescriptor = (
     | { type: "python-in"; mode: "script" | "pt" | "box"; code: string; image?: string; imageToken?: string; tables?: TablePreview[] }
     // `python_exec`'s Out slot: captured stdout, a returned image, a minted @pt/@box token,
     // the raw/JSON value, or a Python traceback.
-    | { type: "python-out"; stdout?: string; image?: string; token?: string; value?: string; error?: string; latex?: boolean; df?: { columns: string[]; rows: (string | number | null)[][] } }
+    | { type: "python-out"; stdout?: string; seen?: number; image?: string; token?: string; value?: string; error?: string; latex?: boolean; df?: { columns: string[]; rows: (string | number | null)[][] } }
+    // `exec`'s Out, the JS twin of python-out: the SAME data its raw result string carries, split into
+    // sections (console / value / error) so a JS run reads like a notebook cell too instead of one blob.
+    | { type: "exec-out"; stdout?: string; seen?: number; value?: string; error?: string; token?: string }
     // A DELEGATED `look`'s Out slot: the exact image the vision reader saw, WHICH model read it, and
     // its text output — so a sub-call look reads like `locate`'s substeps (the native look just shows
     // the screenshot, since the agent itself is the viewer).
@@ -1605,7 +1614,7 @@ export interface MlApi {
     fetchTool(): MlTool;
     /** Run a sandboxed Python snippet (Pyodide/WASM, numpy + Pillow) with an optional
      *  screenshot injected as `img`/`img_np`. No network/filesystem/DOM. */
-    pythonExec(code: string, opts?: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Element | Record<string, string | Element> | null }): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; render?: "latex" | "img"; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; resultTable?: { columns: string[]; rows: (string | number | null)[][] } }>;
+    pythonExec(code: string, opts?: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Element | Record<string, string | Element> | null; onStdout?: (chunk: string) => void }): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; render?: "latex" | "img"; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; resultTable?: { columns: string[]; rows: (string | number | null)[][] } }>;
     /** Built-in sandboxed-Python tool factory (numpy/Pillow pixel/array work). */
     pythonTool(): MlTool;
     /** Read-only self-introspection tool for ml.agent (pass via `extraTools`): reports the run's model,

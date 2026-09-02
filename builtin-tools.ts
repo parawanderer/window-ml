@@ -5,7 +5,7 @@
 // domTools; opt in via extraTools, gated by the approval flow.
 
 import type { MlApi, MlTool, LocateSubstep, ToolResult, RenderDescriptor, VisionMemory, ToolContext } from "./contract";
-import { DEFAULT_GROUNDING_RANGE, resolveOutputCap, outputCapPrecheck } from "./contract";
+import { DEFAULT_GROUNDING_RANGE, resolveOutputCap, outputCapPrecheck, UI_OUT_CAP } from "./contract";
 import { PY_PACKAGE_LABELS } from "./python-env";
 import { truncate, clipOut, errText, elLine, queryAll, selectorError, googleSheetCsvUrl, nonEmptyTables, capturedClosedRoot, isElement, viewportRect, boxIntersectsText, firstHopSealed, clickSelector } from "./dom";
 import { accessibleName } from "./a11y";
@@ -1451,7 +1451,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             const mode = args.cast === "pt" ? "pt" as const : args.cast === "box" ? "box" as const : "script" as const;
             return { type: "python-in", mode, code };
         },
-        run: async ({ code, image, cast, mode, margin, tableRaw, tables, maxChars, maxCharsReason }: { code: string; image?: string; cast?: "pt" | "box"; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Record<string, string>; maxChars?: number; maxCharsReason?: string }): Promise<string | ToolResult> => {
+        run: async ({ code, image, cast, mode, margin, tableRaw, tables, maxChars, maxCharsReason }: { code: string; image?: string; cast?: "pt" | "box"; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Record<string, string>; maxChars?: number; maxCharsReason?: string }, ctx?: import("./contract").ToolContext): Promise<string | ToolResult> => {
             // Effective per-slot output cap (default 2000). A raise past it is only reachable AFTER the human
             // gate (autoApprovePython refuses to sandbox-approve an escalated call), clamped to the ceiling.
             const { cap: PY_OUT_MAX, clamped: capClamped } = resolveOutputCap("python_exec", maxChars, maxCharsReason);
@@ -1470,7 +1470,7 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
                 try { const n = ml._queryAll(sel).length; if (n > 1) tableNote += `⚠ selector "${sel}" matched ${n} elements — loaded the FIRST as \`${name}\`. If the numbers look off, narrow it (an id, or :nth-of-type(N)).\n`; } catch { /* invalid selector → pythonExec/_resolveTable errors below */ }
             }
             if (tableNote) tableNote += "\n";
-            const r = await ml.pythonExec(code, { image: image || null, mode: mode === "full" ? "full" : "readonly", margin: typeof margin === "number" ? margin : 0, tableRaw: !!tableRaw, tables: tables || null });
+            const r = await ml.pythonExec(code, { image: image || null, mode: mode === "full" ? "full" : "readonly", margin: typeof margin === "number" ? margin : 0, tableRaw: !!tableRaw, tables: tables || null, onStdout: ctx?.stream });
             // Cap stdout/value/error fed back to the model so a runaway result (e.g. a
             // string-concat blowup) can't flood the context — with a "[+N truncated]" note.
             const stdoutClipped = clipOut(r.stdout || "", PY_OUT_MAX);
@@ -1492,9 +1492,13 @@ export const buildPythonTool = (ml: MlApi): MlTool => {
             const imageToken = typeof image === "string" && (POINT_RE.test(image.trim()) || BOX_RE.test(image.trim())) ? image.trim() : undefined;
             const renderIn: RenderDescriptor = { type: "python-in", mode: cellMode, code,
                 ...(r.inputImage ? { image: r.inputImage } : {}), ...(imageToken ? { imageToken } : {}), ...(r.inputTables && r.inputTables.length ? { tables: r.inputTables } : {}) };
-            const stdout = stdoutClipped || undefined;
+            // UI keeps far more than the model's cap (PY_OUT_MAX) so a watched stream doesn't SHRINK when the
+            // step lands; `seen` marks where the model-facing view ended (the surplus renders marked).
+            const stdoutFull = r.stdout || "";
+            const stdout = stdoutFull ? clipOut(stdoutFull, UI_OUT_CAP) : undefined;
+            const seen = stdoutFull ? Math.min(stdoutFull.length, PY_OUT_MAX) : undefined;
             const done = (content: string, out: Omit<Extract<RenderDescriptor, { type: "python-out" }>, "type" | "stdout">): ToolResult =>
-                ({ content, renderIn, render: { type: "python-out", stdout, ...out } });
+                ({ content, renderIn, render: { type: "python-out", stdout, seen, ...out } });
 
             if (!r.ok) {
                 const err = clipOut(r.error || "", PY_OUT_MAX);

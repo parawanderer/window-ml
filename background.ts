@@ -336,6 +336,16 @@ function isBlockedFetchTarget(rawUrl: string): boolean {
 // because a session doc with inlined screenshots is large; the tab fetches it by key, and it's deleted on
 // read (the timer cleared then) or after a TTL so a dismissed export never leaks.
 const pendingPrints = new Map<string, { html: string; timer: ReturnType<typeof setTimeout> }>();
+
+// LIVE python_exec stdout streaming: maps a run's streamId (the page requestId) → its tabId, so a PY_STDOUT
+// chunk the offscreen doc forwards can be relayed to the RIGHT page. Set when a streaming PYTHON_EXEC starts,
+// deleted when it resolves. Only populated for opt-in streaming runs (a bounded, short-lived map).
+const pyStreamTabs = new Map<string, number>();
+
+// LIVE tool-output streaming on the BACKGROUND path: the in-flight delegated tool's onStream, keyed by runId.
+// The loop delegates tool calls SEQUENTIALLY (one in flight per run), so runId alone correlates a page-posted
+// PAGE_TOOL_STREAM chunk to the right callback. Set in delegateTool while a streaming call runs, deleted after.
+const delegateStreams = new Map<string, (chunk: string) => void>();
 const PRINT_DOC_TTL_MS = 60_000;
 function dropPrintDoc(key: string): void {
     const e = pendingPrints.get(key);
@@ -735,7 +745,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         if (!resumeMessages) emitLifecycle(startEvent);
         else if (resurrected) fanEvent(startEvent);   // resurrected: no page-side caller emitted a start → fan it ourselves
         runBackgroundAgent(
-            { task: p.task, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, autoApproveSameOriginAuth: p.autoApproveSameOriginAuth, autoApproveSelfSource: p.autoApproveSelfSource, unattended: p.unattended, toolTokens: p.toolTokens, runId, seqBase, resumeMessages, images: p.images },
+            { task: p.task, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, autoApproveSameOriginAuth: p.autoApproveSameOriginAuth, autoApproveSelfSource: p.autoApproveSelfSource, unattended: p.unattended, toolTokens: p.toolTokens, stream: p.stream, runId, seqBase, resumeMessages, images: p.images },
             {
                 callModel: async (messages, opts) => {
                     // Thread the run's abort signal so a CANCEL_RUN kills a slow in-flight generation, not
@@ -760,7 +770,10 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     const r = await fetchLLM({ messages, tools: toolDefs, model: p.model, think: p.think, raw: true }, abortCtl.signal) as { content: string | null; tool_calls: ToolCall[]; reasoning: string | null; usage: TokenUsage | null };
                     return { content: r.content, tool_calls: r.tool_calls, reasoning: r.reasoning, usage: r.usage };
                 },
-                delegateTool: async (name, args) => {
+                delegateTool: async (name, args, onStream) => {
+                    // Live output: register this call's stream sink under the runId so a PAGE_TOOL_STREAM chunk
+                    // the page posts mid-run reaches the loop's throttled fan. Cleared in the finally below.
+                    if (onStream) delegateStreams.set(runId, onStream);
                     // Reaching here means the call is AUTHORIZED (approved / auto / cached alike). Mint the
                     // choke-point grants for the privileged sub-ops this tool will make, bound to the exact
                     // resources in its args — an untrusted page's FETCH_SHEET / full PYTHON_EXEC checks them.
@@ -783,7 +796,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                         const CHANNEL_GONE = /message channel closed|Receiving end does not exist|No tab with id/i;
                         let env: Partial<import("./contract").PageToolEnvelope>;
                         try {
-                            env = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name, args } }) as Partial<import("./contract").PageToolEnvelope>;
+                            env = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name, args, stream: !!onStream } }) as Partial<import("./contract").PageToolEnvelope>;
                         } catch (e) {
                             const emsg = (e as Error)?.message || String(e);
                             if (!CHANNEL_GONE.test(emsg)) {
@@ -946,7 +959,16 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                         return { result: env?.result || `Error: the page returned nothing for tool "${name}".`, renderIn: env?.renderIn, renderOut: env?.renderOut, feedback: env?.feedback, image: env?.image, imageLabel: env?.imageLabel, images: env?.images };
                     } finally {
                         pendingGrants.delete(tabId);   // grants were for THIS approved call's sub-ops only
+                        if (onStream) delegateStreams.delete(runId);   // the call is done — stop routing live chunks to it
                     }
+                },
+                // Pre-run In render for a PENDING step (streaming runs): ask the page to compute the tool's
+                // In descriptor without running it, so a step you watch stream shows exec's beautified JS /
+                // python's code cell from the start instead of raw JSON args. Best-effort — raw args on failure.
+                renderFor: async (name, args) => {
+                    const env = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name, args, renderOnly: true } })
+                        .catch(() => null) as { renderIn?: import("./contract").RenderDescriptor } | null;
+                    return env?.renderIn;
                 },
                 // Read-only try (exec only, and only when the user enabled autoApproveReadonly): ask the
                 // page to run the call through the mediated interpreter — side-effect-free, so if it's
@@ -1134,7 +1156,10 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     }
                 }
             }
-            const payload = { type: "PY_RUN", code: message.payload?.code, image: message.payload?.image ?? null, hardened: message.payload?.hardened !== false, tables: message.payload?.tables ?? null };
+            // LIVE stdout streaming (opt-in): record streamId→tab so a PY_STDOUT chunk reaches this page.
+            const streamId: string | undefined = message.payload?.stream ? message.requestId : undefined;
+            if (streamId && sender.tab?.id != null) pyStreamTabs.set(streamId, sender.tab.id);
+            const payload = { type: "PY_RUN", code: message.payload?.code, image: message.payload?.image ?? null, hardened: message.payload?.hardened !== false, tables: message.payload?.tables ?? null, stream: !!streamId, streamId };
             const attempt = () => ensureOffscreen().then(() => chrome.runtime.sendMessage(payload));
             attempt()
                 .catch((err) => {
@@ -1145,9 +1170,25 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                     return attempt();
                 })
                 .then((res) => sendResponse({ data: res }))
-                .catch((err) => sendResponse({ error: err?.message || String(err) }));
+                .catch((err) => sendResponse({ error: err?.message || String(err) }))
+                .finally(() => { if (streamId) pyStreamTabs.delete(streamId); });
         })();
         return true;   // async
+    }
+    if (message.type === "PAGE_TOOL_STREAM") {
+        // A LIVE output chunk from a DELEGATED page tool (its ctx.stream) → hand it to the in-flight call's
+        // sink, which is the loop's throttled fan → an agent-step `streamOutput` delta on every surface.
+        // Keyed by runId: the loop delegates tool calls sequentially, so one is in flight per run.
+        const sink = delegateStreams.get(message.runId);
+        if (sink) { try { sink(String(message.chunk ?? "")); } catch { /* a bad sink must not break the run */ } }
+        return false;
+    }
+    if (message.type === "PY_STDOUT") {
+        // A live stdout chunk from the offscreen Pyodide host → relay to the run's page (keyed by streamId), which
+        // resolves it as a PYTHON_EXEC_RESPONSE progress event to the awaiting ml.pythonExec (→ the tool's ctx.stream).
+        const tabId = pyStreamTabs.get(message.streamId);
+        if (tabId != null) chrome.tabs.sendMessage(tabId, { type: "PYTHON_STREAM", requestId: message.streamId, chunk: message.chunk }).catch(() => { /* page gone → drop */ });
+        return false;
     }
     if (message.type === "FETCH_SHEET") {
         // Fetch a Google Sheet's CSV export CREDENTIALED (the user's own Google session), so it works on

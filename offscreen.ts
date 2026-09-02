@@ -19,7 +19,7 @@ type PyResult = { ok: boolean; value?: unknown; stdout: string; error?: string; 
 // web_accessible_resources entry; it inherits this page's 'wasm-unsafe-eval' CSP.
 let worker: Worker | null = null;
 let nextId = 1;
-const pending = new Map<number, { resolve: (r: PyResult) => void; timer: ReturnType<typeof setTimeout> }>();
+const pending = new Map<number, { resolve: (r: PyResult) => void; timer: ReturnType<typeof setTimeout>; streamId?: string }>();
 
 // Terminate the worker and fail every still-pending run with `reason`. Used on a worker crash and
 // on a timeout kill (after the timed-out run itself has been resolved + removed from `pending`).
@@ -33,6 +33,13 @@ function ensureWorker(): Worker {
     if (worker) return worker;
     const w = new Worker(chrome.runtime.getURL("python-worker.js"));
     w.onmessage = (e: MessageEvent) => {
+        // A `partial` message is a LIVE stdout chunk (opt-in streaming) — forward it to the background keyed by
+        // this run's streamId (the page requestId), which relays it to the page; DON'T resolve the run.
+        if (e.data?.partial) {
+            const entry = pending.get(e.data.id);
+            if (entry?.streamId) chrome.runtime.sendMessage({ type: "PY_STDOUT", streamId: entry.streamId, chunk: String(e.data.chunk ?? "") }).catch(() => { /* no receiver → drop */ });
+            return;
+        }
         const { id, ...result } = e.data as { id: number } & PyResult;
         const entry = pending.get(id);
         if (entry) { pending.delete(id); clearTimeout(entry.timer); entry.resolve(result); }
@@ -43,7 +50,7 @@ function ensureWorker(): Worker {
     return w;
 }
 
-function runInWorker(code: string, image: string | null, hardened: boolean, tables: unknown): Promise<PyResult> {
+function runInWorker(code: string, image: string | null, hardened: boolean, tables: unknown, stream?: boolean, streamId?: string): Promise<PyResult> {
     const w = ensureWorker();
     const id = nextId++;
     return new Promise((resolve) => {
@@ -54,8 +61,8 @@ function runInWorker(code: string, image: string | null, hardened: boolean, tabl
             entry.resolve({ ok: false, stdout: "", error: `Python run exceeded ${PY_TIMEOUT_MS / 1000}s and was terminated — simplify the computation or reduce the input size.` });
             killWorker("timeout");   // nuke the (still-busy) instance + fail any others queued behind it
         }, PY_TIMEOUT_MS);
-        pending.set(id, { resolve, timer });
-        w.postMessage({ id, code, image, hardened, tables });
+        pending.set(id, { resolve, timer, streamId });   // streamId → the background can key live stdout chunks
+        w.postMessage({ id, code, image, hardened, tables, stream });
     });
 }
 
@@ -63,7 +70,7 @@ chrome.runtime.onMessage.addListener((msg: any, _sender, sendResponse) => {
     if (msg?.type !== "PY_RUN") return;
     // The worker serializes runs internally (single Pyodide instance + harden/unharden swap),
     // so we can forward straight through — no need to chain here.
-    runInWorker(msg.code, msg.image ?? null, msg.hardened !== false, msg.tables ?? null)
+    runInWorker(msg.code, msg.image ?? null, msg.hardened !== false, msg.tables ?? null, msg.stream, msg.streamId)
         .then(sendResponse, e => sendResponse({ ok: false, stdout: "", error: String(e) }));
     return true;   // keep the channel open for the async result
 });

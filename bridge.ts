@@ -42,7 +42,11 @@ export const makeBackgroundTaskPromise = <T = unknown>(
     responseType: string,
     payload: unknown,
     callbackOnResponseSuccess?: (result: unknown, data?: Record<string, unknown>) => T,
-    signal?: AbortSignal | null
+    signal?: AbortSignal | null,
+    // Optional PROGRESS channel (e.g. python_exec live stdout): while the task runs, background pushes
+    // `{ type: progressType, requestId, ... }` messages — this owns the requestId, so it filters them here
+    // and hands each to `onProgress` without resolving. Absent → no progress handling (unchanged).
+    progress?: { type: string; onProgress: (data: Record<string, unknown>) => void }
 ): Promise<T> => {
     return new Promise((resolve, reject) => {
         const requestId = Math.random().toString(36).substring(7);
@@ -52,6 +56,11 @@ export const makeBackgroundTaskPromise = <T = unknown>(
         };
 
         function handleResponse(event: MessageEvent) {
+            // A progress push for THIS request → hand it over, keep listening (don't resolve/cleanup).
+            if (progress && event.data?.type === progress.type && event.data.requestId === requestId) {
+                try { progress.onProgress(event.data); } catch { /* a bad progress handler must not break the task */ }
+                return;
+            }
             if (event.data.type === responseType && event.data.requestId === requestId) {
                 cleanup();
                 if (event.data.error) {

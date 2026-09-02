@@ -406,3 +406,35 @@ test("live tool output: with streaming OFF, the tool gets no ctx.stream (undefin
     assert.equal(onStreamWas, "undefined", "runTool gets no onStream when streaming is off (fan?.push is undefined)");
     assert.equal(calls.emits.filter(e => e.streamOutput != null).length, 0, "no stream deltas emitted");
 });
+
+// Pending-step In render: while a step STREAMS you're staring at it, so its In must show the tool's pretty
+// render (exec's beautified JS / python's notebook cell) from the moment it starts — not raw JSON args. The
+// gated path got this via the approval prompt; an AUTO-APPROVED call didn't (the reported python_exec gap).
+// The loop now pre-renders for BOTH, and only on a streaming run (no extra round-trip otherwise).
+test("pending In render: a STREAMING run pre-renders the In for an AUTO-APPROVED (ungated) call", async () => {
+    const { deps, calls } = makeDeps({ turns: [toolCall("python_exec", { code: "print(1)" }), reply("done")], autoApprove: () => "sandbox" });
+    const asked = [];
+    deps.renderFor = async (name, args) => { asked.push(name); return { type: "python-in", mode: "script", code: args.code }; };
+    await runAgentLoop("x", { tools: [{ name: "python_exec", requiresApproval: true }], stream: true }, deps);
+    assert.deepEqual(asked, ["python_exec"], "the loop asked for the pre-run In render");
+    const start = calls.emits.find(e => e.pending && e.tool === "python_exec");
+    assert.equal(start.renderIn?.type, "python-in", "the pending START carries the pretty In, not raw args");
+});
+
+test("pending In render: a STREAMING run pre-renders the In for a GATED call too (before the gate)", async () => {
+    const { deps, calls } = makeDeps({ turns: [toolCall("exec", { js: "1+1" }), reply("done")], approve: () => true });
+    deps.renderFor = async (name, args) => ({ type: "code", text: args.js, lang: "javascript", format: true });
+    await runAgentLoop("x", { tools: [{ name: "exec", requiresApproval: true }], stream: true }, deps);
+    const start = calls.emits.find(e => e.pending && e.tool === "exec");
+    assert.equal(start.renderIn?.type, "code", "a gated call's pending START carries the pretty In too");
+    assert.equal(start.renderIn?.text, "1+1");
+});
+
+test("pending In render: streaming OFF → no pre-render round-trip (unchanged behaviour)", async () => {
+    const { deps, calls } = makeDeps({ turns: [toolCall("myTool", {}), reply("done")] });
+    let asked = 0;
+    deps.renderFor = async () => { asked++; return { type: "code", text: "x", lang: "javascript" }; };
+    await runAgentLoop("x", { tools: [{ name: "myTool" }] }, deps);   // no `stream`
+    assert.equal(asked, 0, "no extra page round-trip when not streaming");
+    assert.equal(calls.emits.find(e => e.pending && e.tool === "myTool").renderIn, undefined);
+});

@@ -3,10 +3,11 @@
 // auto-derive image/elements, else the default In:/Out: renders the raw result.
 // Extracted from app.tsx; leans on the shared primitives in ./ui-kit.
 import type { ComponentChildren } from "preact";
-import { useState } from "preact/hooks";
+import { useState, useRef, useEffect, useMemo } from "preact/hooks";
+import { signal } from "@preact/signals";
 import type { RenderDescriptor, LocateSubstep, TableSource } from "../contract";
 import { elementReference } from "../dom";
-import { rev, view, sessionMap } from "./store";
+import { rev, view, sessionMap, outMaxH } from "./store";
 import { markdown, truncate, pretty } from "./format";
 import {
     openCtxMenu, copyText, ClickableImg, Code, SheetChip, inlineText,
@@ -214,6 +215,175 @@ function PythonInRender({ d }: { d: Extract<RenderDescriptor, { type: "python-in
         </div>
     );
 }
+// How close to the bottom still counts as "parked there" (px) — tail-follow keeps working through a pixel
+// of rounding / a fractional device-pixel scroll instead of silently detaching.
+const FOLLOW_SLACK = 24;
+/** Is this scroller parked at (or within a hair of) the bottom? Pure arithmetic, so it unit-tests directly. */
+export const atBottomOf = (el: { scrollHeight: number; scrollTop: number; clientHeight: number }): boolean =>
+    el.scrollHeight - el.scrollTop - el.clientHeight <= FOLLOW_SLACK;
+
+/** Captured output, with the tail the MODEL NEVER RECEIVED marked. A tool clips its model-facing result to a
+ *  context budget, but the UI keeps far more (UI_OUT_CAP) — so without this you'd read the surplus as "what the
+ *  model saw". Everything past `seen` chars renders dimmed under an explicit label. Shared by python_exec and
+ *  exec (and any future tool that reports a `seen` boundary). No boundary → plain output, unchanged. */
+export function SeenSplit({ text, seen }: { text: string; seen?: number }) {
+    if (seen == null || seen >= text.length) return <Code text={text} lang="text" />;
+    return (
+        <>
+            <Code text={text.slice(0, seen)} lang="text" />
+            <div class="r-unseen-lbl" title="The tool captured this, but it was clipped out of the result sent to the model (its output cap). The model never read it.">
+                ↓ captured, but NOT sent to the model
+            </div>
+            <div class="r-unseen"><Code text={text.slice(seen)} lang="text" /></div>
+        </>
+    );
+}
+
+/** Substring scan over the cell's text — deliberately NOT a regex: this exists to eyeball a script's output,
+ *  and a regex box buys escaping bugs and pathological patterns for no gain. Returns [start, end) offsets.
+ *  Pure, so the matching rules (case folding, overlap, empty query) unit-test without a DOM. */
+export function findMatches(text: string, query: string, caseSensitive: boolean): [number, number][] {
+    if (!query) return [];
+    const hay = caseSensitive ? text : text.toLowerCase();
+    const needle = caseSensitive ? query : query.toLowerCase();
+    const out: [number, number][] = [];
+    for (let i = hay.indexOf(needle); i !== -1; i = hay.indexOf(needle, i + needle.length)) out.push([i, i + needle.length]);
+    return out;
+}
+
+// Which OutputCell currently owns the find UI. The CSS Custom Highlight registry is GLOBAL (one
+// `::highlight(ml-find)` rule), so exactly one cell may search at a time — opening find in another closes this.
+const findOwner = signal(0);
+let nextCellId = 1;
+
+/** Map match offsets over a container's concatenated text back onto real DOM Ranges, so matches can be painted
+ *  with the CSS Custom Highlight API — no DOM surgery, so the syntax highlighting underneath is untouched. */
+function rangesFor(root: HTMLElement, query: string, caseSensitive: boolean): Range[] {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const nodes: Text[] = [];
+    let text = "";
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) { nodes.push(n as Text); text += (n as Text).data; }
+    const ranges: Range[] = [];
+    // Walk the node list once per match, tracking each node's start offset in the flattened text.
+    const at = (off: number): { node: Text; offset: number } | null => {
+        let base = 0;
+        for (const n of nodes) {
+            if (off <= base + n.data.length) return { node: n, offset: off - base };
+            base += n.data.length;
+        }
+        return null;
+    };
+    for (const [s, e] of findMatches(text, query, caseSensitive)) {
+        const a = at(s), b = at(e);
+        if (!a || !b) continue;
+        const r = document.createRange();
+        try { r.setStart(a.node, a.offset); r.setEnd(b.node, b.offset); ranges.push(r); } catch { /* node went away mid-stream */ }
+    }
+    return ranges;
+}
+
+// Paint the matches (all + the current one) via the global highlight registry. A no-op where the API is
+// missing (jsdom / older engines) — find still counts and scrolls, it just doesn't tint.
+function paintFind(all: Range[], current: Range | null): void {
+    const reg = (globalThis as any).CSS?.highlights;
+    if (!reg) return;
+    try {
+        if (all.length) reg.set("ml-find", new (globalThis as any).Highlight(...all)); else reg.delete("ml-find");
+        if (current) reg.set("ml-find-cur", new (globalThis as any).Highlight(current)); else reg.delete("ml-find-cur");
+    } catch { /* registry unavailable → skip painting */ }
+}
+function clearFindPaint(): void {
+    const reg = (globalThis as any).CSS?.highlights;
+    try { reg?.delete("ml-find"); reg?.delete("ml-find-cur"); } catch { /* ignore */ }
+}
+
+/** The shared OUTPUT CELL every code-ish tool's Out renders into — python_exec and exec today, and any future
+ *  tool (a `bash_exec`, say) for free: wrap your sections in it and you inherit the whole behaviour. Jupyter's
+ *  output-area semantics:
+ *   · capped height (Settings → Appearance) so a chatty run can't bury the transcript, then it SCROLLS;
+ *   · drag the grip to resize THIS cell (bigger or smaller) without changing the global default;
+ *   · TAIL-FOLLOW — while you're parked at the bottom, new streamed output scrolls into view; scroll up and
+ *     it holds still so you can read, and resumes following the moment you return to the bottom.
+ *  Deliberately children-based (not a section schema): each tool's sections legitimately differ (python has a
+ *  DataFrame/LaTeX/image; exec has a console), while the CONTAINER behaviour is what's worth sharing. */
+export function OutputCell({ children }: { children: ComponentChildren }) {
+    const box = useRef<HTMLDivElement>(null);
+    const follow = useRef(true);                       // tail-follow armed? (parked at the bottom)
+    const [dragH, setDragH] = useState<number | null>(null);   // a drag pins THIS cell; null → the configured cap
+    const id = useMemo(() => nextCellId++, []);
+    const findOpen = findOwner.value === id;
+    const [q, setQ] = useState("");
+    const [cs, setCs] = useState(false);               // case-sensitive toggle (the "Aa" button)
+    const [idx, setIdx] = useState(0);                 // which match is current
+    const [count, setCount] = useState(0);
+    const input = useRef<HTMLInputElement>(null);
+    const cap = dragH ?? outMaxH.value;
+
+    // Runs after EVERY render — i.e. on each streamed delta — so the newest line stays visible while following.
+    useEffect(() => { const el = box.current; if (el && follow.current) el.scrollTop = el.scrollHeight; });
+    // Re-run the search whenever the query/case changes — and on every render, so a STREAMING cell keeps its
+    // match count honest as new output lands.
+    useEffect(() => {
+        if (!findOpen || !box.current) return;
+        try {
+            const rs = rangesFor(box.current, q, cs);
+            setCount(rs.length);
+            paintFind(rs, rs.length ? rs[Math.min(idx, rs.length - 1)] : null);
+        } catch (e) { console.error("ml find:", e); setCount(0); }
+    });
+    useEffect(() => () => { if (findOwner.value === id) { findOwner.value = 0; clearFindPaint(); } }, []);   // unmount → drop the paint
+
+    const jump = (delta: number): void => {
+        if (!box.current || !count) return;
+        const next = (idx + delta + count) % count;
+        setIdx(next);
+        const rs = rangesFor(box.current, q, cs);
+        const r = rs[next];
+        if (r) { paintFind(rs, r); (r.startContainer.parentElement)?.scrollIntoView({ block: "nearest" }); }
+    };
+    const closeFind = (): void => { findOwner.value = 0; clearFindPaint(); setQ(""); setCount(0); setIdx(0); };
+    const onKey = (e: any): void => {
+        if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "F")) {
+            e.preventDefault(); e.stopPropagation();
+            findOwner.value = id;
+            setTimeout(() => input.current?.focus(), 0);
+        } else if (e.key === "Escape" && findOpen) { e.preventDefault(); closeFind(); }
+    };
+    const onFindKey = (e: any): void => {
+        if (e.key === "Enter") { e.preventDefault(); jump(e.shiftKey ? -1 : 1); }
+        else if (e.key === "Escape") { e.preventDefault(); closeFind(); box.current?.focus(); }
+    };
+    const onScroll = (): void => { const el = box.current; if (el) follow.current = atBottomOf(el); };
+    const onGrab = (e: any): void => {
+        e.preventDefault();
+        const startY = e.clientY, start = box.current?.getBoundingClientRect().height ?? cap;
+        const move = (ev: any): void => setDragH(Math.max(60, Math.round(start + (ev.clientY - startY))));
+        const up = (): void => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", up);
+    };
+    return (
+        <div class="r-outcell">
+            {/* Ctrl/Cmd+F opens an in-cell find (the cell is focusable so the shortcut is scoped to it, not the page). */}
+            {findOpen ? (
+                <div class="r-find" role="search">
+                    <input ref={input} class="r-find-q" value={q} placeholder="Find" spellcheck={false}
+                        onInput={(e: any) => { setIdx(0); setQ(e.target.value); }} onKeyDown={onFindKey} />
+                    <button class={`r-find-case${cs ? " on" : ""}`} title="Match case" aria-pressed={cs}
+                        onClick={() => { setIdx(0); setCs(v => !v); }}>Aa</button>
+                    <span class="r-find-n">{q ? (count ? `${Math.min(idx, Math.max(count - 1, 0)) + 1} of ${count}` : "No results") : ""}</span>
+                    <button class="r-find-nav" title="Previous match" onClick={() => jump(-1)} disabled={!count}>↑</button>
+                    <button class="r-find-nav" title="Next match" onClick={() => jump(1)} disabled={!count}>↓</button>
+                    <button class="r-find-x" title="Close (Esc)" onClick={closeFind}>✕</button>
+                </div>
+            ) : null}
+            <div class="r-outscroll" ref={box} tabIndex={0} onKeyDown={onKey} onScroll={onScroll}
+                style={cap > 0 ? { maxHeight: `${cap}px` } : undefined}>{children}</div>
+            <div class="r-outgrip" role="separator" aria-label="Drag to resize this output" title="Drag to resize this output" onPointerDown={onGrab} />
+        </div>
+    );
+}
+
 // A collapsible section of the python-out block (stdout / value / error / token). Same disclosure
 // pattern as the In:/Out: blocks — open by default, its label is the summary. A big stdout can be
 // folded away to get to the value.
@@ -224,8 +394,8 @@ function PyOutSection({ label, cls, children }: { label: string; cls: string; ch
 // @pt·@box token / the raw value / a Python traceback.
 function PythonOutRender({ d }: { d: Extract<RenderDescriptor, { type: "python-out" }> }) {
     return (
-        <div class="r-python r-py-out">
-            {d.stdout ? <PyOutSection label="stdout" cls="r-py-stdout"><Code text={d.stdout} lang="text" /></PyOutSection> : null}
+        <div class="r-python r-py-out"><OutputCell>
+            {d.stdout ? <PyOutSection label="stdout" cls="r-py-stdout"><SeenSplit text={d.stdout} seen={d.seen} /></PyOutSection> : null}
             {d.image ? <div class="r-image"><ClickableImg src={d.image} alt="output image" /><div class="r-image-label">returned image</div></div> : null}
             {d.token ? <PyOutSection label="token" cls="r-py-token"><code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code></PyOutSection> : null}
             {d.error ? <PyOutSection label="error" cls="r-py-err"><Code text={d.error} lang="text" /></PyOutSection> : null}
@@ -233,7 +403,21 @@ function PythonOutRender({ d }: { d: Extract<RenderDescriptor, { type: "python-o
             {/* A sympy return auto-flagged `latex` → typeset the value (display mode), not a raw code block. */}
             {d.latex && d.value != null && !d.image && !d.token && !d.error && !d.df ? <PyOutSection label="value (LaTeX)" cls="r-py-val"><div class="md" dangerouslySetInnerHTML={{ __html: markdown(`\\[${d.value}\\]`, { math: true }) }} /></PyOutSection> : null}
             {d.value != null && !d.latex && !d.image && !d.token && !d.error && !d.df ? <PyOutSection label="value" cls="r-py-val"><Code text={d.value} lang="json" /></PyOutSection> : null}
-        </div>
+        </OutputCell></div>
+    );
+}
+
+// `exec`'s Out slot — the JS twin of PythonOutRender, so a JS run reads like the same notebook cell:
+// captured console output, then the returned value (or the thrown error). Reuses PyOutSection so both
+// tools share one look; "console" (not "stdout") because that's what the JS side actually captured.
+function ExecOutRender({ d }: { d: Extract<RenderDescriptor, { type: "exec-out" }> }) {
+    return (
+        <div class="r-python r-py-out"><OutputCell>
+            {d.stdout ? <PyOutSection label="console" cls="r-py-stdout"><SeenSplit text={d.stdout} seen={d.seen} /></PyOutSection> : null}
+            {d.token ? <PyOutSection label="token" cls="r-py-token"><code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code></PyOutSection> : null}
+            {d.error ? <PyOutSection label="error" cls="r-py-err"><Code text={d.error} lang="text" /></PyOutSection> : null}
+            {d.value != null && !d.error ? <PyOutSection label="value" cls="r-py-val"><Code text={d.value} lang="json" /></PyOutSection> : null}
+        </OutputCell></div>
     );
 }
 
@@ -310,6 +494,7 @@ export function RenderPanel({ d }: { d: RenderDescriptor }) {
         case "locate": return <LocateRender d={d} />;
         case "python-in": return <PythonInRender d={d} />;
         case "python-out": return <PythonOutRender d={d} />;
+        case "exec-out": return <ExecOutRender d={d} />;
         case "look": return <LookRender d={d} />;
         default: return <Code text={pretty(d)} lang="json" />;   // unknown type → dump it
     }

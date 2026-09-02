@@ -74,13 +74,15 @@ function writeAnswer(text: string, s: Session, d: Sink, muted = false, rawLabel 
         // Clean value of the slot — a python-out scalar's descriptor value, NOT `step.result` (which carries the
         // model-facing prelude). Mirrors the sidebar; keeps the prelude out of an inline value / `| latex` block.
         const raw = seg.slot === "in" ? (step.arguments ? pretty(step.arguments) : "")
-            : (desc?.type === "python-out" ? (desc.value ?? desc.stdout ?? step.result ?? "") : (step.result ?? ""));
+            : (desc?.type === "python-out" ? (desc.value ?? desc.stdout ?? step.result ?? "")
+                : desc?.type === "exec-out" ? (desc.value ?? desc.stdout ?? step.result ?? "")
+                : (step.result ?? ""));
         // Typeset an explicit `| latex` OR an auto-latex python-out (sympy return, no pipe) — wrap in `$…$` so
         // the HTML/PDF sink's KaTeX renders it (the `.md` sink keeps the `$…$` literal, which is what a coding
         // assistant wants). Mirrors the sidebar's autoLatex.
         const isLatex = raw && (seg.fmt === "latex" || (!seg.fmt && desc?.type === "python-out" && !!desc.latex));
         if (isLatex) { buf += ` $${raw}$ `; continue; }
-        if (desc && ["image", "look", "table", "code", "python-in", "python-out"].includes(desc.type)) {
+        if (desc && ["image", "look", "table", "code", "python-in", "python-out", "exec-out"].includes(desc.type)) {
             flush(); emitTokenBlock(step, seg.slot, d);
             if (seg.label && seg.label.trim()) d.note(seg.label.trim());   // the model's caption, like a figure caption
             continue;
@@ -117,6 +119,14 @@ function emitTokenBlock(step: AgentStep, slot: "in" | "out", d: Sink): void {
     // which the descriptor's own `value`/`stdout` never contains. Mirrors the sidebar's tokenRender; using the
     // structured field (not a regex on the string) stays correct as more model-facing hints are added over time.
     if (desc?.type === "python-out" && (desc.value != null || desc.stdout != null)) { d.code(desc.value ?? desc.stdout ?? ""); return; }
+    // `exec`'s structured Out (the JS twin): console then value, mirroring the sidebar's sections. The RAW
+    // model-facing result string is still emitted alongside by the caller, per the raw-view rule.
+    if (desc?.type === "exec-out" && (desc.stdout != null || desc.value != null || desc.error != null)) {
+        if (desc.stdout) d.code(desc.stdout);
+        if (desc.error) d.note(`error: ${desc.error}`, true);
+        else if (desc.value != null) d.code(desc.value);
+        return;
+    }
     const raw = slot === "in" ? (step.arguments ? pretty(step.arguments) : "") : (step.result ?? "");
     if (raw) d.code(raw);
 }

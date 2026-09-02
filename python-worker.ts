@@ -13,7 +13,7 @@
 import { PY_PACKAGE_LOADS } from "./python-env";
 import { wrapUserCode, harden, unharden } from "./python-runtime";
 
-type RunMsg = { id: number; code: string; image: string | null; hardened: boolean; tables: unknown };
+type RunMsg = { id: number; code: string; image: string | null; hardened: boolean; tables: unknown; stream?: boolean };
 type RunResult = { ok: boolean; value?: unknown; stdout: string; error?: string; table?: { columns: string[]; rows: (string | number | null)[][] }; render?: "latex" | "img" };
 
 let pyodideReady: Promise<any> | null = null;
@@ -36,10 +36,14 @@ function sanitize(v: unknown): unknown {
     try { return JSON.parse(JSON.stringify(v)); } catch { return String(v); }
 }
 
-async function run(code: string, image: string | null, hardened: boolean, tables: unknown): Promise<RunResult> {
+async function run(code: string, image: string | null, hardened: boolean, tables: unknown, onStdout?: (chunk: string) => void): Promise<RunResult> {
     const py = await getPyodide();
     py.globals.set("INJECTED_IMAGE_B64", image);
     py.globals.set("INJECTED_TABLES_JSON", Array.isArray(tables) && tables.length ? JSON.stringify(tables) : null);
+    // LIVE stdout tee (opt-in streaming): the prelude's _MlTee calls this per print(). Set only when the
+    // caller wants live output; cleared in finally so a later non-streaming run doesn't reuse a stale cb (it
+    // survives the per-run RESET — a leading-underscore global). No callback → pure capture, unchanged.
+    if (onStdout) py.globals.set("_ml_stdout_cb", onStdout);
     const saved = hardened ? harden(py) : null;
     try {
         // RESET (per-run isolation) + PRELUDE (preloaded vars) + the user's code, wrapped to capture
@@ -72,6 +76,7 @@ async function run(code: string, image: string | null, hardened: boolean, tables
     } finally {
         py.globals.set("INJECTED_IMAGE_B64", null);
         py.globals.set("INJECTED_TABLES_JSON", null);
+        if (onStdout) { try { py.globals.delete("_ml_stdout_cb"); } catch { /* ignore */ } }   // don't leak the cb into the next run
         if (saved) unharden(py, saved);
     }
 }
@@ -83,8 +88,11 @@ let runChain: Promise<unknown> = Promise.resolve();
 self.onmessage = (e: MessageEvent) => {
     const msg = e.data as RunMsg;
     if (!msg || typeof msg.id !== "number") return;
+    // Live stdout streaming: when the run opted in (`stream`), post each print() chunk back as a `partial`
+    // message (offscreen forwards it up the chain); the final message still carries the full result.
+    const onStdout = msg.stream ? (chunk: string) => self.postMessage({ id: msg.id, partial: true, chunk }) : undefined;
     runChain = runChain
-        .then(() => run(msg.code, msg.image ?? null, msg.hardened !== false, msg.tables ?? null))
+        .then(() => run(msg.code, msg.image ?? null, msg.hardened !== false, msg.tables ?? null, onStdout))
         .then(
             (result: RunResult) => self.postMessage({ id: msg.id, ...result }),
             (err: unknown) => self.postMessage({ id: msg.id, ok: false, stdout: "", error: String(err) }),

@@ -624,6 +624,35 @@ own way. A third format = a third sink, not a third walker.
   hostile tool result or model reply can never inject markup. Disclosures are
   `<details open>`: a collapsed one prints as just its summary.
 
+**Live tool-output streaming (`ctx.stream`) + the shared output cell.** Any tool's `run(args, ctx)` may call
+**`ctx.stream(text)`** to stream partial output AS IT WORKS (Jupyter-style) — a GENERIC capability, gated by the
+same **`stream`** agent flag as the streamed thinking (`ctx.stream` is simply ABSENT when off, so a tool checks
+`if (ctx.stream)` and otherwise returns its full result at the end, unchanged). The loop builds a throttled +
+capped fan per tool call (90ms, `UI_OUT_CAP`) and threads it through `runTool` → `executeTool`; each push emits
+an `agent-step` DELTA carrying only `{ step, seq, streamOutput }` (no `tool`), which the reducer patches
+**additively** onto the pending row — the DONE (with the real result) supersedes it. Shipped consumers: `exec`
+(its console patch also calls `ctx.stream` per line) and `python_exec` (the offscreen WORKER's stdout tees to a
+JS callback — `_ml_stdout_cb`, set only when streaming — and rides worker → offscreen → SW → page → the tool's
+ctx.stream). Works on BOTH paths: the page loop, and the BACKGROUND-hosted (design A) path via a reverse channel
+(`RUN_TOOL_IN_PAGE {stream}` → the page posts `PAGE_TOOL_STREAM {runId, chunk}` → SW → the in-flight call's sink,
+keyed by runId since the loop delegates tools sequentially). **CDP exec on strict-CSP pages is the one path that
+does NOT stream** (`Runtime.evaluate` returns once — it needs a `Runtime.consoleAPICalled` subscription); it
+degrades to the full output at DONE. See the `// TODO(cdp-stream)` in sw-cdp.ts.
+
+*Streaming vs truncation.* The model's result is clipped to its context budget, but the UI keeps far more
+(`UI_OUT_CAP`) — otherwise output you watched stream in would visibly SHRINK when the step landed. So the render
+descriptors carry **`seen`**: how many characters the model actually received. Everything past it renders MARKED
+("captured, but NOT sent to the model" — dimmed, dashed rail), so the fuller human view is never mistaken for
+what the model read (the raw view still shows the model-facing text verbatim).
+
+*The output cell.* `python_exec` and `exec` render their Out through ONE shared **`OutputCell`**
+(sidebar/render-panel.tsx) — a future code-ish tool (a `bash_exec`, say) wraps its own sections in it and
+inherits everything: a height cap (Settings → Appearance, per-cell drag-to-resize), scrolling, **tail-follow**
+(new output scrolls into view only while you're parked at the bottom; scroll up and it holds), and an in-cell
+**Ctrl+F find** (substring only — no regex — with a case toggle, match count, ↑/↓ navigation, painted via the
+CSS Custom Highlight API so the syntax highlighting underneath is untouched). `exec`'s Out is a rendered cell
+too (console / value / error sections), matching python's instead of a raw blob.
+
 **Two surfaces (in-page overlay + DevTools panel).** The same `sidebar-app` bundle runs
 in two places: the in-page **overlay** (a content-script shadow-root shell, `shell.ts`,
 hosting `sidebar.html` in an iframe) and an optional **DevTools panel** (`devtools.ts`
@@ -803,6 +832,14 @@ thing. The parts:
   decision (`resolve(key, …)`), all driven from the SW realm with the page walled off. Deterministic
   (fake-LLM, no model/key). Pace it with `PACE`/`HOLD` (ms). The automated assertions of the same flow
   are `approval.spec.mjs`.
+- **`stream-demo.mjs`** — a **narrated demo, not a test** of LIVE tool-output streaming: `npm run build &&
+  node --import tsx tests/e2e/stream-demo.mjs` opens a headful browser, slides the overlay open on a real
+  (background-hosted) run, and drives a deliberately SLOW `exec` (paced `console.log`) and `python_exec`
+  (paced `print`) so you can watch each Out fill in Jupyter-style. It also captures the two adjacent
+  behaviours: the "captured, but NOT sent to the model" marking, and the in-cell Ctrl+F find bar.
+  Screenshots land in `tests/e2e/artifacts/stream-demo/`; `HOLD=0` exits instead of holding the browser
+  open. Deterministic (fake-LLM, approvals resolved via the SW `__mlApprovals` channel). The automated
+  assertions are `python-stream.spec.mjs` (the reverse channel) and `output-scroll.spec.mjs` (tail-follow).
 - **Real model:** point the extension at a real backend with `E2E_BACKEND=<chatUrl>
   E2E_MODEL=<id> E2E_KEY=<bearer>` (the observer also accepts `USE_ENV=1` to read
   `OPENWEBUI_URL/KEY/MODEL` + `OPENWEBUI_UTILITY_MODEL`/`OPENWEBUI_VISION_MODEL` from `.env`).

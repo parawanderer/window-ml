@@ -18,7 +18,7 @@ import {
     decideGate, decidedSteps, stepKey, grantHostPattern, inlineJson, inlineText,
 } from "./ui-kit";
 import { FeedbackBlock, ReusedBlock } from "./answer-render";
-import { RenderPanel } from "./render-panel";
+import { RenderPanel, OutputCell } from "./render-panel";
 import { ReplyBubble } from "./reply";
 import { CodeExplain, codeOf } from "./summaries";
 import { groupTurns } from "./debug-reducer";
@@ -254,7 +254,7 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                         raw={st.pending
                             ? (st.streamOutput != null
                                 // LIVE tool output (ctx.stream — console.log / print) filling in Jupyter-style while it runs.
-                                ? <div class="astep-streaming"><Code text={st.streamOutput} lang="text" /></div>
+                                ? <div class="astep-streaming"><OutputCell><Code text={st.streamOutput} lang="text" /></OutputCell></div>
                                 : <span class="dim">running…</span>)
                             : (st.modelResult ?? st.result) ? <Code text={st.modelResult ?? st.result ?? ""} lang="text" /> : <span class="dim">(no output)</span>} />
                     {st.feedback ? <FeedbackBlock fb={st.feedback} /> : null}

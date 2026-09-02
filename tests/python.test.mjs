@@ -370,3 +370,22 @@ test("auto-render: a sympy.latex(...) return is flagged latex by the CODE (AST),
     const plain = await pyRun("return str(5)");
     assert.equal(plain.render, undefined, "str(5) is not a latex() call → not flagged");
 });
+
+test("live stdout tee: _ml_stdout_cb streams each print() chunk while _stdout keeps the full capture", { skip }, async () => {
+    const chunks = [];
+    py.globals.set("_ml_stdout_cb", (s) => chunks.push(s));   // the worker sets this only when streaming is on
+    try {
+        const r = await pyRun("print('alpha'); print('beta'); 42");
+        assert.equal(r.value, 42, "the trailing expression still returns");
+        assert.equal(r.stdout, "alpha\nbeta\n", "the final _stdout keeps the byte-exact full output");
+        const streamed = chunks.join("");
+        assert.match(streamed, /alpha/, "alpha streamed live via the tee");
+        assert.match(streamed, /beta/, "beta streamed live via the tee");
+    } finally { py.globals.delete("_ml_stdout_cb"); }
+});
+
+test("live stdout tee: NO callback set → pure capture, the tee is a silent no-op", { skip }, async () => {
+    const r = await pyRun("print('quiet'); 1");   // (prior test deleted _ml_stdout_cb)
+    assert.equal(r.stdout, "quiet\n", "stdout captured normally");
+    assert.equal(r.value, 1);
+});

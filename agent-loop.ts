@@ -13,7 +13,7 @@
 // model / executor / gate in tests/agent-loop.test.js.
 
 import type { AgentResult, AgentTranscriptEntry, ApprovalDecision, ToolCall, RenderDescriptor, ToolFeedback, SubcallUsage, TokenUsage, RunStats } from "./contract";
-import { runStats, fmtTokPerSec } from "./contract";
+import { runStats, fmtTokPerSec, UI_OUT_CAP } from "./contract";
 import type { TokenRender } from "./contract";
 import { UNATTENDED_REFUSAL } from "./prompts";
 import { toolToken } from "./util";
@@ -50,6 +50,11 @@ export interface AgentLoopDeps {
     // Page-delegated on the background path; safe to delegate BECAUSE it can't do anything a mutation
     // could. Reached before autoApprove/the gate for a requiresApproval tool.
     tryReadonly?(name: string, args: Record<string, unknown>): Promise<ToolRunResult | null>;
+    // PRE-RUN In render for the pending step (the tool's `render(input,args)` — exec's beautified JS,
+    // python's code cell), so a step you WATCH streaming shows a pretty In instead of raw JSON args from the
+    // moment it starts. Async because the background must ask the page to compute it. Used only for a
+    // streaming run (that's when a pending step is on screen long enough to matter). Optional.
+    renderFor?(name: string, args: Record<string, unknown>): Promise<RenderDescriptor | undefined>;
     // Doomed-action precheck (click/type): a side-effect-free target resolution → an ERROR STRING if the
     // action can only fail (no element / stale @pt / bad selector), else null/"" to proceed to the gate.
     // The loop uses it to SKIP the approval prompt for an action that would just fail. Page-delegated on
@@ -205,16 +210,22 @@ export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number | (() =
 // text (a runaway print can't blow up a message). The DONE emit carries the full result and supersedes this,
 // so the cap only bounds the LIVE view. Mirrors the LLM stream's 90ms cadence.
 const STREAM_EMIT_MS = 90;
-const STREAM_OUTPUT_CAP = 4000;
+// Same budget the finished render keeps (UI_OUT_CAP), so the live view and the settled one agree — output
+// never visibly shrinks (or jumps) when the step lands. Past it, a running "[+N chars]" note counts up.
+const STREAM_OUTPUT_CAP = UI_OUT_CAP;
 /** Build the per-tool-call streaming fan (or null when streaming is off). `push` accumulates + throttled-emits
  *  the running output; `done` stops any pending trailing emit (the DONE supersedes it). */
 function makeStreamFan(on: boolean | undefined, emit: (out: string) => void): { push: (text: string) => void; done: () => void } | null {
     if (!on) return null;
-    let acc = "", last = 0, timer: ReturnType<typeof setTimeout> | null = null;
-    const send = (): void => { last = Date.now(); emit(acc); };
+    let acc = "", dropped = 0, last = 0, timer: ReturnType<typeof setTimeout> | null = null;
+    // Past the cap we keep the HEAD (like the final clip) and COUNT what we dropped, re-emitting the note each
+    // flush — so a runaway loop shows a truncation figure that ticks up instead of silently freezing.
+    const send = (): void => { last = Date.now(); emit(dropped ? `${acc}… [+${dropped} chars]` : acc); };
     return {
         push(text: string): void {
-            if (acc.length < STREAM_OUTPUT_CAP) acc = (acc + String(text)).slice(0, STREAM_OUTPUT_CAP);   // keep the HEAD, like the final clip
+            const s = String(text), room = STREAM_OUTPUT_CAP - acc.length;
+            if (room > 0) { acc += s.slice(0, room); if (s.length > room) dropped += s.length - room; }
+            else dropped += s.length;
             if (Date.now() - last >= STREAM_EMIT_MS) { if (timer) { clearTimeout(timer); timer = null; } send(); }   // leading edge
             else if (!timer) timer = setTimeout(() => { timer = null; send(); }, STREAM_EMIT_MS);                    // trailing, coalesced
         },
@@ -303,7 +314,10 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             const meta = byName.get(call.name);
             let args = (call.arguments || {}) as Record<string, unknown>;
             const s = ++seq;
-            deps.emit?.({ step, seq: s, pending: true, tool: call.name, arguments: args });   // in-flight START
+            // On a STREAMING run the pending step is on screen while its output fills in, so give it a pretty
+            // In up front (the gated path already does this via approve; this covers auto-approved calls too).
+            const preIn = (opts.stream && deps.renderFor) ? await deps.renderFor(call.name, args).catch(() => undefined) : undefined;
+            deps.emit?.({ step, seq: s, pending: true, tool: call.name, arguments: args, renderIn: preIn });   // in-flight START
             // Live tool-output fan for THIS call (opt-in `stream`): a delta emit carries only { step, seq,
             // streamOutput } so the reducer patches the pending row additively; the DONE below supersedes it.
             const fan = makeStreamFan(opts.stream, (out) => deps.emit?.({ step, seq: s, streamOutput: out }));

@@ -215,7 +215,16 @@ test("defineTool carries capability tags (default empty)", () => {
 // ---- domTools registry ----
 
 // Run a named tool from the default registry (run may be async, e.g. exec).
+// Run a domTool and return its MODEL-FACING text. A tool may return a bare string or a ToolResult
+// ({ content, render, … } — e.g. exec now carries a rendered Out alongside the same raw text), so
+// unwrap `content` here; tests that care about the render read `.render` off the tool directly.
 const run = (ml, name, args) => ml.domTools.find(t => t.name === name).run(args);
+// `exec` returns a ToolResult (its model-facing `content` PLUS a rendered Out descriptor). These assertions
+// want the text the model actually read, so unwrap it; tests about the render/elements read the object.
+const execText = async (ml, args) => {
+    const r = await run(ml, "exec", args);
+    return (r && typeof r === "object" && typeof r.content === "string") ? r.content : r;
+};
 
 test("agent_api_docs ships the generated window.ml reference in the default registry", async () => {
     // The doc itself is covered by tests/api-docs.test.mjs; what matters here is that it
@@ -777,56 +786,56 @@ test("exec on a strict page (CSP / Trusted-Types block) → signals cdpExec with
 
 test("exec evaluates expressions, serializes objects, and catches errors", async () => {
     const { ml } = loadDomWorld("<li></li><li></li>");
-    assert.equal(await run(ml, "exec", { js: "1 + 2" }), "3");
-    assert.equal(await run(ml, "exec", { js: "document.querySelectorAll('li').length" }), "2");
-    assert.equal(await run(ml, "exec", { js: "({a:1})" }), '{"a":1}');
-    assert.equal(await run(ml, "exec", { js: "Promise.resolve(42)" }), "42"); // thenable awaited
-    assert.match(await run(ml, "exec", { js: "nope()" }), /^Error:/);
+    assert.equal(await execText(ml, { js: "1 + 2" }), "3");
+    assert.equal(await execText(ml, { js: "document.querySelectorAll('li').length" }), "2");
+    assert.equal(await execText(ml, { js: "({a:1})" }), '{"a":1}');
+    assert.equal(await execText(ml, { js: "Promise.resolve(42)" }), "42"); // thenable awaited
+    assert.match(await execText(ml, { js: "nope()" }), /^Error:/);
     // Top-level await + return (async-function fallback when eval rejects them).
-    assert.equal(await run(ml, "exec", { js: "return await Promise.resolve(7)" }), "7");
-    assert.equal(await run(ml, "exec", { js: "const x = await Promise.resolve(5); return x * 2" }), "10");
+    assert.equal(await execText(ml, { js: "return await Promise.resolve(7)" }), "7");
+    assert.equal(await execText(ml, { js: "const x = await Promise.resolve(5); return x * 2" }), "10");
     // A bare top-level-await EXPRESSION keeps the REPL trailing-value convention (no
     // explicit `return`) — the async fallback used to drop it and answer undefined.
-    assert.equal(await run(ml, "exec", { js: "await Promise.resolve(9)" }), "9");
-    assert.equal(await run(ml, "exec", { js: "await Promise.all([Promise.resolve(1), Promise.resolve(2)]).then(([a, b]) => ({ a, b }))" }), '{"a":1,"b":2}');
-    assert.equal(await run(ml, "exec", { js: "await Promise.resolve(4);" }), "4"); // trailing ; tolerated
-    assert.match(await run(ml, "exec", { js: "return (" }), /^Error:/); // genuine syntax error still reported
+    assert.equal(await execText(ml, { js: "await Promise.resolve(9)" }), "9");
+    assert.equal(await execText(ml, { js: "await Promise.all([Promise.resolve(1), Promise.resolve(2)]).then(([a, b]) => ({ a, b }))" }), '{"a":1,"b":2}');
+    assert.equal(await execText(ml, { js: "await Promise.resolve(4);" }), "4"); // trailing ; tolerated
+    assert.match(await execText(ml, { js: "return (" }), /^Error:/); // genuine syntax error still reported
     // Multi-line console output keeps its newlines — separate console.log calls
     // join with \n, and the length cap must NOT collapse whitespace (regression:
     // exec used dom.ts `truncate`, whose \s+→" " flattened every line into spaces).
-    const multi = await run(ml, "exec", { js: "for (let i = 1; i <= 3; i++) console.log('line ' + i);" });
+    const multi = await execText(ml, { js: "for (let i = 1; i <= 3; i++) console.log('line ' + i);" });
     assert.match(multi, /^console:\nline 1\nline 2\nline 3\n\nvalue: /);
     // The #1 exec mistake: .map on a raw NodeList → steer to Array.from/spread.
-    const nodelist = await run(ml, "exec", { js: "document.querySelectorAll('li').map(x => x.tagName)" });
+    const nodelist = await execText(ml, { js: "document.querySelectorAll('li').map(x => x.tagName)" });
     assert.match(nodelist, /is not a function/);
     assert.match(nodelist, /NodeList\/HTMLCollection, not an Array/);
     // A non-DOM "not a function" must NOT get the NodeList hint (false-positive guard).
-    assert.doesNotMatch(await run(ml, "exec", { js: "(42).map(x => x)" }), /NodeList/);
+    assert.doesNotMatch(await execText(ml, { js: "(42).map(x => x)" }), /NodeList/);
     // A runaway result is capped so it can't flood context — with a "[+N chars truncated]"
     // count (the model knows it's a prefix). 600 'x' → 500 kept + 100 dropped.
-    const big = await run(ml, "exec", { js: "'x'.repeat(600)" });
+    const big = await execText(ml, { js: "'x'.repeat(600)" });
     assert.match(big, /^x{500}… \[\+100 chars truncated\]$/);
 });
 
 test("exec: `maxChars` raises the per-call output cap (post-approval), clamped to the ceiling", async () => {
     const { ml } = loadDomWorld();
     // Default 500 → 600 'x' clips to 500. With a raise + reason, the same output survives to 4000.
-    assert.match(await run(ml, "exec", { js: "'x'.repeat(600)", maxChars: 4000, maxCharsReason: "need it all" }), /^x{600}$/);
+    assert.match(await execText(ml, { js: "'x'.repeat(600)", maxChars: 4000, maxCharsReason: "need it all" }), /^x{600}$/);
     // A value past the 8000 ceiling is clamped, and the clamp is disclosed to the model.
-    const clamped = await run(ml, "exec", { js: "'x'.repeat(9000)", maxChars: 100000, maxCharsReason: "y" });
+    const clamped = await execText(ml, { js: "'x'.repeat(9000)", maxChars: 100000, maxCharsReason: "y" });
     assert.match(clamped, /x{8000}… \[\+1000 chars truncated\]/);
     assert.match(clamped, /clamped to 8000 chars/i, "the model is told its raise was clamped");
     // A SMALLER cap is honored too (no gate needed for that).
-    assert.match(await run(ml, "exec", { js: "'x'.repeat(600)", maxChars: 100 }), /^x{100}… \[\+500 chars truncated\]$/);
+    assert.match(await execText(ml, { js: "'x'.repeat(600)", maxChars: 100 }), /^x{100}… \[\+500 chars truncated\]$/);
 });
 
 test("exec: `state` persists across calls (the page-kernel scratchpad) + ml.state is the same object", async () => {
     const { ml } = loadDomWorld();
     // Stash on the first call (fast path), read it back on the second — the Jupyter/kernel paradigm.
-    await run(ml, "exec", { js: "state.count = (state.count || 0) + 41" });
-    assert.equal(await run(ml, "exec", { js: "state.count + 1" }), "42", "state survives between exec calls");
+    await execText(ml, { js: "state.count = (state.count || 0) + 41" });
+    assert.equal(await execText(ml, { js: "state.count + 1" }), "42", "state survives between exec calls");
     // The async path (top-level await → AsyncFunction) sees the SAME state.
-    assert.equal(await run(ml, "exec", { js: "await Promise.resolve(state.count)" }), "41", "the async path shares state too");
+    assert.equal(await execText(ml, { js: "await Promise.resolve(state.count)" }), "41", "the async path shares state too");
     // ml.state is the very same object (console/agent parity) and is a getter (can't be reassigned).
     assert.equal(ml.state.count, 41, "ml.state exposes the same scratchpad");
     assert.throws(() => { "use strict"; ml.state = {}; }, "ml.state is getter-only — can't be clobbered");
@@ -910,7 +919,7 @@ test("scroll tool errors clearly for a missing element target", async () => {
 
 test("exec captures console output and returns it with the value", async () => {
     const { ml } = loadDomWorld();
-    const res = await run(ml, "exec", { js: "console.log('hello', 42); 'done'" });
+    const res = await execText(ml, { js: "console.log('hello', 42); 'done'" });
     assert.match(res, /console:\nhello 42/);
     assert.match(res, /value: done/);
 });
@@ -918,7 +927,7 @@ test("exec captures console output and returns it with the value", async () => {
 test("exec returns console output even when the expression evaluates to undefined", async () => {
     // The pattern the model reached for: forEach + console.log (value is undefined).
     const { ml } = loadDomWorld("<li>a</li><li>b</li>");
-    const res = await run(ml, "exec", {
+    const res = await execText(ml, {
         js: "document.querySelectorAll('li').forEach((el,i) => console.log(i, el.textContent))"
     });
     assert.match(res, /0 a/);
@@ -3480,4 +3489,84 @@ test("_describeSkeleton caps children at 12 with an overflow marker", () => {
     const lines = ml._describeSkeleton(document.querySelector("ul"), 1).split("\n");
     assert.equal(lines.length, 1 + 12 + 1);            // ul + 12 li + overflow
     assert.equal(lines.at(-1), "  …(2 more)");
+});
+
+// Generic tool-output streaming (ctx.stream): `exec` is the first builtin consumer — its console patch must
+// push each line to ctx.stream as it runs, while still returning the full captured output at the end. With no
+// ctx.stream (streaming off) it behaves exactly as before.
+test("exec streams each console.log line via ctx.stream, and still returns the full output", async () => {
+    const { ml } = loadDomWorld();
+    const exec = ml.domTools.find(t => t.name === "exec");
+    assert.ok(exec, "the exec tool is wired");
+    const chunks = [];
+    const out = await exec.run({ js: "console.log('one'); console.log('two'); 42" }, { stream: (t) => chunks.push(t) });
+    const streamed = chunks.join("");
+    assert.match(streamed, /one/, "the first console line streamed live");
+    assert.match(streamed, /two/, "the second console line streamed live");
+    const text = typeof out === "string" ? out : out.result || out.content || "";
+    assert.match(text, /one[\s\S]*two/, "the full captured console output still comes back at the end");
+});
+
+test("exec with NO ctx.stream (streaming off) runs unchanged — nothing to stream to", async () => {
+    const { ml } = loadDomWorld();
+    const exec = ml.domTools.find(t => t.name === "exec");
+    const out = await exec.run({ js: "console.log('quiet'); 1" }, {});   // ctx without `stream`
+    const text = typeof out === "string" ? out : out.result || out.content || "";
+    assert.match(text, /quiet/, "output still captured and returned");
+});
+
+// exec's Out now has a RENDERED mode (console / value sections), matching python_exec's cell instead of one
+// raw blob. Two invariants: the RAW model-facing string is byte-identical to before (the raw-view rule — the
+// log must always show exactly what the model read), and the RENDERED descriptor splits it correctly.
+test("exec Out (raw): the model-facing result still carries the full console output + value", async () => {
+    const { ml } = loadDomWorld();
+    const exec = ml.domTools.find(t => t.name === "exec");
+    const out = await exec.run({ js: "console.log('a'); console.log('b'); 7" }, {});
+    assert.match(out.content, /^console:\n/, "the console block leads");
+    assert.match(out.content, /a\nb/, "every logged line is present");
+    assert.match(out.content, /\n\nvalue: 7$/, "then the returned value — the exact text the model reads");
+});
+
+test("exec Out (rendered): the descriptor splits console vs value (parity with python_exec)", async () => {
+    const { ml } = loadDomWorld();
+    const exec = ml.domTools.find(t => t.name === "exec");
+    const out = await exec.run({ js: "console.log('a'); console.log('b'); 7" }, {});
+    assert.equal(out.render.type, "exec-out");
+    assert.equal(out.render.stdout, "a\nb", "console section = the logged lines only (no 'console:' prefix, no value)");
+    assert.equal(out.render.value, "7", "value section = the return, on its own");
+    assert.equal(out.render.error, undefined, "a successful run has no error section");
+});
+
+test("exec Out: a THROWN error fills the error section and stays in the raw text", async () => {
+    const { ml } = loadDomWorld();
+    const exec = ml.domTools.find(t => t.name === "exec");
+    const out = await exec.run({ js: "console.log('before'); throw new Error('boom')" }, {});
+    assert.match(out.content, /before/, "raw keeps the console output produced before the throw");
+    assert.match(out.content, /boom/, "raw keeps the error text");
+    assert.equal(out.render.type, "exec-out");
+    assert.equal(out.render.stdout, "before");
+    assert.match(out.render.error, /boom/, "the error rides its own section");
+    assert.equal(out.render.value, undefined, "an errored run has no value section");
+});
+
+test("exec Out: nothing logged → no console section, value only (both views)", async () => {
+    const { ml } = loadDomWorld();
+    const exec = ml.domTools.find(t => t.name === "exec");
+    const out = await exec.run({ js: "1 + 1" }, {});
+    assert.equal(out.content, "2", "raw is just the value when nothing was logged");
+    assert.equal(out.render.stdout, undefined, "no empty console section");
+    assert.equal(out.render.value, "2");
+});
+
+// Streaming vs truncation: the model's result is clipped to its context budget, but the UI keeps far more —
+// otherwise output you watched stream in would SHRINK when the step lands. The render records where the
+// model's view ended (`seen`) so the surplus can be marked rather than passing as "what the model read".
+test("exec Out: the UI keeps MORE than the model got, and records where the model's view ended", async () => {
+    const { ml } = loadDomWorld();
+    const exec = ml.domTools.find(t => t.name === "exec");
+    const out = await exec.run({ js: "for (let i=0;i<60;i++) console.log('x'.repeat(19)); 1" }, {});
+    assert.match(out.content, /truncated/, "the MODEL's copy is clipped at its output cap");
+    assert.equal(out.render.seen, 500, "the render records exactly how many chars the model received");
+    assert.ok(out.render.stdout.length > 500, "while the UI keeps far more than the model got");
+    assert.doesNotMatch(out.render.stdout, /truncated/, "the UI copy isn't clipped at the model's cap");
 });

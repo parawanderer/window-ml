@@ -690,6 +690,36 @@ details.io[open] > summary .io-preview { display: none; }
 .run-stats .rstat-ic { opacity: .7; margin-right: 3px; }
 .run-stats .rstat-tps { color: var(--fg-dim); }
 
+/* Shared tool OUTPUT CELL (python_exec / exec / any future tool): capped height → scrolls, with a drag grip.
+   Jupyter's output area — tall output can't bury the transcript, and tail-follow keeps the newest line in view. */
+.r-outcell { position: relative; }
+.r-outscroll { overflow: auto; overscroll-behavior: contain; }
+.r-outgrip { height: 7px; margin-top: 2px; border-radius: 4px; cursor: ns-resize; background: var(--panel-2); opacity: .5; }
+.r-outgrip:hover { opacity: 1; background: var(--panel-2-hover); }
+
+/* In-cell find bar (Ctrl/Cmd+F while the output cell is focused) — VSCode-ish, top-right, substring only.
+   Matches paint via the CSS Custom Highlight API, so the syntax highlighting underneath is untouched. */
+.r-outcell { position: relative; }
+.r-outscroll:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
+.r-find { position: absolute; top: 2px; right: 8px; z-index: 3; display: flex; align-items: center; gap: 4px;
+          padding: 3px 5px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+.r-find-q { width: 130px; padding: 2px 5px; font: inherit; font-size: 11px; color: var(--fg);
+            background: var(--bg); border: 1px solid var(--border); border-radius: 4px; }
+.r-find-q:focus { outline: none; border-color: var(--accent); }
+.r-find-case, .r-find-nav, .r-find-x { padding: 1px 5px; font-size: 11px; line-height: 1.4; color: var(--fg-dim);
+            background: transparent; border: 1px solid transparent; border-radius: 4px; cursor: pointer; }
+.r-find-case:hover, .r-find-nav:hover:not(:disabled), .r-find-x:hover { background: var(--panel-2); color: var(--fg); }
+.r-find-case.on { background: var(--panel-2); color: var(--fg); border-color: var(--border); }
+.r-find-nav:disabled { opacity: .35; cursor: default; }
+.r-find-n { min-width: 56px; font-size: 10px; color: var(--fg-faint); font-variant-numeric: tabular-nums; text-align: center; }
+::highlight(ml-find) { background: rgba(250, 204, 21, .35); }
+::highlight(ml-find-cur) { background: rgba(250, 204, 21, .75); color: #18181b; }
+
+/* Output the tool captured but the MODEL never received (clipped at its context cap) — dimmed, under an
+   explicit label, so the fuller human view is never mistaken for what the model actually read. */
+.r-unseen-lbl { margin: 6px 0 3px; font-size: 10px; letter-spacing: .04em; text-transform: uppercase; color: var(--fg-faint); cursor: help; }
+.r-unseen { opacity: .55; border-left: 2px dashed var(--border); padding-left: 6px; }
+
 /* Live tool output (ctx.stream) filling in while a step runs — a pulsing accent rail marks it as still going. */
 .astep-streaming { border-left: 2px solid var(--accent); padding-left: 6px; animation: astep-live 1.2s ease-in-out infinite; }
 @keyframes astep-live { 0%, 100% { border-left-color: var(--accent); } 50% { border-left-color: transparent; } }

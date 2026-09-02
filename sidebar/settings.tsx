@@ -10,8 +10,8 @@ import type { MlConfig, ApiFormat, Theme, DebugMode, CardCorner, AgentHud, Loade
 import { DEFAULT_CONFIG, DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX, detectGroundingModel, modelFilterAllows } from "../contract";
 import { PY_PACKAGES } from "../python-env";
 import {
-    config, models, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps,
-    MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY,
+    config, models, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH,
+    MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT,
 } from "./store";
 import { truncate } from "./format";
 import { applyTheme, applyFont, applyCodePrefs } from "./prefs";
@@ -828,6 +828,15 @@ export function Settings() {
                         <option value="wrap">Wrap (break line)</option>
                         <option value="scroll">Scroll horizontally</option>
                     </select></label>
+                <label class="set-field"><span>Tool output height</span>
+                    <select value={String(outMaxH.value)}
+                        onChange={(e: any) => { outMaxH.value = Number(e.target.value); chrome.storage.local.set({ [OUTMAX_KEY]: outMaxH.value }); }}>
+                        <option value="160">Short (160px)</option>
+                        <option value={String(OUTMAX_DEFAULT)}>Default ({OUTMAX_DEFAULT}px)</option>
+                        <option value="420">Tall (420px)</option>
+                        <option value="0">Uncapped</option>
+                    </select></label>
+                <div class="set-note">How tall a tool's output cell (python_exec / exec) grows before it scrolls — Jupyter-style, so a chatty run can't bury the transcript. Drag the grip under any cell to resize just that one. While you're scrolled to the bottom it follows new streamed output; scroll up and it holds still.</div>
                 <label class="set-check">
                     <input type="checkbox" checked={codeLineNumbers.value}
                         onChange={(e: any) => { codeLineNumbers.value = e.target.checked; applyCodePrefs(); chrome.storage.local.set({ [LINES_KEY]: codeLineNumbers.value }); }} />

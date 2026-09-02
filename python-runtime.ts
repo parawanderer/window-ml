@@ -184,7 +184,18 @@ ${RESET}${PRELUDE}
 ${netPolicy(hardened)}
 result = None
 _ml_src = ${JSON.stringify(code)}
-_out = io.StringIO()
+# stdout capture that ALSO tees each write to a JS callback (\`_ml_stdout_cb\`, set by the worker ONLY when
+# the run opted into live streaming) so print() output streams live (Jupyter-style) — while _out still holds
+# the byte-exact full stdout for the final result. No callback set → pure capture, unchanged.
+class _MlTee(io.StringIO):
+    def write(self, _s):
+        _n = super().write(_s)
+        _cb = globals().get("_ml_stdout_cb")
+        if _cb is not None:
+            try: _cb(_s)
+            except Exception: pass
+        return _n
+_out = _MlTee()
 _err = None
 _ml_ret_latex = False
 with contextlib.redirect_stdout(_out), contextlib.redirect_stderr(_out):

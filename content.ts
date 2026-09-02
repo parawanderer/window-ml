@@ -130,8 +130,14 @@ chrome.runtime.onMessage.addListener((message: PageMessage & { event?: unknown }
         window.postMessage({ __mlDebug: message.event, __mlFromBg: true }, "*");
         return undefined;
     }
+    // A LIVE python_exec stdout chunk (opt-in streaming) → re-post on the page window so ml.pythonExec's
+    // in-flight promise (keyed by requestId) resolves it as a progress event to the tool's ctx.stream.
+    if (message && message.type === "PYTHON_STREAM") {
+        window.postMessage({ type: "PYTHON_STREAM", requestId: (message as { requestId?: string }).requestId, chunk: (message as { chunk?: string }).chunk }, "*");
+        return undefined;
+    }
     if (!message || message.type !== "RUN_TOOL_IN_PAGE") return undefined;
-    const { runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus } = (message.payload || {}) as { runId: string; name: string; args: unknown; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean };
+    const { runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, stream } = (message.payload || {}) as { runId: string; name: string; args: unknown; renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; stream?: boolean };
     // window.ml's script was fetch-refused by CSP (script-src 'none') — nothing will ever answer. Fail fast.
     if (injectedBlocked) { sendResponse({ result: CSP_BLOCK_MSG(name) }); return true; }
     const callId = Math.random().toString(36).slice(2);
@@ -164,7 +170,7 @@ chrome.runtime.onMessage.addListener((message: PageMessage & { event?: unknown }
         finish({ result: `Error: the page didn't respond while running "${name}" (timed out). It may be mid-navigation. Re-check the page (look / pageInfo) and retry, or navigate to a different page.` }, false);
     }, TOOL_RELAY_TIMEOUT_MS);
     window.addEventListener("message", onResult);
-    window.postMessage({ type: "PAGE_TOOL_RUN", callId, runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus }, "*");
+    window.postMessage({ type: "PAGE_TOOL_RUN", callId, runId, name, args, renderOnly, readonlyTry, precheck, verifyAt, verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, stream }, "*");
     return true;   // async sendResponse (the window round-trip completes later)
 });
 
@@ -213,6 +219,13 @@ window.addEventListener("message", (event: MessageEvent) => {
         const port = streamPorts.get(requestId);
         if (port) { streamPorts.delete(requestId); port.disconnect(); }
         else chrome.runtime.sendMessage({ type: "ABORT_TASK", payload: { requestId } });
+        return;
+    }
+    // A LIVE output chunk from a DELEGATED tool (its ctx.stream, posted by run-delegation) → forward to the
+    // background, which routes it to the in-flight call's sink by runId (→ the loop's fan → a streamOutput
+    // delta on every surface). Fire-and-forget; a dropped chunk only costs a frame of live output.
+    if (data.type === "PAGE_TOOL_STREAM") {
+        chrome.runtime.sendMessage({ type: "PAGE_TOOL_STREAM", runId: (data as { runId?: string }).runId, chunk: (data as { chunk?: string }).chunk });
         return;
     }
     // 3. Forward to the background worker (to bypass CORS).

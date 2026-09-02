@@ -23,7 +23,7 @@ import type { InvocationInfo, MlPublicConfig } from "./contract";
 import { ML_READONLY_METHODS } from "./readonly-exec";
 // Generated from contract.ts at build time (scripts/gen-api-docs.mjs) — the public MlApi
 // surface, so the doc the model reads can never drift from the interface it describes.
-import { resolveOutputCap, outputCapPrecheck } from "./contract";
+import { resolveOutputCap, outputCapPrecheck, UI_OUT_CAP } from "./contract";
 import { ML_API_PARTS } from "./api-docs.gen";
 import { queryApiDocs, isDefaultQuery, type ApiDocsQuery } from "./api-docs-query";
 import { answerItemFromString, type AnswerSet } from "./answer-set";
@@ -593,6 +593,20 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 const logged = logs.length ? `console:\n${clipOut(logs.join("\n"), cap)}` : "";
                 const clampNote = clamped ? `\n\n(output limit clamped to ${cap} chars — the hard ceiling.)` : "";
                 const withLogs = (value: string) => (logged ? `${logged}\n\nvalue: ${value}` : value) + clampNote;
+                // The UI's RENDERED Out — parity with python_exec's cell (console / value / error sections +
+                // a rendered⇄raw toggle) instead of one raw blob. Carries exactly the same data the raw
+                // `content` string does, so the model-facing result is byte-identical (the raw-view rule).
+                const execRender = (value?: string, error?: string): import("./contract").RenderDescriptor => {
+                    const joined = logs.join("\n");
+                    return {
+                        type: "exec-out",
+                        // The UI keeps far more than the model's budget, and records where the model's view
+                        // ENDED (`seen`) so the surplus renders marked instead of silently passing as "what it read".
+                        ...(logs.length ? { stdout: clipOut(joined, UI_OUT_CAP), seen: Math.min(joined.length, cap) } : {}),
+                        ...(error != null ? { error } : {}),
+                        ...(value != null ? { value } : {}),
+                    };
+                };
 
                 if (failed) {
                     // errText, NOT `.message`: a rejected `ml.*` call (makeBackgroundTaskPromise) rejects with a
@@ -603,7 +617,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                     // CDP `Runtime.evaluate` (debugger, CSP-exempt). The background decides — run it (cdp on +
                     // granted), or return an actionable "enable / grant" note (off / missing). The `content` here
                     // is the base the background builds on when it CAN'T run CDP.
-                    if (isCspEvalBlocked(msg)) return { content: withLogs("This page blocks main-world eval (its CSP omits 'unsafe-eval', or it enforces Trusted Types), so the code couldn't run in the page context."), cdpExec: { source: js } };
+                    if (isCspEvalBlocked(msg)) return { content: withLogs("This page blocks main-world eval (its CSP omits 'unsafe-eval', or it enforces Trusted Types), so the code couldn't run in the page context."), cdpExec: { source: js }, render: execRender(undefined, "This page blocks main-world eval (CSP / Trusted Types).") };
                     // The #1 exec mistake: querySelectorAll / .children / getElementsBy* return a
                     // NodeList/HTMLCollection (array-LIKE, no .map/.filter). Steer the retry
                     // instead of leaving the model to flail on "map is not a function".
@@ -612,12 +626,12 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                     const hint = arrayish
                         ? " — querySelectorAll / .children / getElementsBy* return a NodeList/HTMLCollection, not an Array. Wrap it first: [...document.querySelectorAll('…')].map(…) or Array.from(…)."
                         : "";
-                    return withLogs(`Error: ${msg}${hint}`);
+                    return { content: withLogs(`Error: ${msg}${hint}`), render: execRender(undefined, `${msg}${hint}`) };
                 }
 
                 // DOM node results come back hoverable (see the loop's envelope).
                 if (typeof Element !== "undefined" && result instanceof Element) {
-                    return { content: withLogs(elPath(result)), elements: [result] };
+                    return { content: withLogs(elPath(result)), elements: [result], render: execRender(elPath(result)) };
                 }
                 const isNodes = result && (
                     (typeof NodeList !== "undefined" && result instanceof NodeList) ||
@@ -626,7 +640,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                         result.every((n: unknown) => typeof Element !== "undefined" && n instanceof Element))
                 );
                 if (isNodes) {
-                    return { content: withLogs(`${(result as NodeListOf<Node>).length} element(s)`), elements: [...(result as NodeListOf<Node>)].slice(0, 50) };
+                    return { content: withLogs(`${(result as NodeListOf<Node>).length} element(s)`), elements: [...(result as NodeListOf<Node>)].slice(0, 50), render: execRender(`${(result as NodeListOf<Node>).length} element(s)`) };
                 }
 
                 let value: string;
@@ -635,7 +649,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                     try { value = clipOut(JSON.stringify(result), cap); }
                     catch { value = clipOut(String(result), cap); }
                 } else value = clipOut(String(result), cap);
-                return withLogs(value);
+                return { content: withLogs(value), render: execRender(value) };
             }
         }),
         T({

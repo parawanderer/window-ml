@@ -5227,3 +5227,52 @@ test("live tool output (sidebar): a stream delta fills the running step's Out; t
     await w.tick();
     assert.equal(w.shadow.querySelector(".astep-streaming"), null, "the live block clears once the result lands");
 });
+
+// The shared tool OUTPUT CELL: python_exec and exec BOTH render their Out into it, so it caps + scrolls +
+// offers a resize grip identically — and any future code-ish tool (a bash_exec, say) inherits that by
+// wrapping its own sections in the same component. Also pins the per-tool section labels (stdout vs console).
+test("tool output cell: python_exec AND exec both render into the shared capped/scrollable cell", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("outcell", "run both"));
+    await w.dispatch(agentStep("outcell", 1, {
+        seq: 1, tool: "python_exec", arguments: { code: "print(1)" }, result: "stdout:\n1\n",
+        renderOut: { type: "python-out", stdout: "1", value: "None" },
+    }));
+    await w.dispatch(agentStep("outcell", 2, {
+        seq: 2, tool: "exec", arguments: { js: "console.log('a'); 7" }, result: "console:\na\n\nvalue: 7",
+        renderOut: { type: "exec-out", stdout: "a", value: "7" },
+    }));
+    await w.dispatch(agentResult("outcell", "done", 2));
+    await openRun(w);
+    for (const head of [...w.shadow.querySelectorAll(".astep.tool .astep-head")]) { head.click(); await w.tick(); }
+    const cells = w.shadow.querySelectorAll(".r-outcell");
+    assert.equal(cells.length, 2, "BOTH tools' Out render into the shared cell (not one bespoke each)");
+    for (const cell of cells) {
+        const scroll = cell.querySelector(".r-outscroll");
+        assert.ok(scroll, "the cell scrolls its overflow");
+        assert.match(scroll.getAttribute("style") || "", /max-height:\s*260px/, "capped at the configured height");
+        assert.ok(cell.querySelector(".r-outgrip"), "and offers a drag grip to resize just this cell");
+    }
+    const labels = [...w.shadow.querySelectorAll(".r-py-lbl")].map(e => e.textContent);
+    assert.ok(labels.includes("stdout"), "python's captured output is labelled stdout");
+    assert.ok(labels.includes("console"), "exec's is labelled console (it captured console.log, not a stdout stream)");
+});
+
+// The captured-but-unseen tail: output past `seen` was clipped out of the model-facing result, so it renders
+// MARKED (dimmed, under an explicit label) instead of silently reading as "what the model saw".
+test("tool output: the part the model never received renders marked, not as plain output", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("unseen", "run it"));
+    await w.dispatch(agentStep("unseen", 1, {
+        seq: 1, tool: "exec", arguments: { js: "…" }, result: "console:\nSEEN… [+4 chars truncated]",
+        renderOut: { type: "exec-out", stdout: "SEENUNSEEN", seen: 4, value: "1" },
+    }));
+    await w.dispatch(agentResult("unseen", "done", 1));
+    await openRun(w);
+    w.shadow.querySelector(".astep.tool .astep-head").click(); await w.tick();
+    const marked = w.shadow.querySelector(".r-unseen");
+    assert.ok(marked, "the surplus renders in its own marked block");
+    assert.match(marked.textContent, /UNSEEN/, "…and it holds the text past the model's cut");
+    assert.doesNotMatch(marked.textContent, /^SEEN[^U]/, "the part the model DID read stays in the normal block");
+    assert.match(w.shadow.querySelector(".r-unseen-lbl").textContent, /NOT sent to the model/i, "labelled explicitly");
+});

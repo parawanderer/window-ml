@@ -14,6 +14,7 @@ export const WRAP_KEY = "ml_debug_codewrap";     // true = break-line (default);
 export const LINES_KEY = "ml_debug_codelines";   // line-number gutter on code blocks
 export const STATS_TOKENS_KEY = "ml_debug_stats_tokens";   // DevTools run-stats bar: cumulative in/out tokens (default on)
 export const STATS_TPS_KEY = "ml_debug_stats_tps";         // DevTools run-stats bar: generation tok/s (default off)
+export const OUTMAX_KEY = "ml_debug_outmax";               // max height (px) of a tool OUTPUT cell before it scrolls
 
 export type Status = "pending" | "ok" | "err";
 export interface Turn {
@@ -79,6 +80,8 @@ export const codeWrap = signal(true);          // wrap long code lines vs. horiz
 export const codeLineNumbers = signal(false);  // show a line-number gutter on code blocks
 export const showStatsTokens = signal(true);   // DevTools run-stats bar: cumulative in/out tokens (default on)
 export const showStatsTps = signal(false);     // DevTools run-stats bar: generation tok/s (default off)
+export const OUTMAX_DEFAULT = 260;             // px — roughly 14 lines; enough to read, small enough not to bury the page
+export const outMaxH = signal(OUTMAX_DEFAULT); // max height of a tool output cell (Settings → Appearance); 0 = uncapped
 export const config = signal<MlConfig>(DEFAULT_CONFIG);   // live mirror of chrome.storage.sync
 export const models = signal<string[]>([]);               // server model ids (for the datalists)
 export const ollamaIds = signal<string[] | null>(null);   // subset that's Ollama-backed (null = can't tell → skip cloud detection)

@@ -34,6 +34,7 @@ export interface RunAgentConfig {
     autoApproveSelfSource?: boolean;       // default on: auto-approve an uncredentialed read of the agent's OWN repo source
     unattended?: boolean;          // headless run: refuse any call that reaches the human gate (see ml.agent's `unattended`)
     toolTokens?: boolean;          // surface `@tool:<id>` on rich tool results (see ml.agent's `toolTokens`)
+    stream?: boolean;              // opt-in live streaming: the model's thinking AND each tool's live output (ctx.stream)
     runId?: string;                // the run's hash — seeds the deterministic tool-token ids
     seqBase?: number;              // per-turn seq offset so a multi-turn run mints globally-unique token ids (see AgentLoopOptions.seqBase)
     resumeMessages?: NeutralMessage[];   // RESUME: continue this prior history (+ `task` as a new user turn) instead of a fresh system+task
@@ -48,7 +49,9 @@ export interface RunAgentHostDeps {
     ): Promise<{ content?: string | null; tool_calls?: ToolCall[]; usage?: unknown; reasoning?: unknown }>;
     // Delegate a tool call to the page (RUN_TOOL_IN_PAGE) → its serializable result string. Reached for
     // a requiresApproval tool ONLY after the gate — the untrusted execution point.
-    delegateTool(name: string, args: Record<string, unknown>): Promise<ToolRunResult>;
+    // `onStream` (opt-in streaming) is forwarded to the PAGE tool as its ctx.stream, so live output
+    // (console.log / print) streams back while the delegated tool runs. Omitted → no live output.
+    delegateTool(name: string, args: Record<string, unknown>, onStream?: (text: string) => void): Promise<ToolRunResult>;
     // Self-introspection (chat_metadata): the run's model + its context window + capability list, from the
     // SW's caches. The loop supplies the token/message counts; this only adds the model facts. Optional.
     chatMeta?(): Promise<{ model: string | null; contextWindow: number | null; capabilities: string[] | null } | null>;
@@ -58,6 +61,9 @@ export interface RunAgentHostDeps {
     // Read-only try (exec only): page-delegated attempt via the mediated interpreter. A non-null result
     // means it ran safely (no mutation) → skip the gate. Wired only when autoApproveReadonly is on.
     tryReadonly?(name: string, args: Record<string, unknown>): Promise<ToolRunResult | null>;
+    // Pre-run In render for a PENDING step (streaming runs) — the page computes the tool's In descriptor
+    // without running it, so a watched streaming step shows a pretty In, not raw JSON args.
+    renderFor?: AgentLoopDeps["renderFor"];
     precheck?(name: string, args: Record<string, unknown>): Promise<string | null>;   // doomed-action skip (click/type)
     // The approval gate — the sidebar, in design A (origin-authed; the decision never crosses the page).
     approve(req: { tool: string; arguments: Record<string, unknown>; seq?: number; step?: number }): Promise<ApprovalDecision>;
@@ -129,12 +135,11 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
 
     const loopDeps: AgentLoopDeps = {
         callModel: (messages, o) => deps.callModel(messages as NeutralMessage[], { tools: o.tools, model: cfg.model, think: cfg.think, step: o.step }),
-        // TODO(bg-stream): forward `onStream` to the delegated page tool for LIVE tool-output streaming on the
-        // background-hosted path — needs a reverse channel (page ctx.stream → PAGE_TOOL_STREAM → SW → this
-        // onStream), correlated by runId+seq. Today a background-delegated tool returns its full output at DONE
-        // (the page loop streams fully). See memory idea-cdp-exec-live-streaming.
-        runTool: (name, args) => deps.delegateTool(name, args),
+        // Live tool output on the background path: `onStream` rides to the PAGE tool as its ctx.stream
+        // (RUN_TOOL_IN_PAGE `stream` → the page posts PAGE_TOOL_STREAM chunks back, correlated by runId).
+        runTool: (name, args, onStream) => deps.delegateTool(name, args, onStream),
         tryReadonly: deps.tryReadonly,
+        renderFor: deps.renderFor,
         precheck: deps.precheck,
         approve: deps.approve,
         // Trusted auto-approve: only python_exec today; a tool not modelled here simply always asks
@@ -188,6 +193,6 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
         chatMeta: deps.chatMeta,   // resolve model/caps/window SW-side (background provides the caches)
         subcallTokens: deps.subcallTokens,   // this turn's delegated vision sub-call tally (background-accumulated)
     };
-    return runAgentLoop(cfg.task, { tools: cfg.tools, maxSteps: cfg.maxSteps, signal: deps.signal, unattended: cfg.unattended, toolTokens: cfg.toolTokens, runHash: cfg.runId, seqBase: cfg.seqBase }, loopDeps)
+    return runAgentLoop(cfg.task, { tools: cfg.tools, maxSteps: cfg.maxSteps, signal: deps.signal, unattended: cfg.unattended, toolTokens: cfg.toolTokens, runHash: cfg.runId, seqBase: cfg.seqBase, stream: cfg.stream }, loopDeps)
         .then(result => ({ result, messages: built }));
 }
