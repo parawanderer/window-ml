@@ -107,7 +107,7 @@ export const incognitoEnableSteps = (info?: BrowserInfo, extId?: string): string
  * and the pageInfo tool exposes it on demand. Guarded so it degrades when a global
  * is missing (e.g. in tests).
  */
-export const pageContext = (): string => {
+export const pageContext = (hasTool?: (name: string) => boolean): string => {
     const parts = [];
     try { if (typeof location !== "undefined" && location.href) parts.push(`URL: ${location.href}`); } catch {}
     try { if (typeof document !== "undefined" && document.title) parts.push(`Title: ${truncate(document.title, 80)}`); } catch {}
@@ -143,8 +143,16 @@ export const pageContext = (): string => {
     // no approval. Undeclared, a copy-as-Markdown control is the weaker hint that fetch_url will still find one.
     try {
         const md = markdownTwin();
-        if (md.url) parts.push(`Markdown: this page declares a Markdown version at ${md.url} — fetch_url it (same-origin, no approval) rather than surveying the DOM.`);
-        else if (md.affordance) parts.push("Markdown: not declared, but the page offers a copy-as-Markdown control — fetch_url on this URL may still return one.");
+        // Name a TOOL only when this run actually HAS it. An agent can be built with `fetch: false`, a custom
+        // `tools` array, or the unattended toolset, and advice pointing at a tool that isn't wired costs the
+        // model a turn to discover — the same reason the pipe errors gate their exec hint on ctx.hasTool.
+        // The FACT (a twin exists, at this URL) holds either way, so that half is unconditional: even without
+        // fetch_url the model can `navigate` there.
+        const canFetch = !!hasTool?.("fetch_url");
+        if (md.url) parts.push(`Markdown: this page declares a Markdown version at ${md.url}${canFetch ? " — fetch_url it (same-origin, so no approval) rather than surveying the DOM" : ""}.`);
+        // The affordance is only ACTIONABLE through a fetch (it's a control, not a URL), so it's worth a line
+        // only when fetching is possible at all.
+        else if (md.affordance && canFetch) parts.push("Markdown: not declared, but the page offers a copy-as-Markdown control — fetch_url on this URL may still return one.");
     } catch {}
     // Iframe orientation: same-origin frames the DOM tools cross (`>>>`); cross-origin ones are SOP-walled.
     try {

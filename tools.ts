@@ -662,7 +662,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 "whether this page publishes a clean MARKDOWN version of itself — on a docs page, fetching " +
                 "that is far cheaper and cleaner than surveying the rendered DOM.",
             parameters: { type: "object", properties: {} },
-            run: (): string => pageContext()
+            run: (_args: unknown, ctx?: ToolContext): string => pageContext(n => !!ctx?.hasTool(n))
         }),
         T({
             name: "agent_api_docs",

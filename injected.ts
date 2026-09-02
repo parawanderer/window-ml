@@ -684,7 +684,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             }
             if (hints) systemPrompt += `\n\nTask-specific notes:\n${hints}`;
             if (env) {
-                const ctx = pageContext();
+                const ctx = pageContext(n => toolset.some(t => t.name === n));
                 if (ctx) systemPrompt += `\n\nCurrent page context:\n${ctx}`;
             }
             // The run's curated answer set lives on the ToolContext (built at `toolCtx` below); the loop reads
@@ -2444,7 +2444,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
         catch { /* rebuild failed → the barrier times out and the loop gets a clear "no active run" error */ }
         // Carry the DESTINATION page's context back: the background folds it into the `navigate` tool's
         // result, so the model's next turn is oriented on the new page without a wasted look()/pageInfo turn.
-        window.postMessage({ type: "RUN_READOPTED", runId, pageInfo: pageContext() }, "*");
+        window.postMessage({ type: "RUN_READOPTED", runId, pageInfo: pageContext(n => (rebuild.toolNames || []).includes(n)) }, "*");
         // Durable resume: an INTERRUPTED (SW-evicted) run auto-CONTINUES from its checkpointed history — the
         // resume handle _adoptRun just re-registered drives a RESUME_RUN (empty follow-up = "carry on").
         if (resume) {
