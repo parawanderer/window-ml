@@ -57,8 +57,12 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* VRAM monitor panel */
 /* `position: relative` for the resize grip; when a height has been dragged, the content SCROLLS inside rather
    than overflowing into the session list below. */
+/* Scrolls only when a height has been DRAGGED — otherwise it sizes to content and stays a plain container,
+   so nothing inside it is clipped. A scroll container clips its children's tooltips, which is why the badges'
+   pops open upward (.above): the rows sit at the bottom, where the room is above them. */
 .vram { flex: 0 0 auto; position: relative; border-bottom: 1px solid var(--border); background: var(--panel);
-        padding: 8px 12px 10px; display: flex; flex-direction: column; gap: 5px; overflow-y: auto; }
+        padding: 8px 12px 10px; display: flex; flex-direction: column; gap: 5px; }
+.vram[style*="height"] { overflow-y: auto; }
 /* The boundary between this panel and the session list, as a handle. It competes with the list for height, so
    which one you want more of depends on what you are doing — a drag, not a setting, and remembered. */
 .vram-grip { position: absolute; left: 0; right: 0; bottom: 0; height: 7px; cursor: ns-resize;
@@ -102,9 +106,13 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rc-eopt.off { opacity: .5; cursor: help; }
 .rc-eopt input { margin: 0; }
 
-.rc { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 2px; }
-.rc-track { position: relative; }   /* so a tip escaping the plot is still contained by something sane */
-.rc-track { display: flex; flex-direction: column; gap: 2px; }
+/* The chart FILLS whatever height the panel has been dragged to: the grip resizes .vram, and without this
+   chain the extra space just went empty below a fixed-height plot. min-height:0 at each level so a flex child
+   is allowed to shrink below its content instead of forcing the panel taller. */
+.rc { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 2px; flex: 1 1 auto; min-height: 0; }
+/* One rule, not two: a second `.rc-track {` later in the file made the first look like it carried the flex
+   sizing when it didn't. `position: relative` so a tip escaping the plot is still contained by something sane. */
+.rc-track { position: relative; display: flex; flex-direction: column; gap: 2px; flex: 1 1 0; min-height: 0; }
 .rc-head { display: flex; align-items: baseline; gap: 6px; font-size: 0.8em; }
 .rc-name { color: var(--fg-dim); }
 .rc-total { color: var(--fg); font-variant-numeric: tabular-nums; cursor: help; }
@@ -113,8 +121,10 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* NO overflow clip here: the hover tip lives in this box and must be able to escape it (the panel is narrow
    and the plot is short, so a tip confined to it is cut off). The clip lives on each SEGMENT instead, which is
    what actually needed rounding. */
-.rc-plot { position: relative; display: flex; gap: 3px; height: 72px; background: var(--panel-2);
-           border-radius: 3px; }
+.rc-plot { position: relative; display: flex; gap: 3px; flex: 1 1 auto; min-height: 44px; height: 72px;
+           background: var(--panel-2); border-radius: 3px; }
+/* Once a height is chosen, `height` becomes the FLOOR the flex box grows from rather than a fixed size. */
+.vram[style*="height"] .rc-plot { height: auto; }
 .rc-seg { min-width: 2px; height: 100%; overflow: hidden; border-radius: 3px; }
 .rc-area { width: 100%; height: 100%; display: block; }
 /* The soft ceiling on unified memory: the recommended working set INSIDE the system total. */

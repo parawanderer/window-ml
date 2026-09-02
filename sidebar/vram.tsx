@@ -252,12 +252,12 @@ export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean 
         <>
             {m.contextLength ? (
                 <span class={tips ? "tt vram-ctx" : "vram-ctx"} {...yieldTip}>{fmtCtx(m.contextLength)}
-                    {tips ? <span class="tt-pop left" role="tooltip">Loaded with a {m.contextLength.toLocaleString()}-token context window. Ollama preallocates the KV cache for the FULL window, even when your prompts are short. Load with a smaller <code>num_ctx</code> to reclaim it.</span> : null}
+                    {tips ? <span class="tt-pop left above" role="tooltip">Loaded with a {m.contextLength.toLocaleString()}-token context window. Ollama preallocates the KV cache for the FULL window, even when your prompts are short. Load with a smaller <code>num_ctx</code> to reclaim it.</span> : null}
                 </span>
             ) : null}
             {ttl ? (
                 <span class={tips ? "tt vram-ttl" : "vram-ttl"} {...yieldTip}>{ttl}
-                    {tips ? <span class="tt-pop left" role="tooltip">Keep-alive TTL — Ollama evicts this model from {m.vramBytes ? "VRAM" : "memory"} when the countdown reaches zero (expires {new Date(m.expiresAt!).toLocaleTimeString()}). Each use resets it. Set <code>keep_alive</code> to change how long it lingers.</span> : null}
+                    {tips ? <span class="tt-pop left above" role="tooltip">Keep-alive TTL — Ollama evicts this model from {m.vramBytes ? "VRAM" : "memory"} when the countdown reaches zero (expires {new Date(m.expiresAt!).toLocaleTimeString()}). Each use resets it. Set <code>keep_alive</code> to change how long it lingers.</span> : null}
                 </span>
             ) : null}
         </>

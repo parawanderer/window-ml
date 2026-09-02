@@ -6001,3 +6001,45 @@ test("layout: a custom layout survives picking a preset, and can be returned to"
     assert.deepEqual(w.localStore.ml_res_layout.custom, [{ id: "mine", series: ["vram.1"], mode: "stack", heightPx: 96 }],
         "and it is still on disk beside whatever is active");
 });
+
+// Dragging the panel taller must grow the CHART, not add empty space under it. jsdom has no layout, so this
+// asserts the flex chain that makes it so — a fixed-height plot inside a resizable panel is the bug.
+test("resource panel: the chart flexes into the dragged height", async () => {
+    const css = require("node:fs").readFileSync("sidebar/sidebar.css", "utf8");
+    const rule = (sel) => css.slice(css.indexOf(sel + " {"), css.indexOf("}", css.indexOf(sel + " {")));
+    for (const sel of [".rc", ".rc-track", ".rc-plot"]) {
+        assert.match(rule(sel), /flex:\s*1 1/, `${sel} must grow with the panel`);
+    }
+    // min-height:0 at each level, or a flex child refuses to shrink below its content and pushes the panel
+    // taller than you dragged it.
+    assert.match(rule(".rc"), /min-height:\s*0/);
+    assert.match(rule(".rc-track"), /min-height:\s*0/);
+    // The plot keeps a floor so it can't collapse to nothing.
+    assert.match(rule(".rc-plot"), /min-height:\s*\d+px/);
+    assert.match(css, /\.vram\[style\*="height"\] \.rc-plot \{ height: auto/, "a dragged height releases the fixed one");
+});
+
+// A scroll container CLIPS its children, so the panel only scrolls once a height has been dragged — and the
+// badges in the rows open their tooltips UPWARD, since the rows sit at the bottom where the room is above.
+test("resource panel: badge tooltips aren't clipped by the resizable panel", async () => {
+    const css = require("node:fs").readFileSync("sidebar/sidebar.css", "utf8");
+    const vram = css.slice(css.indexOf(".vram {"), css.indexOf("}", css.indexOf(".vram {")));
+    assert.ok(!/overflow-y:\s*auto/.test(vram), "no clipping until a height is chosen");
+    assert.match(css, /\.vram\[style\*="height"\] \{ overflow-y: auto/, "…and only then");
+
+    const w = await loadSidebarWorld({
+        vram: [{ model: "a", vramGB: 8, vramBytes: 8 * 1024 ** 3, contextLength: 262144,
+                 expiresAt: new Date(Date.now() + 60_000).toISOString() }],
+        info: INFO_MIXED,
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+    await w.flush();
+    for (const sel of [".vram-ctx", ".vram-ttl"]) {
+        const pop = w.shadow.querySelector(`${sel} .tt-pop`);
+        assert.ok(pop, `${sel} has its tooltip`);
+        assert.ok(pop.classList.contains("above"),
+            `${sel} opens upward — the rows are at the panel's bottom edge`);
+    }
+});
