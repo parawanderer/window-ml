@@ -5962,3 +5962,42 @@ test("resource panel: a remembered height is applied on open", async () => {
     await w.flush();
     assert.match(w.shadow.querySelector(".vram").getAttribute("style") || "", /height:\s*240px/);
 });
+
+// A custom layout must SURVIVE a detour through a preset. It used to be destroyed: picking a preset
+// overwrote the stored tracks, and the "Custom" entry only existed while it was already selected — so there
+// was no way back to something you had built by hand.
+test("layout: a custom layout survives picking a preset, and can be returned to", async () => {
+    const w = await loadSidebarWorld({
+        vram: [{ model: "a", vramGB: 19, vramBytes: 19 * 1024 ** 3, sizeBytes: 19 * 1024 ** 3,
+                 gpus: [{ id: "0", runner: "CUDA", vramBytes: 19 * 1024 ** 3 }], expiresAt: null }],
+        info: INFO_MIXED,
+        local: { ml_res_layout: { presetId: "custom", custom: [{ id: "mine", series: ["vram.1"], mode: "stack", heightPx: 96 }],
+                                  tracks: [{ id: "mine", series: ["vram.1"], mode: "stack", heightPx: 96 }] } },
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+    await w.flush();
+
+    const names = () => [...w.shadow.querySelectorAll(".rc-name")].map((n) => n.textContent);
+    const picker = w.shadow.querySelector(".rc-preset");
+    assert.deepEqual(names(), ["CUDA1"], "the custom layout is what we start on");
+    assert.ok([...picker.options].some((o) => o.value === "custom"), "and Custom is an option");
+
+    // Detour through a preset.
+    picker.value = "overview";
+    picker.dispatchEvent(new w.window.Event("change", { bubbles: true }));
+    await w.flush();
+    assert.ok(names().length >= 1 && names()[0] !== "CUDA1", "the preset takes over");
+    assert.ok([...w.shadow.querySelector(".rc-preset").options].some((o) => o.value === "custom"),
+        "Custom is STILL offered — it wasn't destroyed by looking at a preset");
+
+    // …and back.
+    const p2 = w.shadow.querySelector(".rc-preset");
+    p2.value = "custom";
+    p2.dispatchEvent(new w.window.Event("change", { bubbles: true }));
+    await w.flush();
+    assert.deepEqual(names(), ["CUDA1"], "returning to Custom restores exactly what was built");
+    assert.deepEqual(w.localStore.ml_res_layout.custom, [{ id: "mine", series: ["vram.1"], mode: "stack", heightPx: 96 }],
+        "and it is still on disk beside whatever is active");
+});
