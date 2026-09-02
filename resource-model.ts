@@ -198,6 +198,34 @@ export function ceilingsFor(sample: ResourceSample, deviceId: string): Ceilings 
         : { hardBytes: dev.totalBytes, softBytes: null, softLabel: null, displayBytes: display, displayIsFit };
 }
 
+/** Where a model actually SITS, as one readable line: which device(s), and how it was split. A large model
+ *  can be split across several cards, or across a card and system RAM (the classic partial offload), and none
+ *  of that is visible from a single total — `18.00 GiB` looks identical whether it is one card or three. Named
+ *  devices come from the capacity so the reader sees "CUDA1", not "1".
+ *
+ *  Returns null when there is nothing to say (a single-device box with everything resident on it). */
+export function placementOf(m: ModelResidency, cap: Capacity | null, fmt: (b: number) => string): string | null {
+    const parts: string[] = [];
+    let unknown = false;
+    for (const [id, bytes] of Object.entries(m.perDevice)) {
+        const name = cap?.devices.find((d) => d.id === id)?.name ?? `device ${id}`;
+        if (bytes == null) { unknown = true; parts.push(`${name} (unknown)`); continue; }
+        if (bytes > 0) parts.push(`${name} ${fmt(bytes)}`);
+    }
+    // The CPU half of a partial offload — the reason a model can be "on the GPU" and still be slow.
+    if (m.ramBytes > 0) parts.push(`RAM ${fmt(m.ramBytes)}`);
+    if (!parts.length) return m.vramBytes > 0 ? null : `RAM ${fmt(m.ramBytes)}`;
+    if (parts.length === 1 && !unknown) return parts[0];
+    return parts.join(" + ");
+}
+
+/** Is this model SPLIT — across several devices, or between a device and system RAM? That is the case worth
+ *  surfacing: a split model is slower than its total size suggests, and the total alone never shows it. */
+export function isSplit(m: ModelResidency): boolean {
+    const on = Object.values(m.perDevice).filter((b) => b == null || b > 0).length;
+    return on > 1 || (on >= 1 && m.ramBytes > 0);
+}
+
 /** Is this model on the CPU? `gpus` absent (or nothing in VRAM) is the server's way of saying so. */
 export const isCpuResident = (m: ModelResidency): boolean => m.vramBytes === 0;
 
@@ -398,10 +426,13 @@ export function presetsFor(sample: ResourceSample): Preset[] {
     }
     const overview: Preset = {
         id: "overview", label: "Overview", description: "Every card in one track, overlaid — no false total.",
-        // OVERLAY, not stack: several cards have no meaningful combined total (a model can only use one card's
-        // capacity), and stackRefusal rightly refuses that. A preset must never propose a layout the rule then
-        // rejects. Overlaying claims nothing about a total, so it is the honest way to see them together.
-        tracks: ([{ ...track("overview", devices.map((d) => `vram.${d.id}`)),
+        // OVERLAY, not stack: several pools have no meaningful combined total (a model can only use one
+        // card's capacity), and stackRefusal rightly refuses that. A preset must never propose a layout the
+        // rule then rejects. Overlaying claims nothing about a total, so it is the honest way to compare them.
+        // The HOST pool is included: a CPU-resident model holds no VRAM, so a cards-only overview would make
+        // it vanish from the chart while it still sits in the legend below — the same flaw that took Placement
+        // out of the default slot.
+        tracks: ([{ ...track("overview", [...devices.map((d) => `vram.${d.id}`), "ram"]),
                     mode: (devices.length > 1 ? "overlay" : "stack") as TrackDef["mode"] }] as TrackDef[]).filter(nonEmpty),
     };
     const placement: Preset = {
@@ -412,10 +443,12 @@ export function presetsFor(sample: ResourceSample): Preset[] {
         id: "memory", label: "GPU + RAM", description: "Accelerator memory alongside system RAM.",
         tracks: [...devices.map((d) => track(`dev-${d.id}`, [`vram.${d.id}`])), track("ram", ["ram"])].filter(nonEmpty),
     };
-    // GPU + RAM leads on every box: the DEFAULT view must not hide a resident model, and a CPU-resident one
-    // appears only in the host track. Placement narrows to the accelerators, which is a deliberate choice to
-    // make rather than the state you land in. A single-card box has nothing to place, so it isn't offered.
-    return devices.length > 1 ? [withRam, placement, overview] : [withRam, overview];
+    // OVERVIEW leads: it is the most COMPACT (one track for the whole machine, in a panel that competes for
+    // height with the session list) and — now that it includes the host pool — it hides nothing. That was the
+    // blocker: a cards-only overview made a CPU-resident model vanish from the chart, which is why the default
+    // must never be a view that omits something resident. GPU + RAM breaks the same data into a track per pool
+    // when you want the per-model bands; Placement narrows further, to the accelerators only.
+    return devices.length > 1 ? [overview, withRam, placement] : [overview, withRam];
 }
 
 /** A stable identity for the MACHINE this capacity describes — its devices (id, name, runner, size) and its

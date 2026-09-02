@@ -12,7 +12,7 @@ import {
 import { truncate } from "./format";
 import { normModel, seenContext } from "./model";
 import { IconVram, IconEye, IconEyeOff, IconBench } from "./icons";
-import { parseInfo, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
+import { parseInfo, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
 import { ResourceTracks } from "./resource-chart";
 import type { LoadedModel } from "../contract";
 
@@ -245,6 +245,9 @@ export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean 
     );
 }
 
+/** Pointer position for the model-row tip, in viewport coords (the row is not inside the plot). */
+export const rowTipAt = signal<{ x: number; y: number } | null>(null);
+
 /** The model a chart band is being hovered on, so the band and its legend row highlight together. Module-level
  *  because the chart and the rows are different components either side of the panel. */
 export const hoverModel = signal<string | null>(null);
@@ -332,6 +335,24 @@ function TrackEditor({ sample }: { sample: ResourceSample }) {
     );
 }
 
+/** What a hovered model row is, following the cursor. The single VRAM total hides how a model is PLACED — the
+ *  same 18 GiB reads identically whether it sits on one card, is split across two, or is partly offloaded to
+ *  system RAM, and that last one is why a "GPU" model can still be slow. */
+function RowTip({ sample }: { sample: ResourceSample | null }) {
+    const name = hoverModel.value, at = rowTipAt.value;
+    if (!name || !at || !sample) return null;
+    const m = sample.models.find((x) => x.model === name);
+    if (!m) return null;
+    const where = placementOf(m, sample.capacity, formatBytes);
+    return (
+        <div class="vram-rowtip" role="tooltip" style={{ left: `${at.x + 12}px`, top: `${at.y + 14}px` }}>
+            <div class="vram-rowtip-name"><i class="rc-tip-dot" style={{ background: colorFor(name) }} />{name}</div>
+            {where ? <div class={isSplit(m) ? "vram-rowtip-split" : ""}>{isSplit(m) ? "split: " : "on "}{where}</div> : null}
+            <div class="vram-rowtip-dim">{formatBytes((m.vramBytes || 0) + (m.ramBytes || 0))} resident</div>
+        </div>
+    );
+}
+
 export function VramPanel() {
     const loaded = loadedModels.value;
     const hidden = hiddenModels.value;
@@ -402,6 +423,7 @@ export function VramPanel() {
                 {rows.length ? <button class="vram-free" onClick={() => evict()}>Free VRAM</button> : null}
             </div>
             {editorOpen.value && latestSample ? <TrackEditor sample={latestSample} /> : null}
+            <RowTip sample={latestSample} />
             {capacity.value
                 ? <ResourceTracks samples={resourceHistory.value} capacity={capacity.value} hidden={hidden} layout={layout.value} />
                 /* No /api/info (stock Ollama, or an OpenWebUI without the passthrough): capacity is UNKNOWN,
@@ -414,7 +436,9 @@ export function VramPanel() {
                     const off = hidden.has(m.model);
                     return (
                         <div class={`vram-row${off ? " off" : ""}${hoverModel.value === m.model ? " hot" : ""}`} key={m.model}
-                            onPointerEnter={() => (hoverModel.value = m.model)} onPointerLeave={() => (hoverModel.value = null)}>
+                            onPointerEnter={() => (hoverModel.value = m.model)}
+                            onPointerMove={(e: PointerEvent) => (rowTipAt.value = { x: e.clientX, y: e.clientY })}
+                            onPointerLeave={() => { hoverModel.value = null; rowTipAt.value = null; }}>
                             <button class="vram-dot" style={{ background: off ? "var(--fg-faint)" : colorFor(m.model) }}
                                 title={off ? "Show in totals" : "Hide from totals"} onClick={() => toggleHidden(m.model)} />
                             <span class="vram-name">{m.model}</span>

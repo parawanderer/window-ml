@@ -20,6 +20,9 @@ import { colorFor, hoverModel, ModelFacts, VRAM_COLORS } from "./vram";
 import { loadedModels } from "./store";
 import { signal } from "@preact/signals";
 
+/** Which overlay POOL (a card, or the host) is hovered — the line and its key light together. */
+const hoverPool = signal<string | null>(null);
+
 /** Where in the PLOT the pointer is (CSS px, and the plot's own width), so the tip can follow it and decide
  *  which side to sit on. Tracked on the plot rather than on each polygon: a polygon's offsetX is relative to
  *  its own segment's SVG, so with several segments it would jump, and the viewBox is 300 units wide whatever
@@ -78,7 +81,7 @@ function StackedArea({ frames, ceiling, hidden }: { frames: Band[][]; ceiling: n
         const dim = hoverModel.value && model && hoverModel.value !== model;
         const hot = !!model && hoverModel.value === model;
         return <polygon key={key} points={pts.join(" ")} fill={bandFill(key, frames.at(-1) || [])}
-            class={model ? `rc-band${hot ? " hot" : ""}` : undefined}
+            class={model ? `rc-band${hot ? " hot" : ""}` : undefined} vector-effect="non-scaling-stroke"
             onPointerEnter={model ? () => (hoverModel.value = model) : undefined}
             onPointerLeave={model ? () => { hoverModel.value = null; hoverAt.value = null; } : undefined}
             opacity={dim ? 0.18 : key === "other" ? 0.35 : 0.75} />;
@@ -226,42 +229,87 @@ function TrackView({ def, samples, latest, hidden }: { def: TrackDef; samples: R
  *  anything is measured against (a model can only use one card's capacity), so the chart must not draw one. */
 function OverlayView({ def, samples, latest, hidden }: { def: TrackDef; samples: ResourceSample[]; latest: ResourceSample; hidden: Set<string> }) {
     const cap = latest.capacity!;
-    const devs = def.series.map((id) => cap.devices.find((d) => d.id === id.replace(/^vram\./, ""))).filter(Boolean) as typeof cap.devices;
-    if (!devs.length) return null;
-    // One shared axis is honest HERE only because it is a maximum, not a total: each line is read against its
-    // own card's capacity, and the tallest ceiling just sets the scale.
-    const ceiling = Math.max(...devs.map((d) => ceilingsFor(latest, d.id)?.displayBytes ?? d.totalBytes));
+    // Each series is a POOL: a card, or the host. Including the host matters — a CPU-resident model holds no
+    // VRAM, so a cards-only overlay makes it vanish from the chart entirely while it sits in the legend below.
+    const pools = def.series.map((id) => {
+        if (id === "ram" || id === "mem") {
+            const c = id === "mem" ? ceilingsFor(latest, cap.devices[0]?.id ?? "") : null;
+            return { id, name: id === "mem" ? `${cap.devices[0]?.name ?? "Memory"}` : "System RAM",
+                     ceiling: c?.hardBytes ?? cap.host.totalBytes, bandsOf: hostBands };
+        }
+        const d = cap.devices.find((x) => x.id === id.replace(/^vram\./, ""));
+        if (!d) return null;
+        const c = ceilingsFor(latest, d.id);
+        return { id, name: d.name, ceiling: c?.displayBytes ?? d.totalBytes, bandsOf: (s: ResourceSample) => deviceBands(s, d.id) };
+    }).filter(Boolean) as { id: string; name: string; ceiling: number; bandsOf: (s: ResourceSample) => Band[] }[];
+    if (!pools.length) return null;
+
     const runs = segments(samples).filter((r) => r.length > 1);
-    const usedOf = (s: ResourceSample, id: string) =>
-        deviceBands(s, id).filter((b) => b.kind !== "free" && !(b.model && hidden.has(b.model))).reduce((n, b) => n + b.bytes, 0);
+    const usedOf = (s: ResourceSample, p: typeof pools[number]) =>
+        p.bandsOf(s).filter((b) => b.kind !== "free" && !(b.model && hidden.has(b.model))).reduce((n, b) => n + b.bytes, 0);
+    // Plotted as a FRACTION of each pool's own capacity. Absolute bytes on a shared axis would be a lie here:
+    // 121.2 GiB of RAM and 95.59 GiB of VRAM are different denominators, so the same height would mean
+    // different things per line. Relative occupancy is the comparison this view exists to make.
+    const frac = (s: ResourceSample, p: typeof pools[number]) => (p.ceiling > 0 ? Math.min(1, usedOf(s, p) / p.ceiling) : 0);
+    const pct = (v: number) => `${(v * 100).toFixed(v < 0.1 ? 1 : 0)}%`;
     return (
         <div class="rc-track">
             <div class="rc-head">
-                <span class="rc-name">{devs.map((d) => d.name).join(" · ")}</span>
+                <span class="rc-name">{pools.map((p) => p.name).join(" · ")}</span>
                 <span class="sp" />
                 <span class="rc-total tt">
-                    of {formatBytes(ceiling)} each
-                    <span class="tt-pop wrap" role="tooltip">Each line is read against its OWN card's capacity — these are not added together, because a model can only ever use one card's memory.</span>
+                    % of each pool
+                    <span class="tt-pop wrap" role="tooltip">Each line is how full THAT pool is, as a share of its own capacity — the pools have different sizes, so absolute heights on one axis would not be comparable. Hover a line's key for the real figure.</span>
                 </span>
             </div>
             <div class="rc-plot">
                 {runs.map((run, ri) => (
                     <div class="rc-seg" key={ri} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
                         <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
-                            {devs.map((d, di) => {
-                                if (run.length < 2) return null;
-                                const pts = run.map((s, i) => `${((i / (run.length - 1)) * W).toFixed(1)},${(H - Math.min(1, usedOf(s, d.id) / ceiling) * H).toFixed(1)}`).join(" ");
-                                return <polyline key={d.id} points={pts} fill="none" stroke={VRAM_COLORS[di % VRAM_COLORS.length]} stroke-width="1.5" />;
+                            {pools.map((p, pi) => {
+                                const pts = run.map((s, i) => `${((i / (run.length - 1)) * W).toFixed(1)},${(H - frac(s, p) * H).toFixed(1)}`).join(" ");
+                                // non-scaling-stroke keeps the width in DEVICE space: without it the
+                                // non-uniform viewBox scale makes diagonals visibly fatter than horizontals.
+                                const on = hoverPool.value === p.id;
+                                return (
+                                    <g key={p.id}>
+                                        {/* A wide TRANSPARENT copy is the hit target: a 1.5px line is almost
+                                            impossible to hover, so the visible stroke stays thin. */}
+                                        <polyline points={pts} fill="none" stroke="transparent" stroke-width="10"
+                                            vector-effect="non-scaling-stroke" class="rc-hit"
+                                            onPointerEnter={() => (hoverPool.value = p.id)}
+                                            onPointerLeave={() => (hoverPool.value = null)} />
+                                        <polyline points={pts} fill="none" vector-effect="non-scaling-stroke"
+                                            stroke={VRAM_COLORS[pi % VRAM_COLORS.length]}
+                                            stroke-width={on ? 3 : 1.5} opacity={hoverPool.value && !on ? 0.3 : 1} />
+                                    </g>
+                                );
                             })}
                         </svg>
                     </div>
                 ))}
             </div>
+            {/* Which models make up the hovered line. An overlay line is a POOL total, so "what is in it" is
+                the question it raises — and on a mixed box the answer differs per card. */}
+            {hoverPool.value ? (() => {
+                const p = pools.find((x) => x.id === hoverPool.value);
+                if (!p) return null;
+                const mine = p.bandsOf(latest).filter((b) => b.kind === "model" || b.kind === "unknown");
+                return (
+                    <div class="rc-poolmodels">
+                        {p.name}: {mine.length
+                            ? mine.map((b) => `${b.label} ${formatBytes(b.bytes)}`).join(" · ")
+                            : "nothing of ours resident"}
+                    </div>
+                );
+            })() : null}
             <div class="rc-legend">
-                {devs.map((d, di) => (
-                    <span class="rc-key" key={d.id}>
-                        <i class="rc-swatch" style={{ background: VRAM_COLORS[di % VRAM_COLORS.length] }} />
-                        {d.name} {formatBytes(usedOf(latest, d.id))}
+                {pools.map((p, pi) => (
+                    <span class="rc-key tt" key={p.id}
+                        onPointerEnter={() => (hoverPool.value = p.id)} onPointerLeave={() => (hoverPool.value = null)}>
+                        <i class="rc-swatch" style={{ background: VRAM_COLORS[pi % VRAM_COLORS.length] }} />
+                        {p.name} {pct(frac(latest, p))}
+                        <span class="tt-pop left" role="tooltip">{formatBytes(usedOf(latest, p))} of {formatBytes(p.ceiling)}</span>
                     </span>
                 ))}
             </div>

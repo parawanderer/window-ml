@@ -1444,7 +1444,8 @@ test("VRAM monitor lists loaded models with a total, and evicts one + all", asyn
     ] });
     await w.raw({ __mlSidebarOpen: true });                     // shell reports slid-open → polling allowed
     w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
-    await w.flush();                                            // let the poll effect run
+    await w.flush();
+    await w.flush();   // restoreLayout resolves through a chrome.storage callback, a turn after the click                                            // let the poll effect run
 
     assert.equal(w.shadow.querySelectorAll(".vram-row").length, 2, "one row per loaded model");
     assert.match(w.shadow.querySelector(".vram-total").textContent, /10\.00 GiB/, "total VRAM summed, in BINARY units");
@@ -1469,6 +1470,7 @@ test("VRAM monitor shows the context a model was LOADED with (Ollama preallocate
     await w.raw({ __mlSidebarOpen: true });
     w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
     await w.flush();
+    await w.flush();   // restoreLayout resolves through a chrome.storage callback, a turn after the click
 
     // Rows sort by name: gemma4:31b, glm-ocr, old-server. A missing context renders
     // NOTHING (rather than a misleading "0" / "?"), so only two chips exist.
@@ -1487,6 +1489,7 @@ test("VRAM monitor: clicking a colour dot hides that model from the total", asyn
     await w.raw({ __mlSidebarOpen: true });
     w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
     await w.flush();
+    await w.flush();   // restoreLayout resolves through a chrome.storage callback, a turn after the click
     assert.match(w.shadow.querySelector(".vram-total").textContent, /10\.00 GiB/);
 
     // Hide the first row (glm-ocr, 2.1) → total drops, row is marked off.
@@ -1514,6 +1517,7 @@ test("VRAM monitor shows unavailable with no Ollama backend", async () => {
     await w.raw({ __mlSidebarOpen: true });
     w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
     await w.flush();
+    await w.flush();   // restoreLayout resolves through a chrome.storage callback, a turn after the click
     assert.match(w.shadow.querySelector(".vram-empty").textContent, /unavailable/);
 });
 
@@ -1673,6 +1677,7 @@ test("VRAM panel shows a CPU-resident model's RAM size, not '?'", async () => {
     await w.raw({ __mlSidebarOpen: true });
     w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
     await w.flush();
+    await w.flush();   // restoreLayout resolves through a chrome.storage callback, a turn after the click
     assert.match(w.shadow.querySelector(".vram-gb").textContent, /8\.00 GiB \(CPU\)/);
 });
 
@@ -5392,6 +5397,13 @@ test("non-streaming run: the step waits with 'running…' and then shows the ful
 
 // The resource tracks: a real ceiling, per-model stacking, and gaps left as gaps. The arithmetic is unit
 // tested in resource-model.test.mjs; these cover what only the rendering does.
+// The stacked per-pool view. The DEFAULT is now Overview (one compact overlaid track), so a test about
+// per-model BANDS must choose the view that has them — seeded through storage, which also exercises restore.
+const STACKED_LAYOUT = { local: { ml_res_layout: { presetId: "memory", tracks: [
+    { id: "dev-0", series: ["vram.0"], mode: "stack", heightPx: 96 },
+    { id: "dev-1", series: ["vram.1"], mode: "stack", heightPx: 96 },
+    { id: "ram", series: ["ram"], mode: "stack", heightPx: 96 },
+] } } };
 const INFO_2CARD = { compute: {
     system_compute: { cpu_cores: 32, total_memory: 130142785536, free_memory: 12330946560 },
     supported_gpus: [
@@ -5404,11 +5416,12 @@ test("resource tracks: one per card plus host RAM, each against a real ceiling",
     const w = await loadSidebarWorld({
         vram: [{ model: "gemma4:31b", vramGB: 14, vramBytes: 14 * 1024 ** 3, sizeBytes: 14 * 1024 ** 3,
                  gpus: [{ id: "0", runner: "CUDA", vramBytes: 14 * 1024 ** 3 }], contextLength: 262144, expiresAt: null }],
-        info: INFO_2CARD,
+        info: INFO_2CARD, ...STACKED_LAYOUT,
     });
     await w.raw({ __mlSidebarOpen: true });
     w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
     await w.flush();
+    await w.flush();   // restoreLayout resolves through a chrome.storage callback, a turn after the click
 
     const names = [...w.shadow.querySelectorAll(".rc-name")].map((n) => n.textContent);
     assert.deepEqual(names, ["CUDA0", "CUDA1", "System RAM"], "small multiples — a model uses ONE card's capacity");
@@ -5427,10 +5440,11 @@ test("resource tracks: one per card plus host RAM, each against a real ceiling",
 });
 
 test("resource tracks: the residual is named driver overhead on an idle card, not a phantom process", async () => {
-    const w = await loadSidebarWorld({ vram: [], info: INFO_2CARD });
+    const w = await loadSidebarWorld({ vram: [], info: INFO_2CARD, ...STACKED_LAYOUT });
     await w.raw({ __mlSidebarOpen: true });
     w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
     await w.flush();
+    await w.flush();   // restoreLayout resolves through a chrome.storage callback, a turn after the click
     // CUDA1 is the genuinely idle card in the fixture (94 of 94.97 GiB free → ~1 GiB residual). CUDA0 has
     // 80 GiB free with nothing of ours on it, so ITS 14.97 GiB really is unattributed — correctly so, which
     // is the other half of this behaviour.
@@ -5454,6 +5468,7 @@ test("resource tracks: no /api/info means NO ceiling — it falls back, never in
     await w.raw({ __mlSidebarOpen: true });
     w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
     await w.flush();
+    await w.flush();   // restoreLayout resolves through a chrome.storage callback, a turn after the click
     assert.equal(w.shadow.querySelectorAll(".rc-track").length, 0, "no capacity → no tracks");
     assert.ok(w.shadow.querySelector(".vram-spark"), "…it degrades to the auto-scaled sparkline");
     assert.match(w.shadow.querySelector(".vram-total").textContent, /8\.00 GiB in use/, "the total still renders");
@@ -5468,11 +5483,12 @@ test("resource tracks: hovering a band names its model, with the row's own facts
               gpus: [{ id: "0", runner: "CUDA", vramBytes: 18 * 1024 ** 3 }], contextLength: 262144,
               expiresAt: new Date(Date.now() + 5 * 60_000).toISOString() },
         ],
-        info: INFO_2CARD,
+        info: INFO_2CARD, ...STACKED_LAYOUT,
     });
     await w.raw({ __mlSidebarOpen: true });
     w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
     await w.flush();
+    await w.flush();   // restoreLayout resolves through a chrome.storage callback, a turn after the click
 
     assert.equal(w.shadow.querySelectorAll(".rc-tip").length, 0, "no tooltip until something is hovered");
     const band = w.shadow.querySelector(".rc-band");
@@ -5498,10 +5514,11 @@ test("resource tracks: hovering a band names its model, with the row's own facts
 // at the panel's LEFT edge. The track header's figure is right-aligned, so a left-anchored pop runs off the
 // panel and is clipped — which is exactly what shipped once.
 test("resource tracks: the header tooltip is right-anchored so it can't run off the panel", async () => {
-    const w = await loadSidebarWorld({ vram: [], info: INFO_2CARD });
+    const w = await loadSidebarWorld({ vram: [], info: INFO_2CARD, ...STACKED_LAYOUT });
     await w.raw({ __mlSidebarOpen: true });
     w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
     await w.flush();
+    await w.flush();   // restoreLayout resolves through a chrome.storage callback, a turn after the click
 
     const pop = w.shadow.querySelector(".rc-total .tt-pop");
     assert.ok(pop, "the denominator explains which of the three totals it is");
@@ -5517,11 +5534,12 @@ test("resource tracks: the hovered band outlines itself, and single-sample runs 
     const w = await loadSidebarWorld({
         vram: [{ model: "gemma4:31b", vramGB: 18, vramBytes: 18 * 1024 ** 3, sizeBytes: 18 * 1024 ** 3,
                  gpus: [{ id: "0", runner: "CUDA", vramBytes: 18 * 1024 ** 3 }], expiresAt: null }],
-        info: INFO_2CARD,
+        info: INFO_2CARD, ...STACKED_LAYOUT,
     });
     await w.raw({ __mlSidebarOpen: true });
     w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
     await w.flush();
+    await w.flush();   // restoreLayout resolves through a chrome.storage callback, a turn after the click
 
     // A run of one sample has no shape to draw, and reserving a 2px column for it leaves a pale sliver where
     // the band wash is missing — the "ghost corner". Undrawable runs are skipped entirely.
@@ -5546,4 +5564,69 @@ test("streamed output: a rule separates the timestamp gutter from the text", asy
     assert.ok(rule, "the gutter rule exists");
     assert.match(rule, /border-right:\s*1px solid var\(--border\)/, "a hairline between stamps and output");
     assert.match(rule, /padding-right/, "spaced by padding so the rule sits inside the row gap");
+});
+
+// Mixed-size GPUs are normal (a 4090 beside a 3060), so an overlay must not assume one shared denominator.
+const INFO_MIXED = { compute: {
+    system_compute: { cpu_cores: 16, total_memory: 68719476736, free_memory: 30 * 1024 ** 3 },
+    supported_gpus: [
+        { gpu_id: "0", name: "CUDA0", runner: "CUDA", total_memory: 25757220864, free_memory: 5 * 1024 ** 3 },   // 24 GiB
+        { gpu_id: "1", name: "CUDA1", runner: "CUDA", total_memory: 12884901888, free_memory: 11 * 1024 ** 3 },  // 12 GiB
+    ],
+} };
+
+test("overview: pools of DIFFERENT sizes are compared as a share of each, not on one denominator", async () => {
+    const w = await loadSidebarWorld({
+        vram: [{ model: "big", vramGB: 19, vramBytes: 19 * 1024 ** 3, sizeBytes: 19 * 1024 ** 3,
+                 gpus: [{ id: "0", runner: "CUDA", vramBytes: 19 * 1024 ** 3 }], expiresAt: null }],
+        info: INFO_MIXED,
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+    await w.flush();
+
+    // Default is Overview: ONE track, every pool overlaid — including the host, so a CPU-resident model can
+    // never vanish from the chart.
+    assert.equal(w.shadow.querySelectorAll(".rc-track").length, 1, "one compact track");
+    const keys = [...w.shadow.querySelectorAll(".rc-key")].map((n) => n.textContent);
+    assert.equal(keys.length, 3, `both cards and the host pool — got ${keys.join(" | ")}`);
+    assert.match(keys.join(" "), /System RAM/, "the host pool is in the overview");
+    // Read as a SHARE of each pool: with unequal capacities an absolute height would mean different things
+    // per line. The header must not claim a single denominator ("of X each").
+    const head = w.shadow.querySelector(".rc-total").textContent;
+    assert.match(head, /% of each pool/);
+    assert.ok(!/each$/.test(head.split("Each")[0].trim()), "never a single shared capacity for unequal cards");
+    assert.match(keys[0], /%/, "each key shows its own occupancy as a percentage");
+});
+
+test("model row: hovering shows WHERE it sits, and flags a split", async () => {
+    const w = await loadSidebarWorld({
+        vram: [{ model: "big", vramGB: 19, vramBytes: 19 * 1024 ** 3, sizeBytes: 25 * 1024 ** 3,
+                 gpus: [{ id: "0", runner: "CUDA", vramBytes: 12 * 1024 ** 3 },
+                        { id: "1", runner: "CUDA", vramBytes: 7 * 1024 ** 3 }], expiresAt: null }],
+        info: INFO_MIXED,
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+    await w.flush();
+
+    const row = w.shadow.querySelector(".vram-row");
+    row.dispatchEvent(new w.window.PointerEvent("pointerenter", { bubbles: true }));
+    row.dispatchEvent(new w.window.PointerEvent("pointermove", { bubbles: true, clientX: 100, clientY: 200 }));
+    await w.flush();
+
+    const tip = w.shadow.querySelector(".vram-rowtip");
+    assert.ok(tip, "the row names itself on hover");
+    // The placement a single total cannot show: two cards AND a RAM spill.
+    assert.match(tip.textContent, /CUDA0 12\.00 GiB/);
+    assert.match(tip.textContent, /CUDA1 7\.00 GiB/);
+    assert.match(tip.textContent, /RAM 6\.00 GiB/, "the partial offload — why a 'GPU' model can still be slow");
+    assert.match(tip.textContent, /split/, "and it is flagged as split, not just listed");
+    assert.ok(w.shadow.querySelector(".vram-rowtip-split"), "the split line is marked");
+
+    row.dispatchEvent(new w.window.PointerEvent("pointerleave", { bubbles: true }));
+    await w.flush();
+    assert.equal(w.shadow.querySelectorAll(".vram-rowtip").length, 0, "and clears on leave");
 });

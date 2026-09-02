@@ -212,10 +212,14 @@ test("seriesCatalog: generated from the devices the box actually reports", () =>
 
 test("presetsFor: the default layout follows the hardware", () => {
     const multi = M.presetsFor({ t: 1, capacity: M.parseInfo(CUDA_INFO), models: [] });
-    // The DEFAULT must not hide a resident model: a CPU-resident one appears only in the host track, so
-    // leading with a per-card view would make it vanish from the panel entirely.
-    assert.equal(multi[0].id, "memory", "GPU + RAM leads — the default shows everything resident");
-    assert.equal(multi[0].tracks.length, 3, "both cards and the host pool");
+    // The default is the most COMPACT view that still hides nothing: one track, every pool overlaid — cards
+    // AND the host, since a CPU-resident model holds no VRAM and would otherwise vanish from the chart.
+    assert.equal(multi[0].id, "overview", "Overview leads — one track, and it omits no pool");
+    assert.equal(multi[0].tracks.length, 1, "one track for the whole machine");
+    assert.deepEqual(multi[0].tracks[0].series, ["vram.0", "vram.1", "ram"], "including the host pool");
+    assert.equal(multi[0].tracks[0].mode, "overlay");
+    const withRam = multi.find((p) => p.id === "memory");
+    assert.equal(withRam.tracks.length, 3, "GPU + RAM breaks the same data into a track per pool");
     const placement = multi.find((p) => p.id === "placement");
     assert.equal(placement.tracks.length, 2, "placement narrows to the cards — small multiples, no shared axis");
 
@@ -403,4 +407,37 @@ test("sameBoxOnly: drops history measured on another machine, keeps the current 
     assert.deepEqual(M.sameBoxOnly(history, metal, true).map((s) => s.t), [4],
         "a switch drops what cannot be attributed to either box");
     assert.deepEqual(M.sameBoxOnly(history, cuda, true).map((s) => s.t), [1, 2]);
+});
+
+// A single total hides how a model is placed: 18 GiB reads the same whether it sits on one card, is split
+// across two, or is partly offloaded to system RAM — and the last of those is why it can be unexpectedly slow.
+test("placementOf: names the devices and shows how a model was split", () => {
+    const cap = M.parseInfo(CUDA_INFO);
+    const fmt = M.formatBytes;
+    const res = (over) => M.residencyFrom({ name: "m", size: 20 * GB, size_vram: 20 * GB, ...over });
+
+    // One card: named, not "device 0".
+    assert.equal(M.placementOf(res({ gpus: [{ gpu_id: "0", size_vram: 20 * GB }] }), cap, fmt), "CUDA0 18.63 GiB");
+    // Split across two cards — the case a total can't show.
+    const two = res({ gpus: [{ gpu_id: "0", size_vram: 12 * GB }, { gpu_id: "1", size_vram: 8 * GB }] });
+    assert.equal(M.placementOf(two, cap, fmt), "CUDA0 11.18 GiB + CUDA1 7.45 GiB");
+    assert.equal(M.isSplit(two), true);
+
+    // PARTIAL OFFLOAD: part on a card, the rest in system RAM — why a "GPU" model can still be slow.
+    const spill = M.residencyFrom({ name: "m", size: 30 * GB, size_vram: 20 * GB, gpus: [{ gpu_id: "0", size_vram: 20 * GB }] });
+    assert.match(M.placementOf(spill, cap, fmt), /^CUDA0 18\.63 GiB \+ RAM 9\.31 GiB$/);
+    assert.equal(M.isSplit(spill), true, "GPU + RAM is a split too");
+
+    // Fully CPU-resident: no gpus[] at all.
+    const cpu = M.residencyFrom({ name: "m", size: 8 * GB, size_vram: 0 });
+    assert.match(M.placementOf(cpu, cap, fmt), /^RAM 7\.45 GiB$/);
+    assert.equal(M.isSplit(cpu), false, "one place is not a split");
+
+    // Unattributable placement (the deployed server's caveat-2 case) says so rather than dropping the device.
+    const odd = M.residencyFrom({ name: "m", size: 20 * GB, size_vram: 20 * GB, gpus: [{ gpu_id: "1", size_vram: 0 }] });
+    assert.match(M.placementOf(odd, cap, fmt), /CUDA1 \(unknown\)/);
+
+    // A single-device box with nothing to report gets no line rather than a redundant one.
+    const solo = M.parseInfo(METAL_INFO);
+    assert.equal(M.placementOf(M.residencyFrom({ name: "m", size: 5 * GB, size_vram: 5 * GB }), solo, fmt), null);
 });
