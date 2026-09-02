@@ -2913,3 +2913,19 @@ test("PDF print: GET_PRINT_DOC for an unknown key returns null (no crash)", asyn
     const resp = await bg.send({ type: "GET_PRINT_DOC", k: "deadbeef" }, { tab: { id: 5 } });
     assert.deepEqual(resp, { html: null });
 });
+
+// DEREF_TOKEN: a page-side tool of a BACKGROUND-hosted run reading a `@tool:` pointer. The pointer store lives
+// in the service worker (the loop owns it), so the SW answers — but only for a run it is actually hosting.
+test("DEREF_TOKEN answers only for a run this worker hosts, and forgets it when the run ends", async () => {
+    const bg = loadBackground({ config: baseConfig() });
+    // No such run → an actionable error, never a silent empty value the tool would treat as data.
+    const missing = await bg.send({ type: "DEREF_TOKEN", runId: "nope", ref: "@tool:a1b2c3" }, { tab: { id: 9 } });
+    assert.match(missing.error, /No active background run "nope"/);
+    assert.equal(missing.value, undefined, "nothing is returned for a run we don't host");
+
+    // A run this worker never hosted can't be read by naming it either — the resolver map is populated ONLY by
+    // the loop's tokenSink at run start, so a page cannot conjure a pointer store for an arbitrary runId.
+    const forged = await bg.send({ type: "DEREF_TOKEN", runId: "../../etc", ref: "@tool:a1b2c3" }, { tab: { id: 9 } });
+    assert.match(forged.error, /No active background run/);
+    assert.equal(forged.value, undefined);
+});

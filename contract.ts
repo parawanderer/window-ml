@@ -721,6 +721,9 @@ export interface ToolContext {
     /** The run's curated user-facing answer set — the `answer` tool adds/removes/clears it, `ml.answer`
      *  mirrors it, and the loop reads it to assemble AgentResult. Per run (keyed by the toolset). */
     answer?: AnswerSet;
+    /** Read a `@tool:<id>` pointer from THIS run — what `ml.dereference` binds to inside a tool call. Absent
+     *  outside a run, which is why the page can't reach it from its own console. */
+    deref?: (ref: string, pipe?: string) => Promise<string>;
     /** LIVE partial output — a GENERIC tool-streaming capability. A tool's `run` may call `ctx.stream(text)`
      *  to stream output AS IT WORKS (Jupyter-style: `exec`'s console.log, `python_exec`'s print), so the step's
      *  Out fills in live instead of only appearing at completion. Present ONLY when the run opted into
@@ -1566,6 +1569,11 @@ export interface MlApi {
      *  ask. `add` a live element (→ hoverable/highlighted), a `@tool:` output token, or text; `remove` by index,
      *  `clear`, `length`; the bare object dumps a compact index (never the heavy media). */
     readonly answer: MlAnswer;
+    /** Read a `@tool:<id>` pointer — an output this run already produced — instead of re-running the tool that
+     *  made it. Reaches the FULL capture, not the truncated copy the model was shown. `pipe` reduces it first,
+     *  as a dialect string (".rows | head 5") or an array of stages ([".rows", "head 5"]). Run-bound like
+     *  `ml.answer`: live inside a tool call (an approved `exec`), throws from the console outside a run. */
+    dereference(ref: string, options?: { pipe?: string | string[] | null }): Promise<string>;
     /* ---- chat ---- */
     /** Create a stateful multi-turn chat session. Same raw-model contract as ml.chat —
      *  the turns accumulate, but the model still never sees the page. */

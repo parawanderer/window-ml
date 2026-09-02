@@ -54,7 +54,7 @@ import { renderArgs, logStep, defaultApprove, normalizeApproval, formatReadonlyE
 import { buildLookTool, buildLocateTool, buildClickTool, buildTypeTool, buildPythonTool, targetRender, captureVerify, lookViews, BOX_OVER_TEXT_TIP, VIEWS_PARAM, legendFor, setCdpEnabled } from "./builtin-tools";
 import { pyVarNameError } from "./python-env";
 import { autoApprovePython } from "./auto-approve";
-import { executeTool, toolContext, currentAnswer } from "./tool-exec";
+import { executeTool, toolContext, currentAnswer, currentDeref } from "./tool-exec";
 import { runAgentLoop, shotTurnMessage, CITABLE_TOOLS } from "./agent-loop";
 import type { AgentLoopDeps } from "./agent-loop";
 import { installToolDelegation, registerRun, endRun, runAnswer } from "./run-delegation";
@@ -109,6 +109,35 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             const set = currentAnswer();
             if (!set) throw new Error("ml.answer is only live inside an ml.agent run (it curates that run's user-facing answer).");
             return makeAnswerFacade(set, elLine);
+        },
+        /**
+         * Read a `@tool:<id>` pointer — an output THIS run already produced — instead of re-running the tool
+         * that made it, or retyping a value. Reaches the FULL capture, not the truncated copy the model was
+         * shown, so it can recover data that is otherwise unreachable.
+         *
+         * Run-bound like `ml.answer`: it resolves against the run whose tool is currently executing, so it is
+         * live inside an approved `exec` and THROWS from a page's own console (there is no run, so there is no
+         * store). The binding is what scopes it, not a permission check.
+         *
+         * ```js
+         *   const rows = JSON.parse(await ml.dereference("@tool:a1b2c3", { pipe: ".rows" }));
+         *   rows.filter(r => r[2] > 100).length
+         * ```
+         *
+         * @param ref A pointer: `@tool:<id>`, the bare id, or a builtin's name for its latest call. `:in` reads
+         *            the call/arguments instead of the result.
+         * @param options `pipe` reduces the value first — the text-pipe dialect as a string
+         *                (`".rows | head 5"`), or as an ARRAY of stages (`[".rows", "head 5"]`), which avoids
+         *                quoting entirely.
+         * @returns The value, reduced by the pipe. Rejects with an actionable message when the pointer doesn't
+         *          exist (a MemoryFault naming the nearest real pointers) or a pipe stage is wrong.
+         */
+        dereference: async function(ref: string, { pipe = null }: { pipe?: string | string[] | null } = {}): Promise<string> {
+            const fn = currentDeref();
+            if (!fn) throw new Error("ml.dereference is only live inside an ml.agent run (it reads that run's captured tool outputs).");
+            // An array of stages is the ergonomic form — no quoting, no escaping — and joins to the same dialect.
+            const p = Array.isArray(pipe) ? pipe.filter(Boolean).join(" | ") : (pipe || "");
+            return await fn(String(ref ?? ""), p);
         },
         /**
          * Create a stateful multi-turn chat session.
@@ -878,6 +907,14 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             // The runtime ToolContext for this run — built once from the finalised toolset (byName) + model,
             // so a tool's run(args, ctx) can adapt to which companion tools are wired (e.g. `locate`).
             const toolCtx = toolContext(byName, runModel, null, driverSees, runVisionModel);
+            // `ml.dereference` inside an approved exec: the loop hands its pointer resolver to `tokenSink`
+            // below, and this closure is what the ToolContext binds — so the primitive is live only while a
+            // tool of THIS run is executing (see tool-exec's activeDeref), and resolves against this run.
+            let pageDeref: ((ref: string, pipe?: string) => string) | null = null;
+            toolCtx.deref = async (ref, pipe) => {
+                if (!pageDeref) throw new Error("This run has no captured outputs yet.");
+                return pageDeref(ref, pipe);
+            };
             // The run's curated answer set (created per run on the ToolContext). The `answer` tool mutates it
             // directly — no per-call accumulation here — and the loop reads it at assembly.
             const answerSet = toolCtx.answer!;
@@ -1012,7 +1049,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 answerSet.clear();   // the answer set reflects THIS turn's designations only
                 enterAgentRun();   // suppress orphan chat sessions from a tool's internal ml.chat; finally-decremented
                 try {
-                    const r = await runAgentLoop(t, { tools: toolMetas, maxSteps: () => control.maxSteps, signal, unattended, toolTokens, runHash, seqBase: control.seqBase, stream }, deps);
+                    const r = await runAgentLoop(t, { tools: toolMetas, maxSteps: () => control.maxSteps, signal, unattended, toolTokens, runHash, seqBase: control.seqBase, stream, tokenSink: (fn) => { pageDeref = fn; } }, deps);
                     control.seqBase += turnMaxSeq; turnMaxSeq = 0;   // next turn's step seqs continue past this turn's
                     control.stepBase += turnMaxStep; turnMaxStep = 0;   // …and its step numbers, so turn groups stay distinct
                     // The bottom-of-answer render: the outputs the model DESIGNATED into the answer set, minus

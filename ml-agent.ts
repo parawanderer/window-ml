@@ -127,3 +127,25 @@ export class AgentHandle implements MlAgentHandle, AgentControl {
         return f;
     }
 }
+
+
+/** Read a `@tool:` pointer from a BACKGROUND-hosted run. The loop, and therefore the pointer store, lives in
+ *  the service worker; this tool is executing in the page. So the page asks, over the same relay every other
+ *  page→background request uses, keyed by the runId whose tool is running.
+ *
+ *  Not a page-reachable capability: nothing calls this except a ToolContext built for an executing delegated
+ *  tool (run-delegation), and the background answers only for a run it is actually hosting. A page's own
+ *  console has no active run, so `ml.dereference` throws there before any message is sent. */
+export function derefViaBackground(runId: string, ref: string, pipe?: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const id = `deref-${Math.random().toString(16).slice(2)}`;
+        const onMsg = (e: MessageEvent) => {
+            const d = e.data as { type?: string; id?: string; value?: string; error?: string } | undefined;
+            if (!d || d.type !== "PAGE_DEREF_RESULT" || d.id !== id) return;
+            window.removeEventListener("message", onMsg);
+            if (d.error) reject(new Error(d.error)); else resolve(d.value ?? "");
+        };
+        window.addEventListener("message", onMsg);
+        window.postMessage({ type: "PAGE_DEREF", id, runId, ref, pipe: pipe || "" }, "*");
+    });
+}

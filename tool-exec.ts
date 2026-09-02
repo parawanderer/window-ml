@@ -30,6 +30,14 @@ let activeAnswer: AnswerSet | null = null;
 /** The answer set of the tool currently running, or null (→ `ml.answer` throws outside a run). */
 export function currentAnswer(): AnswerSet | null { return activeAnswer; }
 
+// Same treatment for POINTER reads. `ml.dereference` resolves `@tool:<id>` against the run that is currently
+// executing a tool — so an APPROVED exec can read a previous output as DATA rather than re-reading it as text,
+// while a page calling `window.ml.dereference` from its own console gets nothing: there is no active run, so
+// there is no store to read. The binding, not a permission check, is what scopes it.
+let activeDeref: ((ref: string, pipe?: string) => Promise<string>) | null = null;
+/** The pointer resolver for the tool currently running, or null (→ `ml.dereference` throws outside a run). */
+export function currentDeref(): ((ref: string, pipe?: string) => Promise<string>) | null { return activeDeref; }
+
 // How many NON-docs tool calls may fall between two `agent_api_docs` calls before the dig counts as "over" and
 // the shown-set is purged. 1 = tolerate a single quick detour (an `exec` check) mid-dig without re-printing;
 // a second intervening step means the model has moved on, so a later re-pull re-reads the definitions fresh.
@@ -85,8 +93,9 @@ export async function executeTool(tool: MlTool, args: Record<string, unknown>, c
     const note = issues.length ? `\n\n⚠ Argument schema issue(s): ${issues.join("; ")}` : "";
     // Bind `window.ml.answer` to THIS run's set for the duration of the tool call (an approved exec that calls
     // ml.answer resolves it; outside a run it throws). Save/restore for nested runs.
-    const prevAnswer = activeAnswer;
+    const prevAnswer = activeAnswer, prevDeref = activeDeref;
     if (ctx?.answer) activeAnswer = ctx.answer;
+    if (ctx?.deref) activeDeref = ctx.deref;
     // Drive `agent_api_docs`'s burst-scoped dedup: a NON-docs tool call is a step away from the dig, so count
     // it, and once the model has moved on (past the leniency) purge what it was shown so a later re-pull re-reads
     // definitions fresh. The docs tool itself resets `sinceDocs` when it runs (it's the streak).
@@ -107,5 +116,5 @@ export async function executeTool(tool: MlTool, args: Record<string, unknown>, c
         }
         return { result: String(raw) + note };
     } catch (e) { return { result: `Error: ${errText(e)}` + note }; }
-    finally { activeAnswer = prevAnswer; }
+    finally { activeAnswer = prevAnswer; activeDeref = prevDeref; }
 }

@@ -224,6 +224,16 @@ window.addEventListener("message", (event: MessageEvent) => {
     // A LIVE output chunk from a DELEGATED tool (its ctx.stream, posted by run-delegation) → forward to the
     // background, which routes it to the in-flight call's sink by runId (→ the loop's fan → a streamOutput
     // delta on every surface). Fire-and-forget; a dropped chunk only costs a frame of live output.
+    // `ml.dereference` from inside a delegated tool of a BACKGROUND-hosted run: the pointer store lives in the
+    // service worker, so relay the read and post the answer back to the page. Request/response, id-matched.
+    if (data.type === "PAGE_DEREF") {
+        const d = data as { id?: string; runId?: string; ref?: string; pipe?: string };
+        chrome.runtime.sendMessage({ type: "DEREF_TOKEN", runId: d.runId, ref: d.ref, pipe: d.pipe }, (resp: { value?: string; error?: string } = {}) => {
+            const err = chrome.runtime.lastError?.message || resp?.error;
+            window.postMessage({ type: "PAGE_DEREF_RESULT", id: d.id, ...(err ? { error: err } : { value: resp?.value ?? "" }) }, "*");
+        });
+        return;
+    }
     if (data.type === "PAGE_TOOL_STREAM") {
         chrome.runtime.sendMessage({ type: "PAGE_TOOL_STREAM", runId: (data as { runId?: string }).runId, chunk: (data as { chunk?: string }).chunk, ts: (data as { ts?: number }).ts });
         return;

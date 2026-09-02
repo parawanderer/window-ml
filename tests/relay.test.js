@@ -745,3 +745,61 @@ test("ml.resumeChat throws for an unknown / session-local hash", async () => {
     const world = loadPageWorld({ onRuntimeMessage: (m) => m.type === "GET_SESSION" ? { data: null } : { data: "r" } });
     await assert.rejects(world.ml.resumeChat("ghost"), /No resumable session/);
 });
+
+// A minimal window bus: derefViaBackground talks to the content script over window.postMessage, so the test
+// needs the two halves of that bus and nothing else. (loadPageWorld builds a whole page realm; this contract
+// is just messages, so a bus keeps the test about the protocol.)
+function withWindowBus(fn) {
+    const listeners = new Set();
+    const prev = globalThis.window;
+    globalThis.window = {
+        addEventListener: (t, l) => { if (t === "message") listeners.add(l); },
+        removeEventListener: (t, l) => { if (t === "message") listeners.delete(l); },
+        postMessage: (data) => { for (const l of [...listeners]) queueMicrotask(() => l({ data })); },
+    };
+    return Promise.resolve(fn(globalThis.window)).finally(() => { globalThis.window = prev; });
+}
+
+// `ml.dereference` on the BACKGROUND-hosted path. The loop (and the pointer store) live in the service worker
+// while the tool runs in the page, so the read rings back over the same relay every page→background request
+// uses. This drives the REAL page-side half (derefViaBackground → window.postMessage) against a stubbed
+// content script, so the message contract can't drift.
+test("ml.dereference (background-hosted): the page rings back to the SW, id-matched", async () => {
+    const { derefViaBackground } = await import("../ml-agent.ts");
+    await withWindowBus(async (window) => {
+    const seen = [];
+    // Stand in for content.ts: answer a PAGE_DEREF with a PAGE_DEREF_RESULT carrying the same id.
+    const onMsg = (e) => {
+        const d = e.data;
+        if (!d || d.type !== "PAGE_DEREF") return;
+        seen.push(d);
+        window.postMessage({ type: "PAGE_DEREF_RESULT", id: d.id, value: `resolved:${d.ref}|${d.pipe}` }, "*");
+    };
+    window.addEventListener("message", onMsg);
+    try {
+        const value = await derefViaBackground("run-7", "@tool:a1b2c3", "head 5");
+        assert.equal(value, "resolved:@tool:a1b2c3|head 5");
+        assert.equal(seen.length, 1);
+        assert.equal(seen[0].runId, "run-7", "the read is scoped to the run whose tool is executing");
+        assert.equal(seen[0].ref, "@tool:a1b2c3");
+        assert.ok(seen[0].id, "carries a request id so concurrent reads can't cross");
+    } finally { window.removeEventListener("message", onMsg); }
+    });
+});
+
+test("ml.dereference (background-hosted): an error from the SW rejects, and a foreign id is ignored", async () => {
+    const { derefViaBackground } = await import("../ml-agent.ts");
+    await withWindowBus(async (window) => {
+    const onMsg = (e) => {
+        const d = e.data;
+        if (!d || d.type !== "PAGE_DEREF") return;
+        // A reply for a DIFFERENT request must not settle this one (concurrent reads share the window bus).
+        window.postMessage({ type: "PAGE_DEREF_RESULT", id: "someone-else", value: "wrong" }, "*");
+        window.postMessage({ type: "PAGE_DEREF_RESULT", id: d.id, error: "MemoryFault: pointer '@tool:zzzzzz' does not exist." }, "*");
+    };
+    window.addEventListener("message", onMsg);
+    try {
+        await assert.rejects(() => derefViaBackground("run-7", "@tool:zzzzzz"), /MemoryFault/);
+    } finally { window.removeEventListener("message", onMsg); }
+    });
+});

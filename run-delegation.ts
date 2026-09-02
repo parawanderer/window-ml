@@ -13,6 +13,7 @@
 import type { MlTool, PageToolEnvelope, SubcallUsage, AnswerMedia } from "./contract";
 import { outputCapEscalated } from "./contract";
 import { executeTool, toolContext, answerSetFor } from "./tool-exec";
+import { derefViaBackground } from "./ml-agent";
 import { captureVerify, captureVerifyElement } from "./builtin-tools";
 import { htmlToMarkdown } from "./html-to-md";
 import { clipOut, elLine, errText } from "./dom";
@@ -190,7 +191,14 @@ export async function runDelegatedTool(runId: string, name: string, args: Record
     // A tool (look/locate, or click/type/wait with verify) may make its own delegated vision sub-calls —
     // meter their spend as a delta so the background loop can tally it (the page meter it can't read).
     return withSubUsage(async () => {
-        const env = await executeTool(tool, args, toolContext(run.byName, run.model ?? null, null, run.driverSees ?? false, run.visionModel ?? null), opts.onStream);
+        // The BACKGROUND-hosted path: the loop (and therefore the pointer store) lives in the service worker
+        // while this tool runs in the page, so `ml.dereference` inside an approved exec has to ring back. Same
+        // reverse channel the live-output stream uses, keyed by runId. Binding it here (rather than exposing a
+        // page-reachable store) keeps the primitive scoped to a tool call of THIS run, exactly as on the page
+        // path — a page's own console still has no active run and gets nothing.
+        const ctx = toolContext(run.byName, run.model ?? null, null, run.driverSees ?? false, run.visionModel ?? null);
+        ctx.deref = (ref, pipe) => derefViaBackground(runId, ref, pipe);
+        const env = await executeTool(tool, args, ctx, opts.onStream);
         // An answer-capable tool's result node(s) go into the run's answer SET (page-side); the live nodes stay
         // here (they can't cross the bus), only the COUNT crosses. The built-in `answer` tool curates the set
         // itself (`answerManaged`); a CUSTOM answer tool just returns nodes → accumulate them here. The caller

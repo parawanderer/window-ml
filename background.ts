@@ -221,6 +221,8 @@ const trackRun = (tabId: number, runId: string, rebuild?: import("./contract").R
 const tabHasBgRun = (tabId: number): boolean => { for (const r of bgRuns.values()) if (r.tabId === tabId) return true; return false; };
 const untrackRun = (tabId: number, runId: string): void => {
     runRebuilds.delete(runId);
+    derefByRun.delete(runId);   // the run's pointers die with it — a later read must not resolve against it
+
     const s = activeRuns.get(tabId);
     if (!s) return;
     s.delete(runId);
@@ -345,6 +347,9 @@ const pendingPrints = new Map<string, { html: string; timer: ReturnType<typeof s
 // deleted when it resolves. Only populated for opt-in streaming runs (a bounded, short-lived map).
 const pyStreamTabs = new Map<string, number>();
 
+// Pointer resolvers for background-hosted runs, keyed by runId — handed over by the loop at start (tokenSink)
+// so a page-side tool's `ml.dereference` can read THIS run's captured outputs. Deleted when the run ends.
+const derefByRun = new Map<string, (ref: string, pipe?: string) => string>();
 // LIVE tool-output streaming on the BACKGROUND path: the in-flight delegated tool's onStream, keyed by runId.
 // The loop delegates tool calls SEQUENTIALLY (one in flight per run), so runId alone correlates a page-posted
 // PAGE_TOOL_STREAM chunk to the right callback. Set in delegateTool while a streaming call runs, deleted after.
@@ -985,6 +990,9 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 // Read-only try (exec only, and only when the user enabled autoApproveReadonly): ask the
                 // page to run the call through the mediated interpreter — side-effect-free, so if it's
                 // in-dialect it BOTH auto-approves AND returns the result, and the human gate is skipped.
+                // Keep this run's pointer resolver so a page-side tool's `ml.dereference` (DEREF_TOKEN) can
+                // read the outputs THIS run captured. Dropped in the run's finally, with the other per-run state.
+                tokenSink: (fn) => { derefByRun.set(runId, fn); },
                 tryReadonly: p.autoApproveReadonly ? async (name, args) => {
                     if (name !== "exec") return null;
                     const env = await delegateSend(tabId, { type: "RUN_TOOL_IN_PAGE", payload: { runId, name, args, readonlyTry: true } })
@@ -1186,6 +1194,15 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 .finally(() => { if (streamId) pyStreamTabs.delete(streamId); });
         })();
         return true;   // async
+    }
+    // A page-side tool of a background-hosted run calling `ml.dereference`. Answered only for a run WE are
+    // hosting, from that run's own pointer store — the resolver the loop handed us at start (tokenSink).
+    if (message.type === "DEREF_TOKEN") {
+        const fn = derefByRun.get(String(message.runId || ""));
+        if (!fn) { sendResponse({ error: `No active background run "${message.runId}" to read pointers from.` }); return true; }
+        try { sendResponse({ value: fn(String(message.ref || ""), String(message.pipe || "")) }); }
+        catch (e) { sendResponse({ error: (e as Error)?.message || String(e) }); }
+        return true;
     }
     if (message.type === "PAGE_TOOL_STREAM") {
         // A LIVE output chunk from a DELEGATED page tool (its ctx.stream) → hand it to the in-flight call's

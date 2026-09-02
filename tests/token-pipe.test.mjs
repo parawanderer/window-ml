@@ -171,3 +171,86 @@ test("a pointer prefers the FULL capture over the model's truncated copy", () =>
     assert.equal(P.extraBeyondModel(tok({ out: "short" })), "");
     assert.equal(P.extraBeyondModel(tok({ out: "same", full: "same" })), "");
 });
+
+// --- ml.dereference: run-bound, on BOTH hosting paths ---------------------------------------------------
+// The primitive is scoped by BINDING, not by a permission check: tool-exec binds a resolver for the duration
+// of a tool call and restores it after, so it is live inside an approved exec and absent from a page's own
+// console. These exercise that contract directly against the real tool-exec + agent-loop wiring.
+const { executeTool, toolContext, currentDeref } = await import("../tool-exec.ts");
+
+const fakeTool = (run) => ({ name: "exec", description: "", parameters: { type: "object", properties: {} }, run });
+
+test("ml.dereference is LIVE inside a tool call and gone outside it", async () => {
+    assert.equal(currentDeref(), null, "nothing is bound before any tool runs — a page console gets nothing");
+
+    const ctx = toolContext({ exec: fakeTool(async () => "") });
+    ctx.deref = async (ref, pipe) => `read ${ref}${pipe ? ` | ${pipe}` : ""}`;
+
+    let sawInside = null;
+    const tool = fakeTool(async () => {
+        const fn = currentDeref();
+        sawInside = fn ? await fn("@tool:abc123", "head 2") : null;
+        return "done";
+    });
+    await executeTool(tool, {}, ctx);
+    assert.equal(sawInside, "read @tool:abc123 | head 2", "bound to THIS run's resolver while the tool ran");
+    assert.equal(currentDeref(), null, "and unbound again the moment the call returns");
+});
+
+test("the binding is restored after a nested call, and after a throwing one", async () => {
+    const outer = toolContext({ a: fakeTool(async () => "") });
+    outer.deref = async () => "outer";
+    const inner = toolContext({ b: fakeTool(async () => "") });
+    inner.deref = async () => "inner";
+
+    let duringNested = null, afterNested = null;
+    await executeTool(fakeTool(async () => {
+        await executeTool(fakeTool(async () => { duringNested = await currentDeref()(""); return ""; }), {}, inner);
+        afterNested = await currentDeref()("");
+        return "";
+    }), {}, outer);
+    assert.equal(duringNested, "inner", "a nested run binds its own");
+    assert.equal(afterNested, "outer", "…and the outer run's is restored");
+
+    // executeTool catches a throwing tool; the binding must still be cleaned up.
+    const boom = toolContext({ c: fakeTool(async () => "") });
+    boom.deref = async () => "boom";
+    const r = await executeTool(fakeTool(async () => { throw new Error("kaboom"); }), {}, boom);
+    assert.match(r.result, /kaboom/);
+    assert.equal(currentDeref(), null, "a throwing tool doesn't leak the binding");
+});
+
+test("the loop hands out a resolver bound to ITS OWN store (the page-hosted path)", async () => {
+    const { runAgentLoop } = await import("../agent-loop.ts");
+    let resolver = null;
+    const full = Array.from({ length: 300 }, (_, i) => `row ${i + 1}: v${i + 1}`).join("\n");
+
+    // One exec step that captures a big output, then the model answers. tokenSink hands us the resolver the
+    // host would bind onto the ToolContext.
+    const turns = [
+        { content: "", tool_calls: [{ id: "1", name: "exec", arguments: { js: "x", token: true } }] },
+        { content: "done", tool_calls: [] },
+    ];
+    let i = 0;
+    await runAgentLoop("t", {
+        tools: [{ name: "exec", description: "", parameters: { type: "object", properties: {} } }],
+        maxSteps: () => 3, toolTokens: true, runHash: "abcdef", tokenSink: (fn) => { resolver = fn; },
+    }, {
+        callModel: async () => turns[i++] || { content: "" },
+        runTool: async () => ({ result: full.slice(0, 200) + "… [+truncated]",
+            renderOut: { type: "exec-out", stdout: full, seen: 200 } }),
+        autoApprove: () => null,
+        buildMessages: (task) => [{ role: "user", content: task }],
+        pushAssistant: (m, msg) => m.push({ role: "assistant", ...msg }),
+        pushToolResult: (m, call, result) => m.push({ role: "tool", tool_call_id: call.id, content: result }),
+    });
+
+    assert.equal(typeof resolver, "function", "the loop handed a resolver to the host");
+    // It reads the FULL capture, not the truncated copy the model saw — the whole point.
+    assert.match(resolver("@tool:exec", "grep 'row 297:'"), /row 297: v297/);
+    // A bad pointer raises the same MemoryFault the tool returns, so exec and the tool behave identically.
+    assert.throws(() => resolver("@tool:zzzzzz"), /MemoryFault: pointer '@tool:zzzzzz' does not exist/);
+    assert.throws(() => resolver("@tool:zzzzzz"), /Nearest valid pointers/);
+    // A bad pipe stage raises the dialect's own actionable error.
+    assert.throws(() => resolver("@tool:exec", "jq .x"), /isn't a supported text command/);
+});

@@ -201,6 +201,10 @@ export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number | (() =
     // citation would resolve to the earlier step. The caller passes its running base (the same one it offsets the
     // stored step.seq by), so the minted id matches a session-unique step exactly.
     toolTokens?: boolean; runHash?: string; seqBase?: number;
+    /** Called once at run start with a resolver for this run's `@tool:` pointers. The host binds it into the
+     *  ToolContext so `ml.dereference` inside an approved exec reads THIS run's outputs — and only while a
+     *  tool of this run is executing. The loop owns the store, so it is the only place that can hand this out. */
+    tokenSink?: (resolve: (ref: string, pipe?: string) => string) => void;
     /** Opt-in LIVE tool-output streaming (same flag as the streamed thinking): when set, each tool call gets a
      *  throttled `ctx.stream(text)` so a tool that supports it (exec's console.log, python_exec's print) streams
      *  its output as it runs. Off → tools return the full result at the end, unchanged. */
@@ -312,6 +316,13 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         if (!v.image) return { error: `@tool:${v.id} is ${describeToken(v)}, not an image — there is nothing to look at. Read it with dereference instead.` };
         return { args: { ...args, _image: v.image, _imageLabel: `@tool:${v.id} (captured at step ${v.step})` } };
     };
+    // Hand the resolver to the host (see tokenSink). Throws exactly what the tool would return, so a failed
+    // read inside exec surfaces the same MemoryFault / pipe error the model sees from the tool itself.
+    opts.tokenSink?.((ref: string, pipe?: string): string => {
+        const v = tokenStore.get(ref);
+        if (!v) throw new Error(memoryFault(ref, tokenStore.nearest(ref), seq));
+        return derefPipe(v, TokenStore.slotOf(ref), pipe);
+    });
     /** Rewrite a `look` at an image pointer into a look at that image; anything else passes through. An
      *  unresolvable pointer throws, which the loop's own try/catch turns into the tool result. */
     const lookArgs = (name: string, a: Record<string, unknown>, step: number): Record<string, unknown> => {
