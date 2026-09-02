@@ -15,7 +15,7 @@ export type CaptureAnswer = (els: Element[], note?: string, show?: "inline" | "h
 // domTools stay ml-free. Used by describeElement to reveal content a page selector can't enter.
 export type ShadowResolve = (selector: string) => Promise<{ line: string }[] | null>;
 import { truncate, clipOut, errText, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, deepQueryAll, closedShadowHosts, frameHostOf, selectorError, isCspEvalBlocked, firstHopSealed, isSealedHost } from "./dom";
-import { runPipe } from "./text-pipe";
+import { runPipe, pipeHint, PIPE_SYNTAX } from "./text-pipe";
 import { DEREF_TOOL } from "./token-pipe";
 import { INTERACTIVE_SEL, roleOf, accessibleName, placeholderText, ariaState, hasLayout, styleHidden, isFaded } from "./a11y";
 import { pageContext, browserInfo, agentState } from "./util";
@@ -432,7 +432,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 properties: {
                     selector: { type: "string", description: "CSS selector for possible matches." },
                     n: { type: "integer", description: "How many matches to sample (default 5; raise it when you'll `pipe`)." },
-                    pipe: { type: "string", description: "Optional. Scan/filter the sampled lines through a small shell-style pipeline (NOT a real shell): grep (-i -v -n -c -F -w -o -E, -A/-B/-C N), head/tail (-n N), wc (-l -w -c), sort (-n -r -u -f), uniq (-c -i), chained with `|`. E.g. \"grep -i sold out\" or \"sort | uniq -c\"." }
+                    pipe: { type: "string", description: "Optional. Scan/filter the sampled lines before they reach you. " + PIPE_SYNTAX }
                 },
                 required: ["selector"]
             },
@@ -453,7 +453,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 // `elements` side-channel still holds the full sample (a text-only view). Bad command → actionable.
                 if (typeof pipe === "string" && pipe.trim()) {
                     try { content = runPipe(content, pipe.trim()); }
-                    catch (e) { const escape = ctx?.hasTool("exec") ? " For more, use exec: `[...document.querySelectorAll(sel)].map(e => e.innerText)` and process the array." : ""; return `Pipe error: ${errText(e as Error)}\n\nThe pipe is a small line-scanner (grep · head · tail · wc · sort · uniq), not a real shell.${escape}`; }
+                    catch (e) { const escape = ctx?.hasTool("exec") ? " For more, use exec: `[...document.querySelectorAll(sel)].map(e => e.innerText)` and process the array." : ""; return `Pipe error: ${errText(e as Error)}${pipeHint(errText(e as Error))}${escape}`; }
                     content += `\n\n(piped through \`${pipe.trim()}\`)`;
                 }
                 return { content, elements: sampled };

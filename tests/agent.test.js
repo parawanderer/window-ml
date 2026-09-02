@@ -766,7 +766,7 @@ test("sampleText pipe: scans the sampled lines through the grep/sort pipeline", 
     assert.match(res.content, /piped through `grep -i banana \| wc -l`/, "notes the pipe");
     // A bad command → an actionable error; the exec suggestion is gated on exec being wired.
     const err = tool.run({ selector: "p", n: 10, pipe: "sed x" }, { hasTool: (n) => n === "exec" });
-    assert.match(String(err), /Pipe error.*not a real shell.*use exec/s);
+    assert.match(String(err), /Pipe error.*not a real shell.*use exec/is);
 });
 
 test("exec on a strict page (CSP / Trusted-Types block) → signals cdpExec with the SOURCE, not a plain error", async () => {
@@ -2289,7 +2289,7 @@ test("fetch_url pipe: filters the returned text through the grep/head pipeline (
     assert.match(String(err), /const \{ markdown \} = await ml\.fetch/, "with exec wired → points at the exec escape hatch");
     // Without exec wired, the hint is omitted (no misleading suggestion to use a tool it doesn't have).
     const errNoExec = await tool.run({ url, pipe: "sed 's/a/b/'" }, { hasTool: () => false, tools: [], model: null, capabilities: null });
-    assert.match(String(errNoExec), /not a real shell/, "still explains the dialect");
+    assert.match(String(errNoExec), /not a real shell/i, "still explains the dialect");
     assert.doesNotMatch(String(errNoExec), /use exec/, "no exec suggestion when exec isn't available");
 
     // Grepping RAW HTML is ALLOWED — but a MINIFIED (one-line) page can't be split by line tools, so nudge.

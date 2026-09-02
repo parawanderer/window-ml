@@ -35,7 +35,7 @@ import type {
 import { detectGroundingModel, DEFAULT_GROUNDING_RANGE, outputCapEscalated } from "./contract";
 import { evalReadonly } from "./readonly-exec";
 import { htmlToMarkdown } from "./html-to-md";
-import { runPipe } from "./text-pipe";
+import { runPipe, pipeHint, PIPE_SYNTAX } from "./text-pipe";
 import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement, navTarget, clipOut, askReaderNumCtx, jsonShape, shadowHostReport, clickSelector, elLine } from "./dom";
 import { makeAnswerFacade, finalizeAnswer, resolveOutputs } from "./answer-set";
 import { isSelfSourceUrl } from "./self-source";
@@ -1509,7 +1509,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     properties: {
                         url: { type: "string", description: "The URL to go to (absolute or site-relative, e.g. \"/dashboard\")." },
                         verify: { type: "string", enum: ["viewport", "text", "text-all"], description: "Fold a view of the DESTINATION page into the result (saves a `wait`+`look`/`fetch` turn to see where you landed). \"viewport\" = a SCREENSHOT (an inline look); \"text\" = the page distilled to clean Markdown (nav/chrome stripped — cheaper, no vision needed); \"text-all\" = the same Markdown but keeping nav/header/footer. Omit to skip." },
-                        pipe: { type: "string", description: "Optional, only with verify:\"text\"/\"text-all\". Scan/filter the destination page's Markdown through a small shell-style pipeline before it reaches you (NOT a real shell): grep (-i -v -n -c -F -w -o -E, -A/-B/-C N), head/tail (-n N), wc (-l -w -c), sort (-n -r -u -f), uniq (-c -i), chained with `|`. E.g. \"grep -i '^## ' | head\" to see just the headings of where you landed." },
+                        pipe: { type: "string", description: "Optional, only with verify:\"text\"/\"text-all\". Scan/filter the destination page's Markdown before it reaches you — e.g. \"grep -i '^## ' | head\" to see just the headings of where you landed. " + PIPE_SYNTAX },
                     },
                     required: ["url"],
                 },
@@ -1601,7 +1601,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                         rendered: { type: "boolean", description: "If true, load the URL in a background tab so its JavaScript runs, then return the SETTLED DOM — for client-rendered/SPA pages a raw GET returns empty. Renders in INCOGNITO (no session/cookies): same-origin is FREE, cross-origin asks once then remembered (needs 'Allow in Incognito'). Add credentials:true to render in the user's SESSION (a normal tab with cookies) — always re-asks. Slower/heavier; never cached." },
                         ask: { type: "string", description: "If set, a fast reader model reads the fetched content and answers THIS question; you get the answer, not the body (keeps a large page out of your context). Takes precedence over `schema`." },
                         raw: { type: "boolean", description: "If true, return an HTML page's ORIGINAL raw HTML instead of the auto-converted Markdown (HTML is converted to clean Markdown by default for readability; non-HTML is unaffected)." },
-                        pipe: { type: "string", description: "Optional. SCAN/FILTER the returned text through a small shell-style pipeline BEFORE it reaches you — so you read only the relevant lines instead of the whole doc (cheaper). It's an interpreted line-based environment (NOT a real shell); supported commands, chained with `|`: grep (flags -i -v -n -c -F -w -o -E, context -A/-B/-C N), head/tail (-n N), wc (-l -w -c), sort (-n -r -u -f), uniq (-c -i). E.g. \"grep -i pricing | head -20\", or \"grep -o '[0-9]+' | sort -n | tail -1\". For anything MORE COMPLEX than this dialect, use exec instead: `const { markdown } = await ml.fetch('<the url>');` then process that string with JS." },
+                        pipe: { type: "string", description: "Optional. SCAN/FILTER the returned text through a small shell-style pipeline BEFORE it reaches you — so you read only the relevant lines instead of the whole doc (cheaper). " + PIPE_SYNTAX + " For anything MORE COMPLEX than this dialect, use exec instead: `const { markdown } = await ml.fetch('<the url>');` then process that string with JS." },
                     },
                     required: ["url"],
                 },
@@ -1644,7 +1644,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                         let out: string;
                         try { out = runPipe(src, pipeStr); }
                         // The exec escape-hatch hint only makes sense when `exec` is actually wired this run — gate it.
-                        catch (e) { const escape = ctx?.hasTool("exec") ? ` For anything more complex, use exec: \`const { markdown } = await ml.fetch(${JSON.stringify(r.url)});\` then process the string in JS.` : ""; return { text: src, footer: "", err: `${head}\n\nPipe error: ${errText(e)}\n\nThe pipe is a small line-scanner (grep · head · tail · wc · sort · uniq), not a real shell.${escape}` }; }
+                        catch (e) { const escape = ctx?.hasTool("exec") ? ` For anything more complex, use exec: \`const { markdown } = await ml.fetch(${JSON.stringify(r.url)});\` then process the string in JS.` : ""; return { text: src, footer: "", err: `${head}\n\nPipe error: ${errText(e)}${pipeHint(errText(e))}${escape}` }; }
                         // Minified source (essentially one line, but large) → line tools can't split it usefully. This
                         // is the RAW-HTML footgun: grep/head over a one-line minified page is near-useless. Nudge to
                         // drop raw:true (the default HTML→Markdown lines up cleanly) or otherwise reformat first.

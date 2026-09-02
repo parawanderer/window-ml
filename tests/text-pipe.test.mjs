@@ -239,3 +239,28 @@ test("DRIFT GUARD: every verb the dialect exports exists, and the prompt names e
         assert.ok(!new RegExp(`\\b${gone}\\b`).test(DEREF_CLAUSE), `the prompt still advertises the removed \`${gone}\``);
     }
 });
+
+// The prompt was single-sourced from PIPE_CMDS; the ERROR paths and TOOL PARAMETERS were not, and had drifted
+// to a six-verb list while the dialect had twelve. A model told the set is smaller than it is never reaches
+// for `schema` or a `.path` — the same wasted turn the PIPE_CMDS comment describes, on a different surface.
+test("DRIFT GUARD: every model-facing description of the dialect is derived, not hardcoded", async () => {
+    const { PIPE_CMDS, PIPE_HINT, PIPE_SYNTAX } = await import("../text-pipe.ts");
+    for (const v of PIPE_CMDS) {
+        assert.ok(PIPE_HINT.includes(v), `the pipe-error hint doesn't name \`${v}\``);
+        assert.ok(PIPE_SYNTAX.includes(v), `the pipe parameter description doesn't name \`${v}\``);
+    }
+    // Both name the `.path` stage, which isn't a verb in PIPE_CMDS but is part of the dialect.
+    assert.ok(PIPE_HINT.includes(".path") && PIPE_SYNTAX.includes(".path"));
+    // No source file may spell the verb list out by hand again. Catches the exact stale list that was copied
+    // into four places (fetch_url's param + error, navigate's verify error, interactives' error).
+    const { readdirSync, readFileSync } = await import("node:fs");
+    const stale = [];
+    for (const f of readdirSync(new URL("../", import.meta.url)).filter((f) => f.endsWith(".ts"))) {
+        if (f === "text-pipe.ts") continue;        // the single source is allowed to name them
+        if (f.endsWith(".gen.ts")) continue;      // generated (build-info embeds a diff of the working tree)
+        const src = readFileSync(new URL(`../${f}`, import.meta.url), "utf8");
+        // Two verbs in a row, joined the way every hardcoded copy joined them.
+        if (/grep\s*[·|]\s*head|grep \(flags|grep \(-i/.test(src)) stale.push(f);
+    }
+    assert.deepEqual(stale, [], `these hardcode a verb list instead of importing PIPE_HINT / PIPE_SYNTAX: ${stale.join(", ")}`);
+});

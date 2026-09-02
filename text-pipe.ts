@@ -6,7 +6,8 @@
 // is already clipped.
 //
 // A MODELED dialect (like readonly-exec): only the modeled verbs/flags run; anything else throws an actionable
-// error — it is NOT a real shell. Supported verbs: grep · head · tail · wc · sort · uniq, chained with `|`.
+// error — it is NOT a real shell. The verbs are PIPE_CMDS below (the single source for every message,
+// prompt and tool-parameter description that names them); chain them with `|`.
 // The input text is the pipeline's stdin (no `cat`); each stage transforms the lines and feeds the next.
 
 import { jsonShape } from "./dom";
@@ -16,6 +17,46 @@ import { jsonShape } from "./dom";
  *  turn to discover, which has happened once already; deriving both from this makes that drift impossible. */
 export const PIPE_CMDS = ["grep", "head", "tail", "wc", "count", "sort", "uniq", "keys", "values", "schema", "type"] as const;
 const CMDS = `${PIPE_CMDS.join(" · ")} · a .path`;
+
+/** What each verb ACCEPTS, in the model's words — the flags and the one-line semantics. Typed as a total
+ *  Record over {@link PIPE_CMDS}, so adding a verb without describing it is a COMPILE error, not a doc that
+ *  quietly goes stale. Feeds {@link PIPE_SYNTAX}; nothing else should spell a verb list out by hand. */
+const PIPE_USAGE: Record<(typeof PIPE_CMDS)[number], string> = {
+    grep: "grep PATTERN (-i -v -n -c -F -w -o -E, context -A/-B/-C N)",
+    head: "head (-n N)",
+    tail: "tail (-n N)",
+    wc: "wc (-l -w -c)",
+    count: "count (structure-aware size: array elements, table rows, object keys, else lines)",
+    sort: "sort (-n -r -u -f)",
+    uniq: "uniq (-c -i; adjacent only, so sort first)",
+    keys: "keys (an object's keys, or a table's columns)",
+    values: "values (an object's values)",
+    schema: "schema (the SHAPE of a JSON value, not the data — the cheapest read of something big)",
+    type: "type (what the value actually is)",
+};
+
+/** The one-line hint every pipe ERROR path shows the model. Derived from {@link PIPE_CMDS} so a failed pipe
+ *  can never advertise a SMALLER dialect than the one that just refused it — a model told the set is
+ *  "grep · head · tail · wc · sort · uniq" will never reach for `schema` or a `.path`. */
+export const PIPE_HINT = `The pipe is a small line-scanner (${CMDS}), NOT a real shell.`;
+
+/** The hint to append to a FAILED pipe's message — {@link PIPE_HINT}, or nothing when the dialect's own error
+ *  already named the verbs (the unknown-command refusal does). Without this the model reads the same twelve
+ *  verbs twice in one tool result, which is noise it pays for in context. Returns a leading blank line so a
+ *  caller can concatenate it unconditionally. */
+export function pipeHint(message: string): string {
+    return message.includes(CMDS) ? "" : `\n\n${PIPE_HINT}`;
+}
+
+/** The model-facing DESCRIPTION of the dialect: the single source for every `pipe` tool PARAMETER (fetch_url,
+ *  navigate's text verify, interactives). Each tool prepends its own lead-in and appends its own escape hatch;
+ *  the dialect itself is described here once. */
+export const PIPE_SYNTAX =
+    "It's an interpreted line-based environment (NOT a real shell); supported commands, chained with `|`: " +
+    `${PIPE_CMDS.map(c => PIPE_USAGE[c]).join(", ")}, or a \`.path\` into JSON (\`.rows[0].name\`). ` +
+    "E.g. \"grep -i pricing | head -n 20\", or \"grep -o '[0-9]+' | sort -n | tail -n 1\". " +
+    "A stage's argument needs quoting if it contains spaces; you can also pass an ARRAY with one stage per " +
+    "entry ([\"grep -E error|warn\", \"head 5\"]), which is never re-split, so a `|` inside a stage needs no quotes.";
 const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 /** Split on newlines, dropping a single trailing "\n" so a text that ends in a newline isn't seen as having a
  *  phantom empty last line (matches how the shell tools treat a trailing line terminator). */

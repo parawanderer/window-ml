@@ -1,8 +1,8 @@
 // The POINTER layer behind `dereference`: what a `@tool:<id>` token points at, and how to read part of it.
 //
-// The pipe language itself is NOT here — it is `text-pipe.ts`, the existing modeled bash sub-dialect
-// (grep · head · tail · wc · sort · uniq, plus the structural keys · values · schema · type · `.path` stages
-// added for this). This module adds only what a POINTER knows that a bare string doesn't:
+// The pipe language itself is NOT here — it is `text-pipe.ts`, the existing modeled bash sub-dialect (its
+// verbs are PIPE_CMDS there, the single source for every message and tool-parameter description that names
+// them). This module adds only what a POINTER knows that a bare string doesn't:
 //
 //   • its TYPE (a table, an image, code, JSON, text) — so `keys` on a DataFrame means its COLUMNS, and the
 //     model is told what it is holding before it decides how to slice it;
