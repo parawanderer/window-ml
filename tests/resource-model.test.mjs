@@ -391,4 +391,12 @@ test("sameBoxOnly: drops history measured on another machine, keeps the current 
     assert.deepEqual(M.sameBoxOnly(history, cuda).map((s) => s.t), [1, 2, 3]);
     // Capacity unknown → nothing to contradict, so keep everything rather than blanking the panel.
     assert.equal(M.sameBoxOnly(history, null).length, 4);
+
+    // The case that actually bit: a sample taken BEFORE capacity was known (t:3) is exempt from the filter,
+    // and a capacity-less sample gets the CURRENT capacity backfilled when drawn. On a normal open that is
+    // right. After a SWITCH it draws the old machine's readings against the new machine's ceiling — an 18 GiB
+    // band clipped against an 11.84 GiB pool, which reads as a measurement. So it is dropped instead.
+    assert.deepEqual(M.sameBoxOnly(history, metal, true).map((s) => s.t), [4],
+        "a switch drops what cannot be attributed to either box");
+    assert.deepEqual(M.sameBoxOnly(history, cuda, true).map((s) => s.t), [1, 2]);
 });

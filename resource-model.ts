@@ -429,11 +429,17 @@ export function boxSignature(cap: Capacity | null): string {
 }
 
 /** Samples that describe the CURRENT box. Anything recorded against a different machine is dropped rather than
- *  redrawn against a ceiling it was never measured under. */
-export function sameBoxOnly(samples: ResourceSample[], cap: Capacity | null): ResourceSample[] {
+ *  redrawn against a ceiling it was never measured under.
+ *
+ *  `switched` is the case that bites: a sample taken before capacity was first known carries none, and a
+ *  capacity-less sample gets the CURRENT capacity backfilled at render. On a normal open that is right (it was
+ *  measured moments ago on this box). After a backend SWITCH it is a category error — an 18 GiB reading from a
+ *  CUDA server, backfilled with a Mac's 16 GiB pool, clips to the full height and looks like a measurement. So
+ *  when the box changed, an unattributable sample is dropped rather than assumed to belong to either machine. */
+export function sameBoxOnly(samples: ResourceSample[], cap: Capacity | null, switched = false): ResourceSample[] {
     const sig = boxSignature(cap);
     if (!sig) return samples;   // capacity unknown → nothing to contradict; keep what we have
-    return samples.filter((s) => !s.capacity || boxSignature(s.capacity) === sig);
+    return samples.filter((s) => (s.capacity ? boxSignature(s.capacity) === sig : !switched));
 }
 
 // --- history ------------------------------------------------------------------------------------------------

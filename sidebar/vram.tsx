@@ -67,7 +67,14 @@ export function fetchCapacity(): void {
         // Pointing at a DIFFERENT machine (a CUDA server, then a Metal Mac) invalidates the history: those
         // samples were measured against another ceiling, on devices whose ids mean different hardware. Drawing
         // them here would clip an 18 GiB band against an 11.84 GiB ceiling and look like a reading.
-        if (boxSignature(next) !== boxSignature(capacity.value)) resourceHistory.value = sameBoxOnly(resourceHistory.value, next);
+        // A SWITCH means one known box replaced by a different known box. The first fetch (unknown → known)
+        // is not one: treating it as such would drop every sample taken before capacity arrived, which on a
+        // fresh open is all of them — the panel would render nothing until the next poll.
+        const switched = !!capacity.value && boxSignature(next) !== boxSignature(capacity.value);
+        // On a switch, drop samples that can't be attributed to EITHER box as well — an unattributed sample is
+        // backfilled with the current capacity at render, which after a switch means drawing the old machine's
+        // readings against the new machine's ceiling.
+        if (switched) resourceHistory.value = sameBoxOnly(resourceHistory.value, next, true);
         capacity.value = next;
     });
 }

@@ -66,21 +66,27 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
    a real ceiling. Small multiples rather than one shared axis — a model can only use ONE card's capacity, so
    a combined axis would be a lie. */
 .rc { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 2px; }
+.rc-track { position: relative; }   /* so a tip escaping the plot is still contained by something sane */
 .rc-track { display: flex; flex-direction: column; gap: 2px; }
 .rc-head { display: flex; align-items: baseline; gap: 6px; font-size: 0.8em; }
 .rc-name { color: var(--fg-dim); }
 .rc-total { color: var(--fg); font-variant-numeric: tabular-nums; cursor: help; }
 /* Segments sit side by side with a visible break between them: history has HOLES by design (polling is gated
    on the panel being open), and a gap must read as "not measured", never as a flat line. */
+/* NO overflow clip here: the hover tip lives in this box and must be able to escape it (the panel is narrow
+   and the plot is short, so a tip confined to it is cut off). The clip lives on each SEGMENT instead, which is
+   what actually needed rounding. */
 .rc-plot { position: relative; display: flex; gap: 3px; height: 72px; background: var(--panel-2);
-           border-radius: 3px; overflow: hidden; }
-.rc-seg { min-width: 2px; height: 100%; }
+           border-radius: 3px; }
+.rc-seg { min-width: 2px; height: 100%; overflow: hidden; border-radius: 3px; }
 .rc-area { width: 100%; height: 100%; display: block; }
 /* The soft ceiling on unified memory: the recommended working set INSIDE the system total. */
 .rc-soft { position: absolute; left: 0; right: 0; height: 0; border-top: 1px dashed var(--accent); opacity: .6; }
 /* A band names itself on hover, and its neighbours dim so one shape resolves out of a similar-coloured stack. */
 .rc-band { cursor: help; transition: opacity .12s ease; }
-.rc-tip { position: absolute; top: 4px; left: 4px; right: 4px; z-index: 2; display: flex; align-items: center;
+/* Follows the cursor (positioned inline), so it reads as "this band, here" rather than as a caption for the
+   whole track. `pointer-events: none` keeps it from stealing the hover it is describing. */
+.rc-tip { position: absolute; top: 4px; left: 4px; z-index: 5; display: flex; align-items: center; white-space: nowrap;
           gap: 5px; padding: 3px 6px; font-size: 0.74em; pointer-events: none;
           background: var(--panel); border: 1px solid var(--border); border-radius: 4px;
           box-shadow: 0 2px 8px rgba(0,0,0,.25); }

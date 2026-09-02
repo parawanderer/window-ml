@@ -17,6 +17,13 @@ import {
 } from "../resource-model";
 import { colorFor, hoverModel, ModelFacts } from "./vram";
 import { loadedModels } from "./store";
+import { signal } from "@preact/signals";
+
+/** Where in the PLOT the pointer is (CSS px, and the plot's own width), so the tip can follow it and decide
+ *  which side to sit on. Tracked on the plot rather than on each polygon: a polygon's offsetX is relative to
+ *  its own segment's SVG, so with several segments it would jump, and the viewBox is 300 units wide whatever
+ *  the panel's real pixel width is. */
+const hoverAt = signal<{ x: number; y: number; w: number } | null>(null);
 
 const W = 300, H = 72;
 
@@ -71,7 +78,7 @@ function StackedArea({ frames, ceiling, hidden }: { frames: Band[][]; ceiling: n
         return <polygon key={key} points={pts.join(" ")} fill={bandFill(key, frames.at(-1) || [])}
             class={model ? "rc-band" : undefined}
             onPointerEnter={model ? () => (hoverModel.value = model) : undefined}
-            onPointerLeave={model ? () => (hoverModel.value = null) : undefined}
+            onPointerLeave={model ? () => { hoverModel.value = null; hoverAt.value = null; } : undefined}
             opacity={dim ? 0.18 : key === "other" ? 0.35 : 0.75} />;
     });
     return (
@@ -117,7 +124,9 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingIsFi
                     </span>
                 </span>
             </div>
-            <div class="rc-plot">
+            <div class="rc-plot"
+                onPointerMove={(e: PointerEvent) => { const el = e.currentTarget as HTMLElement; hoverAt.value = { x: e.offsetX, y: e.offsetY, w: el.clientWidth }; }}
+                onPointerLeave={() => { hoverAt.value = null; hoverModel.value = null; }}>
                 {runs.map((run, i) => (
                     <div class="rc-seg" key={i} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
                         <StackedArea frames={run.map(bandsOf)} ceiling={ceiling} hidden={hidden} />
@@ -149,12 +158,24 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingIsFi
  *  TTL, no badge, and a half-second delay before it appears. */
 function BandTip({ bands }: { bands: Band[] }) {
     const name = hoverModel.value;
+    const at = hoverAt.value;
     if (!name) return null;
     const band = bands.find((b) => b.model === name);
     if (!band) return null;   // hovering a model that isn't on THIS device — its own track shows the tip
     const m = (loadedModels.value || []).find((x) => x.model === name);
+    // Follows the cursor, offset up-left so it never sits under the pointer (which would flicker as the
+    // pointer enters the tip itself) and clamped inside the plot so it can't run off the narrow panel.
+    // Flip to the LEFT of the cursor near the right edge rather than clamping (a clamped tip ends up under the
+    // pointer, which then flickers as the pointer enters it). `right`/`left` are set as a pair so the previous
+    // frame's value can't linger.
+    const flip = at ? at.x > at.w * 0.55 : false;
+    const style = at
+        ? flip
+            ? { right: `${Math.max(2, at.w - at.x + 10)}px`, left: "auto", top: `${Math.max(2, at.y - 26)}px` }
+            : { left: `${at.x + 10}px`, right: "auto", top: `${Math.max(2, at.y - 26)}px` }
+        : undefined;
     return (
-        <div class="rc-tip" role="tooltip">
+        <div class="rc-tip" role="tooltip" style={style}>
             <i class="rc-tip-dot" style={{ background: colorFor(name) }} />
             <span class="rc-tip-name">{name}</span>
             <span class="rc-tip-size">{formatBytes(band.bytes)}</span>

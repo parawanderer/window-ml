@@ -146,3 +146,76 @@ test("resource panel: a closed spell leaves a GAP, and no /api/info draws no cei
         await fake.stop();
     }
 });
+
+// Swapping the backend from a CUDA server to a Metal Mac. Not a cosmetic case: those samples were measured
+// against a 94.97 GiB ceiling on devices whose ids mean different hardware, so redrawn on an 11.84 GiB Mac an
+// 18 GiB band would clip at 100% and read as a measurement rather than a category error.
+const METAL_BOX = {
+    compute: {
+        system_compute: { cpu_cores: 10, total_memory: 17179869184, free_memory: 3682385920, free_swap: 0 },
+        supported_gpus: [{ gpu_id: "0", name: "MTL0", runner: "Metal", total_memory: 12712935424, free_memory: 12711886848 }],
+    },
+};
+const metalResident = (name, bytes) => ({
+    model: name, name, size: bytes, size_vram: bytes, context_length: 4096, expires_at: null,
+    gpus: [{ gpu_id: "0", runner: "Metal", size_vram: bytes }],
+});
+
+test("resource panel: switching CUDA → Metal re-shapes the panel and drops the old box's history", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        const { frame } = await openPanel(fake, ext);
+
+        // The server: three tracks, ~95 GiB ceilings.
+        await expect.poll(() => frame.locator(".rc-track").count(), { timeout: 20000 }).toBe(3);
+        await sleep(5000);   // accumulate history that must NOT survive the switch
+        expect(await frame.locator(".rc-total").first().textContent()).toContain("95.59 GiB");
+
+        // Now the same extension, pointed at a Mac.
+        fake.setCapacity(METAL_BOX);
+        fake.setResident([metalResident("qwen3:0.6b", 1 * GiB), metalResident("gemma4:e2b", 3 * GiB)]);
+
+        // ONE track: unified memory is a single pool, so a separate RAM track would double-count the silicon.
+        await expect.poll(() => frame.locator(".rc-track").count(), { timeout: 40000 }).toBe(1);
+        const name = await frame.locator(".rc-name").textContent();
+        expect(name).toMatch(/MTL0/);
+        expect(name).toMatch(/unified/, "and it says so, rather than looking like a small GPU");
+
+        // The ceiling is the SYSTEM total (16 GiB), with the working set as a soft line inside it — never the
+        // device total presented as the whole machine.
+        const head = await frame.locator(".rc-total").textContent();
+        expect(head).toContain("16.00 GiB");
+        expect(await frame.locator(".rc-soft").count()).toBe(1);
+
+        // The old box's samples are gone: every drawn segment belongs to THIS machine.
+        const segs = await frame.locator(".rc-seg").count();
+        expect(segs).toBeGreaterThan(0);
+        // Nothing on screen still claims the server's capacity.
+        expect(await frame.locator(".rc").textContent()).not.toContain("95.59 GiB");
+
+        // Two models in ONE pool DO stack — within a single pool the parts genuinely sum to its occupancy.
+        // (It is only ACROSS pools that a stack would assert a total nothing is measured against.)
+        await expect.poll(() => frame.locator(".rc-band").count(), { timeout: 20000 }).toBe(2);
+        // Neither band may reach the top of the plot: 1 + 3 GiB of a 16 GiB pool is a quarter of it, and a
+        // band pinned at y=0 is the clipping that happens when another machine's readings are drawn here.
+        const geom = await frame.locator(".rc-band").evaluateAll((els) => els.map((e) => {
+            const ys = e.getAttribute("points").split(" ").map((p) => Number(p.split(",")[1]));
+            return { top: Math.min(...ys), bottom: Math.max(...ys) };
+        }));
+        expect(geom.every((g) => g.top > 8), `no band is clipped at the ceiling — got ${JSON.stringify(geom)}`).toBe(true);
+        // …and they STACK: within one pool the parts genuinely sum to its occupancy, so the second sits on top
+        // of the first rather than behind it. (It is only ACROSS pools that a stack asserts a false total.)
+        const tops = geom.map((g) => g.top).sort((a, b) => b - a);
+        expect(tops[1]).toBeLessThan(tops[0], "one band's top is the other's baseline");
+    } finally {
+        await ext.close();
+        await fake.stop();
+    }
+});
