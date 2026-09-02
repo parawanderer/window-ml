@@ -401,8 +401,15 @@ shows as the tool step). `agent` also carries the run's resolved `config`
 (system prompt, tools, maxSteps, env/vision/hints) for the sidebar's "agent
 options" block, and each tool step carries `argIssues` — a minimal page-side
 JSON-Schema check (`validateArgs`: required/type/enum/unknown-prop) of the args
-against the tool's `parameters`, rendered as a red strip (flat tool schemas
-don't warrant ajv; swap it in there if a custom tool ships a complex schema).
+against the tool's `parameters`, rendered as a red strip. It is also APPENDED to
+the tool result the model sees, so it is what teaches the model the shape it
+should have sent — not only a debug decoration. Still not a full validator, but
+it does understand a `oneOf`/`anyOf` UNION (checked against its branches when
+every branch names a type): reading only `spec.type` meant a union property was
+validated as NOTHING AT ALL, which is how `python_exec`'s `tables` — declared
+"a source string OR a {name: source} map" — accepted an array, a number and
+null in silence. A built-in shipping a complex schema is no longer hypothetical,
+so reach for ajv only if one ships something this can't express.
 An approval-gated call also carries `approval` (`"readonly"` = auto-approved via
 the read-only interpreter · `"user"` = you approved · `"denied"` = you rejected),
 shown as a green/red **provenance badge** + a matching left-border outline on the
@@ -699,9 +706,21 @@ background-hosted paths with no page round-trip and no approval.
   families can never collide — `.keys()` is spelled `keys`, and "the keys of that field" is `.items | keys`.
   Structural stages REFUSE non-JSON rather than inventing a shape for prose. `count` is the structure-aware
   size (`wc -l` counts LINES, so after a path stage it counts the lines of pretty-printed JSON — true and
-  useless). **`PIPE_CMDS` is the single source** for both the refusal message and the system prompt's verb
-  list, with a drift-guard test: a prompt that advertises a verb the dialect lacks costs the model a whole
-  turn, which happened once (`len`/`slice`, left over from a discarded dialect).
+  useless). **`PIPE_CMDS` is the single source** for EVERY description of the dialect: `PIPE_USAGE` (a total
+  `Record` over it, so adding a verb without describing it is a COMPILE error) feeds `PIPE_SYNTAX` for the
+  tools' `pipe` PARAMETERS and `PIPE_HINT` for the error paths, and `pipeHint()` drops the hint when the
+  dialect's own refusal already listed the verbs. It was originally single-sourced only for the refusal and
+  the system prompt, which is not the same as guarding the invariant: five other copies were hand-written
+  and all had drifted to six verbs while the dialect had twelve, and `dereference`'s own description still
+  advertised `len`/`slice` — verbs left over from a discarded dialect — even though the drift-guard test
+  checked `DEREF_CLAUSE` for exactly those two names. A model told the set is smaller than it is never
+  reaches for `schema` or a `.path`, which costs it a whole turn to discover.
+  The guard now scans the tree, and its shape is the reusable part: the invariant is COMPLETENESS, not
+  "never name a verb" — a pipeline EXAMPLE is what a doc should show, and no regex separates an example from
+  a stale list. A line naming THREE OR MORE verbs is a list and must name them all; it scans PROSE only
+  (comments + string literals), because five verb names are ordinary identifiers and `|` is TypeScript's
+  union operator, so every false positive was code; and an explicit `…` or `e.g.` is honoured as the
+  author's own "not exhaustive" disclaimer.
 - The pointer carries the value's **TYPE**, from the render descriptor the step already produced — so `keys`
   on a DataFrame means its COLUMNS, and two casts the line dialect can't express work: `latex`, and `img`,
   which never dumps the payload but says it IS base64 image data, how large, and what to do instead.
@@ -719,12 +738,45 @@ background-hosted paths with no page round-trip and no approval.
   already took — a new question about the same pixels, instead of re-shooting a page that may have changed.
   The loop resolves it and hands the image down, so `look` never learns about tokens.
 - **`ml.dereference(ref, { pipe })`** is the same thing as a primitive, `pipe` taking the dialect string or an
-  ARRAY of stages (which sidesteps quoting). Run-bound exactly like `ml.answer`: `tool-exec` binds a resolver
+  ARRAY of stages (which sidesteps quoting — one entry may hold a bare `|`). That was documented long before
+  it was TRUE: stages were joined with `" | "` and then re-split, so `["grep -E error|warn"]` was torn in two
+  and `["grep -E head|tail"]` silently grepped `head` and ran `tail` as a stage — a plausible wrong answer,
+  no error. STAGES are now the form execution uses and are never re-joined; joining is for DISPLAY only
+  (`pipeStages` vs `displayPipe`). The array had to be widened along the whole path, and `DEREF_TOKEN` in the
+  background did `String(pipe || "")`, which comma-joins an array into something that is not the dialect. Run-bound exactly like `ml.answer`: `tool-exec` binds a resolver
   for the duration of a tool call and restores it after, so it is live inside an approved `exec` and throws
   from a page's own console. The BACKGROUND path rings back over the same reverse channel the output stream
   uses (`DEREF_TOKEN`, keyed by runId) — a page-only binding would have worked in off-mode and silently
   returned nothing whenever a debug surface was open. `dereference` and `info` are both in the read-only exec
   dialect (pure reads that spend nothing), with the adversarial tests the dialect rule requires.
+
+- **Reading by NAME pins a stable id.** `@tool:python_exec` means "the LATEST python_exec call" — a moving
+  target. A model that didn't pass `token: true` was never shown that call's hex (it is minted for a citable
+  builtin either way, just not surfaced), and it often only decides an output is worth keeping AFTER seeing
+  it. Dereferencing through the alias is exactly that moment, so the reply hands over the stable id and says
+  what it is, rather than leaving the model holding a handle that moves under it.
+- **Pointers survive a session's later turns** — a follow-up turn can still read what an earlier one captured.
+  The store was per-`runAgentLoop` call, so every turn started empty while the model still saw the earlier
+  turn's pointers in its own history. Ids were never the obstacle (`seqBase` already offsets each turn so a
+  later one cannot collide), so one store per SESSION is safe. It is therefore BOUNDED — `TokenStore.CAP`,
+  evicting least-recently-USED, since a read has to count as a use or "pin it before it goes out of scope"
+  does not hold. Recency is tracked apart from insertion order, because insertion order is what makes the
+  name alias mean "the latest CALL": refreshing it on a read would promote an old output to look like the
+  newest. On the background path the store lives in a map beside `derefByRun`, deliberately NOT on the
+  `bgRuns` record — that record is JSON-checkpointed for MV3 eviction and a Map serializes to `{}`.
+- **A PIPED read mints its own pointer**, so the model can cite the reduction it just built rather than the
+  whole original. `dereference` is otherwise excluded from `citable` because it "produces no new data, only a
+  VIEW" — true with no pipe, false with one. Minted inside `derefLocally`, not by flipping `citable`, since
+  the generic path would read this tool's `token` PARAMETER as the model's opt-in/label.
+- **`ml.pipe(source, pipe)`** runs the same dialect over ANY string, not just a captured tool output:
+  `ml.pipe(await ml.fetch(url), "grep -i pricing | head -20")`. So the scanning vocabulary is one language
+  wherever text comes from, and a stage never round-trips through a re-joined string.
+
+**Site-authored Markdown twins (`pageInfo`).** Many docs platforms publish a clean, agent-oriented Markdown
+version of each page and DECLARE it in `<head>`. Standing on such a page the agent had no way to know the twin
+existed and would survey the rendered DOM instead, which is strictly worse text. `pageInfo` now reports it, so
+the agent can fetch the declared version rather than scraping the page. (`pageInfo` also stopped naming a tool
+the run may not have been given — a suggestion the model cannot act on is worse than none.)
 
 **`ml.info()` — machine capacity.** `ml.ps()` says what is RESIDENT; `ml.info()` says what there is room for
 (Ollama `/api/info`, via the same base discovery `/api/ps` uses). Returns **null** when the route isn't served

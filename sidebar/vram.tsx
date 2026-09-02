@@ -74,7 +74,14 @@ export function fetchCapacity(): void {
         // On a switch, drop samples that can't be attributed to EITHER box as well — an unattributed sample is
         // backfilled with the current capacity at render, which after a switch means drawing the old machine's
         // readings against the new machine's ceiling.
-        if (switched) resourceHistory.value = sameBoxOnly(resourceHistory.value, next, true);
+        if (switched) {
+            resourceHistory.value = sameBoxOnly(resourceHistory.value, next, true);
+            // The LAYOUT is per-box too: one naming `vram.1` is meaningless on a machine with one device, and
+            // TrackView would silently drop those tracks rather than falling back to something that fits.
+            // Clearing it re-runs restoreLayout against the NEW box, where presetRefusal rejects a stale saved
+            // layout and hands back that box's default.
+            layout.value = null;
+        }
         capacity.value = next;
     });
 }
@@ -419,13 +426,16 @@ export function VramPanel() {
                             {/* Only offered once you HAVE edited — picking "Custom" from a preset would mean nothing. */}
                             {presetId.value === "custom" ? <option value="custom">Custom</option> : null}
                         </select>
-                        <button class={`tt rc-cog${editorOpen.value ? " on" : ""}`} aria-label="Edit tracks"
-                            onClick={() => (editorOpen.value = !editorOpen.value)}>⚙
-                            <span class="tt-pop" role="tooltip">Choose which series each track shows</span>
-                        </button>
                     </>
                 ) : null}
                 {rows.length ? <button class="vram-free" onClick={() => evict()}>Free VRAM</button> : null}
+                {/* Last in the row: the picker is what you reach for, the editor is the rarer follow-up. */}
+                {capacity.value && latestSample ? (
+                    <button class={`tt rc-cog${editorOpen.value ? " on" : ""}`} aria-label="Edit tracks"
+                        onClick={() => (editorOpen.value = !editorOpen.value)}>⚙
+                        <span class="tt-pop" role="tooltip">Choose which series each track shows</span>
+                    </button>
+                ) : null}
             </div>
             {editorOpen.value && latestSample ? <TrackEditor sample={latestSample} /> : null}
             <RowTip sample={latestSample} />

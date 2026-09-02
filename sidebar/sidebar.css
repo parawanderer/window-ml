@@ -69,8 +69,10 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
    space in a panel competing for height with the session list. */
 .rc-preset { font: inherit; font-size: 0.78em; color: var(--fg-dim); background: var(--panel-2);
              border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; margin-left: 6px; }
-.rc-cog { margin-left: 4px; padding: 0 4px; font-size: 0.85em; color: var(--fg-faint); background: none;
-          border: 1px solid transparent; border-radius: 4px; cursor: pointer; }
+/* Sits after "Free VRAM": the picker is what you reach for, this is the rarer follow-up. Sized to match the
+   buttons beside it — the old 0.85em glyph was smaller than everything around it and read as an afterthought. */
+.rc-cog { margin-left: 6px; padding: 1px 5px; font-size: 1.05em; line-height: 1.1; color: var(--fg-dim);
+          background: none; border: 1px solid transparent; border-radius: 4px; cursor: pointer; }
 .rc-cog:hover, .rc-cog.on { color: var(--fg); background: var(--panel-2); border-color: var(--border); }
 /* Expanded on demand: you configure rarely and read constantly. */
 .rc-editor { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; padding: 6px;

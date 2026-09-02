@@ -102,14 +102,15 @@ export interface DeviceViewProps {
     ceiling: number;
     /** A soft ceiling inside the hard one (unified memory's recommended working set), or null. */
     soft?: { bytes: number; label: string } | null;
-    /** True when `ceiling` is ollama's own total rather than the driver's — say so rather than implying it is
-     *  the number nvidia-smi shows. */
-    ceilingIsFit?: boolean;
+    /** What the denominator IS, in this track's own terms. Passed in rather than derived here, because the
+     *  honest sentence differs per pool: a discrete card's driver total names that vendor's tool, a unified
+     *  device's is the system total, and the host pool has no driver in the story at all. */
+    ceilingNote: string;
     hidden: Set<string>;
 }
 
 /** One track: a header carrying the denominator, then the stacked history, gaps left as gaps. */
-export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingIsFit, hidden }: DeviceViewProps) {
+export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote, hidden }: DeviceViewProps) {
     const latest = samples.at(-1);
     const bands = latest ? bandsOf(latest) : [];
     const used = bands.filter((b) => b.kind !== "free" && !(b.model && hidden.has(b.model))).reduce((n, b) => n + b.bytes, 0);
@@ -127,11 +128,7 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingIsFi
                     {formatBytes(used)} / {formatBytes(ceiling)}
                     {/* RIGHT-anchored (the default): this figure sits at the panel's right edge, so a
                         left-anchored pop extends rightward and is clipped. `wrap` because it is prose. */}
-                    <span class="tt-pop wrap" role="tooltip">
-                        {ceilingIsFit
-                            ? "Capacity as Ollama reports it (cuDeviceTotalMem) — the figure placement decides against. Slightly below what nvidia-smi shows, which this server doesn't report."
-                            : "Total as the driver reports it, matching nvidia-smi. Ollama places against a slightly lower figure."}
-                    </span>
+                    <span class="tt-pop wrap" role="tooltip">{ceilingNote}</span>
                 </span>
             </div>
             <div class="rc-plot"
@@ -228,6 +225,20 @@ function enterPool(p: { id: string; name: string; bandsOf: (s: ResourceSample) =
 }
 function leavePool(): void { hoverPool.value = null; poolHover.value = null; }
 
+/** The per-vendor name for "the tool that shows this card's memory". Saying "nvidia-smi" on an AMD box is
+ *  worse than saying nothing — it tells the reader to check something that isn't there. */
+const smiFor = (runner: string): string =>
+    runner === "CUDA" ? "nvidia-smi" : runner === "ROCm" ? "rocm-smi" : "";
+
+/** What a device track's denominator is, in that device's own terms. */
+function deviceCeilingNote(dev: { runner: string; unified: boolean; physicalBytes?: number }): string {
+    if (dev.unified) return "This machine shares ONE pool of memory between the GPU and the system, so the ceiling is the system total. The dashed line is the working set the accelerator is advised to stay within — it is not a second pool, and the two are never added together.";
+    const smi = smiFor(dev.runner);
+    if (dev.physicalBytes != null)
+        return `Total as the driver reports it${smi ? `, matching ${smi}` : ""}. Ollama places against a slightly lower figure (its own reserve), so a model can fail to fit slightly before this line.`;
+    return `Capacity as Ollama reports it — the figure placement decides against. It sits a little below the driver's own total${smi ? `, which ${smi} shows` : ""}; this server doesn't report that one.`;
+}
+
 /** Draw one TrackDef. A track's series resolve to band sources: `vram.<id>` is that device's decomposition,
  *  `ram`/`mem` the host pool's. STACK renders the bands (the parts do sum to that pool's occupancy); OVERLAY
  *  renders one line per series, each against its own ceiling, because several pools have no shared total —
@@ -242,15 +253,20 @@ function TrackView({ def, samples, latest, hidden }: { def: TrackDef; samples: R
         if (isHost) {
             const label = first === "mem" ? `${cap.devices[0]?.name ?? "Memory"} · unified memory` : "System RAM";
             const c = first === "mem" ? ceilingsFor(latest, cap.devices[0]?.id ?? "") : null;
+            // The HOST pool: no driver, no framebuffer — just the machine's RAM. On unified memory this same
+            // track IS the accelerator's pool, so it carries that explanation instead.
+            const note = first === "mem" && cap.devices[0]
+                ? deviceCeilingNote(cap.devices[0])
+                : "Total system memory. Models here are running on the CPU, or are the spilled part of a model too large for the accelerator.";
             return <DeviceView label={label} samples={samples} bandsOf={hostBands}
-                ceiling={c?.hardBytes ?? cap.host.totalBytes}
+                ceiling={c?.hardBytes ?? cap.host.totalBytes} ceilingNote={note}
                 soft={c?.softBytes ? { bytes: c.softBytes, label: c.softLabel || "" } : null} hidden={hidden} />;
         }
         const d = deviceOf(first);
         if (!d) return null;
         const c = ceilingsFor(latest, d.id);
         return <DeviceView label={d.name} samples={samples} bandsOf={(s) => deviceBands(s, d.id)}
-            ceiling={c?.displayBytes ?? d.totalBytes} ceilingIsFit={c?.displayIsFit}
+            ceiling={c?.displayBytes ?? d.totalBytes} ceilingNote={deviceCeilingNote(d)}
             soft={c?.softBytes ? { bytes: c.softBytes, label: c.softLabel || "" } : null} hidden={hidden} />;
     }
     return <OverlayView def={def} samples={samples} latest={latest} hidden={hidden} />;
@@ -282,6 +298,12 @@ function OverlayView({ def, samples, latest, hidden }: { def: TrackDef; samples:
     // 121.2 GiB of RAM and 95.59 GiB of VRAM are different denominators, so the same height would mean
     // different things per line. Relative occupancy is the comparison this view exists to make.
     const frac = (s: ResourceSample, p: typeof pools[number]) => (p.ceiling > 0 ? Math.min(1, usedOf(s, p) / p.ceiling) : 0);
+    // A pool whose models you have ALL hidden reads as empty, with nothing to say it is a choice rather than
+    // the truth. Dim it like the row you hid, so the selection is visible from both ends.
+    const allHidden = (p: typeof pools[number]) => {
+        const mine = p.bandsOf(latest).filter((b) => b.kind === "model" && b.model);
+        return mine.length > 0 && mine.every((b) => hidden.has(b.model!));
+    };
     const pct = (v: number) => `${(v * 100).toFixed(v < 0.1 ? 1 : 0)}%`;
     return (
         <div class="rc-track">
@@ -310,7 +332,8 @@ function OverlayView({ def, samples, latest, hidden }: { def: TrackDef; samples:
                                 const holdsHovered = !!hoverModel.value && p.bandsOf(latest).some((b) => b.model === hoverModel.value);
                                 const on = hoverPool.value === p.id || holdsHovered;
                                 const muted = (!!hoverPool.value && hoverPool.value !== p.id)
-                                    || (!!hoverModel.value && !holdsHovered);
+                                    || (!!hoverModel.value && !holdsHovered)
+                                    || allHidden(p);
                                 return (
                                     <g key={p.id}>
                                         {/* A wide TRANSPARENT copy is the hit target: a 1.5px line is almost
@@ -331,7 +354,7 @@ function OverlayView({ def, samples, latest, hidden }: { def: TrackDef; samples:
             </div>
             <div class="rc-legend">
                 {pools.map((p, pi) => (
-                    <span class={`rc-key tt${hoverModel.value && !p.bandsOf(latest).some((b) => b.model === hoverModel.value) ? " away" : ""}`} key={p.id}
+                    <span class={`rc-key tt${hoverModel.value && !p.bandsOf(latest).some((b) => b.model === hoverModel.value) ? " away" : ""}${allHidden(p) ? " off" : ""}`} key={p.id}
                         onPointerEnter={() => enterPool(p, latest)} onPointerLeave={() => leavePool()}>
                         <i class="rc-swatch" style={{ background: VRAM_COLORS[pi % VRAM_COLORS.length] }} />
                         {p.name} {pct(frac(latest, p))}

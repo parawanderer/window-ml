@@ -26,6 +26,17 @@ const resident = (name, vramBytes, gpu, sizeBytes = vramBytes) => ({
     ...(vramBytes ? { gpus: [{ gpu_id: String(gpu), runner: "CUDA", size_vram: vramBytes }] } : {}),
 });
 
+/** The stacked per-pool view. The DEFAULT is Overview — one compact overlaid track — so a test about per-pool
+ *  TRACKS and per-model bands must choose the view that has them. Seeded through storage, which also exercises
+ *  the restore path. */
+async function seedStacked(ext) {
+    await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_layout: { presetId: "memory", tracks: [
+        { id: "dev-0", series: ["vram.0"], mode: "stack", heightPx: 96 },
+        { id: "dev-1", series: ["vram.1"], mode: "stack", heightPx: 96 },
+        { id: "ram", series: ["ram"], mode: "stack", heightPx: 96 },
+    ] } }));
+}
+
 /** Boot the extension against the fake box and return the sidebar frame with the VRAM panel open. */
 async function openPanel(fake, ext) {
     const page = await ext.context.newPage();
@@ -70,6 +81,7 @@ test("resource panel: a real ceiling, per-model bands, and capacity that tracks 
         });
         fake.setCapacity(box(IDLE, IDLE));
         fake.setResident([]);
+        await seedStacked(ext);
         const { frame } = await openPanel(fake, ext);
 
         // One track per card, plus the host pool — small multiples, because a model can only ever use one
@@ -116,6 +128,7 @@ test("resource panel: a closed spell leaves a GAP, and no /api/info draws no cei
         });
         fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
         fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        await seedStacked(ext);
         const { frame, setPanel } = await openPanel(fake, ext);
         await expect.poll(() => frame.locator(".rc-track").count(), { timeout: 20000 }).toBe(3);
 
@@ -171,6 +184,7 @@ test("resource panel: switching CUDA → Metal re-shapes the panel and drops the
         });
         fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
         fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        await seedStacked(ext);
         const { frame } = await openPanel(fake, ext);
 
         // The server: three tracks, ~95 GiB ceilings.
@@ -194,9 +208,10 @@ test("resource panel: switching CUDA → Metal re-shapes the panel and drops the
         expect(head).toContain("16.00 GiB");
         expect(await frame.locator(".rc-soft").count()).toBe(1);
 
-        // The old box's samples are gone: every drawn segment belongs to THIS machine.
-        const segs = await frame.locator(".rc-seg").count();
-        expect(segs).toBeGreaterThan(0);
+        // The old box's samples are GONE, so the chart has to rebuild from scratch — it takes two polls before
+        // there is a drawable run at all (one point has no shape). That wait is the proof the history was
+        // dropped rather than redrawn against the new ceiling.
+        await expect.poll(() => frame.locator(".rc-seg").count(), { timeout: 30000 }).toBeGreaterThan(0);
         // Nothing on screen still claims the server's capacity.
         expect(await frame.locator(".rc").textContent()).not.toContain("95.59 GiB");
 
