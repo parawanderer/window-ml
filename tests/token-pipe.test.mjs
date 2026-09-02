@@ -325,3 +325,22 @@ test("labels: nearest() finds a pointer by the NAME the model gave it", () => {
     assert.match(msg, /python_exec: "the pricing table"/);
     assert.match(msg, /exec: "nav links"/);
 });
+
+// A store now lives for a whole SESSION, and an entry can carry a full capture or a screenshot data URL, so
+// it must be bounded or a long conversation grows without limit.
+test("TokenStore: bounded, evicting the OLDEST, and re-noting an id keeps it 'latest' for the name alias", () => {
+    const store = new P.TokenStore();
+    const put = (id, out, tool = "exec") => store.note({ id, tool, kind: "text", out, t: 1000, step: 1 });
+    for (let i = 0; i < P.TokenStore.CAP + 10; i++) put(`id${i}`, `v${i}`);
+    assert.equal(store.size, P.TokenStore.CAP, "capped");
+    assert.equal(store.get("id0"), null, "the oldest were evicted");
+    assert.ok(store.get(`id${P.TokenStore.CAP + 9}`), "the newest survive");
+    // The tool-name alias resolves to the most recently NOTED entry of that tool.
+    const s2 = new P.TokenStore();
+    s2.note({ id: "aaa", tool: "python_exec", kind: "text", out: "FIRST", t: 1, step: 1 });
+    s2.note({ id: "bbb", tool: "python_exec", kind: "text", out: "SECOND", t: 2, step: 2 });
+    assert.equal(s2.get("python_exec").out, "SECOND");
+    s2.note({ id: "aaa", tool: "python_exec", kind: "text", out: "AGAIN", t: 3, step: 3 });
+    assert.equal(s2.get("python_exec").out, "AGAIN", "re-noting moves it to the end");
+    assert.equal(s2.size, 2, "…without duplicating it");
+});

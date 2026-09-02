@@ -21,6 +21,7 @@ export interface AgentControl {
     seqBase: number;              // monotonic step-seq base so seqs stay session-unique across turns
     stepBase: number;             // monotonic STEP base so turn groups stay distinct in the sidebar across turns
     bg?: boolean;                 // the CURRENT run routed to the background → a mid-run say() steers via INJECT_MESSAGE
+    tokens?: import("./token-pipe").TokenStore;   // the SESSION's `@tool:` pointer store — spans every turn (see AgentLoopOptions.tokenStore)
 }
 
 // Monotonic id per mid-run steer (a.say()), so the "seen" indicator can key an `agent-say-seen` event

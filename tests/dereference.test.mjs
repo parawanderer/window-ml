@@ -6,6 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 const { runAgentLoop } = await import("../agent-loop.ts");
+const { TokenStore } = await import("../token-pipe.ts");
 
 const TOOLS = [
     { name: "exec", description: "", parameters: { type: "object", properties: {} } },
@@ -17,10 +18,10 @@ const call = (name, args, id = "c1") => ({ content: "", tool_calls: [{ id, name,
 
 /** Drive the loop over scripted turns; return every tool result the MODEL was handed, plus the args each tool
  *  actually received (so a rewritten `look` is observable). */
-async function drive(turns, runTool) {
+async function drive(turns, runTool, opts = {}) {
     const results = [], got = [];
     let i = 0;
-    await runAgentLoop("t", { tools: TOOLS, maxSteps: () => turns.length + 2, toolTokens: true, runHash: "abcdef" }, {
+    await runAgentLoop("t", { tools: TOOLS, maxSteps: () => turns.length + 2, toolTokens: true, runHash: "abcdef", ...opts }, {
         callModel: async () => turns[i++] || { content: "done", tool_calls: [] },
         runTool: async (name, args) => { got.push({ name, args }); return runTool(name, args); },
         autoApprove: () => null,
@@ -161,4 +162,41 @@ test("token as a label: a string still opts IN (it is not just decoration)", asy
     const execResult = results.find((r) => r.name === "exec").result;
     assert.match(execResult, /@tool:[0-9a-f]{6}/, "the handle was surfaced because the label opted in");
     assert.match(derefResult({ results }), /"nav links"/);
+});
+
+// REGRESSION (observed in a real session). A follow-up turn — "How did you compute this?" — dereferenced
+// `python_exec` and got "Nothing has been captured in this run yet, so there is no pointer to read." The tool
+// HAD run, in the previous turn of the same session. The store was created per runAgentLoop call, so each turn
+// started empty, while the model still saw the earlier turn's `@tool:` pointers in its own history. Ids are
+// already unique across turns (the loop offsets each turn's seq base), so one store per SESSION cannot collide.
+test("dereference: a pointer from an EARLIER TURN of the same session still resolves", async () => {
+    const tokenStore = new TokenStore();
+    // Turn 1: run python_exec, capture an output. Nothing dereferences it yet.
+    const first = await drive([call("python_exec", { code: "df.sum()", token: true })],
+        () => ({ result: "grand total 6260" }), { tokenStore });
+    assert.ok(first.results.find((r) => r.name === "python_exec"), "turn 1 captured a pointer");
+
+    // Turn 2 (the follow-up): a NEW loop over the SAME session store, referencing the tool by NAME.
+    const second = await drive([call("dereference", { token: "python_exec", pipe: "type" })],
+        () => ({ result: "" }), { tokenStore, seqBase: 8 });
+    const out = derefResult(second);
+    assert.doesNotMatch(out, /MemoryFault/, "the previous turn's output is still readable");
+    assert.doesNotMatch(out, /Nothing has been captured/);
+    assert.match(out, /\(python_exec\)/, "and it resolved to that tool's capture");
+});
+
+test("dereference: the tool-name alias means the LATEST call, across turns too", async () => {
+    const tokenStore = new TokenStore();
+    await drive([call("python_exec", { code: "a", token: true })], () => ({ result: "FIRST" }), { tokenStore });
+    await drive([call("python_exec", { code: "b", token: true })], () => ({ result: "SECOND" }), { tokenStore, seqBase: 8 });
+    const third = await drive([call("dereference", { token: "python_exec" })], () => ({ result: "" }), { tokenStore, seqBase: 16 });
+    assert.match(derefResult(third), /SECOND/, "the most recent call wins");
+    assert.doesNotMatch(derefResult(third), /FIRST/);
+});
+
+// Without a shared store a one-shot run is unchanged: each loop owns its own pointers.
+test("dereference: separate runs with no shared store stay isolated", async () => {
+    await drive([call("python_exec", { code: "a", token: true })], () => ({ result: "FIRST" }));
+    const next = await drive([call("dereference", { token: "python_exec" })], () => ({ result: "" }));
+    assert.match(derefResult(next), /MemoryFault|Nothing has been captured/, "a fresh run has no prior pointers");
 });

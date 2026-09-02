@@ -6,7 +6,8 @@ import type { NeutralMessage, ToolCall, TokenUsage, StartRunPayload, SetApproval
 import { modelFilterAllows, bgRunResumable, pushReplay, UI_OUT_CAP } from "./contract";   // single source of truth (see contract.ts)
 import { runBackgroundAgent } from "./agent-host";   // design A: the background-hosted agent loop
 import type { ToolMeta } from "./agent-loop";
-import { externalSheetIds, googleSheetId, clipOut } from "./dom";   // track approved external sheets across a run + the choke-point grants
+import { externalSheetIds, googleSheetId, clipOut } from "./dom";
+import { TokenStore } from "./token-pipe";   // per-session `@tool:` pointer store for background-hosted runs   // track approved external sheets across a run + the choke-point grants
 // The model-facing cap cdpEval clips its console to (exec's default per-slot cap) — the UI keeps far more, so
 // `seen` marks where the model's copy stopped, exactly like the main-world exec path.
 const CDP_EXEC_CAP = 500;
@@ -222,6 +223,7 @@ const tabHasBgRun = (tabId: number): boolean => { for (const r of bgRuns.values(
 const untrackRun = (tabId: number, runId: string): void => {
     runRebuilds.delete(runId);
     derefByRun.delete(runId);   // the run's pointers die with it — a later read must not resolve against it
+    tokensByRun.delete(runId);
 
     const s = activeRuns.get(tabId);
     if (!s) return;
@@ -350,6 +352,20 @@ const pyStreamTabs = new Map<string, number>();
 // Pointer resolvers for background-hosted runs, keyed by runId — handed over by the loop at start (tokenSink)
 // so a page-side tool's `ml.dereference` can read THIS run's captured outputs. Deleted when the run ends.
 const derefByRun = new Map<string, (ref: string, pipe?: string | string[]) => string>();
+// The `@tool:` pointer store per background-hosted run, kept ACROSS the turns of one session so a follow-up
+// ("how did you compute that?") can still dereference the previous turn's output. Deliberately NOT a field on
+// the bgRuns record: that record is JSON-checkpointed to storage for MV3 eviction, and a Map serializes to
+// `{}` — it would rehydrate as a plain object and blow up on the first read. Bounded by TokenStore.CAP, and
+// dropped with the run in untrackRun. An SW eviction loses it, like the rest of the run's in-memory state.
+const tokensByRun = new Map<string, TokenStore>();
+/** This run's pointer store, created on the first turn and REUSED by every later turn of the same session. */
+const sessionTokens = (runId: string): TokenStore => {
+    const existing = tokensByRun.get(runId);
+    if (existing) return existing;
+    const fresh = new TokenStore();
+    tokensByRun.set(runId, fresh);
+    return fresh;
+};
 // LIVE tool-output streaming on the BACKGROUND path: the in-flight delegated tool's onStream, keyed by runId.
 // The loop delegates tool calls SEQUENTIALLY (one in flight per run), so runId alone correlates a page-posted
 // PAGE_TOOL_STREAM chunk to the right callback. Set in delegateTool while a streaming call runs, deleted after.
@@ -753,7 +769,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         if (!resumeMessages) emitLifecycle(startEvent);
         else if (resurrected) fanEvent(startEvent);   // resurrected: no page-side caller emitted a start → fan it ourselves
         runBackgroundAgent(
-            { task: p.task, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, autoApproveSameOriginAuth: p.autoApproveSameOriginAuth, autoApproveSelfSource: p.autoApproveSelfSource, unattended: p.unattended, toolTokens: p.toolTokens, stream: p.stream, runId, seqBase, resumeMessages, images: p.images },
+            { task: p.task, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, autoApproveSameOriginAuth: p.autoApproveSameOriginAuth, autoApproveSelfSource: p.autoApproveSelfSource, unattended: p.unattended, toolTokens: p.toolTokens, stream: p.stream, runId, seqBase, tokenStore: sessionTokens(runId), resumeMessages, images: p.images },
             {
                 callModel: async (messages, opts) => {
                     // Thread the run's abort signal so a CANCEL_RUN kills a slow in-flight generation, not

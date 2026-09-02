@@ -205,6 +205,9 @@ export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number | (() =
      *  ToolContext so `ml.dereference` inside an approved exec reads THIS run's outputs — and only while a
      *  tool of this run is executing. The loop owns the store, so it is the only place that can hand this out. */
     tokenSink?: (resolve: (ref: string, pipe?: string | string[]) => string) => void;
+    /** The pointer store to use. Pass the SESSION's store so `@tool:` references survive across a handle's
+     *  turns; omit for a one-shot run and the loop makes its own. */
+    tokenStore?: TokenStore;
     /** Opt-in LIVE tool-output streaming (same flag as the streamed thinking): when set, each tool call gets a
      *  throttled `ctx.stream(text)` so a tool that supports it (exec's console.log, python_exec's print) streams
      *  its output as it runs. Off → tools return the full result at the end, unchanged. */
@@ -273,7 +276,12 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     // so the pointer store and the citation ids can never disagree. Owned by the LOOP (not the page), which is
     // why dereference resolves here instead of being delegated: it is a pure read of run state, identical on
     // the page-hosted and background-hosted paths, and needs no page round-trip or approval.
-    const tokenStore = new TokenStore();
+    // The caller may own the store so it spans a SESSION (every turn of a handle) rather than one turn: the
+    // model sees `@tool:` pointers in its own history from earlier turns, so they have to keep resolving —
+    // a follow-up "how did you compute that?" dereferencing the previous turn's python_exec used to get
+    // "Nothing has been captured in this run yet". Ids stay unique across turns via `seqBase`, so a shared
+    // store cannot collide. No store passed (a one-shot run) → a fresh one, as before.
+    const tokenStore = opts.tokenStore ?? new TokenStore();
     /** Resolve a `dereference` call against this run's pointer store. Side-effect-free by construction (it only
      *  reads values already captured), so it needs no approval and never touches the page. Every answer leads
      *  with WHAT is at the pointer and WHEN it was captured: a pointer aliases a snapshot with no invalidation,

@@ -167,7 +167,18 @@ export function displayPipe(pipe: string | string[] | null | undefined): string 
 export class TokenStore {
     private byId = new Map<string, TokenValue>();
 
-    note(v: TokenValue): void { this.byId.set(v.id, v); }
+    /** How many pointers a store keeps. A store lives for a whole SESSION (every turn of an agent handle), not
+     *  one turn, and an entry can carry a big `full` capture or a screenshot data URL — so it has to be bounded
+     *  or a long conversation grows without limit. ~10 turns of heavy tool use at the default 20-step cap. */
+    static readonly CAP = 200;
+
+    note(v: TokenValue): void {
+        this.byId.delete(v.id);   // re-noting an id moves it to the END, so the tool-name alias still means "latest"
+        this.byId.set(v.id, v);
+        // Drop the OLDEST beyond the cap — also the least likely to still be referenced. Ids are unique across
+        // turns (the loop offsets each turn's seq base), so eviction is the only thing that removes a pointer.
+        while (this.byId.size > TokenStore.CAP) this.byId.delete(this.byId.keys().next().value as string);
+    }
 
     /** Resolve `@tool:<id>`, a bare id, or a tool-name alias. Null when nothing matches. */
     get(ref: string): TokenValue | null {
