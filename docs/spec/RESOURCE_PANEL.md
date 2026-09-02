@@ -60,35 +60,73 @@ A few minutes earlier the same box reported `free_memory: 18196987904` on card 0
 argument for the three-band decomposition below**: a panel that showed "18 of 102 GB" would have
 been reporting memory that no model of ours held, with no way for the reader to tell.
 
-### 2.2 Samples still needed — Metal (Mac)
+### 2.2 Captured samples — Metal (16 GB Mac, live)
 
-`runner` is the discriminator for unified memory, so the exact strings matter. Please capture, with
-`OPENWEBUI_URL`/`OPENWEBUI_KEY` pointed at the Mac's Ollama:
+`/api/info` — one device, `compute`/`driver` absent as predicted, `free_swap: 0`:
 
-```bash
-# 1. capacity — the whole body
-curl -s -H "Authorization: Bearer $KEY" "$URL/ollama/api/info"
-
-# 2. residency, GPU-resident: load something, then
-curl -s -H "Authorization: Bearer $KEY" "$URL/ollama/api/ps"
-
-# 3. residency, CPU-forced: send a generate with options {"num_gpu": 0}, then /api/ps again
+```json
+{
+  "models": { "store": "/Users/sb/.ollama/models", "count": 2,
+              "filesystem_used": 1766784634, "running": 0, "vram_used": 0 },
+  "compute": {
+    "system_compute": { "cpu_cores": 10, "total_memory": 17179869184,
+                        "free_memory": 3682385920, "free_swap": 0 },
+    "supported_gpus": [
+      { "gpu_id": "0", "name": "MTL0", "total_memory": 12712935424,
+        "free_memory": 12711886848, "runner": "Metal" }
+    ]
+  }
+}
 ```
 
-What is being pinned down:
+`/api/ps`, GPU-resident — Metal **does** report `gpus[]`, and `size == size_vram`:
 
-| From | What it settles |
+```json
+{ "name": "qwen3:0.6b", "size": 1039086387, "size_vram": 1039086387,
+  "context_length": 4096, "expires_at": "2026-09-02T16:32:54.167053+02:00",
+  "gpus": [ { "gpu_id": "0", "runner": "Metal", "size_vram": 1039086387 } ] }
+```
+
+`/api/ps`, forced to the CPU with `options: {"num_gpu": 0}` — `gpus` absent entirely:
+
+```json
+{ "name": "qwen3:0.6b", "size": 1018523810, "size_vram": 0, "context_length": 4096 }
+```
+
+Confirmed, and now fixtures in `tests/resource-model.test.mjs`:
+
+| Question | Answer |
 | --- | --- |
-| `/api/info` → `supported_gpus[].runner` | The literal for Metal. The model currently treats "not CUDA/ROCm" as unified; a confirmed string lets it match positively instead. |
-| `/api/info` → `supported_gpus[].name` | Whether it is a device label like `"Metal"` or something friendlier — it is what the track header shows. |
-| `/api/info` → absence of `compute`/`driver` | Confirms the corroborating signal (the handover says these are CUDA/ROCm concepts, `omitempty`). |
-| `/api/info` → `total_memory` vs `system_compute.total_memory` | The overlap ratio on a real machine (the handover says a 16 GB Mac reports ~12.7 GB for its device). |
-| `/api/ps` GPU-resident → `gpus[]` | Whether Metal reports a device array at all, and what `gpu_id` looks like when there is one device. |
-| `/api/ps` CPU-forced | Confirms `gpus` is absent, not an empty array — the model reads absence as "on the CPU". |
+| Metal's `runner` literal | `"Metal"` — matched positively now, not as "not discrete" |
+| Device label | `"MTL0"` (not "Metal") — that is what a track header shows |
+| `compute` / `driver` | Absent, as the handover predicted |
+| Working set vs system | 12.71 GB of 17.18 GB — a ~74% soft ceiling inside the hard one |
+| `gpus[]` on Metal | Present, `gpu_id: "0"` — per-device attribution works |
+| CPU-forced | `gpus` absent, not empty — the "absence means CPU" contract holds |
+| `free_swap` | `0` on macOS — unknown, not "no swap" |
 
-**ROCm is assumed to match CUDA** (discrete pool, `runner: "ROCm"`), untested. It is in
-`DISCRETE_RUNNERS` on that assumption; if it ever turns out to behave like unified memory, that set
-is the one line to change.
+**ROCm is assumed to match CUDA** (discrete, `runner: "ROCm"`), untested. It sits in
+`DISCRETE_RUNNERS` on that assumption; if it ever behaves like unified memory, that set is the one
+line to change.
+
+#### 2.2.1 What these samples changed
+
+Two corrections the capture forced, both now covered by tests:
+
+1. **A unified device's own `free_memory` is blind to the rest of the machine.** The Mac reported
+   12.711 of 12.713 GB device-free while the *system* was 13.5 GB deep in the same silicon. So
+   occupancy on a unified box must come from `system_compute`, not from the device. Reading the
+   device would have drawn a nearly-empty machine as nearly empty while it was nearly full.
+2. **A GPU-resident model on Metal has `size == size_vram`, so its `ramBytes` is 0.** Attributing
+   only the spill — correct on a discrete box, where the GPU half lives in another pool — would have
+   attributed *nothing* and left a plainly-resident model invisible. On unified memory the whole
+   footprint is attributed to the one pool.
+
+Together these mean `deviceBands()` for a unified device delegates to the host decomposition, and
+`seriesCatalog()` emits a single `mem` series rather than a device/host pair — one pool gets one
+ceiling, so the UI can't offer the double-count that `stackRefusal` would then have to block.
+
+### 2.3 Samples still wanted
 
 Also worth capturing on either box when convenient, because neither is represented in any sample
 yet and both drive real UI:
@@ -109,8 +147,9 @@ parseInfo(raw)            -> Capacity | null      null = capacity unknown (stock
 residencyFrom(psEntry)    -> ModelResidency       bytes, not the rounded GB LoadedModel carries
 ResourceSample            = { t, models[], capacity }
 
-deviceBands(sample, id)   -> Band[]               the three-band split, below
-hostBands(sample)         -> Band[]
+deviceBands(sample, id)   -> Band[]               the three-band split, below (unified → hostBands)
+hostBands(sample)         -> Band[]               attributes the FULL footprint when unified
+ceilingsFor(sample, id)   -> Ceilings | null      hard limit + the soft working-set line (unified only)
 seriesCatalog(sample)     -> SeriesDef[]          generated from the devices the box reports
 stackRefusal(defs, cap)   -> string | null        why these series may not share a stacked axis
 presetsFor(sample)        -> Preset[]             starting layouts, chosen by device count
@@ -216,8 +255,8 @@ would be a lie. This is the honest answer to the handover's open "per card or ag
 ┌──────────────────────────────────────────────┐
 │ Resources            [Memory ▾]  [⏸ live] ⚙ │
 ├──────────────────────────────────────────────┤
-│ Metal · unified memory        8.9 / 16 GB    │
-│   16 ┤- - - - - - - - - - - - - - - - - - -  │  ← system total
+│ MTL0 · unified memory        13.5 / 17.2 GB  │
+│ 17.2 ┤- - - - - - - - - - - - - - - - - - -  │  ← system total (hard)
 │ 12.7 ┤═══════════════════════════════════    │  ← recommended working set (soft)
 │      │             ▁▂▃▅███████████████████    │
 │    0 ┼░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░    │
@@ -225,6 +264,9 @@ would be a lie. This is the honest answer to the handover's open "per card or ag
 │ ⓘ This machine shares one pool between the   │
 │   GPU and the system, so these are the same  │
 │   memory — they are never added together.    │
+│   Occupancy is read from the system: the     │
+│   device reports itself 12.71/12.71 free     │
+│   while 13.5 GB of that silicon is in use.   │
 └──────────────────────────────────────────────┘
 ```
 
@@ -307,7 +349,6 @@ Each step is useful on its own.
 
 ## 6. Open questions
 
-- The Metal literals (section 2.2) — the model matches "not discrete" until they are pinned.
 - Sampling while the panel is CLOSED. History has holes by design today. A slow background sample
   (say 30s) would fill them at the cost of polling a box nobody is watching. Worth it, or are
   honest gaps better?

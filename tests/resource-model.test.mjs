@@ -17,14 +17,22 @@ const CUDA_INFO = {
         ],
     },
 };
-// Metal's shape per the handover: ONE device, `compute`/`driver` absent, a working set well under system RAM.
-// The literals are unconfirmed (spec §2.2) — this fixture asserts the treatment, not the strings.
+// Live capture from a 16 GB Mac: ONE device named "MTL0", `compute`/`driver` absent, and a 12.71 GB working
+// set inside a 17.18 GB system. Note the two "free" figures disagree wildly — the device reports itself all
+// but empty while the SYSTEM is 13.5 GB deep in the same silicon. That is what makes device-side occupancy
+// meaningless here, and it is asserted below.
 const METAL_INFO = {
     compute: {
-        system_compute: { cpu_cores: 10, total_memory: 17179869184, free_memory: 4e9, free_swap: 0 },
-        supported_gpus: [{ gpu_id: "0", name: "Metal", total_memory: 12700000000, free_memory: 9e9, runner: "Metal" }],
+        system_compute: { cpu_cores: 10, total_memory: 17179869184, free_memory: 3682385920, free_swap: 0 },
+        supported_gpus: [{ gpu_id: "0", name: "MTL0", total_memory: 12712935424, free_memory: 12711886848, runner: "Metal" }],
     },
 };
+// Live capture: the same model GPU-resident, then forced to the CPU with options {"num_gpu": 0}.
+const METAL_PS_GPU = { name: "qwen3:0.6b", model: "qwen3:0.6b", size: 1039086387, size_vram: 1039086387,
+    context_length: 4096, expires_at: "2026-09-02T16:32:54.167053+02:00",
+    gpus: [{ gpu_id: "0", runner: "Metal", size_vram: 1039086387 }] };
+const METAL_PS_CPU = { name: "qwen3:0.6b", model: "qwen3:0.6b", size: 1018523810, size_vram: 0,
+    context_length: 4096, expires_at: "2026-09-02T16:33:04.541311+02:00" };
 
 test("parseInfo: reads a live CUDA body — discrete devices, host RAM, swap", () => {
     const cap = M.parseInfo(CUDA_INFO);
@@ -39,9 +47,19 @@ test("parseInfo: reads a live CUDA body — discrete devices, host RAM, swap", (
 
 test("parseInfo: Metal is UNIFIED — the device total overlaps system RAM", () => {
     const cap = M.parseInfo(METAL_INFO);
+    assert.equal(cap.devices[0].runner, "Metal", "the confirmed literal from a live Mac");
+    assert.equal(cap.devices[0].name, "MTL0", "…and the device label the track header shows");
     assert.equal(cap.devices[0].unified, true);
     assert.equal(cap.unified, true, "the capacity as a whole is flagged, so nothing sums device + host");
     assert.equal(cap.host.swapFreeBytes, null, "free_swap 0 is UNKNOWN on macOS, not 'no swap'");
+    // Two ceilings for one pool: the working set is the "will it fit" number INSIDE the system total.
+    const ceil = M.ceilingsFor({ t: 1, models: [], capacity: cap }, "0");
+    assert.equal(ceil.hardBytes, 17179869184, "the hard limit is the system's, not the device's");
+    assert.equal(ceil.softBytes, 12712935424, "the device total survives as a soft working-set line");
+    // A discrete card has exactly one, real ceiling.
+    const cudaCeil = M.ceilingsFor({ t: 1, models: [], capacity: M.parseInfo(CUDA_INFO) }, "0");
+    assert.equal(cudaCeil.hardBytes, 101972967424);
+    assert.equal(cudaCeil.softBytes, null);
 });
 
 test("parseInfo: an unrecognised runner is treated as unified (the safe guess)", () => {
@@ -111,12 +129,43 @@ test("deviceBands: one band per model, plus an explicit unknown for an unattribu
     assert.equal(other.bytes, 0, "41 GB in use = 18 + 22 + 1, so nothing is left unaccounted for");
 });
 
-test("deviceBands: a single-device box needs no attribution — the total IS the share", () => {
-    const sample = { t: 1, capacity: M.parseInfo(METAL_INFO), models: [
+test("deviceBands: a single DISCRETE device needs no attribution — the total IS the share", () => {
+    const cap = M.parseInfo({ compute: { system_compute: { total_memory: 64e9, free_memory: 32e9 },
+        supported_gpus: [{ gpu_id: "0", name: "CUDA0", total_memory: 24e9, free_memory: 19e9, runner: "CUDA" }] } });
+    const sample = { t: 1, capacity: cap, models: [
         M.residencyFrom({ name: "solo", size: 5 * GB, size_vram: 5 * GB }),   // no gpus[] reported at all
     ] };
     const band = M.deviceBands(sample, "0").find((b) => b.kind === "model");
-    assert.equal(band.bytes, 5 * GB, "with one device there is nowhere else it could be");
+    assert.equal(band.bytes, 5 * GB, "with one card there is nowhere else it could be");
+});
+
+// The Mac capture's most important consequence. Its device reported 12.711 of 12.713 GB FREE while the system
+// was 13.5 GB deep in the very same memory — so occupancy read off the device would show a nearly-empty box.
+test("unified memory: occupancy comes from the HOST, and the model is attributed in FULL", () => {
+    const sample = { t: 1, capacity: M.parseInfo(METAL_INFO), models: [M.residencyFrom(METAL_PS_GPU)] };
+    const bands = M.deviceBands(sample, "0");
+    const model = bands.find((b) => b.kind === "model");
+    // size == size_vram on Metal, so ramBytes is 0; attributing only the spill would show NOTHING resident.
+    assert.equal(model.bytes, 1039086387, "the whole footprint occupies the one pool, GPU-resident or not");
+    const other = bands.find((b) => b.kind === "other");
+    const free = bands.find((b) => b.kind === "free");
+    assert.equal(free.bytes, 3682385920, "free is the SYSTEM's, not the device's near-empty figure");
+    assert.ok(other.bytes > 12 * GB, "the 12.5 GB held by the rest of the machine is visible, not hidden as ~0");
+    const total = bands.reduce((n, b) => n + b.bytes, 0);
+    assert.equal(total, 17179869184, "the bands account for exactly the system total — one pool, no double-count");
+});
+
+test("Metal residency: GPU-resident reports gpus[]; CPU-forced omits it entirely", () => {
+    const gpu = M.residencyFrom(METAL_PS_GPU);
+    assert.deepEqual(gpu.perDevice, { 0: 1039086387 }, "Metal DOES attribute per device, with gpu_id '0'");
+    assert.equal(gpu.ramBytes, 0, "size == size_vram when it is on the GPU");
+    assert.equal(M.isCpuResident(gpu), false);
+    assert.ok(gpu.expiresAt > 0, "the keep-alive TTL parses");
+
+    const cpu = M.residencyFrom(METAL_PS_CPU);
+    assert.deepEqual(cpu.perDevice, {}, "gpus is ABSENT when forced to the CPU — the contract holds on Metal");
+    assert.equal(cpu.ramBytes, 1018523810);
+    assert.equal(M.isCpuResident(cpu), true);
 });
 
 test("hostBands: a model's CPU spill is attributed, the rest is not ours", () => {
@@ -147,12 +196,15 @@ test("stackRefusal: stacking asserts a real total, so the false cases are refuse
 test("seriesCatalog: generated from the devices the box actually reports", () => {
     const two = M.seriesCatalog({ t: 1, capacity: M.parseInfo(CUDA_INFO), models: [] }).map((s) => s.id);
     assert.deepEqual(two, ["vram.0", "vram.1", "ram"], "two cards → two device series, no hardcoding");
-    const one = M.seriesCatalog({ t: 1, capacity: M.parseInfo(METAL_INFO), models: [] }).map((s) => s.id);
-    assert.deepEqual(one, ["vram.0", "ram"], "the same code yields a one-device catalog on a Mac");
+    // Unified memory yields ONE capacity series, not a device/host pair — offering both would invite exactly
+    // the double-count stackRefusal exists to block.
+    const cat = M.seriesCatalog({ t: 1, capacity: M.parseInfo(METAL_INFO), models: [M.residencyFrom(METAL_PS_GPU)] });
+    assert.deepEqual(cat.map((s) => s.id), ["mem", "mem.qwen3:0.6b"], "one pool, one ceiling, plus the model");
+    assert.match(cat[0].label, /MTL0/, "labelled with the device the machine reported");
 
-    // A resident model adds its own per-device and (when it spills) per-host series.
-    const withModel = M.seriesCatalog({ t: 1, capacity: M.parseInfo(METAL_INFO), models: [
-        M.residencyFrom({ name: "m", size: 10 * GB, size_vram: 6 * GB }),
+    // A resident model on a DISCRETE box adds its own per-device and (when it spills) per-host series.
+    const withModel = M.seriesCatalog({ t: 1, capacity: M.parseInfo(CUDA_INFO), models: [
+        M.residencyFrom({ name: "m", size: 10 * GB, size_vram: 6 * GB, gpus: [{ gpu_id: "0", size_vram: 6 * GB }] }),
     ] }).map((s) => s.id);
     assert.ok(withModel.includes("vram.0.m"), "the model is plottable on the device");
     assert.ok(withModel.includes("ram.m"), "…and its spill is plottable against host RAM");
@@ -163,7 +215,7 @@ test("presetsFor: the default layout follows the hardware", () => {
     assert.equal(multi[0].id, "placement", "two cards → lead with WHERE the model landed");
     assert.equal(multi[0].tracks.length, 2, "one track per card — small multiples, not a shared axis");
 
-    const single = M.presetsFor({ t: 1, capacity: M.parseInfo(METAL_INFO), models: [] });
+    const single = M.presetsFor({ t: 1, capacity: M.parseInfo(METAL_INFO), models: [] });   // the Mac
     assert.equal(single[0].id, "memory", "one device → placement is meaningless, so lead with GPU vs RAM");
     assert.ok(!single.some((p) => p.id === "placement"), "and don't offer a per-card view of one card");
 });

@@ -129,6 +129,20 @@ export function residencyFrom(raw: unknown): ModelResidency {
     };
 }
 
+/** The line(s) a track is drawn against. A discrete card has one real ceiling. A unified device has two: the
+ *  system total is the hard limit, and the device's reported total is a RECOMMENDED WORKING SET inside it —
+ *  the "will this model fit" number, not a second pool. Measured on a 16 GB Mac: 12.71 GB working set of a
+ *  17.18 GB system. */
+export interface Ceilings { hardBytes: number; softBytes: number | null; softLabel: string | null }
+export function ceilingsFor(sample: ResourceSample, deviceId: string): Ceilings | null {
+    const cap = sample.capacity;
+    const dev = cap?.devices.find((d) => d.id === deviceId);
+    if (!cap || !dev) return null;
+    return dev.unified
+        ? { hardBytes: cap.host.totalBytes, softBytes: dev.totalBytes, softLabel: "recommended working set" }
+        : { hardBytes: dev.totalBytes, softBytes: null, softLabel: null };
+}
+
 /** Is this model on the CPU? `gpus` absent (or nothing in VRAM) is the server's way of saying so. */
 export const isCpuResident = (m: ModelResidency): boolean => m.vramBytes === 0;
 
@@ -159,6 +173,12 @@ function shareOf(m: ModelResidency, deviceId: string, deviceCount: number): numb
 export function deviceBands(sample: ResourceSample, deviceId: string): Band[] {
     const cap = sample.capacity?.devices.find((d) => d.id === deviceId);
     if (!cap) return [];
+    // UNIFIED memory: the device's own `free_memory` only tracks the accelerator's working set and is blind to
+    // everything else on the machine — a 16 GB Mac reported 12.711 of 12.713 GB device-free while the SYSTEM
+    // was 13.5 GB deep in the very same silicon. Reading "other processes" off the device would therefore show
+    // ~0 on a nearly-full machine. The pool is the host's, so the occupancy comes from there; the device total
+    // survives only as the soft ceiling (see ceilingsFor).
+    if (cap.unified) return hostBands(sample);
     const count = sample.capacity!.devices.length;
     const bands: Band[] = [];
     let attributed = 0, unknown = 0;
@@ -182,12 +202,18 @@ export function deviceBands(sample: ResourceSample, deviceId: string): Band[] {
 export function hostBands(sample: ResourceSample): Band[] {
     const host = sample.capacity?.host;
     if (!host) return [];
+    // On UNIFIED memory the whole footprint sits in this one pool, so a GPU-resident model must be attributed
+    // in full — `size == size_vram` there, which would otherwise attribute NOTHING and leave a model that is
+    // plainly resident invisible in the stack. On a discrete box the GPU half lives in its own pool and only
+    // the spill (`size - size_vram`) belongs here.
+    const unified = !!sample.capacity?.unified;
     const bands: Band[] = [];
     let attributed = 0;
     for (const m of sample.models) {
-        if (m.ramBytes <= 0) continue;
-        attributed += m.ramBytes;
-        bands.push({ key: `m:${m.model}`, label: m.model, bytes: m.ramBytes, kind: "model", model: m.model });
+        const bytes = unified ? m.vramBytes + m.ramBytes : m.ramBytes;
+        if (bytes <= 0) continue;
+        attributed += bytes;
+        bands.push({ key: `m:${m.model}`, label: m.model, bytes, kind: "model", model: m.model });
     }
     const used = Math.max(0, host.totalBytes - host.freeBytes);
     bands.push({ key: "other", label: "other processes", bytes: Math.max(0, used - attributed), kind: "other" });
@@ -214,6 +240,15 @@ export interface SeriesDef {
 export function seriesCatalog(sample: ResourceSample): SeriesDef[] {
     const cap = sample.capacity;
     const out: SeriesDef[] = [];
+    // One pool → ONE capacity series. Offering a separate device and host series here would invite exactly the
+    // double-count `stackRefusal` exists to block, so unified memory doesn't produce the pair in the first
+    // place. Per-model series remain: `size_vram` still says what Ollama put on the GPU versus spilled.
+    if (cap?.unified) {
+        const dev = cap.devices[0];
+        out.push({ id: "mem", label: `${dev?.name ?? "Memory"} · unified`, scope: "host", pool: "host", capacityBytes: cap.host.totalBytes });
+        for (const m of sample.models) out.push({ id: `mem.${m.model}`, label: m.model, scope: "host", pool: "host", model: m.model, capacityBytes: cap.host.totalBytes });
+        return out;
+    }
     for (const d of cap?.devices ?? []) {
         out.push({ id: `vram.${d.id}`, label: d.name, scope: "device", pool: `device:${d.id}`, deviceId: d.id, capacityBytes: d.totalBytes });
         for (const m of sample.models) {
