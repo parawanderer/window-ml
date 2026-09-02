@@ -259,7 +259,10 @@ function TrackView({ def, samples, latest, hidden }: { def: TrackDef; samples: R
     const first = def.series[0] ?? "";
     const isHost = first === "ram" || first === "mem";
 
-    if (def.mode === "stack" || def.series.length < 2) {
+    // `overlay` is meaningful even for ONE series — it is a LINE of that pool's occupancy rather than the
+    // per-model bands, which is the compact-vs-detailed choice. Short-circuiting to the stacked view below two
+    // series made the mode control inert on exactly the layout the presets produce (a track per pool).
+    if (def.mode === "stack") {
         if (isHost) {
             const label = first === "mem" ? `${cap.devices[0]?.name ?? "Memory"} · unified memory` : "System RAM";
             const c = first === "mem" ? ceilingsFor(latest, cap.devices[0]?.id ?? "") : null;

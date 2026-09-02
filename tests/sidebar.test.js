@@ -5803,3 +5803,34 @@ test("panel open: holds an empty plot until capacity answers, never flashes the 
     assert.ok(w.shadow.querySelectorAll(".rc-key").length > 0, "…and the real tracks replace it once it lands");
     assert.equal(w.shadow.querySelectorAll(".vram-spark").length, 0, "still no legacy chart");
 });
+
+// The editor's stack/overlay control must DO something on the layouts the presets actually produce — a track
+// per pool, i.e. one series each. It was short-circuiting to the stacked view below two series, so the
+// dropdown was inert exactly where it is most used.
+test("editor: stack vs overlay changes the rendering even for a single-series track", async () => {
+    const one = (mode) => ({ local: { ml_res_layout: { presetId: "custom", tracks: [
+        { id: "t", series: ["vram.0"], mode, heightPx: 96 },
+    ] } } });
+    const mk = async (mode) => {
+        const w = await loadSidebarWorld({
+            vram: [{ model: "a", vramGB: 19, vramBytes: 19 * 1024 ** 3, sizeBytes: 19 * 1024 ** 3,
+                     gpus: [{ id: "0", runner: "CUDA", vramBytes: 19 * 1024 ** 3 }], expiresAt: null }],
+            info: INFO_MIXED, ...one(mode),
+        });
+        await w.raw({ __mlSidebarOpen: true });
+        w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+        await w.flush();
+        await w.flush();
+        return w;
+    };
+
+    const stacked = await mk("stack");
+    assert.ok(stacked.shadow.querySelectorAll("polygon").length > 0, "stack draws per-model BANDS");
+    assert.match(stacked.shadow.querySelector(".rc-legend").textContent, /free/, "with the pool's breakdown");
+
+    const overlaid = await mk("overlay");
+    assert.equal(overlaid.shadow.querySelectorAll("polygon").length, 0, "overlay draws no bands…");
+    assert.ok(overlaid.shadow.querySelectorAll("polyline").length > 0, "…it draws a LINE of the pool's occupancy");
+    assert.match(overlaid.shadow.querySelector(".rc-total").textContent, /% of each pool/,
+        "and reads as a share, like any overlay");
+});
