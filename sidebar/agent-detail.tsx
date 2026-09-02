@@ -528,9 +528,13 @@ export function AgentRunView({ s }: { s: Session }) {
     // its turn's steps, and a following user message just after that.
     const lastAnswerTs = (s.answers && s.answers.length) ? s.answers[s.answers.length - 1].ts : -1;
     const answers = s.answers || [];
-    // A tool-name ALIAS (`@tool:python_exec`) in answer i must resolve within THAT turn's steps, not the whole
-    // run — else a prior answer's alias drifts to a later turn's call. The turn's steps are the groups between
-    // the previous answer's boundary and this one's (mirrors buildRunBlocks' segmentation).
+    // A tool-name ALIAS (`@tool:python_exec`) in a PRIOR answer must resolve within THAT turn's steps, not the
+    // whole run — else it drifts to a later turn's call. The turn's steps are the groups between the previous
+    // answer's boundary and this one's (mirrors buildRunBlocks' segmentation). The LATEST answer is NOT scoped
+    // (undefined → whole run): a tool-name alias means "that tool's latest call", and a follow-up answer
+    // legitimately cites a tool it ran in an EARLIER turn (e.g. "show me how you computed this" → the prior
+    // python_exec). Per-turn-scoping the latest answer was the bug that made such a cross-turn citation show
+    // "unresolved" in the DevTools panel while the HUD (which passes no scope for the final answer) resolved it.
     const scopeFor = (i: number): AgentStep[] => {
         const lo = i > 0 ? answers[i - 1].atStep : -Infinity;
         const hi = answers[i].atStep;
@@ -539,7 +543,7 @@ export function AgentRunView({ s }: { s: Session }) {
     const answer = (a: NonNullable<Session["answers"]>[number], key: string, i: number) =>
         a.error
             ? <ReplyBubble key={key} content="" status="err" model={s.model} profile={sessionProfile(s)} ts={a.ts} error={a.error} label="run failed" />
-            : <ReplyBubble key={key} content={a.text} status={a.status} model={s.model} profile={sessionProfile(s)} ts={a.ts} tokenRun={s} tokenScope={scopeFor(i)} latest={a.ts === lastAnswerTs}
+            : <ReplyBubble key={key} content={a.text} status={a.status} model={s.model} profile={sessionProfile(s)} ts={a.ts} tokenRun={s} tokenScope={a.ts === lastAnswerTs ? undefined : scopeFor(i)} latest={a.ts === lastAnswerTs}
                 label={a.cancelled ? "cancelled" : a.hitCap ? "stopped (step cap)" : undefined} capped={a.hitCap || a.cancelled}
                 // Only the LATEST answer, and only a step-cap stop (not a cancel/error), offers Continue — resuming
                 // an old buried answer would be confusing, and a live run has nothing to resume.

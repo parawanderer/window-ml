@@ -5104,3 +5104,40 @@ test("answer render (sidebar): a sympy.latex() output cited `| latex` typesets v
     assert.ok(tok.querySelector(".katex"), "the sympy.latex output (with \\frac/\\sqrt) typesets via KaTeX");
     assert.doesNotMatch(tok.textContent, /loaded, reference directly/, "the model-facing prelude is NOT fed to KaTeX");
 });
+
+// A follow-up turn's answer citing a tool it ran in an EARLIER turn — "show me how you computed this" → the
+// prior python_exec. A tool-NAME alias (@tool:python_exec) means "that tool's LATEST call", so the LATEST
+// answer must resolve it against the WHOLE run, not just its own (python_exec-less) turn. Regression: the
+// DevTools panel scoped the latest answer per-turn → "(unresolved @tool:python_exec)", while the HUD (no
+// scope on the final answer) resolved it — a surface parity break. Both surfaces must resolve it now.
+const xTurnCitedRun = async (w, hash) => {
+    await w.dispatch(agentStart(hash, "compute the totals"));
+    await w.dispatch(compStep(hash));                                          // TURN 1: a tokened python_exec
+    await w.dispatch({ ...agentResult(hash, "Grand total: 6260.", 1), ts: Date.now() + 1 });
+    // FOLLOW-UP turn (a continuation — no sayId), whose answer cites the turn-1 python_exec BY NAME.
+    await w.dispatch(agentSay(hash, "Can you show me how you computed this?", undefined, Date.now() + 2));
+    await w.dispatch({ ...agentResult(hash,
+        "Here's the exact code that ran:\n\n![computation code](@tool:python_exec:out)\n\nDone.", 2),
+        ts: Date.now() + 3 });
+};
+
+test("DevTools panel: a follow-up answer's tool-NAME @tool alias resolves whole-run, not per-turn", async () => {
+    const w = await loadSidebarWorld();
+    await xTurnCitedRun(w, "xturn");
+    await openRun(w);
+    assert.equal(w.shadow.querySelector(".tok-unresolved"), null,
+        "the latest answer's @tool:python_exec resolves (its own turn ran no python_exec — was 'unresolved')");
+    assert.ok(w.shadow.querySelector(".msg.asst .answer-rendered .tok-ref"),
+        "the cross-turn citation renders as a resolved tool-output block in the panel");
+});
+
+test("HUD card: the SAME cross-turn tool-name citation resolves (parity with the DevTools panel)", async () => {
+    const w = await loadSidebarWorld();
+    await w.raw({ __mlSidebarSurface: "card" });   // off-mode corner card
+    await xTurnCitedRun(w, "xturnC");
+    await w.tick();
+    assert.equal(w.shadow.querySelector(".tok-unresolved"), null,
+        "the HUD resolves the same cross-turn tool-name citation");
+    assert.ok(w.shadow.querySelector(".answer-rendered .tok-ref"),
+        "the citation renders as a resolved block on the corner card");
+});
