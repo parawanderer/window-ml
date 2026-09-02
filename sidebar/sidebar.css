@@ -55,7 +55,17 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .hbtn:hover, .hbtn.on { background: var(--panel-2); color: var(--fg); }
 
 /* VRAM monitor panel */
-.vram { flex: 0 0 auto; border-bottom: 1px solid var(--border); background: var(--panel); padding: 8px 12px; display: flex; flex-direction: column; gap: 5px; }
+/* `position: relative` for the resize grip; when a height has been dragged, the content SCROLLS inside rather
+   than overflowing into the session list below. */
+.vram { flex: 0 0 auto; position: relative; border-bottom: 1px solid var(--border); background: var(--panel);
+        padding: 8px 12px 10px; display: flex; flex-direction: column; gap: 5px; overflow-y: auto; }
+/* The boundary between this panel and the session list, as a handle. It competes with the list for height, so
+   which one you want more of depends on what you are doing — a drag, not a setting, and remembered. */
+.vram-grip { position: absolute; left: 0; right: 0; bottom: 0; height: 7px; cursor: ns-resize;
+             display: flex; align-items: center; justify-content: center; }
+.vram-grip::after { content: ""; width: 34px; height: 3px; border-radius: 2px; background: var(--panel-2);
+                    opacity: .55; transition: width .12s ease, opacity .12s ease; }
+.vram-grip:hover::after { width: 52px; opacity: 1; background: var(--panel-2-hover); }
 .vram-head { display: flex; align-items: center; }
 .vram-total { color: var(--fg); font-weight: 600; font-size: 0.92em; font-variant-numeric: tabular-nums; }
 .vram-free { background: var(--panel-2); color: var(--fg); border: none; border-radius: 4px; padding: 3px 8px; font-size: 0.83em; cursor: pointer; }
@@ -116,10 +126,13 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rc-band.hot { stroke: var(--fg); stroke-width: 1.5; paint-order: stroke fill; }
 /* Follows the cursor (positioned inline), so it reads as "this band, here" rather than as a caption for the
    whole track. `pointer-events: none` keeps it from stealing the hover it is describing. */
+/* ONE look for every cursor-following tip (chart band, pool line, model row). Sized off the ROOT (--fs), not
+   the parent's em: these are anchored in rows and legends of different sizes, and an em would make otherwise
+   identical popups render at different sizes a centimetre apart. Same reasoning as .tt-pop. */
 .rc-tip { position: absolute; top: 4px; left: 4px; z-index: 5; display: flex; align-items: center; white-space: nowrap;
-          gap: 5px; padding: 3px 6px; font-size: 0.74em; pointer-events: none;
-          background: var(--panel); border: 1px solid var(--border); border-radius: 4px;
-          box-shadow: 0 2px 8px rgba(0,0,0,.25); }
+          gap: 5px; padding: 4px 7px; font-size: calc(var(--fs) * 0.8); line-height: 1.4; pointer-events: none;
+          color: var(--fg); background: var(--panel); border: 1px solid var(--border); border-radius: 5px;
+          box-shadow: 0 2px 10px rgba(0,0,0,.35); }
 .rc-tip-dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
 /* The pool tip is a small table, not a one-liner: how big, how much is used, and BY WHAT — the consumer list
    is repeated here so the answer is complete without looking away from the cursor. */
@@ -133,9 +146,9 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .vram-row.hot { background: var(--panel-2); border-radius: 3px; }
 /* The model row's follow-along tip. `position: fixed` because the row is outside the plot and the panel's
    own scrolling would otherwise clip it. */
-.vram-rowtip { position: fixed; z-index: 40; pointer-events: none; padding: 4px 7px; font-size: 0.74rem;
-               line-height: 1.4; background: var(--panel); color: var(--fg); border: 1px solid var(--border);
-               border-radius: 5px; box-shadow: 0 2px 10px rgba(0,0,0,.35); white-space: nowrap; }
+/* The row tip carries .rc-tip for the shared look; it only differs in being FIXED (the row is outside the
+   plot) and in stacking its lines. */
+.vram-rowtip { position: fixed; z-index: 40; flex-direction: column; align-items: stretch; gap: 1px; }
 .vram-rowtip-name { display: flex; align-items: center; gap: 5px; font-weight: 600; }
 .vram-rowtip-dim { color: var(--fg-faint); }
 /* A SPLIT model is the interesting case — it is slower than its total size suggests. */

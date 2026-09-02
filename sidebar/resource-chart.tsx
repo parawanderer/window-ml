@@ -18,6 +18,7 @@ import {
 } from "../resource-model";
 import { colorFor, hoverModel, poolHover, ModelFacts, VRAM_COLORS } from "./vram";
 import { loadedModels, resWindowS } from "./store";
+import { tipStyle } from "./tip";
 import { signal } from "@preact/signals";
 
 /** Which overlay POOL (a card, or the host) is hovered — the line and its key light together. */
@@ -172,15 +173,7 @@ function BandTip({ bands }: { bands: Band[] }) {
     const m = (loadedModels.value || []).find((x) => x.model === name);
     // Follows the cursor, offset up-left so it never sits under the pointer (which would flicker as the
     // pointer enters the tip itself) and clamped inside the plot so it can't run off the narrow panel.
-    // Flip to the LEFT of the cursor near the right edge rather than clamping (a clamped tip ends up under the
-    // pointer, which then flickers as the pointer enters it). `right`/`left` are set as a pair so the previous
-    // frame's value can't linger.
-    const flip = at ? at.x > at.w * 0.55 : false;
-    const style = at
-        ? flip
-            ? { right: `${Math.max(2, at.w - at.x + 10)}px`, left: "auto", top: `${Math.max(2, at.y - 26)}px` }
-            : { left: `${at.x + 10}px`, right: "auto", top: `${Math.max(2, at.y - 26)}px` }
-        : undefined;
+    const style = at ? tipStyle(at) : undefined;
     return (
         <div class="rc-tip" role="tooltip" style={style}>
             <i class="rc-tip-dot" style={{ background: colorFor(name) }} />
@@ -197,10 +190,7 @@ function BandTip({ bands }: { bands: Band[] }) {
 function PoolTip() {
     const h = poolHover.value, at = hoverAt.value;
     if (!h || !at) return null;
-    const flip = at.x > at.w * 0.55;
-    const style = flip
-        ? { right: `${Math.max(2, at.w - at.x + 10)}px`, left: "auto", top: `${Math.max(2, at.y - 26)}px` }
-        : { left: `${at.x + 10}px`, right: "auto", top: `${Math.max(2, at.y - 26)}px` };
+    const style = tipStyle(at);
     return (
         <div class="rc-tip rc-tip-pool" role="tooltip" style={style}>
             <div class="rc-tip-line"><span class="rc-tip-name">{h.name}</span>

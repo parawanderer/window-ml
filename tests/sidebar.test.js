@@ -5834,3 +5834,131 @@ test("editor: stack vs overlay changes the rendering even for a single-series tr
     assert.match(overlaid.shadow.querySelector(".rc-total").textContent, /% of each pool/,
         "and reads as a share, like any overlay");
 });
+
+// A cursor-following tip must never sit UNDER the cursor. Clamping `top` to the plot's edge did exactly that
+// near the top of the chart: the tip landed on the pointer and covered the line it was describing.
+test("chart tips: flip BELOW the cursor near the top edge instead of clamping onto it", async () => {
+    const w = await loadSidebarWorld({
+        vram: [{ model: "a", vramGB: 19, vramBytes: 19 * 1024 ** 3, sizeBytes: 19 * 1024 ** 3,
+                 gpus: [{ id: "0", runner: "CUDA", vramBytes: 19 * 1024 ** 3 }], expiresAt: null }],
+        info: INFO_MIXED,
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+    await w.flush();
+
+    const plot = w.shadow.querySelector(".rc-plot");
+    const key = w.shadow.querySelector(".rc-key");
+    const tipTop = async (y) => {
+        key.dispatchEvent(new w.window.PointerEvent("pointerenter", { bubbles: true }));
+        const ev = new w.window.PointerEvent("pointermove", { bubbles: true });
+        Object.defineProperty(ev, "offsetY", { value: y });
+        Object.defineProperty(ev, "offsetX", { value: 40 });
+        plot.dispatchEvent(ev);
+        await w.flush();
+        return parseFloat(w.shadow.querySelector(".rc-tip").style.top);
+    };
+
+    // Room above → the tip sits above the cursor.
+    const low = await tipTop(60);
+    assert.ok(low < 60, `above the cursor when there is room (top ${low} < 60)`);
+    // No room above → it goes BELOW, never onto the pointer.
+    const high = await tipTop(4);
+    assert.ok(high > 4, `below the cursor near the top edge (top ${high} > 4), not clamped onto it`);
+
+    // The model ROW's tip is the third of these and had NO snapping at all — it ran off the window's right
+    // edge. It carries .rc-tip now, so it shares both the look and the positioning.
+    const row = w.shadow.querySelector(".vram-row");
+    row.dispatchEvent(new w.window.PointerEvent("pointerenter", { bubbles: true }));
+    const ev = new w.window.PointerEvent("pointermove", { bubbles: true, clientX: 5000, clientY: 300 });
+    row.dispatchEvent(ev);
+    await w.flush();
+    const rowTip = w.shadow.querySelector(".vram-rowtip");
+    assert.ok(rowTip.classList.contains("rc-tip"), "shares the one tooltip look, so sizes match across the panel");
+    assert.equal(rowTip.style.left, "auto", "far right → it opens LEFTWARD instead of off-screen");
+    assert.ok(parseFloat(rowTip.style.right) >= 2);
+});
+
+// Two tooltips for one pointer is never right: the badge has its own, so the row's follower steps aside.
+test("model row: a badge's own tooltip suppresses the follow-along tip", async () => {
+    const w = await loadSidebarWorld({
+        vram: [{ model: "a", vramGB: 19, vramBytes: 19 * 1024 ** 3, sizeBytes: 19 * 1024 ** 3,
+                 gpus: [{ id: "0", runner: "CUDA", vramBytes: 19 * 1024 ** 3 }],
+                 contextLength: 262144, expiresAt: null }],
+        info: INFO_MIXED,
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+    await w.flush();
+
+    const row = w.shadow.querySelector(".vram-row");
+    row.dispatchEvent(new w.window.PointerEvent("pointerenter", { bubbles: true }));
+    row.dispatchEvent(new w.window.PointerEvent("pointermove", { bubbles: true, clientX: 100, clientY: 200 }));
+    await w.flush();
+    assert.ok(w.shadow.querySelector(".vram-rowtip"), "the row tip follows the cursor across the row");
+
+    // Onto the context badge, which carries its own .tt-pop.
+    const badge = w.shadow.querySelector(".vram-ctx");
+    assert.ok(badge.classList.contains("tt"), "the badge really does have its own tooltip");
+    badge.dispatchEvent(new w.window.PointerEvent("pointerenter", { bubbles: true }));
+    await w.flush();
+    assert.equal(w.shadow.querySelectorAll(".vram-rowtip").length, 0, "the follower yields to the specific one");
+
+    // Back onto the row proper and it returns.
+    // pointerleave does NOT bubble in a browser — dispatching it with bubbles:true would also fire the ROW's
+    // leave and clear the hover, which is not what happens when you slide off a badge onto the row.
+    badge.dispatchEvent(new w.window.PointerEvent("pointerleave", { bubbles: false }));
+    row.dispatchEvent(new w.window.PointerEvent("pointermove", { bubbles: true, clientX: 120, clientY: 200 }));
+    await w.flush();
+    assert.ok(w.shadow.querySelector(".vram-rowtip"), "and comes back when you leave the badge");
+});
+
+// The resource panel sits above the session list and competes with it for height, so it is draggable and the
+// choice is remembered. (Layout is jsdom-less, so this covers the mechanics: the grip exists, a drag sets a
+// height, it persists, and a saved height is applied on open. The feel is the e2e's job.)
+test("resource panel: drag the bottom edge to resize, and the height is remembered", async () => {
+    const w = await loadSidebarWorld({
+        vram: [{ model: "a", vramGB: 8, vramBytes: 8 * 1024 ** 3, expiresAt: null }],
+        info: INFO_MIXED,
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+    await w.flush();
+
+    const panel = w.shadow.querySelector(".vram");
+    assert.ok(!panel.getAttribute("style"), "no height until you choose one — it sizes to its content");
+    const grip = w.shadow.querySelector(".vram-grip");
+    assert.ok(grip, "the boundary with the session list is a handle");
+
+    grip.dispatchEvent(new w.window.PointerEvent("pointerdown", { bubbles: true, clientY: 300 }));
+    w.window.dispatchEvent(new w.window.PointerEvent("pointermove", { clientY: 420 }));
+    await w.flush();
+    const h = parseFloat(w.shadow.querySelector(".vram").style.height);
+    assert.ok(h > 0, "dragging down sets a height");
+
+    w.window.dispatchEvent(new w.window.PointerEvent("pointerup", {}));
+    await w.flush();
+    assert.equal(w.localStore.ml_vram_h, h, "…and it is remembered, not just applied");
+
+    // A height can't be dragged to nothing — the panel would become unusable and un-grabbable.
+    grip.dispatchEvent(new w.window.PointerEvent("pointerdown", { bubbles: true, clientY: 300 }));
+    w.window.dispatchEvent(new w.window.PointerEvent("pointermove", { clientY: -5000 }));
+    await w.flush();
+    assert.ok(parseFloat(w.shadow.querySelector(".vram").style.height) >= 80, "clamped to a usable minimum");
+    w.window.dispatchEvent(new w.window.PointerEvent("pointerup", {}));
+});
+
+test("resource panel: a remembered height is applied on open", async () => {
+    const w = await loadSidebarWorld({
+        vram: [{ model: "a", vramGB: 8, vramBytes: 8 * 1024 ** 3, expiresAt: null }],
+        info: INFO_MIXED, local: { ml_vram_h: 240 },
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+    await w.flush();
+    assert.match(w.shadow.querySelector(".vram").getAttribute("style") || "", /height:\s*240px/);
+});

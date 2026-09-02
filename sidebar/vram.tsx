@@ -12,6 +12,8 @@ import {
 import { truncate } from "./format";
 import { normModel, seenContext } from "./model";
 import { IconVram, IconEye, IconEyeOff, IconBench, IconGear } from "./icons";
+import { tipStyle } from "./tip";
+import { VRAMH_KEY, vramH } from "./store";
 import { parseInfo, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
 import { ResourceTracks } from "./resource-chart";
 import type { LoadedModel } from "../contract";
@@ -242,15 +244,19 @@ export function ModelStatusDot({ model, inFlight }: { model: string; inFlight: b
  *  both placements, which is the whole reason this isn't inlined twice. */
 export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean }) {
     const ttl = fmtTTL(m.expiresAt);
+    // Only the row's copy has its own tooltips to defer to; the chart tip renders these as plain text.
+    const yieldTip = tips
+        ? { onPointerEnter: () => (rowTipSuppressed.value = true), onPointerLeave: () => (rowTipSuppressed.value = false) }
+        : {};
     return (
         <>
             {m.contextLength ? (
-                <span class={tips ? "tt vram-ctx" : "vram-ctx"}>{fmtCtx(m.contextLength)}
+                <span class={tips ? "tt vram-ctx" : "vram-ctx"} {...yieldTip}>{fmtCtx(m.contextLength)}
                     {tips ? <span class="tt-pop left" role="tooltip">Loaded with a {m.contextLength.toLocaleString()}-token context window. Ollama preallocates the KV cache for the FULL window, even when your prompts are short. Load with a smaller <code>num_ctx</code> to reclaim it.</span> : null}
                 </span>
             ) : null}
             {ttl ? (
-                <span class={tips ? "tt vram-ttl" : "vram-ttl"}>{ttl}
+                <span class={tips ? "tt vram-ttl" : "vram-ttl"} {...yieldTip}>{ttl}
                     {tips ? <span class="tt-pop left" role="tooltip">Keep-alive TTL — Ollama evicts this model from {m.vramBytes ? "VRAM" : "memory"} when the countdown reaches zero (expires {new Date(m.expiresAt!).toLocaleTimeString()}). Each use resets it. Set <code>keep_alive</code> to change how long it lingers.</span> : null}
                 </span>
             ) : null}
@@ -265,6 +271,10 @@ export const poolHover = signal<{ name: string; ceiling: number; used: number; c
 
 /** Pointer position for the model-row tip, in viewport coords (the row is not inside the plot). */
 export const rowTipAt = signal<{ x: number; y: number } | null>(null);
+/** True while the pointer is over a badge inside the row that has its OWN tooltip (the context window, the
+ *  keep-alive TTL). Two tooltips for one pointer is never right — the specific one wins, and the row's
+ *  follower steps aside rather than overlapping it. */
+export const rowTipSuppressed = signal(false);
 
 /** The model a chart band is being hovered on, so the band and its legend row highlight together. Module-level
  *  because the chart and the rows are different components either side of the panel. */
@@ -365,12 +375,16 @@ function TrackEditor({ sample }: { sample: ResourceSample }) {
  *  system RAM, and that last one is why a "GPU" model can still be slow. */
 function RowTip({ sample }: { sample: ResourceSample | null }) {
     const name = hoverModel.value, at = rowTipAt.value;
-    if (!name || !at || !sample) return null;
+    if (!name || !at || !sample || rowTipSuppressed.value) return null;
     const m = sample.models.find((x) => x.model === name);
     if (!m) return null;
     const where = placementOf(m, sample.capacity, formatBytes);
     return (
-        <div class="vram-rowtip" role="tooltip" style={{ left: `${at.x + 12}px`, top: `${at.y + 14}px` }}>
+        // The SAME snapping every other cursor-following tip uses — this one had none, so it ran off the
+        // window's right edge. Bounds are the viewport here (the row sits outside the plot, so the tip is
+        // position: fixed).
+        <div class="vram-rowtip rc-tip" role="tooltip"
+            style={tipStyle({ x: at.x, y: at.y, w: typeof window !== "undefined" ? window.innerWidth : 1e4 })}>
             <div class="vram-rowtip-name"><i class="rc-tip-dot" style={{ background: colorFor(name) }} />{name}</div>
             {where ? <div class={isSplit(m) ? "vram-rowtip-split" : ""}>{isSplit(m) ? "split: " : "on "}{where}</div> : null}
             <div class="vram-rowtip-dim">{formatBytes((m.vramBytes || 0) + (m.ramBytes || 0))} resident</div>
@@ -412,6 +426,21 @@ export function VramPanel() {
         chrome.runtime.sendMessage({ type: "OLLAMA_UNLOAD", payload: model ? { model } : {} }, () => pollPs());
 
     if (err) return <div class="vram"><div class="vram-empty">VRAM unavailable — no Ollama backend.</div></div>;
+    // Drag the panel's bottom edge to trade height with the session list below it. Which one you want more of
+    // depends on what you are doing, so it is a drag rather than a setting, and it is remembered.
+    const onGrab = (e: PointerEvent) => {
+        e.preventDefault();
+        const el = (e.currentTarget as HTMLElement).parentElement as HTMLElement;
+        const startY = e.clientY, startH = el.getBoundingClientRect().height;
+        const move = (ev: PointerEvent) => { vramH.value = Math.max(80, startH + (ev.clientY - startY)); };
+        const up = () => {
+            window.removeEventListener("pointermove", move);
+            window.removeEventListener("pointerup", up);
+            try { chrome.storage.local.set({ [VRAMH_KEY]: vramH.value }); } catch { /* opaque origin */ }
+        };
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", up);
+    };
 
     // Total is the CURRENT visible resident set — read it straight from `loaded`,
     // not the sparkline history (which lags a render and resets to 0 on reopen).
@@ -427,7 +456,7 @@ export function VramPanel() {
         ? series.map((v, i) => `${((i / (series.length - 1)) * W).toFixed(1)},${(H - (v / yMax) * H).toFixed(1)}`).join(" ")
         : "";
     return (
-        <div class="vram">
+        <div class="vram" style={vramH.value ? { height: `${vramH.value}px` } : undefined}>
             <div class="vram-head">
                 <span class="vram-total">{formatBytes(total)} in use</span>
                 <span class="sp" />
@@ -474,7 +503,7 @@ export function VramPanel() {
                         <div class={`vram-row${off ? " off" : ""}${hoverModel.value === m.model ? " hot" : ""}${poolHover.value && !poolHover.value.consumers.some((c) => c.label === m.model) ? " away" : ""}`} key={m.model}
                             onPointerEnter={() => (hoverModel.value = m.model)}
                             onPointerMove={(e: PointerEvent) => (rowTipAt.value = { x: e.clientX, y: e.clientY })}
-                            onPointerLeave={() => { hoverModel.value = null; rowTipAt.value = null; }}>
+                            onPointerLeave={() => { hoverModel.value = null; rowTipAt.value = null; rowTipSuppressed.value = false; }}>
                             <button class="vram-dot" style={{ background: off ? "var(--fg-faint)" : colorFor(m.model) }}
                                 title={off ? "Show in totals" : "Hide from totals"} onClick={() => toggleHidden(m.model)} />
                             <span class="vram-name">{m.model}</span>
@@ -486,6 +515,8 @@ export function VramPanel() {
                     );
                 })
                 : <div class="vram-empty">Nothing loaded.</div>}
+        <div class="vram-grip" role="separator" aria-label="Drag to resize the resource panel"
+                title="Drag to resize" onPointerDown={onGrab} />
         </div>
     );
 }

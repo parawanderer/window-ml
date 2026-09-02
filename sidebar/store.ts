@@ -18,6 +18,9 @@ export const OUTTS_KEY = "ml_debug_outts";                 // show per-line time
 export const OUTMAX_KEY = "ml_debug_outmax";               // max height (px) of a tool OUTPUT cell before it scrolls
 // How much history the resource chart DRAWS, in seconds. Kept separate from how much is retained: 30 minutes
 // squeezed into ~300px is a smear, so the window is short by default and the samples behind it stay in memory.
+// How tall the VRAM/resource panel is. It sits above the session list and competes with it for height, so
+// which one you want more of depends on what you are doing — hence draggable, and remembered.
+export const VRAMH_KEY = "ml_vram_h";
 export const RESWIN_KEY = "ml_res_window";
 export const RESWIN_DEFAULT = 300;                         // 5 minutes — readable at this width
 
@@ -87,6 +90,7 @@ export const showStatsTokens = signal(true);   // DevTools run-stats bar: cumula
 export const showStatsTps = signal(false);     // DevTools run-stats bar: generation tok/s (default off)
 export const OUTMAX_DEFAULT = 260;             // px — roughly 14 lines; enough to read, small enough not to bury the page
 export const showOutTimes = signal(true);      // render the timestamp gutter on streamed output (default on)
+export const vramH = signal(0);   // px; 0 = size to content (the default)
 export const resWindowS = signal(RESWIN_DEFAULT);  // seconds of history the resource chart shows (Settings → Appearance)
 export const outMaxH = signal(OUTMAX_DEFAULT); // max height of a tool output cell (Settings → Appearance); 0 = uncapped
 export const config = signal<MlConfig>(DEFAULT_CONFIG);   // live mirror of chrome.storage.sync

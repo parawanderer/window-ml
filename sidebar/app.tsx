@@ -9,9 +9,9 @@ import { useState, useEffect, useRef } from "preact/hooks";
 import type { MlDebugEvent, MlConfig, ElementContext } from "../contract";
 import { DEFAULT_CONFIG } from "../contract";
 import {
-    FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_DEFAULT,
+    FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_DEFAULT, VRAMH_KEY,
     sessionMap, rev, view, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes, config,
-    vramOpen, sidebarOpen, backendError, surface, atBottom, resWindowS } from "./store";
+    vramOpen, sidebarOpen, backendError, surface, atBottom, resWindowS, vramH } from "./store";
 import { ContextMenu, Hash, highlightPos } from "./ui-kit";
 import { onDebug, maybeGenerateTitles, titleTried } from "./debug-reducer";
 import { OptionsBlock, MessageTurn, ProfileBadge, SessionRow, AgentBadge } from "./reply";
@@ -295,12 +295,13 @@ function mount(): void {
     initThemeStyle();
     const root = document.getElementById("root") || document.body;
     chrome.storage.sync.get(DEFAULT_CONFIG, (cfg: any) => { config.value = cfg as MlConfig; applyTheme(); });
-    chrome.storage.local.get({ [FONT_KEY]: 1, [WRAP_KEY]: true, [LINES_KEY]: false, [STATS_TOKENS_KEY]: true, [STATS_TPS_KEY]: false, [OUTMAX_KEY]: OUTMAX_DEFAULT, [OUTTS_KEY]: true, [RESWIN_KEY]: RESWIN_DEFAULT }, (d: any) => {
+    chrome.storage.local.get({ [FONT_KEY]: 1, [WRAP_KEY]: true, [LINES_KEY]: false, [STATS_TOKENS_KEY]: true, [STATS_TPS_KEY]: false, [OUTMAX_KEY]: OUTMAX_DEFAULT, [OUTTS_KEY]: true, [RESWIN_KEY]: RESWIN_DEFAULT, [VRAMH_KEY]: 0 }, (d: any) => {
         if (d[FONT_KEY]) fontScale.value = d[FONT_KEY]; applyFont();
         codeWrap.value = d[WRAP_KEY] !== false; codeLineNumbers.value = !!d[LINES_KEY]; applyCodePrefs();
         showStatsTokens.value = d[STATS_TOKENS_KEY] !== false; showStatsTps.value = !!d[STATS_TPS_KEY];
         if (typeof d[OUTMAX_KEY] === "number") outMaxH.value = d[OUTMAX_KEY];
         if (typeof d[RESWIN_KEY] === "number") resWindowS.value = d[RESWIN_KEY];
+        if (typeof d[VRAMH_KEY] === "number") vramH.value = d[VRAMH_KEY];
         showOutTimes.value = d[OUTTS_KEY] !== false;
     });
     applyTheme();
