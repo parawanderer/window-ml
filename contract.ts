@@ -415,6 +415,65 @@ export interface TokenUsage {
     promptTokens: number;
     completionTokens: number;
     totalTokens: number;
+    /** Wall-clock ms of THIS model call, measured at the source (around the fetch). ALWAYS available; it
+     *  includes the call's own network/queue latency (TTFT) — the honest "time spent waiting on the model". */
+    genMs?: number;
+    /** Ollama-native `eval_duration` (generation-only, ns → ms) when the native route reports it. PREFERRED
+     *  over `genMs` for a tok/s rate (it excludes network/queue); absent for cloud / OpenWebUI-OpenAI. */
+    evalMs?: number;
+}
+
+/** Whole-run token accounting, cumulative across every model call — the numbers API consumers care about
+ *  (spend) plus a generation rate. Computed by {@link runStats} and shared by the DevTools bottom bar, the
+ *  chat_metadata tool, and the exports so all three agree. */
+export interface RunStats {
+    inTokens: number;      // cumulative prompt-token SPEND: Σ promptTokens (billed every call — a real sum, unlike live occupancy)
+    outTokens: number;     // cumulative completion tokens (all generated output, incl. thinking)
+    totalTokens: number;   // in + out
+    calls: number;         // model calls that reported usage
+    tokPerSec: number | null;   // outTokens ÷ Σ per-call generation seconds; null when no timing was captured
+    genBasis: "eval" | "wall" | "mixed" | null;   // eval = Ollama generation-only; wall = includes network/queue; mixed = some of each
+}
+
+/** Fold per-call usage samples into a whole-run summary. Cumulative in/out are SUMS (each call is billed the
+ *  full prompt it re-sends). The tok/s denominator prefers Ollama's `evalMs` (generation-only) per call and
+ *  falls back to the wall-clock `genMs` (which includes that call's network/queue) — `genBasis` records which,
+ *  so a surface can be honest about what the rate measures. Pure; null/empty samples are skipped. */
+export function runStats(usages: readonly (TokenUsage | null | undefined)[]): RunStats {
+    let inTokens = 0, outTokens = 0, totalTokens = 0, calls = 0;
+    let ratedOut = 0, genMs = 0, evalCount = 0, wallCount = 0;   // rate basis: only calls that carried timing
+    for (const u of usages) {
+        if (!u) continue;
+        calls++;
+        inTokens += u.promptTokens || 0;
+        outTokens += u.completionTokens || 0;
+        totalTokens += u.totalTokens || ((u.promptTokens || 0) + (u.completionTokens || 0));
+        const ms = u.evalMs ?? u.genMs;   // prefer generation-only (Ollama); else wall-clock (incl. network)
+        if (ms != null && ms > 0) {
+            genMs += ms; ratedOut += u.completionTokens || 0;
+            if (u.evalMs != null) evalCount++; else wallCount++;
+        }
+    }
+    const tokPerSec = genMs > 0 ? ratedOut / (genMs / 1000) : null;
+    const genBasis = (evalCount || wallCount) ? (evalCount && wallCount ? "mixed" : evalCount ? "eval" : "wall") : null;
+    return { inTokens, outTokens, totalTokens, calls, tokPerSec, genBasis };
+}
+
+/** The tok/s rate as a short display string ("42 tok/s" / "6.3 tok/s"), or null when no timing was captured. */
+export function fmtTokPerSec(s: RunStats): string | null {
+    if (s.tokPerSec == null) return null;
+    return `${s.tokPerSec >= 100 ? Math.round(s.tokPerSec) : s.tokPerSec.toFixed(1)} tok/s`;
+}
+
+/** A one-line PROVENANCE explanation for the tok/s figure — what the denominator actually measured — for a
+ *  hover tooltip, so the rate is never presented as more precise than it is. */
+export function runStatsProvenance(s: RunStats): string {
+    const basis = s.genBasis === "eval" ? "Ollama generation time (eval_duration — excludes network/queue)"
+        : s.genBasis === "wall" ? "wall-clock per model call (includes network + queue latency)"
+        : s.genBasis === "mixed" ? "Ollama generation time where reported, else wall-clock (includes network)"
+        : "no per-call timing was available";
+    const rate = s.tokPerSec == null ? `rate unavailable — ${basis}` : `${s.outTokens} generated tokens ÷ ${basis}`;
+    return `${rate}. Cumulative spend: ${s.inTokens} in + ${s.outTokens} out across ${s.calls} model call${s.calls === 1 ? "" : "s"}.`;
 }
 
 export interface LlmResult {

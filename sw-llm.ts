@@ -59,8 +59,18 @@ export const normalizeUsage = (u: any): TokenUsage | null => {
     const c = n(u.completion_tokens) ?? n(u.output_tokens) ?? n(u.eval_count);
     if (p == null && c == null) return null;   // no counts at all → report nothing, never a fake 0
     const promptTokens = p ?? 0, completionTokens = c ?? 0;
-    return { promptTokens, completionTokens, totalTokens: n(u.total_tokens) ?? promptTokens + completionTokens };
+    // Ollama-native generation time (`eval_duration`, nanoseconds) — the generation-only rate basis, when present.
+    const evalNs = n(u.eval_duration);
+    const out: TokenUsage = { promptTokens, completionTokens, totalTokens: n(u.total_tokens) ?? promptTokens + completionTokens };
+    if (evalNs != null && evalNs > 0) out.evalMs = evalNs / 1e6;
+    return out;
 };
+
+// Stamp the measured wall-clock of a model call onto its usage (source-side timing the server doesn't report),
+// so a run's tok/s can divide by "time spent waiting on the model" (excluding our tool runs, which happen
+// between calls). No usage (server reported no counts) → nothing to stamp. Never mutates the input.
+const withGenMs = (usage: TokenUsage | null, genMs: number): TokenUsage | null =>
+    usage ? { ...usage, genMs } : usage;
 
 // OpenAI serves tool-call arguments as a JSON string; Ollama as an object.
 // Normalize to a parsed object, falling back to the raw value on bad JSON.
@@ -520,6 +530,7 @@ const HANDBACK_ERROR =
 
 export async function fetchLLM(payload: FetchLlmPayload, signal?: AbortSignal): Promise<LlmResult | { content: string | null; tool_calls: ToolCall[]; usage: TokenUsage | null }> {
     const { config, format, body, send, model } = await prepareRequest(payload, signal);
+    const _t0 = Date.now();   // wall-clock of this model call → usage.genMs (for the run's tok/s)
 
     let data: any;
     if (payload.toolIds?.length && !payload.raw) {
@@ -547,7 +558,7 @@ export async function fetchLLM(payload: FetchLlmPayload, signal?: AbortSignal): 
             // The model's separate thinking channel (reasoning_content / message.thinking). The agent
             // loop surfaces it as a collapsible "think" section, distinct from `content` (its prose).
             reasoning: format.extractReasoning(data) || null,
-            usage: normalizeUsage(data.usage || data),
+            usage: withGenMs(normalizeUsage(data.usage || data), Date.now() - _t0),
         };
     }
 
@@ -560,7 +571,7 @@ export async function fetchLLM(payload: FetchLlmPayload, signal?: AbortSignal): 
         // no-match and a chat gets an empty string, rather than crashing the run. Only a
         // MISSING container is a real format/endpoint mismatch (e.g. a wrong route's SPA HTML).
         if (format.hasContainer(data)) {
-            return { content: "", sources: [], model, reasoning: format.extractReasoning(data) || null, usage: normalizeUsage(data.usage || data) };
+            return { content: "", sources: [], model, reasoning: format.extractReasoning(data) || null, usage: withGenMs(normalizeUsage(data.usage || data), Date.now() - _t0) };
         }
         throw new Error(
             `Response did not match the "${config.apiFormat}" format ` +
@@ -573,7 +584,7 @@ export async function fetchLLM(payload: FetchLlmPayload, signal?: AbortSignal): 
     // sources: server-side tool / RAG provenance (OpenWebUI attaches it top-level
     // when a tool runs). Absent on plain chats and the Ollama-native format.
     // usage: OpenWebUI nests it under `usage`; Ollama-native puts counts at the root.
-    return { content, sources: Array.isArray(data.sources) ? data.sources : [], model, reasoning: format.extractReasoning(data) || null, usage: normalizeUsage(data.usage || data) };
+    return { content, sources: Array.isArray(data.sources) ? data.sources : [], model, reasoning: format.extractReasoning(data) || null, usage: withGenMs(normalizeUsage(data.usage || data), Date.now() - _t0) };
 }
 
 // Streaming variant of fetchLLM: reads the SSE/NDJSON response and calls
@@ -583,6 +594,7 @@ export async function fetchLLM(payload: FetchLlmPayload, signal?: AbortSignal): 
 // emitted to the caller before we retry the next mode).
 export async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: string) => void, signal?: AbortSignal): Promise<{ content: string; sources: unknown[]; model: string; reasoning: string | null; usage: TokenUsage | null }> {
     const { format, body, send, model } = await prepareRequest(payload, signal);
+    const _t0 = Date.now();   // wall-clock of this streamed call → usage.genMs
 
     const consume = async (res: Response) => {
         const reader = res.body!.getReader();
@@ -619,13 +631,13 @@ export async function streamLLM(payload: FetchLlmPayload, onDelta: (delta: strin
         for (const mode of SERVER_TOOL_MODES) {
             body.params = { ...body.params, function_calling: mode };
             const { content, sawToolCall, sources, reasoning, usage } = await consume(await send(body, true));
-            if (content.trim() || !sawToolCall) return { content, sources, model, reasoning, usage };   // real answer, or a plain empty completion
+            if (content.trim() || !sawToolCall) return { content, sources, model, reasoning, usage: withGenMs(usage, Date.now() - _t0) };   // real answer, or a plain empty completion
         }
         throw new Error(HANDBACK_ERROR);
     }
 
     const { content, sources, reasoning, usage } = await consume(await send(body, true));
-    return { content, sources, model, reasoning, usage };
+    return { content, sources, model, reasoning, usage: withGenMs(usage, Date.now() - _t0) };
 }
 
 /** Streaming variant for the AGENT loop (opt-in `stream:true`). Unlike streamLLM (text-only), it ACCUMULATES
@@ -638,6 +650,7 @@ export async function streamAgentTurn(
     signal?: AbortSignal,
 ): Promise<{ content: string | null; tool_calls: ToolCall[]; reasoning: string | null; usage: TokenUsage | null }> {
     const { format, body, send } = await prepareRequest(payload, signal);
+    const _t0 = Date.now();   // wall-clock of this streamed agent-turn call → usage.genMs
     let content = "", reasoning = "";
     // OpenAI streams tool_calls as FRAGMENTS keyed by `index` (id + name + arguments-string pieces); Ollama
     // sends them WHOLE in a chunk. Accumulate both, then normalize via the format's own extractToolCalls.
@@ -686,7 +699,7 @@ export async function streamAgentTurn(
         const arr = [...byIndex.entries()].sort((a, b) => a[0] - b[0]).map(([, v]) => ({ id: v.id, type: "function", function: { name: v.name, arguments: v.args } }));
         tool_calls = format.extractToolCalls({ choices: [{ message: { tool_calls: arr } }] } as any);
     }
-    return { content: content || null, tool_calls, reasoning: reasoning || null, usage };
+    return { content: content || null, tool_calls, reasoning: reasoning || null, usage: withGenMs(usage, Date.now() - _t0) };
 }
 
 function authHeaders(config: MlConfig): Record<string, string> {

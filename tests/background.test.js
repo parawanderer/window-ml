@@ -179,7 +179,11 @@ test("FETCH_LLM surfaces token usage — OpenWebUI `usage` block and Ollama-nati
         onFetch: () => jsonResponse({ choices: [{ message: { content: "42" } }], usage: { prompt_tokens: 18, completion_tokens: 70, total_tokens: 88 } })
     });
     const rO = await bgO.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "q" }] } });
-    assert.deepEqual(rO.usage, { promptTokens: 18, completionTokens: 70, totalTokens: 88 });
+    // usage now also carries genMs (the call's wall-clock, stamped source-side for the run's tok/s) — check
+    // the token counts by subset and that the timing field is present.
+    const { genMs: gmO, ...tokO } = rO.usage;
+    assert.deepEqual(tokO, { promptTokens: 18, completionTokens: 70, totalTokens: 88 });
+    assert.equal(typeof gmO, "number", "the call's wall-clock (genMs) is stamped onto usage");
 
     // Ollama-native puts prompt_eval_count/eval_count at the response root (no total).
     const bgL = loadBackground({
@@ -187,7 +191,9 @@ test("FETCH_LLM surfaces token usage — OpenWebUI `usage` block and Ollama-nati
         onFetch: () => jsonResponse({ message: { content: "42" }, prompt_eval_count: 20, eval_count: 5 })
     });
     const rL = await bgL.send({ type: "FETCH_LLM", payload: { messages: [{ role: "user", content: "q" }] } });
-    assert.deepEqual(rL.usage, { promptTokens: 20, completionTokens: 5, totalTokens: 25 }, "total derived when absent");
+    const { genMs: gmL, ...tokL } = rL.usage;
+    assert.deepEqual(tokL, { promptTokens: 20, completionTokens: 5, totalTokens: 25 }, "total derived when absent");
+    assert.equal(typeof gmL, "number", "genMs stamped on the Ollama-native path too");
 });
 
 test("FETCH_LLM raw returns reasoning_content (the agent path) — a tool-call turn with empty content", async () => {

@@ -12,7 +12,8 @@
 // No chrome, no DOM → builds standalone (dist/agent-loop.js) and is unit-tested against a mocked
 // model / executor / gate in tests/agent-loop.test.js.
 
-import type { AgentResult, AgentTranscriptEntry, ApprovalDecision, ToolCall, RenderDescriptor, ToolFeedback, SubcallUsage } from "./contract";
+import type { AgentResult, AgentTranscriptEntry, ApprovalDecision, ToolCall, RenderDescriptor, ToolFeedback, SubcallUsage, TokenUsage, RunStats } from "./contract";
+import { runStats, fmtTokPerSec } from "./contract";
 import type { TokenRender } from "./contract";
 import { UNATTENDED_REFUSAL } from "./prompts";
 import { toolToken } from "./util";
@@ -115,6 +116,7 @@ function usageTokens(u: unknown): { prompt: number; completion: number } {
 function formatChatMeta(
     cm: ChatMeta | null,
     stats: { promptLast: number; genTotal: number; calls: number; sub?: SubcallUsage },
+    rs: RunStats,
     messages: unknown[],
     tools: ToolMeta[],
 ): string {
@@ -141,6 +143,10 @@ function formatChatMeta(
         L.push(`fixed overhead: ~${sys + tl} tokens${share} — system prompt ~${sys}, tool list ~${tl} (estimated)`);
     }
     L.push(`generated this run: ${stats.genTotal} tokens over ${stats.calls} model call${stats.calls === 1 ? "" : "s"} (all output incl. thinking — thinking isn't kept in context)`);
+    // Cumulative SPEND (what an API bill sums) + the generation rate — the same figures the DevTools bar shows.
+    L.push(`cumulative tokens: ${rs.inTokens} in + ${rs.outTokens} out = ${rs.totalTokens} billed across ${rs.calls} call${rs.calls === 1 ? "" : "s"} (input re-sent each turn, so it grows fast)`);
+    const tps = fmtTokPerSec(rs);
+    if (tps) L.push(`generation rate: ${tps} — ${rs.genBasis === "eval" ? "Ollama generation time (excludes network)" : rs.genBasis === "wall" ? "wall-clock per call (includes network/queue)" : "mixed (Ollama timing where available, else wall-clock)"}`);
     if (cm?.vramGB) L.push(`VRAM resident: ~${cm.vramGB.toFixed(1)} GB`);
     // conversation SHAPE — "messages" was ambiguous; split turns / your messages / model replies
     L.push(`conversation so far: ${role("user")} of your messages · ${role("assistant")} model replies${imgs ? ` · ${imgs} carried images` : ""}`);
@@ -220,6 +226,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     // context occupancy), genTotal = completion tokens summed across the run. Accurate on both worlds since
     // the loop is shared. `calls` = model turns so far.
     let promptLast = 0, genTotal = 0, modelCalls = 0;
+    const usages: TokenUsage[] = [];   // every call's usage sample → runStats (cumulative in/out spend + tok/s) for chat_metadata
     const cancelled = (steps: number): Omit<AgentResult, "hash"> => ({ summary: "Cancelled by the caller.", steps, transcript, elements: [], cancelled: true, tokenRenders });
 
     for (let step = 1; step <= maxSteps(); step++) {
@@ -233,7 +240,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         try { msg = await deps.callModel(messages, { tools, step }); }
         catch (e) { if (signal?.aborted) return cancelled(step - 1); throw e; }
         if (signal?.aborted) return cancelled(step - 1);
-        if (msg.usage) { const u = usageTokens(msg.usage); modelCalls++; if (u.prompt) promptLast = u.prompt; genTotal += u.completion; }
+        if (msg.usage) { const u = usageTokens(msg.usage); modelCalls++; if (u.prompt) promptLast = u.prompt; genTotal += u.completion; usages.push(msg.usage as TokenUsage); }
         if (!msg.tool_calls || !msg.tool_calls.length) {
             // Final-answer step: emit its usage (the run's peak context) + any reasoning so the sidebar's
             // gauge/think-section match the page-side loop even on a content-less final turn.
@@ -279,7 +286,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 // and message list, so the numbers are accurate on both the page and background paths with no
                 // extra plumbing. Never gated, never delegated to runTool (it only reads its own run's state).
                 const cm = deps.chatMeta ? await deps.chatMeta() : null;
-                result = formatChatMeta(cm, { promptLast, genTotal, calls: modelCalls, sub: deps.subcallTokens?.() }, messages, tools);
+                result = formatChatMeta(cm, { promptLast, genTotal, calls: modelCalls, sub: deps.subcallTokens?.() }, runStats(usages), messages, tools);
             } else if (meta.requiresApproval) {
                 // Read-only try FIRST: the mediated interpreter can't mutate, so if the call is in its
                 // dialect it's already run safely — auto-approve with its result, no gate, no runTool.
