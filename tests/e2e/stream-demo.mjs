@@ -66,7 +66,10 @@ const main = async () => {
         fake.setScript([
             { tool: "exec", args: { js: EXEC_JS } },
             { tool: "python_exec", args: { code: PY_CODE, mode: "readonly" } },
-            { content: "Both tools streamed their output live." },
+            // A NON-streaming tool, to show the SAME output cell wrapping any tool's plain result — a fetched
+            // page is the case you actually want Ctrl+F for.
+            { tool: "fetch_url", args: { url: site.url + "/" } },
+            { content: "Both code tools streamed live; the fetched page uses the same output cell." },
         ]);
 
         const page = await ext.context.newPage();
@@ -126,7 +129,7 @@ const main = async () => {
                 expanded.add(seq);
             }
         };
-        const answered = async () => (await frame.locator(".msg.asst").filter({ hasText: "streamed their output live" }).count().catch(() => 0)) > 0;
+        const answered = async () => (await frame.locator(".msg.asst").filter({ hasText: "same output cell" }).count().catch(() => 0)) > 0;
         for (let i = 0; i < 700; i++) {
             if (i % 4 === 0) await autoApprove(ext.sw, log);      // gates open rarely — don't pay for it every tick
             await expandNew();

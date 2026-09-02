@@ -28,7 +28,7 @@ import type { AgentTurnGroup } from "./debug-reducer";
 // own (a grey inline preview shows when collapsed). If a descriptor targets THIS
 // block it renders by default with a per-block rendered⇄raw toggle (e.g. exec's
 // In renders pretty JS while its Out stays raw). `raw` is the plain fallback.
-export function IoBlock({ label, tip, preview, render, raw }: { label: string; tip?: string; preview: string; render?: RenderDescriptor; raw: ComponentChildren }) {
+export function IoBlock({ label, tip, preview, render, raw, marks }: { label: string; tip?: string; preview: string; render?: RenderDescriptor; raw: ComponentChildren; marks?: [number, number][] }) {
     const [showRaw, setShowRaw] = useState(false);   // rendered by default when a descriptor targets this block
     return (
         <details class="io" open>
@@ -40,7 +40,7 @@ export function IoBlock({ label, tip, preview, render, raw }: { label: string; t
                             <span class="tt"><button class={showRaw ? "" : "on"} onClick={() => setShowRaw(false)}>rendered</button><span class="tt-pop left" role="tooltip">A debug visualisation for you — not shown to the model.</span></span>
                             <span class="tt"><button class={showRaw ? "on" : ""} onClick={() => setShowRaw(true)}>raw</button><span class="tt-pop left" role="tooltip">Exactly what the model sent/received. All it knows.</span></span>
                         </div>
-                        {showRaw ? <OutputCell>{raw}</OutputCell> : <RenderPanel d={render} />}
+                        {showRaw ? <OutputCell>{raw}</OutputCell> : <RenderPanel d={render} marks={marks} />}
                     </>
                     // The RAW view is every tool's model-facing text — a fetch_url page, a big sampleText dump —
                     // so it gets the same capped/scrollable/findable cell the code tools' output does. (A tool
@@ -262,7 +262,7 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                             preview={inlineJson(args || {})} render={inRender}
                             raw={<RawArgs args={args || {}} schema={paramSchema} />} />
                         : null}
-                    <IoBlock label="Out" tip="What the tool returned to the model."
+                    <IoBlock label="Out" tip="What the tool returned to the model." marks={st.streamMarks}
                         preview={st.pending ? (st.streamOutput ? inlineText(st.streamOutput) : "running…") : inlineText(st.result || "")} render={outRender}
                         raw={st.pending
                             ? (st.streamOutput != null

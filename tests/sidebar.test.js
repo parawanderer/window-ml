@@ -5299,3 +5299,22 @@ test("live output: the doomed tail is marked AS IT STREAMS, at the call's own ra
     const tail = w.shadow.querySelector(".r-unseen");
     assert.ok(tail && tail.textContent.trim().length >= 100, "exactly the text past the RAISED 600-char cap is marked");
 });
+
+// The executor's per-line timestamps must SURVIVE the step settling: the finished Out renders the same
+// captured text the stream produced, so the gutter shouldn't vanish the moment the tool returns.
+test("streamed timestamps survive the DONE and time the settled output", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("tsdone", "run it"));
+    await w.dispatch(agentStep("tsdone", 1, { seq: 1, pending: true, tool: "exec", arguments: { js: "…" } }));
+    await w.dispatch(agentStep("tsdone", 1, { seq: 1, streamOutput: "one\ntwo\n", streamMarks: [[0, 1731000000000], [4, 1731000002000]] }));
+    // The DONE carries the real result + render, and NO marks — they must be kept, not wiped.
+    await w.dispatch(agentStep("tsdone", 1, { seq: 1, tool: "exec", arguments: { js: "…" }, result: "console:\none\ntwo\n\nvalue: 1",
+        renderOut: { type: "exec-out", stdout: "one\ntwo\n", value: "1" } }));
+    await w.dispatch(agentResult("tsdone", "done", 1));
+    await openRun(w);
+    w.shadow.querySelector(".astep.tool .astep-head").click(); await w.tick();
+    const stamps = [...w.shadow.querySelectorAll(".r-ts")].map(e => e.textContent).filter(Boolean);
+    assert.ok(stamps.length >= 2, "the settled output still shows the executor's timestamps");
+    assert.notEqual(stamps[0], stamps[1], "and a later line shows its own (changed) time");
+    assert.match(w.shadow.querySelector(".r-ts[title]").getAttribute("title"), /\d\d:\d\d:\d\d\.\d\d\d/, "hover carries millisecond precision");
+});

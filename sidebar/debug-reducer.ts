@@ -78,7 +78,7 @@ export function onDebug(ev: MlDebugEvent): void {
             if (j >= 0) { s.steps = steps0.map((x, k) => k === j ? { ...x, streamOutput: ev.streamOutput, streamMarks: ev.streamMarks } : x); s.lastTs = ev.ts; rev.value++; }
             return;
         }
-        const step = { step: ev.step, localStep: ev.localStep, seq: ev.seq, pending: ev.pending, awaitingApproval: ev.awaitingApproval, thought: ev.thought, reasoning: ev.reasoning, tool: ev.tool, arguments: ev.arguments, result: ev.result, modelResult: ev.modelResult, token: ev.token, elements: ev.elements, renderIn: ev.renderIn, renderOut: ev.renderOut, feedback: ev.feedback, argIssues: ev.argIssues, approval: ev.approval, usage: ev.usage, subUsage: ev.subUsage, grants: ev.grants, reused: ev.reused };
+        const step = { step: ev.step, localStep: ev.localStep, seq: ev.seq, pending: ev.pending, awaitingApproval: ev.awaitingApproval, thought: ev.thought, reasoning: ev.reasoning, tool: ev.tool, arguments: ev.arguments, result: ev.result, modelResult: ev.modelResult, streamMarks: ev.streamMarks, token: ev.token, elements: ev.elements, renderIn: ev.renderIn, renderOut: ev.renderOut, feedback: ev.feedback, argIssues: ev.argIssues, approval: ev.approval, usage: ev.usage, subUsage: ev.subUsage, grants: ev.grants, reused: ev.reused };
         const steps = s.steps || [];
         // In-flight: a tool step arrives twice — a pending START then the DONE, sharing a `seq`.
         // Patch the existing row in place (immutably) so it fills in; otherwise append. Thoughts
@@ -88,8 +88,12 @@ export function onDebug(ev: MlDebugEvent): void {
         // DONE carries no renderIn/renderOut (the tool never ran → no envelope), which would blank
         // out the In preview the awaiting-approval START already showed. A render only ever appears,
         // never legitimately vanishes, so keep the existing one when the DONE doesn't supply a newer.
+        // Keep the stream MARKS across the DONE (like the render slots): the settled Out renders the SAME
+        // captured text the stream produced — both keep the head under one cap — so the executor's per-line
+        // timestamps stay valid for it. `streamOutput` itself is still superseded by the real result.
         const merged = i >= 0
-            ? { ...step, renderIn: step.renderIn ?? steps[i].renderIn, renderOut: step.renderOut ?? steps[i].renderOut }
+            ? { ...step, renderIn: step.renderIn ?? steps[i].renderIn, renderOut: step.renderOut ?? steps[i].renderOut,
+                streamMarks: step.streamMarks ?? steps[i].streamMarks }
             : step;
         s.steps = i >= 0 ? steps.map((x, k) => k === i ? merged : x) : [...steps, step];
         // A step means the agent is actively working — flip to pending so a follow-up turn on an already-

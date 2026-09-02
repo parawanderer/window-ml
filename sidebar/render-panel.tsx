@@ -226,6 +226,14 @@ export const atBottomOf = (el: { scrollHeight: number; scrollTop: number; client
  *  context budget, but the UI keeps far more (UI_OUT_CAP) — so without this you'd read the surplus as "what the
  *  model saw". Everything past `seen` chars renders dimmed under an explicit label. Shared by python_exec and
  *  exec (and any future tool that reports a `seen` boundary). No boundary → plain output, unchanged. */
+/** Guard against timing text the marks don't describe. The settled Out renders the SAME captured output the
+ *  stream produced (both keep the head under one cap), so offsets carry over — but if a tool ever post-processes
+ *  its output, a stale mark would time the wrong line. Cheap check: drop the marks unless they fit the text. */
+export function alignedMarks(marks: [number, number][] | undefined, text?: string): [number, number][] | undefined {
+    if (!marks?.length || typeof text !== "string") return undefined;
+    return marks[marks.length - 1][0] <= text.length ? marks : undefined;
+}
+
 /** Wall-clock for one streamed line, from the marks the EXECUTOR supplied. Pure so the mapping (a line takes
  *  the time of the last mark at or before its offset) is unit-testable without a DOM. Returns null when no mark
  *  covers the offset — we never invent a time. */
@@ -236,6 +244,12 @@ export function timeForOffset(marks: [number, number][] | undefined, offset: num
     return ts;
 }
 const hhmmss = (ts: number): string => new Date(ts).toTimeString().slice(0, 8);
+// Full precision for the hover — the gutter stays hh:mm:ss (narrow, scannable) but the underlying marks are
+// epoch MILLISECONDS, so the tooltip can show the exact instant and a meaningful gap.
+const hhmmssms = (ts: number): string => `${hhmmss(ts)}.${String(new Date(ts).getMilliseconds()).padStart(3, "0")}`;
+/** Human gap between two marks: sub-second stays in ms (that's the resolution that matters for a fast loop). */
+export const fmtDelta = (ms: number): string =>
+    ms < 1000 ? `${Math.round(ms)}ms` : ms < 60000 ? `${(ms / 1000).toFixed(2)}s` : `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`;
 
 /** Streamed output with a TIMESTAMP GUTTER — when each line was produced, per the executor's marks. The time
  *  is repeated only when it CHANGES, so a burst of lines reads as one moment rather than a wall of identical
@@ -245,14 +259,24 @@ const hhmmss = (ts: number): string => new Date(ts).toTimeString().slice(0, 8);
 export function TimedOutput({ text, marks }: { text: string; marks?: [number, number][] }) {
     if (!showOutTimes.value || !marks || !marks.length) return <Code text={text} lang="text" />;
     const lines = text.split("\n");
-    let off = 0, shown = "";
+    let off = 0, shown = "", prevTs: number | null = null;
     const rows = lines.map((line, i) => {
         const ts = timeForOffset(marks, off);
         off += line.length + 1;
         const label = ts == null ? "" : hhmmss(ts);
-        const repeat = label && label === shown;
+        const repeat = !!label && label === shown;
         if (label) shown = label;
-        return <div class="r-ts-row" key={i}><span class="r-ts" aria-hidden="true">{repeat ? "" : label}</span><span class="r-ts-line">{line}</span></div>;
+        // Hover shows the exact instant (to the millisecond) and the gap since the previous timestamped line —
+        // which is what you actually want when reading a loop's output ("where did the 4 seconds go?").
+        const tip = ts == null ? undefined
+            : `${hhmmssms(ts)}${prevTs != null && ts !== prevTs ? ` · +${fmtDelta(ts - prevTs)} since the previous line` : ""}`;
+        if (ts != null) prevTs = ts;
+        return (
+            <div class="r-ts-row" key={i}>
+                <span class="r-ts" title={tip}>{repeat ? "" : label}</span>
+                <span class="r-ts-line">{line}</span>
+            </div>
+        );
     });
     return <div class="code r-timed">{rows}</div>;
 }
@@ -446,12 +470,12 @@ function PyOutSection({ label, cls, children }: { label: string; cls: string; ch
 }
 // `python_exec`'s Out slot: captured stdout, then one of a returned image / a minted
 // @pt·@box token / the raw value / a Python traceback.
-function PythonOutRender({ d }: { d: Extract<RenderDescriptor, { type: "python-out" }> }) {
+function PythonOutRender({ d, marks }: { d: Extract<RenderDescriptor, { type: "python-out" }>; marks?: [number, number][] }) {
     return (
         <div class="r-python r-py-out">
             {/* Only the captured OUTPUT scrolls (and hosts the find bar) — the returned value/table/image sit
                 below it, always visible, like a notebook cell's result. */}
-            {d.stdout ? <PyOutSection label="stdout" cls="r-py-stdout"><OutputCell><SeenSplit text={d.stdout} seen={d.seen} /></OutputCell></PyOutSection> : null}
+            {d.stdout ? <PyOutSection label="stdout" cls="r-py-stdout"><OutputCell><SeenSplit text={d.stdout} seen={d.seen} marks={alignedMarks(marks, d.stdout)} /></OutputCell></PyOutSection> : null}
             {d.image ? <div class="r-image"><ClickableImg src={d.image} alt="output image" /><div class="r-image-label">returned image</div></div> : null}
             {d.token ? <PyOutSection label="token" cls="r-py-token"><code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code></PyOutSection> : null}
             {d.error ? <PyOutSection label="error" cls="r-py-err"><Code text={d.error} lang="text" /></PyOutSection> : null}
@@ -466,10 +490,10 @@ function PythonOutRender({ d }: { d: Extract<RenderDescriptor, { type: "python-o
 // `exec`'s Out slot — the JS twin of PythonOutRender, so a JS run reads like the same notebook cell:
 // captured console output, then the returned value (or the thrown error). Reuses PyOutSection so both
 // tools share one look; "console" (not "stdout") because that's what the JS side actually captured.
-function ExecOutRender({ d }: { d: Extract<RenderDescriptor, { type: "exec-out" }> }) {
+function ExecOutRender({ d, marks }: { d: Extract<RenderDescriptor, { type: "exec-out" }>; marks?: [number, number][] }) {
     return (
         <div class="r-python r-py-out">
-            {d.stdout ? <PyOutSection label="console" cls="r-py-stdout"><OutputCell><SeenSplit text={d.stdout} seen={d.seen} /></OutputCell></PyOutSection> : null}
+            {d.stdout ? <PyOutSection label="console" cls="r-py-stdout"><OutputCell><SeenSplit text={d.stdout} seen={d.seen} marks={alignedMarks(marks, d.stdout)} /></OutputCell></PyOutSection> : null}
             {d.token ? <PyOutSection label="token" cls="r-py-token"><code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code></PyOutSection> : null}
             {d.error ? <PyOutSection label="error" cls="r-py-err"><Code text={d.error} lang="text" /></PyOutSection> : null}
             {d.value != null && !d.error ? <PyOutSection label="value" cls="r-py-val"><Code text={d.value} lang="json" /></PyOutSection> : null}
@@ -499,7 +523,7 @@ function LookRender({ d }: { d: Extract<RenderDescriptor, { type: "look" }> }) {
     );
 }
 
-export function RenderPanel({ d }: { d: RenderDescriptor }) {
+export function RenderPanel({ d, marks }: { d: RenderDescriptor; marks?: [number, number][] }) {
     switch (d.type) {
         case "image": {
             // If the label references an @pt/@box (e.g. look's `element "@pt:…"`), hovering the shot
@@ -549,8 +573,8 @@ export function RenderPanel({ d }: { d: RenderDescriptor }) {
             return <Code text={pretty(d)} lang="json" />;
         case "locate": return <LocateRender d={d} />;
         case "python-in": return <PythonInRender d={d} />;
-        case "python-out": return <PythonOutRender d={d} />;
-        case "exec-out": return <ExecOutRender d={d} />;
+        case "python-out": return <PythonOutRender d={d} marks={marks} />;
+        case "exec-out": return <ExecOutRender d={d} marks={marks} />;
         case "look": return <LookRender d={d} />;
         default: return <Code text={pretty(d)} lang="json" />;   // unknown type → dump it
     }

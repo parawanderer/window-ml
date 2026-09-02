@@ -136,3 +136,19 @@ test("timeForOffset: no marks → NO time is invented", async () => {
     assert.equal(timeForOffset([], 5), null);
     assert.equal(timeForOffset([[10, 999]], 0), null, "an offset before the first mark has no time to show");
 });
+
+test("fmtDelta: sub-second gaps stay in ms (the resolution that matters for a fast loop)", async () => {
+    const { fmtDelta } = await import("../sidebar/render-panel.tsx");
+    assert.equal(fmtDelta(240), "240ms");
+    assert.equal(fmtDelta(1204), "1.20s");
+    assert.equal(fmtDelta(65000), "1m 5s");
+});
+
+test("alignedMarks: marks that don't index into the rendered text are DROPPED, never applied", async () => {
+    const { alignedMarks } = await import("../sidebar/render-panel.tsx");
+    const marks = [[0, 1], [40, 2]];
+    assert.deepEqual(alignedMarks(marks, "x".repeat(60)), marks, "the text covers every mark → time it");
+    assert.equal(alignedMarks(marks, "short"), undefined, "text shorter than the last mark → don't time the wrong lines");
+    assert.equal(alignedMarks(undefined, "abc"), undefined);
+    assert.equal(alignedMarks(marks, undefined), undefined);
+});
