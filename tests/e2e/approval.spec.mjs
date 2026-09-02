@@ -13,11 +13,15 @@ import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
 
-let ext, fake, site;
+let ext, fake, site, data;
 
 test.beforeAll(async () => {
     fake = await startFakeLlm({ model: "fake-model" });
     site = await startPageServer({});
+    // A SECOND origin (a different port is a different origin) for the fetch_url tests: an uncredentialed
+    // same-origin GET is auto-approved by design — the page can already fetch its own origin — so a
+    // same-origin URL would never open the gate this spec exists to exercise.
+    data = await startPageServer({});
     ext = await launchExtension();
     await configureExtension(ext.sw, {
         chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model",
@@ -30,6 +34,7 @@ test.afterAll(async () => {
     await ext?.close();
     await fake?.stop();
     await site?.stop();
+    await data?.stop();
 });
 
 // Wait until exactly one gate is pending on the SW-side channel, then return its descriptor.
@@ -120,13 +125,16 @@ test("resolve() on an unknown/stale key is a harmless no-op (returns false)", as
 // each behind the unforgeable approval gate (resolved via __mlApprovals). Proves the whole pipeline —
 // background uncredentialed GET, the consent gate, and the heuristic classification (incl. a raw .ts served
 // as text/plain classified as code by its extension). Deterministic under the fake LLM.
+// The URLs are CROSS-ORIGIN (a second server) because an uncredentialed SAME-ORIGIN GET auto-approves — the
+// page can already fetch its own origin. The last case below asserts exactly that, so the free path is covered
+// rather than silently swallowing the gate this test is about.
 test("fetch_url: reads + classifies raw JSON, CSV, and a mislabelled code file (approved via the channel)", async () => {
     const page = await ext.context.newPage();
     await page.goto(site.url + "/");
     await waitForMl(page);
 
     // Drive one fetch_url call, approve its gate, and return the tool RESULT the model saw on its final turn.
-    async function fetchThroughAgent(url) {
+    async function fetchThroughAgent(url, { gated = true } = {}) {
         const before = fake.calls().length;
         fake.setScript([
             { tool: "fetch_url", args: { url } },
@@ -137,28 +145,39 @@ test("fetch_url: reads + classifies raw JSON, CSV, and a mislabelled code file (
             },
         ]);
         const runPromise = page.evaluate((u) => window.ml.agent(`Fetch ${u} and report it.`, { env: false, approvalRouting: "both" }), url);
-        const gate = await waitForGate(ext.sw);
-        expect(gate.tool).toBe("fetch_url");
-        expect(gate.arguments.url).toBe(url);   // the human sees the exact URL in the gate
-        await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), gate.key);
+        if (gated) {
+            const gate = await waitForGate(ext.sw);
+            expect(gate.tool).toBe("fetch_url");
+            expect(gate.arguments.url).toBe(url);   // the human sees the exact URL in the gate
+            await ext.sw.evaluate((key) => globalThis.__mlApprovals.resolve(key, true), gate.key);
+        }
         await runPromise.catch(() => {});
         await expect.poll(() => fake.calls().length - before, { timeout: 15000 }).toBeGreaterThanOrEqual(2);
         return fake.calls().at(-1).messages.map((m) => (typeof m.content === "string" ? m.content : "")).join("\n");
     }
 
-    const jsonSeen = await fetchThroughAgent(site.url + "/data.json");
+    const jsonSeen = await fetchThroughAgent(data.url + "/data.json");
     expect(jsonSeen).toMatch(/type: json/);
     expect(jsonSeen).toContain("widget");                 // the body reached the model
     expect(jsonSeen).toContain('"tags"');                 // pre-parsed JSON was pretty-printed
 
-    const csvSeen = await fetchThroughAgent(site.url + "/data.csv");
+    const csvSeen = await fetchThroughAgent(data.url + "/data.csv");
     expect(csvSeen).toMatch(/type: csv/);
     expect(csvSeen).toContain("apples,3,1.20");
 
     // A raw .ts served as text/plain — the header can't classify it, so the URL extension resolves it to code.
-    const codeSeen = await fetchThroughAgent(site.url + "/code.ts");
+    const codeSeen = await fetchThroughAgent(data.url + "/code.ts");
     expect(codeSeen).toMatch(/type: code \(typescript\)/);
     expect(codeSeen).toContain("export const answer");
+
+    // The free path: an uncredentialed SAME-ORIGIN GET is auto-approved (the page can already fetch its own
+    // origin), so the model gets the body with NO gate ever opening. This is the rule that made the three
+    // cases above cross-origin — assert it directly rather than letting it silently swallow a missing gate.
+    const sameOrigin = await fetchThroughAgent(site.url + "/data.json", { gated: false });
+    expect(sameOrigin).toMatch(/type: json/);
+    expect(sameOrigin).toContain("widget");
+    expect(await ext.sw.evaluate(() => globalThis.__mlApprovals.list().length))
+        .toBe(0);   // nothing was ever queued for a human
 
     await page.close();
 });
