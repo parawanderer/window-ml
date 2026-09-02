@@ -981,7 +981,7 @@ const citeToolOutput = (toolName, id = "c1") => {
         if (m.type === "GET_CONFIG" || m.type === "MODEL_CAPS") return undefined;
         if (++turn === 1) return { data: toolCall(toolName, { token: true }, id) };
         const tm = (m.payload?.messages || []).find((x) => x.tool_call_id === id);
-        const tid = String(tm?.content || "").match(/@tool:([0-9a-f]{6})/)?.[1] || "000000";
+        const tid = String(tm?.content || "").match(/@tool:([0-9a-f]{7})/)?.[1] || "000000";
         return { data: reply(`The result: ![out](@tool:${tid}:out).`) };
     };
 };
@@ -1036,7 +1036,7 @@ test("toolTokens: opt-in — a token is minted ONLY when the model sets token:tr
     let world = loadPageWorld({ onRuntimeMessage: script() });
     await world.ml.agent("t", { tools: [world.ml.defineTool(tool("wants")), world.ml.defineTool(tool("skip"))], toolTokens: true });
     let msgs = world.runtimeCalls.at(-1).payload.messages;
-    assert.match(msgs.find(m => m.tool_call_id === "c1").content, /@tool:[0-9a-f]{6}:out/, "the opted-in call gets a token");
+    assert.match(msgs.find(m => m.tool_call_id === "c1").content, /@tool:[0-9a-f]{7}:out/, "the opted-in call gets a token");
     assert.doesNotMatch(msgs.find(m => m.tool_call_id === "c2").content, /@tool:/, "a call that didn't ask gets none");
 
     // OFF (default): no token line even on the opted-in call — a normal run is byte-identical.

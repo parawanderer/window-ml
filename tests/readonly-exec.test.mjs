@@ -849,7 +849,7 @@ const runAns = (js, set = new AnswerSet(), doc = world()) =>
 test("ml.answer: add text / @tool token, remove, clear run FREE in the dialect (no approval)", async () => {
     const set = new AnswerSet();
     await runAns(`ml.answer.add("Total: 42")`, set);
-    await runAns(`ml.answer.add("@tool:35bf1f:out")`, set);
+    await runAns(`ml.answer.add("@tool:35bf1f0:out")`, set);
     assert.deepEqual(set.items.map(i => i.kind), ["text", "token"], "text vs @tool: classified");
     assert.equal((await runAns(`ml.answer.length`, set)).value, 2);
     await runAns(`ml.answer.remove(0)`, set);
@@ -914,9 +914,9 @@ test("the owned-mutation guard is INTACT — add/clear on a page object stay Den
 
 test("ml.dereference: the plain read works (that is the point of it being free)", async () => {
     ML_CALLS.length = 0;
-    assert.equal((await run(`return ml.dereference("@tool:a1b2c3")`)).value, "VALUE(@tool:a1b2c3)");
-    assert.equal((await run(`return ml.dereference("@tool:a1b2c3", { pipe: ".rows | head 5" })`)).value, "VALUE(@tool:a1b2c3)");
-    assert.deepEqual(ML_CALLS.at(-1), ["dereference", "@tool:a1b2c3", ".rows | head 5"], "the options object reaches it intact");
+    assert.equal((await run(`return ml.dereference("@tool:a1b2c3f")`)).value, "VALUE(@tool:a1b2c3f)");
+    assert.equal((await run(`return ml.dereference("@tool:a1b2c3f", { pipe: ".rows | head 5" })`)).value, "VALUE(@tool:a1b2c3f)");
+    assert.deepEqual(ML_CALLS.at(-1), ["dereference", "@tool:a1b2c3f", ".rows | head 5"], "the options object reaches it intact");
     // Auto-await means a forgotten await still yields the value, and .then applies inline (the shapes models write).
     assert.equal((await run(`return ml.dereference("@tool:x").then(v => v.length)`)).value, "VALUE(@tool:x)".length);
     const all = (await run(`return Promise.all([ml.dereference("@tool:a"), ml.dereference("@tool:b")])`)).value;

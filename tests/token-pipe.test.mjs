@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert";
 const P = await import("../token-pipe.ts");
 
-const tok = (over = {}) => ({ id: "a1b2c3", tool: "exec", kind: "text", out: "hello", t: 1000, step: 1, ...over });
+const tok = (over = {}) => ({ id: "a1b2c3f", tool: "exec", kind: "text", out: "hello", t: 1000, step: 1, ...over });
 const TABLE = tok({ id: "bbb222", tool: "python_exec", kind: "table", step: 3,
     out: "name  qty\napples  3\npears  5",
     table: { columns: ["name", "qty", "price"], rows: [["apples", 3, 1.2], ["pears", 5, 0.9]] } });
@@ -23,8 +23,8 @@ test("the :in slot reads the call, not the result", () => {
     const v = tok({ in: '{"js":"1+1"}' });
     assert.equal(P.derefPipe(v, "in", ""), '{"js":"1+1"}');
     assert.equal(P.derefPipe(v, "out", ""), "hello");
-    assert.equal(P.TokenStore.slotOf("@tool:a1b2c3:in"), "in");
-    assert.equal(P.TokenStore.slotOf("@tool:a1b2c3"), "out", "out is the default");
+    assert.equal(P.TokenStore.slotOf("@tool:a1b2c3f:in"), "in");
+    assert.equal(P.TokenStore.slotOf("@tool:a1b2c3f"), "out", "out is the default");
 });
 
 test("describeToken names what is at the pointer, for every kind", () => {
@@ -75,41 +75,41 @@ test("a failing stage throws an actionable message — the dialect's contract, a
 
 test("TokenStore resolves a hex id, an @tool: reference, and a tool-name alias", () => {
     const s = new P.TokenStore();
-    s.note(tok({ id: "aaa111", tool: "exec", out: "first", step: 1 }));
+    s.note(tok({ id: "aaa1115", tool: "exec", out: "first", step: 1 }));
     s.note(tok({ id: "bbb222", tool: "python_exec", out: "older py", step: 2 }));
     s.note(tok({ id: "ccc333", tool: "python_exec", out: "newer py", step: 3 }));
 
-    assert.equal(s.get("aaa111").out, "first");
-    assert.equal(s.get("@tool:aaa111").out, "first", "the model writes the @tool: form it was shown");
-    assert.equal(s.get("@tool:aaa111:out").out, "first", "a slot suffix doesn't break resolution");
-    assert.equal(s.get("  aaa111 ").out, "first", "whitespace is forgiven");
+    assert.equal(s.get("aaa1115").out, "first");
+    assert.equal(s.get("@tool:aaa1115").out, "first", "the model writes the @tool: form it was shown");
+    assert.equal(s.get("@tool:aaa1115:out").out, "first", "a slot suffix doesn't break resolution");
+    assert.equal(s.get("  aaa1115 ").out, "first", "whitespace is forgiven");
     assert.equal(s.get("python_exec").out, "newer py", "a tool-name alias means the LATEST call of that tool");
     assert.equal(s.get("nope"), null, "an unresolvable reference is null, not a wrong guess");
-    assert.deepEqual(s.all().map((v) => v.id), ["aaa111", "bbb222", "ccc333"], "oldest first");
+    assert.deepEqual(s.all().map((v) => v.id), ["aaa1115", "bbb222", "ccc333"], "oldest first");
 });
 
 // Models hallucinate token-SHAPED ids — six plausible hex characters that were never minted — so a bare
 // "no such pointer" just invites another guess.
 test("nearest() names the closest real pointers for a hallucinated id", () => {
     const s = new P.TokenStore();
-    s.note(tok({ id: "a1b2c3", tool: "exec", step: 1 }));
-    s.note(tok({ id: "d4e5f6", tool: "python_exec", step: 2 }));
-    s.note(tok({ id: "9a8b7c", tool: "fetch_url", step: 3 }));
+    s.note(tok({ id: "a1b2c3f", tool: "exec", step: 1 }));
+    s.note(tok({ id: "d4e5f6b", tool: "python_exec", step: 2 }));
+    s.note(tok({ id: "9a8b7c7", tool: "fetch_url", step: 3 }));
 
     // One character off — the intended pointer must rank first.
-    assert.equal(s.nearest("a1b2c9")[0].id, "a1b2c3");
-    assert.equal(s.nearest("@tool:a1b2c9:out")[0].id, "a1b2c3", "the @tool: form and slot are normalised away");
+    assert.equal(s.nearest("a1b2c9f")[0].id, "a1b2c3f");
+    assert.equal(s.nearest("@tool:a1b2c9f:out")[0].id, "a1b2c3f", "the @tool: form and slot are normalised away");
     // Half-remembered by TOOL rather than id.
-    assert.equal(s.nearest("python")[0].id, "d4e5f6", "a near-miss on the tool name steers to that tool's output");
-    assert.equal(s.nearest("fetchurl")[0].id, "9a8b7c");
+    assert.equal(s.nearest("python")[0].id, "d4e5f6b", "a near-miss on the tool name steers to that tool's output");
+    assert.equal(s.nearest("fetchurl")[0].id, "9a8b7c7");
     assert.equal(s.nearest("zzzzzz").length, 3, "always offers candidates rather than a dead end");
     assert.equal(s.nearest("zzzzzz", 1).length, 1, "…capped by the limit");
-    assert.deepEqual(new P.TokenStore().nearest("a1b2c3"), [], "nothing captured → nothing to suggest");
+    assert.deepEqual(new P.TokenStore().nearest("a1b2c3f"), [], "nothing captured → nothing to suggest");
 });
 
 test("editDistance underpins the ranking", () => {
     assert.equal(P.editDistance("abc", "abc"), 0);
-    assert.equal(P.editDistance("a1b2c3", "a1b2c9"), 1);
+    assert.equal(P.editDistance("a1b2c3f", "a1b2c9f"), 1);
     assert.equal(P.editDistance("", "abc"), 3);
 });
 
@@ -117,15 +117,15 @@ test("editDistance underpins the ranking", () => {
 // fault because that is exactly what happened, and it is a concept the model already understands precisely.
 test("memoryFault: names the fault, ranks the candidates, and says it is recoverable", () => {
     const s = new P.TokenStore();
-    s.note(tok({ id: "af21d0", tool: "python_exec", step: 2 }));
-    s.note(tok({ id: "bf21d0", tool: "exec", step: 1 }));
-    const msg = P.memoryFault("@tool:af21e0", s.nearest("af21e0"), 4);
+    s.note(tok({ id: "af21d0d", tool: "python_exec", step: 2 }));
+    s.note(tok({ id: "bf21d0e", tool: "exec", step: 1 }));
+    const msg = P.memoryFault("@tool:af21e0d", s.nearest("af21e0d"), 4);
 
-    assert.match(msg, /^MemoryFault: pointer '@tool:af21e0' does not exist\./, "the fault names the bad address");
+    assert.match(msg, /^MemoryFault: pointer '@tool:af21e0d' does not exist\./, "the fault names the bad address");
     assert.match(msg, /Nearest valid pointers:/);
     // Distance from the CURRENT step, which is the actionable half ("2 steps back" beats "step 2").
-    assert.match(msg, /- @tool:af21d0 \(2 steps back: python_exec\)\s+\[edit_dist=1\]/);
-    assert.match(msg, /- @tool:bf21d0 \(3 steps back: exec\)\s+\[edit_dist=2\]/);
+    assert.match(msg, /- @tool:af21d0d \(2 steps back: python_exec\)\s+\[edit_dist=1\]/);
+    assert.match(msg, /- @tool:bf21d0e \(3 steps back: exec\)\s+\[edit_dist=3\]/);
     // The candidate columns line up, so the list is scannable rather than ragged.
     const cols = msg.split("\n").filter((l) => l.includes("edit_dist")).map((l) => l.indexOf("[edit_dist"));
     assert.equal(new Set(cols).size, 1, "the edit_dist column is aligned across candidates");
@@ -136,17 +136,17 @@ test("memoryFault: names the fault, ranks the candidates, and says it is recover
 
 test("memoryFault: distinguishes a typo from an invented id", () => {
     const s = new P.TokenStore();
-    s.note(tok({ id: "af21d0", tool: "python_exec", step: 2 }));
+    s.note(tok({ id: "af21d0d", tool: "python_exec", step: 2 }));
     // One character out — a typo. Don't tell the model it invented it.
-    assert.doesNotMatch(P.memoryFault("af21e0", s.nearest("af21e0"), 3), /inventing the id/);
+    assert.doesNotMatch(P.memoryFault("af21e06", s.nearest("af21e06"), 3), /inventing the id/);
     // Nothing remotely like it — say so, because a fabricated pointer needs a different fix than a typo.
     assert.match(P.memoryFault("zzzzzz", s.nearest("zzzzzz"), 3), /None of these is close/);
     assert.match(P.memoryFault("zzzzzz", s.nearest("zzzzzz"), 3), /earlier turn or inventing the id/);
 });
 
 test("memoryFault: an empty run says there is nothing to point at yet", () => {
-    const msg = P.memoryFault("@tool:abc123", new P.TokenStore().nearest("abc123"), 1);
-    assert.match(msg, /^MemoryFault: pointer '@tool:abc123' does not exist\./);
+    const msg = P.memoryFault("@tool:abc1231", new P.TokenStore().nearest("abc1231"), 1);
+    assert.match(msg, /^MemoryFault: pointer '@tool:abc1231' does not exist\./);
     assert.match(msg, /Nothing has been captured in this run yet/);
     assert.match(msg, /Run a tool first/);
     assert.doesNotMatch(msg, /Nearest valid pointers/, "no empty candidate list");
@@ -189,11 +189,11 @@ test("ml.dereference is LIVE inside a tool call and gone outside it", async () =
     let sawInside = null;
     const tool = fakeTool(async () => {
         const fn = currentDeref();
-        sawInside = fn ? await fn("@tool:abc123", "head 2") : null;
+        sawInside = fn ? await fn("@tool:abc1231", "head 2") : null;
         return "done";
     });
     await executeTool(tool, {}, ctx);
-    assert.equal(sawInside, "read @tool:abc123 | head 2", "bound to THIS run's resolver while the tool ran");
+    assert.equal(sawInside, "read @tool:abc1231 | head 2", "bound to THIS run's resolver while the tool ran");
     assert.equal(currentDeref(), null, "and unbound again the moment the call returns");
 });
 
@@ -313,12 +313,12 @@ test("labels: cleaned, capped, and shown BESIDE the derived description (never i
 
 test("labels: nearest() finds a pointer by the NAME the model gave it", () => {
     const s = new P.TokenStore();
-    s.note(tok({ id: "a1b2c3", tool: "python_exec", step: 1, label: "the pricing table" }));
+    s.note(tok({ id: "a1b2c3f", tool: "python_exec", step: 1, label: "the pricing table" }));
     s.note(tok({ id: "d4e5f6", tool: "exec", step: 2, label: "nav links" }));
 
     // Recalling the name but inventing the id is the common failure — the label must rescue it.
-    assert.equal(s.nearest("pricing")[0].id, "a1b2c3", "a substring of the label is an exact hit");
-    assert.equal(s.nearest("the pricing table")[0].id, "a1b2c3");
+    assert.equal(s.nearest("pricing")[0].id, "a1b2c3f", "a substring of the label is an exact hit");
+    assert.equal(s.nearest("the pricing table")[0].id, "a1b2c3f");
     assert.equal(s.nearest("nav")[0].id, "d4e5f6");
     // And the fault message names pointers the way the model named them.
     const msg = P.memoryFault("@tool:zzzzzz", s.nearest("zzzzzz"), 4);

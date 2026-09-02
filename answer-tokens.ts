@@ -14,6 +14,8 @@
 
 /** One piece of a split answer: literal markdown, or a resolved-later token reference. `embed` = image form
  *  (`![…]`, expand in place); else the link form (`[…]`, a clickable jump to the output). */
+import { TOKEN_HEX_SRC, isTokenShape } from "./token-id";
+
 export type AnswerSegment =
     | { kind: "prose"; text: string }
     | { kind: "token"; embed: boolean; label: string; id: string; slot: "in" | "out"; fmt?: string };
@@ -25,8 +27,8 @@ export type AnswerSegment =
 // token ONLY when a caller-supplied `isAlias(name)` confirms that tool actually ran (else it's ordinary markdown,
 // left as prose — the grammar gate). A bare `@tool:`, a normal link, etc. never match. `g` for matchAll; built
 // fresh each call so no shared lastIndex state.
-const tokenLinkRe = (): RegExp => /(!?)\[([^\]]*)\]\(@tool:([0-9a-f]{6}|[a-z][a-z0-9_]*)(?::(in|out))?(?:\s*\|\s*([a-z][a-z0-9]*))?\)/g;
-const isHex6 = (s: string): boolean => /^[0-9a-f]{6}$/.test(s);
+const tokenLinkRe = (): RegExp => new RegExp(`(!?)\\[([^\\]]*)\\]\\(@tool:(${TOKEN_HEX_SRC}|[a-z][a-z0-9_]*)(?::(in|out))?(?:\\s*\\|\\s*([a-z][a-z0-9]*))?\\)`, "g");
+const isHex6 = (s: string): boolean => isTokenShape(s);
 
 /**
  * Split answer markdown into prose + token segments. A 6-hex token always splits; a non-hex TOOL-NAME alias splits

@@ -323,8 +323,8 @@ return sympy.latex(expr)
     // 2) Feed THAT exact output into the sidebar as a python-out.value, cite it `| latex`, assert KaTeX renders it.
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("symint", "compute symbolically"));
-    await w.dispatch(agentStep("symint", 1, { seq: 1, tool: "python_exec", token: "abcdef", result: `[loaded, reference directly] a df.\n\n${latex}`, renderOut: { type: "python-out", value: latex } }));
-    await w.dispatch({ ...agentResult("symint", `The result is ![result](@tool:abcdef:out | latex).`, 1), answer: "" });
+    await w.dispatch(agentStep("symint", 1, { seq: 1, tool: "python_exec", token: "abcdef5", result: `[loaded, reference directly] a df.\n\n${latex}`, renderOut: { type: "python-out", value: latex } }));
+    await w.dispatch({ ...agentResult("symint", `The result is ![result](@tool:abcdef5:out | latex).`, 1), answer: "" });
     w.shadow.querySelector(".row").click(); await w.tick();
     const tok = w.shadow.querySelector(".msg.asst .answer-rendered .tok-ref");
     assert.ok(tok, "the citation renders in the UI");

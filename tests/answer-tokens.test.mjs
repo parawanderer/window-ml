@@ -7,19 +7,19 @@ import { toolToken } from "../util.ts";
 
 test("splitAnswer: a token link splits into prose + token + prose; default slot is out; embed vs link", () => {
     // LINK form `[…]` → embed:false (renders as a clickable jump).
-    const segs = splitAnswer("The count is [9](@tool:e7ed9f:out) total.");
+    const segs = splitAnswer("The count is [9](@tool:e7ed9fa:out) total.");
     assert.equal(segs.length, 3);
     assert.deepEqual(segs[0], { kind: "prose", text: "The count is " });
-    assert.deepEqual(segs[1], { kind: "token", embed: false, label: "9", id: "e7ed9f", slot: "out" });
+    assert.deepEqual(segs[1], { kind: "token", embed: false, label: "9", id: "e7ed9fa", slot: "out" });
     assert.deepEqual(segs[2], { kind: "prose", text: " total." });
 
     // IMAGE form `![…]` → embed:true (expands the output in place).
-    assert.deepEqual(splitAnswer("![9](@tool:e7ed9f:out)")[0], { kind: "token", embed: true, label: "9", id: "e7ed9f", slot: "out" });
+    assert.deepEqual(splitAnswer("![9](@tool:e7ed9fa:out)")[0], { kind: "token", embed: true, label: "9", id: "e7ed9fa", slot: "out" });
     // bare @tool:id defaults to :out
-    assert.deepEqual(splitAnswer("[x](@tool:abc123)")[0], { kind: "token", embed: false, label: "x", id: "abc123", slot: "out" });
+    assert.deepEqual(splitAnswer("[x](@tool:abc1231)")[0], { kind: "token", embed: false, label: "x", id: "abc1231", slot: "out" });
     // :in and a piped format
-    assert.deepEqual(splitAnswer("![c](@tool:abc123:in)")[0], { kind: "token", embed: true, label: "c", id: "abc123", slot: "in" });
-    assert.deepEqual(splitAnswer("![e](@tool:abc123:out | latex)")[0], { kind: "token", embed: true, label: "e", id: "abc123", slot: "out", fmt: "latex" });
+    assert.deepEqual(splitAnswer("![c](@tool:abc1231:in)")[0], { kind: "token", embed: true, label: "c", id: "abc1231", slot: "in" });
+    assert.deepEqual(splitAnswer("![e](@tool:abc1231:out | latex)")[0], { kind: "token", embed: true, label: "e", id: "abc1231", slot: "out", fmt: "latex" });
 });
 
 test("splitAnswer: an answer with no tokens is a single prose segment (verbatim)", () => {
@@ -29,12 +29,12 @@ test("splitAnswer: an answer with no tokens is a single prose segment (verbatim)
 
 test("GRAMMAR GATE: malformed / non-token links stay prose (never specially handled)", () => {
     for (const md of [
-        "[x](@tool:nothex)",              // id isn't 6-hex
-        "[x](@tool:abc12)",               // too short
-        "[x](@tool:abc1234)",             // too long
+        "[x](@tool:nothexx)",             // id isn't hex
+        "[x](@tool:abc123)",              // too short (6 — the pre-checksum length)
+        "[x](@tool:abc12345)",            // too long
         "[x](@tool:)",                    // no id
-        "[x](@tool:abc123:sideways)",     // bad slot → the :slot just isn't captured, but 'sideways' breaks the URL match
-        "see @tool:abc123 inline",        // not a markdown link at all
+        "[x](@tool:abc1231:sideways)",     // bad slot → the :slot just isn't captured, but 'sideways' breaks the URL match
+        "see @tool:abc1231 inline",        // not a markdown link at all
         "[x](https://tool.example/abc)",  // ordinary link
     ]) {
         const segs = splitAnswer(md);
@@ -44,7 +44,7 @@ test("GRAMMAR GATE: malformed / non-token links stay prose (never specially hand
 });
 
 test("hasTokens: true only when a real token is present", () => {
-    assert.equal(hasTokens("[9](@tool:e7ed9f:out)"), true);
+    assert.equal(hasTokens("[9](@tool:e7ed9fa:out)"), true);
     assert.equal(hasTokens("no tokens here [x](@tool:nothex)"), false);
     assert.equal(hasTokens("plain text"), false);
 });

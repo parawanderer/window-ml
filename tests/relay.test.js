@@ -781,11 +781,11 @@ test("ml.dereference (background-hosted): the page rings back to the SW, id-matc
     };
     window.addEventListener("message", onMsg);
     try {
-        const value = await derefViaBackground("run-7", "@tool:a1b2c3", "head 5");
-        assert.equal(value, "resolved:@tool:a1b2c3|head 5");
+        const value = await derefViaBackground("run-7", "@tool:a1b2c3f", "head 5");
+        assert.equal(value, "resolved:@tool:a1b2c3f|head 5");
         assert.equal(seen.length, 1);
         assert.equal(seen[0].runId, "run-7", "the read is scoped to the run whose tool is executing");
-        assert.equal(seen[0].ref, "@tool:a1b2c3");
+        assert.equal(seen[0].ref, "@tool:a1b2c3f");
         assert.ok(seen[0].id, "carries a request id so concurrent reads can't cross");
     } finally { window.removeEventListener("message", onMsg); }
     });
@@ -815,7 +815,7 @@ test("ml.dereference (background-hosted): an error from the SW rejects, and a fo
 test("ml.dereference: throws when called outside a run", async () => {
     const { loadPageWorld } = require("./helpers");
     const world = loadPageWorld({});
-    await assert.rejects(() => world.ml.dereference("@tool:a1b2c3"), /only live inside an ml\.agent run/);
+    await assert.rejects(() => world.ml.dereference("@tool:a1b2c3f"), /only live inside an ml\.agent run/);
 });
 
 // ml.info() across the real page relay: injected.js → content.js HANDLE_MAP → background.

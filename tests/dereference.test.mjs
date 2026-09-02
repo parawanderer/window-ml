@@ -42,7 +42,7 @@ test("dereference: the reply says WHAT the value is and HOW STALE, then the pipe
             : { result: "" });
 
     const out = results.find((r) => r.name === "dereference").result;
-    assert.match(out, /^@tool:[0-9a-f]{6} \(exec\) — text, \d+ chars \/ 300 lines/, "leads with what is at the pointer");
+    assert.match(out, /^@tool:[0-9a-f]{7} \(exec\) — text, \d+ chars \/ 300 lines/, "leads with what is at the pointer");
     assert.match(out, /chars MORE than you were shown \(your copy was truncated\)/, "…and that this read is worth the step");
     assert.match(out, /captured at step 1, 1 step ago — the page may have changed since/, "…and how stale it is");
     assert.match(out, /row 297: v297/, "then the piped value — a line the model never saw");
@@ -50,10 +50,10 @@ test("dereference: the reply says WHAT the value is and HOW STALE, then the pipe
 
 test("dereference: a hallucinated pointer returns a MemoryFault naming the real ones", async () => {
     const { results } = await drive(
-        [call("exec", { js: "x", token: true }), call("dereference", { token: "@tool:deadbe" })],
+        [call("exec", { js: "x", token: true }), call("dereference", { token: "@tool:deadbe1" })],
         () => ({ result: "captured" }));
     const out = results.find((r) => r.name === "dereference").result;
-    assert.match(out, /^Error: MemoryFault: pointer '@tool:deadbe' does not exist\./);
+    assert.match(out, /^Error: MemoryFault: pointer '@tool:deadbe1' does not exist\./);
     assert.match(out, /Nearest valid pointers:/);
     assert.match(out, /\(1 step back: exec\) +\[edit_dist=\d+\]/, "the real pointer, with distance and how far back");
     assert.match(out, /recoverable/i);
@@ -65,7 +65,7 @@ test("dereference: a missing token argument lists what IS available", async () =
         () => ({ result: "captured" }));
     const out = results.find((r) => r.name === "dereference").result;
     assert.match(out, /^Error: "token" is required/);
-    assert.match(out, /@tool:[0-9a-f]{6} \(exec, step 1\)/, "names the pointer it could have used");
+    assert.match(out, /@tool:[0-9a-f]{7} \(exec, step 1\)/, "names the pointer it could have used");
 });
 
 test("dereference: a bad pipe stage returns the dialect's own actionable refusal", async () => {
@@ -110,7 +110,7 @@ test("look: an @tool: image pointer is rewritten into a look at that image", asy
 
     const second = got.filter((g) => g.name === "look")[1];
     assert.equal(second.args._image, shot, "the loop resolved the pointer to the captured image");
-    assert.match(second.args._imageLabel, /@tool:[0-9a-f]{6} \(captured at step 1\)/, "…labelled with where it came from");
+    assert.match(second.args._imageLabel, /@tool:[0-9a-f]{7} \(captured at step 1\)/, "…labelled with where it came from");
     assert.equal(second.args.question, "any red text?", "the model's own question is preserved");
     assert.equal(results.filter((r) => r.name === "look").length, 2);
 });
@@ -145,7 +145,7 @@ test("token as a label: names the pointer in the reply, the listing, and the fau
     const { results } = await drive(
         [call("python_exec", { code: "x", token: "the pricing table" }),
          call("dereference", { token: "@tool:python_exec" }),
-         call("dereference", { token: "@tool:deadbe" })],
+         call("dereference", { token: "@tool:deadbe1" })],
         (name) => name === "python_exec" ? { result: "rows…" } : { result: "" });
 
     const [read, fault] = results.filter((r) => r.name === "dereference").map((r) => r.result);
@@ -160,7 +160,7 @@ test("token as a label: a string still opts IN (it is not just decoration)", asy
         () => ({ result: "a\nb" }));
     // If the string hadn't counted as opting in, the id would never have been surfaced to the model.
     const execResult = results.find((r) => r.name === "exec").result;
-    assert.match(execResult, /@tool:[0-9a-f]{6}/, "the handle was surfaced because the label opted in");
+    assert.match(execResult, /@tool:[0-9a-f]{7}/, "the handle was surfaced because the label opted in");
     assert.match(derefResult({ results }), /"nav links"/);
 });
 
@@ -211,7 +211,7 @@ test("dereference: a PIPED view mints its own pointer, and that pointer resolves
         (name) => name === "python_exec" ? { result: rows } : { result: "" });
     const out = derefResult(results ? { results } : { results });
     assert.match(out, /TOTAL 6260/, "the reduction itself");
-    const id = /\[this view is @tool:([0-9a-f]{6})/.exec(out)?.[1];
+    const id = /\[this view is @tool:([0-9a-f]{7})/.exec(out)?.[1];
     assert.ok(id, "the view was given a pointer");
     assert.match(out, new RegExp(`!\\[label\\]\\(@tool:${id}:out\\)`), "…and says how to show it");
 
@@ -249,14 +249,14 @@ test("dereference: reading by NAME hands back the stable id, and that id does no
         (name, args) => name === "python_exec" ? { result: args.code === "first" ? "ONE" : "TWO" } : { result: "" });
     const reads = results.filter((r) => r.name === "dereference");
 
-    const pinned = /\[pinned: this call is @tool:([0-9a-f]{6})\./.exec(reads[0].result)?.[1];
+    const pinned = /\[pinned: this call is @tool:([0-9a-f]{7})\./.exec(reads[0].result)?.[1];
     assert.ok(pinned, "reading by name pins the call it resolved to");
     assert.match(reads[0].result, /always means the LATEST python_exec call and will move/, "…and says the name moves");
     assert.match(reads[0].result, /ONE/);
 
     // The SAME name now resolves to the second call — the alias moved, exactly as the pin line warned.
     assert.match(reads[1].result, /TWO/, "the alias followed the newer call");
-    const pinned2 = /\[pinned: this call is @tool:([0-9a-f]{6})\./.exec(reads[1].result)?.[1];
+    const pinned2 = /\[pinned: this call is @tool:([0-9a-f]{7})\./.exec(reads[1].result)?.[1];
     assert.notEqual(pinned2, pinned, "…so it pins a different id");
 
     // …while the FIRST pin still means the first call. That is the whole point of handing it over.

@@ -12,6 +12,7 @@
 // the caller and handed in, so it unit-tests standalone. Nodes ride along as opaque values.
 
 import type { AnswerMedia, AgentOutput, TokenRender } from "./contract";
+import { TOKEN_HEX_SRC } from "./token-id";
 import { tokenIdsIn, resolveToken } from "./answer-tokens";
 
 /** One item in the answer set. `element` carries live nodes (page-side only) + a serialized preview
@@ -35,8 +36,8 @@ export const TOOL_TOKEN_PREFIX = "@tool:";
 export const answerItemFromString = (s: string, note?: string): AnswerItem =>
     s.startsWith(TOOL_TOKEN_PREFIX) ? { kind: "token", ref: s, ...(note ? { preview: note } : {}) } : { kind: "text", text: s };
 
-/** The id inside a `@tool:<id>[:in|:out]` ref — a 6-hex token OR a tool-name alias — or null if it isn't one. */
-const idOfRef = (ref: string): string | null => ref.match(/^@tool:([0-9a-f]{6}|[a-z][a-z0-9_]*)/)?.[1] ?? null;
+/** The id inside a `@tool:<id>[:in|:out]` ref — a minted token OR a tool-name alias — or null if it isn't one. */
+const idOfRef = (ref: string): string | null => ref.match(new RegExp(`^@tool:(${TOKEN_HEX_SRC}|[a-z][a-z0-9_]*)`))?.[1] ?? null;
 
 /**
  * Resolve the run's BOTTOM-OF-ANSWER markdown — the tool outputs the model EXPLICITLY DESIGNATED to render
