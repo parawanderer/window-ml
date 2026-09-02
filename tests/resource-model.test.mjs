@@ -212,8 +212,12 @@ test("seriesCatalog: generated from the devices the box actually reports", () =>
 
 test("presetsFor: the default layout follows the hardware", () => {
     const multi = M.presetsFor({ t: 1, capacity: M.parseInfo(CUDA_INFO), models: [] });
-    assert.equal(multi[0].id, "placement", "two cards → lead with WHERE the model landed");
-    assert.equal(multi[0].tracks.length, 2, "one track per card — small multiples, not a shared axis");
+    // The DEFAULT must not hide a resident model: a CPU-resident one appears only in the host track, so
+    // leading with a per-card view would make it vanish from the panel entirely.
+    assert.equal(multi[0].id, "memory", "GPU + RAM leads — the default shows everything resident");
+    assert.equal(multi[0].tracks.length, 3, "both cards and the host pool");
+    const placement = multi.find((p) => p.id === "placement");
+    assert.equal(placement.tracks.length, 2, "placement narrows to the cards — small multiples, no shared axis");
 
     // The Mac: ONE pool, so one preset with one track — not a GPU view and a RAM view of the same silicon.
     const single = M.presetsFor({ t: 1, capacity: M.parseInfo(METAL_INFO), models: [] });

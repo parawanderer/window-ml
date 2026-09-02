@@ -12,7 +12,7 @@ import {
 import { truncate } from "./format";
 import { normModel, seenContext } from "./model";
 import { IconVram, IconEye, IconEyeOff, IconBench } from "./icons";
-import { parseInfo, formatBytes, boxSignature, sameBoxOnly, type Capacity, type ResourceSample, type ModelResidency } from "../resource-model";
+import { parseInfo, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
 import { ResourceTracks } from "./resource-chart";
 import type { LoadedModel } from "../contract";
 
@@ -249,6 +249,89 @@ export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean 
  *  because the chart and the rows are different components either side of the panel. */
 export const hoverModel = signal<string | null>(null);
 
+// The chosen VIEW. A preset is a named starting point for a layout, and editing one is the same operation on
+// the same state (`TrackDef[]`) — so there is no "am I in preset mode or edit mode" to get wrong. `layout`
+// null means "use the default preset for this box", which is also the fallback when a saved layout doesn't
+// fit the machine we're now pointed at.
+export const LAYOUT_KEY = "ml_res_layout";
+export const presetId = signal<string>("");
+export const layout = signal<TrackDef[] | null>(null);
+export const editorOpen = signal(false);
+
+/** Restore a saved view, but only if it still describes THIS box — a layout saved on a two-card server names
+ *  `vram.1`, which is meaningless on a one-device Mac. Anything that doesn't fit falls back to the default
+ *  preset rather than rendering a track for a card that isn't there. */
+export function restoreLayout(sample: ResourceSample): void {
+    chrome.storage.local.get([LAYOUT_KEY], (got: Record<string, unknown>) => {
+        const saved = got?.[LAYOUT_KEY] as { presetId?: string; tracks?: TrackDef[] } | undefined;
+        const presets = presetsFor(sample);
+        const fallback = () => { presetId.value = presets[0]?.id ?? ""; layout.value = presets[0]?.tracks ?? null; };
+        if (!saved?.tracks?.length) return fallback();
+        const probe = { id: "saved", label: "", description: "", tracks: saved.tracks };
+        if (presetRefusal(probe, sample)) return fallback();   // saved on another machine, or now invalid
+        presetId.value = saved.presetId || "custom";
+        layout.value = saved.tracks;
+    });
+}
+const saveLayout = (): void => {
+    try { chrome.storage.local.set({ [LAYOUT_KEY]: { presetId: presetId.value, tracks: layout.value } }); } catch { /* opaque origin */ }
+};
+/** Pick a preset: it POPULATES the layout, which the editor then edits in place. */
+export function choosePreset(id: string, sample: ResourceSample): void {
+    const p = presetsFor(sample).find((x) => x.id === id);
+    if (!p) return;
+    presetId.value = p.id; layout.value = p.tracks; saveLayout();
+}
+/** Any edit flips the picker to Custom — the layout no longer IS that preset. */
+export function editLayout(tracks: TrackDef[]): void {
+    layout.value = tracks; presetId.value = "custom"; saveLayout();
+}
+
+/** Which series each track shows. Bundling and splitting are the SAME operation on a list — everything in one
+ *  track is combined, one series per track is small multiples — so the editor is just this list, and a preset
+ *  is a starting point for it. A stack the rule would refuse is disabled rather than hidden, with the reason,
+ *  so the constraint teaches instead of just removing options. */
+function TrackEditor({ sample }: { sample: ResourceSample }) {
+    const tracks = layout.value ?? [];
+    const cat = seriesCatalog(sample);
+    const setTrack = (i: number, next: TrackDef) => editLayout(tracks.map((t, k) => (k === i ? next : t)));
+    return (
+        <div class="rc-editor">
+            {tracks.map((t, i) => (
+                <div class="rc-etrack" key={t.id}>
+                    <div class="rc-erow">
+                        <select class="rc-emode" aria-label="Track mode" value={t.mode}
+                            onChange={(e) => setTrack(i, { ...t, mode: (e.target as HTMLSelectElement).value as TrackDef["mode"] })}>
+                            <option value="stack">stack</option>
+                            <option value="overlay">overlay</option>
+                        </select>
+                        <span class="sp" />
+                        <button class="rc-ex" aria-label="Remove track"
+                            onClick={() => editLayout(tracks.filter((_, k) => k !== i))}>✕</button>
+                    </div>
+                    <div class="rc-eseries">
+                        {cat.filter(sd => !sd.model).map(sd => {
+                            const on = t.series.includes(sd.id);
+                            const next = on ? t.series.filter(x => x !== sd.id) : [...t.series, sd.id];
+                            const defs = next.map(id => cat.find(c => c.id === id)!).filter(Boolean);
+                            const refusal = !on && t.mode === "stack" ? stackRefusal(defs, sample.capacity) : null;
+                            return (
+                                <label class={`rc-eopt${refusal ? " tt off" : ""}`} key={sd.id}>
+                                    <input type="checkbox" checked={on} disabled={!!refusal}
+                                        onChange={() => setTrack(i, { ...t, series: next })} />
+                                    {sd.label}
+                                    {refusal ? <span class="tt-pop left" role="tooltip">{refusal}</span> : null}
+                                </label>
+                            );
+                        })}
+                    </div>
+                </div>
+            ))}
+            <button class="rc-eadd" onClick={() => editLayout([...tracks, { id: `t${Date.now()}`, series: [], mode: "stack", heightPx: 96 }])}>+ Add track</button>
+        </div>
+    );
+}
+
 export function VramPanel() {
     const loaded = loadedModels.value;
     const hidden = hiddenModels.value;
@@ -265,6 +348,13 @@ export function VramPanel() {
     const [, tick] = useState(0);
     useEffect(() => { const id = setInterval(() => tick(t => t + 1), 1000); return () => clearInterval(id); }, []);
     useEffect(() => { pollPs(); fetchCapacity(); }, []);   // immediate poll + the denominator
+    // The newest sample, with capacity filled in — what the picker and editor describe.
+    const latestSample = (() => {
+        const last = resourceHistory.value.at(-1);
+        return last ? { ...last, capacity: last.capacity ?? capacity.value } : null;
+    })();
+    // Restore the saved view once capacity is known (a layout can only be validated against a real box).
+    useEffect(() => { if (latestSample?.capacity && !layout.value) restoreLayout(latestSample); }, [capacity.value]);
     useEffect(() => {
         if (!loaded) return;
         const snap: Record<string, number> = {};
@@ -295,10 +385,25 @@ export function VramPanel() {
             <div class="vram-head">
                 <span class="vram-total">{formatBytes(total)} in use</span>
                 <span class="sp" />
+                {capacity.value && latestSample ? (
+                    <>
+                        <select class="rc-preset" aria-label="View" value={presetId.value}
+                            onChange={(e) => choosePreset((e.target as HTMLSelectElement).value, latestSample)}>
+                            {presetsFor(latestSample).map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
+                            {/* Only offered once you HAVE edited — picking "Custom" from a preset would mean nothing. */}
+                            {presetId.value === "custom" ? <option value="custom">Custom</option> : null}
+                        </select>
+                        <button class={`tt rc-cog${editorOpen.value ? " on" : ""}`} aria-label="Edit tracks"
+                            onClick={() => (editorOpen.value = !editorOpen.value)}>⚙
+                            <span class="tt-pop" role="tooltip">Choose which series each track shows</span>
+                        </button>
+                    </>
+                ) : null}
                 {rows.length ? <button class="vram-free" onClick={() => evict()}>Free VRAM</button> : null}
             </div>
+            {editorOpen.value && latestSample ? <TrackEditor sample={latestSample} /> : null}
             {capacity.value
-                ? <ResourceTracks samples={resourceHistory.value} capacity={capacity.value} hidden={hidden} />
+                ? <ResourceTracks samples={resourceHistory.value} capacity={capacity.value} hidden={hidden} layout={layout.value} />
                 /* No /api/info (stock Ollama, or an OpenWebUI without the passthrough): capacity is UNKNOWN,
                    so fall back to the old auto-scaled shape rather than drawing a ceiling we don't have. */
                 : <svg class="vram-spark" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">

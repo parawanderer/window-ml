@@ -5512,3 +5512,38 @@ test("resource tracks: the header tooltip is right-anchored so it can't run off 
     const keyPop = w.shadow.querySelector(".rc-key .tt-pop");
     assert.ok(keyPop.classList.contains("left"), "left-edge trigger → left-anchored pop");
 });
+
+test("resource tracks: the hovered band outlines itself, and single-sample runs aren't drawn", async () => {
+    const w = await loadSidebarWorld({
+        vram: [{ model: "gemma4:31b", vramGB: 18, vramBytes: 18 * 1024 ** 3, sizeBytes: 18 * 1024 ** 3,
+                 gpus: [{ id: "0", runner: "CUDA", vramBytes: 18 * 1024 ** 3 }], expiresAt: null }],
+        info: INFO_2CARD,
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+
+    // A run of one sample has no shape to draw, and reserving a 2px column for it leaves a pale sliver where
+    // the band wash is missing — the "ghost corner". Undrawable runs are skipped entirely.
+    const segs = [...w.shadow.querySelectorAll(".rc-seg")];
+    assert.ok(segs.every((sg) => sg.querySelectorAll("polygon, polyline").length > 0),
+        "every drawn segment actually contains a shape");
+
+    const band = w.shadow.querySelector(".rc-band");
+    if (!band) return;   // needs ≥2 samples to have drawn anything yet
+    assert.ok(!band.classList.contains("hot"), "nothing is marked until hovered");
+    band.dispatchEvent(new w.window.PointerEvent("pointerenter", { bubbles: true }));
+    await w.flush();
+    assert.ok(w.shadow.querySelector(".rc-band.hot"), "the hovered band marks ITSELF, not just its neighbours");
+});
+
+test("streamed output: a rule separates the timestamp gutter from the text", async () => {
+    // The stamps are right-aligned in a fixed column; without an edge, leading whitespace in the output has
+    // nothing to be measured against. Same device as a line-number gutter's rule.
+    const css = await import("node:fs").then((fs) => fs.readFileSync("sidebar/sidebar.css", "utf8"));
+    // The standalone `.r-ts` rule — not `.r-timed.short .r-ts`, which merely narrows the column.
+    const rule = /\n\.r-ts \{([^}]*)\}/.exec(css)?.[1] ?? "";
+    assert.ok(rule, "the gutter rule exists");
+    assert.match(rule, /border-right:\s*1px solid var\(--border\)/, "a hairline between stamps and output");
+    assert.match(rule, /padding-right/, "spaced by padding so the rule sits inside the row gap");
+});

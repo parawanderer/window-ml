@@ -65,6 +65,29 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* Resource tracks: one per accelerator (plus the host pool on a discrete box), each a stacked history against
    a real ceiling. Small multiples rather than one shared axis — a model can only use ONE card's capacity, so
    a combined axis would be a lie. */
+/* The view picker and its editor badge sit in the header row that already exists, so they cost no vertical
+   space in a panel competing for height with the session list. */
+.rc-preset { font: inherit; font-size: 0.78em; color: var(--fg-dim); background: var(--panel-2);
+             border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; margin-left: 6px; }
+.rc-cog { margin-left: 4px; padding: 0 4px; font-size: 0.85em; color: var(--fg-faint); background: none;
+          border: 1px solid transparent; border-radius: 4px; cursor: pointer; }
+.rc-cog:hover, .rc-cog.on { color: var(--fg); background: var(--panel-2); border-color: var(--border); }
+/* Expanded on demand: you configure rarely and read constantly. */
+.rc-editor { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; padding: 6px;
+             background: var(--panel-2); border: 1px solid var(--border); border-radius: 4px; font-size: 0.78em; }
+.rc-etrack { display: flex; flex-direction: column; gap: 3px; }
+.rc-erow { display: flex; align-items: center; gap: 4px; }
+.rc-emode { font: inherit; color: var(--fg-dim); background: var(--panel); border: 1px solid var(--border);
+            border-radius: 3px; padding: 0 3px; }
+.rc-ex, .rc-eadd { color: var(--fg-faint); background: none; border: 1px solid transparent; border-radius: 3px;
+                   cursor: pointer; font: inherit; padding: 0 5px; }
+.rc-ex:hover, .rc-eadd:hover { color: var(--fg); background: var(--panel); border-color: var(--border); }
+.rc-eseries { display: flex; flex-wrap: wrap; gap: 4px 10px; }
+.rc-eopt { display: inline-flex; align-items: center; gap: 3px; color: var(--fg-dim); cursor: pointer; position: relative; }
+/* A stack the rule would refuse is DISABLED with the reason, not hidden — the constraint should teach. */
+.rc-eopt.off { opacity: .5; cursor: help; }
+.rc-eopt input { margin: 0; }
+
 .rc { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 2px; }
 .rc-track { position: relative; }   /* so a tip escaping the plot is still contained by something sane */
 .rc-track { display: flex; flex-direction: column; gap: 2px; }
@@ -84,6 +107,9 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rc-soft { position: absolute; left: 0; right: 0; height: 0; border-top: 1px dashed var(--accent); opacity: .6; }
 /* A band names itself on hover, and its neighbours dim so one shape resolves out of a similar-coloured stack. */
 .rc-band { cursor: help; transition: opacity .12s ease; }
+/* The hovered band outlines itself, so you can see WHICH one you are reading rather than inferring it from
+   the neighbours having dimmed. `paint-order` keeps the stroke outside the fill so a thin band still shows it. */
+.rc-band.hot { stroke: var(--fg); stroke-width: 1.5; paint-order: stroke fill; }
 /* Follows the cursor (positioned inline), so it reads as "this band, here" rather than as a caption for the
    whole track. `pointer-events: none` keeps it from stealing the hover it is describing. */
 .rc-tip { position: absolute; top: 4px; left: 4px; z-index: 5; display: flex; align-items: center; white-space: nowrap;
@@ -779,7 +805,11 @@ details.io[open] > summary .io-preview { display: none; }
 .r-ts-row { display: flex; gap: 8px; white-space: pre; }
 .r-timed.short .r-ts { width: 38px; }   /* mm:ss — the hour is the current one, shown on hover */
 .r-ts { flex: 0 0 auto; width: 56px; text-align: right; color: var(--fg-faint); opacity: .8;
-        font-variant-numeric: tabular-nums; user-select: none; -webkit-user-select: none; }
+        font-variant-numeric: tabular-nums; user-select: none; -webkit-user-select: none;
+        /* A barely-visible rule between the stamps and the output, like a line-number gutter's: it gives the
+           eye a fixed edge, so leading whitespace in the output is measurable at a glance instead of floating
+           against a blank column. Padding, not margin, so the border sits flush against the 8px row gap. */
+        border-right: 1px solid var(--border); padding-right: 7px; opacity: .8; }
 /* The whole gutter column is hoverable (exact time + gap since the previous line), including rows whose
    label is elided as a repeat — so hovering anywhere down the left edge answers "when was this line?". */
 .r-ts.hoverable { cursor: help; }

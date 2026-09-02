@@ -13,9 +13,10 @@ import { useMemo } from "preact/hooks";
 import {
     deviceBands, hostBands, ceilingsFor, segments, formatBytes, isCpuResident,
     OTHER_BAND_NOTE, DRIVER_BAND_LABEL,
-    type ResourceSample, type Band, type Capacity,
+    presetsFor,
+    type ResourceSample, type Band, type Capacity, type TrackDef,
 } from "../resource-model";
-import { colorFor, hoverModel, ModelFacts } from "./vram";
+import { colorFor, hoverModel, ModelFacts, VRAM_COLORS } from "./vram";
 import { loadedModels } from "./store";
 import { signal } from "@preact/signals";
 
@@ -75,8 +76,9 @@ function StackedArea({ frames, ceiling, hidden }: { frames: Band[][]; ceiling: n
         // similar colours resolves into one identifiable shape.
         const model = (frames.at(-1) || []).find((b) => b.key === key)?.model;
         const dim = hoverModel.value && model && hoverModel.value !== model;
+        const hot = !!model && hoverModel.value === model;
         return <polygon key={key} points={pts.join(" ")} fill={bandFill(key, frames.at(-1) || [])}
-            class={model ? "rc-band" : undefined}
+            class={model ? `rc-band${hot ? " hot" : ""}` : undefined}
             onPointerEnter={model ? () => (hoverModel.value = model) : undefined}
             onPointerLeave={model ? () => { hoverModel.value = null; hoverAt.value = null; } : undefined}
             opacity={dim ? 0.18 : key === "other" ? 0.35 : 0.75} />;
@@ -109,7 +111,10 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingIsFi
     const bands = latest ? bandsOf(latest) : [];
     const used = bands.filter((b) => b.kind !== "free" && !(b.model && hidden.has(b.model))).reduce((n, b) => n + b.bytes, 0);
     // Each contiguous run is drawn separately — a gap is a gap, never interpolated across.
-    const runs = useMemo(() => segments(samples), [samples]);
+    // A run of ONE sample has no shape to draw — StackedArea needs two points — and giving it a 2px column
+    // leaves a pale sliver where the band wash is missing, which reads as a rendering artifact rather than as
+    // data. Undrawable runs are skipped; nothing is lost, because a lone point conveys no trend either.
+    const runs = useMemo(() => segments(samples).filter((r) => r.length > 1), [samples]);
     return (
         <div class="rc-track">
             <div class="rc-head">
@@ -189,30 +194,96 @@ function BandTip({ bands }: { bands: Band[] }) {
 /** Every track this machine warrants: one per accelerator, plus the host pool on a discrete box. A unified
  *  device has ONE pool, so it gets one track (its bands already come from the host) and no separate RAM track
  *  — two would double-count the same silicon. */
-export function ResourceTracks({ samples, capacity, hidden }: { samples: ResourceSample[]; capacity: Capacity | null; hidden: Set<string> }) {
+/** Draw one TrackDef. A track's series resolve to band sources: `vram.<id>` is that device's decomposition,
+ *  `ram`/`mem` the host pool's. STACK renders the bands (the parts do sum to that pool's occupancy); OVERLAY
+ *  renders one line per series, each against its own ceiling, because several pools have no shared total —
+ *  which is exactly what `stackRefusal` refuses and why the Overview preset overlays. */
+function TrackView({ def, samples, latest, hidden }: { def: TrackDef; samples: ResourceSample[]; latest: ResourceSample; hidden: Set<string> }) {
+    const cap = latest.capacity!;
+    const deviceOf = (id: string) => cap.devices.find((d) => d.id === id.replace(/^vram\./, ""));
+    const first = def.series[0] ?? "";
+    const isHost = first === "ram" || first === "mem";
+
+    if (def.mode === "stack" || def.series.length < 2) {
+        if (isHost) {
+            const label = first === "mem" ? `${cap.devices[0]?.name ?? "Memory"} · unified memory` : "System RAM";
+            const c = first === "mem" ? ceilingsFor(latest, cap.devices[0]?.id ?? "") : null;
+            return <DeviceView label={label} samples={samples} bandsOf={hostBands}
+                ceiling={c?.hardBytes ?? cap.host.totalBytes}
+                soft={c?.softBytes ? { bytes: c.softBytes, label: c.softLabel || "" } : null} hidden={hidden} />;
+        }
+        const d = deviceOf(first);
+        if (!d) return null;
+        const c = ceilingsFor(latest, d.id);
+        return <DeviceView label={d.name} samples={samples} bandsOf={(s) => deviceBands(s, d.id)}
+            ceiling={c?.displayBytes ?? d.totalBytes} ceilingIsFit={c?.displayIsFit}
+            soft={c?.softBytes ? { bytes: c.softBytes, label: c.softLabel || "" } : null} hidden={hidden} />;
+    }
+    return <OverlayView def={def} samples={samples} latest={latest} hidden={hidden} />;
+}
+
+/** Several series in ONE track, drawn as independent lines rather than a stack: their sum is not a quantity
+ *  anything is measured against (a model can only use one card's capacity), so the chart must not draw one. */
+function OverlayView({ def, samples, latest, hidden }: { def: TrackDef; samples: ResourceSample[]; latest: ResourceSample; hidden: Set<string> }) {
+    const cap = latest.capacity!;
+    const devs = def.series.map((id) => cap.devices.find((d) => d.id === id.replace(/^vram\./, ""))).filter(Boolean) as typeof cap.devices;
+    if (!devs.length) return null;
+    // One shared axis is honest HERE only because it is a maximum, not a total: each line is read against its
+    // own card's capacity, and the tallest ceiling just sets the scale.
+    const ceiling = Math.max(...devs.map((d) => ceilingsFor(latest, d.id)?.displayBytes ?? d.totalBytes));
+    const runs = segments(samples).filter((r) => r.length > 1);
+    const usedOf = (s: ResourceSample, id: string) =>
+        deviceBands(s, id).filter((b) => b.kind !== "free" && !(b.model && hidden.has(b.model))).reduce((n, b) => n + b.bytes, 0);
+    return (
+        <div class="rc-track">
+            <div class="rc-head">
+                <span class="rc-name">{devs.map((d) => d.name).join(" · ")}</span>
+                <span class="sp" />
+                <span class="rc-total tt">
+                    of {formatBytes(ceiling)} each
+                    <span class="tt-pop wrap" role="tooltip">Each line is read against its OWN card's capacity — these are not added together, because a model can only ever use one card's memory.</span>
+                </span>
+            </div>
+            <div class="rc-plot">
+                {runs.map((run, ri) => (
+                    <div class="rc-seg" key={ri} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
+                        <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
+                            {devs.map((d, di) => {
+                                if (run.length < 2) return null;
+                                const pts = run.map((s, i) => `${((i / (run.length - 1)) * W).toFixed(1)},${(H - Math.min(1, usedOf(s, d.id) / ceiling) * H).toFixed(1)}`).join(" ");
+                                return <polyline key={d.id} points={pts} fill="none" stroke={VRAM_COLORS[di % VRAM_COLORS.length]} stroke-width="1.5" />;
+                            })}
+                        </svg>
+                    </div>
+                ))}
+            </div>
+            <div class="rc-legend">
+                {devs.map((d, di) => (
+                    <span class="rc-key" key={d.id}>
+                        <i class="rc-swatch" style={{ background: VRAM_COLORS[di % VRAM_COLORS.length] }} />
+                        {d.name} {formatBytes(usedOf(latest, d.id))}
+                    </span>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+/** The panel's tracks, from the chosen LAYOUT. A layout is just `TrackDef[]`; a preset is a named starting
+ *  point for it (see `presetsFor`), and editing one is the same operation on the same state. */
+export function ResourceTracks({ samples, capacity, hidden, layout }: { samples: ResourceSample[]; capacity: Capacity | null; hidden: Set<string>; layout?: TrackDef[] | null }) {
     // Capacity is fetched once per open and arrives AFTER the first ps poll, so the earliest samples carry
     // none. Backfill the current one rather than dropping them: capacity is slow-moving (a card doesn't change
     // size), and the alternative is a panel that renders nothing for the first two seconds every time.
     const filled = useMemo(() => samples.map((s) => (s.capacity ? s : { ...s, capacity })), [samples, capacity]);
     const latest = filled.at(-1);
-    const cap = latest?.capacity;
-    if (!cap) return null;
-    const samplesIn = filled;
-    const tracks = cap.devices.map((d) => {
-        const c = ceilingsFor(latest!, d.id);
-        return (
-            <DeviceView key={d.id} label={cap.unified ? `${d.name} · unified memory` : d.name}
-                samples={samplesIn} bandsOf={(s) => deviceBands(s, d.id)}
-                ceiling={c?.displayBytes ?? d.totalBytes} ceilingIsFit={c?.displayIsFit}
-                soft={c?.softBytes ? { bytes: c.softBytes, label: c.softLabel || "" } : null}
-                hidden={hidden} />
-        );
-    });
-    // System RAM is its own pool only on a DISCRETE box; on unified memory the device track already IS it.
-    if (!cap.unified) tracks.push(
-        <DeviceView key="host" label="System RAM" samples={samplesIn} bandsOf={hostBands}
-            ceiling={cap.host.totalBytes} hidden={hidden} />);
-    return <div class="rc">{tracks}</div>;
+    if (!latest?.capacity) return null;
+    const tracks = layout && layout.length ? layout : (presetsFor(latest)[0]?.tracks ?? []);
+    return (
+        <div class="rc">
+            {tracks.map((t) => <TrackView key={t.id} def={t} samples={filled} latest={latest} hidden={hidden} />)}
+        </div>
+    );
 }
 
 /** Models resident on the CPU — they hold no VRAM, so they never appear in a device track and would otherwise

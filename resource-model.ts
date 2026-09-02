@@ -412,8 +412,10 @@ export function presetsFor(sample: ResourceSample): Preset[] {
         id: "memory", label: "GPU + RAM", description: "Accelerator memory alongside system RAM.",
         tracks: [...devices.map((d) => track(`dev-${d.id}`, [`vram.${d.id}`])), track("ram", ["ram"])].filter(nonEmpty),
     };
-    // A single-card box has nothing to place, so lead with the split that means something there.
-    return devices.length > 1 ? [placement, overview, withRam] : [withRam, overview];
+    // GPU + RAM leads on every box: the DEFAULT view must not hide a resident model, and a CPU-resident one
+    // appears only in the host track. Placement narrows to the accelerators, which is a deliberate choice to
+    // make rather than the state you land in. A single-card box has nothing to place, so it isn't offered.
+    return devices.length > 1 ? [withRam, placement, overview] : [withRam, overview];
 }
 
 /** A stable identity for the MACHINE this capacity describes — its devices (id, name, runner, size) and its
