@@ -25,6 +25,18 @@ the page doesn't.
 lives in the page's **main world** (reachable by page scripts/userscripts), not
 the isolated content-script world.
 
+`background.ts` is the message router + run/approval/consent/print/nav spine;
+three cohesive leaf layers are split into their own modules it imports (all
+bundled back into `dist/background.js` by esbuild, so the split is invisible at
+runtime and to the tests, which load the bundle): **`sw-llm.ts`** (the
+per-format request builders `API_FORMATS`, `getConfig`, model-capability probes,
+`fetchLLM`/`streamLLM`/`streamAgentTurn` + `prepareRequest`, the model-list /
+`setModel` / unload plumbing), **`sw-fetch.ts`** (the ml.fetch GET, the rendered
+background-tab fetch, and the credentialed Google Sheets CSV pull — the
+security-sensitive fetch guards `SHEET_URL_OK` + the response-header safelist
+live here), and **`sw-cdp.ts`** (the `chrome.debugger`/CDP layer: attach
+lifecycle + `cdpClick`/`cdpEval`/`cdpScreenshot`/`cdpShadowResolve`/`cdpKeyType`).
+
 ## The message contract (how to add a primitive)
 
 Every `window.ml` method that needs the server/privileges follows one pattern.
