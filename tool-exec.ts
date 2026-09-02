@@ -69,7 +69,7 @@ export interface ToolEnvelope {
     answerManaged?: boolean;
 }
 
-export async function executeTool(tool: MlTool, args: Record<string, unknown>, ctx?: ToolContext, onStream?: (text: string) => void): Promise<ToolEnvelope> {
+export async function executeTool(tool: MlTool, args: Record<string, unknown>, ctx?: ToolContext, onStream?: (text: string, ts?: number) => void): Promise<ToolEnvelope> {
     // Check the model's args against the tool's schema (the same validateArgs that feeds the debug ⚠
     // strip) and surface it to the MODEL, not just the sidebar. A MISSING REQUIRED arg means the tool
     // can't run usefully (e.g. click with no `selector` → a baffling "No element matches undefined"),

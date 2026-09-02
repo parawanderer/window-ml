@@ -85,7 +85,7 @@ export function getRun(runId: string): PageRun | undefined { return runs.get(run
  *  executeTool already validates args + catches errors (never throws), so this only reduces the
  *  envelope: real nodes → a count, and an answer-capable tool's nodes are stashed page-side. */
 const VERIFY_TEXT_MAX = 8000;   // cap the navigate verify:"text" Markdown so a big page can't flood the turn
-export async function runDelegatedTool(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; onStream?: (text: string) => void } = {}): Promise<PageToolEnvelope> {
+export async function runDelegatedTool(runId: string, name: string, args: Record<string, unknown>, opts: { renderOnly?: boolean; readonlyTry?: boolean; precheck?: boolean; verifyAt?: { x: number; y: number }; verifyViewport?: boolean; verifyText?: "strip" | "all"; verifyPipe?: string; verifyElement?: string; verifyFocus?: boolean; onStream?: (text: string, ts?: number) => void } = {}): Promise<PageToolEnvelope> {
     const run = runs.get(runId);
     if (!run) return { result: `Error: no active agent run "${runId}" on this page (it may have ended).` };
     // navigate({ verify: "text" / "text-all" }): after the destination page re-adopts, the background rings
@@ -225,7 +225,7 @@ export function installToolDelegation(): void {
         // LIVE tool output: when the background asked for streaming, hand the tool a ctx.stream that posts each
         // chunk straight back up the delegation chain (→ content → background → the loop's fan). Keyed by runId,
         // which is all the background needs (one delegated call is in flight per run).
-        const onStream = stream ? (chunk: string) => { try { window.postMessage({ type: "PAGE_TOOL_STREAM", runId, chunk }, "*"); } catch { /* non-cloneable → drop */ } } : undefined;
+        const onStream = stream ? (chunk: string, ts?: number) => { try { window.postMessage({ type: "PAGE_TOOL_STREAM", runId, chunk, ts }, "*"); } catch { /* non-cloneable → drop */ } } : undefined;
         const envelope = await runDelegatedTool(runId, name, args || {}, { renderOnly: !!renderOnly, readonlyTry: !!readonlyTry, precheck: !!precheck, verifyAt, verifyViewport: !!verifyViewport, verifyText, verifyPipe, verifyElement, verifyFocus, onStream });
         window.postMessage({ type: "PAGE_TOOL_RESULT", callId, envelope }, "*");
     });

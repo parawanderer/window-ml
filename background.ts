@@ -345,7 +345,7 @@ const pyStreamTabs = new Map<string, number>();
 // LIVE tool-output streaming on the BACKGROUND path: the in-flight delegated tool's onStream, keyed by runId.
 // The loop delegates tool calls SEQUENTIALLY (one in flight per run), so runId alone correlates a page-posted
 // PAGE_TOOL_STREAM chunk to the right callback. Set in delegateTool while a streaming call runs, deleted after.
-const delegateStreams = new Map<string, (chunk: string) => void>();
+const delegateStreams = new Map<string, (chunk: string, ts?: number) => void>();
 const PRINT_DOC_TTL_MS = 60_000;
 function dropPrintDoc(key: string): void {
     const e = pendingPrints.get(key);
@@ -1180,14 +1180,14 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // sink, which is the loop's throttled fan → an agent-step `streamOutput` delta on every surface.
         // Keyed by runId: the loop delegates tool calls sequentially, so one is in flight per run.
         const sink = delegateStreams.get(message.runId);
-        if (sink) { try { sink(String(message.chunk ?? "")); } catch { /* a bad sink must not break the run */ } }
+        if (sink) { try { sink(String(message.chunk ?? ""), typeof message.ts === "number" ? message.ts : undefined); } catch { /* a bad sink must not break the run */ } }
         return false;
     }
     if (message.type === "PY_STDOUT") {
         // A live stdout chunk from the offscreen Pyodide host → relay to the run's page (keyed by streamId), which
         // resolves it as a PYTHON_EXEC_RESPONSE progress event to the awaiting ml.pythonExec (→ the tool's ctx.stream).
         const tabId = pyStreamTabs.get(message.streamId);
-        if (tabId != null) chrome.tabs.sendMessage(tabId, { type: "PYTHON_STREAM", requestId: message.streamId, chunk: message.chunk }).catch(() => { /* page gone → drop */ });
+        if (tabId != null) chrome.tabs.sendMessage(tabId, { type: "PYTHON_STREAM", requestId: message.streamId, chunk: message.chunk, ts: message.ts }).catch(() => { /* page gone → drop */ });
         return false;
     }
     if (message.type === "FETCH_SHEET") {

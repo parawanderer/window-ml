@@ -133,7 +133,7 @@ chrome.runtime.onMessage.addListener((message: PageMessage & { event?: unknown }
     // A LIVE python_exec stdout chunk (opt-in streaming) → re-post on the page window so ml.pythonExec's
     // in-flight promise (keyed by requestId) resolves it as a progress event to the tool's ctx.stream.
     if (message && message.type === "PYTHON_STREAM") {
-        window.postMessage({ type: "PYTHON_STREAM", requestId: (message as { requestId?: string }).requestId, chunk: (message as { chunk?: string }).chunk }, "*");
+        window.postMessage({ type: "PYTHON_STREAM", requestId: (message as { requestId?: string }).requestId, chunk: (message as { chunk?: string }).chunk, ts: (message as { ts?: number }).ts }, "*");
         return undefined;
     }
     if (!message || message.type !== "RUN_TOOL_IN_PAGE") return undefined;
@@ -225,7 +225,7 @@ window.addEventListener("message", (event: MessageEvent) => {
     // background, which routes it to the in-flight call's sink by runId (→ the loop's fan → a streamOutput
     // delta on every surface). Fire-and-forget; a dropped chunk only costs a frame of live output.
     if (data.type === "PAGE_TOOL_STREAM") {
-        chrome.runtime.sendMessage({ type: "PAGE_TOOL_STREAM", runId: (data as { runId?: string }).runId, chunk: (data as { chunk?: string }).chunk });
+        chrome.runtime.sendMessage({ type: "PAGE_TOOL_STREAM", runId: (data as { runId?: string }).runId, chunk: (data as { chunk?: string }).chunk, ts: (data as { ts?: number }).ts });
         return;
     }
     // 3. Forward to the background worker (to bypass CORS).

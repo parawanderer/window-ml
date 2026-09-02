@@ -34,7 +34,7 @@ export interface AgentLoopDeps {
     // Reached for a requiresApproval tool ONLY after the gate. This is the untrusted delegation point.
     // `onStream`, when provided (opt-in `stream`), is handed to the tool as `ctx.stream` so it can stream live
     // output as it runs (the loop throttles + fans it). Ignored by tools that don't support streaming.
-    runTool(name: string, args: Record<string, unknown>, onStream?: (text: string) => void): Promise<ToolRunResult>;
+    runTool(name: string, args: Record<string, unknown>, onStream?: (text: string, ts?: number) => void): Promise<ToolRunResult>;
     // The approval gate (UI). Reached ONLY for a requiresApproval tool that isn't auto-approved. `seq`
     // and `step` identify the pending step so a background gate can correlate its async decision to it.
     approve(req: { tool: string; arguments: Record<string, unknown>; seq?: number; step?: number }): Promise<ApprovalDecision>;
@@ -73,7 +73,7 @@ export interface AgentLoopDeps {
     // `elements` carries the tool's real result nodes on a DONE (page-side only — nodes can't cross the
     // bus, so the background path leaves it undefined and assembles answer nodes separately). The page's
     // emit uses them for onStep + the debug event's element COUNT.
-    emit?(ev: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: unknown; tool?: string; arguments?: Record<string, unknown>; result?: string; modelResult?: string; token?: string; approval?: Approval; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; usage?: unknown; elements?: unknown[]; reused?: import("./contract").ReusedGrant[]; streamOutput?: string }): void;
+    emit?(ev: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: unknown; tool?: string; arguments?: Record<string, unknown>; result?: string; modelResult?: string; token?: string; approval?: Approval; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; usage?: unknown; elements?: unknown[]; reused?: import("./contract").ReusedGrant[]; streamOutput?: string; streamMarks?: [number, number][] }): void;
     // Mid-run STEERING (a.say()): drained at each step boundary (before the model call) — returns any user
     // messages queued since the last step, injected via pushUser so the model sees them on its next turn.
     // Omit → no steering. The queue lives in the caller's world (page handle / SW inbox).
@@ -215,15 +215,20 @@ const STREAM_EMIT_MS = 90;
 const STREAM_OUTPUT_CAP = UI_OUT_CAP;
 /** Build the per-tool-call streaming fan (or null when streaming is off). `push` accumulates + throttled-emits
  *  the running output; `done` stops any pending trailing emit (the DONE supersedes it). */
-function makeStreamFan(on: boolean | undefined, emit: (out: string) => void): { push: (text: string) => void; done: () => void } | null {
+function makeStreamFan(on: boolean | undefined, emit: (out: string, marks: [number, number][]) => void): { push: (text: string, ts?: number) => void; done: () => void } | null {
     if (!on) return null;
     let acc = "", dropped = 0, last = 0, timer: ReturnType<typeof setTimeout> | null = null;
+    const marks: [number, number][] = [];   // [offset in acc, when the producer emitted it]
     // Past the cap we keep the HEAD (like the final clip) and COUNT what we dropped, re-emitting the note each
     // flush — so a runaway loop shows a truncation figure that ticks up instead of silently freezing.
-    const send = (): void => { last = Date.now(); emit(dropped ? `${acc}… [+${dropped} chars]` : acc); };
+    const send = (): void => { last = Date.now(); emit(dropped ? `${acc}… [+${dropped} chars]` : acc, marks.slice()); };
     return {
-        push(text: string): void {
+        push(text: string, ts?: number): void {
             const s = String(text), room = STREAM_OUTPUT_CAP - acc.length;
+            // The EXECUTOR's timestamp wins (it may have crossed a worker/network hop); fall back to now only
+            // when the producer is this realm. One mark per push — the UI maps a line back to the mark at or
+            // before its offset.
+            if (room > 0 && s) marks.push([acc.length, ts ?? Date.now()]);
             if (room > 0) { acc += s.slice(0, room); if (s.length > room) dropped += s.length - room; }
             else dropped += s.length;
             if (Date.now() - last >= STREAM_EMIT_MS) { if (timer) { clearTimeout(timer); timer = null; } send(); }   // leading edge
@@ -320,7 +325,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             deps.emit?.({ step, seq: s, pending: true, tool: call.name, arguments: args, renderIn: preIn });   // in-flight START
             // Live tool-output fan for THIS call (opt-in `stream`): a delta emit carries only { step, seq,
             // streamOutput } so the reducer patches the pending row additively; the DONE below supersedes it.
-            const fan = makeStreamFan(opts.stream, (out) => deps.emit?.({ step, seq: s, streamOutput: out }));
+            const fan = makeStreamFan(opts.stream, (out, marks) => deps.emit?.({ step, seq: s, streamOutput: out, streamMarks: marks }));
             let result: string, approval: Approval | undefined;
             let tr: ToolRunResult | undefined;   // the full result — its render slots ride the DONE emit
             if (!meta) {

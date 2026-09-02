@@ -725,8 +725,14 @@ export interface ToolContext {
      *  to stream output AS IT WORKS (Jupyter-style: `exec`'s console.log, `python_exec`'s print), so the step's
      *  Out fills in live instead of only appearing at completion. Present ONLY when the run opted into
      *  `streaming` — a tool checks `if (ctx.stream)` and streams if it can; absent → it just returns the full
-     *  result at the end (unchanged). The loop throttles + caps the fan; the final result still supersedes it. */
-    stream?: (text: string) => void;
+     *  result at the end (unchanged). The loop throttles + caps the fan; the final result still supersedes it.
+     *
+     *  `ts` is WHEN THE OUTPUT WAS PRODUCED, and it belongs to the EXECUTOR, not the renderer: a tool whose
+     *  work happens elsewhere (python_exec's Pyodide worker; a hypothetical bash tool running on a server)
+     *  passes the time recorded THERE, so the displayed clock isn't skewed by however many hops the chunk
+     *  crossed to reach us. Omit it only when the producer IS this realm (exec's console patch) — the fan then
+     *  stamps `Date.now()`, which is the same instant. The UI only decides whether to SHOW these. */
+    stream?: (text: string, ts?: number) => void;
 }
 
 /** `agent_api_docs`'s per-run memory: which reference chunks have been shown in the CURRENT burst of docs
@@ -1476,6 +1482,10 @@ export interface DebugAgentStep extends DebugBase {
      *  in-flight Jupyter-style Out. A delta emit carries ONLY `{ step, seq, streamOutput }` (no `tool`) so the
      *  reducer patches it additively onto the pending row; the DONE (with `result`) supersedes it. */
     streamOutput?: string;
+    /** When each streamed chunk was PRODUCED, as `[offsetInStreamOutput, epochMs]` marks — supplied by the
+     *  executor (see ToolContext.stream), never inferred here. The UI reads the mark at or before a line's
+     *  offset to show its time; absent → no timestamps to show (a non-streamed result has none). */
+    streamMarks?: [number, number][];
     /** the `@tool:<id>` this step was MINTED (opt-in `token:true` on a citable call). The answer renderer matches
      *  it EXACTLY to resolve a `[label](@tool:<id>)` citation — no re-derivation, so it can't drift. */
     token?: string;
@@ -1614,7 +1624,7 @@ export interface MlApi {
     fetchTool(): MlTool;
     /** Run a sandboxed Python snippet (Pyodide/WASM, numpy + Pillow) with an optional
      *  screenshot injected as `img`/`img_np`. No network/filesystem/DOM. */
-    pythonExec(code: string, opts?: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Element | Record<string, string | Element> | null; onStdout?: (chunk: string) => void }): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; render?: "latex" | "img"; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; resultTable?: { columns: string[]; rows: (string | number | null)[][] } }>;
+    pythonExec(code: string, opts?: { image?: string | Element | null; mode?: "readonly" | "full"; margin?: number; tableRaw?: boolean; tables?: string | Element | Record<string, string | Element> | null; onStdout?: (chunk: string, ts?: number) => void }): Promise<{ ok: boolean; value?: unknown; stdout: string; error?: string; render?: "latex" | "img"; inputImage?: string; inputTables?: TablePreview[]; imageBox?: ShotBox; resultTable?: { columns: string[]; rows: (string | number | null)[][] } }>;
     /** Built-in sandboxed-Python tool factory (numpy/Pillow pixel/array work). */
     pythonTool(): MlTool;
     /** Read-only self-introspection tool for ml.agent (pass via `extraTools`): reports the run's model,

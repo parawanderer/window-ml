@@ -51,7 +51,7 @@ export interface RunAgentHostDeps {
     // a requiresApproval tool ONLY after the gate — the untrusted execution point.
     // `onStream` (opt-in streaming) is forwarded to the PAGE tool as its ctx.stream, so live output
     // (console.log / print) streams back while the delegated tool runs. Omitted → no live output.
-    delegateTool(name: string, args: Record<string, unknown>, onStream?: (text: string) => void): Promise<ToolRunResult>;
+    delegateTool(name: string, args: Record<string, unknown>, onStream?: (text: string, ts?: number) => void): Promise<ToolRunResult>;
     // Self-introspection (chat_metadata): the run's model + its context window + capability list, from the
     // SW's caches. The loop supplies the token/message counts; this only adds the model facts. Optional.
     chatMeta?(): Promise<{ model: string | null; contextWindow: number | null; capabilities: string[] | null } | null>;

@@ -118,3 +118,21 @@ test("find bar: the arrows are disabled while there is nothing to step through",
     await type(cell, "nope");
     for (const b of cell.querySelectorAll(".r-find-nav")) assert.equal(b.disabled, true);
 });
+
+/* ---------------- streamed-output timestamps (supplied by the executor, not guessed) ---------------- */
+
+test("timeForOffset: a line takes the time of the last mark at or before it", async () => {
+    const { timeForOffset } = await import("../sidebar/render-panel.tsx");
+    const marks = [[0, 1000], [10, 2000], [25, 3000]];
+    assert.equal(timeForOffset(marks, 0), 1000, "the first chunk's own time");
+    assert.equal(timeForOffset(marks, 5), 1000, "still inside the first chunk");
+    assert.equal(timeForOffset(marks, 10), 2000, "exactly at the next mark");
+    assert.equal(timeForOffset(marks, 30), 3000, "after the last mark");
+});
+
+test("timeForOffset: no marks → NO time is invented", async () => {
+    const { timeForOffset } = await import("../sidebar/render-panel.tsx");
+    assert.equal(timeForOffset(undefined, 5), null);
+    assert.equal(timeForOffset([], 5), null);
+    assert.equal(timeForOffset([[10, 999]], 0), null, "an offset before the first mark has no time to show");
+});

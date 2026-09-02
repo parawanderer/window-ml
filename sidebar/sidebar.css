@@ -719,6 +719,14 @@ details.io[open] > summary .io-preview { display: none; }
    explicit label, so the fuller human view is never mistaken for what the model actually read. */
 .r-unseen-lbl { margin: 6px 0 3px; font-size: 10px; letter-spacing: .04em; text-transform: uppercase; color: var(--fg-faint); cursor: help; }
 .r-unseen { opacity: .55; border-left: 2px dashed var(--border); padding-left: 6px; }
+/* Timestamp gutter on streamed output: when each line was PRODUCED (the executor's clock). Never selectable,
+   so copying the output copies only the output. */
+.r-timed { display: block; }
+.r-ts-row { display: flex; gap: 8px; white-space: pre; }
+.r-ts { flex: 0 0 auto; width: 56px; text-align: right; color: var(--fg-faint); opacity: .8;
+        font-variant-numeric: tabular-nums; user-select: none; -webkit-user-select: none; }
+.r-ts-line { flex: 1 1 auto; white-space: pre-wrap; word-break: break-word; }
+
 .r-unseen-lbl.live { color: var(--fg-faint); text-transform: none; letter-spacing: 0; font-style: italic; }
 .r-unseen-q { display: inline-flex; align-items: center; justify-content: center; width: 13px; height: 13px;
               margin-left: 3px; border: 1px solid var(--border); border-radius: 50%; font-size: 9px; font-style: normal; }

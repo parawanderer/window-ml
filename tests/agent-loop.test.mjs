@@ -438,3 +438,22 @@ test("pending In render: streaming OFF → no pre-render round-trip (unchanged b
     assert.equal(asked, 0, "no extra page round-trip when not streaming");
     assert.equal(calls.emits.find(e => e.pending && e.tool === "myTool").renderIn, undefined);
 });
+
+// Stream timestamps belong to the EXECUTOR: a tool whose work happens elsewhere (python_exec's worker, a
+// hypothetical bash tool on a server) passes the time recorded THERE, so the clock isn't skewed by the hops
+// back to us. A producer that IS this realm passes none and the fan stamps now. The UI never guesses.
+test("stream marks: the executor's own timestamp is recorded verbatim; otherwise the fan stamps now", async () => {
+    const { deps, calls } = makeDeps({ turns: [toolCall("myTool", {}), reply("done")] });
+    deps.runTool = async (name, args, onStream) => {
+        onStream?.("first\n", 111111);                       // produced elsewhere — it knows when
+        await new Promise(r => setTimeout(r, 120));
+        onStream?.("second\n");                              // produced here — no ts to supply
+        return { result: "ok" };
+    };
+    await runAgentLoop("x", { tools: [{ name: "myTool" }], stream: true }, deps);
+    const marks = calls.emits.filter(e => e.streamMarks?.length).at(-1).streamMarks;
+    assert.equal(marks[0][0], 0, "the first chunk is anchored at offset 0");
+    assert.equal(marks[0][1], 111111, "the executor's timestamp is kept verbatim, not re-stamped on arrival");
+    assert.equal(marks[1][0], "first\n".length, "the next chunk is anchored where it starts");
+    assert.ok(marks[1][1] > 1e12, "a producer that supplies none falls back to the fan's clock");
+});

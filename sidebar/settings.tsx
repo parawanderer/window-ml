@@ -10,8 +10,8 @@ import type { MlConfig, ApiFormat, Theme, DebugMode, CardCorner, AgentHud, Loade
 import { DEFAULT_CONFIG, DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX, detectGroundingModel, modelFilterAllows } from "../contract";
 import { PY_PACKAGES } from "../python-env";
 import {
-    config, models, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH,
-    MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT,
+    config, models, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes,
+    MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY,
 } from "./store";
 import { truncate } from "./format";
 import { applyTheme, applyFont, applyCodePrefs } from "./prefs";
@@ -836,6 +836,12 @@ export function Settings() {
                         <option value="420">Tall (420px)</option>
                         <option value="0">Uncapped</option>
                     </select></label>
+                <label class="set-check">
+                    <input type="checkbox" checked={showOutTimes.value}
+                        onChange={(e: any) => { showOutTimes.value = e.target.checked; chrome.storage.local.set({ [OUTTS_KEY]: showOutTimes.value }); }} />
+                    <span>Timestamp streamed output lines</span>
+                </label>
+                <div class="set-note">Shows when each line of a tool's live output was produced, in a gutter beside it (never part of the text — it won't be copied, and the model never sees it). The times come from whatever PRODUCED the output — python_exec stamps inside its worker, so they aren't skewed by the hops back to the UI.</div>
                 <div class="set-note">How tall ANY tool's output grows before it scrolls (python_exec, exec, a big fetch_url page — every tool's output uses the same cell) — Jupyter-style, so a chatty run can't bury the transcript. Drag the grip under any cell to resize just that one, and Ctrl+F inside one to search it. While you're scrolled to the bottom it follows new streamed output; scroll up and it holds still.</div>
                 <label class="set-check">
                     <input type="checkbox" checked={codeLineNumbers.value}

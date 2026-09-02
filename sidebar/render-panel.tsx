@@ -7,7 +7,7 @@ import { useState, useRef, useEffect, useMemo } from "preact/hooks";
 import { signal } from "@preact/signals";
 import type { RenderDescriptor, LocateSubstep, TableSource } from "../contract";
 import { elementReference } from "../dom";
-import { rev, view, sessionMap, outMaxH } from "./store";
+import { rev, view, sessionMap, outMaxH, showOutTimes } from "./store";
 import { markdown, truncate, pretty } from "./format";
 import {
     openCtxMenu, copyText, ClickableImg, Code, SheetChip, inlineText,
@@ -226,11 +226,42 @@ export const atBottomOf = (el: { scrollHeight: number; scrollTop: number; client
  *  context budget, but the UI keeps far more (UI_OUT_CAP) — so without this you'd read the surplus as "what the
  *  model saw". Everything past `seen` chars renders dimmed under an explicit label. Shared by python_exec and
  *  exec (and any future tool that reports a `seen` boundary). No boundary → plain output, unchanged. */
-export function SeenSplit({ text, seen, live }: { text: string; seen?: number; live?: boolean }) {
-    if (seen == null || seen >= text.length) return <Code text={text} lang="text" />;
+/** Wall-clock for one streamed line, from the marks the EXECUTOR supplied. Pure so the mapping (a line takes
+ *  the time of the last mark at or before its offset) is unit-testable without a DOM. Returns null when no mark
+ *  covers the offset — we never invent a time. */
+export function timeForOffset(marks: [number, number][] | undefined, offset: number): number | null {
+    if (!marks || !marks.length) return null;
+    let ts: number | null = null;
+    for (const [at, t] of marks) { if (at <= offset) ts = t; else break; }
+    return ts;
+}
+const hhmmss = (ts: number): string => new Date(ts).toTimeString().slice(0, 8);
+
+/** Streamed output with a TIMESTAMP GUTTER — when each line was produced, per the executor's marks. The time
+ *  is repeated only when it CHANGES, so a burst of lines reads as one moment rather than a wall of identical
+ *  clocks. The gutter is its own element with `user-select: none`, so it is never part of the text you copy
+ *  (and it was never part of what the model read). Falls back to a plain block when there are no marks or the
+ *  gutter is switched off in Settings. */
+export function TimedOutput({ text, marks }: { text: string; marks?: [number, number][] }) {
+    if (!showOutTimes.value || !marks || !marks.length) return <Code text={text} lang="text" />;
+    const lines = text.split("\n");
+    let off = 0, shown = "";
+    const rows = lines.map((line, i) => {
+        const ts = timeForOffset(marks, off);
+        off += line.length + 1;
+        const label = ts == null ? "" : hhmmss(ts);
+        const repeat = label && label === shown;
+        if (label) shown = label;
+        return <div class="r-ts-row" key={i}><span class="r-ts" aria-hidden="true">{repeat ? "" : label}</span><span class="r-ts-line">{line}</span></div>;
+    });
+    return <div class="code r-timed">{rows}</div>;
+}
+
+export function SeenSplit({ text, seen, live, marks }: { text: string; seen?: number; live?: boolean; marks?: [number, number][] }) {
+    if (seen == null || seen >= text.length) return <TimedOutput text={text} marks={marks} />;
     return (
         <>
-            <Code text={text.slice(0, seen)} lang="text" />
+            <TimedOutput text={text.slice(0, seen)} marks={marks} />
             {/* While the tool is still RUNNING we already know where the model's cut will fall, so mark it as it
                 streams rather than springing it on you at the end — greyed, with a "?" that explains why. */}
             <div class={`r-unseen-lbl${live ? " live" : ""}`}
@@ -239,7 +270,7 @@ export function SeenSplit({ text, seen, live }: { text: string; seen?: number; l
                     : "The tool captured this, but it was clipped out of the result sent to the model (its output cap). The model never read it."}>
                 {live ? "beyond the model's cutoff " : "↓ captured, but NOT sent to the model"}{live ? <span class="r-unseen-q">?</span> : null}
             </div>
-            <div class="r-unseen"><Code text={text.slice(seen)} lang="text" /></div>
+            <div class="r-unseen"><TimedOutput text={text.slice(seen)} marks={marks?.map(([o, t]) => [o - seen, t] as [number, number])} /></div>
         </>
     );
 }

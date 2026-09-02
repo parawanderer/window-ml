@@ -75,7 +75,7 @@ export function onDebug(ev: MlDebugEvent): void {
         if (ev.streamOutput != null && ev.tool == null && ev.seq != null) {
             const steps0 = s.steps || [];
             const j = steps0.findIndex(x => x.seq === ev.seq);
-            if (j >= 0) { s.steps = steps0.map((x, k) => k === j ? { ...x, streamOutput: ev.streamOutput } : x); s.lastTs = ev.ts; rev.value++; }
+            if (j >= 0) { s.steps = steps0.map((x, k) => k === j ? { ...x, streamOutput: ev.streamOutput, streamMarks: ev.streamMarks } : x); s.lastTs = ev.ts; rev.value++; }
             return;
         }
         const step = { step: ev.step, localStep: ev.localStep, seq: ev.seq, pending: ev.pending, awaitingApproval: ev.awaitingApproval, thought: ev.thought, reasoning: ev.reasoning, tool: ev.tool, arguments: ev.arguments, result: ev.result, modelResult: ev.modelResult, token: ev.token, elements: ev.elements, renderIn: ev.renderIn, renderOut: ev.renderOut, feedback: ev.feedback, argIssues: ev.argIssues, approval: ev.approval, usage: ev.usage, subUsage: ev.subUsage, grants: ev.grants, reused: ev.reused };

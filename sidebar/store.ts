@@ -14,6 +14,7 @@ export const WRAP_KEY = "ml_debug_codewrap";     // true = break-line (default);
 export const LINES_KEY = "ml_debug_codelines";   // line-number gutter on code blocks
 export const STATS_TOKENS_KEY = "ml_debug_stats_tokens";   // DevTools run-stats bar: cumulative in/out tokens (default on)
 export const STATS_TPS_KEY = "ml_debug_stats_tps";         // DevTools run-stats bar: generation tok/s (default off)
+export const OUTTS_KEY = "ml_debug_outts";                 // show per-line timestamps on streamed tool output
 export const OUTMAX_KEY = "ml_debug_outmax";               // max height (px) of a tool OUTPUT cell before it scrolls
 
 export type Status = "pending" | "ok" | "err";
@@ -26,7 +27,7 @@ export interface Turn {
     reasoning?: string | null;  // separate thinking/reasoning text, if the model produced any
     usage?: TokenUsage | null;  // token counts for this turn, when the server reports them
 }
-export interface AgentStep { step: number; localStep?: number; seq?: number; pending?: boolean; awaitingApproval?: boolean; thought?: string; reasoning?: string | null; tool?: string; arguments?: Record<string, unknown>; result?: string; modelResult?: string; streamOutput?: string; token?: string; elements?: number; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; argIssues?: string[]; approval?: "readonly" | "sandbox" | "same-origin" | "consented" | "self-source" | "user" | "denied" | "skipped" | "cancelled"; usage?: TokenUsage | null; subUsage?: SubcallUsage; grants?: PersistGrant[]; reused?: ReusedGrant[]; }
+export interface AgentStep { step: number; localStep?: number; seq?: number; pending?: boolean; awaitingApproval?: boolean; thought?: string; reasoning?: string | null; tool?: string; arguments?: Record<string, unknown>; result?: string; modelResult?: string; streamOutput?: string; streamMarks?: [number, number][]; token?: string; elements?: number; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; argIssues?: string[]; approval?: "readonly" | "sandbox" | "same-origin" | "consented" | "self-source" | "user" | "denied" | "skipped" | "cancelled"; usage?: TokenUsage | null; subUsage?: SubcallUsage; grants?: PersistGrant[]; reused?: ReusedGrant[]; }
 
 // The agent's TURN count — the number of distinct `.step` values, NOT `steps.length`.
 // One turn (one LLM call) emits several `AgentStep` events (its thought + one per tool
@@ -81,6 +82,7 @@ export const codeLineNumbers = signal(false);  // show a line-number gutter on c
 export const showStatsTokens = signal(true);   // DevTools run-stats bar: cumulative in/out tokens (default on)
 export const showStatsTps = signal(false);     // DevTools run-stats bar: generation tok/s (default off)
 export const OUTMAX_DEFAULT = 260;             // px — roughly 14 lines; enough to read, small enough not to bury the page
+export const showOutTimes = signal(true);      // render the timestamp gutter on streamed output (default on)
 export const outMaxH = signal(OUTMAX_DEFAULT); // max height of a tool output cell (Settings → Appearance); 0 = uncapped
 export const config = signal<MlConfig>(DEFAULT_CONFIG);   // live mirror of chrome.storage.sync
 export const models = signal<string[]>([]);               // server model ids (for the datalists)

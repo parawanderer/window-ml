@@ -90,7 +90,10 @@ self.onmessage = (e: MessageEvent) => {
     if (!msg || typeof msg.id !== "number") return;
     // Live stdout streaming: when the run opted in (`stream`), post each print() chunk back as a `partial`
     // message (offscreen forwards it up the chain); the final message still carries the full result.
-    const onStdout = msg.stream ? (chunk: string) => self.postMessage({ id: msg.id, partial: true, chunk }) : undefined;
+    // Stamped HERE, in the worker — this is where the print actually happened. The chunk then crosses
+    // offscreen → SW → page before anything renders it, so a timestamp taken downstream would be skewed
+    // by those hops (the same reason a remote bash tool must stamp on its own server).
+    const onStdout = msg.stream ? (chunk: string) => self.postMessage({ id: msg.id, partial: true, chunk, ts: Date.now() }) : undefined;
     runChain = runChain
         .then(() => run(msg.code, msg.image ?? null, msg.hardened !== false, msg.tables ?? null, onStdout))
         .then(

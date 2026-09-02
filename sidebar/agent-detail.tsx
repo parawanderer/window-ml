@@ -267,7 +267,7 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                         raw={st.pending
                             ? (st.streamOutput != null
                                 // LIVE tool output (ctx.stream — console.log / print) filling in Jupyter-style while it runs.
-                                ? <div class="astep-streaming"><SeenSplit text={st.streamOutput} seen={liveCutoff(st)} live /></div>
+                                ? <div class="astep-streaming"><SeenSplit text={st.streamOutput} seen={liveCutoff(st)} live marks={st.streamMarks} /></div>
                                 : <span class="dim">running…</span>)
                             : (st.modelResult ?? st.result) ? <Code text={st.modelResult ?? st.result ?? ""} lang="text" /> : <span class="dim">(no output)</span>} />
                     {st.feedback ? <FeedbackBlock fb={st.feedback} /> : null}

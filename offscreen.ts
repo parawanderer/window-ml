@@ -37,7 +37,7 @@ function ensureWorker(): Worker {
         // this run's streamId (the page requestId), which relays it to the page; DON'T resolve the run.
         if (e.data?.partial) {
             const entry = pending.get(e.data.id);
-            if (entry?.streamId) chrome.runtime.sendMessage({ type: "PY_STDOUT", streamId: entry.streamId, chunk: String(e.data.chunk ?? "") }).catch(() => { /* no receiver → drop */ });
+            if (entry?.streamId) chrome.runtime.sendMessage({ type: "PY_STDOUT", streamId: entry.streamId, chunk: String(e.data.chunk ?? ""), ts: e.data.ts }).catch(() => { /* no receiver → drop */ });
             return;
         }
         const { id, ...result } = e.data as { id: number } & PyResult;
