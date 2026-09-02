@@ -2,6 +2,7 @@
 // model picker, Save & Test, VRAM readout, and the theme. Talks to background.ts
 // via chrome.runtime for privileged work.
 import type { MlConfig, Theme, LoadedModel } from "./contract";
+import { formatBytes } from "./resource-model";
 import { DEFAULT_CONFIG, fmtCtx } from "./contract";   // single source of truth (see contract.ts)
 import { browserInfo, extensionDetailsUrl } from "./util";   // browser-correct internal scheme + details-page URL
 
@@ -345,11 +346,13 @@ function renderVram(models: LoadedModel[]) {
         $("vram").textContent = "Nothing loaded.";
         return;
     }
-    const usedGB = models.reduce((sum, m) => sum + (m.vramGB || 0), 0);
+    // Exact bytes through the one formatter — the sidebar and the popup must not show the same box on two
+    // different rulers (and GPU memory is BINARY: a 96GB card is 94.97 GiB, not 101.97 GB).
+    const usedBytes = models.reduce((sum, m) => sum + (m.vramBytes ?? 0), 0);
     // Show the loaded context too — Ollama preallocates KV cache for the whole window,
     // so it's a big part of why a model costs what it costs.
-    const list = models.map(m => `• ${m.model}${m.contextLength ? ` (${fmtCtx(m.contextLength)} ctx)` : ""} — ${m.vramGB ?? "?"} GB`).join("\n");
-    $("vram").textContent = `${usedGB.toFixed(1)} GB in use\n${list}`;
+    const list = models.map(m => `• ${m.model}${m.contextLength ? ` (${fmtCtx(m.contextLength)} ctx)` : ""} — ${formatBytes(m.vramBytes)}`).join("\n");
+    $("vram").textContent = `${formatBytes(usedBytes)} in use\n${list}`;
 }
 
 // Resolves to the loaded-model list (so callers can poll after an unload), or

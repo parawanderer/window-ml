@@ -1439,15 +1439,15 @@ test("settings view live-syncs a config change made elsewhere (e.g. the popup)",
 
 test("VRAM monitor lists loaded models with a total, and evicts one + all", async () => {
     const w = await loadSidebarWorld({ vram: [
-        { model: "qwen3:14b", vramGB: 8.2, expiresAt: null },
-        { model: "glm-ocr", vramGB: 2.1, expiresAt: null },
+        { model: "qwen3:14b", vramGB: 8.2, vramBytes: 8 * 1024 ** 3, expiresAt: null },
+        { model: "glm-ocr", vramGB: 2.1, vramBytes: 2 * 1024 ** 3, expiresAt: null },
     ] });
     await w.raw({ __mlSidebarOpen: true });                     // shell reports slid-open → polling allowed
     w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
     await w.flush();                                            // let the poll effect run
 
     assert.equal(w.shadow.querySelectorAll(".vram-row").length, 2, "one row per loaded model");
-    assert.match(w.shadow.querySelector(".vram-total").textContent, /10\.3 GB/, "total VRAM summed");
+    assert.match(w.shadow.querySelector(".vram-total").textContent, /10\.00 GiB/, "total VRAM summed, in BINARY units");
     // Rows are sorted by name (stable order, no reshuffle on load/evict).
     assert.deepEqual([...w.shadow.querySelectorAll(".vram-name")].map(n => n.textContent), ["glm-ocr", "qwen3:14b"]);
 
@@ -1462,8 +1462,8 @@ test("VRAM monitor lists loaded models with a total, and evicts one + all", asyn
 
 test("VRAM monitor shows the context a model was LOADED with (Ollama preallocates the KV cache)", async () => {
     const w = await loadSidebarWorld({ vram: [
-        { model: "gemma4:31b", vramGB: 21.4, contextLength: 262144, expiresAt: null },
-        { model: "glm-ocr", vramGB: 2.1, contextLength: 8192, expiresAt: null },
+        { model: "gemma4:31b", vramGB: 21.4, vramBytes: 8 * 1024 ** 3, contextLength: 262144, expiresAt: null },
+        { model: "glm-ocr", vramGB: 2.1, vramBytes: 2 * 1024 ** 3, contextLength: 8192, expiresAt: null },
         { model: "old-server", vramGB: 1.0, contextLength: null, expiresAt: null },   // pre-0.11 Ollama: not reported
     ] });
     await w.raw({ __mlSidebarOpen: true });
@@ -1481,24 +1481,24 @@ test("VRAM monitor shows the context a model was LOADED with (Ollama preallocate
 
 test("VRAM monitor: clicking a colour dot hides that model from the total", async () => {
     const w = await loadSidebarWorld({ vram: [
-        { model: "qwen3:14b", vramGB: 8.2, expiresAt: null },
-        { model: "glm-ocr", vramGB: 2.1, expiresAt: null },
+        { model: "qwen3:14b", vramGB: 8.2, vramBytes: 8 * 1024 ** 3, expiresAt: null },
+        { model: "glm-ocr", vramGB: 2.1, vramBytes: 2 * 1024 ** 3, expiresAt: null },
     ] });
     await w.raw({ __mlSidebarOpen: true });
     w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
     await w.flush();
-    assert.match(w.shadow.querySelector(".vram-total").textContent, /10\.3 GB/);
+    assert.match(w.shadow.querySelector(".vram-total").textContent, /10\.00 GiB/);
 
     // Hide the first row (glm-ocr, 2.1) → total drops, row is marked off.
     w.shadow.querySelector(".vram-row .vram-dot").click();
     await w.tick();
-    assert.match(w.shadow.querySelector(".vram-total").textContent, /8\.2 GB/, "hidden model excluded from total");
+    assert.match(w.shadow.querySelector(".vram-total").textContent, /8\.00 GiB/, "hidden model excluded from total");
     assert.ok(w.shadow.querySelector(".vram-row.off"), "hidden row is dimmed");
 
     // Click again → back in.
     w.shadow.querySelector(".vram-row .vram-dot").click();
     await w.tick();
-    assert.match(w.shadow.querySelector(".vram-total").textContent, /10\.3 GB/, "unhidden → back in total");
+    assert.match(w.shadow.querySelector(".vram-total").textContent, /10\.00 GiB/, "unhidden → back in total");
 });
 
 test("VRAM monitor pauses polling while the sidebar is slid closed", async () => {
@@ -1668,11 +1668,12 @@ test("status dot: no cloud guess when provenance is unknown (ollamaModels null)"
 });
 
 test("VRAM panel shows a CPU-resident model's RAM size, not '?'", async () => {
-    const w = await loadSidebarWorld({ vram: [{ model: "util:2b", vramGB: null, sizeGB: 7.7, expiresAt: null }] });
+    // vramBytes 0 / no gpus[] is the server's "on the CPU" — the row shows its RAM footprint, never "?".
+    const w = await loadSidebarWorld({ vram: [{ model: "util:2b", vramGB: null, vramBytes: 0, sizeGB: 7.7, sizeBytes: 8 * 1024 ** 3, expiresAt: null }] });
     await w.raw({ __mlSidebarOpen: true });
     w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
     await w.flush();
-    assert.match(w.shadow.querySelector(".vram-gb").textContent, /7\.7 GB \(CPU\)/);
+    assert.match(w.shadow.querySelector(".vram-gb").textContent, /8\.00 GiB \(CPU\)/);
 });
 
 test("status dot: unknown (grey) when there's no Ollama backend", async () => {
@@ -5387,4 +5388,73 @@ test("non-streaming run: the step waits with 'running…' and then shows the ful
     assert.match(out.textContent, /all of it/, "the full captured output appears on completion");
     assert.match(out.textContent, /42/, "…and the returned value");
     assert.equal(w.shadow.querySelector(".r-ts"), null, "no timestamp gutter — nothing streamed, so there are no marks");
+});
+
+// The resource tracks: a real ceiling, per-model stacking, and gaps left as gaps. The arithmetic is unit
+// tested in resource-model.test.mjs; these cover what only the rendering does.
+const INFO_2CARD = { compute: {
+    system_compute: { cpu_cores: 32, total_memory: 130142785536, free_memory: 12330946560 },
+    supported_gpus: [
+        { gpu_id: "0", name: "CUDA0", total_memory: 101972967424, physical_memory: 102641958912, free_memory: 80 * 1024 ** 3, runner: "CUDA" },
+        { gpu_id: "1", name: "CUDA1", total_memory: 101972967424, physical_memory: 102641958912, free_memory: 94 * 1024 ** 3, runner: "CUDA" },
+    ],
+} };
+
+test("resource tracks: one per card plus host RAM, each against a real ceiling", async () => {
+    const w = await loadSidebarWorld({
+        vram: [{ model: "gemma4:31b", vramGB: 14, vramBytes: 14 * 1024 ** 3, sizeBytes: 14 * 1024 ** 3,
+                 gpus: [{ id: "0", runner: "CUDA", vramBytes: 14 * 1024 ** 3 }], contextLength: 262144, expiresAt: null }],
+        info: INFO_2CARD,
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+
+    const names = [...w.shadow.querySelectorAll(".rc-name")].map((n) => n.textContent);
+    assert.deepEqual(names, ["CUDA0", "CUDA1", "System RAM"], "small multiples — a model uses ONE card's capacity");
+    assert.equal(w.shadow.querySelectorAll(".rc-track").length, 3, "one track each, never a shared axis");
+    // The figure lives alongside a tooltip inside .rc-total, so match the pair rather than the whole node.
+    const totals = [...w.shadow.querySelectorAll(".rc-total")].map((n) => n.textContent);
+    // The DISPLAY ceiling is the driver framebuffer total (95.59 GiB), not ollama's 94.97 — it must agree
+    // with what nvidia-smi shows the user everywhere else.
+    // The numerator is what is IN USE on the card — the 14 GiB model plus ~1 GiB of driver context — because
+    // that is the figure that reconciles with free. The legend breaks it into model vs overhead.
+    assert.match(totals[0], /14\.97 GiB \/ 95\.59 GiB/, "in use on card 0, against the DRIVER total");
+    assert.match(totals[1], /993\.0 MiB \/ 95\.59 GiB/, "the IDLE card shows only its driver context");
+    assert.match(totals[2], /GiB \/ 121\.2 GiB/, "and system RAM against its own total");
+    const figures = totals.join(" ").match(/[\d.]+ [KMGT]?i?B/g) || [];
+    assert.ok(figures.every((f) => /( B|iB)$/.test(f)), `binary units only, saw ${figures.join()}`);
+});
+
+test("resource tracks: the residual is named driver overhead on an idle card, not a phantom process", async () => {
+    const w = await loadSidebarWorld({ vram: [], info: INFO_2CARD });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+    // CUDA1 is the genuinely idle card in the fixture (94 of 94.97 GiB free → ~1 GiB residual). CUDA0 has
+    // 80 GiB free with nothing of ours on it, so ITS 14.97 GiB really is unattributed — correctly so, which
+    // is the other half of this behaviour.
+    const cardLegend = w.shadow.querySelectorAll(".rc-track")[1].querySelector(".rc-legend").textContent;
+    const busyLegend = w.shadow.querySelectorAll(".rc-track")[0].querySelector(".rc-legend").textContent;
+    assert.match(busyLegend, /unattributed/, "a card holding 15 GiB nobody claims IS unattributed");
+    assert.match(cardLegend, /driver overhead/,
+        "an idle card's residual is ollama's own discovery context, not a phantom third party");
+    assert.ok(!/unattributed/.test(cardLegend), "…it never escalates past the floor on an idle card");
+    assert.match(cardLegend, /free/, "free capacity is always named");
+    // The host pool, by contrast, really does have other processes in it.
+    const hostLegend = [...w.shadow.querySelectorAll(".rc-track")].at(-1).querySelector(".rc-legend").textContent;
+    assert.match(hostLegend, /unattributed/, "the OS's own RAM use clears the floor and is named as such");
+});
+
+test("resource tracks: no /api/info means NO ceiling — it falls back, never invents one", async () => {
+    const w = await loadSidebarWorld({
+        vram: [{ model: "a", vramGB: 8, vramBytes: 8 * 1024 ** 3, expiresAt: null }],
+        info: null,   // stock Ollama / no passthrough → capacity unknown
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+    assert.equal(w.shadow.querySelectorAll(".rc-track").length, 0, "no capacity → no tracks");
+    assert.ok(w.shadow.querySelector(".vram-spark"), "…it degrades to the auto-scaled sparkline");
+    assert.match(w.shadow.querySelector(".vram-total").textContent, /8\.00 GiB in use/, "the total still renders");
 });

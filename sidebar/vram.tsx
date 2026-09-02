@@ -12,6 +12,22 @@ import {
 import { truncate } from "./format";
 import { normModel, seenContext } from "./model";
 import { IconVram, IconEye, IconEyeOff, IconBench } from "./icons";
+import { parseInfo, formatBytes, type Capacity, type ResourceSample, type ModelResidency } from "../resource-model";
+import { ResourceTracks } from "./resource-chart";
+import type { LoadedModel } from "../contract";
+
+/** A LoadedModel (the ps relay's shape) → the residency the chart works in. Bytes, never the rounded GB: the
+ *  bands subtract these from exact capacity figures. `gpus` absent means CPU-resident, and that absence is
+ *  preserved as an empty device map rather than invented placement. */
+export function residencyOf(m: LoadedModel): ModelResidency {
+    const vram = m.vramBytes ?? 0, size = m.sizeBytes ?? 0;
+    const perDevice: Record<string, number | null> = {};
+    for (const g of m.gpus ?? []) perDevice[g.id] = g.vramBytes === 0 && vram > 0 ? null : g.vramBytes;
+    return {
+        model: m.model, vramBytes: vram, ramBytes: Math.max(0, size - vram), perDevice,
+        contextLength: m.contextLength, expiresAt: m.expiresAt ? Date.parse(m.expiresAt) || null : null,
+    };
+}
 import { RenderPanel } from "./render-panel";
 
 // Fetch the server's model list via the background worker (privileged fetch);
@@ -29,6 +45,22 @@ export function fetchModels(): void {
 export const VRAM_COLORS = ["#6366f1", "#22c55e", "#f59e0b", "#ec4899", "#06b6d4", "#a855f7", "#ef4444", "#84cc16"];
 export const colorFor = (name: string) => VRAM_COLORS[[...name].reduce((a, c) => a + c.charCodeAt(0), 0) % VRAM_COLORS.length];
 export const VRAM_HISTORY = 45, VRAM_POLL_MS = 2000;
+// Session-long history, in a MODULE signal rather than component state: the old panel kept 45 samples in
+// useState and threw them away on every close, so "what happened during that run" was unanswerable the moment
+// you looked away. ~30 min at 2s is ~900 samples of a few numbers each — kilobytes. Session-only by choice:
+// it dies with the page, and gaps (the panel was closed, so nothing was polled) stay gaps.
+export const RESOURCE_HISTORY = 900;
+export const resourceHistory = signal<ResourceSample[]>([]);
+// Machine CAPACITY — the denominator. Changes far more slowly than residency, so it is fetched ONCE per panel
+// open rather than on the ps cadence. null = unknown (the route isn't served): the chart then draws no
+// ceiling at all rather than pretending capacity is zero.
+export const capacity = signal<Capacity | null>(null);
+export function fetchCapacity(): void {
+    chrome.runtime.sendMessage({ type: "OLLAMA_INFO", payload: {} }, (resp: any) => {
+        if (chrome.runtime.lastError || !resp || resp.error) return;   // leave capacity unknown
+        capacity.value = parseInfo(resp.data);
+    });
+}
 // Models the user has hidden from the totals/graph (session-only; a signal so it
 // survives VramPanel remounts). Immutable Set updates so the signal notifies.
 export const hiddenModels = signal<Set<string>>(new Set());
@@ -55,6 +87,14 @@ export function pollPs(): void {
         // Remember each resident model's window (overwrite → tracks a mid-run reload).
         for (const m of loaded) if (typeof m.contextLength === "number") seenContext.set(normModel(m.model), m.contextLength);
         loadedModels.value = loaded;
+        // One sample per poll, carrying the capacity in force at the time — a sample read back from history
+        // must know the ceiling it was drawn against, not today's.
+        const sample: ResourceSample = {
+            t: Date.now(),
+            models: loaded.map((m: LoadedModel) => residencyOf(m)),
+            capacity: capacity.value,
+        };
+        resourceHistory.value = [...resourceHistory.value, sample].slice(-RESOURCE_HISTORY);
     });
 }
 
@@ -180,7 +220,7 @@ export function VramPanel() {
     // mounted while open) so it never keeps a jsdom test window alive.
     const [, tick] = useState(0);
     useEffect(() => { const id = setInterval(() => tick(t => t + 1), 1000); return () => clearInterval(id); }, []);
-    useEffect(() => { pollPs(); }, []);   // immediate poll on open (don't wait for the interval)
+    useEffect(() => { pollPs(); fetchCapacity(); }, []);   // immediate poll + the (slow-moving) denominator
     useEffect(() => {
         if (!loaded) return;
         const snap: Record<string, number> = {};
@@ -195,7 +235,7 @@ export function VramPanel() {
 
     // Total is the CURRENT visible resident set — read it straight from `loaded`,
     // not the sparkline history (which lags a render and resets to 0 on reopen).
-    const total = loaded ? loaded.reduce((s, m) => s + (hidden.has(m.model) ? 0 : (m.vramGB || 0)), 0) : 0;
+    const total = loaded ? loaded.reduce((s, m) => s + (hidden.has(m.model) ? 0 : (m.vramBytes ?? 0)), 0) : 0;
     // Stable order so rows don't reshuffle as models load/evict.
     const rows = loaded ? [...loaded].sort((a, b) => a.model.localeCompare(b.model)) : [];
     // Recompute every point's visible-total each render, so toggling redraws the
@@ -209,13 +249,17 @@ export function VramPanel() {
     return (
         <div class="vram">
             <div class="vram-head">
-                <span class="vram-total">{total.toFixed(1)} GB in use</span>
+                <span class="vram-total">{formatBytes(total)} in use</span>
                 <span class="sp" />
                 {rows.length ? <button class="vram-free" onClick={() => evict()}>Free VRAM</button> : null}
             </div>
-            <svg class="vram-spark" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
-                {pts ? <polyline points={pts} fill="none" stroke="var(--accent)" stroke-width="1.5" /> : null}
-            </svg>
+            {capacity.value
+                ? <ResourceTracks samples={resourceHistory.value} capacity={capacity.value} hidden={hidden} />
+                /* No /api/info (stock Ollama, or an OpenWebUI without the passthrough): capacity is UNKNOWN,
+                   so fall back to the old auto-scaled shape rather than drawing a ceiling we don't have. */
+                : <svg class="vram-spark" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
+                    {pts ? <polyline points={pts} fill="none" stroke="var(--accent)" stroke-width="1.5" /> : null}
+                </svg>}
             {rows.length
                 ? rows.map(m => {
                     const off = hidden.has(m.model);
@@ -235,7 +279,7 @@ export function VramPanel() {
                                 </span>
                             ) : null}
                             <span class="sp" />
-                            <span class="vram-gb">{m.vramGB != null ? `${m.vramGB} GB` : m.sizeGB != null ? `${m.sizeGB} GB (CPU)` : "?"}</span>
+                            <span class="vram-gb">{m.vramBytes ? formatBytes(m.vramBytes) : m.sizeBytes ? `${formatBytes(m.sizeBytes)} (CPU)` : "?"}</span>
                             <button class="tt vram-x" aria-label="Evict from VRAM" onClick={() => evict(m.model)}>✕<span class="tt-pop" role="tooltip">Evict from VRAM</span></button>
                         </div>
                     );

@@ -61,6 +61,30 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .vram-free { background: var(--panel-2); color: var(--fg); border: none; border-radius: 4px; padding: 3px 8px; font-size: 0.83em; cursor: pointer; }
 .vram-free:hover { background: var(--panel-2-hover); }
 .vram-spark { width: 100%; height: 34px; display: block; }
+
+/* Resource tracks: one per accelerator (plus the host pool on a discrete box), each a stacked history against
+   a real ceiling. Small multiples rather than one shared axis — a model can only use ONE card's capacity, so
+   a combined axis would be a lie. */
+.rc { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 2px; }
+.rc-track { display: flex; flex-direction: column; gap: 2px; }
+.rc-head { display: flex; align-items: baseline; gap: 6px; font-size: 0.8em; }
+.rc-name { color: var(--fg-dim); }
+.rc-total { color: var(--fg); font-variant-numeric: tabular-nums; cursor: help; }
+/* Segments sit side by side with a visible break between them: history has HOLES by design (polling is gated
+   on the panel being open), and a gap must read as "not measured", never as a flat line. */
+.rc-plot { position: relative; display: flex; gap: 3px; height: 72px; background: var(--panel-2);
+           border-radius: 3px; overflow: hidden; }
+.rc-seg { min-width: 2px; height: 100%; }
+.rc-area { width: 100%; height: 100%; display: block; }
+/* The soft ceiling on unified memory: the recommended working set INSIDE the system total. */
+.rc-soft { position: absolute; left: 0; right: 0; height: 0; border-top: 1px dashed var(--accent); opacity: .6; }
+.rc-legend { display: flex; flex-wrap: wrap; gap: 8px; font-size: 0.72em; color: var(--fg-faint);
+             font-variant-numeric: tabular-nums; }
+.rc-key { display: inline-flex; align-items: center; gap: 3px; }
+.rc-key.tt { cursor: help; }
+.rc-swatch { width: 7px; height: 7px; border-radius: 2px; display: inline-block; }
+.rc-swatch-other { background: var(--fg-faint); opacity: .5; }
+.rc-swatch-free { border: 1px solid var(--border); }
 .vram-row { display: flex; align-items: center; gap: 6px; font-size: 0.83em; }
 /* Colour indicator doubles as a hide/show toggle (greys out when hidden). */
 .vram-dot { width: 0.7em; height: 0.7em; border-radius: 50%; flex: 0 0 auto; padding: 0; border: none; cursor: pointer; }
