@@ -5170,3 +5170,39 @@ test("HUD orb (non-streaming): a STALLED run shows an elapsed heartbeat + phase,
     assert.match(label.textContent, /Viewing the screen… · \d+s/, "the elapsed heartbeat proves the pipe is alive");
     assert.doesNotMatch(label.textContent, /tok/, "non-streaming has no live token count (can't know mid-generation)");
 });
+
+// The DevTools run-stats bar (RunStatsBar) — cumulative token SPEND + generation rate below the detail
+// composer, each figure independently toggled (chrome.storage.local prefs), with a provenance tooltip. Usage
+// rides the per-STEP emits (one per model call), so the bar sums across calls. Panel chrome only.
+test("DevTools run-stats bar: cumulative in/out tokens summed across calls (default on)", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("rstat", "compute"));
+    await w.dispatch(agentStep("rstat", 1, { seq: 1, tool: "python_exec", arguments: { code: "1" }, result: "1", usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120, genMs: 500 } }));
+    await w.dispatch(agentStep("rstat", 2, { seq: 2, thought: "final", usage: { promptTokens: 140, completionTokens: 30, totalTokens: 170, genMs: 600 } }));
+    await w.dispatch(agentResult("rstat", "done", 2));
+    await openRun(w);
+    const bar = w.shadow.querySelector(".run-stats");
+    assert.ok(bar, "the run-stats bar renders");
+    assert.match(bar.textContent, /240 in · 50 out/, "cumulative in/out summed across both calls");
+    assert.doesNotMatch(bar.textContent, /tok\/s/, "tok/s is OFF by default");
+});
+
+test("DevTools run-stats bar: tok/s shows when enabled + a provenance tooltip records how it was measured", async () => {
+    const w = await loadSidebarWorld({ local: { ml_debug_stats_tps: true } });   // enable the tok/s figure
+    await w.dispatch(agentStart("rstat2", "compute"));
+    // 60 completion tokens over 2s of Ollama eval time = 30 tok/s (generation-only basis).
+    await w.dispatch(agentStep("rstat2", 1, { seq: 1, thought: "t", usage: { promptTokens: 100, completionTokens: 60, totalTokens: 160, evalMs: 2000 } }));
+    await w.dispatch(agentResult("rstat2", "done", 1));
+    await openRun(w);
+    const bar = w.shadow.querySelector(".run-stats");
+    assert.match(bar.textContent, /30\.0 tok\/s/, "60 tokens ÷ 2s eval = 30 tok/s");
+    assert.match(bar.querySelector(".tt-pop").textContent, /Ollama generation time/, "the tooltip records the rate's provenance");
+});
+
+test("DevTools run-stats bar: renders nothing before any usage is reported", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("rstat3", "compute"));
+    await w.dispatch(agentStep("rstat3", 1, { seq: 1, pending: true, tool: "look", arguments: {} }));   // no usage yet
+    await openRun(w);
+    assert.equal(w.shadow.querySelector(".run-stats"), null, "no bar until the model reports token counts");
+});

@@ -683,6 +683,13 @@ details.io[open] > summary .io-preview { display: none; }
 .tt-pop.above::after { top: 100%; bottom: auto; border-bottom-color: transparent; border-top-color: var(--panel-2); }
 .tt:hover .tt-pop { opacity: 1; }
 
+/* DevTools run-stats readout — a thin muted bar above the detail composer (cumulative in/out tokens + tok/s).
+   Reuses `.tt` for the provenance tooltip; overrides its inline-flex so the bar can right-align full width. */
+.run-stats { display: flex; justify-content: flex-end; align-items: center; gap: 12px; padding: 2px 12px 0; font-size: 11px; color: var(--fg-faint); font-variant-numeric: tabular-nums; cursor: default; }
+.run-stats .rstat { white-space: nowrap; }
+.run-stats .rstat-ic { opacity: .7; margin-right: 3px; }
+.run-stats .rstat-tps { color: var(--fg-dim); }
+
 .icon-btn {
     display: inline-flex; align-items: center; justify-content: center; line-height: 0;
     background: transparent; border: none; color: var(--fg-faint); cursor: pointer;

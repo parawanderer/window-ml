@@ -162,3 +162,21 @@ test("run export: build hash + system-prompt size tag; tool defs gated on the se
         config.value = { ...config.value, exportToolDefs: false };   // don't leak the toggle to other tests
     }
 });
+
+test("agent run stats (cumulative tokens + generation rate) export into the run header — md + PDF parity", () => {
+    const s = {
+        hash: "st", kind: "agent", model: "qwen3", tag: "session", createdTs: 1, lastTs: 2, status: "ok",
+        turns: [], task: "compute the totals", answers: [{ text: "done", ts: 9, atStep: 2, status: "ok" }],
+        steps: [
+            { step: 1, tool: "python_exec", arguments: { code: "1" }, result: "1", usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120, evalMs: 1000 } },
+            { step: 2, thought: "final", usage: { promptTokens: 140, completionTokens: 40, totalTokens: 180, evalMs: 1000 } },
+        ],
+    };
+    const { md } = serializeSession(s);
+    assert.match(md, /Tokens/, "the run header carries a token line");
+    assert.match(md, /240 in · 60 out/, "cumulative in/out summed across both calls");
+    assert.match(md, /30\.0 tok\/s/, "60 out tokens ÷ 2s eval = 30 tok/s");
+    assert.match(md, /Ollama generation time/, "and the rate's provenance/basis is recorded");
+    const html = sessionToHtml(s, "run-stats-test");
+    assert.match(html, /240 in/, "the PDF/HTML sink carries the same stats (parity)");
+});

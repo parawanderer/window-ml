@@ -244,6 +244,20 @@ test("a meta-capability tool (chat_metadata) is answered BY THE LOOP with live t
     assert.doesNotMatch(done.result, /`look`/, "a VISION model's look inlines the image into context — NOT flagged as untracked");
 });
 
+test("chat_metadata reports cumulative token SPEND + generation rate with its basis", async () => {
+    const { deps, calls } = makeDeps({ turns: [
+        // The chat_metadata turn carries usage WITH Ollama eval timing → cumulative spend + a tok/s rate.
+        { content: "", tool_calls: [{ id: "m1", name: "chat_metadata", arguments: {} }], usage: { promptTokens: 1200, completionTokens: 40, totalTokens: 1240, evalMs: 2000 } },
+        reply("info"),
+    ] });
+    deps.chatMeta = async () => ({ model: "qwen3", contextWindow: 40960, capabilities: ["tools"], vramGB: null, local: true, backend: null, systemTokens: 100, toolTokens: 200 });
+    await runAgentLoop("x", { tools: [{ name: "chat_metadata", capabilities: ["meta"] }] }, deps);
+    const done = calls.emits.find(e => e.tool === "chat_metadata" && !e.pending);
+    assert.match(done.result, /cumulative tokens: 1200 in \+ 40 out = 1240 billed across 1 call\b/, "cumulative SPEND (in/out/total across N calls)");
+    assert.match(done.result, /generation rate: 20\.0 tok\/s/, "40 out tokens ÷ 2s eval = 20 tok/s");
+    assert.match(done.result, /Ollama generation time/, "the rate's basis/provenance is recorded");
+});
+
 test("chat_metadata reports the METERED delegated sub-call tokens when a tally exists (not just the note)", async () => {
     const { deps } = makeDeps({ turns: [
         { content: "", tool_calls: [{ id: "m1", name: "chat_metadata", arguments: {} }], usage: { promptTokens: 1200, completionTokens: 40, totalTokens: 1240 } },

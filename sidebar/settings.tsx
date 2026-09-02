@@ -10,8 +10,8 @@ import type { MlConfig, ApiFormat, Theme, DebugMode, CardCorner, AgentHud, Loade
 import { DEFAULT_CONFIG, DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX, detectGroundingModel, modelFilterAllows } from "../contract";
 import { PY_PACKAGES } from "../python-env";
 import {
-    config, models, fontScale, codeWrap, codeLineNumbers,
-    MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY,
+    config, models, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps,
+    MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY,
 } from "./store";
 import { truncate } from "./format";
 import { applyTheme, applyFont, applyCodePrefs } from "./prefs";
@@ -833,6 +833,20 @@ export function Settings() {
                         onChange={(e: any) => { codeLineNumbers.value = e.target.checked; applyCodePrefs(); chrome.storage.local.set({ [LINES_KEY]: codeLineNumbers.value }); }} />
                     <span>Show line numbers</span>
                 </label>
+                </Section>
+
+                <Section id="runstats" title="Run stats">
+                <label class="set-check">
+                    <input type="checkbox" checked={showStatsTokens.value}
+                        onChange={(e: any) => { showStatsTokens.value = e.target.checked; chrome.storage.local.set({ [STATS_TOKENS_KEY]: showStatsTokens.value }); }} />
+                    <span>Show cumulative tokens (in / out)</span>
+                </label>
+                <label class="set-check">
+                    <input type="checkbox" checked={showStatsTps.value}
+                        onChange={(e: any) => { showStatsTps.value = e.target.checked; chrome.storage.local.set({ [STATS_TPS_KEY]: showStatsTps.value }); }} />
+                    <span>Show generation speed (tokens/sec)</span>
+                </label>
+                <div class="set-note">A readout below a run's message box: total input + output tokens billed across the run, and the generation rate. Hover it for the rate's provenance — Ollama's native generation time when available (excludes network), else wall-clock per call (includes network/queue). Both figures are also in the <code>chat_metadata</code> tool and the run exports.</div>
                 </Section>
 
                 <Section id="export" title="Export">

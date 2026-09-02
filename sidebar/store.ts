@@ -12,6 +12,8 @@ export const BASE_FS = 12, MIN_FS = 0.8, MAX_FS = 1.6;   // font-scale bounds (Ã
 // of the ml config the popup/background share).
 export const WRAP_KEY = "ml_debug_codewrap";     // true = break-line (default); false = horizontal scroll
 export const LINES_KEY = "ml_debug_codelines";   // line-number gutter on code blocks
+export const STATS_TOKENS_KEY = "ml_debug_stats_tokens";   // DevTools run-stats bar: cumulative in/out tokens (default on)
+export const STATS_TPS_KEY = "ml_debug_stats_tps";         // DevTools run-stats bar: generation tok/s (default off)
 
 export type Status = "pending" | "ok" | "err";
 export interface Turn {
@@ -75,6 +77,8 @@ export const view = signal<{ name: "list" } | { name: "detail"; hash: string } |
 export const fontScale = signal(1);
 export const codeWrap = signal(true);          // wrap long code lines vs. horizontal scroll
 export const codeLineNumbers = signal(false);  // show a line-number gutter on code blocks
+export const showStatsTokens = signal(true);   // DevTools run-stats bar: cumulative in/out tokens (default on)
+export const showStatsTps = signal(false);     // DevTools run-stats bar: generation tok/s (default off)
 export const config = signal<MlConfig>(DEFAULT_CONFIG);   // live mirror of chrome.storage.sync
 export const models = signal<string[]>([]);               // server model ids (for the datalists)
 export const ollamaIds = signal<string[] | null>(null);   // subset that's Ollama-backed (null = can't tell â†’ skip cloud detection)

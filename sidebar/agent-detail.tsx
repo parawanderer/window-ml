@@ -6,9 +6,9 @@
 import type { ComponentChildren } from "preact";
 import { useState, useEffect, useRef } from "preact/hooks";
 import type { RenderDescriptor, DebugAgentConfig, PersistGrant } from "../contract";
-import { resolveOutputCap } from "../contract";
+import { resolveOutputCap, runStats, fmtTokPerSec, runStatsProvenance } from "../contract";
 import { externalSheetIds } from "../dom";
-import { config, surface, view, rev, sessionMap, turnsRun, atBottom } from "./store";
+import { config, surface, view, rev, sessionMap, turnsRun, atBottom, showStatsTokens, showStatsTps } from "./store";
 import type { Session, AgentStep, Status } from "./store";
 import { pretty, truncate, markdown, collapsedPreview } from "./format";
 import { sessionProfile } from "./model";
@@ -515,6 +515,30 @@ export function NavDivider({ url }: { url: string }) {
                 navigated to <b class="nav-url">{prettyUrl(url)}</b> · session resumed
             </span>
             <span class="nav-rule" aria-hidden="true" />
+        </div>
+    );
+}
+
+// Every per-call usage sample a session recorded — agent runs stamp usage per STEP; chat sessions per TURN.
+function sessionUsages(s: Session): (import("../contract").TokenUsage | null | undefined)[] {
+    return [...(s.steps || []).map(st => st.usage), ...(s.turns || []).map(t => t.usage)];
+}
+
+// The DevTools bottom-bar run-stats readout: cumulative in/out token SPEND and the generation rate, with a
+// hover tooltip recording HOW the rate was measured (Ollama generation time vs wall-clock incl. network). Each
+// figure is independently toggled in Settings → Appearance (chrome.storage.local prefs); with both off, or no
+// usage reported yet, it renders nothing. Panel chrome — the HUD card has no such bar.
+export function RunStatsBar({ s }: { s: Session }) {
+    const rs = runStats(sessionUsages(s));
+    const tps = fmtTokPerSec(rs);
+    const showTok = showStatsTokens.value && rs.calls > 0;
+    const showTps = showStatsTps.value && tps != null;
+    if (!showTok && !showTps) return null;
+    return (
+        <div class="run-stats tt" role="status" aria-label="run token stats">
+            {showTok ? <span class="rstat"><span class="rstat-ic" aria-hidden="true">↕</span>{rs.inTokens.toLocaleString()} in · {rs.outTokens.toLocaleString()} out</span> : null}
+            {showTps ? <span class="rstat rstat-tps">{tps}</span> : null}
+            <span class="tt-pop left" role="tooltip">{runStatsProvenance(rs)}</span>
         </div>
     );
 }

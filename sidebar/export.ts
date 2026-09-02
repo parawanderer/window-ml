@@ -15,6 +15,7 @@ import { sessionMap, turnsRun, config } from "./store";
 import type { Session, AgentStep } from "./store";
 import { pretty, fullStamp, beautifyJs, escapeHtml, highlight, markdown } from "./format";
 import { splitAnswer, hasTokens, resolveTokenStep } from "../answer-tokens";
+import { runStats, fmtTokPerSec } from "../contract";
 import { BUILD_INFO } from "../build-info.gen";
 
 // A rough token estimate for a string — the ubiquitous ~4-chars/token heuristic (good enough to gauge how much
@@ -220,7 +221,7 @@ function htmlSink() {
 // --- the walk (one per session kind), written through a Sink ---------------
 function writeAgent(s: Session, d: Sink): void {
     d.title(`Agent run · ${s.model || "default"} · ${s.hash}`);
-    d.meta([
+    const meta: [string, string][] = [
         ["Task", s.task || ""],
         ["Started", fullStamp(s.createdTs)],
         ["Finished", fullStamp(s.lastTs)],
@@ -229,7 +230,16 @@ function writeAgent(s: Session, d: Sink): void {
         // The build this run's extension was on — the SAME commit the agent reads via agent_api_docs, so an
         // exported log is pinnable to a build when reproducing behaviour.
         ["Build", buildLabel()],
-    ]);
+    ];
+    // Run token stats (cumulative SPEND + generation rate) — always in the export (a static artifact), the same
+    // figures the DevTools bar + chat_metadata report. Only when usage was reported (a local model always does).
+    const rs = runStats([...(s.steps || []).map(st => st.usage), ...(s.turns || []).map(t => t.usage)]);
+    if (rs.calls) {
+        meta.push(["Tokens", `${rs.inTokens.toLocaleString()} in · ${rs.outTokens.toLocaleString()} out · ${rs.totalTokens.toLocaleString()} total (${rs.calls} call${rs.calls === 1 ? "" : "s"})`]);
+        const tps = fmtTokPerSec(rs);
+        if (tps) meta.push(["Rate", `${tps} · ${rs.genBasis === "eval" ? "Ollama generation time (excl. network)" : rs.genBasis === "wall" ? "wall-clock per call (incl. network)" : "mixed timing"}`]);
+    }
+    d.meta(meta);
     // Composer attachments the user pasted with the initial task → PNG sidecars (as the sidebar shows them).
     (s.taskImages || []).forEach((img, j) => d.image(img, `task-img-${j + 1}`, `task image ${j + 1}`));
     const c = s.agentConfig;
