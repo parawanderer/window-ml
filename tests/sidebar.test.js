@@ -5567,6 +5567,16 @@ test("streamed output: a rule separates the timestamp gutter from the text", asy
 });
 
 // Mixed-size GPUs are normal (a 4090 beside a 3060), so an overlay must not assume one shared denominator.
+/** A class that dims must have a RULE behind it. Asserting only the class name let both cross-highlight
+ *  directions ship with no styling at all — every test green, nothing visibly dimmed. */
+function assertDims(selector) {
+    const css = require("node:fs").readFileSync("sidebar/sidebar.css", "utf8");
+    const at = css.indexOf(selector + " {");
+    assert.ok(at !== -1, `no CSS rule for ${selector} — the class would dim nothing`);
+    const body = css.slice(at, css.indexOf("}", at));
+    assert.match(body, /opacity:\s*0?\.\d/, `${selector} must actually reduce opacity`);
+}
+
 const INFO_MIXED = { compute: {
     system_compute: { cpu_cores: 16, total_memory: 68719476736, free_memory: 30 * 1024 ** 3 },
     supported_gpus: [
@@ -5660,6 +5670,9 @@ test("overview: hovering a line greys the models that aren't on it, and injects 
     assert.equal(w.shadow.querySelectorAll(".vram-row").length, rowsBefore, "no row is added — nothing shifts");
     const away = [...w.shadow.querySelectorAll(".vram-row.away")].map((r) => r.querySelector(".vram-name").textContent);
     assert.deepEqual(away, ["onone"], "only the model that is NOT on this pool greys out");
+    // …and the class must actually DIM. A class with no rule behind it passed every test while doing nothing
+    // visible — which is exactly how this shipped broken.
+    assertDims(".vram-row.away");
 
     key.dispatchEvent(new w.window.PointerEvent("pointerleave", { bubbles: true }));
     await w.flush();
@@ -5692,6 +5705,7 @@ test("overview: hovering a model row dims the pools it isn't on", async () => {
         .map((k) => k.textContent.replace(/\s+/g, " ").trim());
     assert.equal(lit.length, 1, `only the pool holding it stays lit — got ${lit.join(" | ")}`);
     assert.match(lit[0], /CUDA1/, "the card this model is actually resident on");
+    assertDims(".rc-key.away");
 
     row.dispatchEvent(new w.window.PointerEvent("pointerleave", { bubbles: true }));
     await w.flush();

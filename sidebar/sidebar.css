@@ -69,10 +69,9 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
    space in a panel competing for height with the session list. */
 .rc-preset { font: inherit; font-size: 0.78em; color: var(--fg-dim); background: var(--panel-2);
              border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; margin-left: 6px; }
-/* Sits after "Free VRAM": the picker is what you reach for, this is the rarer follow-up. Sized to match the
-   buttons beside it — the old 0.85em glyph was smaller than everything around it and read as an afterthought. */
-.rc-cog { margin-left: 6px; padding: 1px 5px; font-size: 1.05em; line-height: 1.1; color: var(--fg-dim);
-          background: none; border: 1px solid transparent; border-radius: 4px; cursor: pointer; }
+/* Sits after "Free VRAM": the picker is what you reach for, this is the rarer follow-up. It is an .hbtn, so
+   it inherits the header buttons' sizing and hover — a font-sized glyph could never match them. */
+.rc-cog { margin-left: 6px; }
 .rc-cog:hover, .rc-cog.on { color: var(--fg); background: var(--panel-2); border-color: var(--border); }
 /* Expanded on demand: you configure rarely and read constantly. */
 .rc-editor { display: flex; flex-direction: column; gap: 6px; margin: 6px 0; padding: 6px;
@@ -150,6 +149,14 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
              font-variant-numeric: tabular-nums; }
 .rc-key { display: inline-flex; align-items: center; gap: 3px; }
 .rc-key.tt { cursor: help; }
+/* Cross-highlighting, both directions. Hovering a model row dims the pools it is NOT resident on; hovering a
+   pool's line dims the model rows that are not on it. The rows and the keys describe the same set from two
+   ends, so each answers the other. */
+.rc-key { transition: opacity .12s ease; }
+.rc-key.away { opacity: .3; }
+/* Every model on this pool is hidden from the totals — the same treatment its row gets, so a selection is
+   legible from the chart as well as from the list. */
+.rc-key.off { opacity: .45; text-decoration: line-through; }
 .rc-swatch { width: 7px; height: 7px; border-radius: 2px; display: inline-block; }
 .rc-swatch-other { background: var(--fg-faint); opacity: .5; }
 .rc-swatch-free { border: 1px solid var(--border); }
@@ -157,6 +164,9 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* Colour indicator doubles as a hide/show toggle (greys out when hidden). */
 .vram-dot { width: 0.7em; height: 0.7em; border-radius: 50%; flex: 0 0 auto; padding: 0; border: none; cursor: pointer; }
 .vram-row.off .vram-name, .vram-row.off .vram-gb, .vram-row.off .vram-ctx, .vram-row.off .vram-ttl { opacity: 0.45; text-decoration: line-through; }
+/* Dimmed because a pool's line is hovered and this model is not on it (the reverse of .rc-key.away). */
+.vram-row { transition: opacity .12s ease; }
+.vram-row.away { opacity: .3; }
 .vram-name { color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Context the model was LOADED with — Ollama preallocates KV cache for the whole
    window, so it explains much of the GB on the right. Sits by the name, dimmed. */

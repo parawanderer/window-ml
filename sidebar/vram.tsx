@@ -11,7 +11,7 @@ import {
 } from "./store";
 import { truncate } from "./format";
 import { normModel, seenContext } from "./model";
-import { IconVram, IconEye, IconEyeOff, IconBench } from "./icons";
+import { IconVram, IconEye, IconEyeOff, IconBench, IconGear } from "./icons";
 import { parseInfo, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
 import { ResourceTracks } from "./resource-chart";
 import type { LoadedModel } from "../contract";
@@ -444,8 +444,11 @@ export function VramPanel() {
                 {rows.length ? <button class="vram-free" onClick={() => evict()}>Free VRAM</button> : null}
                 {/* Last in the row: the picker is what you reach for, the editor is the rarer follow-up. */}
                 {capacity.value && latestSample ? (
-                    <button class={`tt rc-cog${editorOpen.value ? " on" : ""}`} aria-label="Edit tracks"
-                        onClick={() => (editorOpen.value = !editorOpen.value)}>⚙
+                    /* The real gear icon, not a ⚙ text glyph: the glyph rendered thin and font-sized, so it
+                       came out smaller than everything around it and unreadable at panel scale. Same icon and
+                       the same .hbtn treatment as the header's own settings button. */
+                    <button class={`tt hbtn rc-cog${editorOpen.value ? " on" : ""}`} aria-label="Edit tracks"
+                        onClick={() => (editorOpen.value = !editorOpen.value)}><IconGear />
                         <span class="tt-pop" role="tooltip">Choose which series each track shows</span>
                     </button>
                 ) : null}
