@@ -653,6 +653,26 @@ inherits everything: a height cap (Settings → Appearance, per-cell drag-to-res
 CSS Custom Highlight API so the syntax highlighting underneath is untouched). `exec`'s Out is a rendered cell
 too (console / value / error sections), matching python's instead of a raw blob.
 
+*Per-line timestamps (the EXECUTOR stamps them).* Streamed output carries a **produced-at gutter** — when each
+line actually happened, not when the UI saw it. `ctx.stream(text, ts?)` lets the producer stamp the instant:
+python stamps in the Pyodide **worker** (the chunk then crosses worker → offscreen → SW → page, so anything
+downstream would be skewed), and a remote tool (a `bash_exec` on a server) would stamp on its own host. A
+producer in the local realm omits `ts` and the loop's fan stamps it. The loop records `[offsetInTheAccumulated
+text, epochMs]` on `streamMarks`; the UI only decides whether to SHOW them (Settings → Appearance, default on)
+and NEVER invents one — an offset no mark covers renders blank, and `alignedMarks` drops the whole set if it
+doesn't index into the text being rendered. The gutter is `user-select: none`, so copying the output copies
+only the output; a repeated stamp is blanked so a burst reads as one moment; hovering any row gives the exact
+instant to the **millisecond** plus the gap since the previous line. The **hour is elided** (mm:ss) only while
+every mark is in the hour we're in *right now* — and since that is answered at render time, a `hourNow` signal
+bumped by ONE self-terminating timeout (armed at the next boundary, `unref`'d, re-armed only from a render)
+widens every gutter to hh:mm:ss together when the clock rolls over. Time-only, no date: a run spanning
+midnight is correct on both sides but unmarked. The mapping is pure and shared — **`sidebar/timestamps.ts`**
+(`timeForOffset`/`alignedMarks`/`elideHour`/`timedText`), imported by the sidebar gutter AND by both export
+sinks, so they can't drift; `render-panel.tsx` re-exports it. The **exports** carry the times as a collapsed
+`Out · timed` block BESIDE the verbatim Out rather than prefixed onto it — the sidebar's gutter is
+unselectable and markdown has no equivalent, so baking times into the output would make an exported log
+un-pasteable (and the raw-view rule already demands the model-facing text stay verbatim).
+
 **Two surfaces (in-page overlay + DevTools panel).** The same `sidebar-app` bundle runs
 in two places: the in-page **overlay** (a content-script shadow-root shell, `shell.ts`,
 hosting `sidebar.html` in an iframe) and an optional **DevTools panel** (`devtools.ts`
