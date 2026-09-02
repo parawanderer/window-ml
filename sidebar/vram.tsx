@@ -51,9 +51,14 @@ export const VRAM_HISTORY = 45, VRAM_POLL_MS = 2000;
 // it dies with the page, and gaps (the panel was closed, so nothing was polled) stay gaps.
 export const RESOURCE_HISTORY = 900;
 export const resourceHistory = signal<ResourceSample[]>([]);
-// Machine CAPACITY — the denominator. Changes far more slowly than residency, so it is fetched ONCE per panel
-// open rather than on the ps cadence. null = unknown (the route isn't served): the chart then draws no
-// ceiling at all rather than pretending capacity is zero.
+// Machine CAPACITY — the denominator. The TOTALS change only when hardware does, but `free_memory` rides in
+// the same payload and changes with every load and evict, so fetching once per open froze the free and
+// residual bands at whatever they were when you opened the panel (a card would read "18 GiB in use" beside
+// "free 94.42 GiB"). Refreshed on a SLOWER cadence than ps instead: often enough to track occupancy, rarely
+// enough not to hammer a route whose totals never move.
+// null = unknown (the route isn't served): the chart then draws no ceiling rather than pretending it is zero.
+export const CAPACITY_EVERY = 5;   // ps polls between capacity refreshes (5 x 2s = 10s)
+let psSinceCapacity = 0;
 export const capacity = signal<Capacity | null>(null);
 export function fetchCapacity(): void {
     chrome.runtime.sendMessage({ type: "OLLAMA_INFO", payload: {} }, (resp: any) => {
@@ -95,6 +100,8 @@ export function pollPs(): void {
             capacity: capacity.value,
         };
         resourceHistory.value = [...resourceHistory.value, sample].slice(-RESOURCE_HISTORY);
+        // Keep occupancy honest without polling capacity as often as residency (see CAPACITY_EVERY).
+        if (++psSinceCapacity >= CAPACITY_EVERY) { psSinceCapacity = 0; fetchCapacity(); }
     });
 }
 
@@ -220,7 +227,7 @@ export function VramPanel() {
     // mounted while open) so it never keeps a jsdom test window alive.
     const [, tick] = useState(0);
     useEffect(() => { const id = setInterval(() => tick(t => t + 1), 1000); return () => clearInterval(id); }, []);
-    useEffect(() => { pollPs(); fetchCapacity(); }, []);   // immediate poll + the (slow-moving) denominator
+    useEffect(() => { pollPs(); fetchCapacity(); }, []);   // immediate poll + the denominator
     useEffect(() => {
         if (!loaded) return;
         const snap: Record<string, number> = {};

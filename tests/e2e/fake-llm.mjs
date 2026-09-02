@@ -37,7 +37,7 @@ const toChoice = (step) => {
 };
 
 /**
- * Start the fake backend. Returns { url, origin, setScript, calls, stop }.
+ * Start the fake backend. Returns { url, origin, setScript, setResident, setCapacity, calls, stop }.
  * - url:       the chatUrl to configure the extension with (…/api/chat/completions)
  * - setScript: (steps: Array<StepOrFn>) => void   — the ordered turns for the NEXT run
  * - calls:     () => object[]                      — every chat request body received (for assertions)
@@ -45,6 +45,12 @@ const toChoice = (step) => {
  */
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0 } = {}) {
+    // A scriptable fake BOX as well as a fake model: /api/ps (what is resident) and /api/info (what capacity
+    // exists) are what the resource panel polls, and both are settable mid-run so a test or demo can make
+    // models load and evict on a timeline. `info: null` reproduces a stock Ollama, which doesn't serve the
+    // route at all — the case the panel must degrade for.
+    let resident = [];
+    let boxInfo = null;
     let script = [];
     let idx = 0;
     const calls = [];
@@ -73,7 +79,14 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
         if (req.method === "GET" && (path === "/api/models" || path === "/v1/models")) {
             return json(res, 200, { data: [{ id: model, name: model, owned_by: "ollama", connection_type: "local" }] });
         }
-        if (req.method === "GET" && path === "/api/ps") return json(res, 200, { models: [] });
+        // Both bases findOllamaBase tries: `${origin}/ollama` first, then the origin itself.
+        if (req.method === "GET" && (path === "/api/ps" || path === "/ollama/api/ps")) return json(res, 200, { models: resident });
+        if (req.method === "GET" && (path === "/api/info" || path === "/ollama/api/info")) {
+            // A server without the patch answers this route with the SPA's HTML, not a 404 — reproduce THAT,
+            // since "unknown capacity" arriving as unparseable HTML is the case worth exercising.
+            if (!boxInfo) { res.writeHead(200, { "content-type": "text/html" }); return res.end("<!doctype html><html><body>app</body></html>"); }
+            return json(res, 200, boxInfo);
+        }
         if (req.method === "GET" && path === "/api/version") return json(res, 200, { version: "fake" });
         if (req.method === "POST" && (path === "/api/chat/completions" || path === "/v1/chat/completions")) {
             const body = await readBody(req);
@@ -97,6 +110,10 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
                 url: `${origin}/api/chat/completions`,
                 origin,
                 setScript: (steps) => { script = steps.slice(); idx = 0; },
+                /** What /api/ps reports as resident — raw ollama ps rows (size / size_vram / gpus / …). */
+                setResident: (models) => { resident = models; },
+                /** What /api/info reports as capacity; null = a server that doesn't serve the route at all. */
+                setCapacity: (info) => { boxInfo = info; },
                 calls: () => calls.slice(),
                 stop: () => new Promise((r) => server.close(r)),
             });
