@@ -181,3 +181,13 @@ test("the dialect stays CLOSED — an unknown stage still refuses and names what
     assert.throws(() => runPipe(JSON_OUT, "keys | eval x"), /isn't a supported text command/);
     assert.throws(() => runPipe(JSON_OUT, "keys | rm -rf /"), /isn't a supported text command/);
 });
+
+test("head/tail accept a bare count as well as the shell flag forms", () => {
+    const lines = "a\nb\nc\nd\ne";
+    // Models write the bare form constantly; refusing it would burn a turn teaching a flag that changes nothing.
+    assert.equal(runPipe(lines, "head 2"), "a\nb");
+    assert.equal(runPipe(lines, "head -n 2"), "a\nb");
+    assert.equal(runPipe(lines, "head -2"), "a\nb");
+    assert.equal(runPipe(lines, "tail 2"), "d\ne");
+    assert.equal(runPipe(lines, "head"), lines, "no count at all is still the shell default of 10");
+});

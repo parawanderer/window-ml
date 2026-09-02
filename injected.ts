@@ -48,6 +48,7 @@ import { annotate, pickAccentColorForTarget } from "./locate";
 import { suspiciousArgsWarning, suspiciousChars } from "./security";
 import { emitDebug, debugId, shortHash, sessionRegistry, agentRegistry, handleRegistry, enterAgentRun, exitAgentRun, resetSubcallUsage, subcallUsage } from "./bus";
 import { makeDomTools, buildDereferenceTool } from "./tools";
+import { normalizePipe } from "./token-pipe";
 import { hideSidebarForShot, makeBackgroundTaskPromise, makeChatRequest, makeStreamingTaskPromise } from "./bridge";
 import { validateArgs, validateExtend } from "./validate";
 import { renderArgs, logStep, defaultApprove, normalizeApproval, formatReadonlyExec } from "./approval";
@@ -135,9 +136,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
         dereference: async function(ref: string, { pipe = null }: { pipe?: string | string[] | null } = {}): Promise<string> {
             const fn = currentDeref();
             if (!fn) throw new Error("ml.dereference is only live inside an ml.agent run (it reads that run's captured tool outputs).");
-            // An array of stages is the ergonomic form — no quoting, no escaping — and joins to the same dialect.
-            const p = Array.isArray(pipe) ? pipe.filter(Boolean).join(" | ") : (pipe || "");
-            return await fn(String(ref ?? ""), p);
+            return await fn(String(ref ?? ""), normalizePipe(pipe));
         },
         /**
          * Create a stateful multi-turn chat session.
@@ -639,7 +638,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 toolset = [...toolset, buildDereferenceTool(window.ml.defineTool)];
                 toolset = toolset.map(t => CITABLE_TOOLS.has(t.name)
                     ? { ...t, parameters: { ...t.parameters, properties: { ...(t.parameters as { properties?: Record<string, unknown> }).properties,
-                        token: { type: "boolean", description: "Set true if you'll SHOW this call's output in your answer — it mints an @tool:<id> you embed with `![caption](@tool:<id>:out)` (expands to this exact output). Off for exploratory steps." } } } }
+                        token: { type: ["boolean", "string"], description: "Keep a handle to this call's output. `true`, or better a SHORT LABEL for yourself (\"the pricing table\") — the label is how you'll recognise it a dozen steps later, and you can find it by that name. The result then ends with an @tool:<id>: embed it in your answer with `![caption](@tool:<id>:out)`, and/or read it back with `dereference`. Opt in whenever the output is worth keeping — to show OR to reuse; off for exploratory steps." } } } }
                     : t);
             }
             const byName = Object.fromEntries(toolset.map(t => [t.name, t]));

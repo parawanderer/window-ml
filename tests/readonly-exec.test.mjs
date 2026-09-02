@@ -22,6 +22,7 @@ function world() {
 // A stand-in window.ml: the read-only slice the dialect may call, plus the gated half it must
 // NOT be able to reach. The gated ones THROW A DISTINCT ERROR if invoked, so a test can tell
 // "rejected at the gate" (NotInDialect/Denied) apart from "actually ran".
+const ML_CALLS = [];
 const ML = {
     getModel: async () => "gemma4:31b",
     config: async () => ({ model: "gemma4:31b", ocrModel: "", apiFormat: "openai" }),
@@ -38,6 +39,10 @@ const ML = {
     pythonExec: async () => { throw new Error("RAN: pythonExec"); },
     // A pure, SYNC helper (the bounded counter loop) — on the read-only facade so `ml.range(n).map(…)` runs
     // without approval. Kept trivial here; util.mlRange is unit-tested separately.
+    // A pure read of THIS run's already-captured outputs — free in the dialect for the same reason the other
+    // read-only members are. Records what it was asked for, so the adversarial tests can prove nothing effectful
+    // slipped through it.
+    dereference: async (ref, opts) => { ML_CALLS.push(["dereference", ref, opts && opts.pipe]); return `VALUE(${ref})`; },
     range: (a, b, step = 1) => { const start = b === undefined ? 0 : a, stop = b === undefined ? a : b; const out = []; for (let i = 0, v = start; i < Math.max(0, Math.ceil((stop - start) / step)); i++, v += step) out.push(v); return out; },
 };
 const run = (js, doc = world(), ml = ML) => evalReadonly(js, doc, ml);
@@ -897,4 +902,89 @@ test("the owned-mutation guard is INTACT — add/clear on a page object stay Den
     // classList.add is reached off a page node, not the answer facade → still refused. Proves `!onAnswer` only
     // exempted the answer facade, not `add`/`clear` everywhere.
     await assert.rejects(runAns(`document.body.classList.add("x")`), outOfDialect);
+});
+
+// --- ADVERSARIAL: ml.dereference as a dialect member -------------------------------------------------------
+// Required by the AGENTS rule: a new facade member must be probed for whether it can be abused to reach
+// something it shouldn't. `dereference` is a pure read of this run's own captured outputs, so the question is
+// whether it can be turned into a lever — extracted, re-bound, walked through, or used to smuggle a call.
+
+test("ml.dereference: the plain read works (that is the point of it being free)", async () => {
+    ML_CALLS.length = 0;
+    assert.equal((await run(`return ml.dereference("@tool:a1b2c3")`)).value, "VALUE(@tool:a1b2c3)");
+    assert.equal((await run(`return ml.dereference("@tool:a1b2c3", { pipe: ".rows | head 5" })`)).value, "VALUE(@tool:a1b2c3)");
+    assert.deepEqual(ML_CALLS.at(-1), ["dereference", "@tool:a1b2c3", ".rows | head 5"], "the options object reaches it intact");
+    // Auto-await means a forgotten await still yields the value, and .then applies inline (the shapes models write).
+    assert.equal((await run(`return ml.dereference("@tool:x").then(v => v.length)`)).value, "VALUE(@tool:x)".length);
+    const all = (await run(`return Promise.all([ml.dereference("@tool:a"), ml.dereference("@tool:b")])`)).value;
+    assert.deepEqual(all, ["VALUE(@tool:a)", "VALUE(@tool:b)"]);
+});
+
+test("ADVERSARIAL: dereference can't be extracted, re-bound, or re-targeted at an effectful method", async () => {
+    ML_CALLS.length = 0;
+    // Reading it as a value yields the inert METHOD_REF sentinel, like every other facade method.
+    await assert.rejects(run(`const f = ml.dereference; return f("@tool:a")`), outOfDialect);
+    await assert.rejects(run(`const o = { d: ml.dereference }; return o.d("@tool:a")`), outOfDialect);
+    // call/apply/bind must not re-target it (the classic escape: borrow a permitted function, aim it elsewhere).
+    await assert.rejects(run(`return ml.dereference.call(ml, "@tool:a")`), outOfDialect);
+    await assert.rejects(run(`return ml.dereference.apply(ml, ["@tool:a"])`), outOfDialect);
+    await assert.rejects(run(`return ml.dereference.bind(ml)("@tool:a")`), outOfDialect);
+    assert.deepEqual(ML_CALLS, [], "not one of those reached the real method");
+});
+
+test("ADVERSARIAL: dereference is no route to the realm, or to the methods it sits beside", async () => {
+    // Walking off the function to a constructor / Function is the standard sandbox break.
+    await assert.rejects(run(`return ml.dereference.constructor("return 1")()`), outOfDialect);
+    await assert.rejects(run(`return ml.dereference.constructor.constructor("return globalThis")()`), outOfDialect);
+    await assert.rejects(run(`return ml.dereference.__proto__`), outOfDialect);
+    await assert.rejects(run(`return ml.dereference.prototype`), outOfDialect);
+    // The facade holds ONLY the read-only set, so the token-spending / mutating / privileged halves aren't
+    // present to reach — with or without dereference in scope.
+    for (const js of [`ml.chat("hi")`, `ml.agent("x")`, `ml.pythonExec("1")`, `ml.setModel("m")`, `ml.screenshot()`]) {
+        await assert.rejects(run(`return ${js}`), outOfDialect, js);
+    }
+    // And its RESULT is a plain string — no property walk off it reaches anything.
+    await assert.rejects(run(`return ml.dereference("@tool:a").constructor`), outOfDialect);
+    await assert.rejects(run(`return ml.dereference("@tool:a").constructor("return 1")()`), outOfDialect);
+});
+
+test("ADVERSARIAL: the pipe argument is data, not a second execution channel", async () => {
+    ML_CALLS.length = 0;
+    // Whatever the model puts in `pipe` is a STRING handed to a closed, pure dialect — it can't smuggle a call
+    // out of the interpreter, and the fixture records exactly what was passed.
+    await run(`return ml.dereference("@tool:a", { pipe: "exec rm -rf /" })`);
+    assert.deepEqual(ML_CALLS.at(-1), ["dereference", "@tool:a", "exec rm -rf /"], "passed through as inert text");
+    // An arrow IS legal in the dialect (that is how .map callbacks work), so writing one here doesn't throw —
+    // the guarantee is that it is never INVOKED: it crosses as an inert interpreter closure, and `pipe` is
+    // normalised to "" for anything that isn't a string or an array of stages (normalizePipe, unit-tested).
+    ML_CALLS.length = 0;
+    await run(`return ml.dereference("@tool:a", { pipe: () => ml.chat("x") })`);
+    assert.ok(!ML_CALLS.some(c => c[0] === "chat"), "the callback was never called — no smuggled execution");
+    // A method that isn't ON the facade reads as undefined, so it travels as an inert value, not a callable —
+    // the guarantee here is "nothing effectful is carried in", not that the expression throws.
+    ML_CALLS.length = 0;
+    await run(`return ml.dereference("@tool:a", { pipe: ml.chat })`);
+    assert.equal(ML_CALLS.at(-1)[2], undefined, "ml.chat isn't on the facade, so nothing live was passed");
+    // A facade method placed in an object literal DOES cross as the live bound function (the METHOD_REF
+    // sentinel covers extraction-then-call, not this path). That is inert in practice, and this asserts WHY:
+    // the facade holds only read-only members, so the effectful half cannot be leaked this way at all.
+    await run(`return ml.dereference("@tool:a", { pipe: ml.getModel })`);
+    assert.equal((await run(`const o = { c: ml.chat, s: ml.setModel, p: ml.pythonExec }; return [typeof o.c, typeof o.s, typeof o.p].join()`)).value,
+        "undefined,undefined,undefined", "no effectful method exists on the facade to smuggle out this way");
+    // And extracting a read-only one still can't be INVOKED — the identity check is what stops the lever.
+    await assert.rejects(run(`const p = ml.getModel; return ml.dereference("@tool:a", { pipe: p() })`), outOfDialect,
+        "an extracted method can't be invoked to build the argument");
+    // Nor can a spread launder a live method out of the facade: the effectful half isn't THERE to copy, and
+    // the copied read-only method is rejected on call (the facade is checked by IDENTITY, not by name).
+    assert.equal((await run(`const o = { ...ml }; return typeof o.chat`)).value, "undefined",
+        "the token-spending half was never on the facade to be spread");
+    await assert.rejects(run(`const o = { ...ml }; return o.dereference("@tool:a")`), outOfDialect,
+        "and a spread copy of dereference can't be invoked");
+});
+
+test("ADVERSARIAL: dereference can't be looped unboundedly to burn the page down", async () => {
+    // The dialect has no unbounded loop construct; a while/for is out of dialect, so a deref storm isn't
+    // expressible (and each call is a pure read anyway).
+    await assert.rejects(run(`while (true) { ml.dereference("@tool:a"); }`), outOfDialect);
+    await assert.rejects(run(`for (;;) ml.dereference("@tool:a");`), outOfDialect);
 });

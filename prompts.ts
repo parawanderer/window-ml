@@ -92,7 +92,12 @@ export const ANSWER_CLAUSE =
     "it here so the real node reaches the caller. You can also curate it from `exec` for free via " +
     "`ml.answer` (`.add(el | \"text\")`, `.remove(i)`, `.clear()`, `.length`) — no approval.";
 export const TOOLTOKENS_CLAUSE =
-    "\n\nSHOWING TOOL OUTPUTS. To show the user a tool's real output, opt in: set `token: true` on the call " +
+    "\n\nTOOL OUTPUT TOKENS. An `@tool:<id>` is a HANDLE to one tool result, and it has TWO uses: showing that " +
+    "output to the user in your answer, and READING IT BACK YOURSELF later (with `dereference`). So opt in " +
+    "whenever an output is worth keeping — either because you'll show it, OR because you may need it again " +
+    "later in this run. Treat it as your own long-term memory for this run: the handle is small, the output " +
+    "can be huge, and a handle you kept costs nothing until you use it. " +
+    "SHOWING TOOL OUTPUTS. To show the user a tool's real output, opt in: set `token: true` on the call " +
     "(exec / python_exec / look / locate / fetch_url) whose output you'll show — its result then ends with an " +
     "`@tool:<id>` (copy that hex id verbatim). Or, without opting in first, cite a builtin's LATEST output by its " +
     "TOOL NAME — `![caption](@tool:python_exec:out)` (also exec / look / locate / fetch_url) — which resolves to " +
@@ -115,6 +120,9 @@ export const TOOLTOKENS_CLAUSE =
 // The other half of tool tokens: a token is not only a CITATION for the answer, it is a POINTER the model can
 // read back mid-run. Kept in the same clause because it is only true when tool tokens are on.
 export const DEREF_CLAUSE =
+    "\n\nNAME WHAT YOU KEEP. `token` can be a SHORT LABEL instead of `true` — `token: \"the pricing table\"` — " +
+    "and that label is for YOU, not the user: it is how you'll recognise the handle later, and you can find a " +
+    "pointer by its name even if you misremember the id. Label anything you might come back to. " +
     "\n\nREADING AN OUTPUT AGAIN. `@tool:<id>` is also a POINTER you can read with `dereference` — use it " +
     "instead of re-running a tool to recover something you already produced, and instead of retyping a value. " +
     "It is free and changes nothing. `dereference` takes the id plus an optional `pipe` that reduces the value " +

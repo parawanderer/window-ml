@@ -254,3 +254,45 @@ test("the loop hands out a resolver bound to ITS OWN store (the page-hosted path
     // A bad pipe stage raises the dialect's own actionable error.
     assert.throws(() => resolver("@tool:exec", "jq .x"), /isn't a supported text command/);
 });
+
+test("normalizePipe: an array of stages is shorthand for the dialect string", () => {
+    assert.equal(P.normalizePipe([".rows", "head 5"]), ".rows | head 5", "no quoting, no escaping — the part models fumble");
+    assert.equal(P.normalizePipe(".rows | head 5"), ".rows | head 5", "a string passes through unchanged");
+    assert.equal(P.normalizePipe([" .rows ", "  head 5"]), ".rows | head 5", "entries are trimmed");
+    // A conditionally-built array shouldn't produce an empty stage the dialect would then refuse.
+    assert.equal(P.normalizePipe([".rows", "", null, "head 5"]), ".rows | head 5");
+    assert.equal(P.normalizePipe([]), "");
+    assert.equal(P.normalizePipe(null), "");
+    assert.equal(P.normalizePipe(undefined), "");
+});
+
+// A self-authored LABEL turns a hex address into a named variable — purely for the model's own recall.
+test("labels: cleaned, capped, and shown BESIDE the derived description (never instead of it)", () => {
+    assert.equal(P.cleanLabel("  the pricing  table \n"), "the pricing table", "collapsed and trimmed");
+    assert.equal(P.cleanLabel("x".repeat(200)).length, P.LABEL_MAX, "capped — it's a memo, not prose");
+    assert.equal(P.cleanLabel(""), undefined);
+    assert.equal(P.cleanLabel(true), undefined, "`token: true` is an opt-in, not a label");
+    assert.equal(P.cleanLabel(undefined), undefined);
+
+    const named = tok({ label: "the pricing table" });
+    assert.equal(P.nameOf(named), 'exec: "the pricing table"', "the model's own words name it");
+    assert.equal(P.nameOf(tok()), "exec", "…and an unlabelled pointer is just its tool");
+    // The label is a CLAIM the model wrote; the derived description is what the value actually IS. A read
+    // shows both, so a pointer mislabelled "the full table" can't quietly misrepresent itself.
+    assert.match(P.describeToken(named), /^text, \d+ chars/, "describeToken stays derived, never the label");
+});
+
+test("labels: nearest() finds a pointer by the NAME the model gave it", () => {
+    const s = new P.TokenStore();
+    s.note(tok({ id: "a1b2c3", tool: "python_exec", step: 1, label: "the pricing table" }));
+    s.note(tok({ id: "d4e5f6", tool: "exec", step: 2, label: "nav links" }));
+
+    // Recalling the name but inventing the id is the common failure — the label must rescue it.
+    assert.equal(s.nearest("pricing")[0].id, "a1b2c3", "a substring of the label is an exact hit");
+    assert.equal(s.nearest("the pricing table")[0].id, "a1b2c3");
+    assert.equal(s.nearest("nav")[0].id, "d4e5f6");
+    // And the fault message names pointers the way the model named them.
+    const msg = P.memoryFault("@tool:zzzzzz", s.nearest("zzzzzz"), 4);
+    assert.match(msg, /python_exec: "the pricing table"/);
+    assert.match(msg, /exec: "nav links"/);
+});

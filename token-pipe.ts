@@ -40,6 +40,11 @@ export interface TokenValue {
     image?: string;
     /** A LaTeX rendering when the step produced one (a sympy return sets it). */
     latex?: string;
+    /** The model's OWN short name for what this pointer holds, from `token: "the pricing table"`. Purely for
+     *  the model: it is what turns a hex address into a named variable it can actually recall a step later,
+     *  and it is matched by `nearest()` so half-remembering the NAME still lands. It is a CLAIM, not a fact —
+     *  model-authored — so it is always shown BESIDE the derived description, never instead of it. */
+    label?: string;
     t: number;
     step: number;
 }
@@ -53,6 +58,15 @@ export function extraBeyondModel(v: TokenValue): string {
 
 /** A one-line description of what sits at a pointer — prefixed onto every read so the model knows what it is
  *  holding before it decides how to slice it. */
+/** How long a self-authored label may be. It is a memo to itself, not prose — a cap keeps a model from
+ *  stuffing a paragraph into every listing. */
+export const LABEL_MAX = 60;
+/** Clean a model-supplied label: single line, trimmed, capped. Empty → undefined (no label at all). */
+export function cleanLabel(raw: unknown): string | undefined {
+    const t = typeof raw === "string" ? raw.replace(/\s+/g, " ").trim().slice(0, LABEL_MAX) : "";
+    return t || undefined;
+}
+
 export function describeToken(v: TokenValue): string {
     const text = v.full ?? v.out;
     if (v.kind === "table" && v.table) {
@@ -124,6 +138,14 @@ export function derefPipe(v: TokenValue, slot: "in" | "out", pipe?: string | nul
     return rest.length ? runPipe(text, rest.join(" | ")) : text;
 }
 
+/** Normalise `ml.dereference`'s `pipe` argument. An ARRAY of stages is the ergonomic form — no quoting, no
+ *  escaping, which is the part models fumble — and joins to exactly the dialect string it is shorthand for.
+ *  Blank entries are dropped so a conditionally-built array doesn't produce an empty stage. */
+export function normalizePipe(pipe: string | string[] | null | undefined): string {
+    if (Array.isArray(pipe)) return pipe.filter((s) => typeof s === "string" && s.trim()).map((s) => s.trim()).join(" | ");
+    return typeof pipe === "string" ? pipe : "";
+}
+
 /** A run's captured outputs. Keyed by id, with the tool name as a secondary alias resolving to the LATEST call
  *  of that tool — the same aliasing the answer tokens already accept (`@tool:python_exec`), so the model can
  *  dereference by the name it remembers instead of a hex id it never saw. */
@@ -149,7 +171,7 @@ export class TokenStore {
         const q = normRef(ref).toLowerCase();
         if (!q) return this.all().slice(-limit);
         return this.all()
-            .map((v) => ({ v, d: Math.min(editDistance(q, v.id), editDistance(q, v.tool.toLowerCase())) }))
+            .map((v) => ({ v, d: distanceTo(q, v) }))
             .sort((a, b) => a.d - b.d || b.v.step - a.v.step)
             .slice(0, limit)
             .map((x) => x.v);
@@ -177,6 +199,10 @@ const FAR_ENOUGH_TO_BE_UNRELATED = 3;
  *  just correct, distance 5 means it likely invented the id and should re-run the tool. And the last line says
  *  the fault is RECOVERABLE — without it, a model pattern-matching "fault" to a segfault may report a crash or
  *  abandon the task, which is the one way this framing could backfire. */
+/** How a pointer is NAMED in a listing: its own label when it has one, else just the tool. The label is the
+ *  model's own words, which is what makes a list of pointers readable a dozen steps later. */
+export const nameOf = (v: TokenValue): string => v.label ? `${v.tool}: "${v.label}"` : v.tool;
+
 export function memoryFault(ref: string, near: TokenValue[], currentStep: number): string {
     const head = `MemoryFault: pointer '@tool:${normRef(ref)}' does not exist.`;
     if (!near.length) return `${head}\nNothing has been captured in this run yet, so there is no pointer to read. Run a tool first.`;
@@ -184,7 +210,7 @@ export function memoryFault(ref: string, near: TokenValue[], currentStep: number
     const rows = near.map((v) => {
         const back = currentStep - v.step;
         const where = back <= 0 ? "this step" : `${back} step${back === 1 ? "" : "s"} back`;
-        return { left: `  - @tool:${v.id}`, mid: `(${where}: ${v.tool})`, d: Math.min(editDistance(q, v.id), editDistance(q, v.tool.toLowerCase())) };
+        return { left: `  - @tool:${v.id}`, mid: `(${where}: ${nameOf(v)})`, d: distanceTo(q, v) };
     });
     const w = Math.max(...rows.map((r) => r.mid.length));
     const body = rows.map((r) => `${r.left} ${r.mid.padEnd(w)} [edit_dist=${r.d}]`).join("\n");
@@ -192,6 +218,15 @@ export function memoryFault(ref: string, near: TokenValue[], currentStep: number
         ? "\nNone of these is close, so you may be recalling an output from an earlier turn or inventing the id."
         : "";
     return `${head}\nNearest valid pointers:\n${body}${unrelated}\nThis is recoverable: retry with one of these, or re-run the tool if you need the data fresh.`;
+}
+
+/** Distance from a reference to a pointer, over its id, its tool name AND its own label — so "the pricing
+ *  table" finds the pointer the model named that, even when the hex it wrote was invented. Substring hits on
+ *  the label score 0: recalling the name exactly is a match, not an approximation. */
+function distanceTo(q: string, v: TokenValue): number {
+    const label = v.label?.toLowerCase() ?? "";
+    if (q && label && label.includes(q)) return 0;
+    return Math.min(editDistance(q, v.id), editDistance(q, v.tool.toLowerCase()), label ? editDistance(q, label) : Infinity);
 }
 
 const normRef = (ref: string): string => String(ref).trim().replace(/^@tool:/, "").replace(/:(in|out)$/, "");

@@ -803,3 +803,13 @@ test("ml.dereference (background-hosted): an error from the SW rejects, and a fo
     } finally { window.removeEventListener("message", onMsg); }
     });
 });
+
+// The `ml.dereference` METHOD's boundary: from a page's own console there is no active run, so nothing is
+// bound and it throws — rather than silently resolving to nothing. (The binding itself, and the array-pipe
+// normalisation, are covered in token-pipe.test.mjs; the page world runs its own module graph, so a resolver
+// bound out here would not be the one the sandbox sees.)
+test("ml.dereference: throws when called outside a run", async () => {
+    const { loadPageWorld } = require("./helpers");
+    const world = loadPageWorld({});
+    await assert.rejects(() => world.ml.dereference("@tool:a1b2c3"), /only live inside an ml\.agent run/);
+});

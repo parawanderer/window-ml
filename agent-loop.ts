@@ -17,7 +17,7 @@ import { runStats, fmtTokPerSec, UI_OUT_CAP } from "./contract";
 import type { TokenRender } from "./contract";
 import { UNATTENDED_REFUSAL } from "./prompts";
 import { toolToken } from "./util";
-import { TokenStore, derefPipe, describeToken, extraBeyondModel, memoryFault, DEREF_TOOL, type TokenKind } from "./token-pipe";
+import { TokenStore, derefPipe, describeToken, extraBeyondModel, memoryFault, cleanLabel, nameOf, DEREF_TOOL, type TokenKind } from "./token-pipe";
 
 export type Approval = "readonly" | "sandbox" | "same-origin" | "consented" | "self-source" | "user" | "denied" | "skipped" | "cancelled";
 export interface ToolMeta { name: string; requiresApproval?: boolean; capabilities?: string[]; }
@@ -291,7 +291,9 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         const age = step - v.step;
         // The staleness line is not decoration: this is the failure mode of pointer-passing.
         const when = age <= 0 ? "captured this step" : `captured at step ${v.step}, ${age} step${age === 1 ? "" : "s"} ago — the page may have changed since`;
-        const head = `@tool:${v.id} (${v.tool}${slot === "in" ? ", the call" : ""}) — ${describeToken(v)}${extraBeyondModel(v)}, ${when}.`;
+        // The model's own label leads (it is what it will recognise), but the DERIVED description always
+        // follows it — the label is a claim it wrote, the description is what the value actually is.
+        const head = `@tool:${v.id} (${nameOf(v)}${slot === "in" ? ", the call" : ""}) — ${describeToken(v)}${extraBeyondModel(v)}, ${when}.`;
         try {
             return { result: `${head}\n\n${derefPipe(v, slot, pipe)}` };
         } catch (e) {
@@ -301,7 +303,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         }
     };
     const tokenList = (): string =>
-        tokenStore.size ? tokenStore.all().map(v => `@tool:${v.id} (${v.tool}, step ${v.step})`).join(", ") : "(nothing captured yet)";
+        tokenStore.size ? tokenStore.all().map(v => `@tool:${v.id} (${nameOf(v)}, step ${v.step})`).join(", ") : "(nothing captured yet)";
     /** `look` at an IMAGE POINTER. A screenshot the run already captured is addressable like any other output,
      *  so `look { selector: "@tool:abc123" }` re-examines it — a different question about the SAME pixels —
      *  instead of re-screenshotting a page that has since scrolled or changed. The store lives here, so the
@@ -323,18 +325,21 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         if (!v) throw new Error(memoryFault(ref, tokenStore.nearest(ref), seq));
         return derefPipe(v, TokenStore.slotOf(ref), pipe);
     });
-    /** Rewrite a `look` at an image pointer into a look at that image; anything else passes through. An
-     *  unresolvable pointer throws, which the loop's own try/catch turns into the tool result. */
-    const lookArgs = (name: string, a: Record<string, unknown>, step: number): Record<string, unknown> => {
-        if (name !== "look") return a;
+    /** Rewrite a `look` at an image pointer into a look at that image; anything else passes through.
+     *  A bad pointer becomes an ERROR RESULT, never a throw: the model should read the fault and correct the
+     *  call, exactly as it does for `dereference`, rather than the run dying on a mistyped id. */
+    const lookArgs = (name: string, a: Record<string, unknown>, step: number): { args: Record<string, unknown> } | { error: string } => {
+        if (name !== "look") return { args: a };
         const r = resolveLookPointer(a, step);
-        if (!r) return a;
-        if (r.error) throw new Error(r.error);
-        return r.args!;
+        if (!r) return { args: a };
+        return r.error ? { error: r.error } : { args: r.args! };
     };
     /** Every tool dispatch goes through here so `dereference` is answered from run state instead of delegated. */
     const runTool = (name: string, a: Record<string, unknown>, push: ((t: string, ts?: number) => void) | undefined, step: number): Promise<ToolRunResult> | ToolRunResult =>
-        name === DEREF_TOOL ? derefLocally(a, step) : deps.runTool(name, lookArgs(name, a, step), push);
+        name === DEREF_TOOL ? derefLocally(a, step) : (() => {
+            const l = lookArgs(name, a, step);
+            return "error" in l ? { result: `Error: ${l.error}` } : deps.runTool(name, l.args, push);
+        })();
     let seq = 0;
     // Live token stats for the chat_metadata tool: promptLast = the last call's prompt tokens (current
     // context occupancy), genTotal = completion tokens summed across the run. Accurate on both worlds since
@@ -494,7 +499,11 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             const failed = blocked
                 || /(^|\n)(Error:|Denied|Python error:)/.test(result)
                 || (tr?.renderOut?.type === "python-out" && !!tr.renderOut.error);
-            const wantsToken = (args as Record<string, unknown>)?.token === true;
+            // `token` is either `true` (opt in) or a SHORT LABEL the model writes for itself — a string is both
+            // the opt-in and the name, so naming a pointer costs no extra field.
+            const rawToken = (args as Record<string, unknown>)?.token;
+            const wantsToken = rawToken === true || (typeof rawToken === "string" && !!rawToken.trim());
+            const label = cleanLabel(rawToken);
             // Mint a stable id onto EVERY non-failed citable step (when the feature's on) and CARRY it on the step
             // — the answer renderer matches this stored id EXACTLY (never re-derives runHash:seq, which could
             // resolve a citation to the WRONG step). The id is INVISIBLE to the model unless it opted IN
@@ -504,7 +513,10 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             // Citable = a builtin whose output is worth citing (minted so the model CAN cite it), OR ANY call the
             // model explicitly opted into (`token: true` — e.g. a custom tool that has no param but whose output
             // the model wants to cite). Never a failed call (nothing to cite).
-            const citable = (CITABLE_TOOLS.has(call.name) || wantsToken) && !failed;
+            // `dereference` is never citable: it produces no new data, only a VIEW of a pointer that already
+            // exists, so minting one would clutter the store with self-referential handles. It also has its own
+            // `token` PARAMETER — the pointer being read — which would otherwise be misread here as a label.
+            const citable = call.name !== DEREF_TOOL && (CITABLE_TOOLS.has(call.name) || wantsToken) && !failed;
             // Seed the id from the GLOBAL seq (base + per-turn) so a multi-turn run never mints a colliding id
             // (turn 2's step 1 vs turn 1's step 1) that a citation would then resolve to the wrong, earlier step.
             const tokenId = (opts.toolTokens && opts.runHash && citable) ? toolToken(opts.runHash, (opts.seqBase ?? 0) + s) : undefined;
@@ -527,7 +539,12 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 // the main reason to dereference at all.
                 const fuller = (r?.type === "python-out" || r?.type === "exec-out") ? r.stdout : undefined;
                 const full = fuller && fuller.length > result.length ? fuller : undefined;
-                tokenStore.note({ id: tokenId, tool: call.name, kind, out: result, ...(full ? { full } : {}), in: JSON.stringify(args), t: Date.now(), step, ...(tbl ? { table: tbl } : {}) });
+                // Carry the typed PAYLOADS too, not just the kind — an image pointer with no image is what
+                // `look` would resolve to, and a `latex` cast needs the symbolic string.
+                const image = tr?.image
+                    ?? (r?.type === "image" ? r.src : r?.type === "look" ? r.image : r?.type === "python-out" ? r.image : undefined);
+                const latex = r?.type === "python-out" && r.latex && r.value != null ? String(r.value) : undefined;
+                tokenStore.note({ id: tokenId, tool: call.name, kind, out: result, ...(full ? { full } : {}), ...(image ? { image } : {}), ...(latex ? { latex } : {}), ...(label ? { label } : {}), in: JSON.stringify(args), t: Date.now(), step, ...(tbl ? { table: tbl } : {}) });
             }
             const forModel = (tokenId && wantsToken)
                 ? `${result}\n\n[output token @tool:${tokenId} — EMBED this exact output in your final answer with image syntax: ![label](@tool:${tokenId}:out) (use ":in" for the call/code). It expands in place; don't retype it.]`
