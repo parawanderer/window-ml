@@ -1582,7 +1582,11 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     "question — you get back the ANSWER, not the (possibly huge) body, so a big page/API never floods " +
                     "your context. Use it when you need a FACT out of the content, not the raw bytes to process further. " +
                     "An HTML page is auto-converted to clean Markdown (scripts/nav/chrome stripped) so you get the " +
-                    "readable content, not tag soup; set `raw: true` if you specifically need the original HTML. " +
+                    "readable content, not tag soup. Better still, many docs sites PUBLISH their own Markdown version of a page — " +
+                    "this NEGOTIATES for it (asking the server, then following any version the page declares, then a " +
+                    "conventional `.md` URL) and falls back to converting the HTML itself, so you usually get the site's " +
+                    "authored text rather than our reduction of its markup. Set `format: \"html\"` if you specifically " +
+                    "need the original markup and no negotiation. " +
                     "**NOTE:** When a user asks you to get information from a user-facing HTML page, assume the user " +
                     "wants you to actually navigate them to a page by default so that they see the information themselves. " +
                     "You can still use this tool to fetch the information for your own usage, but navigate the user so that " +
@@ -1600,7 +1604,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                         credentials: { type: "boolean", description: "If true, fetch AS THE USER (send their cookies) for authenticated data. Always prompts; never cached/remembered." },
                         rendered: { type: "boolean", description: "If true, load the URL in a background tab so its JavaScript runs, then return the SETTLED DOM — for client-rendered/SPA pages a raw GET returns empty. Renders in INCOGNITO (no session/cookies): same-origin is FREE, cross-origin asks once then remembered (needs 'Allow in Incognito'). Add credentials:true to render in the user's SESSION (a normal tab with cookies) — always re-asks. Slower/heavier; never cached." },
                         ask: { type: "string", description: "If set, a fast reader model reads the fetched content and answers THIS question; you get the answer, not the body (keeps a large page out of your context). Takes precedence over `schema`." },
-                        raw: { type: "boolean", description: "If true, return an HTML page's ORIGINAL raw HTML instead of the auto-converted Markdown (HTML is converted to clean Markdown by default for readability; non-HTML is unaffected)." },
+                        format: { type: "string", enum: ["markdown", "html"], description: "What DOCUMENT to fetch. \"markdown\" (default) negotiates for the site's own Markdown version of the page and falls back to converting its HTML. \"html\" returns the ORIGINAL markup in one plain request, no negotiation — for when you need the markup itself (a selector, an attribute, an embedded script). Data bodies (JSON/CSV/code) are unaffected either way." },
                         pipe: { type: "string", description: "Optional. SCAN/FILTER the returned text through a small shell-style pipeline BEFORE it reaches you — so you read only the relevant lines instead of the whole doc (cheaper). " + PIPE_SYNTAX + " For anything MORE COMPLEX than this dialect, use exec instead: `const { markdown } = await ml.fetch('<the url>');` then process that string with JS." },
                     },
                     required: ["url"],
@@ -1615,19 +1619,26 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     const pipe = (typeof a?.pipe === "string" && a.pipe.trim()) ? a.pipe.trim() : undefined;
                     return { type: "action", verb: "fetch", target: String(a?.url ?? ""), ...(note ? { note } : {}), ...(ask ? { ask } : {}), ...(pipe ? { pipe } : {}) };
                 },
-                run: async ({ url, schema = false, credentials = false, rendered = false, ask = null, raw = false, pipe = null }: { url?: unknown; schema?: boolean; credentials?: boolean; rendered?: boolean; ask?: unknown; raw?: boolean; pipe?: unknown } = {}, ctx?: import("./contract").ToolContext): Promise<string | ToolResult> => {
+                run: async ({ url, schema = false, credentials = false, rendered = false, ask = null, format = "markdown", pipe = null }: { url?: unknown; schema?: boolean; credentials?: boolean; rendered?: boolean; ask?: unknown; format?: unknown; pipe?: unknown } = {}, ctx?: import("./contract").ToolContext): Promise<string | ToolResult> => {
                     if (typeof url !== "string" || !url.trim()) return "Error: fetch_url needs a `url`.";
                     let r: import("./contract").FetchResult;
-                    try { r = await ml.fetch(url, { credentials, rendered }); }
+                    const wantHtml = format === "html";
+                    try { r = await ml.fetch(url, { credentials, rendered, format: wantHtml ? "html" : "markdown" }); }
                     catch (e) { return `Error: ${errText(e)}`; }
                     const mislabel = r.typeByHeader && r.typeByHeader !== r.type ? ` (header said "${r.typeByHeader}")` : "";
                     const head = `Fetched ${r.url} — HTTP ${r.status}, type: ${r.type}${r.language ? ` (${r.language})` : ""}${mislabel}${r.truncated ? " · body truncated" : ""}.`;
                     // HTML → Markdown by DEFAULT (readability): an HTML page is mostly slop (scripts/nav/chrome) to a
                     // reading model, so distil it unless `raw` is set. Only HTML — json/csv/code/text/markdown are
                     // already clean. Applies to BOTH the normal view and the ask-mode reader input.
-                    const converted = r.type === "html" && !raw && !schema && r.json === undefined;
+                    const converted = r.type === "html" && !wantHtml && !schema && r.json === undefined;
+                    // Say WHOSE Markdown this is. The site's own is authored for reading and is the better text;
+                    // ours is a reduction of the page's markup with nav/header/footer stripped. A model that
+                    // can't tell them apart can't judge whether a missing detail was never there or was cut.
+                    const by = r.negotiation?.resolvedBy;
                     const mdNote = converted
-                        ? "\n\n(This page was raw HTML; the tool converted it to Markdown automatically for readability. Re-run fetch_url with \"raw\": true to get the original HTML.)"
+                        ? "\n\n(This page was HTML; the tool converted it to Markdown itself for readability — nav/header/footer stripped. Re-run with \"format\": \"html\" for the original markup.)"
+                        : (by === "accept" || by === "declared" || by === "sibling")
+                        ? `\n\n(This is the SITE'S OWN Markdown version of the page${by === "declared" ? ", the one it declares for agents" : by === "sibling" ? ", from its .md URL" : ", served by content negotiation"} — authored text, not our conversion of the HTML. Re-run with "format": "html" for the original markup.)`
                         : "";
                     // The body to read/return: converted Markdown for HTML (unless raw), else the JSON/raw text.
                     // ml.fetch already attached `.markdown` for HTML; reuse it (fall back to a fresh conversion).
@@ -1650,7 +1661,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                         // drop raw:true (the default HTML→Markdown lines up cleanly) or otherwise reformat first.
                         const srcLines = nlines(src);
                         const minified = srcLines <= 2 && src.length > 800;
-                        const warn = minified ? ` — ⚠ the source is ${srcLines} line${srcLines === 1 ? "" : "s"} (minified?), so line tools couldn't split it${r.type === "html" && raw ? "; drop \"raw\": true to pipe the clean Markdown instead" : ""}` : "";
+                        const warn = minified ? ` — ⚠ the source is ${srcLines} line${srcLines === 1 ? "" : "s"} (minified?), so line tools couldn't split it${r.type === "html" && wantHtml ? "; drop \"format\": \"html\" to pipe the clean Markdown instead" : ""}` : "";
                         return { text: out, footer: `\n\n(piped through \`${pipeStr}\`: ${nlines(out)} lines, ${out.length.toLocaleString()} chars — filtered from ${srcLines} source lines${warn})` };
                     };
                     // ASK mode: distill the body through a fast reader model (extend:"utility") instead of returning
@@ -2335,11 +2346,12 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          * @param {{ fresh?: boolean; credentials?: boolean; rendered?: boolean }} [opts] `fresh` bypasses the read cache; `credentials` fetches with the user's cookies; `rendered` loads it in a background tab and returns the settled DOM (both gated, uncached).
          * @returns {Promise<FetchResult>} { url, status, ok, type, language?, text, json?, schema?, typeBy*, truncated?, rendered?, headers? }. `headers` is a SAFELIST of non-sensitive response headers (link/etag/lastModified/retryAfter/contentLength/contentDisposition/cacheControl/date) — auth headers (Cookie/Authorization/…) are never exposed.
          */
-        fetch: function(url: string, opts?: { fresh?: boolean; credentials?: boolean; rendered?: boolean }): Promise<import("./contract").FetchResult> {
+        fetch: function(url: string, opts?: { fresh?: boolean; credentials?: boolean; rendered?: boolean; format?: import("./contract").FetchFormat }): Promise<import("./contract").FetchResult> {
             const key = String(url);   // the real method always fetches live; `fresh` only matters for the read-only cache path
             const credentials = !!opts?.credentials;
             const rendered = !!opts?.rendered;
-            return makeBackgroundTaskPromise<import("./contract").FetchResult>("FETCH_URL_REQUEST", "FETCH_URL_RESPONSE", { url: key, credentials, rendered })
+            const format = opts?.format === "html" ? "html" as const : "markdown" as const;
+            return makeBackgroundTaskPromise<import("./contract").FetchResult>("FETCH_URL_REQUEST", "FETCH_URL_RESPONSE", { url: key, credentials, rendered, format })
                 .then(r => {
                     // For an HTML body, attach a `.markdown` distillation (scripts/nav/chrome stripped) so ANY
                     // caller — exec, a read-only survey (`ml.fetch(url).markdown`), the fetch_url tool — gets the
@@ -2348,7 +2360,11 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     if (r && r.type === "html" && typeof r.text === "string" && r.markdown === undefined) {
                         try { r.markdown = htmlToMarkdown(r.text); } catch { /* leave undefined — callers fall back to .text */ }
                     }
-                    if (r && r.ok && !credentials && !rendered) mlFetchCache.set(key, r);   // cache ONLY a successful UNCREDENTIALED, non-rendered fetch (as-you bytes are authenticated — never cache)
+                    // Cache ONLY a successful UNCREDENTIALED, non-rendered fetch (as-you bytes are authenticated —
+                    // never cache). Keyed by url ALONE, so only the DEFAULT format is cached: `format:"html"`
+                    // returns different bytes for the same url, and letting it share the key would hand a later
+                    // reader the wrong document.
+                    if (r && r.ok && !credentials && !rendered && format === "markdown") mlFetchCache.set(key, r);
                     return r;
                 });
         },

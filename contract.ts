@@ -220,7 +220,40 @@ export function outputCapPrecheck(tool: OutputCapTool, args: Record<string, unkn
  *  permissions). Uncredentialed by default; `credentials` sends the user's cookies, `rendered` loads it in a
  *  tab so its JS runs (incognito unless credentialed). No headers/body/method knobs by design: a locked,
  *  low-surface read primitive. */
-export interface FetchUrlPayload { url: string; credentials?: boolean; rendered?: boolean; }
+export interface FetchUrlPayload { url: string; credentials?: boolean; rendered?: boolean; format?: FetchFormat; }
+
+/** What DOCUMENT a fetch goes and gets — a fetch-level concern, so it is the one option shared by `ml.fetch`
+ *  and the `fetch_url` tool. `"markdown"` (the default) runs the negotiation ladder for the site's OWN
+ *  Markdown; `"html"` skips it entirely and returns the original markup in one plain GET. Data bodies
+ *  (json/csv/code) are unaffected either way. This REPLACED `raw`, which straddled the line between "what do
+ *  we fetch" and "what does the model receive" and so read as a second, overlapping knob. */
+export type FetchFormat = "markdown" | "html";
+
+/** One rung of the Markdown ladder, as it actually ran. Recorded for every attempt — including the ones that
+ *  were skipped — because the failure modes here are INVISIBLE in the body alone: a stub twin is a valid 200
+ *  Markdown document that is simply the wrong page, and a site-authored twin is content written specifically
+ *  to be read by agents (GitBook appends an "Agent Instructions" section), so "which URL did these bytes come
+ *  from" is provenance for an injection surface, not decoration. */
+export interface FetchAttempt {
+    /** `accept` = the same URL with `Accept: text/markdown`; `declared` = the `<link rel="alternate">` the
+     *  page named; `sibling` = the derived `.md`/`index.md`; `convert` = our own HTML→Markdown. */
+    strategy: "accept" | "declared" | "sibling" | "convert";
+    url: string;
+    status?: number;
+    contentType?: string;
+    bytes?: number;
+    ms?: number;
+    outcome: "hit" | "not-markdown" | "error" | "skipped";
+    /** Why, when the outcome needs one ("not attempted — already resolved", a cross-origin declaration). */
+    note?: string;
+}
+
+/** The ladder's trace: what was tried, what worked, what was never needed. */
+export interface FetchNegotiation {
+    wanted: FetchFormat;
+    attempts: FetchAttempt[];
+    resolvedBy: FetchAttempt["strategy"];
+}
 /** The result of `ml.fetch(url)`. Content type is resolved BOTH ways so a mislabel is visible: `type` is the
  *  final pick (header when specific, else the content sniff), `typeByHeader`/`typeByContent` are the raw
  *  signals. `json` is pre-parsed when `type === "json"`. `text` is the raw body (size-capped → `truncated`). */
@@ -244,6 +277,11 @@ export interface FetchResult {
     truncated?: boolean;      // the body was clipped to the size cap
     redirected?: boolean;     // the request followed ≥1 redirect (`url` above is the FINAL landing URL — the
                               // intermediate chain isn't visible to fetch; a redirect log needs chrome.webRequest)
+    /** The Markdown ladder's trace, when negotiation ran (absent for `format: "html"` and for data bodies that
+     *  never negotiate). `resolvedBy` says which rung produced `text` — in particular whether the Markdown is
+     *  the SITE's or our own Turndown reduction, which is the difference that matters when debugging why a
+     *  model missed a detail. */
+    negotiation?: FetchNegotiation;
     rendered?: boolean;       // the body is the SETTLED DOM after the page's JS ran in a background tab (rendered
                               // mode), not the raw HTTP response — so client-rendered/SPA content is present
     /** A SAFELIST of NON-SENSITIVE response headers — the ONLY headers ever exposed. Auth-bearing headers
@@ -1742,8 +1780,15 @@ export interface MlApi {
      *  `rendered: true` loads the URL in a background tab so its JavaScript runs, then returns the SETTLED DOM
      *  (for SPA / client-rendered pages a raw GET can't see); by default it renders PRIVATELY in incognito (no
      *  session — rememberable like a plain fetch), or in the user's session when combined with `credentials`.
-     *  Rendered is never cached. */
-    fetch(url: string, opts?: { fresh?: boolean; credentials?: boolean; rendered?: boolean }): Promise<FetchResult>;
+     *  Rendered is never cached.
+     *
+     *  `format` (default `"markdown"`) NEGOTIATES for the site's OWN Markdown version of a page before falling
+     *  back to converting its HTML: the same request asking for Markdown, then any version the page declares,
+     *  then the conventional `.md` URL. When one is found `.type` is `"markdown"` and `.text` IS that document;
+     *  `.negotiation` records every rung and which one produced the body — the difference between the site's
+     *  authored text and our reduction of its markup. `format: "html"` skips all of it for the original markup
+     *  in one request. A data body (JSON/CSV/code) never negotiates and costs one request either way. */
+    fetch(url: string, opts?: { fresh?: boolean; credentials?: boolean; rendered?: boolean; format?: FetchFormat }): Promise<FetchResult>;
     /** Internal: CACHE-ONLY read of a prior `ml.fetch(url)` result (or undefined on a miss). The read-only
      *  `exec` dialect binds its `ml.fetch` to this, so re-reading an already-fetched URL is free (no egress).
      *  Not part of the stable public API. */

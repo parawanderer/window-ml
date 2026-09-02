@@ -1271,6 +1271,8 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             const url = String((message.payload as { url?: unknown })?.url || "");
             const credentials = !!(message.payload as { credentials?: unknown })?.credentials;
             const rendered = !!(message.payload as { rendered?: unknown })?.rendered;
+            // Only "html" opts OUT of the Markdown ladder; anything else (absent, junk) takes the default.
+            const format = (message.payload as { format?: unknown })?.format === "html" ? "html" as const : "markdown" as const;
             let scheme = "";
             try { scheme = new URL(url).protocol; } catch { sendResponse({ error: `Refused: "${url}" is not a valid URL.` }); return; }
             if (scheme !== "http:" && scheme !== "https:") { sendResponse({ error: `Refused: ml.fetch supports only http(s) URLs (got "${scheme}").` }); return; }
@@ -1316,7 +1318,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 // same-origin one is free); a credentialed render uses the SESSION tab (as-you → always prompts).
                 // A session (non-incognito) render is NEVER free. The `cdp` setting lets it emulate foreground so
                 // a backgrounded tab's gated loads fire.
-                const data = rendered ? await fetchRenderedContent(url, !credentials, !!cfg.cdp) : await fetchUrlContent(url, credentials);
+                const data = rendered ? await fetchRenderedContent(url, !credentials, !!cfg.cdp) : await fetchUrlContent(url, credentials, format);
                 // Redirect guard: a per-URL-consented fetch (NOT a surface/whitelisted/exec one) that ends on a
                 // DIFFERENT, un-consented origin followed a redirect off the approved resource — withhold the body
                 // (a consented public URL could redirect to a private/other target). The GET already happened but
