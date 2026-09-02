@@ -11,7 +11,11 @@
 
 import { jsonShape } from "./dom";
 
-const CMDS = "grep · head · tail · wc · sort · uniq · keys · values · schema · type · a .path";
+/** Every verb the dialect implements — the SINGLE SOURCE for the refusal message AND for the system prompt's
+ *  "here is what you can pipe" list. A prompt that advertises a verb the dialect lacks costs the model a whole
+ *  turn to discover, which has happened once already; deriving both from this makes that drift impossible. */
+export const PIPE_CMDS = ["grep", "head", "tail", "wc", "count", "sort", "uniq", "keys", "values", "schema", "type"] as const;
+const CMDS = `${PIPE_CMDS.join(" · ")} · a .path`;
 const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 /** Split on newlines, dropping a single trailing "\n" so a text that ends in a newline isn't seen as having a
  *  phantom empty last line (matches how the shell tools treat a trailing line terminator). */
@@ -235,6 +239,21 @@ export function runPipe(text: string, pipe: string): string {
             case "sort": lines = sortLines(lines, argv); break;
             case "uniq": lines = uniq(lines, argv); break;
             case "cat": break;   // a harmless no-op if the model prefixes `cat |` out of habit
+            // `count` is the STRUCTURE-AWARE size: elements of an array, rows of a table, keys of an object,
+            // lines of text. `wc -l` counts LINES, which after a path stage means the lines of pretty-printed
+            // JSON — `.rows | wc -l` on a 3-row table says 14, which is true and useless. This is the verb to
+            // reach for after a path.
+            case "count": {
+                const text = fromLines(lines).trim();
+                if (text.startsWith("{") || text.startsWith("[")) {
+                    const j = parseJson(lines, "count");
+                    if (Array.isArray(j)) { lines = [String(j.length)]; break; }
+                    if (isObj(j) && Array.isArray(j.rows)) { lines = [String(j.rows.length)]; break; }   // a table
+                    if (isObj(j)) { lines = [String(Object.keys(j).length)]; break; }
+                }
+                lines = [String(lines.length)];
+                break;
+            }
             case "keys": lines = keysOf(lines); break;
             case "values": {
                 const j = parseJson(lines, "values");

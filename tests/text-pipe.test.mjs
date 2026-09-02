@@ -191,3 +191,33 @@ test("head/tail accept a bare count as well as the shell flag forms", () => {
     assert.equal(runPipe(lines, "tail 2"), "d\ne");
     assert.equal(runPipe(lines, "head"), lines, "no count at all is still the shell default of 10");
 });
+
+test("count is the structure-aware size (wc -l counts LINES, which a path makes useless)", () => {
+    const table = JSON.stringify({ columns: ["a", "b"], rows: [[1, 2], [3, 4], [5, 6]] });
+    assert.equal(runPipe(table, ".rows | count"), "3", "elements, not the lines of pretty-printed JSON");
+    assert.equal(runPipe(table, "count"), "3", "a {columns,rows} table counts its ROWS");
+    assert.equal(runPipe(JSON.stringify({ x: 1, y: 2 }), "count"), "2", "an object counts its keys");
+    assert.equal(runPipe(JSON.stringify([9, 8]), "count"), "2");
+    assert.equal(runPipe("a\nb\nc", "count"), "3", "text counts lines");
+    // The trap this exists to remove — kept working, and deliberately still LINE-based.
+    assert.equal(runPipe(table, ".rows | wc -l"), "14", "wc -l still means lines, of the JSON it was handed");
+});
+
+// A prompt that advertises a verb the dialect doesn't have costs the model a whole turn to discover. That
+// already happened: DEREF_CLAUSE promised `len` and `slice A B`, leftovers from a discarded dialect. The list
+// is now DERIVED from PIPE_CMDS, so this asserts the two really are one source rather than two that agree today.
+test("DRIFT GUARD: every verb the dialect exports exists, and the prompt names exactly those", async () => {
+    const { PIPE_CMDS } = await import("../text-pipe.ts");
+    const { DEREF_CLAUSE } = await import("../prompts.ts");
+    for (const v of PIPE_CMDS) {
+        // Every exported verb must PARSE (a usage error is fine; "not supported" is not).
+        const src = v === "grep" ? "grep x" : v === "head" || v === "tail" ? `${v} 2` : v;
+        try { runPipe('{"a":[1,2,3]}', src); }
+        catch (e) { assert.doesNotMatch(e.message, /isn't a supported text command/, `exported but missing: ${v}`); }
+        assert.ok(DEREF_CLAUSE.includes(v), `the prompt doesn't mention the \`${v}\` verb`);
+    }
+    // And nothing the prompt promises is absent from the dialect (the failure that actually happened).
+    for (const gone of ["len", "slice"]) {
+        assert.ok(!new RegExp(`\\b${gone}\\b`).test(DEREF_CLAUSE), `the prompt still advertises the removed \`${gone}\``);
+    }
+});

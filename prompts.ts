@@ -91,6 +91,8 @@ export const ANSWER_CLAUSE =
     "`remove` an item by index, or `clear` and redo. If the task is to FIND / LOCATE an element, designate " +
     "it here so the real node reaches the caller. You can also curate it from `exec` for free via " +
     "`ml.answer` (`.add(el | \"text\")`, `.remove(i)`, `.clear()`, `.length`) — no approval.";
+import { PIPE_CMDS } from "./text-pipe";
+
 export const TOOLTOKENS_CLAUSE =
     "\n\nTOOL OUTPUT TOKENS. An `@tool:<id>` is a HANDLE to one tool result, and it has TWO uses: showing that " +
     "output to the user in your answer, and READING IT BACK YOURSELF later (with `dereference`). So opt in " +
@@ -127,8 +129,10 @@ export const DEREF_CLAUSE =
     "instead of re-running a tool to recover something you already produced, and instead of retyping a value. " +
     "It is free and changes nothing. `dereference` takes the id plus an optional `pipe` that reduces the value " +
     "before you read it, so you can inspect something far larger than you want in context: `schema` (its shape), " +
-    "`keys` (an object's keys, or a table's COLUMNS), `len`, `type`, `head N` / `tail N`, `grep <text>`, " +
-    "`slice A B`, or a path like `.items[0].name`. Chain them with `|`, e.g. `.rows | head 5`. Start with " +
+    "`keys` (an object's keys, or a table's COLUMNS) and `count` (elements/rows/keys, or lines of text). " +
+    // Derived from the dialect itself (PIPE_CMDS) so the prompt can never advertise a verb that doesn't exist.
+    `The full set: ${PIPE_CMDS.join(", ")}, plus a path like \`.items[0].name\`. ` +
+    "Chain them with `|`, e.g. `.rows | count`. Start with " +
     "`schema` or `keys` on anything big. NOTE a pointer is a SNAPSHOT of when that tool ran: the reply says " +
     "when it was captured, so re-read the page instead if it has changed since.";
 
