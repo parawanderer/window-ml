@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
-import { elementReference, classifyOverlay, navTarget, typeFromHeader, typeFromContent, typeFromExtension, classifyContent, jsonShape, askReaderNumCtx, isCspEvalBlocked, markdownAlternateHref, resolveMarkdownAlternate, markdownAffordance, markdownTwin, externalSheetIds } from "../dom.ts";
+import { elementReference, classifyOverlay, navTarget, typeFromHeader, typeFromContent, typeFromExtension, classifyContent, jsonShape, askReaderNumCtx, isCspEvalBlocked, markdownAlternateHref, resolveMarkdownAlternate, markdownAffordance, markdownTwin, externalSheetIds, markdownSiblingUrl, isMarkdownResponse } from "../dom.ts";
 
 // --- ml.fetch content classification (header / content / extension → a HEURISTIC type for chaining) ---
 test("typeFromHeader: specific content-types map; generic ones return null (defer to content/extension)", () => {
@@ -280,4 +280,75 @@ test("externalSheetIds: finds sheets in a string, a map, AND an array", () => {
     assert.deepEqual(externalSheetIds({ tables: ["current"] }), [], "'current' is the page you are on, not external");
     assert.deepEqual(externalSheetIds({ tables: "#sales" }), []);
     assert.deepEqual(externalSheetIds({}), []);
+});
+
+// The third rung of the Markdown ladder: the DERIVED sibling, tried only when negotiation missed and the page
+// declared nothing. It rides the base URL's own consent, so what it can express IS the security boundary.
+test("markdownSiblingUrl: the trailing slash picks the sibling, and only ONE is ever derived", () => {
+    // Measured against real docs platforms — Cloudflare 404s on `guide.md` and serves `guide/index.md`.
+    assert.equal(markdownSiblingUrl("https://bun.sh/docs/installation"), "https://bun.sh/docs/installation.md");
+    assert.equal(markdownSiblingUrl("https://developers.cloudflare.com/workers/get-started/guide/"),
+        "https://developers.cloudflare.com/workers/get-started/guide/index.md");
+    // `.md` IN PLACE of an explicit .html — "page.html.md" is nobody's convention.
+    assert.equal(markdownSiblingUrl("https://x.test/a/page.html"), "https://x.test/a/page.md");
+    assert.equal(markdownSiblingUrl("https://x.test/a/page.htm"), "https://x.test/a/page.md");
+    // Query and fragment addressed the HTML resource; carrying them to another path is a guess.
+    assert.equal(markdownSiblingUrl("https://x.test/docs?tab=cli#frag"), "https://x.test/docs.md");
+    // Nothing to derive.
+    assert.equal(markdownSiblingUrl("https://x.test/page.md"), null, "already the markdown resource");
+    assert.equal(markdownSiblingUrl("https://x.test/page.mdx"), null);
+    assert.equal(markdownSiblingUrl("https://x.test/data.json"), null, "a data file has no prose twin");
+    assert.equal(markdownSiblingUrl("https://x.test/logo.png"), null);
+    assert.equal(markdownSiblingUrl("https://x.test/"), null, "a site root has no page twin (that is llms.txt's job)");
+    assert.equal(markdownSiblingUrl("javascript:alert(1)"), null);
+    assert.equal(markdownSiblingUrl("data:text/html,x"), null);
+    assert.equal(markdownSiblingUrl("not a url"), null);
+    assert.equal(markdownSiblingUrl(""), null);
+});
+
+// ADVERSARIAL. This URL is fetched under the consent given for the BASE url, so if a caller could steer it to
+// another origin it would become "approve one page, read anywhere". Unlike a declared alternate it takes no
+// page-supplied string — but assert the invariant directly rather than trusting the construction.
+test("markdownSiblingUrl: the result is ALWAYS same-origin, whatever the input tries", () => {
+    const hostile = [
+        "https://good.test/a/../../evil.test/x",
+        "https://good.test/a/%2e%2e/%2e%2e/x",
+        "https://good.test/x?next=https://evil.test/y",
+        "https://good.test/x#https://evil.test/y",
+        "https://good.test/x/..;/y",
+        "https://user:pass@good.test/x",
+        "https://good.test:443/x",
+        "https://good.test/\\evil.test/x",
+        "https://good.test/x%00.md",
+        "https://good.test/..%2f..%2fevil",
+    ];
+    for (const h of hostile) {
+        const out = markdownSiblingUrl(h);
+        if (out === null) continue;                       // refusing is always an acceptable answer
+        assert.equal(new URL(out).origin, new URL(h).origin, `escaped the origin: ${h} -> ${out}`);
+        assert.ok(out.endsWith(".md"), `not a markdown sibling: ${out}`);
+        // …and the path is the base path plus the suffix — never a new path the input smuggled in.
+        const basePath = new URL(h).pathname.replace(/\.html?$/i, "");
+        const expected = basePath.endsWith("/") ? `${basePath}index.md` : `${basePath}.md`;
+        assert.equal(new URL(out).pathname, expected, `path was steered: ${h} -> ${out}`);
+    }
+});
+
+// How every rung of the ladder is judged. Both of these are measured behaviours, not hypotheticals.
+test("isMarkdownResponse: the header is not trusted in EITHER direction", () => {
+    // react.dev serves genuine Markdown as text/plain — requiring the header would reject a real twin.
+    assert.equal(isMarkdownResponse(true, "text/plain; charset=utf-8", "# Thinking in React\n\nText."), true);
+    assert.equal(isMarkdownResponse(true, "text/markdown; charset=utf-8", "# GLM-5.3-Flash\n\nText."), true);
+    assert.equal(isMarkdownResponse(true, "text/x-markdown", "# Title"), true);
+    // …and the common failure is not a 404 but a 200 text/html SPA catch-all (docs.github.com answers
+    // `…/index.md` with 359KB of HTML), which a status check alone would happily accept.
+    assert.equal(isMarkdownResponse(true, "text/html; charset=utf-8", "<!DOCTYPE html><html><head>"), false);
+    assert.equal(isMarkdownResponse(true, "text/plain", "<html><body>still html</body></html>"), false, "sniffed, not just headered");
+    // Structured data is never the prose twin.
+    assert.equal(isMarkdownResponse(true, "application/json", '{"a":1}'), false);
+    assert.equal(isMarkdownResponse(true, "text/csv", "a,b\n1,2"), false);
+    assert.equal(isMarkdownResponse(true, "application/xml", "<?xml version=\"1.0\"?><r/>"), false);
+    // Non-2xx and empty bodies are misses — an error page is prose too.
+    assert.equal(isMarkdownResponse(false, "text/markdown", "# Not found"), false);
+    assert.equal(isMarkdownResponse(true, "text/markdown", "   "), false);
 });

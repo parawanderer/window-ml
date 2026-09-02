@@ -1365,6 +1365,55 @@ export function resolveMarkdownAlternate(href: string | null | undefined, pageUr
     } catch { return null; }
 }
 
+/** Does this response actually hold the Markdown twin we asked for? Every rung of the ladder is judged by
+ *  this, and it is deliberately NOT `classifyContent(...).type === "markdown"`.
+ *
+ *  Two measured facts shape it. Content-Type LIES in both directions: react.dev serves genuine Markdown as
+ *  `text/plain` (so requiring the header would reject a real twin), while the common failure is a 200
+ *  `text/html` SPA catch-all — docs.github.com answers `…/index.md` with 359KB of HTML rather than a 404. So
+ *  the rule is: an explicit markdown header is enough on its own; otherwise anything STRUCTURED (html, xml,
+ *  json, csv) is a miss, and remaining prose is a hit — we only ever ask at a URL the site declared or that
+ *  we derived, and the fallback if we are wrong is the HTML we already hold.
+ *
+ *  Pure; `ok` is the response's 2xx-ness, since an error page is prose too. */
+export function isMarkdownResponse(ok: boolean, contentType: string, body: string): boolean {
+    if (!ok) return false;
+    if (!body.trim()) return false;                                   // an empty 200 is not a twin
+    if (/^text\/(x-)?markdown\b/i.test(contentType)) return true;     // said so outright
+    const { byContent } = classifyContent(contentType, body);
+    return byContent !== "html" && byContent !== "xml" && byContent !== "json" && byContent !== "csv";
+}
+
+/** The ONE derived URL the Markdown ladder may fetch under the base URL's own grant, or null.
+ *
+ *  Deriving is the ladder's third rung, tried only when content negotiation missed AND the page declared no
+ *  twin. Unlike a DECLARED alternate (page-controlled — see {@link resolveMarkdownAlternate}), this is
+ *  deterministic and same-origin BY CONSTRUCTION: origin, path and nothing else, so it cannot be steered.
+ *  That is what lets it ride the consent already given for the base URL instead of prompting again.
+ *
+ *  Which sibling depends on the trailing slash, and getting it wrong is not merely wasteful. Measured across
+ *  docs platforms: `…/guide/` → `…/guide/index.md` (Cloudflare 404s on `guide.md`), `…/page` → `…/page.md`.
+ *  Trying `index.md` on a non-slash URL is DANGEROUS — Next.js and ai-sdk.dev both answer 200 with a valid
+ *  markdown STUB, i.e. the wrong document, silently. So exactly one candidate is derived, never both.
+ *
+ *  Query and fragment are dropped: they addressed the HTML resource, and carrying them to a different path is
+ *  a guess. Pure — unit-tested, including the cases the origin guard exists for. */
+export function markdownSiblingUrl(base: string): string | null {
+    let u: URL;
+    try { u = new URL(base); } catch { return null; }
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    let path = u.pathname;
+    if (/\.mdx?$/i.test(path)) return null;                    // already the markdown resource
+    // A page served with an explicit .html extension takes .md IN PLACE of it — "page.html.md" is nobody's
+    // convention. Any OTHER extension (.json/.csv/.png) is a data file, not a document with a prose twin.
+    const ext = /\.([A-Za-z0-9]+)$/.exec(path.split("/").pop() || "");
+    if (ext && !/^html?$/i.test(ext[1])) return null;
+    if (ext) path = path.slice(0, -(ext[0].length));
+    const sibling = path.endsWith("/") ? `${path}index.md` : `${path}.md`;
+    if (sibling === "/index.md" && u.pathname === "/") return null;   // a site ROOT has no page twin; llms.txt is that job
+    return `${u.origin}${sibling}`;
+}
+
 /** Cap on the interactive elements scanned for a "copy as Markdown" control (see {@link markdownAffordance}). */
 const MD_AFFORDANCE_SCAN = 400;
 
