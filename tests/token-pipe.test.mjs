@@ -255,15 +255,44 @@ test("the loop hands out a resolver bound to ITS OWN store (the page-hosted path
     assert.throws(() => resolver("@tool:exec", "jq .x"), /isn't a supported text command/);
 });
 
-test("normalizePipe: an array of stages is shorthand for the dialect string", () => {
-    assert.equal(P.normalizePipe([".rows", "head 5"]), ".rows | head 5", "no quoting, no escaping — the part models fumble");
-    assert.equal(P.normalizePipe(".rows | head 5"), ".rows | head 5", "a string passes through unchanged");
-    assert.equal(P.normalizePipe([" .rows ", "  head 5"]), ".rows | head 5", "entries are trimmed");
+test("pipeStages: a pipe resolves to STAGES — an array entry is one stage, never re-split", () => {
+    assert.deepEqual(P.pipeStages([".rows", "head 5"]), [".rows", "head 5"]);
+    assert.deepEqual(P.pipeStages(".rows | head 5"), [".rows", "head 5"], "a string splits on unquoted |");
+    assert.deepEqual(P.pipeStages([" .rows ", "  head 5"]), [".rows", "head 5"], "entries are trimmed");
     // A conditionally-built array shouldn't produce an empty stage the dialect would then refuse.
-    assert.equal(P.normalizePipe([".rows", "", null, "head 5"]), ".rows | head 5");
-    assert.equal(P.normalizePipe([]), "");
-    assert.equal(P.normalizePipe(null), "");
-    assert.equal(P.normalizePipe(undefined), "");
+    assert.deepEqual(P.pipeStages([".rows", "", null, "head 5"]), [".rows", "head 5"]);
+    assert.deepEqual(P.pipeStages([]), []);
+    assert.deepEqual(P.pipeStages(null), []);
+    assert.deepEqual(P.pipeStages(undefined), []);
+    // The point of the array form: a stage may hold a bare `|` (regex alternation) with NO quoting, and it
+    // stays ONE stage. Splitting it would make "warn" a command — or, worse, silently run a real one.
+    assert.deepEqual(P.pipeStages(["grep -E error|warn", "head 5"]), ["grep -E error|warn", "head 5"]);
+    // The string form gets the same protection from quotes, which the splitter respects.
+    assert.deepEqual(P.pipeStages("grep -E 'error|warn' | head 5"), ["grep -E 'error|warn'", "head 5"]);
+});
+
+test("displayPipe: joins for DISPLAY only, and never throws on a malformed pipe", () => {
+    assert.equal(P.displayPipe([".rows", "head 5"]), ".rows | head 5");
+    assert.equal(P.displayPipe(".rows | head 5"), ".rows | head 5");
+    assert.equal(P.displayPipe(null), "");
+    // Unterminated quotes are an EXECUTION error; a label still has to render.
+    assert.equal(P.displayPipe("grep 'foo"), "grep 'foo");
+    assert.doesNotThrow(() => P.displayPipe(["grep 'foo"]));
+});
+
+// REGRESSION. derefPipe used to split the pipe with a naive `split("|")` and then re-join the surviving
+// stages with " | " for runPipe to split AGAIN. Both halves corrupted a regex alternation, and neither
+// raised: `'error|warn'` came back EMPTY (reads as "no matches"), and `'head|tail'` came back with the
+// result of grepping "head " and then running `tail` as its own stage — a plausible wrong answer.
+test("derefPipe: a regex alternation survives — as a quoted string AND as an array stage", () => {
+    const v = tok({ out: "head of report\nerror: disk full\nwarn: slow\ntail of report", full: "head of report\nerror: disk full\nwarn: slow\ntail of report" });
+    assert.equal(P.derefPipe(v, "out", "grep -E 'error|warn'"), "error: disk full\nwarn: slow");
+    assert.equal(P.derefPipe(v, "out", ["grep -E error|warn"]), "error: disk full\nwarn: slow", "array: no quoting needed at all");
+    // The nastiest case: both alternatives are real command names, so the old code ran one of them silently.
+    assert.equal(P.derefPipe(v, "out", "grep -E 'head|tail'"), "head of report\ntail of report");
+    assert.equal(P.derefPipe(v, "out", ["grep -E head|tail"]), "head of report\ntail of report");
+    // …and a genuine multi-stage pipe still behaves.
+    assert.equal(P.derefPipe(v, "out", ["grep -E error|warn", "head 1"]), "error: disk full");
 });
 
 // A self-authored LABEL turns a hex address into a named variable — purely for the model's own recall.

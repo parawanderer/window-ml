@@ -34,9 +34,9 @@ export function currentAnswer(): AnswerSet | null { return activeAnswer; }
 // executing a tool — so an APPROVED exec can read a previous output as DATA rather than re-reading it as text,
 // while a page calling `window.ml.dereference` from its own console gets nothing: there is no active run, so
 // there is no store to read. The binding, not a permission check, is what scopes it.
-let activeDeref: ((ref: string, pipe?: string) => Promise<string>) | null = null;
+let activeDeref: ((ref: string, pipe?: string | string[]) => Promise<string>) | null = null;
 /** The pointer resolver for the tool currently running, or null (→ `ml.dereference` throws outside a run). */
-export function currentDeref(): ((ref: string, pipe?: string) => Promise<string>) | null { return activeDeref; }
+export function currentDeref(): ((ref: string, pipe?: string | string[]) => Promise<string>) | null { return activeDeref; }
 
 // How many NON-docs tool calls may fall between two `agent_api_docs` calls before the dig counts as "over" and
 // the shown-set is purged. 1 = tolerate a single quick detour (an `exec` check) mid-dig without re-printing;

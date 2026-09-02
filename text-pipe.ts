@@ -22,24 +22,54 @@ const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$
 const toLines = (text: string): string[] => text.replace(/\n$/, "").split("\n");
 const fromLines = (lines: string[]): string => lines.join("\n");
 
-/** Quote-aware parse of a pipeline string into stages of argv. Respects '…' and "…" (both literal — no
- *  expansion, so a `|` or space inside quotes stays part of the argument, e.g. `grep 'a|b'`). An unquoted `|`
- *  ends a stage; unquoted whitespace ends an argument. Throws on an unterminated quote. */
-function parsePipeline(str: string): string[][] {
-    const stages: string[][] = [];
-    let argv: string[] = [], cur = "", hasCur = false, q = "";
+/** Quote-aware split of a pipeline STRING into stage strings, on unquoted `|` only. Respects '…' and "…"
+ *  (both literal — no expansion, so a `|` inside quotes stays part of the argument, e.g. `grep 'a|b'`), and
+ *  keeps the quotes so {@link parseArgv} can still see them. Throws on an unterminated quote.
+ *
+ *  This is deliberately SEPARATE from argv parsing, and stages are never re-joined into a string once split:
+ *  a stage carrying an unquoted `|` (an array entry — `["grep -E head|tail"]`) would be torn in two by a
+ *  second split, which used to silently grep for `head` and then run `tail` as its own stage. */
+export function splitStages(pipe: string): string[] {
+    const out: string[] = [];
+    let cur = "", q = "";
+    for (const c of pipe) {
+        if (q) { cur += c; if (c === q) q = ""; continue; }        // inside quotes: copy verbatim, `|` included
+        if (c === "'" || c === '"') { q = c; cur += c; continue; }
+        if (c === "|") { out.push(cur); cur = ""; continue; }
+        cur += c;
+    }
+    if (q) throw new Error(`unterminated quote (${q}) in the pipe.`);
+    out.push(cur);
+    return out.map(s => s.trim()).filter(Boolean);   // drop empty stages (leading/trailing/`||`)
+}
+
+/** Quote-aware parse of ONE stage into argv. Unquoted whitespace ends an argument; quotes are literal (no
+ *  expansion) and are consumed, so `grep 'a|b'` yields the two args `grep` and `a|b`. A `|` here is an
+ *  ORDINARY character — the stage boundary was already decided by {@link splitStages} or by the caller
+ *  handing us an array. Throws on an unterminated quote. */
+function parseArgv(stage: string): string[] {
+    const argv: string[] = [];
+    let cur = "", hasCur = false, q = "";
     const endArg = () => { if (hasCur) { argv.push(cur); cur = ""; hasCur = false; } };
-    const endStage = () => { endArg(); stages.push(argv); argv = []; };
-    for (const c of str) {
+    for (const c of stage) {
         if (q) { if (c === q) q = ""; else { cur += c; hasCur = true; } continue; }
         if (c === "'" || c === '"') { q = c; hasCur = true; continue; }   // an empty '' is still an (empty) arg
-        if (c === "|") { endStage(); continue; }
         if (c === " " || c === "\t" || c === "\n") { endArg(); continue; }
         cur += c; hasCur = true;
     }
     if (q) throw new Error(`unterminated quote (${q}) in the pipe.`);
-    endStage();
-    return stages.filter(s => s.length);   // drop empty stages (leading/trailing/`||`)
+    endArg();
+    return argv;
+}
+
+/** Resolve a pipe to its stages' argv. A STRING is split on unquoted `|`; an ARRAY is already one entry per
+ *  stage and is NEVER re-split, so an entry may contain a bare `|` (regex alternation) with no quoting at
+ *  all — the whole point of the array form. */
+function pipelineArgv(pipe: string | string[]): string[][] {
+    const stages = Array.isArray(pipe)
+        ? pipe.filter(s => typeof s === "string" && s.trim()).map(s => s.trim())
+        : splitStages(pipe);
+    return stages.map(parseArgv).filter(a => a.length);
 }
 
 /** Peel single-char boolean flags + numeric flags from an argv, returning the set of flags, a map of numeric
@@ -225,9 +255,13 @@ function keysOf(lines: string[]): string[] {
 }
 
 /** Run a `grep | head | …` pipeline over `text`, returning the transformed text. Throws an actionable Error on
- *  an unknown/misused command (the caller surfaces it to the model). Pure — no side effects. */
-export function runPipe(text: string, pipe: string): string {
-    const stages = parsePipeline(pipe);
+ *  an unknown/misused command (the caller surfaces it to the model). Pure — no side effects.
+ *
+ *  `pipe` is either the dialect STRING (`"grep -i x | head 5"`, split on unquoted `|`) or an ARRAY with one
+ *  stage per entry (`["grep -E error|warn", "head 5"]`), which is never re-split — so a stage may contain a
+ *  bare `|` with no quoting. The two forms are equivalent for stages that contain no `|`. */
+export function runPipe(text: string, pipe: string | string[]): string {
+    const stages = pipelineArgv(pipe);
     let lines = toLines(text);
     for (const argv of stages) {
         const cmd = argv[0];

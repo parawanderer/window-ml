@@ -90,6 +90,24 @@ test("pipes: stages chain left to right", () => {
 });
 test("quote-aware: a `|` and spaces inside quotes stay part of the grep pattern", () => {
     assert.equal(runPipe("a|b\nac\nxyz", "grep 'a|b'"), "a|b\nac", "the quoted | is regex alternation, not a stage split");
+});
+
+// REGRESSION. An ARRAY is one entry per stage and must never be re-split: the old code joined it with " | "
+// and re-parsed, tearing `["grep -E head|tail"]` into a grep for "head" followed by a real `tail` stage —
+// which returned a plausible WRONG answer with no error at all.
+test("pipe: an array entry is ONE stage, so it can hold a bare | with no quoting", () => {
+    const doc = "head of report\nerror: disk full\nwarn: slow\ntail of report";
+    assert.equal(runPipe(doc, ["grep -E error|warn"]), "error: disk full\nwarn: slow");
+    assert.equal(runPipe(doc, ["grep -E head|tail"]), "head of report\ntail of report", "both alternatives are real command names");
+    assert.equal(runPipe(doc, ["grep -E error|warn", "head 1"]), "error: disk full", "…and it still pipes");
+    // The two forms agree whenever no stage contains a `|`.
+    assert.equal(runPipe(doc, ["grep -i report", "head 1"]), runPipe(doc, "grep -i report | head 1"));
+    // Array housekeeping matches the string form's: blanks dropped, entries trimmed.
+    assert.equal(runPipe(doc, ["  grep -i report  ", "", "head 1"]), "head of report");
+    assert.equal(runPipe(doc, []), doc, "no stages = unchanged");
+    // A malformed stage still raises the dialect's own actionable error.
+    assert.throws(() => runPipe(doc, ["grep 'foo"]), /unterminated quote/);
+    assert.throws(() => runPipe(doc, ["jq .x"]), /isn't a supported text command/);
     assert.equal(runPipe("foo bar\nfoo\nbar", "grep 'foo bar'"), "foo bar");
 });
 test("cat is a harmless no-op (models prefix it out of habit)", () => {

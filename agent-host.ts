@@ -63,7 +63,7 @@ export interface RunAgentHostDeps {
     tryReadonly?(name: string, args: Record<string, unknown>): Promise<ToolRunResult | null>;
     /** Receives this run's pointer resolver at start, so the host can answer a page-side `ml.dereference`
      *  (the loop, and the store, live here; the tool runs in the page). See background's derefByRun. */
-    tokenSink?(resolve: (ref: string, pipe?: string) => string): void;
+    tokenSink?(resolve: (ref: string, pipe?: string | string[]) => string): void;
     // Pre-run In render for a PENDING step (streaming runs) — the page computes the tool's In descriptor
     // without running it, so a watched streaming step shows a pretty In, not raw JSON args.
     renderFor?: AgentLoopDeps["renderFor"];

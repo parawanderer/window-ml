@@ -723,7 +723,7 @@ export interface ToolContext {
     answer?: AnswerSet;
     /** Read a `@tool:<id>` pointer from THIS run — what `ml.dereference` binds to inside a tool call. Absent
      *  outside a run, which is why the page can't reach it from its own console. */
-    deref?: (ref: string, pipe?: string) => Promise<string>;
+    deref?: (ref: string, pipe?: string | string[]) => Promise<string>;
     /** LIVE partial output — a GENERIC tool-streaming capability. A tool's `run` may call `ctx.stream(text)`
      *  to stream output AS IT WORKS (Jupyter-style: `exec`'s console.log, `python_exec`'s print), so the step's
      *  Out fills in live instead of only appearing at completion. Present ONLY when the run opted into
@@ -1615,7 +1615,8 @@ export interface MlApi {
     readonly answer: MlAnswer;
     /** Read a `@tool:<id>` pointer — an output this run already produced — instead of re-running the tool that
      *  made it. Reaches the FULL capture, not the truncated copy the model was shown. `pipe` reduces it first,
-     *  as a dialect string (".rows | head 5") or an array of stages ([".rows", "head 5"]). Run-bound like
+     *  as a dialect string (".rows | head 5") or an array with one stage per entry ([".rows", "head 5"]) —
+     *  an array entry is never re-split, so use it when a stage holds a `|` (["grep -E error|warn"]). Run-bound like
      *  `ml.answer`: live inside a tool call (an approved `exec`), throws from the console outside a run. */
     dereference(ref: string, options?: { pipe?: string | string[] | null }): Promise<string>;
     /* ---- chat ---- */

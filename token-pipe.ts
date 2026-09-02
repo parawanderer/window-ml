@@ -12,7 +12,7 @@
 //
 // Pure: no DOM, no chrome, no I/O.
 
-import { runPipe } from "./text-pipe";
+import { runPipe, splitStages } from "./text-pipe";
 
 /** The tool name, shared by the loop (which answers it) and the toolset builder (which advertises it). */
 export const DEREF_TOOL = "dereference";
@@ -116,8 +116,8 @@ export function pipeInput(v: TokenValue, slot: "in" | "out" = "out"): string {
 /** Read a pointer through `pipe`. A leading `latex` / `img` cast is applied first (it needs the typed value);
  *  everything after is the ordinary text-pipe dialect. Any stage that fails THROWS with an actionable message —
  *  the dialect's existing contract — and the caller turns that into a tool error the model can correct. */
-export function derefPipe(v: TokenValue, slot: "in" | "out", pipe?: string | null): string {
-    const stages = (pipe ?? "").split("|").map((s) => s.trim()).filter(Boolean);
+export function derefPipe(v: TokenValue, slot: "in" | "out", pipe?: string | string[] | null): string {
+    const stages = pipeStages(pipe);
     // With NO pipe the model wants the value as it would read it — the rendered table, not the {columns,rows}
     // JSON that only exists so the structural stages have something to work on.
     if (!stages.length) return slot === "in" ? (v.in ?? "") : (v.full ?? v.out);
@@ -135,13 +135,28 @@ export function derefPipe(v: TokenValue, slot: "in" | "out", pipe?: string | nul
         if (/^(latex|img|image)$/i.test(later))
             throw new Error(`\`${later}\` only works as the FIRST stage — it reads the output's type, not the text an earlier stage produced.`);
     }
-    return rest.length ? runPipe(text, rest.join(" | ")) : text;
+    // The remaining stages go through as an ARRAY, never re-joined into a string: joining and letting runPipe
+    // re-split is what used to tear `grep -E 'error|warn'` into two stages (silently returning nothing, or —
+    // for `'head|tail'` — a plausible wrong answer).
+    return rest.length ? runPipe(text, rest) : text;
 }
 
-/** Normalise `ml.dereference`'s `pipe` argument. An ARRAY of stages is the ergonomic form — no quoting, no
- *  escaping, which is the part models fumble — and joins to exactly the dialect string it is shorthand for.
- *  Blank entries are dropped so a conditionally-built array doesn't produce an empty stage. */
-export function normalizePipe(pipe: string | string[] | null | undefined): string {
+/** Resolve a `pipe` argument to its STAGES — the canonical form for EXECUTION. A string is split on unquoted
+ *  `|` (quote-aware, via the dialect's own splitter); an array is already one stage per entry and is passed
+ *  through untouched, so an entry may contain a bare `|` (regex alternation) with no quoting at all. Blank
+ *  entries are dropped so a conditionally-built array doesn't produce an empty stage.
+ *
+ *  Never re-join these for execution — see {@link derefPipe}. */
+export function pipeStages(pipe: string | string[] | null | undefined): string[] {
+    if (Array.isArray(pipe)) return pipe.filter((s) => typeof s === "string" && s.trim()).map((s) => s.trim());
+    return typeof pipe === "string" && pipe.trim() ? splitStages(pipe) : [];
+}
+
+/** The pipe as ONE human-readable line, for DISPLAY only — the sidebar's `bash` block, the approval card, the
+ *  export. Deliberately lossy: a stage containing an unquoted `|` reads ambiguously here, which is fine for a
+ *  label and is exactly why {@link pipeStages} is what execution uses. Never throws (a malformed pipe still
+ *  has to render), so it does not validate quoting. */
+export function displayPipe(pipe: string | string[] | null | undefined): string {
     if (Array.isArray(pipe)) return pipe.filter((s) => typeof s === "string" && s.trim()).map((s) => s.trim()).join(" | ");
     return typeof pipe === "string" ? pipe : "";
 }

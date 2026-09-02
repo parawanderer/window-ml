@@ -136,7 +136,7 @@ export class AgentHandle implements MlAgentHandle, AgentControl {
  *  Not a page-reachable capability: nothing calls this except a ToolContext built for an executing delegated
  *  tool (run-delegation), and the background answers only for a run it is actually hosting. A page's own
  *  console has no active run, so `ml.dereference` throws there before any message is sent. */
-export function derefViaBackground(runId: string, ref: string, pipe?: string): Promise<string> {
+export function derefViaBackground(runId: string, ref: string, pipe?: string | string[]): Promise<string> {
     return new Promise((resolve, reject) => {
         const id = `deref-${Math.random().toString(16).slice(2)}`;
         const onMsg = (e: MessageEvent) => {
@@ -146,6 +146,7 @@ export function derefViaBackground(runId: string, ref: string, pipe?: string): P
             if (d.error) reject(new Error(d.error)); else resolve(d.value ?? "");
         };
         window.addEventListener("message", onMsg);
-        window.postMessage({ type: "PAGE_DEREF", id, runId, ref, pipe: pipe || "" }, "*");
+        // `pipe` may be an ARRAY of stages (structured-clones fine); `??` not `||` so an array survives.
+        window.postMessage({ type: "PAGE_DEREF", id, runId, ref, pipe: pipe ?? "" }, "*");
     });
 }

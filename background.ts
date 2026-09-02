@@ -349,7 +349,7 @@ const pyStreamTabs = new Map<string, number>();
 
 // Pointer resolvers for background-hosted runs, keyed by runId — handed over by the loop at start (tokenSink)
 // so a page-side tool's `ml.dereference` can read THIS run's captured outputs. Deleted when the run ends.
-const derefByRun = new Map<string, (ref: string, pipe?: string) => string>();
+const derefByRun = new Map<string, (ref: string, pipe?: string | string[]) => string>();
 // LIVE tool-output streaming on the BACKGROUND path: the in-flight delegated tool's onStream, keyed by runId.
 // The loop delegates tool calls SEQUENTIALLY (one in flight per run), so runId alone correlates a page-posted
 // PAGE_TOOL_STREAM chunk to the right callback. Set in delegateTool while a streaming call runs, deleted after.
@@ -1200,7 +1200,12 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
     if (message.type === "DEREF_TOKEN") {
         const fn = derefByRun.get(String(message.runId || ""));
         if (!fn) { sendResponse({ error: `No active background run "${message.runId}" to read pointers from.` }); return true; }
-        try { sendResponse({ value: fn(String(message.ref || ""), String(message.pipe || "")) }); }
+        // `pipe` is EITHER the dialect string or an ARRAY of stages — keep the array intact. `String(array)`
+        // comma-joins it ("grep -E a|b,head 5"), which is not the dialect and silently mangles the read.
+        const pipe = Array.isArray(message.pipe)
+            ? (message.pipe as unknown[]).filter((x): x is string => typeof x === "string")
+            : String(message.pipe || "");
+        try { sendResponse({ value: fn(String(message.ref || ""), pipe) }); }
         catch (e) { sendResponse({ error: (e as Error)?.message || String(e) }); }
         return true;
     }

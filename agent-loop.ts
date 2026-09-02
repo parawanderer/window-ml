@@ -204,7 +204,7 @@ export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number | (() =
     /** Called once at run start with a resolver for this run's `@tool:` pointers. The host binds it into the
      *  ToolContext so `ml.dereference` inside an approved exec reads THIS run's outputs — and only while a
      *  tool of this run is executing. The loop owns the store, so it is the only place that can hand this out. */
-    tokenSink?: (resolve: (ref: string, pipe?: string) => string) => void;
+    tokenSink?: (resolve: (ref: string, pipe?: string | string[]) => string) => void;
     /** Opt-in LIVE tool-output streaming (same flag as the streamed thinking): when set, each tool call gets a
      *  throttled `ctx.stream(text)` so a tool that supports it (exec's console.log, python_exec's print) streams
      *  its output as it runs. Off → tools return the full result at the end, unchanged. */
@@ -320,7 +320,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     };
     // Hand the resolver to the host (see tokenSink). Throws exactly what the tool would return, so a failed
     // read inside exec surfaces the same MemoryFault / pipe error the model sees from the tool itself.
-    opts.tokenSink?.((ref: string, pipe?: string): string => {
+    opts.tokenSink?.((ref: string, pipe?: string | string[]): string => {
         const v = tokenStore.get(ref);
         if (!v) throw new Error(memoryFault(ref, tokenStore.nearest(ref), seq));
         return derefPipe(v, TokenStore.slotOf(ref), pipe);

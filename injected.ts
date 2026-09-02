@@ -48,7 +48,7 @@ import { annotate, pickAccentColorForTarget } from "./locate";
 import { suspiciousArgsWarning, suspiciousChars } from "./security";
 import { emitDebug, debugId, shortHash, sessionRegistry, agentRegistry, handleRegistry, enterAgentRun, exitAgentRun, resetSubcallUsage, subcallUsage } from "./bus";
 import { makeDomTools, buildDereferenceTool } from "./tools";
-import { normalizePipe } from "./token-pipe";
+import { pipeStages } from "./token-pipe";
 import { hideSidebarForShot, makeBackgroundTaskPromise, makeChatRequest, makeStreamingTaskPromise } from "./bridge";
 import { validateArgs, validateExtend } from "./validate";
 import { renderArgs, logStep, defaultApprove, normalizeApproval, formatReadonlyExec } from "./approval";
@@ -128,15 +128,19 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          * @param ref A pointer: `@tool:<id>`, the bare id, or a builtin's name for its latest call. `:in` reads
          *            the call/arguments instead of the result.
          * @param options `pipe` reduces the value first — the text-pipe dialect as a string
-         *                (`".rows | head 5"`), or as an ARRAY of stages (`[".rows", "head 5"]`), which avoids
-         *                quoting entirely.
+         *                (`".rows | head 5"`, split on unquoted `|`), or as an ARRAY with one stage per entry
+         *                (`[".rows", "head 5"]`), which is never re-split. Reach for the array when a stage
+         *                contains a `|` — `["grep -E error|warn"]` needs no quoting, where the string form
+         *                needs `"grep -E 'error|warn'"`. (Quoting an argument with SPACES is unchanged in
+         *                both forms: `grep -i 'pricing plan'`.)
          * @returns The value, reduced by the pipe. Rejects with an actionable message when the pointer doesn't
          *          exist (a MemoryFault naming the nearest real pointers) or a pipe stage is wrong.
          */
         dereference: async function(ref: string, { pipe = null }: { pipe?: string | string[] | null } = {}): Promise<string> {
             const fn = currentDeref();
             if (!fn) throw new Error("ml.dereference is only live inside an ml.agent run (it reads that run's captured tool outputs).");
-            return await fn(String(ref ?? ""), normalizePipe(pipe));
+            // STAGES cross the boundary, not a joined string — a stage may hold a bare `|` (see pipeStages).
+            return await fn(String(ref ?? ""), pipeStages(pipe));
         },
         /**
          * Create a stateful multi-turn chat session.
@@ -909,7 +913,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             // `ml.dereference` inside an approved exec: the loop hands its pointer resolver to `tokenSink`
             // below, and this closure is what the ToolContext binds — so the primitive is live only while a
             // tool of THIS run is executing (see tool-exec's activeDeref), and resolves against this run.
-            let pageDeref: ((ref: string, pipe?: string) => string) | null = null;
+            let pageDeref: ((ref: string, pipe?: string | string[]) => string) | null = null;
             toolCtx.deref = async (ref, pipe) => {
                 if (!pageDeref) throw new Error("This run has no captured outputs yet.");
                 return pageDeref(ref, pipe);

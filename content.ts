@@ -228,7 +228,7 @@ window.addEventListener("message", (event: MessageEvent) => {
     // `ml.dereference` from inside a delegated tool of a BACKGROUND-hosted run: the pointer store lives in the
     // service worker, so relay the read and post the answer back to the page. Request/response, id-matched.
     if (data.type === "PAGE_DEREF") {
-        const d = data as { id?: string; runId?: string; ref?: string; pipe?: string };
+        const d = data as { id?: string; runId?: string; ref?: string; pipe?: string | string[] };
         chrome.runtime.sendMessage({ type: "DEREF_TOKEN", runId: d.runId, ref: d.ref, pipe: d.pipe }, (resp: { value?: string; error?: string } = {}) => {
             const err = chrome.runtime.lastError?.message || resp?.error;
             window.postMessage({ type: "PAGE_DEREF_RESULT", id: d.id, ...(err ? { error: err } : { value: resp?.value ?? "" }) }, "*");
