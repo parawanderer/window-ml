@@ -62,7 +62,10 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
    pops open upward (.above): the rows sit at the bottom, where the room is above them. */
 .vram { flex: 0 0 auto; position: relative; border-bottom: 1px solid var(--border); background: var(--panel);
         padding: 8px 12px 10px; display: flex; flex-direction: column; gap: 5px; }
-.vram[style*="height"] { overflow-y: auto; }
+/* Belt and braces with the drag's own clamp: even if a height arrives from storage that predates the floor
+   (or from a narrower panel), the box can never render smaller than its content needs, and what does not fit
+   scrolls rather than spilling over the session list below. */
+.vram[style*="height"] { overflow-y: auto; min-height: 190px; }
 /* The boundary between this panel and the session list, as a handle. It competes with the list for height, so
    which one you want more of depends on what you are doing — a drag, not a setting, and remembered. */
 .vram-grip { position: absolute; left: 0; right: 0; bottom: 0; height: 7px; cursor: ns-resize;

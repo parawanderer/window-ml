@@ -6043,3 +6043,32 @@ test("resource panel: badge tooltips aren't clipped by the resizable panel", asy
             `${sel} opens upward — the rows are at the panel's bottom edge`);
     }
 });
+
+// A panel dragged too small cannot fit its header, plot and rows — the content spilled over the session list
+// below rather than shrinking. Both the drag and the stylesheet enforce a floor.
+test("resource panel: cannot be dragged smaller than its content needs", async () => {
+    const { VRAM_MIN_H } = await import("../sidebar/vram.tsx");
+    assert.ok(VRAM_MIN_H >= 160, `the floor must hold header + plot + rows, got ${VRAM_MIN_H}`);
+
+    const w = await loadSidebarWorld({
+        vram: [{ model: "a", vramGB: 8, vramBytes: 8 * 1024 ** 3, expiresAt: null }],
+        info: INFO_MIXED,
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+    await w.flush();
+
+    const grip = w.shadow.querySelector(".vram-grip");
+    grip.dispatchEvent(new w.window.PointerEvent("pointerdown", { bubbles: true, clientY: 400 }));
+    w.window.dispatchEvent(new w.window.PointerEvent("pointermove", { clientY: -9999 }));
+    await w.flush();
+    assert.equal(parseFloat(w.shadow.querySelector(".vram").style.height), VRAM_MIN_H, "clamped to the floor");
+    w.window.dispatchEvent(new w.window.PointerEvent("pointerup", {}));
+
+    // …and the stylesheet enforces it too, so a height saved before the floor existed can't render broken.
+    const css = require("node:fs").readFileSync("sidebar/sidebar.css", "utf8");
+    const rule = css.slice(css.indexOf('.vram[style*="height"] {'), css.indexOf("}", css.indexOf('.vram[style*="height"] {')));
+    assert.match(rule, /min-height:\s*\d+px/, "a stale saved height still can't render smaller than the content");
+    assert.match(rule, /overflow-y:\s*auto/, "and what doesn't fit scrolls instead of spilling");
+});

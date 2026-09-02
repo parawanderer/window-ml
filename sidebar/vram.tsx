@@ -269,6 +269,10 @@ export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean 
  *  a row that shifts the layout under the cursor. */
 export const poolHover = signal<{ name: string; ceiling: number; used: number; consumers: { label: string; bytes: number }[] } | null>(null);
 
+/** The smallest the panel may be dragged: header + a plot at its floor + a couple of model rows. Below this
+ *  the content cannot fit and overflows the panel instead of shrinking. */
+export const VRAM_MIN_H = 190;
+
 /** Pointer position for the model-row tip, in viewport coords (the row is not inside the plot). */
 export const rowTipAt = signal<{ x: number; y: number } | null>(null);
 /** True while the pointer is over a badge inside the row that has its OWN tooltip (the context window, the
@@ -449,7 +453,10 @@ export function VramPanel() {
         e.preventDefault();
         const el = (e.currentTarget as HTMLElement).parentElement as HTMLElement;
         const startY = e.clientY, startH = el.getBoundingClientRect().height;
-        const move = (ev: PointerEvent) => { vramH.value = Math.max(80, startH + (ev.clientY - startY)); };
+        // 80px was not a usable panel: the header, a plot at its own floor, and the model rows cannot fit, so
+        // the content spilled over the session list below. The floor is what the panel actually needs to hold
+        // its parts.
+        const move = (ev: PointerEvent) => { vramH.value = Math.max(VRAM_MIN_H, startH + (ev.clientY - startY)); };
         const up = () => {
             window.removeEventListener("pointermove", move);
             window.removeEventListener("pointerup", up);
