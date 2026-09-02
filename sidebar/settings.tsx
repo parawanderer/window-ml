@@ -11,8 +11,7 @@ import { DEFAULT_CONFIG, DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX, detectGroundin
 import { PY_PACKAGES } from "../python-env";
 import {
     config, models, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes,
-    MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY,
-} from "./store";
+    MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_DEFAULT, resWindowS } from "./store";
 import { truncate } from "./format";
 import { applyTheme, applyFont, applyCodePrefs } from "./prefs";
 import { IconCheck } from "./icons";
@@ -751,6 +750,17 @@ export function Settings() {
 
                 <Section id="grounding" title="Visual grounding">
                 <div class="set-note">Optional coordinate model for the agent's <code>locate</code> tool. <b>Loads an extra model into VRAM</b> — leave off if memory is tight. Off = <code>locate</code> still works via the Set-of-Marks screenshot tool (no extra model). Recommended: <code>qwen2.5vl:7b</code> (or <code>:3b</code>); accuracy is unproven.</div>
+                <label class="set-field"><span>Resource chart window</span>
+                    <select value={String(resWindowS.value)}
+                        onChange={(e: any) => { resWindowS.value = Number(e.target.value); chrome.storage.local.set({ [RESWIN_KEY]: resWindowS.value }); }}>
+                        <option value="60">1 minute</option>
+                        <option value="180">3 minutes</option>
+                        <option value={String(RESWIN_DEFAULT)}>5 minutes</option>
+                        <option value="900">15 minutes</option>
+                        <option value="1800">30 minutes</option>
+                        <option value="0">Everything kept</option>
+                    </select></label>
+                <div class="set-note">How much history the VRAM/RAM chart DRAWS. Samples are kept for the whole session either way — this only sets how far back the chart looks, because a long window squeezed into a narrow panel smears into an unreadable blur. Gaps stay gaps: while the panel is closed nothing is sampled, so the line breaks rather than being drawn across.</div>
                 <label class="set-check">
                     <input type="checkbox" checked={c.groundingEnabled}
                         onChange={(e: any) => setField("groundingEnabled", e.target.checked)} />

@@ -133,7 +133,11 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rc-hit { cursor: help; }
 /* What makes up the hovered pool's line. Sits between the plot and the legend so it reads as an annotation of
    the line rather than a tooltip that covers it. */
-.rc-poolmodels { font-size: 0.72em; color: var(--fg-dim); padding: 1px 0; }
+/* Height is RESERVED (it renders a hard space when idle), so hovering a line never shifts the legend or the
+   rows below it — a panel that jumps under the cursor reads as broken. Truncates rather than wrapping, for
+   the same reason: a long model list must not grow the row to two lines. */
+.rc-poolmodels { font-size: 0.72em; color: var(--fg-dim); padding: 1px 0; min-height: 1.35em;
+                 white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rc-legend { display: flex; flex-wrap: wrap; gap: 8px; font-size: 0.72em; color: var(--fg-faint);
              font-variant-numeric: tabular-nums; }
 .rc-key { display: inline-flex; align-items: center; gap: 3px; }

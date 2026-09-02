@@ -5630,3 +5630,81 @@ test("model row: hovering shows WHERE it sits, and flags a split", async () => {
     await w.flush();
     assert.equal(w.shadow.querySelectorAll(".vram-rowtip").length, 0, "and clears on leave");
 });
+
+// Hovering a pool must never move the layout: a panel that shifts under the cursor reads as broken, and the
+// shift can pull the thing you were pointing at out from under the pointer. So no row is injected at all —
+// the model rows below ARE the legend, and the ones not on that pool grey out.
+test("overview: hovering a line greys the models that aren't on it, and injects no row", async () => {
+    const w = await loadSidebarWorld({
+        vram: [
+            { model: "onzero", vramGB: 19, vramBytes: 19 * 1024 ** 3, sizeBytes: 19 * 1024 ** 3,
+              gpus: [{ id: "0", runner: "CUDA", vramBytes: 19 * 1024 ** 3 }], expiresAt: null },
+            { model: "onone", vramGB: 8, vramBytes: 8 * 1024 ** 3, sizeBytes: 8 * 1024 ** 3,
+              gpus: [{ id: "1", runner: "CUDA", vramBytes: 8 * 1024 ** 3 }], expiresAt: null },
+        ],
+        info: INFO_MIXED,
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+    await w.flush();
+
+    const rowsBefore = w.shadow.querySelectorAll(".vram-row").length;
+    assert.equal(w.shadow.querySelectorAll(".vram-row.away").length, 0, "nothing dimmed until a pool is hovered");
+
+    // Hover CUDA0's key: the model on CUDA1 greys out, the one on CUDA0 does not.
+    const key = w.shadow.querySelector(".rc-key");
+    key.dispatchEvent(new w.window.PointerEvent("pointerenter", { bubbles: true }));
+    await w.flush();
+
+    assert.equal(w.shadow.querySelectorAll(".vram-row").length, rowsBefore, "no row is added — nothing shifts");
+    const away = [...w.shadow.querySelectorAll(".vram-row.away")].map((r) => r.querySelector(".vram-name").textContent);
+    assert.deepEqual(away, ["onone"], "only the model that is NOT on this pool greys out");
+
+    key.dispatchEvent(new w.window.PointerEvent("pointerleave", { bubbles: true }));
+    await w.flush();
+    assert.equal(w.shadow.querySelectorAll(".vram-row.away").length, 0, "and it clears on leave");
+});
+
+// The reverse of dimming rows: hovering a MODEL row dims the pools it is NOT resident on, so the chart points
+// back at the row as directly as the rows point at the chart.
+test("overview: hovering a model row dims the pools it isn't on", async () => {
+    const w = await loadSidebarWorld({
+        vram: [
+            { model: "onzero", vramGB: 19, vramBytes: 19 * 1024 ** 3, sizeBytes: 19 * 1024 ** 3,
+              gpus: [{ id: "0", runner: "CUDA", vramBytes: 19 * 1024 ** 3 }], expiresAt: null },
+            { model: "onone", vramGB: 8, vramBytes: 8 * 1024 ** 3, sizeBytes: 8 * 1024 ** 3,
+              gpus: [{ id: "1", runner: "CUDA", vramBytes: 8 * 1024 ** 3 }], expiresAt: null },
+        ],
+        info: INFO_MIXED,
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+    await w.flush();
+
+    assert.equal(w.shadow.querySelectorAll(".rc-key.away").length, 0, "no pool dimmed until a row is hovered");
+    const row = [...w.shadow.querySelectorAll(".vram-row")].find((r) => r.textContent.includes("onone"));
+    row.dispatchEvent(new w.window.PointerEvent("pointerenter", { bubbles: true }));
+    await w.flush();
+
+    const lit = [...w.shadow.querySelectorAll(".rc-key")].filter((k) => !k.classList.contains("away"))
+        .map((k) => k.textContent.replace(/\s+/g, " ").trim());
+    assert.equal(lit.length, 1, `only the pool holding it stays lit — got ${lit.join(" | ")}`);
+    assert.match(lit[0], /CUDA1/, "the card this model is actually resident on");
+
+    row.dispatchEvent(new w.window.PointerEvent("pointerleave", { bubbles: true }));
+    await w.flush();
+    assert.equal(w.shadow.querySelectorAll(".rc-key.away").length, 0, "and it clears on leave");
+});
+
+test("the resource chart window is configurable, and short by default", async () => {
+    const { RESWIN_DEFAULT } = await import("../sidebar/store.ts");
+    assert.equal(RESWIN_DEFAULT, 300, "5 minutes — 30 squeezed into a narrow panel is an unreadable smear");
+    // The knob belongs in DevTools Settings (the superset), per the AGENTS rule for user-editable config.
+    const settings = await import("node:fs").then((fs) => fs.readFileSync("sidebar/settings.tsx", "utf8"));
+    assert.match(settings, /Resource chart window/, "surfaced in Settings → Appearance");
+    assert.match(settings, /RESWIN_KEY/, "and persisted");
+    assert.match(settings, /Samples are kept for the whole session either way/,
+        "the note distinguishes what is DRAWN from what is retained");
+});

@@ -16,6 +16,10 @@ export const STATS_TOKENS_KEY = "ml_debug_stats_tokens";   // DevTools run-stats
 export const STATS_TPS_KEY = "ml_debug_stats_tps";         // DevTools run-stats bar: generation tok/s (default off)
 export const OUTTS_KEY = "ml_debug_outts";                 // show per-line timestamps on streamed tool output
 export const OUTMAX_KEY = "ml_debug_outmax";               // max height (px) of a tool OUTPUT cell before it scrolls
+// How much history the resource chart DRAWS, in seconds. Kept separate from how much is retained: 30 minutes
+// squeezed into ~300px is a smear, so the window is short by default and the samples behind it stay in memory.
+export const RESWIN_KEY = "ml_res_window";
+export const RESWIN_DEFAULT = 300;                         // 5 minutes — readable at this width
 
 export type Status = "pending" | "ok" | "err";
 export interface Turn {
@@ -83,6 +87,7 @@ export const showStatsTokens = signal(true);   // DevTools run-stats bar: cumula
 export const showStatsTps = signal(false);     // DevTools run-stats bar: generation tok/s (default off)
 export const OUTMAX_DEFAULT = 260;             // px — roughly 14 lines; enough to read, small enough not to bury the page
 export const showOutTimes = signal(true);      // render the timestamp gutter on streamed output (default on)
+export const resWindowS = signal(RESWIN_DEFAULT);  // seconds of history the resource chart shows (Settings → Appearance)
 export const outMaxH = signal(OUTMAX_DEFAULT); // max height of a tool output cell (Settings → Appearance); 0 = uncapped
 export const config = signal<MlConfig>(DEFAULT_CONFIG);   // live mirror of chrome.storage.sync
 export const models = signal<string[]>([]);               // server model ids (for the datalists)

@@ -245,6 +245,11 @@ export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean 
     );
 }
 
+/** The pool (card or host) currently hovered in the chart, and which models sit on it. The model rows below
+ *  ARE the legend, so rows not on that pool grey out — reusing what is already on screen instead of injecting
+ *  a row that shifts the layout under the cursor. */
+export const poolHover = signal<{ name: string; models: string[] } | null>(null);
+
 /** Pointer position for the model-row tip, in viewport coords (the row is not inside the plot). */
 export const rowTipAt = signal<{ x: number; y: number } | null>(null);
 
@@ -435,7 +440,7 @@ export function VramPanel() {
                 ? rows.map(m => {
                     const off = hidden.has(m.model);
                     return (
-                        <div class={`vram-row${off ? " off" : ""}${hoverModel.value === m.model ? " hot" : ""}`} key={m.model}
+                        <div class={`vram-row${off ? " off" : ""}${hoverModel.value === m.model ? " hot" : ""}${poolHover.value && !poolHover.value.models.includes(m.model) ? " away" : ""}`} key={m.model}
                             onPointerEnter={() => (hoverModel.value = m.model)}
                             onPointerMove={(e: PointerEvent) => (rowTipAt.value = { x: e.clientX, y: e.clientY })}
                             onPointerLeave={() => { hoverModel.value = null; rowTipAt.value = null; }}>
