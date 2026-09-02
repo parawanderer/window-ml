@@ -165,3 +165,24 @@ test("elideHour: drops the hour only when every mark is in the CURRENT hour", as
     assert.equal(elideHour([[0, t("14", "17")]], tomorrow), false, "same hour-of-day but a different DAY → keep it");
     assert.equal(elideHour([], now), false);
 });
+
+test("timestamp gutter: EVERY timestamped row is hoverable, with ms precision and a gap", async () => {
+    const { h: h2, render: render2 } = await (async () => ({ h, render }))();
+    const host = doc.getElementById("root");
+    const { TimedOutput } = await import("../sidebar/render-panel.tsx");
+    render2(null, host);
+    // three lines: two share a mark (a burst), the third is 1.2s later
+    const marks = [[0, 1731000000000], [8, 1731000001204]];
+    render2(h2(TimedOutput, { text: "aaa\nbbb\nccc", marks }), host);
+    await tick();
+    const gutters = [...host.querySelectorAll(".r-ts")];
+    assert.equal(gutters.length, 3, "one gutter cell per line");
+    // Row 2 repeats row 1's time, so its LABEL is blank — but it must still be hoverable.
+    assert.equal(gutters[1].textContent, "", "a repeated time isn't reprinted");
+    for (const g of gutters) {
+        assert.match(g.getAttribute("title") || "", /\d\d:\d\d:\d\d\.\d\d\d/, "every row hovers to a millisecond-precise time");
+        assert.match(g.className, /hoverable/, "…and is marked as hoverable");
+    }
+    assert.match(gutters[2].getAttribute("title"), /\+1\.20s since the previous line/, "the third line reports the gap");
+    assert.doesNotMatch(gutters[0].getAttribute("title"), /since the previous line/, "the first line has nothing to compare to");
+});

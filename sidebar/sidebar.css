@@ -728,6 +728,10 @@ details.io[open] > summary .io-preview { display: none; }
 .r-timed.short .r-ts { width: 38px; }   /* mm:ss — the hour is the current one, shown on hover */
 .r-ts { flex: 0 0 auto; width: 56px; text-align: right; color: var(--fg-faint); opacity: .8;
         font-variant-numeric: tabular-nums; user-select: none; -webkit-user-select: none; }
+/* The whole gutter column is hoverable (exact time + gap since the previous line), including rows whose
+   label is elided as a repeat — so hovering anywhere down the left edge answers "when was this line?". */
+.r-ts.hoverable { cursor: help; }
+.r-ts.hoverable:hover { opacity: 1; color: var(--fg-dim); }
 .r-ts-line { flex: 1 1 auto; white-space: pre-wrap; word-break: break-word; }
 
 .r-unseen-lbl.live { color: var(--fg-faint); text-transform: none; letter-spacing: 0; font-style: italic; }

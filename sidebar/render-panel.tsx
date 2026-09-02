@@ -284,7 +284,7 @@ export function TimedOutput({ text, marks }: { text: string; marks?: [number, nu
         if (ts != null) prevTs = ts;
         return (
             <div class="r-ts-row" key={i}>
-                <span class="r-ts" title={tip}>{repeat ? "" : label}</span>
+                <span class={`r-ts${tip ? " hoverable" : ""}`} title={tip}>{repeat ? "" : label}</span>
                 <span class="r-ts-line">{line}</span>
             </div>
         );
