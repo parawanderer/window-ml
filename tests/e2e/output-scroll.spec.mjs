@@ -120,3 +120,79 @@ test("output cell: tail-follows at the bottom, holds still when scrolled up", as
         site.stop?.();
     }
 });
+
+// The live rail (the pulsing accent bar on a streaming step) must take NO layout: when the step finishes and
+// the rail goes away, the Out content must stay exactly where it was. It used to be a real border+padding, so
+// the whole block jumped left on completion — visible and irritating. Measured in a real browser (no layout in jsdom).
+test("output cell: the Out content does not shift when streaming stops", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const site = await startPageServer({});
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: fake.url, apiKey: "", apiFormat: "openai", model: "fake-model", debugMode: "overlay",
+        });
+        // Short, so it settles quickly — we care about the live→settled transition, not the volume.
+        fake.setScript([
+            { tool: "exec", args: { js: "const w=(ms)=>new Promise(r=>setTimeout(r,ms));\nfor (let i=1;i<=8;i++){ console.log('shift-check line '+i); await w(300); }\nreturn 'done';" } },
+            { content: "finished" },
+        ]);
+
+        const page = await ext.context.newPage();
+        await page.setViewportSize({ width: 1400, height: 900 });
+        await page.goto(site.url + "/");
+        await waitForMl(page);
+        await page.evaluate(() => { window.ml.agent("stream briefly", { stream: true, approvalRouting: "both" }); });
+        for (let i = 0; i < 60; i++) {
+            const n = await ext.sw.evaluate(() => {
+                const p = globalThis.__mlApprovals?.list?.() || [];
+                p.forEach(d => globalThis.__mlApprovals.resolve(d.key, true));
+                return p.length;
+            });
+            if (n) break;
+            await sleep(150);
+        }
+        await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot?.getElementById("ml-sb-host"), null, { timeout: 20000 });
+        await page.evaluate(() => {
+            const root = document.getElementById("ml-sb-root").shadowRoot;
+            const panel = root.getElementById("ml-sb-host");
+            panel.style.width = `${Math.round(window.innerWidth / 2)}px`;
+            panel.classList.add("open");
+            root.getElementById("ml-sb-frame")?.contentWindow?.postMessage({ __mlSidebarOpen: true }, "*");
+        });
+        const frame = await (async () => {
+            for (let i = 0; i < 80; i++) {
+                const f = page.frames().find((fr) => /sidebar\.html/.test(fr.url()));
+                if (f) return f;
+                await sleep(100);
+            }
+            throw new Error("sidebar iframe never appeared");
+        })();
+        for (let i = 0; i < 60; i++) {
+            const row = frame.locator("button.row").first();
+            if (await row.count()) await row.click({ timeout: 1500 }).catch(() => {});
+            if (await frame.locator('button.nav[aria-label="Back to sessions"]').count()) break;
+            await sleep(200);
+        }
+        for (let i = 0; i < 40; i++) {
+            const head = frame.locator(".astep.tool:not(.open) .astep-head").last();
+            if (await head.count()) await head.click({ timeout: 800 }).catch(() => {});
+            if (await frame.locator(".astep-streaming").count()) break;
+            await sleep(200);
+        }
+
+        // Measure the LIVE output's left edge…
+        const live = frame.locator(".astep-streaming").last();
+        await expect.poll(async () => live.count(), { timeout: 20000 }).toBeGreaterThan(0);
+        const liveX = (await live.boundingBox()).x;
+        // …then the SETTLED output's, once the step has a real result.
+        await expect.poll(async () => frame.locator(".r-py-out").count(), { timeout: 25000 }).toBeGreaterThan(0);
+        await sleep(400);
+        const settledX = (await frame.locator(".r-py-out").last().boundingBox()).x;
+        expect(Math.abs(settledX - liveX), "the Out content stays put when the live rail goes away").toBeLessThanOrEqual(1);
+    } finally {
+        await ext.close();
+        fake.stop?.();
+        site.stop?.();
+    }
+});

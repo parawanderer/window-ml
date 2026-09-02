@@ -459,7 +459,9 @@ details.io[open] > summary::before { content: "▾ "; }
 /* grey inline preview, only while collapsed */
 .io-preview { color: var(--fg-faint); }
 details.io[open] > summary .io-preview { display: none; }
-.io-body { padding-left: 10px; }
+/* `position: relative` + this padding is the gutter the live rail paints into — reserved in EVERY state so
+   a step never shifts sideways when it stops streaming. */
+.io-body { padding-left: 10px; position: relative; }
 
 /* descriptor renderers */
 .r-image img { max-width: 100%; max-height: 320px; border-radius: 6px; border: 1px solid var(--border); display: block; }
@@ -739,8 +741,12 @@ details.io[open] > summary .io-preview { display: none; }
               margin-left: 3px; border: 1px solid var(--border); border-radius: 50%; font-size: 9px; font-style: normal; }
 
 /* Live tool output (ctx.stream) filling in while a step runs — a pulsing accent rail marks it as still going. */
-.astep-streaming { border-left: 2px solid var(--accent); padding-left: 6px; animation: astep-live 1.2s ease-in-out infinite; }
-@keyframes astep-live { 0%, 100% { border-left-color: var(--accent); } 50% { border-left-color: transparent; } }
+/* The live rail takes NO layout: it paints into the gutter .io-body already reserves (below), as an absolutely
+   positioned bar. Before, the rail's own border+padding disappeared when streaming stopped and the whole block
+   JUMPED left on completion — the reserved gutter means the settled view sits exactly where the live one did. */
+.astep-streaming::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; border-radius: 1px;
+                           background: var(--accent); animation: astep-live 1.2s ease-in-out infinite; }
+@keyframes astep-live { 0%, 100% { opacity: 1; } 50% { opacity: .15; } }
 
 .icon-btn {
     display: inline-flex; align-items: center; justify-content: center; line-height: 0;
