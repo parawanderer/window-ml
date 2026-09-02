@@ -2,7 +2,7 @@
 // exec, and any future code-ish tool render their Out into. Rendered DIRECTLY here (no app, no debug stream)
 // so its own behaviour is pinned: the tail-follow rule, and the in-cell find bar's interactivity.
 // Real scrolling (which needs layout) is covered by tests/e2e/output-scroll.spec.mjs — jsdom has no layout.
-import { test, before } from "node:test";
+import { test, before, after } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
 import { createRequire } from "node:module";
@@ -256,4 +256,53 @@ test("output cell: dragging the grip resizes THIS cell only", async () => {
     W.dispatchEvent(new W.PointerEvent("pointerup", { bubbles: true }));
     await tick();
     assert.notEqual(cell.querySelector(".r-outscroll").getAttribute("style"), before, "the drag pinned a new height");
+});
+
+
+// The hour gutter must WIDEN when the clock rolls over — otherwise a long session left open keeps rendering a
+// bare mm:ss that silently claims the current hour. It is driven by a `hourNow` signal (one timer for the whole
+// app), so the roll-over is testable by advancing that signal instead of waiting an hour.
+test("hour roll-over: a mounted gutter widens to hh:mm:ss when the hour ticks over", async () => {
+    const { TimedOutput } = await import("../sidebar/render-panel.tsx");
+    const { hourNow, armHourTick, stopHourTick } = await import("../sidebar/timestamps.ts");
+    const host = doc.getElementById("root");
+    const base = new Date("2026-09-02T14:17:30").getTime();
+    hourNow.value = base;
+    render(null, host);
+    render(h(TimedOutput, { text: "alpha\nbeta", marks: [[0, base], [6, base + 1200]] }), host);
+    await tick();
+
+    const gutter = () => [...host.querySelectorAll(".r-ts")].map((n) => n.textContent).filter(Boolean);
+    assert.equal(host.querySelector(".r-timed").className.includes("short"), true, "same hour → mm:ss");
+    assert.deepEqual(gutter(), ["17:30", "17:31"], "the hour is elided while it is the current one");
+
+    // The clock rolls into the next hour: the SAME marks are now in a past hour, so the full clock comes back.
+    hourNow.value = new Date("2026-09-02T15:00:02").getTime();
+    await tick();
+    assert.equal(host.querySelector(".r-timed").className.includes("short"), false, "past hour → hh:mm:ss");
+    assert.deepEqual(gutter(), ["14:17:30", "14:17:31"], "every row widened together — no mixed-width gutter");
+
+    // The timer is armed at most once, and re-arming is a no-op while one is pending.
+    armHourTick(); armHourTick();
+    stopHourTick();
+    render(null, host);
+});
+
+test("timedText: the export's plain-text gutter mirrors the sidebar's", async () => {
+    const { timedText } = await import("../sidebar/timestamps.ts");
+    const now = new Date("2026-09-02T14:17:40").getTime();
+    const t0 = new Date("2026-09-02T14:17:30").getTime();
+    const text = "alpha\nbeta\ngamma";
+    const marks = [[0, t0], [11, t0 + 61000]];   // 11 = where "gamma" starts ("alpha\n" 6 + "beta\n" 5)
+
+    const same = timedText(text, marks, now);
+    assert.deepEqual(same.split("\n"), ["17:30  alpha", "       beta", "18:31  gamma"],
+        "current hour → mm:ss, and a repeated stamp is blanked exactly like the gutter");
+
+    // Read back later (or a run that spans the boundary) → the full clock, same as the sidebar.
+    const later = timedText(text, marks, new Date("2026-09-02T15:30:00").getTime());
+    assert.deepEqual(later.split("\n"), ["14:17:30  alpha", "          beta", "14:18:31  gamma"]);
+
+    assert.equal(timedText("short", [[0, t0], [400, t0]], now), null, "marks that don't fit the text → no guess");
+    assert.equal(timedText("alpha", undefined, now), null, "no marks (a non-streaming run) → nothing to time");
 });

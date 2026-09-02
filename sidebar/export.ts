@@ -16,6 +16,7 @@ import type { Session, AgentStep } from "./store";
 import { pretty, fullStamp, beautifyJs, escapeHtml, highlight, markdown } from "./format";
 import { splitAnswer, hasTokens, resolveTokenStep } from "../answer-tokens";
 import { runStats, fmtTokPerSec } from "../contract";
+import { timedText } from "./timestamps";
 import { BUILD_INFO } from "../build-info.gen";
 
 // A rough token estimate for a string — the ubiquitous ~4-chars/token heuristic (good enough to gauge how much
@@ -103,6 +104,16 @@ function writeResult(s: Session, d: Sink): void {
     writeAnswer(s.answer, s, d, false, "Result");
 }
 
+/** A streamed step's captured output with its produced-at gutter, or null when the step carried no marks
+ *  (a non-streaming run, or a tool that never called ctx.stream). Reads whichever slot actually holds the
+ *  captured output — python_exec's stdout and exec's console are the shipped producers. */
+function timedOut(st: AgentStep): string | null {
+    const d = st.renderOut;
+    const text = d && (d.type === "python-out" || d.type === "exec-out") ? d.stdout : undefined;
+    if (typeof text !== "string" || !text) return null;
+    return timedText(text, st.streamMarks);
+}
+
 // A BLOCK citation: the cited step's In/Out as a real table / image / code.
 function emitTokenBlock(step: AgentStep, slot: "in" | "out", d: Sink): void {
     const desc = slot === "in" ? step.renderIn : step.renderOut;
@@ -119,6 +130,8 @@ function emitTokenBlock(step: AgentStep, slot: "in" | "out", d: Sink): void {
     // which the descriptor's own `value`/`stdout` never contains. Mirrors the sidebar's tokenRender; using the
     // structured field (not a regex on the string) stays correct as more model-facing hints are added over time.
     if (desc?.type === "python-out" && (desc.value != null || desc.stdout != null)) { d.code(desc.value ?? desc.stdout ?? ""); return; }
+    // (a cited stdout keeps its produced-at gutter via the step's own timed block below — the citation shows
+    //  the value, which is what was cited)
     // `exec`'s structured Out (the JS twin): console then value, mirroring the sidebar's sections. The RAW
     // model-facing result string is still emitted alongside by the caller, per the raw-view rule.
     if (desc?.type === "exec-out" && (desc.stdout != null || desc.value != null || desc.error != null)) {
@@ -424,6 +437,13 @@ function writeAgent(s: Session, d: Sink): void {
         // The AGENTS raw-view rule: when the model was fed MORE than the clean Out (an appended `@tool:<id>`
         // token line), the exact text it saw must stay recoverable — a collapsed disclosure beside the clean Out.
         if (st.modelResult && st.modelResult !== st.result) d.details("Out · raw (as the model saw it)", () => d.block("", st.modelResult!));
+        // The sidebar's per-line PRODUCED-AT gutter, mirrored here (the render-in-both-surfaces rule). It is a
+        // SEPARATE collapsed block rather than a prefix on the Out above, because the sidebar's gutter is
+        // unselectable — a copy there yields clean output — and a markdown/HTML export has no equivalent, so
+        // folding times into the output itself would make the exported log un-pasteable. Times are the
+        // EXECUTOR's (python stamps in the worker, a remote tool on its own host), never guessed here.
+        const timed = timedOut(st);
+        if (timed) d.details("Out · timed (when each line was produced)", () => d.code(timed, "text"));
         // What the tool fed straight INTO the model's context (locate's snap-inject) — a marked crop the
         // model SAW, or a delegated description it received. A static export can't toggle, so show both the
         // reason and the payload.

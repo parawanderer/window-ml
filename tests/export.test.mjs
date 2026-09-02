@@ -180,3 +180,45 @@ test("agent run stats (cumulative tokens + generation rate) export into the run 
     const html = sessionToHtml(s, "run-stats-test");
     assert.match(html, /240 in/, "the PDF/HTML sink carries the same stats (parity)");
 });
+
+// Per-line PRODUCED-AT timestamps: the sidebar draws them as an unselectable gutter, so the render-in-both
+// surfaces rule says the export must carry them too — but NOT folded into the Out block, or a copied log would
+// be un-pasteable. They ride a separate collapsed block beside the verbatim output.
+test("streamed output: the export carries a timed view BESIDE the verbatim Out (both sinks)", () => {
+    const t0 = new Date("2026-09-02T14:17:30").getTime();
+    const stdout = "alpha\nbeta\ngamma\n";
+    const s = {
+        hash: "ts1", kind: "agent", model: "m", tag: "session", createdTs: 1, lastTs: 2, status: "ok",
+        turns: [], task: "stream some output", answers: [{ text: "done", ts: 9, atStep: 1, status: "ok" }],
+        steps: [{
+            step: 1, localStep: 1, tool: "python_exec", arguments: { code: "print('alpha')" },
+            result: stdout,
+            streamMarks: [[0, t0], [6, t0 + 1200], [11, t0 + 3600000]],   // the third line lands an hour later
+            renderOut: { type: "python-out", stdout },
+        }],
+    };
+    const { md } = serializeSession(s);
+    assert.match(md, /Out · timed \(when each line was produced\)/, "the timed view is present, in its own disclosure");
+    // The run spans an hour boundary → the FULL clock, so no line can be misread as the wrong hour.
+    assert.match(md, /14:17:30 {2}alpha/, "line 1 carries the executor's stamp");
+    assert.match(md, /14:17:31 {2}beta/, "line 2 carries its own (a later mark within the same burst)");
+    assert.match(md, /15:17:30 {2}gamma/, "line 3 shows the hour it actually landed in");
+    // The verbatim output is still there, untouched — a copy from the Out block yields clean text.
+    assert.ok(md.includes("\nalpha\nbeta\ngamma\n"), "the raw Out survives without a gutter baked into it");
+    // Same content through the HTML/PDF sink.
+    const html = sessionToHtml(s, "ml-agent-ts1");
+    assert.match(html, /Out · timed/, "the PDF sink emits it too");
+    assert.match(html.replace(/<[^>]+>/g, ""), /14:17:30\s+alpha/);
+});
+
+test("non-streaming run: no marks means no timed block (never a guessed timestamp)", () => {
+    const s = {
+        hash: "ts2", kind: "agent", model: "m", tag: "session", createdTs: 1, lastTs: 2, status: "ok",
+        turns: [], task: "run once", answers: [{ text: "done", ts: 9, atStep: 1, status: "ok" }],
+        steps: [{ step: 1, localStep: 1, tool: "python_exec", arguments: { code: "print(1)" },
+                  result: "1\n", renderOut: { type: "python-out", stdout: "1\n" } }],
+    };
+    const { md } = serializeSession(s);
+    assert.doesNotMatch(md, /Out · timed/, "a run that never streamed has nothing to time");
+    assert.match(md, /1/, "the output itself still exports");
+});

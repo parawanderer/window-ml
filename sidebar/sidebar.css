@@ -698,8 +698,13 @@ details.io[open] > summary .io-preview { display: none; }
 /* Vertical only: the cell exists to CAP HEIGHT. Horizontal is the inner code block's job (it honours the
    wrap/scroll pref), so letting the cell scroll sideways too just produced a stray bar under short content. */
 .r-outscroll { overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
-.r-outgrip { height: 7px; margin-top: 2px; border-radius: 4px; cursor: ns-resize; background: var(--panel-2); opacity: .5; }
-.r-outgrip:hover { opacity: 1; background: var(--panel-2-hover); }
+/* A short CENTRED handle, not a full-width bar: a bar spanning the cell reads as an inert horizontal
+   scrollbar track ("why is there a scrollbar with nothing to scroll?"). The hit area stays full-width and
+   9px tall so it is still easy to grab; only the pill is painted. */
+.r-outgrip { height: 9px; margin-top: 1px; cursor: ns-resize; display: flex; align-items: center; justify-content: center; }
+.r-outgrip::after { content: ""; width: 34px; height: 3px; border-radius: 2px; background: var(--panel-2);
+                    opacity: .55; transition: width .12s ease, opacity .12s ease; }
+.r-outgrip:hover::after { width: 52px; opacity: 1; background: var(--panel-2-hover); }
 
 /* The rendered/raw toggle held OPEN (but inert) while a step is still streaming — reserving its height so the
    block doesn't shift down when the descriptor lands. */

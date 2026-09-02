@@ -8,6 +8,7 @@ import { signal } from "@preact/signals";
 import type { RenderDescriptor, LocateSubstep, TableSource } from "../contract";
 import { elementReference } from "../dom";
 import { rev, view, sessionMap, outMaxH, showOutTimes } from "./store";
+import { timeForOffset, alignedMarks, elideHour, hhmmss, hhmmssms, fmtDelta, hourNow, armHourTick } from "./timestamps";
 import { markdown, truncate, pretty } from "./format";
 import {
     openCtxMenu, copyText, ClickableImg, Code, SheetChip, inlineText,
@@ -226,40 +227,9 @@ export const atBottomOf = (el: { scrollHeight: number; scrollTop: number; client
  *  context budget, but the UI keeps far more (UI_OUT_CAP) — so without this you'd read the surplus as "what the
  *  model saw". Everything past `seen` chars renders dimmed under an explicit label. Shared by python_exec and
  *  exec (and any future tool that reports a `seen` boundary). No boundary → plain output, unchanged. */
-/** Guard against timing text the marks don't describe. The settled Out renders the SAME captured output the
- *  stream produced (both keep the head under one cap), so offsets carry over — but if a tool ever post-processes
- *  its output, a stale mark would time the wrong line. Cheap check: drop the marks unless they fit the text. */
-export function alignedMarks(marks: [number, number][] | undefined, text?: string): [number, number][] | undefined {
-    if (!marks?.length || typeof text !== "string") return undefined;
-    return marks[marks.length - 1][0] <= text.length ? marks : undefined;
-}
-
-/** Wall-clock for one streamed line, from the marks the EXECUTOR supplied. Pure so the mapping (a line takes
- *  the time of the last mark at or before its offset) is unit-testable without a DOM. Returns null when no mark
- *  covers the offset — we never invent a time. */
-export function timeForOffset(marks: [number, number][] | undefined, offset: number): number | null {
-    if (!marks || !marks.length) return null;
-    let ts: number | null = null;
-    for (const [at, t] of marks) { if (at <= offset) ts = t; else break; }
-    return ts;
-}
-const hhmmss = (ts: number): string => new Date(ts).toTimeString().slice(0, 8);
-// A timestamp's LOCAL hour bucket (date + hour), so "same hour" is exact across midnight and half-hour zones.
-const hourKey = (ts: number): string => { const d = new Date(ts); return `${d.toDateString()} ${d.getHours()}`; };
-/** Drop the HOUR from the gutter? Only when EVERY mark falls in the hour we're in right now — then "14:" is
- *  noise you can infer from context. A run that spans an hour boundary, or one you're reading back later,
- *  keeps the full clock so it can never be misread. The hover always carries the full time either way. */
-export function elideHour(marks: [number, number][] | undefined, now: number = Date.now()): boolean {
-    if (!marks?.length) return false;
-    const k = hourKey(now);
-    return marks.every(([, t]) => hourKey(t) === k);
-}
-// Full precision for the hover — the gutter stays hh:mm:ss (narrow, scannable) but the underlying marks are
-// epoch MILLISECONDS, so the tooltip can show the exact instant and a meaningful gap.
-const hhmmssms = (ts: number): string => `${hhmmss(ts)}.${String(new Date(ts).getMilliseconds()).padStart(3, "0")}`;
-/** Human gap between two marks: sub-second stays in ms (that's the resolution that matters for a fast loop). */
-export const fmtDelta = (ms: number): string =>
-    ms < 1000 ? `${Math.round(ms)}ms` : ms < 60000 ? `${(ms / 1000).toFixed(2)}s` : `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`;
+// The per-line timestamp helpers live in ./timestamps (pure — the exports read the same mapping). Re-exported
+// here because this module is where they were first published and the standalone tests import them from it.
+export { timeForOffset, alignedMarks, elideHour, fmtDelta } from "./timestamps";
 
 /** Streamed output with a TIMESTAMP GUTTER — when each line was produced, per the executor's marks. The time
  *  is repeated only when it CHANGES, so a burst of lines reads as one moment rather than a wall of identical
@@ -269,7 +239,12 @@ export const fmtDelta = (ms: number): string =>
 export function TimedOutput({ text, marks }: { text: string; marks?: [number, number][] }) {
     if (!showOutTimes.value || !marks || !marks.length) return <Code text={text} lang="text" />;
     const lines = text.split("\n");
-    const short = elideHour(marks);   // current hour throughout → show mm:ss, not hh:mm:ss
+    // `hourNow` is a SIGNAL, not Date.now(): a single timer bumps it at each hour boundary, so every gutter on
+    // screen widens from mm:ss to hh:mm:ss the moment eliding stops being true — a long session left open
+    // across the hour would otherwise keep claiming the current hour. armHourTick is idempotent and re-arms
+    // only from a render, so the timer stops itself once no timestamped output is mounted.
+    armHourTick();
+    const short = elideHour(marks, hourNow.value);   // current hour throughout → show mm:ss, not hh:mm:ss
     let off = 0, shown = "", prevTs: number | null = null;
     const rows = lines.map((line, i) => {
         const ts = timeForOffset(marks, off);
