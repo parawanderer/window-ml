@@ -364,26 +364,76 @@ export function stackRefusal(defs: SeriesDef[], cap: Capacity | null): string | 
 
 export interface Preset { id: string; label: string; description: string; tracks: TrackDef[] }
 
+/** Why this preset is invalid on this machine, or null. A preset proposes a LAYOUT and `stackRefusal` judges
+ *  it, so the two must agree: a preset that offers a stack the rule then refuses would be an option the user
+ *  can pick and immediately be told off for. Used by the drift guard, and by the layout validator when a saved
+ *  layout is restored onto a different box. */
+export function presetRefusal(p: Preset, sample: ResourceSample): string | null {
+    const cat = seriesCatalog(sample);
+    for (const t of p.tracks) {
+        const defs = t.series.map((id) => cat.find((s) => s.id === id)).filter(Boolean) as SeriesDef[];
+        if (defs.length !== t.series.length) return `references a series this machine doesn't have`;
+        if (t.mode === "stack") { const r = stackRefusal(defs, sample.capacity); if (r) return r; }
+    }
+    return null;
+}
+
 /** Starting layouts, generated from the box: a two-card server opens on placement (where did it land?), a
  *  single-device machine on the split that actually matters there (GPU vs CPU spill). */
 export function presetsFor(sample: ResourceSample): Preset[] {
     const cap = sample.capacity;
     const devices = cap?.devices ?? [];
-    const track = (id: string, series: string[], mode: TrackDef["mode"] = "stack"): TrackDef => ({ id, series, mode, heightPx: 96 });
+    // Build from the CATALOG, not from device ids: on unified memory the catalog collapses to a single `mem`
+    // series (one pool, one ceiling), so naming `vram.0`/`ram` here would propose tracks for series that do
+    // not exist on that machine. The two must be derived from one source or they drift apart.
+    const have = new Set(seriesCatalog(sample).map((s) => s.id));
+    const track = (id: string, series: string[], mode: TrackDef["mode"] = "stack"): TrackDef =>
+        ({ id, series: series.filter((x) => have.has(x)), mode, heightPx: 96 });
+    const nonEmpty = (t: TrackDef) => t.series.length > 0;
+
+    if (cap?.unified) {
+        // One physical pool: one track, and no per-card view of a machine with one device.
+        return [{ id: "memory", label: "Memory", description: "The single pool this machine shares between GPU and system.",
+                  tracks: [track("mem", ["mem"])].filter(nonEmpty) }];
+    }
     const overview: Preset = {
-        id: "overview", label: "Overview", description: "Everything resident, stacked against capacity.",
-        tracks: [track("overview", devices.map((d) => `vram.${d.id}`))].filter((t) => t.series.length > 0),
+        id: "overview", label: "Overview", description: "Every card in one track, overlaid — no false total.",
+        // OVERLAY, not stack: several cards have no meaningful combined total (a model can only use one card's
+        // capacity), and stackRefusal rightly refuses that. A preset must never propose a layout the rule then
+        // rejects. Overlaying claims nothing about a total, so it is the honest way to see them together.
+        tracks: ([{ ...track("overview", devices.map((d) => `vram.${d.id}`)),
+                    mode: (devices.length > 1 ? "overlay" : "stack") as TrackDef["mode"] }] as TrackDef[]).filter(nonEmpty),
     };
     const placement: Preset = {
         id: "placement", label: "Placement", description: "One track per card, so you can see where a model landed.",
-        tracks: devices.map((d) => track(`dev-${d.id}`, [`vram.${d.id}`])),
+        tracks: devices.map((d) => track(`dev-${d.id}`, [`vram.${d.id}`])).filter(nonEmpty),
     };
     const withRam: Preset = {
         id: "memory", label: "GPU + RAM", description: "Accelerator memory alongside system RAM.",
-        tracks: [...devices.map((d) => track(`dev-${d.id}`, [`vram.${d.id}`])), track("ram", ["ram"])],
+        tracks: [...devices.map((d) => track(`dev-${d.id}`, [`vram.${d.id}`])), track("ram", ["ram"])].filter(nonEmpty),
     };
-    // A single-device box has nothing to place, so lead with the split that means something there.
+    // A single-card box has nothing to place, so lead with the split that means something there.
     return devices.length > 1 ? [placement, overview, withRam] : [withRam, overview];
+}
+
+/** A stable identity for the MACHINE this capacity describes — its devices (id, name, runner, size) and its
+ *  host total. Point the extension at a different backend (a CUDA server, then a Metal Mac) and this changes,
+ *  which matters because history from the old box CANNOT be drawn on the new one: the ceiling moves by 8x, the
+ *  device ids mean different hardware, and a saved layout may name a card that no longer exists. Samples are
+ *  kept per-box and dropped when it changes — the alternative is an 18 GiB band clipped against an 11.84 GiB
+ *  ceiling, which looks like a reading rather than a category error. */
+export function boxSignature(cap: Capacity | null): string {
+    if (!cap) return "";
+    const devs = cap.devices.map((d) => `${d.id}:${d.name}:${d.runner}:${d.totalBytes}`).join("|");
+    return `${devs}#${cap.host.totalBytes}`;
+}
+
+/** Samples that describe the CURRENT box. Anything recorded against a different machine is dropped rather than
+ *  redrawn against a ceiling it was never measured under. */
+export function sameBoxOnly(samples: ResourceSample[], cap: Capacity | null): ResourceSample[] {
+    const sig = boxSignature(cap);
+    if (!sig) return samples;   // capacity unknown → nothing to contradict; keep what we have
+    return samples.filter((s) => !s.capacity || boxSignature(s.capacity) === sig);
 }
 
 // --- history ------------------------------------------------------------------------------------------------

@@ -215,9 +215,11 @@ test("presetsFor: the default layout follows the hardware", () => {
     assert.equal(multi[0].id, "placement", "two cards → lead with WHERE the model landed");
     assert.equal(multi[0].tracks.length, 2, "one track per card — small multiples, not a shared axis");
 
-    const single = M.presetsFor({ t: 1, capacity: M.parseInfo(METAL_INFO), models: [] });   // the Mac
-    assert.equal(single[0].id, "memory", "one device → placement is meaningless, so lead with GPU vs RAM");
-    assert.ok(!single.some((p) => p.id === "placement"), "and don't offer a per-card view of one card");
+    // The Mac: ONE pool, so one preset with one track — not a GPU view and a RAM view of the same silicon.
+    const single = M.presetsFor({ t: 1, capacity: M.parseInfo(METAL_INFO), models: [] });
+    assert.deepEqual(single.map((p) => p.id), ["memory"]);
+    assert.deepEqual(single[0].tracks.map((t) => t.series), [["mem"]], "the one pool, once");
+    assert.ok(!single.some((p) => p.id === "placement"), "and no per-card view of one card");
 });
 
 test("segments: history breaks at a hole instead of drawing across it", () => {
@@ -323,4 +325,70 @@ test("ceilings: without physical_memory, fall back honestly rather than synthesi
     // The nominal 96 GiB is a spec-sheet number no API reports; rounding up to it breaks on ECC or an odd
     // config, so nothing here may ever produce it.
     assert.ok(!M.formatBytes(c.displayBytes).startsWith("96"), "never synthesised by rounding");
+});
+
+// A preset PROPOSES a layout and stackRefusal JUDGES it, so the two must agree — otherwise the panel offers a
+// view the user can pick and be told off for. This caught exactly that: Overview stacked several cards.
+test("DRIFT GUARD: every generated preset is valid under the stacking rule", () => {
+    for (const info of [CUDA_INFO, METAL_INFO]) {
+        const sample = { t: 1, models: [], capacity: M.parseInfo(info) };
+        const presets = M.presetsFor(sample);
+        assert.ok(presets.length > 0);
+        for (const p of presets) {
+            assert.equal(M.presetRefusal(p, sample), null,
+                `preset "${p.id}" proposes a layout the rule refuses on ${info === CUDA_INFO ? "2 cards" : "Metal"}`);
+        }
+    }
+});
+
+test("presets: several cards are OVERLAID, never stacked into a total that isn't real", () => {
+    const sample = { t: 1, models: [], capacity: M.parseInfo(CUDA_INFO) };
+    const overview = M.presetsFor(sample).find((p) => p.id === "overview");
+    assert.equal(overview.tracks[0].mode, "overlay", "two cards have no meaningful combined total");
+    // On a single-device box there is nothing to overlay, so a stack is both valid and the clearer reading.
+    const mac = { t: 1, models: [], capacity: M.parseInfo(METAL_INFO) };
+    assert.equal(M.presetsFor(mac).find((p) => p.id === "overview"), undefined,
+        "a one-pool machine gets one preset — there is nothing to overlay or place");
+});
+
+test("presetRefusal: names a series the machine doesn't have (a layout saved on another box)", () => {
+    const mac = { t: 1, models: [], capacity: M.parseInfo(METAL_INFO) };
+    // A layout saved on the 2-card server, restored onto a Mac: `vram.1` does not exist here.
+    const stale = { id: "saved", label: "Saved", description: "", tracks: [{ id: "t", series: ["vram.1"], mode: "stack", heightPx: 96 }] };
+    assert.match(M.presetRefusal(stale, mac), /doesn't have/);
+});
+
+// Switching the extension's backend from a CUDA server to a Metal Mac is not a UI nicety — it is a category
+// error waiting to happen. Those samples were measured against a 94.97 GiB ceiling on devices whose ids mean
+// different hardware; redrawn on a 11.84 GiB Mac, an 18 GiB band clips at 100% and looks like a READING.
+test("boxSignature: identifies the machine, and ignores what merely moves", () => {
+    const a = M.parseInfo(CUDA_INFO), b = M.parseInfo(CUDA_INFO);
+    assert.equal(M.boxSignature(a), M.boxSignature(b), "the same box is the same box");
+    // free_memory changes constantly — it must NOT count as a different machine.
+    b.devices[0].freeBytes = 1234;
+    assert.equal(M.boxSignature(a), M.boxSignature(b), "occupancy is not identity");
+    // A different machine is.
+    assert.notEqual(M.boxSignature(a), M.boxSignature(M.parseInfo(METAL_INFO)));
+    // So is losing a card, or the same card reporting a different size.
+    const oneCard = M.parseInfo(CUDA_INFO); oneCard.devices.pop();
+    assert.notEqual(M.boxSignature(a), M.boxSignature(oneCard));
+    const resized = M.parseInfo(CUDA_INFO); resized.devices[0].totalBytes = 42e9;
+    assert.notEqual(M.boxSignature(a), M.boxSignature(resized));
+    assert.equal(M.boxSignature(null), "", "unknown capacity has no identity to compare");
+});
+
+test("sameBoxOnly: drops history measured on another machine, keeps the current box's", () => {
+    const cuda = M.parseInfo(CUDA_INFO), metal = M.parseInfo(METAL_INFO);
+    const history = [
+        { t: 1, models: [], capacity: cuda },
+        { t: 2, models: [], capacity: cuda },
+        { t: 3, models: [], capacity: null },     // taken before capacity was known
+        { t: 4, models: [], capacity: metal },
+    ];
+    // Now pointed at the Mac: the two CUDA samples are unusable here.
+    assert.deepEqual(M.sameBoxOnly(history, metal).map((s) => s.t), [3, 4]);
+    // Back on the server: the Mac sample goes instead.
+    assert.deepEqual(M.sameBoxOnly(history, cuda).map((s) => s.t), [1, 2, 3]);
+    // Capacity unknown → nothing to contradict, so keep everything rather than blanking the panel.
+    assert.equal(M.sameBoxOnly(history, null).length, 4);
 });

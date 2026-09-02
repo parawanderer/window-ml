@@ -15,7 +15,8 @@ import {
     OTHER_BAND_NOTE, DRIVER_BAND_LABEL,
     type ResourceSample, type Band, type Capacity,
 } from "../resource-model";
-import { colorFor } from "./vram";
+import { colorFor, hoverModel, ModelFacts } from "./vram";
+import { loadedModels } from "./store";
 
 const W = 300, H = 72;
 
@@ -63,8 +64,15 @@ function StackedArea({ frames, ceiling, hidden }: { frames: Band[][]; ceiling: n
         const pts: string[] = [];
         for (let i = 0; i < frames.length; i++) pts.push(`${x(i).toFixed(1)},${y(top[i] ?? 0).toFixed(1)}`);
         for (let i = frames.length - 1; i >= 0; i--) pts.push(`${x(i).toFixed(1)},${y(below ? (tops[below]?.[i] ?? 0) : 0).toFixed(1)}`);
+        // The band knows which model it is, so hovering it can name it — and dim its neighbours, so a stack of
+        // similar colours resolves into one identifiable shape.
+        const model = (frames.at(-1) || []).find((b) => b.key === key)?.model;
+        const dim = hoverModel.value && model && hoverModel.value !== model;
         return <polygon key={key} points={pts.join(" ")} fill={bandFill(key, frames.at(-1) || [])}
-            opacity={key === "other" ? 0.35 : 0.75} />;
+            class={model ? "rc-band" : undefined}
+            onPointerEnter={model ? () => (hoverModel.value = model) : undefined}
+            onPointerLeave={model ? () => (hoverModel.value = null) : undefined}
+            opacity={dim ? 0.18 : key === "other" ? 0.35 : 0.75} />;
     });
     return (
         <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
@@ -117,6 +125,7 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingIsFi
                 ))}
                 {soft ? <div class="rc-soft" style={{ bottom: `${Math.min(100, (soft.bytes / ceiling) * 100)}%` }}
                     title={soft.label} /> : null}
+                <BandTip bands={bands} />
             </div>
             <div class="rc-legend">
                 {bands.filter((b) => b.kind === "other" && b.bytes > 0).map((b) => (
@@ -131,6 +140,25 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingIsFi
                     <span class="rc-key" key={b.key}><i class="rc-swatch rc-swatch-free" /> free {formatBytes(b.bytes)}</span>
                 ))}
             </div>
+        </div>
+    );
+}
+
+/** What the hovered band is, shown over the plot. Deliberately the SAME facts as the legend row (ModelFacts),
+ *  because a band and its row describe one model — an SVG <title> could carry none of it: no colour, no live
+ *  TTL, no badge, and a half-second delay before it appears. */
+function BandTip({ bands }: { bands: Band[] }) {
+    const name = hoverModel.value;
+    if (!name) return null;
+    const band = bands.find((b) => b.model === name);
+    if (!band) return null;   // hovering a model that isn't on THIS device — its own track shows the tip
+    const m = (loadedModels.value || []).find((x) => x.model === name);
+    return (
+        <div class="rc-tip" role="tooltip">
+            <i class="rc-tip-dot" style={{ background: colorFor(name) }} />
+            <span class="rc-tip-name">{name}</span>
+            <span class="rc-tip-size">{formatBytes(band.bytes)}</span>
+            {m ? <ModelFacts m={m} tips={false} /> : null}
         </div>
     );
 }

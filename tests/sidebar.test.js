@@ -5458,3 +5458,38 @@ test("resource tracks: no /api/info means NO ceiling — it falls back, never in
     assert.ok(w.shadow.querySelector(".vram-spark"), "…it degrades to the auto-scaled sparkline");
     assert.match(w.shadow.querySelector(".vram-total").textContent, /8\.00 GiB in use/, "the total still renders");
 });
+
+// Hovering a coloured band names the model it belongs to — the SAME facts the legend row carries, because a
+// band and its row describe one model. One component in two placements, so a future badge lands in both.
+test("resource tracks: hovering a band names its model, with the row's own facts", async () => {
+    const w = await loadSidebarWorld({
+        vram: [
+            { model: "gemma4:31b", vramGB: 18, vramBytes: 18 * 1024 ** 3, sizeBytes: 18 * 1024 ** 3,
+              gpus: [{ id: "0", runner: "CUDA", vramBytes: 18 * 1024 ** 3 }], contextLength: 262144,
+              expiresAt: new Date(Date.now() + 5 * 60_000).toISOString() },
+        ],
+        info: INFO_2CARD,
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+
+    assert.equal(w.shadow.querySelectorAll(".rc-tip").length, 0, "no tooltip until something is hovered");
+    const band = w.shadow.querySelector(".rc-band");
+    assert.ok(band, "a model's band is hoverable");
+    band.dispatchEvent(new w.window.PointerEvent("pointerenter", { bubbles: true }));
+    await w.flush();
+
+    const tip = w.shadow.querySelector(".rc-tip");
+    assert.ok(tip, "hovering names the model");
+    assert.match(tip.textContent, /gemma4:31b/);
+    assert.match(tip.textContent, /18\.00 GiB/, "how much it holds ON THIS card, in binary units");
+    assert.match(tip.textContent, /256K/, "the context window — the same fact the row shows");
+    assert.match(tip.textContent, /\dm ?\d*s?/, "and the keep-alive TTL");
+    // The row lights up too: a band and its row are the same model, so hovering either marks both.
+    assert.ok(w.shadow.querySelector(".vram-row.hot"), "the legend row highlights with the band");
+
+    band.dispatchEvent(new w.window.PointerEvent("pointerleave", { bubbles: true }));
+    await w.flush();
+    assert.equal(w.shadow.querySelectorAll(".rc-tip").length, 0, "and it clears on leave");
+});

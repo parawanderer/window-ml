@@ -144,6 +144,14 @@ async function main() {
         await sleep(4000);
         await capture(page, "no-capacity");
 
+        // Restore a full box and let it rebuild, so the browser is HELD OPEN on the interesting view rather
+        // than on the degraded one — the last step is a demonstration, not the resting state.
+        fake.setCapacity(box(IDLE - 30 * GiB, IDLE - 22 * GiB, 8 * GiB));
+        await setPanel(false); await sleep(500); await setPanel(true);
+        log("capacity restored — holding here.");
+        await sleep(8000);
+        await capture(page, "restored");
+
         console.log(`\n  screenshots in ${ART}`);
         if (HOLD) {
             log("holding the browser open (HOLD=0 to skip). Close the window or Ctrl+C to exit.");

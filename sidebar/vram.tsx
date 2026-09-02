@@ -12,7 +12,7 @@ import {
 import { truncate } from "./format";
 import { normModel, seenContext } from "./model";
 import { IconVram, IconEye, IconEyeOff, IconBench } from "./icons";
-import { parseInfo, formatBytes, type Capacity, type ResourceSample, type ModelResidency } from "../resource-model";
+import { parseInfo, formatBytes, boxSignature, sameBoxOnly, type Capacity, type ResourceSample, type ModelResidency } from "../resource-model";
 import { ResourceTracks } from "./resource-chart";
 import type { LoadedModel } from "../contract";
 
@@ -63,7 +63,12 @@ export const capacity = signal<Capacity | null>(null);
 export function fetchCapacity(): void {
     chrome.runtime.sendMessage({ type: "OLLAMA_INFO", payload: {} }, (resp: any) => {
         if (chrome.runtime.lastError || !resp || resp.error) return;   // leave capacity unknown
-        capacity.value = parseInfo(resp.data);
+        const next = parseInfo(resp.data);
+        // Pointing at a DIFFERENT machine (a CUDA server, then a Metal Mac) invalidates the history: those
+        // samples were measured against another ceiling, on devices whose ids mean different hardware. Drawing
+        // them here would clip an 18 GiB band against an 11.84 GiB ceiling and look like a reading.
+        if (boxSignature(next) !== boxSignature(capacity.value)) resourceHistory.value = sameBoxOnly(resourceHistory.value, next);
+        capacity.value = next;
     });
 }
 // Models the user has hidden from the totals/graph (session-only; a signal so it
@@ -212,6 +217,31 @@ export function ModelStatusDot({ model, inFlight }: { model: string; inFlight: b
 // Live VRAM: a sparkline of total usage over time + a per-model legend with
 // evict controls. Reads the shared OLLAMA_PS signals (polled at App level while
 // the sidebar is open) and accumulates the sparkline history locally.
+/** The facts about one resident model: context window and keep-alive TTL, each with its explanation. Shared
+ *  by the legend row and the chart's hover tooltip so the two can never drift — a badge added here appears in
+ *  both placements, which is the whole reason this isn't inlined twice. */
+export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean }) {
+    const ttl = fmtTTL(m.expiresAt);
+    return (
+        <>
+            {m.contextLength ? (
+                <span class={tips ? "tt vram-ctx" : "vram-ctx"}>{fmtCtx(m.contextLength)}
+                    {tips ? <span class="tt-pop left" role="tooltip">Loaded with a {m.contextLength.toLocaleString()}-token context window. Ollama preallocates the KV cache for the FULL window, even when your prompts are short. Load with a smaller <code>num_ctx</code> to reclaim it.</span> : null}
+                </span>
+            ) : null}
+            {ttl ? (
+                <span class={tips ? "tt vram-ttl" : "vram-ttl"}>{ttl}
+                    {tips ? <span class="tt-pop left" role="tooltip">Keep-alive TTL — Ollama evicts this model from {m.vramBytes ? "VRAM" : "memory"} when the countdown reaches zero (expires {new Date(m.expiresAt!).toLocaleTimeString()}). Each use resets it. Set <code>keep_alive</code> to change how long it lingers.</span> : null}
+                </span>
+            ) : null}
+        </>
+    );
+}
+
+/** The model a chart band is being hovered on, so the band and its legend row highlight together. Module-level
+ *  because the chart and the rows are different components either side of the panel. */
+export const hoverModel = signal<string | null>(null);
+
 export function VramPanel() {
     const loaded = loadedModels.value;
     const hidden = hiddenModels.value;
@@ -271,20 +301,12 @@ export function VramPanel() {
                 ? rows.map(m => {
                     const off = hidden.has(m.model);
                     return (
-                        <div class={`vram-row${off ? " off" : ""}`} key={m.model}>
+                        <div class={`vram-row${off ? " off" : ""}${hoverModel.value === m.model ? " hot" : ""}`} key={m.model}
+                            onPointerEnter={() => (hoverModel.value = m.model)} onPointerLeave={() => (hoverModel.value = null)}>
                             <button class="vram-dot" style={{ background: off ? "var(--fg-faint)" : colorFor(m.model) }}
                                 title={off ? "Show in totals" : "Hide from totals"} onClick={() => toggleHidden(m.model)} />
                             <span class="vram-name">{m.model}</span>
-                            {m.contextLength ? (
-                                <span class="tt vram-ctx">{fmtCtx(m.contextLength)}
-                                    <span class="tt-pop left" role="tooltip">Loaded with a {m.contextLength.toLocaleString()}-token context window. Ollama preallocates the KV cache for the FULL window, even when your prompts are short. Load with a smaller <code>num_ctx</code> to reclaim it.</span>
-                                </span>
-                            ) : null}
-                            {fmtTTL(m.expiresAt) ? (
-                                <span class="tt vram-ttl">{fmtTTL(m.expiresAt)}
-                                    <span class="tt-pop left" role="tooltip">Keep-alive TTL — Ollama evicts this model from {m.vramGB ? "VRAM" : "memory"} when the countdown reaches zero (expires {new Date(m.expiresAt!).toLocaleTimeString()}). Each use resets it. Set <code>keep_alive</code> to change how long it lingers.</span>
-                                </span>
-                            ) : null}
+                            <ModelFacts m={m} />
                             <span class="sp" />
                             <span class="vram-gb">{m.vramBytes ? formatBytes(m.vramBytes) : m.sizeBytes ? `${formatBytes(m.sizeBytes)} (CPU)` : "?"}</span>
                             <button class="tt vram-x" aria-label="Evict from VRAM" onClick={() => evict(m.model)}>✕<span class="tt-pop" role="tooltip">Evict from VRAM</span></button>
