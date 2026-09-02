@@ -137,6 +137,78 @@ yet and both drive real UI:
   `size_vram: 0` per device under a correct total. The panel renders that as an explicit
   "placement unknown" band, and the exact shape should be pinned before that path is trusted.
 
+## 2.4 Units: everything is binary, always labelled
+
+**Every memory figure these endpoints return is raw bytes, and every one of them is BINARY.** Render
+with 1024, label `GiB`/`MiB`, and never emit a bare number.
+
+```
+101,972,967,424 bytes  / 1024^3 =  94.97 GiB   <- correct
+                       / 1000^3 = 101.97 GB    <- wrong for this quantity
+```
+
+That second line is what a card sold as "96GB" looks like divided by the wrong power. It reads as a
+plausible number rather than an obvious error, which is exactly what makes it dangerous.
+
+GPU and system memory are sold and reported in binary units while spelled "GB", and the whole
+toolchain around this box agrees: `nvidia-smi` reports MiB, llama.cpp logs MiB, ollama's scheduler
+logs GiB. Rendering decimal would make this panel the only component disagreeing with every other —
+by 7.4%, large enough to look like a real discrepancy and small enough to be believed.
+
+**Do not mix rulers on one screen.** `ollama list` prints model file sizes with a *decimal*
+formatter while everything about memory uses a binary one. Both are correctly labelled at their
+source and they are still a trap:
+
+| Shown | Bytes | In GiB |
+| --- | --- | --- |
+| `ollama list` → 111 GB | 119,057,326,592 | 110.9 GiB |
+| `/api/info` total → a card | 101,972,967,424 | 94.97 GiB |
+
+A reader comparing "111 GB model" with "94.97 GiB card" concludes it cannot fit. It does fit, at
+76.8 GiB, because ~26.8 GiB of that file is a per-layer embedding table that never reaches VRAM. So
+**normalise everything on a screen to GiB, model file sizes included**, even though `ollama list`
+shows GB for those. Consistency within a comparison beats matching each source's own convention,
+because users subtract adjacent numbers.
+
+Implementation: keep **bytes internally** (every derivation in `resource-model.ts` does) and convert
+once at the render boundary through `formatBytes` — one formatter, one place, never a hand-rolled
+`/1e9` at a call site. Two decimals below 100, one above (`94.97 GiB`, `110.9 GiB`): VRAM decisions
+turn on hundreds of MiB, so a whole-number render hides the margin that matters.
+
+## 2.5 Which number means what
+
+Per entry in `compute.supported_gpus`:
+
+| Field | Meaning |
+| --- | --- |
+| `total_memory` | what the driver reports for the card, already minus its own reserve |
+| `free_memory` | what is currently unallocated |
+
+On gpubox `total_memory` is **94.97 GiB** against a nominal 96 GiB. That ~1 GiB gap is real and
+expected — 417 MiB of firmware/display reservation, plus ~638 MiB because ollama reads the total
+from inside a live CUDA context whose own allocation is already excluded. **Never present that gap
+as an error or try to reconcile it to 96.**
+
+`total_memory` is the figure to show as a card's usable capacity. Ollama makes its own fit decisions
+against a slightly lower number (`total_memory` minus a minimum reserve — 94.4 GiB here), so **if
+the panel ever renders a "will it fit" judgement, that is the figure to compare against.** That
+reserve is not exposed by the API today, which is the open question in §6.
+
+### The unattributed band is not "other processes"
+
+`size_vram` is llama-server's own buffer accounting, not the driver's. The driver consistently
+reports **0.7-1.8 GiB more per model**, roughly constant regardless of model size: the CUDA context,
+which no buffer line reports. So "model is using X" and "card has Y free" will never reconcile to
+the card total, and the residual is that context.
+
+This is why the middle band is labelled **unattributed**, not "other processes" — a large part of it
+is our OWN models' overhead, and a reader told it is other processes will go hunting for a process
+that does not exist. Not worth trying to correct; worth a tooltip (`OTHER_BAND_NOTE`).
+
+From `/api/ps`, `size_vram` is the total and `gpus[].size_vram` the per-device split. These sum
+exactly on the current build (verified across 13 models), so a disagreement in the UI is a real bug,
+not a rounding artifact.
+
 ## 3. Data model
 
 `resource-model.ts` (root, pure — no DOM, no chrome, no preact, like `timestamps.ts` and
@@ -159,10 +231,10 @@ eventsIn(events, a, b)    -> ResourceEvent[]
 
 ### 3.1 Three bands, never two
 
-A device decomposes into **attributed / other / free**:
+A device decomposes into **attributed / unattributed / free**:
 
 - **attributed** — one band per model, from `/api/ps` `gpus[].size_vram`
-- **other** — `(total - free) - attributed`, memory in use that no model of ours accounts for
+- **unattributed** — `(total - free) - attributed`: mostly our own models' CUDA contexts (§2.5), plus anything genuinely foreign. NOT "other processes"
 - **free** — `free_memory`
 
 Plus an **unknown** band when a model's total is non-zero but its per-device share reports 0
@@ -209,8 +281,8 @@ at the narrow width; the wide surface gets the same layout with more horizontal 
 ┌──────────────────────────────────────────────┐
 │ Resources          [Overview ▾]  [⏸ live] ⚙ │
 ├──────────────────────────────────────────────┤
-│ CUDA0                        41.2 / 102 GB   │
-│  102 ┤                                       │
+│ CUDA0                      38.4 / 94.97 GiB  │
+│ 95.0 ┤                                       │
 │      │                        ▁▂▃▅▅▅▅▅▅▅▅▅  │  ← free (unfilled)
 │      │              ▁▂▂▃▃▃▃▃▃▃██████████████ │  ← qwen3.5:32b   (model colour)
 │      │▂▂▂▂▂▂▂▂▂▂▂▂▂▂██████████████████████ │  ← gemma4:31b    (model colour)
@@ -218,10 +290,10 @@ at the narrow width; the wide surface gets the same layout with more horizontal 
 │      └──────────────────────────────────────│
 │       -30m            -15m              now  │
 ├──────────────────────────────────────────────┤
-│ ● gemma4:31b      18.1 GB  128K  4m12s   ✕  │
-│ ● qwen3.5:32b     22.5 GB  262K  1m03s   ✕  │
-│ ░ other processes  0.6 GB   — not ours       │
-│ ○ free            60.8 GB                    │
+│ ● gemma4:31b     16.9 GiB  128K  4m12s   ✕  │
+│ ● qwen3.5:32b    21.0 GiB  262K  1m03s   ✕  │
+│ ░ unattributed   0.59 GiB  incl. CUDA ctx    │
+│ ○ free           56.5 GiB                    │
 └──────────────────────────────────────────────┘
 ```
 
@@ -234,13 +306,13 @@ as "our models are using 41 GB".
 ┌──────────────────────────────────────────────┐
 │ Resources         [Placement ▾]  [⏸ live] ⚙ │
 ├──────────────────────────────────────────────┤
-│ CUDA0                        41.2 / 102 GB   │
+│ CUDA0                      38.4 / 94.97 GiB  │
 │      │▂▂▂▃▃▃▃▅▅▅▅▅███████████████████████    │
 │      └──────────────────────────────────────│
-│ CUDA1                         0.6 / 102 GB   │
+│ CUDA1                       0.59 / 94.97 GiB │
 │      │░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░    │
 │      └──────────────────────────────────────│
-│ System RAM                  117 / 130 GB     │
+│ System RAM                  109 / 121 GiB    │
 │      │▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓    │
 │      └──────────────────────────────────────│
 └──────────────────────────────────────────────┘
@@ -255,9 +327,9 @@ would be a lie. This is the honest answer to the handover's open "per card or ag
 ┌──────────────────────────────────────────────┐
 │ Resources            [Memory ▾]  [⏸ live] ⚙ │
 ├──────────────────────────────────────────────┤
-│ MTL0 · unified memory        13.5 / 17.2 GB  │
-│ 17.2 ┤- - - - - - - - - - - - - - - - - - -  │  ← system total (hard)
-│ 12.7 ┤═══════════════════════════════════    │  ← recommended working set (soft)
+│ MTL0 · unified memory      12.6 / 16.00 GiB  │
+│ 16.0 ┤- - - - - - - - - - - - - - - - - - -  │  ← system total (hard)
+│ 11.8 ┤═══════════════════════════════════    │  ← recommended working set (soft)
 │      │             ▁▂▃▅███████████████████    │
 │    0 ┼░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░    │
 │      └──────────────────────────────────────│
@@ -265,8 +337,8 @@ would be a lie. This is the honest answer to the handover's open "per card or ag
 │   GPU and the system, so these are the same  │
 │   memory — they are never added together.    │
 │   Occupancy is read from the system: the     │
-│   device reports itself 12.71/12.71 free     │
-│   while 13.5 GB of that silicon is in use.   │
+│   device reports itself 11.84/11.84 free     │
+│   while 12.6 GiB of that silicon is in use.  │
 └──────────────────────────────────────────────┘
 ```
 

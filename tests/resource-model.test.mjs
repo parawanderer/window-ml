@@ -237,3 +237,54 @@ test("eventsIn: only the window, in time order", () => {
     assert.deepEqual(M.eventsIn(all, 5, 100).map((e) => e.label), ["early", "late"]);
     assert.deepEqual(M.eventsIn(all, 0, 0).map((e) => e.label), []);
 });
+
+// Every memory figure this API returns is raw bytes, and every one of them is BINARY. Dividing by 1000³ makes
+// the UI the only component disagreeing with nvidia-smi, llama.cpp and ollama's own logs — by 7.4%, which is
+// large enough to look like a real discrepancy and small enough to be believed.
+test("formatBytes: binary units, matching what the rest of the toolchain reports", () => {
+    // The exact trap: a card sold as "96GB". Decimal would render 101.97 GB — a plausible-looking wrong number.
+    assert.equal(M.formatBytes(101972967424), "94.97 GiB");
+    assert.ok(!M.formatBytes(101972967424).includes("101"), "never the decimal reading");
+    // A 16 GB Mac's system memory really is 16 GiB.
+    assert.equal(M.formatBytes(17179869184), "16.00 GiB");
+    assert.equal(M.formatBytes(12712935424), "11.84 GiB", "…and its Metal working set");
+    // A model file: ollama list prints this as 111 GB (decimal); on OUR screens it is GiB, because users
+    // subtract adjacent numbers and a mixed ruler makes a model look like it can't fit when it can.
+    assert.equal(M.formatBytes(119057326592), "110.9 GiB");
+});
+
+test("formatBytes: two decimals below 100, one above — the margin that matters", () => {
+    assert.equal(M.formatBytes(5453182401), "5.08 GiB", "VRAM decisions turn on hundreds of MiB");
+    assert.equal(M.formatBytes(119057326592), "110.9 GiB");
+    assert.equal(M.formatBytes(1039086387), "990.9 MiB", "…and it steps down a unit rather than saying 0.97 GiB");
+    assert.equal(M.formatBytes(668991488), "638.0 MiB");
+    assert.equal(M.formatBytes(1023), "1023 B", "raw bytes get no decimals");
+    assert.equal(M.formatBytes(1024), "1.00 KiB");
+});
+
+test("formatBytes: never a bare number — an unlabelled figure is a support ticket", () => {
+    for (const b of [0, 1, 1024, 1e9, 1e12]) assert.match(M.formatBytes(b), /\d ?(B|KiB|MiB|GiB|TiB)$/);
+    assert.equal(M.formatBytes(null), "—", "unknown renders as unknown, not as zero");
+    assert.equal(M.formatBytes(undefined), "—");
+    assert.equal(M.formatBytes(NaN), "—");
+    // splitBytes is the same figure for a UI that styles the unit separately — never a value without its unit.
+    assert.deepEqual(M.splitBytes(101972967424), { value: "94.97", unit: "GiB" });
+    assert.deepEqual(M.splitBytes(null), { value: "—", unit: "" });
+});
+
+// `size_vram` is llama-server's buffer accounting; the driver reports 0.7-1.8 GiB more per model (the CUDA
+// context, which no buffer line reports). So the unattributed band holds OUR models' overhead too, and must
+// not claim to be other processes — or the reader goes hunting for a process that isn't there.
+test("the unattributed band doesn't claim to be other processes", () => {
+    const cap = M.parseInfo(CUDA_INFO);
+    cap.devices[0].freeBytes = cap.devices[0].totalBytes - 21 * GB;   // 20 GiB of model + ~1 GiB of context
+    const sample = { t: 1, capacity: cap, models: [
+        M.residencyFrom({ name: "m", size: 20 * GB, size_vram: 20 * GB, gpus: [{ gpu_id: "0", size_vram: 20 * GB }] }),
+    ] };
+    const other = M.deviceBands(sample, "0").find((b) => b.kind === "other");
+    assert.equal(other.label, M.OTHER_BAND_LABEL);
+    assert.equal(other.label, "unattributed");
+    assert.ok(!/other process/i.test(other.label), "the residual is largely our own model's CUDA context");
+    assert.match(M.OTHER_BAND_NOTE, /CUDA context/, "and the note explains where it comes from");
+    assert.ok(other.bytes > 0, "the residual really is there — it never reconciles to zero");
+});

@@ -15,6 +15,38 @@
 //   3. Metal is UNIFIED memory: the device "total" is a recommended working set that OVERLAPS system RAM, so
 //      device and host capacity must never be summed. `runner` is the discriminator.
 
+// --- rendering ------------------------------------------------------------------------------------------
+// EVERY memory figure this API returns is raw bytes, and every one of them is BINARY. GPU and system memory
+// are sold and reported in binary units while spelled "GB", so a card sold as 96GB really is 96 GiB — and the
+// whole toolchain around it agrees: nvidia-smi reports MiB, llama.cpp logs MiB, ollama's scheduler logs GiB.
+// Dividing by 1000³ makes this UI the only component disagreeing with every other, by 7.4%:
+//
+//     101,972,967,424 bytes  ÷ 1024³ =  94.97 GiB   correct
+//                            ÷ 1000³ = 101.97 GB    wrong — and it reads as a plausible number
+//
+// That is what makes it dangerous rather than obviously broken. So: keep BYTES internally (every derivation
+// here does), convert once at the render boundary, through this and only this.
+const UNITS = ["B", "KiB", "MiB", "GiB", "TiB"] as const;
+
+/** Bytes → a rendered figure, binary units. Two decimals below 100, one above: VRAM decisions turn on hundreds
+ *  of MiB, so a whole-number GiB render hides exactly the margin that matters. Never returns a bare number —
+ *  the unit is part of the value, because "94.4" is a support ticket and "94.4 GiB" is not. */
+export function formatBytes(bytes: number | null | undefined): string {
+    if (bytes == null || !Number.isFinite(bytes)) return "—";
+    const neg = bytes < 0;
+    let v = Math.abs(bytes), i = 0;
+    while (v >= 1024 && i < UNITS.length - 1) { v /= 1024; i++; }
+    const digits = i === 0 ? 0 : v >= 100 ? 1 : 2;
+    return `${neg ? "-" : ""}${v.toFixed(digits)} ${UNITS[i]}`;
+}
+
+/** The same figure split, for a UI that wants to style the unit separately. */
+export const splitBytes = (bytes: number | null | undefined): { value: string; unit: string } => {
+    const s = formatBytes(bytes);
+    const i = s.lastIndexOf(" ");
+    return i === -1 ? { value: s, unit: "" } : { value: s.slice(0, i), unit: s.slice(i + 1) };
+};
+
 export type Runner = "CUDA" | "ROCm" | "Metal" | (string & {});
 
 // Runners whose memory is a pool genuinely SEPARATE from system RAM. Anything else (Metal today) is treated
@@ -149,6 +181,17 @@ export const isCpuResident = (m: ModelResidency): boolean => m.vramBytes === 0;
 // --- bands: how ONE device's (or the host's) capacity decomposes at one instant ------------------------------
 
 export type BandKind = "model" | "other" | "free" | "unknown";
+
+/** What the unattributed band actually contains — NOT simply "other processes". `size_vram` is llama-server's
+ *  own buffer accounting, and the driver consistently reports 0.7–1.8 GiB MORE per model (roughly constant
+ *  regardless of model size): the CUDA context, which no buffer line reports. So this band holds our own
+ *  models' context overhead as well as genuinely foreign allocations, and "model is using X" will never
+ *  reconcile with "card has Y free". That residual is expected and is not worth trying to correct — but the
+ *  band must not CLAIM to be other processes, or the reader will go looking for a process that isn't there. */
+export const OTHER_BAND_LABEL = "unattributed";
+export const OTHER_BAND_NOTE =
+    "In use but not accounted for by a model's reported buffers — mostly each loaded model's CUDA context "
+    + "(0.7-1.8 GiB per model, which no buffer line reports), plus anything else on the card.";
 export interface Band {
     key: string;
     label: string;
@@ -193,7 +236,7 @@ export function deviceBands(sample: ResourceSample, deviceId: string): Band[] {
     // Everything in use that we cannot attribute to a model of ours. Clamped: `free` is sampled independently
     // of `ps`, so a race can make the arithmetic go slightly negative.
     const used = Math.max(0, cap.totalBytes - cap.freeBytes);
-    bands.push({ key: "other", label: "other processes", bytes: Math.max(0, used - attributed - unknown), kind: "other" });
+    bands.push({ key: "other", label: OTHER_BAND_LABEL, bytes: Math.max(0, used - attributed - unknown), kind: "other" });
     bands.push({ key: "free", label: "free", bytes: Math.max(0, cap.freeBytes), kind: "free" });
     return bands;
 }
@@ -216,7 +259,7 @@ export function hostBands(sample: ResourceSample): Band[] {
         bands.push({ key: `m:${m.model}`, label: m.model, bytes, kind: "model", model: m.model });
     }
     const used = Math.max(0, host.totalBytes - host.freeBytes);
-    bands.push({ key: "other", label: "other processes", bytes: Math.max(0, used - attributed), kind: "other" });
+    bands.push({ key: "other", label: OTHER_BAND_LABEL, bytes: Math.max(0, used - attributed), kind: "other" });
     bands.push({ key: "free", label: "free", bytes: Math.max(0, host.freeBytes), kind: "free" });
     return bands;
 }
