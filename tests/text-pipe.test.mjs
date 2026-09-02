@@ -116,3 +116,68 @@ test("a missing grep pattern is an actionable error", () => {
 test("a numeric flag without its number errors", () => {
     assert.throws(() => runPipe("x", "head -n"), /head -n.*needs a number/s);
 });
+
+// --- structural stages (added for `dereference`) --------------------------------------------------------
+// The line verbs are blind to structure, which is useless for the JSON a tool often returns. These parse the
+// stream, transform it, and re-emit JSON, so they compose with the line verbs in either order.
+const JSON_OUT = JSON.stringify({ id: 7, name: "widget", tags: ["a", "b"], nested: { deep: [{ k: 1 }] } });
+
+test("keys / values read an object structurally; a path uses jq's leading dot", () => {
+    assert.deepEqual(JSON.parse(runPipe(JSON_OUT, "keys")), ["id", "name", "tags", "nested"]);
+    assert.equal(runPipe(JSON_OUT, ".name"), "widget");
+    assert.equal(runPipe(JSON_OUT, ".nested.deep[0].k"), "1");
+    // The composition that replaces a JS-style `.keys()` method form.
+    assert.deepEqual(JSON.parse(runPipe(JSON_OUT, ".nested | keys")), ["deep"]);
+    assert.deepEqual(JSON.parse(runPipe(JSON.stringify({ a: 1, b: "two" }), "values")), [1, "two"]);
+    assert.throws(() => runPipe(JSON.stringify([1, 2]), "values"), /needs an object; this is an array of 2/);
+});
+
+test("keys on an array of objects yields the COLUMNS, and on a {columns,rows} table its columns", () => {
+    assert.deepEqual(JSON.parse(runPipe(JSON.stringify([{ a: 1, b: 2 }, { a: 3, b: 4 }]), "keys")), ["a", "b"]);
+    const table = JSON.stringify({ columns: ["name", "qty"], rows: [["apples", 3]] });
+    assert.deepEqual(JSON.parse(runPipe(table, "keys")), ["name", "qty"], "a DataFrame pointer's keys are its columns");
+});
+
+test("schema reads the SHAPE, not the data (jsonschema is the same stage)", () => {
+    const shape = runPipe(JSON_OUT, "schema");
+    assert.match(shape, /name/, "the shape names the fields");
+    assert.ok(!shape.includes("widget"), "…without the values, which is the point of asking for a shape");
+    assert.equal(runPipe(JSON_OUT, "jsonschema"), shape, "models reach for this name; accept it");
+});
+
+test("type answers 'what is this' for JSON and for prose", () => {
+    assert.match(runPipe(JSON_OUT, "type"), /object with 4 keys/);
+    assert.match(runPipe(JSON.stringify([1, 2]), "type"), /array of 2/);
+    assert.match(runPipe("just some prose\nlines", "type"), /text, \d+ chars \/ 2 lines/);
+});
+
+test("structural stages compose with the line verbs in either order", () => {
+    const rows = JSON.stringify({ rows: [{ n: 1 }, { n: 2 }, { n: 3 }] });
+    assert.match(runPipe(rows, ".rows | head 3"), /^\[/, "a path then a line verb");
+    assert.equal(runPipe(JSON.stringify({ a: "x\ny\nz" }), ".a | wc -l"), "3", "…and the line verb sees real lines");
+});
+
+test("structural stages REFUSE prose rather than inventing a shape", () => {
+    assert.throws(() => runPipe("alpha\nbeta", "keys"), /needs JSON, but this is plain text/);
+    assert.throws(() => runPipe("alpha\nbeta", "schema"), /needs JSON/);
+    // Looks like JSON but isn't — say so, don't silently treat it as text.
+    assert.throws(() => runPipe("{not really json", "keys"), /doesn't parse/);
+});
+
+test("a wrong path says WHERE it failed and what was available", () => {
+    assert.throws(() => runPipe(JSON_OUT, ".missing"), (e) => {
+        assert.match(e.message, /no key "missing"/);
+        assert.match(e.message, /id, name, tags, nested/, "the real keys, so the model can correct itself");
+        return true;
+    });
+    assert.throws(() => runPipe(JSON_OUT, ".name[0]"), /needs an array, but that part of the value is a string/);
+    assert.throws(() => runPipe(JSON_OUT, ".tags.nope"), /needs an object, but that part of the value is an array of 2/);
+    // `.keys()` is not the syntax — it must fail, not be treated as a valid path.
+    assert.throws(() => runPipe(JSON_OUT, ".keys()"), /segment|no key/i);
+});
+
+test("the dialect stays CLOSED — an unknown stage still refuses and names what exists", () => {
+    assert.throws(() => runPipe(JSON_OUT, "jq .name"), /isn't a supported text command/);
+    assert.throws(() => runPipe(JSON_OUT, "keys | eval x"), /isn't a supported text command/);
+    assert.throws(() => runPipe(JSON_OUT, "keys | rm -rf /"), /isn't a supported text command/);
+});

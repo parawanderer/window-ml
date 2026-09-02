@@ -17,6 +17,7 @@ import { runStats, fmtTokPerSec, UI_OUT_CAP } from "./contract";
 import type { TokenRender } from "./contract";
 import { UNATTENDED_REFUSAL } from "./prompts";
 import { toolToken } from "./util";
+import { TokenStore, derefPipe, describeToken, memoryFault, DEREF_TOOL, type TokenKind } from "./token-pipe";
 
 export type Approval = "readonly" | "sandbox" | "same-origin" | "consented" | "self-source" | "user" | "denied" | "skipped" | "cancelled";
 export interface ToolMeta { name: string; requiresApproval?: boolean; capabilities?: string[]; }
@@ -264,6 +265,42 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     // Per-step render data for citable steps, so the outputs resolver can turn a cited/designated token into its
     // structured value (res.outputs — the headless-scripting payload).
     const tokenRenders: TokenRender[] = [];
+    // Values addressable by `@tool:<id>` for THIS run — what `dereference` reads. Populated at mint time below,
+    // so the pointer store and the citation ids can never disagree. Owned by the LOOP (not the page), which is
+    // why dereference resolves here instead of being delegated: it is a pure read of run state, identical on
+    // the page-hosted and background-hosted paths, and needs no page round-trip or approval.
+    const tokenStore = new TokenStore();
+    /** Resolve a `dereference` call against this run's pointer store. Side-effect-free by construction (it only
+     *  reads values already captured), so it needs no approval and never touches the page. Every answer leads
+     *  with WHAT is at the pointer and WHEN it was captured: a pointer aliases a snapshot with no invalidation,
+     *  so a survey taken before a click still resolves, and a model would otherwise read it as current. */
+    const derefLocally = (args: Record<string, unknown>, step: number): ToolRunResult => {
+        const ref = String(args?.token ?? "").trim();
+        const pipe = args?.pipe == null ? "" : String(args.pipe);
+        if (!ref) return { result: `Error: "token" is required — the @tool:<id> of an output you want to read. Available: ${tokenList()}` };
+        const v = tokenStore.get(ref);
+        // A pointer that doesn't resolve is usually a HALLUCINATED id (six plausible hex characters that were
+        // never minted), so name the closest real ones rather than just saying no — the model can then correct
+        // itself in one step instead of guessing again.
+        if (!v) return { result: `Error: ${memoryFault(ref, tokenStore.nearest(ref), step)}` };
+        const slot = TokenStore.slotOf(ref);
+        const age = step - v.step;
+        // The staleness line is not decoration: this is the failure mode of pointer-passing.
+        const when = age <= 0 ? "captured this step" : `captured at step ${v.step}, ${age} step${age === 1 ? "" : "s"} ago — the page may have changed since`;
+        const head = `@tool:${v.id} (${v.tool}${slot === "in" ? ", the call" : ""}) — ${describeToken(v)}, ${when}.`;
+        try {
+            return { result: `${head}\n\n${derefPipe(v, slot, pipe)}` };
+        } catch (e) {
+            // Any stage that fails throws with an actionable message — the pipe dialect's existing contract.
+            // Surface it verbatim so the model corrects the pipe rather than abandoning the pointer.
+            return { result: `Error: ${(e as Error)?.message || e}` };
+        }
+    };
+    const tokenList = (): string =>
+        tokenStore.size ? tokenStore.all().map(v => `@tool:${v.id} (${v.tool}, step ${v.step})`).join(", ") : "(nothing captured yet)";
+    /** Every tool dispatch goes through here so `dereference` is answered from run state instead of delegated. */
+    const runTool = (name: string, a: Record<string, unknown>, push: ((t: string, ts?: number) => void) | undefined, step: number): Promise<ToolRunResult> | ToolRunResult =>
+        name === DEREF_TOOL ? derefLocally(a, step) : deps.runTool(name, a, push);
     let seq = 0;
     // Live token stats for the chat_metadata tool: promptLast = the last call's prompt tokens (current
     // context occupancy), genTotal = completion tokens summed across the run. Accurate on both worlds since
@@ -348,7 +385,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                     tr = ro; result = ro.result;   // the interpreter already produced the result
                 } else if (auto) {
                     approval = auto.approval;
-                    tr = await deps.runTool(call.name, args, fan?.push); result = tr.result;   // trusted auto-approve → execute
+                    tr = await runTool(call.name, args, fan?.push, step); result = tr.result;   // trusted auto-approve → execute
                     if (auto.reused?.length) tr = { ...tr, reused: [...(tr.reused || []), ...auto.reused] };   // surface the reused grants
                 } else if (deps.precheck && (result = (await deps.precheck(call.name, args)) || "")) {
                     // Doomed-action skip: a side-effect-free precheck (click/type target resolution) found
@@ -390,12 +427,12 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                         } else {
                             approval = "user";
                             args = d.arguments;                                   // possibly gate-edited
-                            tr = await deps.runTool(call.name, args, fan?.push); result = tr.result;   // EXECUTE ONLY AFTER APPROVE
+                            tr = await runTool(call.name, args, fan?.push, step); result = tr.result;   // EXECUTE ONLY AFTER APPROVE
                         }
                     }
                 }
             } else {
-                tr = await deps.runTool(call.name, args, fan?.push); result = tr.result;   // non-approval tool
+                tr = await runTool(call.name, args, fan?.push, step); result = tr.result;   // non-approval tool
             }
             fan?.done();   // the tool finished — stop any trailing live emit; the DONE below carries the full result
             result = String(result);
@@ -438,6 +475,20 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             // (turn 2's step 1 vs turn 1's step 1) that a citation would then resolve to the wrong, earlier step.
             const tokenId = (opts.toolTokens && opts.runHash && citable) ? toolToken(opts.runHash, (opts.seqBase ?? 0) + s) : undefined;
             if (tokenId) tokenRenders.push({ id: tokenId, tool: call.name, render: tr?.renderOut, result });   // → res.outputs (only if CITED)
+            // The pointer carries the value's TYPE, taken from the render descriptor the step already produced —
+            // so `dereference … | keys` on a DataFrame means its COLUMNS, without re-parsing a rendered grid.
+            if (tokenId) {
+                const r = tr?.renderOut;
+                const df = r?.type === "python-out" ? r.df : undefined;
+                const tbl = df ? { columns: df.columns, rows: df.rows as unknown[][] }
+                    : r?.type === "table" ? { columns: r.columns, rows: r.rows as unknown[][] } : undefined;
+                const looksJson = /^\s*[[{]/.test(result);
+                const kind: TokenKind = tbl ? "table"
+                    : (r?.type === "image" || r?.type === "look") ? "image"
+                    : (r?.type === "code" || r?.type === "python-in") ? "code"
+                    : looksJson ? "json" : "text";
+                tokenStore.note({ id: tokenId, tool: call.name, kind, out: result, in: JSON.stringify(args), t: Date.now(), step, ...(tbl ? { table: tbl } : {}) });
+            }
             const forModel = (tokenId && wantsToken)
                 ? `${result}\n\n[output token @tool:${tokenId} — EMBED this exact output in your final answer with image syntax: ![label](@tool:${tokenId}:out) (use ":in" for the call/code). It expands in place; don't retype it.]`
                 : result;

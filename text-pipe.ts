@@ -9,7 +9,9 @@
 // error — it is NOT a real shell. Supported verbs: grep · head · tail · wc · sort · uniq, chained with `|`.
 // The input text is the pipeline's stdin (no `cat`); each stage transforms the lines and feeds the next.
 
-const CMDS = "grep · head · tail · wc · sort · uniq";
+import { jsonShape } from "./dom";
+
+const CMDS = "grep · head · tail · wc · sort · uniq · keys · values · schema · type · a .path";
 const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 /** Split on newlines, dropping a single trailing "\n" so a text that ends in a newline isn't seen as having a
  *  phantom empty last line (matches how the shell tools treat a trailing line terminator). */
@@ -103,8 +105,11 @@ function grep(lines: string[], argv: string[]): string[] {
 }
 
 function headTail(cmd: "head" | "tail", lines: string[], argv: string[]): string[] {
-    const { nums } = parseArgs(cmd, argv, "", "n");
-    const n = nums.n ?? nums[""] ?? 10;
+    const { nums, pos } = parseArgs(cmd, argv, "", "n");
+    // Accept a BARE count (`head 20`) as well as the shell forms (`head -n 20`, `head -20`). Models write the
+    // bare form constantly; refusing it would burn a turn to teach a flag that changes nothing.
+    const bare = pos.length && /^\d+$/.test(pos[0]) ? Number(pos[0]) : undefined;
+    const n = nums.n ?? nums[""] ?? bare ?? 10;
     if (n < 0) throw new Error(`\`${cmd} -n\` needs a non-negative number.`);
     return cmd === "head" ? lines.slice(0, n) : lines.slice(Math.max(0, lines.length - n));
 }
@@ -148,6 +153,73 @@ function uniq(lines: string[], argv: string[]): string[] {
     return out;
 }
 
+// --- STRUCTURAL stages -------------------------------------------------------------------------------------
+// The line verbs above are blind to structure, which is useless for the JSON a tool often returns: "the keys of
+// this object" is not a line operation. These stages parse the stream as JSON, transform it, and re-emit JSON —
+// so they compose with the line verbs in either order (`.rows | head 5`, `grep id | schema`).
+//
+// Syntax is chosen so the two families can't collide: line verbs are bare words (`head 20`), structural PATHS
+// start with a dot (`.items[0].name`). So the JS spelling `.keys()` is deliberately NOT it — that is `keys`,
+// and "the keys of that field" composes as `.items | keys`.
+//
+// They REFUSE non-JSON rather than guessing a shape for prose: a fabricated key list is worse than an honest
+// "this isn't JSON" (the same posture as the read-only exec dialect — a gap degrades to asking, never to a
+// wrong answer).
+const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+
+/** A short, honest name for a value — used in every refusal so the model can correct itself. */
+export function describeValue(v: unknown): string {
+    if (v === null) return "null";
+    if (v === undefined) return "missing";
+    if (Array.isArray(v)) return `an array of ${v.length}`;
+    if (typeof v === "object") return `an object with ${Object.keys(v as object).length} keys`;
+    return `a ${typeof v}`;
+}
+
+function parseJson(lines: string[], cmd: string): unknown {
+    const text = fromLines(lines).trim();
+    if (!(text.startsWith("{") || text.startsWith("["))) 
+        throw new Error(`\`${cmd}\` needs JSON, but this is plain text (${text.length} chars). Use the line commands instead (${CMDS.split(" · ").slice(0, 6).join(" · ")}).`);
+    try { return JSON.parse(text); }
+    catch (e) { throw new Error(`\`${cmd}\` — this looks like JSON but doesn't parse (${(e as Error).message}).`); }
+}
+const emit = (v: unknown): string[] => toLines(typeof v === "string" ? v : JSON.stringify(v, null, 2));
+
+/** `.a.b[0]` → the value there. Names the segment that failed and what WAS available, so a wrong path is a
+ *  one-step correction rather than a bare `undefined`. */
+function pickPath(root: unknown, path: string): unknown {
+    let cur = root;
+    for (const step of path.slice(1).split(".").filter(Boolean)) {
+        const m = /^([^[\]]*)((?:\[\d+\])*)$/.exec(step);
+        if (!m) throw new Error(`can't read the path segment "${step}".`);
+        const [, key, idx] = m;
+        if (key) {
+            if (!isObj(cur)) throw new Error(`".${key}" needs an object, but that part of the value is ${describeValue(cur)}.`);
+            if (!(key in cur)) throw new Error(`no key "${key}". Available: ${Object.keys(cur).slice(0, 20).join(", ") || "(none)"}`);
+            cur = cur[key];
+        }
+        for (const n of idx.match(/\d+/g) ?? []) {
+            if (!Array.isArray(cur)) throw new Error(`"[${n}]" needs an array, but that part of the value is ${describeValue(cur)}.`);
+            cur = cur[Number(n)];
+        }
+    }
+    return cur;
+}
+
+function keysOf(lines: string[]): string[] {
+    const j = parseJson(lines, "keys");
+    // A table entered as {columns, rows} (a DataFrame pointer) — its keys are its COLUMNS, which is the answer
+    // the question actually wants. Likewise an array of uniform objects.
+    if (isObj(j) && Array.isArray(j.columns)) return emit(j.columns);
+    if (Array.isArray(j)) {
+        const first = j.find(isObj);
+        if (!first) throw new Error(`\`keys\` needs an object (or an array of objects); this is ${describeValue(j)}.`);
+        return emit(Object.keys(first));
+    }
+    if (!isObj(j)) throw new Error(`\`keys\` needs an object; this is ${describeValue(j)}.`);
+    return emit(Object.keys(j));
+}
+
 /** Run a `grep | head | …` pipeline over `text`, returning the transformed text. Throws an actionable Error on
  *  an unknown/misused command (the caller surfaces it to the model). Pure — no side effects. */
 export function runPipe(text: string, pipe: string): string {
@@ -163,7 +235,24 @@ export function runPipe(text: string, pipe: string): string {
             case "sort": lines = sortLines(lines, argv); break;
             case "uniq": lines = uniq(lines, argv); break;
             case "cat": break;   // a harmless no-op if the model prefixes `cat |` out of habit
-            default: throw new Error(`\`${cmd}\` isn't a supported text command. This is a small scanning pipeline (${CMDS}), NOT a real shell — for a transform, process the text in a script instead.`);
+            case "keys": lines = keysOf(lines); break;
+            case "values": {
+                const j = parseJson(lines, "values");
+                if (!isObj(j)) throw new Error(`\`values\` needs an object; this is ${describeValue(j)}.`);
+                lines = emit(Object.values(j)); break;
+            }
+            // The SHAPE, not the data — the cheapest read of a big structure, and what to reach for first.
+            // `jsonschema` is accepted as the same thing: models reach for that name.
+            case "schema": case "jsonschema": lines = toLines(jsonShape(parseJson(lines, cmd))); break;
+            case "type": {
+                const text = fromLines(lines).trim();
+                const looksJson = text.startsWith("{") || text.startsWith("[");
+                lines = [looksJson ? describeValue(parseJson(lines, "type")) : `text, ${text.length} chars / ${lines.length} lines`];
+                break;
+            }
+            default:
+                if (cmd.startsWith(".")) { lines = emit(pickPath(parseJson(lines, cmd), cmd)); break; }
+                throw new Error(`\`${cmd}\` isn't a supported text command. This is a small scanning pipeline (${CMDS}), NOT a real shell — for a transform, process the text in a script instead.`);
         }
     }
     return fromLines(lines);

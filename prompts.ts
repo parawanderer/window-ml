@@ -112,6 +112,18 @@ export const TOOLTOKENS_CLAUSE =
     "sympy expression / a `sympy.latex(...)` string / an image ALREADY auto-typesets (or shows the image) when " +
     "cited — NO pipe needed. A pipe only OVERRIDES: `| latex` forces typesetting, `| img` forces an image, `| raw` " +
     "forces the literal text. E.g. `![derivative](@tool:<id>:out)` typesets a sympy result on its own.";
+// The other half of tool tokens: a token is not only a CITATION for the answer, it is a POINTER the model can
+// read back mid-run. Kept in the same clause because it is only true when tool tokens are on.
+export const DEREF_CLAUSE =
+    "\n\nREADING AN OUTPUT AGAIN. `@tool:<id>` is also a POINTER you can read with `dereference` — use it " +
+    "instead of re-running a tool to recover something you already produced, and instead of retyping a value. " +
+    "It is free and changes nothing. `dereference` takes the id plus an optional `pipe` that reduces the value " +
+    "before you read it, so you can inspect something far larger than you want in context: `schema` (its shape), " +
+    "`keys` (an object's keys, or a table's COLUMNS), `len`, `type`, `head N` / `tail N`, `grep <text>`, " +
+    "`slice A B`, or a path like `.items[0].name`. Chain them with `|`, e.g. `.rows | head 5`. Start with " +
+    "`schema` or `keys` on anything big. NOTE a pointer is a SNAPSHOT of when that tool ran: the reply says " +
+    "when it was captured, so re-read the page instead if it has changed since.";
+
 export const SHADOW_CLAUSE =
     "\n\nShadow DOM: the DOM tools (findByText / interactives / describeElement / ancestors / countMatches / " +
     "sampleText / click / type / wait / answer) pierce OPEN shadow roots automatically. A control inside one " +

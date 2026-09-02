@@ -16,6 +16,7 @@ export type CaptureAnswer = (els: Element[], note?: string, show?: "inline" | "h
 export type ShadowResolve = (selector: string) => Promise<{ line: string }[] | null>;
 import { truncate, clipOut, errText, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, deepQueryAll, closedShadowHosts, frameHostOf, selectorError, isCspEvalBlocked, firstHopSealed, isSealedHost } from "./dom";
 import { runPipe } from "./text-pipe";
+import { DEREF_TOOL } from "./token-pipe";
 import { INTERACTIVE_SEL, roleOf, accessibleName, placeholderText, ariaState, hasLayout, styleHidden, isFaded } from "./a11y";
 import { pageContext, browserInfo, agentState } from "./util";
 import { makeBackgroundTaskPromise } from "./bridge";
@@ -901,3 +902,26 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
         })
     ];
 };
+
+/** `dereference` — read a value the run already produced, by its `@tool:<id>` pointer, optionally reduced by a
+ *  `pipe` first. Only offered when tool tokens are on (there are no pointers otherwise).
+ *
+ *  The RUN LOOP answers this call, not this `run` (see agent-loop's `derefLocally`): the pointer store is run
+ *  state the loop owns, so resolving it there works identically on the page-hosted and background-hosted paths
+ *  with no page round-trip and no approval — it only reads what was already captured. This definition exists to
+ *  advertise the schema to the model; `run` is the guard for the impossible case of it being dispatched anyway. */
+export function buildDereferenceTool(defineTool: (tool?: Partial<MlTool>) => MlTool): MlTool {
+    return defineTool({
+        name: DEREF_TOOL,
+        description: "Read an output this run already produced, by its @tool:<id> pointer — instead of re-running a tool or retyping a value. Free, changes nothing, and can read MORE than the truncated copy you were shown. Optional `pipe` reduces it first: schema | keys | values | len | type | head N | tail N | grep TEXT | slice A B, or a path like .items[0].name; chain with '|'. The reply says what the value is and when it was captured (a pointer is a snapshot — the page may have changed since).",
+        parameters: {
+            type: "object",
+            properties: {
+                token: { type: "string", description: "The pointer: an @tool:<id> you were given (the hex id alone is fine), or a builtin's NAME for its latest call, e.g. 'python_exec'. Add ':in' to read the call/code instead of the result." },
+                pipe: { type: "string", description: "Optional reduction, e.g. 'schema', 'keys', 'head 20', 'grep error', '.rows | head 5'. Omit to read the whole value. Start with 'schema' or 'keys' on anything large." },
+            },
+            required: ["token"],
+        },
+        run: async () => "Error: dereference is resolved by the agent loop; it cannot be run directly.",
+    });
+}

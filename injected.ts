@@ -41,13 +41,13 @@ import { makeAnswerFacade, finalizeAnswer, resolveOutputs } from "./answer-set";
 import { isSelfSourceUrl } from "./self-source";
 import { BUILD_INFO } from "./build-info.gen";
 import { accessibleName, roleOf, ariaState } from "./a11y";
-import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, TOOLTOKENS_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_NOTE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_EXEC_NOTE, IFRAME_CLAUSE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, EXEC_RANGE_CLAUSE, NAV_OFF_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, askAboutTask } from "./prompts";
+import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, TOOLTOKENS_CLAUSE, DEREF_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_NOTE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_EXEC_NOTE, IFRAME_CLAUSE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, EXEC_RANGE_CLAUSE, NAV_OFF_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, askAboutTask } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, markSeen, PT_LOOK_RADIUS, BOX_RE, resolveBox, agentState, mlRange } from "./util";
 import type { ShotBox, ServerTool, VisionMemory, RebuildConfig, AnswerMedia, MlAnswer } from "./contract";
 import { annotate, pickAccentColorForTarget } from "./locate";
 import { suspiciousArgsWarning, suspiciousChars } from "./security";
 import { emitDebug, debugId, shortHash, sessionRegistry, agentRegistry, handleRegistry, enterAgentRun, exitAgentRun, resetSubcallUsage, subcallUsage } from "./bus";
-import { makeDomTools } from "./tools";
+import { makeDomTools, buildDereferenceTool } from "./tools";
 import { hideSidebarForShot, makeBackgroundTaskPromise, makeChatRequest, makeStreamingTaskPromise } from "./bridge";
 import { validateArgs, validateExtend } from "./validate";
 import { renderArgs, logStep, defaultApprove, normalizeApproval, formatReadonlyExec } from "./approval";
@@ -603,6 +603,11 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             // The model sets `token: true` on a call whose output it intends to CITE; the loop surfaces the
             // @tool:<id> only for those (see agent-loop). Clone the shared defs; don't mutate them.
             if (toolTokens) {
+                // The other half of tool tokens: a token is a POINTER, not only a citation. `dereference` reads
+                // the value back — cheaper than re-running a tool, and it reaches the FULL output rather than
+                // the truncated copy the model was shown. The run loop answers it (agent-loop's derefLocally);
+                // this only advertises the schema.
+                toolset = [...toolset, buildDereferenceTool(window.ml.defineTool)];
                 toolset = toolset.map(t => CITABLE_TOOLS.has(t.name)
                     ? { ...t, parameters: { ...t.parameters, properties: { ...(t.parameters as { properties?: Record<string, unknown> }).properties,
                         token: { type: "boolean", description: "Set true if you'll SHOW this call's output in your answer — it mints an @tool:<id> you embed with `![caption](@tool:<id>:out)` (expands to this exact output). Off for exploratory steps." } } } }
@@ -619,7 +624,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 // Adapt the default prompt to what the toolset can actually do.
                 if (hasCap("vision")) systemPrompt += VISION_CLAUSE;
                 if (hasCap("answer")) systemPrompt += ANSWER_CLAUSE;
-                if (toolTokens) systemPrompt += TOOLTOKENS_CLAUSE;   // rich results carry an @tool: id to cite verbatim
+                if (toolTokens) systemPrompt += TOOLTOKENS_CLAUSE + DEREF_CLAUSE;   // rich results carry an @tool: id — to cite verbatim, and to read back
                 if (toolset.some(t => t.name === "wait")) systemPrompt += WAIT_CLAUSE;
                 // The DOM tools all pierce open shadow roots + resolve `>>>` — tell the model, plus (only when
                 // exec is wired) how the notation maps to JS. Gated on a representative DOM tool being present.
