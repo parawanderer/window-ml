@@ -43,6 +43,9 @@ const ML = {
     // read-only members are. Records what it was asked for, so the adversarial tests can prove nothing effectful
     // slipped through it.
     dereference: async (ref, opts) => { ML_CALLS.push(["dereference", ref, opts && opts.pipe]); return `VALUE(${ref})`; },
+    // Machine CAPACITY — a read of the hardware that spends nothing and changes nothing.
+    info: async () => { ML_CALLS.push(["info"]); return { compute: { system_compute: { total_memory: 130142785536 },
+        supported_gpus: [{ gpu_id: "0", name: "CUDA0", total_memory: 101972967424, free_memory: 101386813440, runner: "CUDA" }] } }; },
     range: (a, b, step = 1) => { const start = b === undefined ? 0 : a, stop = b === undefined ? a : b; const out = []; for (let i = 0, v = start; i < Math.max(0, Math.ceil((stop - start) / step)); i++, v += step) out.push(v); return out; },
 };
 const run = (js, doc = world(), ml = ML) => evalReadonly(js, doc, ml);
@@ -987,4 +990,38 @@ test("ADVERSARIAL: dereference can't be looped unboundedly to burn the page down
     // expressible (and each call is a pure read anyway).
     await assert.rejects(run(`while (true) { ml.dereference("@tool:a"); }`), outOfDialect);
     await assert.rejects(run(`for (;;) ml.dereference("@tool:a");`), outOfDialect);
+});
+
+// --- ADVERSARIAL: ml.info as a dialect member --------------------------------------------------------------
+// Required by the AGENTS rule. `info` is machine capacity — VRAM totals, system RAM — so a survey asking
+// "will this fit" shouldn't cost a prompt. The question is whether reading hardware opens any other door.
+
+test("ml.info: the plain read works, and its nested shape is walkable", async () => {
+    ML_CALLS.length = 0;
+    const gpus = (await run(`return ml.info().compute.supported_gpus.map(g => g.name)`)).value;
+    assert.deepEqual(gpus, ["CUDA0"], "auto-await, then an ordinary property walk into the response");
+    const total = (await run(`return ml.info().compute.supported_gpus[0].total_memory`)).value;
+    assert.equal(total, 101972967424, "raw BYTES — the dialect never sees a pre-formatted figure");
+    assert.deepEqual(ML_CALLS, [["info"], ["info"]]);
+});
+
+test("ADVERSARIAL: info can't be extracted, re-bound, or walked to the realm", async () => {
+    ML_CALLS.length = 0;
+    await assert.rejects(run(`const f = ml.info; return f()`), outOfDialect);
+    await assert.rejects(run(`return ml.info.call(ml)`), outOfDialect);
+    await assert.rejects(run(`return ml.info.apply(ml, [])`), outOfDialect);
+    await assert.rejects(run(`return ml.info.bind(ml)()`), outOfDialect);
+    await assert.rejects(run(`return ml.info.constructor("return globalThis")()`), outOfDialect);
+    assert.deepEqual(ML_CALLS, [], "none of those reached the real method");
+});
+
+test("ADVERSARIAL: the info RESPONSE is inert data, not a route to anything", async () => {
+    // The response is plain JSON from the worker — walking off it must reach nothing.
+    await assert.rejects(run(`return ml.info().constructor`), outOfDialect);
+    await assert.rejects(run(`return ml.info().constructor.constructor("return 1")()`), outOfDialect);
+    await assert.rejects(run(`return ml.info().__proto__`), outOfDialect);
+    await assert.rejects(run(`return ml.info().compute.__proto__`), outOfDialect);
+    // And it is no lever onto the effectful half, which isn't on the facade at all.
+    assert.equal((await run(`return typeof ml.unload`)).value, "undefined");
+    assert.equal((await run(`return typeof ml.pythonExec`)).value, "undefined");
 });

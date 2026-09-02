@@ -1449,8 +1449,10 @@ test("OLLAMA_PS reports loaded models with VRAM usage", async () => {
         config: baseConfig(),
         onFetch: () => jsonResponse({
             models: [
-                { model: "a", size_vram: 21_400_000_000, size: 30_000_000_000, expires_at: "soon", context_length: 262_144 },
-                // An older Ollama omits context_length entirely → null, never a bogus 0.
+                { model: "a", size_vram: 21_400_000_000, size: 30_000_000_000, expires_at: "soon", context_length: 262_144,
+                  gpus: [{ gpu_id: "0", runner: "CUDA", size_vram: 21_400_000_000 }] },
+                // An older Ollama omits context_length entirely → null, never a bogus 0. And a CPU-resident
+                // model omits `gpus` ENTIRELY — the server's contract for "on the CPU".
                 { model: "b", size_vram: 2_100_000_000, size: 2_100_000_000, expires_at: "later" },
             ]
         })
@@ -1458,9 +1460,14 @@ test("OLLAMA_PS reports loaded models with VRAM usage", async () => {
 
     const res = await bg.send({ type: "OLLAMA_PS", payload: {} });
     assert.deepEqual(res, { data: [
-        { model: "a", vramGB: 21.4, sizeGB: 30, contextLength: 262_144, expiresAt: "soon" },
-        { model: "b", vramGB: 2.1, sizeGB: 2.1, contextLength: null, expiresAt: "later" },
+        // EXACT bytes ride alongside the rounded GB the older readouts use — the resource panel's bands
+        // subtract these from exact capacity figures, where 0.1 GB rounding would accumulate visible error.
+        { model: "a", vramGB: 21.4, sizeGB: 30, vramBytes: 21_400_000_000, sizeBytes: 30_000_000_000,
+          gpus: [{ id: "0", runner: "CUDA", vramBytes: 21_400_000_000 }], contextLength: 262_144, expiresAt: "soon" },
+        { model: "b", vramGB: 2.1, sizeGB: 2.1, vramBytes: 2_100_000_000, sizeBytes: 2_100_000_000,
+          contextLength: null, expiresAt: "later" },
     ] });
+    assert.ok(!("gpus" in res.data[1]), "a CPU-resident model has NO gpus key — absence is the signal, not []");
 });
 
 // A tiny helper: drains microtasks/macrotasks so port messages settle.
@@ -2928,4 +2935,30 @@ test("DEREF_TOKEN answers only for a run this worker hosts, and forgets it when 
     const forged = await bg.send({ type: "DEREF_TOKEN", runId: "../../etc", ref: "@tool:a1b2c3" }, { tab: { id: 9 } });
     assert.match(forged.error, /No active background run/);
     assert.equal(forged.value, undefined);
+});
+
+// OLLAMA_INFO: the machine's CAPACITY (per-device VRAM, system RAM) — the denominator ml.ps() never had.
+// Only a patched Ollama behind an OpenWebUI passthrough serves /api/info; everything else answers with the
+// SPA's HTML, which must read as "unknown", never as a capacity of zero.
+test("OLLAMA_INFO returns the machine's capacity, and null when the route isn't served", async () => {
+    const INFO = { compute: {
+        system_compute: { cpu_cores: 32, total_memory: 130142785536, free_memory: 12330946560, free_swap: 3330347008 },
+        supported_gpus: [{ gpu_id: "0", name: "CUDA0", total_memory: 101972967424, physical_memory: 102641958912, free_memory: 101386813440, runner: "CUDA" }],
+    } };
+    const ok = loadBackground({ config: baseConfig(), onFetch: ({ url }) =>
+        /\/api\/info$/.test(url) ? jsonResponse(INFO) : { ok: false, status: 404, json: async () => ({}) } });
+    const res = await ok.send({ type: "OLLAMA_INFO", payload: {} }, { tab: { id: 1 } });
+    assert.equal(res.data.compute.supported_gpus[0].total_memory, 101972967424);
+    assert.equal(res.data.compute.supported_gpus[0].physical_memory, 102641958912, "the driver framebuffer total rides along");
+
+    // The SPA's HTML on the wrong route: a body that isn't the expected JSON is NOT capacity.
+    const html = loadBackground({ config: baseConfig(), onFetch: () =>
+        ({ ok: true, json: async () => { throw new Error("Unexpected token < in JSON"); } }) });
+    const miss = await html.send({ type: "OLLAMA_INFO", payload: {} }, { tab: { id: 1 } });
+    assert.equal(miss.data, null, "unknown, never zero");
+    assert.equal(miss.error, undefined, "…and not an error the page has to handle");
+
+    // A JSON body of the wrong shape is equally not capacity.
+    const wrong = loadBackground({ config: baseConfig(), onFetch: () => jsonResponse({ hello: 1 }) });
+    assert.equal((await wrong.send({ type: "OLLAMA_INFO", payload: {} }, { tab: { id: 1 } })).data, null);
 });

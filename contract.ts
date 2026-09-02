@@ -1048,6 +1048,7 @@ export type PageRequestType =
     | "SAVE_SESSION_REQUEST" | "GET_SESSION_REQUEST" | "PYTHON_EXEC_REQUEST" | "FETCH_SHEET_REQUEST" | "FETCH_URL_REQUEST"
     | "CDP_SHADOW_RESOLVE_REQUEST"   // read-only: resolve a `>>>` selector into a SEALED closed shadow root via CDP (discovery)
     | "LIST_SERVER_TOOLS_REQUEST"   // discover the OpenWebUI server-side tools this key may use (valid `toolIds`)
+    | "INFO_REQUEST"                // machine CAPACITY: per-device VRAM totals/free + system RAM (Ollama /api/info)
     | "INVOCATION_REQUEST"   // how the user can open the HUD here (live shortcut — user-rebindable, never hardcode it)
     | "START_RUN_REQUEST"   // design A: kick off a background-hosted ml.agent loop
     | "RESUME_RUN_REQUEST"   // design A: continue a background-hosted run (append a follow-up turn to its stored history)
@@ -1062,6 +1063,7 @@ export type BackgroundMessageType =
     | "SAVE_SESSION" | "GET_SESSION" | "PYTHON_EXEC" | "FETCH_SHEET" | "FETCH_SHEET_TITLE" | "FETCH_URL"
     | "CDP_SHADOW_RESOLVE"   // read-only CDP resolve of a `>>>` selector across sealed shadow roots (discovery half of sealed reach)
     | "LIST_SERVER_TOOLS"   // GET OpenWebUI /api/v1/tools/ — the server-side tools, with their function specs
+    | "OLLAMA_INFO"         // GET Ollama /api/info — machine capacity (per-device VRAM, system RAM)
     | "GET_INVOCATION"   // read chrome.commands' LIVE shortcut for the HUD (+ whether the user rebound it)
     | "ABORT_TASK"    // abort the AbortController registered for a requestId (only FETCH_LLM registers one today)
     | "START_RUN"     // design A: run an ml.agent loop in the background (unforgeable gate); tools delegate to the page
@@ -1346,12 +1348,54 @@ export interface InvocationInfo {
     contextMenu: boolean;
 }
 
+/** One accelerator a resident model occupies, from `/api/ps` `gpus[]`. ABSENT entirely for a CPU-resident
+ *  model — that is the server's contract for "on the CPU", not a missing field. */
+export interface LoadedModelGpu { id: string; runner: string; vramBytes: number }
+
 export interface LoadedModel {
     model: string;
     vramGB: number | null;
     sizeGB: number | null;
+    /** EXACT bytes, beside the rounded GB the existing readouts use. The resource panel subtracts these from
+     *  exact capacity figures to size its bands, so 0.1 GB rounding would accumulate visible error. */
+    vramBytes: number | null;
+    sizeBytes: number | null;
+    /** Which devices it sits on, and how much on each. Absent (not empty) when the model is CPU-resident. */
+    gpus?: LoadedModelGpu[];
     contextLength: number | null;
     expiresAt: string | null;
+}
+
+/** One accelerator the machine has, from `/api/info` `compute.supported_gpus[]`. All memory figures are raw
+ *  BYTES and all are BINARY — render through `formatBytes` (resource-model.ts), never a hand-rolled /1e9. */
+export interface GpuInfo {
+    gpu_id: string;
+    name: string;
+    runner: string;
+    /** cuDeviceTotalMem — what ollama places against. */
+    total_memory: number;
+    /** The DRIVER's framebuffer total (what nvidia-smi shows). Newer servers only; absent on older ones. */
+    physical_memory?: number;
+    free_memory: number;
+    /** CUDA/ROCm only — absent on Metal, which is itself a signal of unified memory. */
+    compute?: string;
+    driver?: string;
+}
+
+export interface SystemCompute {
+    cpu_cores?: number;
+    total_memory: number;
+    free_memory: number;
+    /** 0 on macOS whether or not swap exists — treat 0 as UNKNOWN, not as "no swap". */
+    free_swap?: number;
+}
+
+/** `/api/info` — the machine's CAPACITY, as opposed to `/api/ps`'s residency. Only a patched Ollama +
+ *  OpenWebUI serves this route; everything else answers with the SPA's HTML, which is why `ml.info()`
+ *  resolves to `null` rather than throwing. */
+export interface OllamaInfo {
+    models?: { store?: string; count?: number; filesystem_used?: number; running?: number; vram_used?: number };
+    compute: { system_compute: SystemCompute; supported_gpus?: GpuInfo[] };
 }
 
 /** One function exposed by an OpenWebUI server-side tool. A tool bundles several
@@ -1704,6 +1748,11 @@ export interface MlApi {
      *  the valid ids for `ml.chat`'s `toolIds`, with each one's function specs.
      *  Empty on a bare-Ollama endpoint (no such concept). */
     serverTools(): Promise<ServerTool[]>;
+    /** The machine's memory CAPACITY — per-device VRAM totals/free and system RAM (Ollama `/api/info`).
+     *  `ml.ps()` says what is RESIDENT; this says what there is room for. Returns `null` when the route
+     *  isn't available (stock Ollama, or an OpenWebUI without the passthrough) — treat that as "capacity
+     *  unknown", never as zero. All figures are raw BYTES and BINARY. */
+    info(): Promise<OllamaInfo | null>;
 
     /** Resolves once window.ml is fully wired (synchronous; set right after
      *  injection). See the `ml:ready` event for the pre-resolution hook. */

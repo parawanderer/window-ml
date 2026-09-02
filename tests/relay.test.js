@@ -813,3 +813,19 @@ test("ml.dereference: throws when called outside a run", async () => {
     const world = loadPageWorld({});
     await assert.rejects(() => world.ml.dereference("@tool:a1b2c3"), /only live inside an ml\.agent run/);
 });
+
+// ml.info() across the real page relay: injected.js → content.js HANDLE_MAP → background.
+test("ml.info(): the capacity round-trip, and null when the route isn't served", async () => {
+    const INFO = { compute: {
+        system_compute: { cpu_cores: 32, total_memory: 130142785536, free_memory: 12330946560 },
+        supported_gpus: [{ gpu_id: "0", name: "CUDA0", total_memory: 101972967424, physical_memory: 102641958912, free_memory: 101386813440, runner: "CUDA" }],
+    } };
+    const world = loadPageWorld({ onRuntimeMessage: (m) => (m.type === "OLLAMA_INFO" ? { data: INFO } : undefined) });
+    const info = await world.ml.info();
+    assert.equal(info.compute.supported_gpus[0].total_memory, 101972967424);
+    assert.equal(info.compute.supported_gpus[0].physical_memory, 102641958912);
+
+    // Capacity UNKNOWN must arrive as null, so the panel omits its ceiling rather than drawing one at zero.
+    const none = loadPageWorld({ onRuntimeMessage: (m) => (m.type === "OLLAMA_INFO" ? { data: null } : undefined) });
+    assert.equal(await none.ml.info(), null);
+});

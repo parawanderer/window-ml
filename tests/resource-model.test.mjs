@@ -302,7 +302,7 @@ test("the residual band is named by MAGNITUDE, so an idle card shows no phantom 
 // (physical_memory, what nvidia-smi shows), and cuDeviceTotalMem (total_memory, what ollama places against).
 test("ceilings: display the DRIVER total when reported, decide fit against ollama's", () => {
     const withPhysical = { compute: { ...CUDA_INFO.compute, supported_gpus: [
-        { ...CUDA_INFO.compute.supported_gpus[0], physical_memory: 102638980956 },   // 95.59 GiB — the driver framebuffer total nvidia-smi shows
+        { ...CUDA_INFO.compute.supported_gpus[0], physical_memory: 102641958912 },   // 95.59 GiB — the driver framebuffer total nvidia-smi shows
     ] } };
     const cap = M.parseInfo(withPhysical);
     assert.equal(M.formatBytes(cap.devices[0].physicalBytes), "95.59 GiB", "the driver framebuffer total");

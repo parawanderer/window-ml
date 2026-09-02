@@ -629,11 +629,14 @@ const ANSWER_METHODS = new Set(["add", "remove", "clear", "dump"]);
 // interactives/findByText tools use). It adds no capability the dialect lacks (it already reaches elements +
 // reads their attributes); it just packages it. The object's values are strings and its `constructor`/proto
 // stay denied by guardKey, so it can't reach a realm/effect, and it neither mutates nor spends.
+// `info` is machine CAPACITY (VRAM totals, system RAM) — a read of the hardware, spending nothing and
+// changing nothing, and it exposes no more than `ps` already does. A survey asking "will this fit" shouldn't
+// cost a prompt.
 // `dereference` belongs here for the same reason the rest do: it is a pure READ of values THIS run already
 // captured — no page mutation, no egress, no token spend, and nothing it returns wasn't already produced by an
 // approved call. A survey that re-reads its own earlier output should not cost a prompt. (It is also run-bound
 // on the real API, so outside a run it throws before the facade is even reached.)
-export const ML_READONLY_METHODS = ["getModel", "config", "models", "capabilities", "ps", "serverTools", "queryAll", "range", "a11y", "dereference"] as const;
+export const ML_READONLY_METHODS = ["getModel", "config", "models", "capabilities", "ps", "serverTools", "queryAll", "range", "a11y", "dereference", "info"] as const;
 
 /** Build the `ml` object the dialect sees: ONLY {@link ML_READONLY_METHODS}, bound to the real API.
  *  A purpose-built facade rather than `window.ml` itself, so the free set is enforced by what exists,

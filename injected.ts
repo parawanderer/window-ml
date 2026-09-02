@@ -43,7 +43,7 @@ import { BUILD_INFO } from "./build-info.gen";
 import { accessibleName, roleOf, ariaState } from "./a11y";
 import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, TOOLTOKENS_CLAUSE, DEREF_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_NOTE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_EXEC_NOTE, IFRAME_CLAUSE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, EXEC_RANGE_CLAUSE, NAV_OFF_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, askAboutTask } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, markSeen, PT_LOOK_RADIUS, BOX_RE, resolveBox, agentState, mlRange } from "./util";
-import type { ShotBox, ServerTool, VisionMemory, RebuildConfig, AnswerMedia, MlAnswer } from "./contract";
+import type { ShotBox, ServerTool, OllamaInfo, VisionMemory, RebuildConfig, AnswerMedia, MlAnswer } from "./contract";
 import { annotate, pickAccentColorForTarget } from "./locate";
 import { suspiciousArgsWarning, suspiciousChars } from "./security";
 import { emitDebug, debugId, shortHash, sessionRegistry, agentRegistry, handleRegistry, enterAgentRun, exitAgentRun, resetSubcallUsage, subcallUsage } from "./bus";
@@ -2226,6 +2226,23 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          */
         serverTools: async function(): Promise<ServerTool[]> {
             return makeBackgroundTaskPromise("LIST_SERVER_TOOLS_REQUEST", "LIST_SERVER_TOOLS_RESPONSE", {});
+        },
+        /**
+         * The machine's memory CAPACITY — per-device VRAM totals/free and system RAM, from Ollama's
+         * `/api/info`. `ml.ps()` says what is RESIDENT; this says what there is room for, so together they
+         * answer "will this model fit" and "what is using my box".
+         *
+         * Every figure is raw BYTES and BINARY (a card sold as 96GB reports 94.97 GiB) — render through
+         * `formatBytes`, never a hand-rolled `/1e9`.
+         *
+         * Returns **null** when the route isn't available: only a patched Ollama behind an OpenWebUI with the
+         * passthrough serves it, and everything else answers with the SPA's HTML. Treat null as "capacity
+         * unknown", never as zero.
+         *
+         * @returns {Promise<OllamaInfo|null>} The machine's capacity, or null when undeterminable.
+         */
+        info: async function(): Promise<OllamaInfo | null> {
+            return makeBackgroundTaskPromise("INFO_REQUEST", "INFO_RESPONSE", {});
         },
         /**
          * Get capability list for a model, read from Ollama's /api/show.

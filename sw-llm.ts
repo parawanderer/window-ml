@@ -857,12 +857,40 @@ export async function listLoadedModels(): Promise<LoadedModel[]> {
         model: m.model || m.name,
         vramGB: m.size_vram ? +(m.size_vram / 1e9).toFixed(1) : null,
         sizeGB: m.size ? +(m.size / 1e9).toFixed(1) : null,
+        // EXACT bytes alongside the rounded GB: the resource panel's bands subtract these from exact capacity
+        // figures, so rounding here would accumulate into visibly wrong sums.
+        vramBytes: typeof m.size_vram === "number" ? m.size_vram : null,
+        sizeBytes: typeof m.size === "number" ? m.size : null,
+        // Which devices it occupies. `gpus` is ABSENT for a CPU-resident model — the server's way of saying
+        // so — and that absence is preserved here rather than normalised to an empty array.
+        ...(Array.isArray(m.gpus) ? { gpus: m.gpus.map((g: any) => ({
+            id: String(g.gpu_id ?? ""), runner: String(g.runner ?? ""), vramBytes: Number(g.size_vram) || 0,
+        })) } : {}),
         // The context window it was loaded with. Ollama preallocates KV cache for the
         // FULL window, so this explains a big share of size_vram (a 256K-ctx load is
         // mostly cache). Older servers don't report it → null, and the UI hides it.
         contextLength: typeof m.context_length === "number" ? m.context_length : null,
         expiresAt: m.expires_at || null,
     }));
+}
+
+/** GET Ollama `/api/info` — the machine's CAPACITY (per-device VRAM, system RAM), through the same base
+ *  discovery `/api/ps` uses. Only a patched Ollama behind an OpenWebUI with the passthrough serves this;
+ *  everything else answers with the SPA's HTML. Returns **null** rather than throwing in that case — the same
+ *  convention as `modelCapabilities` and `listServerTools`: unknown, never "no". */
+export async function fetchOllamaInfo(): Promise<import("./contract").OllamaInfo | null> {
+    const config = await getConfig();
+    const origin = new URL(config.chatUrl).origin;
+    for (const base of [`${origin}/ollama`, origin]) {
+        try {
+            const res = await fetch(`${base}/api/info`, { headers: authHeaders(config) });
+            if (!res.ok) continue;
+            // A non-JSON body means the wrong route (the SPA's HTML) — not a capacity of zero.
+            const body = await res.json();
+            if (body && typeof body === "object" && body.compute && body.compute.system_compute) return body;
+        } catch { /* try the next base, then give up */ }
+    }
+    return null;
 }
 
 // A generate request with keep_alive: 0 tells Ollama to evict the model
