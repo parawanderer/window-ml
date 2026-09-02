@@ -335,5 +335,16 @@ export const toolToken = (runHash: string, seq: number): string => {
     let h = 0x811c9dc5;
     const s = `${runHash}:${seq}`;
     for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+    // AVALANCHE the result (murmur3's fmix32). Without it these ids were a thinly disguised COUNTER: FNV-1a's
+    // last step only xors the final byte before one multiply, so consecutive seqs stayed closely related and
+    // the top bits — the ones this truncates to — barely moved. Real output was f22fa7 · ef2fa3 · f02fa4 ·
+    // f52fac … : the middle four characters IDENTICAL for nine steps, the rest tracking the counter.
+    // That defeats both properties this id is supposed to have. Ids sat a Hamming distance of 2 apart, so a
+    // model mistyping two characters could land on ANOTHER LIVE POINTER and read the wrong output with no
+    // error — MemoryFault only catches a miss, not a near-miss that resolves. And "opaque, so it must COPY
+    // the token rather than guess it" stops being true once the ids are visibly extrapolable.
+    h ^= h >>> 16; h = Math.imul(h, 0x85ebca6b);
+    h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35);
+    h ^= h >>> 16;
     return (h >>> 0).toString(16).padStart(8, "0").slice(0, 6);
 };
