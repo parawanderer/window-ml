@@ -295,6 +295,34 @@ function keysOf(lines: string[]): string[] {
     return emit(Object.keys(j));
 }
 
+/** `ml.pipe(source, pipe)` — the dialect over ANY string, not just a fetched body.
+ *
+ *  The `pipe` PARAMETER on fetch_url / navigate's verify / interactives only ever reaches that one tool's own
+ *  output. A model holding text from anywhere else (a DOM survey, python's stdout, two fetches concatenated,
+ *  something on `ml.state`) had to hand-roll the equivalent JS, and models write shell pipelines far more
+ *  reliably than they write `.split("\n").filter(...).slice(...)`. This is the same dialect, callable inline —
+ *  and it inverts the `pipe` parameter's own escape hatch ("for anything more complex, use exec"): from inside
+ *  exec you can now go the other way too.
+ *
+ *  `source` is a string, or anything with a `.text` (a {@link FetchResult}), in which case its readable form is
+ *  used — `.markdown` when the fetch distilled one, else `.text`. Accepting the whole result object is
+ *  deliberate: a model WILL write `ml.pipe(await ml.fetch(url), ...)`, the same accommodation the Python
+ *  prelude makes for `pd.read_csv('current')`.
+ *
+ *  Pure: no I/O, no DOM, no tokens spent. Throws the dialect's own actionable Error on a bad stage. */
+export function mlPipe(source: unknown, pipe?: string | string[] | null): string {
+    let text: unknown = source;
+    if (source && typeof source === "object") {
+        const r = source as { markdown?: unknown; text?: unknown };
+        if (typeof r.text === "string" || typeof r.markdown === "string") text = r.markdown ?? r.text;
+    }
+    if (typeof text !== "string") {
+        throw new Error(`ml.pipe needs a string (or a fetch result), got ${text === null ? "null" : Array.isArray(text) ? "an array" : typeof text}. For an object, JSON.stringify it first — the \`.path\`/keys/schema stages then read it.`);
+    }
+    if (pipe == null || (Array.isArray(pipe) ? !pipe.length : !pipe.trim())) return text;   // no stages = unchanged
+    return runPipe(text, pipe);
+}
+
 /** Run a `grep | head | …` pipeline over `text`, returning the transformed text. Throws an actionable Error on
  *  an unknown/misused command (the caller surfaces it to the model). Pure — no side effects.
  *

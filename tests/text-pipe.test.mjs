@@ -4,7 +4,7 @@
 // pipe chaining, quote-aware parsing, and the actionable errors for the un-modeled cases.
 import { test } from "node:test";
 import assert from "node:assert";
-import { runPipe } from "../text-pipe.ts";
+import { runPipe, mlPipe } from "../text-pipe.ts";
 
 const DOC = ["Apple 3", "banana 10", "Cherry 2", "apple 7", "date", "banana 10"].join("\n");
 
@@ -263,4 +263,36 @@ test("DRIFT GUARD: every model-facing description of the dialect is derived, not
         if (/grep\s*[·|]\s*head|grep \(flags|grep \(-i/.test(src)) stale.push(f);
     }
     assert.deepEqual(stale, [], `these hardcode a verb list instead of importing PIPE_HINT / PIPE_SYNTAX: ${stale.join(", ")}`);
+});
+
+// ---- ml.pipe: the dialect over ANY string, callable from exec ----
+// The `pipe` PARAMETER only ever reaches one tool's own output; this is the same dialect inline, so text from
+// a survey / python stdout / two fetches can be filtered without hand-rolling the JS equivalent.
+const LOG = "head of report\nerror: disk full\nwarn: slow\ntail of report";
+
+test("mlPipe: takes a string, and the array form works the same as it does in a tool", () => {
+    assert.equal(mlPipe(LOG, "grep -E 'error|warn'"), "error: disk full\nwarn: slow");
+    assert.equal(mlPipe(LOG, ["grep -E error|warn", "head 1"]), "error: disk full");
+    assert.equal(mlPipe('{"rows":[1,2,3]}', ".rows | count"), "3", "the structural stages too");
+});
+
+// A model WILL write `ml.pipe(await ml.fetch(url), …)` rather than reaching into the result, so accept the
+// whole object — the same accommodation the Python prelude makes for `pd.read_csv('current')`.
+test("mlPipe: a fetch result is accepted whole, and its READABLE form is used", () => {
+    assert.equal(mlPipe({ type: "html", text: "<h1>Hi</h1><h2>There</h2>", markdown: "# Hi\n## There" }, "grep '^##'"),
+        "## There", "prefers .markdown — .text is the raw tag soup");
+    assert.equal(mlPipe({ type: "json", text: '{"rows":[1,2]}' }, ".rows | count"), "2", "falls back to .text when there is no markdown");
+});
+
+test("mlPipe: no pipe returns the source unchanged; a bad source or stage throws actionably", () => {
+    assert.equal(mlPipe(LOG), LOG);
+    assert.equal(mlPipe(LOG, null), LOG);
+    assert.equal(mlPipe(LOG, []), LOG);
+    assert.equal(mlPipe(LOG, "   "), LOG);
+    // An object that isn't a fetch result names the fix rather than stringifying to "[object Object]".
+    assert.throws(() => mlPipe({ a: 1 }, "head"), /needs a string \(or a fetch result\), got object.*JSON\.stringify/s);
+    assert.throws(() => mlPipe(42, "head"), /got number/);
+    assert.throws(() => mlPipe(null, "head"), /got null/);
+    // A bad stage raises the dialect's own error, naming the real verb set.
+    assert.throws(() => mlPipe(LOG, "jq .x"), /isn't a supported text command/);
 });

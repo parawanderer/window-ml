@@ -1726,6 +1726,13 @@ export interface MlApi {
      *  `for`/`while`): `ml.range(8).map(i => …)`. `range(stop)` / `range(start, stop)` / `range(start,
      *  stop, step)`. Returns a real array capped at 100k (over → throws), so it can never run away. */
     range(a: number, b?: number, step?: number): number[];
+    /** Scan/filter a string with the same small shell-style dialect the tools' `pipe` parameter takes, but over
+     *  ANY text — not just one tool's output. `ml.pipe(await ml.fetch(url), "grep -i pricing | head -20")`.
+     *  Pass a fetch result directly and its readable form is used (`.markdown`, else `.text`). The pipe is the
+     *  dialect string, or an ARRAY with one stage per entry (never re-split, so a stage may hold a bare `|`:
+     *  `["grep -E error|warn", "head 5"]`). Synchronous and pure — no network, no tokens. Throws an actionable
+     *  Error naming the supported verbs if a stage is wrong. */
+    pipe(source: string | FetchResult, pipe?: string | string[] | null): string;
     /** GET a URL's content via the background (bypasses CORS; UNCREDENTIALED BY DEFAULT — no cookies unless you
      *  ask). Use it to READ a page/file the current DOM can't reach — a raw file, a JSON API, another site —
      *  instead of navigating there. Returns a {@link FetchResult}: `.type` classifies the body (json/csv/html/

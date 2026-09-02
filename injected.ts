@@ -35,7 +35,7 @@ import type {
 import { detectGroundingModel, DEFAULT_GROUNDING_RANGE, outputCapEscalated } from "./contract";
 import { evalReadonly } from "./readonly-exec";
 import { htmlToMarkdown } from "./html-to-md";
-import { runPipe, pipeHint, PIPE_SYNTAX } from "./text-pipe";
+import { runPipe, mlPipe, pipeHint, PIPE_SYNTAX } from "./text-pipe";
 import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement, navTarget, clipOut, askReaderNumCtx, jsonShape, shadowHostReport, clickSelector, elLine } from "./dom";
 import { makeAnswerFacade, finalizeAnswer, resolveOutputs } from "./answer-set";
 import { isSelfSourceUrl } from "./self-source";
@@ -2281,6 +2281,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          * @returns {number[]} The integer sequence.
          */
         range: mlRange,
+        pipe: mlPipe,
         /**
          * GET a URL's content via the background worker — bypasses CORS (host permissions), and by DEFAULT sends
          * no cookies (uncredentialed; `credentials`/`rendered` opt in — see below). Use it to READ a page/file

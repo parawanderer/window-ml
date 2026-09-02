@@ -482,6 +482,12 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 "prompt; anything else is still allowed but falls back to real `eval` and asks the user first. " +
                 "So for a read-only survey prefer `.map`/`.filter`/`.reduce`/`for…of` + `ml.range(n)` — reach " +
                 "for mutation or a while-loop only when the task actually needs it. " +
+                // Advertise ml.pipe HERE rather than in the system prompt or the tools' `pipe` parameter: exec
+                // is where you'd reach for it, and inside exec its availability is self-evident (naming it on
+                // another tool would name a capability that needs exec, which the run may not have).
+                "FILTERING TEXT: `ml.pipe(text, \"grep -i pricing | head -20\")` runs the same small dialect the " +
+                "tools' `pipe` parameter takes, over ANY string — a survey's output, a fetch, python's stdout. " +
+                "Cheaper to write (and to get right) than the equivalent `.split`/`.filter`/`.slice` chain. " +
                 "SHADOW DOM / IFRAMES: use `ml.queryAll('host >>> inner')` — a shadow/iframe-piercing " +
                 "querySelectorAll that returns an Array and understands the same selector dialect the DOM " +
                 "tools use (`>>>` crosses each OPEN shadow root / same-origin iframe; a trailing " +
