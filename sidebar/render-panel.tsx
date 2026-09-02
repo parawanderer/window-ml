@@ -435,12 +435,15 @@ export function OutputCell({ children }: { children: ComponentChildren }) {
         if ((e.ctrlKey || e.metaKey) && (e.key === "f" || e.key === "F")) {
             e.preventDefault(); e.stopPropagation();
             findOwner.value = id;
-            setTimeout(() => input.current?.focus(), 0);
+            // preventScroll: focusing normally makes the browser reveal the target by scrolling its
+            // ANCESTORS — which yanks the panel around and then fights the tail-follow effect (the
+            // "Ctrl+F randomly scrolls up and down" jitter). Opening find must never move the view.
+            setTimeout(() => input.current?.focus({ preventScroll: true }), 0);
         } else if (e.key === "Escape" && findOpen) { e.preventDefault(); closeFind(); }
     };
     const onFindKey = (e: any): void => {
         if (e.key === "Enter") { e.preventDefault(); jump(e.shiftKey ? -1 : 1); }
-        else if (e.key === "Escape") { e.preventDefault(); closeFind(); box.current?.focus(); }
+        else if (e.key === "Escape") { e.preventDefault(); closeFind(); box.current?.focus({ preventScroll: true }); }
     };
     const onScroll = (): void => { const el = box.current; if (el) follow.current = atBottomOf(el); };
     const onGrab = (e: any): void => {

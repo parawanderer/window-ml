@@ -109,6 +109,19 @@ test("output cell: tail-follows at the bottom, holds still when scrolled up", as
         const after = await cell.evaluate((el) => el.scrollTop);
         expect(Math.abs(after - parked), "scroll position held — no snap to the bottom").toBeLessThanOrEqual(2);
 
+        // 3b. Opening FIND must not move the view. Focusing the input normally makes the browser reveal it by
+        //     scrolling ancestors, which yanked the panel around and fought tail-follow ("Ctrl+F randomly
+        //     scrolls"). Parked mid-scroll, the position must be identical before and after Ctrl+F.
+        const beforeFind = await cell.evaluate((el) => el.scrollTop);
+        await cell.click({ position: { x: 20, y: 20 } });
+        await page.keyboard.press("Control+f");
+        await sleep(400);
+        expect(await frame.locator(".r-find").count(), "the find bar opened").toBeGreaterThan(0);
+        expect(Math.abs((await cell.evaluate((el) => el.scrollTop)) - beforeFind),
+            "opening find left the scroll position alone").toBeLessThanOrEqual(2);
+        await page.keyboard.press("Escape");
+        await sleep(200);
+
         // 4. Return to the bottom → following resumes.
         await scrollTo(cell, (el) => el.scrollHeight);
         await sleep(900);
@@ -184,11 +197,15 @@ test("output cell: the Out content does not shift when streaming stops", async (
         // Measure the LIVE output's left edge…
         const live = frame.locator(".astep-streaming").last();
         await expect.poll(async () => live.count(), { timeout: 20000 }).toBeGreaterThan(0);
+        await sleep(500);   // let the panel finish laying out — an x measured mid-layout is meaningless
         const liveX = (await live.boundingBox()).x;
         // …then the SETTLED output's, once the step has a real result.
         await expect.poll(async () => frame.locator(".r-py-out").count(), { timeout: 25000 }).toBeGreaterThan(0);
         await sleep(400);
         const settledX = (await frame.locator(".r-py-out").last().boundingBox()).x;
+        // The gutter must survive too — if the settled view dropped its timestamps the text would shift by the
+        // gutter's width, which is exactly the kind of jump this test exists to catch.
+        expect(await frame.locator(".r-py-out .r-ts").count(), "the settled output kept its timestamp gutter").toBeGreaterThan(0);
         expect(Math.abs(settledX - liveX), "the Out content stays put when the live rail goes away").toBeLessThanOrEqual(1);
     } finally {
         await ext.close();
