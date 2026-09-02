@@ -77,7 +77,9 @@ test("rung 4: everything misses, so we convert the HTML ourselves — and say it
     const r = await fetchUrlContent("https://conv.test/guide");
     assert.equal(by(r), "convert");
     assert.equal(r.type, "html", "the body is still the HTML; the conversion happens page-side");
-    assert.match(rung(r, "convert").note, /OUR reduction/, "the render must not pass it off as the site's text");
+    // The rung's note stays short; "whose Markdown is this" is carried by the resolved-by label, which
+    // tests/fetch-ladder.test.mjs pins — saying it in both places just made the row wrap.
+    assert.match(rung(r, "convert").note, /stripped/, "says what the conversion did to the page");
     assert.equal(rung(r, "sibling").outcome, "not-markdown");
 });
 

@@ -3,6 +3,7 @@
 // auto-derive image/elements, else the default In:/Out: renders the raw result.
 // Extracted from app.tsx; leans on the shared primitives in ./ui-kit.
 import type { ComponentChildren } from "preact";
+import { GLYPH, RESOLVED_LABEL, rungLabel, rungMeta } from "./fetch-ladder";
 import { useState, useRef, useEffect, useMemo } from "preact/hooks";
 import { signal } from "@preact/signals";
 import type { RenderDescriptor, LocateSubstep, TableSource } from "../contract";
@@ -540,6 +541,31 @@ export function RenderPanel({ d, marks }: { d: RenderDescriptor; marks?: [number
         case "table": return <RenderTable columns={d.columns} rows={d.rows} />;
         case "keyval": return <div class="r-keyval">{d.pairs.map(([k, v], i) => <div class="r-kv" key={i}><span class="r-k">{k}</span><span class="r-v">{v}</span></div>)}</div>;
         case "elements": return <RenderElements items={d.items} />;
+/** The Markdown ladder as a resolution TREE: what was tried, what worked, what was never needed. Every rung is
+ *  drawn, dimmed when unused, so the protocol is legible from any single render rather than having to be
+ *  inferred across several. The failures it exists to expose are invisible in the body alone — a stub twin is
+ *  a valid 200 Markdown document that is simply the wrong page. */
+function FetchLadder({ attempts, resolvedBy }: { attempts: import("../contract").FetchAttempt[]; resolvedBy?: string }): preact.JSX.Element {
+    return (
+        <div class="r-lad">
+            {attempts.map((a, i) => {
+                const last = i === attempts.length - 1;
+                const meta = rungMeta(a);
+                return (
+                    <div class={`r-lad-row${a.outcome === "skipped" ? " r-lad-unused" : ""}`} key={`${a.strategy}-${i}`}>
+                        <span class="r-lad-rail">{last ? "└─" : "├─"}</span>
+                        <span class={`r-lad-glyph r-lad-${a.outcome}`}>{GLYPH[a.outcome] || "·"}</span>
+                        <span class="r-lad-label">{rungLabel(a)}</span>
+                        {meta ? <span class="r-lad-meta">{meta}</span> : null}
+                        {a.note ? <span class="r-lad-note">{a.note}</span> : null}
+                    </div>
+                );
+            })}
+            {resolvedBy ? <div class="r-lad-by"><b>resolved by</b> {RESOLVED_LABEL[resolvedBy as import("../contract").FetchAttempt["strategy"]] || resolvedBy}</div> : null}
+        </div>
+    );
+}
+
         case "action":
             // DEBUG In view (overlay/devtools + HUD "show work"): a hoverable ELEMENT reference when the action
             // targets a page element (selector — hover → outline, right-click → copy a reference); otherwise a
@@ -560,6 +586,9 @@ export function RenderPanel({ d, marks }: { d: RenderDescriptor; marks?: [number
                                 ])}>{target}</span>
                             {d.note ? <span class="r-action-note"> · {d.note}</span> : null}
                         </div>
+                        {/* The Markdown ladder — which URL these bytes actually came from, and whether the
+                            Markdown is the site's own or ours. Absent unless negotiation ran. */}
+                        {d.attempts?.length ? <FetchLadder attempts={d.attempts} resolvedBy={d.resolvedBy} /> : null}
                         {/* fetch `ask` mode: the question gets its own line (FULL, never truncated), then who answered
                             it + the tokens that reader sub-call spent — so the distill is legible, not a squeezed note. */}
                         {d.ask ? <div class="r-action-ask"><b>Asked:</b> {d.ask}</div> : null}

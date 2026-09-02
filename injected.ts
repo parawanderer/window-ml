@@ -1649,6 +1649,17 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     // hatch. The FOOTER states the result's size (lines / chars, vs source) so the model has a
                     // reference for what it's operating on. `pipeStr` is the trimmed pipe (falsy = no pipe).
                     const pipeStr = typeof pipe === "string" && pipe.trim() ? pipe.trim() : "";
+                    /** ONE In descriptor for every return path, so no path can quietly drop a field. It used to
+                     *  be built per-path, which is why a credentialed PIPED fetch lost its "as you" note. Carries
+                     *  the Markdown ladder's trace when negotiation ran — the sidebar draws it as a resolution
+                     *  tree, and the export mirrors it. */
+                    const inRender = (extra: Record<string, unknown> = {}): RenderDescriptor => ({
+                        type: "action", verb: "fetch", target: r.url,
+                        ...(credentials ? { note: "as you (sends your cookies)" } : rendered ? { note: "rendered (ran the page's JS)" } : {}),
+                        ...(pipeStr ? { pipe: pipeStr } : {}),
+                        ...(r.negotiation ? { attempts: r.negotiation.attempts, resolvedBy: r.negotiation.resolvedBy } : {}),
+                        ...extra,
+                    } as RenderDescriptor);
                     const nlines = (s: string): number => s === "" ? 0 : s.replace(/\n$/, "").split("\n").length;
                     const doPipe = (src: string): { text: string; footer: string; err?: string } => {
                         if (!pipeStr) return { text: src, footer: "" };
@@ -1696,17 +1707,15 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                         const prevCalls = new Map((beforeU.byModel || []).map(m => [m.model, m.calls]));
                         const answeredBy = (afterU.byModel || []).find(m => (m.calls - (prevCalls.get(m.model) || 0)) > 0)?.model || null;
                         const content = `${head}\n\nAnswer${cut ? " (the content was truncated before reading — it may be incomplete)" : ""}:\n${answer}${mdNote}${pp.footer}`;
-                        const renderIn: RenderDescriptor = {
-                            type: "action", verb: "fetch", target: r.url, ask: question,
-                            ...(credentials ? { note: "as you (sends your cookies)" } : {}),
-                            ...(pipeStr ? { pipe: pipeStr } : {}),
+                        const renderIn: RenderDescriptor = inRender({
+                            ask: question,
                             ...(answeredBy ? { answeredBy } : {}), ...(tokens > 0 ? { tokens } : {}),
                             // The content handed to the reader — the in-the-middle step, so the distill is auditable
                             // (like locate's per-substep prompt). JSON is highlighted; a converted HTML page shows as
                             // the Markdown the reader actually saw, not the original tag soup.
                             askBody: clipped, askBodyLang: r.json !== undefined ? "json" : converted ? "markdown" : "text",
                             ...(cut ? { askBodyTruncated: true } : {}),
-                        };
+                        });
                         return { content, renderIn };
                     }
                     // `schema: true` — the caller wants the JSON's STRUCTURE, not the body.
@@ -1716,10 +1725,10 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                             const why = r.truncated ? "the body was too large to parse whole" : `it's ${r.type}, Content-Type: ${r.contentType || "(none)"}`;
                             return `Error: you asked for the JSON schema, but ${r.url} isn't JSON — ${why}${mislabel}. First bytes:\n\n${clipOut(r.text, 600)}`;
                         }
-                        const sig = r.schema ?? jsonShape(r.json), raw = JSON.stringify(r.json, null, 2);
+                        const sig = r.schema ?? jsonShape(r.json), rawJson = JSON.stringify(r.json, null, 2);
                         // If the shape is bigger than the payload itself (a tiny/flat object), just dump the JSON.
-                        if (sig.length >= raw.length) return `${head}\n\n${clipOut(raw, 4000)}\n\n(raw JSON shown — its schema would be larger than the object itself.)`;
-                        return `${head}\n\nJSON schema:\n${clipOut(sig, 4000)}`;
+                        if (sig.length >= rawJson.length) return { content: `${head}\n\n${clipOut(rawJson, 4000)}\n\n(raw JSON shown — its schema would be larger than the object itself.)`, renderIn: inRender() };
+                        return { content: `${head}\n\nJSON schema:\n${clipOut(sig, 4000)}`, renderIn: inRender() };
                     }
                     // Default: the body (HTML → Markdown unless raw), optionally scanned through `pipe` (which the
                     // model uses to filter a big doc to the relevant lines BEFORE the clip). For a LARGE json, prepend
@@ -1732,10 +1741,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                         ? `JSON schema: ${r.schema}\n\n` : "";
                     // The pipe footer (size/lines) goes at the END, so the model has a reference for the doc it got.
                     const buildTool = (t: string): string => `${head}${mdNote}\n\n${shapeLine}${t}${pd.footer}`;
-                    const bodyRender: RenderDescriptor | undefined = pipeStr
-                        ? { type: "action", verb: "fetch", target: r.url, pipe: pipeStr }
-                        : undefined;
-                    return bodyRender ? { content: buildTool(clipOut(body, 4000)), renderIn: bodyRender } : buildTool(clipOut(body, 4000));
+                    return { content: buildTool(clipOut(body, 4000)), renderIn: inRender() };
                 },
             });
         },

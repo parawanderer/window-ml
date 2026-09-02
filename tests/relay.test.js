@@ -18,6 +18,10 @@ const jsonResult = (json, extra = {}) => ({
     contentType: "application/json", ...extra,
 });
 
+// fetch_url's returns are ToolResults wherever an In render rides along (the Markdown ladder's trace); this
+// reads the model-facing text out of either shape.
+const body = (out) => (typeof out === "string" ? out : out.content);
+
 test("fetch_url tool: the render note flags schema-only vs full-page (so the log says which the agent asked for)", async () => {
     const tool = fetchTool(jsonResult({ a: 1 }));
     const full = tool.render(undefined, { url: "https://x.test/a.json" });
@@ -30,7 +34,7 @@ test("fetch_url tool: the render note flags schema-only vs full-page (so the log
 
 test("fetch_url tool: schema:true returns the JSON shape, not the body", async () => {
     const json = { id: 7, items: [{ name: "a" }, { name: "b" }] };
-    const out = await fetchTool(jsonResult(json, { schema: "{ id: number, items: { name: string }[] /* 2 items */ }" })).run({ url: "https://x.test/a.json", schema: true });
+    const out = body(await fetchTool(jsonResult(json, { schema: "{ id: number, items: { name: string }[] /* 2 items */ }" })).run({ url: "https://x.test/a.json", schema: true }));
     assert.match(out, /JSON schema:/);
     assert.match(out, /items: \{ name: string \}\[\]/);
     assert.doesNotMatch(out, /"name":\s*"a"/, "the raw body is NOT dumped when schema was requested");
@@ -38,7 +42,7 @@ test("fetch_url tool: schema:true returns the JSON shape, not the body", async (
 
 test("fetch_url tool: schema:true falls back to computing the shape when the result carries none", async () => {
     // No `.schema` on the result → the tool computes jsonShape(json) itself.
-    const out = await fetchTool(jsonResult({ a: [1, 2, 3] })).run({ url: "https://x.test/a.json", schema: true });
+    const out = body(await fetchTool(jsonResult({ a: [1, 2, 3] })).run({ url: "https://x.test/a.json", schema: true }));
     assert.match(out, /JSON schema:/);
     assert.match(out, /a: number\[\]/);
 });
@@ -55,7 +59,7 @@ test("fetch_url tool: schema:true on a NON-JSON body errors and says what it act
 
 test("fetch_url tool: schema:true dumps the RAW json + a note when the shape would be larger than the object", async () => {
     // A tiny flat object: its shape (`{ a: number }`) is longer than the payload itself.
-    const out = await fetchTool(jsonResult({ a: 1 }, { schema: "{ a: number }" })).run({ url: "https://x.test/a.json", schema: true });
+    const out = body(await fetchTool(jsonResult({ a: 1 }, { schema: "{ a: number }" })).run({ url: "https://x.test/a.json", schema: true }));
     assert.doesNotMatch(out, /JSON schema:/, "no shape header");
     assert.match(out, /"a": 1/, "the raw JSON is shown");
     assert.match(out, /schema would be larger than the object/i, "with a note explaining why");
@@ -64,11 +68,11 @@ test("fetch_url tool: schema:true dumps the RAW json + a note when the shape wou
 test("fetch_url tool: default (no flag) PREPENDS the shape for a LARGE json, but not a small one", async () => {
     // Large json → the shape orients the model even though the body is clipped.
     const big = { items: Array.from({ length: 60 }, (_, i) => ({ name: `item-number-${i}`, index: i })) };
-    const bigOut = await fetchTool(jsonResult(big, { schema: "{ items: { name: string, index: number }[] /* 60 items */ }" })).run({ url: "https://x.test/a.json" });
+    const bigOut = body(await fetchTool(jsonResult(big, { schema: "{ items: { name: string, index: number }[] /* 60 items */ }" })).run({ url: "https://x.test/a.json" }));
     assert.match(bigOut, /JSON schema: \{ items:/, "a big json gets its shape prepended");
     assert.match(bigOut, /"item-number-0"/, "and the (clipped) body too");
     // Small json → no shape line, just the body.
-    const smallOut = await fetchTool(jsonResult({ ok: true }, { schema: "{ ok: boolean }" })).run({ url: "https://x.test/a.json" });
+    const smallOut = body(await fetchTool(jsonResult({ ok: true }, { schema: "{ ok: boolean }" })).run({ url: "https://x.test/a.json" }));
     assert.doesNotMatch(smallOut, /JSON schema:/, "a small json isn't cluttered with a shape line");
     assert.match(smallOut, /"ok": true/);
 });

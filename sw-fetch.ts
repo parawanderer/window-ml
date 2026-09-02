@@ -230,8 +230,9 @@ export async function fetchUrlContent(url: string, credentials = false, format: 
     }
 
     // ---- rung 4: our own conversion (done page-side, which has a DOM) ----
-    record({ strategy: "convert", url: landed, outcome: "hit",
-             note: "HTML→Markdown — OUR reduction (nav/header/footer/aside stripped), not the site's own text" });
+    // The rung's note stays short; RESOLVED_LABEL is what says whose Markdown this is, so saying it twice in
+    // one tree just makes the row wrap.
+    record({ strategy: "convert", url: landed, outcome: "hit", note: "nav/header/footer/aside stripped" });
     firstResult.negotiation = { wanted: format, attempts, resolvedBy: "convert" };
     return firstResult;
 }

@@ -704,7 +704,13 @@ export type RenderDescriptor = (
     // is auditable: you can read exactly what the model saw before it answered.
     // `pipe` (fetch_url): the grep/head/tail/… shell pipeline the model scanned the fetched text through —
     // shown as a `bash` code block in the In slot so it reads as the interpreted command it is.
-    | { type: "action"; verb: string; kind?: string; target?: string; selector?: string; input?: string; note?: string; crossOrigin?: string; ask?: string; answeredBy?: string; tokens?: number; askBody?: string; askBodyLang?: string; askBodyTruncated?: boolean; pipe?: string }
+    // `attempts`/`resolvedBy` (fetch_url): the Markdown ladder as it actually ran — rendered as a resolution
+    // TREE, every rung shown including the ones never needed. Not decoration: a stub twin is a valid 200
+    // Markdown document that is simply the wrong page, so "which URL did these bytes come from" is the only
+    // place that failure is visible; and the winning rung says whether the Markdown is the SITE's authored
+    // text or our own reduction of its markup. Present only on the POST-call render (the approval card's
+    // `render()` runs before any rung has been tried).
+    | { type: "action"; verb: string; kind?: string; target?: string; selector?: string; input?: string; note?: string; crossOrigin?: string; ask?: string; answeredBy?: string; tokens?: number; askBody?: string; askBodyLang?: string; askBodyTruncated?: boolean; pipe?: string; attempts?: FetchAttempt[]; resolvedBy?: FetchAttempt["strategy"] }
 );
 // The slot a descriptor fills is decided by which hook produced it (a tool's `render()`
 // method / run()-returned `renderIn` → the In slot; a run()-returned `render` / an
