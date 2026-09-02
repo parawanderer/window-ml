@@ -5338,3 +5338,28 @@ test("settings (Appearance): each explanatory note stays under its own control",
     assert.ok(heightNote < stampsCtl, "…and comes BEFORE the next control (not orphaned under it)");
     assert.ok(stampsCtl < stampsNote, "the timestamp note follows the timestamp toggle");
 });
+
+// The rendered/raw toggle only exists once a descriptor lands (i.e. when the step settles), so it used to
+// APPEAR on completion and push the whole block down. It's now reserved — present but inert — while output
+// is still streaming, so the settled layout matches the live one.
+test("rendered/raw toggle: reserved (disabled) while streaming, live once the step settles", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("rrtog", "run it"));
+    await w.dispatch(agentStep("rrtog", 1, { seq: 1, pending: true, tool: "exec", arguments: { js: "loop()" } }));
+    await w.dispatch(agentStep("rrtog", 1, { seq: 1, streamOutput: "line 1\n" }));
+    await openRun(w);
+    w.shadow.querySelector(".astep.tool .astep-head").click(); await w.tick();
+    const outToggle = () => [...w.shadow.querySelectorAll(".io")].find(io => /^Out/.test(io.querySelector(".io-label").textContent))?.querySelector(".rr-toggle");
+    const live = outToggle();
+    assert.ok(live, "the toggle's space is held while output streams");
+    assert.match(live.className, /reserved/);
+    assert.ok([...live.querySelectorAll("button")].every(b => b.disabled), "…but neither button is usable yet");
+    // The DONE brings the descriptor → the same row becomes usable, no new row appearing.
+    await w.dispatch(agentStep("rrtog", 1, { seq: 1, tool: "exec", arguments: { js: "loop()" }, result: "console:\nline 1\n\nvalue: 1",
+        renderOut: { type: "exec-out", stdout: "line 1\n", value: "1" } }));
+    await w.tick();
+    const settled = outToggle();
+    assert.ok(settled, "the toggle is still there");
+    assert.doesNotMatch(settled.className, /reserved/);
+    assert.ok([...settled.querySelectorAll("button")].every(b => !b.disabled), "both buttons work once it settles");
+});

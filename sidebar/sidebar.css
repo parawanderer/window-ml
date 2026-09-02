@@ -701,6 +701,10 @@ details.io[open] > summary .io-preview { display: none; }
 .r-outgrip { height: 7px; margin-top: 2px; border-radius: 4px; cursor: ns-resize; background: var(--panel-2); opacity: .5; }
 .r-outgrip:hover { opacity: 1; background: var(--panel-2-hover); }
 
+/* The rendered/raw toggle held OPEN (but inert) while a step is still streaming — reserving its height so the
+   block doesn't shift down when the descriptor lands. */
+.rr-toggle.reserved button { opacity: .45; cursor: default; }
+
 /* In-cell find bar (Ctrl/Cmd+F while the output cell is focused) — VSCode-ish, top-right, substring only.
    Matches paint via the CSS Custom Highlight API, so the syntax highlighting underneath is untouched. */
 .r-outcell { position: relative; }
