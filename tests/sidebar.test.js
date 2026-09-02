@@ -5708,3 +5708,57 @@ test("the resource chart window is configurable, and short by default", async ()
     assert.match(settings, /Samples are kept for the whole session either way/,
         "the note distinguishes what is DRAWN from what is retained");
 });
+
+// A saved PRESET is re-derived, not replayed: storing its tracks pins the preset as it was the day it was
+// picked. Overview later gained the host pool, and a layout saved before that kept drawing a cards-only chart
+// with a CPU-resident model missing from it entirely.
+test("layout: a saved preset picks up later improvements; only Custom is restored verbatim", async () => {
+    const stale = { ml_res_layout: { presetId: "overview", tracks: [
+        { id: "overview", series: ["vram.0", "vram.1"], mode: "overlay", heightPx: 96 },   // pre-host-pool
+    ] } };
+    const w = await loadSidebarWorld({ vram: [], info: INFO_MIXED, local: stale });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+    await w.flush();
+    const keys = [...w.shadow.querySelectorAll(".rc-key")].map((n) => n.textContent);
+    assert.equal(keys.length, 3, `the CURRENT overview, including the host pool — got ${keys.join(" | ")}`);
+    assert.match(keys.join(" "), /System RAM/, "the improvement lands rather than being pinned out");
+
+    // A CUSTOM layout is a literal record of choices, so it IS restored as saved.
+    const custom = { ml_res_layout: { presetId: "custom", tracks: [
+        { id: "just-one", series: ["vram.1"], mode: "stack", heightPx: 96 },
+    ] } };
+    const w2 = await loadSidebarWorld({ vram: [], info: INFO_MIXED, local: custom });
+    await w2.raw({ __mlSidebarOpen: true });
+    w2.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w2.flush();
+    await w2.flush();
+    assert.deepEqual([...w2.shadow.querySelectorAll(".rc-name")].map((n) => n.textContent), ["CUDA1"],
+        "a custom layout is kept exactly as chosen");
+});
+
+test("overview: the line tooltip gives size, usage and the consumers", async () => {
+    const w = await loadSidebarWorld({
+        vram: [{ model: "onzero", vramGB: 19, vramBytes: 19 * 1024 ** 3, sizeBytes: 19 * 1024 ** 3,
+                 gpus: [{ id: "0", runner: "CUDA", vramBytes: 19 * 1024 ** 3 }], expiresAt: null }],
+        info: INFO_MIXED,
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+    await w.flush();
+
+    const key = w.shadow.querySelector(".rc-key");
+    key.dispatchEvent(new w.window.PointerEvent("pointerenter", { bubbles: true }));
+    // The tip follows the cursor, so it needs a position before it renders.
+    w.shadow.querySelector(".rc-plot").dispatchEvent(new w.window.PointerEvent("pointermove", { bubbles: true }));
+    await w.flush();
+
+    const tip = w.shadow.querySelector(".rc-tip-pool");
+    assert.ok(tip, "hovering a pool's line opens the tip");
+    assert.match(tip.textContent, /CUDA0/, "which device");
+    assert.match(tip.textContent, /of 23\.99 GiB/, "how big the pool is");
+    assert.match(tip.textContent, /19\.00 GiB|20\.00 GiB/, "how much of it is consumed");
+    assert.match(tip.textContent, /onzero/, "and BY WHAT — the consumers, named again in the tip");
+});

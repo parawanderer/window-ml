@@ -255,7 +255,7 @@ export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean 
 /** The pool (card or host) currently hovered in the chart, and which models sit on it. The model rows below
  *  ARE the legend, so rows not on that pool grey out — reusing what is already on screen instead of injecting
  *  a row that shifts the layout under the cursor. */
-export const poolHover = signal<{ name: string; models: string[] } | null>(null);
+export const poolHover = signal<{ name: string; ceiling: number; used: number; consumers: { label: string; bytes: number }[] } | null>(null);
 
 /** Pointer position for the model-row tip, in viewport coords (the row is not inside the plot). */
 export const rowTipAt = signal<{ x: number; y: number } | null>(null);
@@ -282,9 +282,16 @@ export function restoreLayout(sample: ResourceSample): void {
         const presets = presetsFor(sample);
         const fallback = () => { presetId.value = presets[0]?.id ?? ""; layout.value = presets[0]?.tracks ?? null; };
         if (!saved?.tracks?.length) return fallback();
+        // A saved PRESET is re-derived, never replayed. Storing its tracks would pin the preset as it was the
+        // day you picked it: Overview later gained the host pool, and a layout saved before that kept showing
+        // a cards-only chart with a CPU-resident model missing from it. Only a CUSTOM layout is a literal
+        // record of choices, and only that is restored verbatim.
+        const named = saved.presetId && saved.presetId !== "custom"
+            ? presets.find((x) => x.id === saved.presetId) : null;
+        if (named) { presetId.value = named.id; layout.value = named.tracks; return; }
         const probe = { id: "saved", label: "", description: "", tracks: saved.tracks };
         if (presetRefusal(probe, sample)) return fallback();   // saved on another machine, or now invalid
-        presetId.value = saved.presetId || "custom";
+        presetId.value = "custom";
         layout.value = saved.tracks;
     });
 }
@@ -450,7 +457,7 @@ export function VramPanel() {
                 ? rows.map(m => {
                     const off = hidden.has(m.model);
                     return (
-                        <div class={`vram-row${off ? " off" : ""}${hoverModel.value === m.model ? " hot" : ""}${poolHover.value && !poolHover.value.models.includes(m.model) ? " away" : ""}`} key={m.model}
+                        <div class={`vram-row${off ? " off" : ""}${hoverModel.value === m.model ? " hot" : ""}${poolHover.value && !poolHover.value.consumers.some((c) => c.label === m.model) ? " away" : ""}`} key={m.model}
                             onPointerEnter={() => (hoverModel.value = m.model)}
                             onPointerMove={(e: PointerEvent) => (rowTipAt.value = { x: e.clientX, y: e.clientY })}
                             onPointerLeave={() => { hoverModel.value = null; rowTipAt.value = null; }}>

@@ -202,9 +202,14 @@ function PoolTip() {
         ? { right: `${Math.max(2, at.w - at.x + 10)}px`, left: "auto", top: `${Math.max(2, at.y - 26)}px` }
         : { left: `${at.x + 10}px`, right: "auto", top: `${Math.max(2, at.y - 26)}px` };
     return (
-        <div class="rc-tip" role="tooltip" style={style}>
-            <span class="rc-tip-name">{h.name}</span>
-            <span class="rc-tip-size">{h.models.length ? `${h.models.length} model${h.models.length === 1 ? "" : "s"}` : "nothing of ours"}</span>
+        <div class="rc-tip rc-tip-pool" role="tooltip" style={style}>
+            <div class="rc-tip-line"><span class="rc-tip-name">{h.name}</span>
+                <span class="rc-tip-size">{formatBytes(h.used)} of {formatBytes(h.ceiling)}</span></div>
+            {h.consumers.length
+                ? h.consumers.map((c) => (
+                    <div class="rc-tip-line rc-tip-dim" key={c.label}><span>{c.label}</span><span>{formatBytes(c.bytes)}</span></div>
+                ))
+                : <div class="rc-tip-line rc-tip-dim">nothing resident</div>}
         </div>
     );
 }
@@ -216,11 +221,16 @@ function PoolTip() {
  *  every resident model, so they are the legend: rows not on this pool grey out, and a tooltip on the plot
  *  names the device. That reuses what is on screen instead of injecting a row that pushes the layout around
  *  under the cursor. */
-function enterPool(p: { id: string; name: string; bandsOf: (s: ResourceSample) => Band[] }, latest: ResourceSample): void {
+function enterPool(p: { id: string; name: string; ceiling: number; bandsOf: (s: ResourceSample) => Band[] }, latest: ResourceSample): void {
+    const bands = p.bandsOf(latest);
     hoverPool.value = p.id;
     poolHover.value = {
         name: p.name,
-        models: p.bandsOf(latest).filter((b) => b.kind === "model" && b.model).map((b) => b.model!),
+        ceiling: p.ceiling,
+        used: bands.filter((b) => b.kind !== "free").reduce((n, b) => n + b.bytes, 0),
+        // Every consumer, named with its share — including the residual, which is most of what a nearly-idle
+        // card holds and is the thing a reader would otherwise go looking for a process to explain.
+        consumers: bands.filter((b) => b.kind !== "free" && b.bytes > 0).map((b) => ({ label: b.label, bytes: b.bytes })),
     };
 }
 function leavePool(): void { hoverPool.value = null; poolHover.value = null; }
