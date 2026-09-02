@@ -5493,3 +5493,22 @@ test("resource tracks: hovering a band names its model, with the row's own facts
     await w.flush();
     assert.equal(w.shadow.querySelectorAll(".rc-tip").length, 0, "and it clears on leave");
 });
+
+// Tooltip anchoring is a real trap here: `.tt-pop.left` means LEFT-anchored (extends rightward), for triggers
+// at the panel's LEFT edge. The track header's figure is right-aligned, so a left-anchored pop runs off the
+// panel and is clipped — which is exactly what shipped once.
+test("resource tracks: the header tooltip is right-anchored so it can't run off the panel", async () => {
+    const w = await loadSidebarWorld({ vram: [], info: INFO_2CARD });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+
+    const pop = w.shadow.querySelector(".rc-total .tt-pop");
+    assert.ok(pop, "the denominator explains which of the three totals it is");
+    assert.ok(!pop.classList.contains("left"),
+        "right-aligned trigger → right-anchored pop (extends leftward), or it clips at the panel edge");
+    assert.ok(pop.classList.contains("wrap"), "and it wraps — the explanation is prose, not a label");
+    // The legend keys sit at the LEFT edge, so those are correctly left-anchored.
+    const keyPop = w.shadow.querySelector(".rc-key .tt-pop");
+    assert.ok(keyPop.classList.contains("left"), "left-edge trigger → left-anchored pop");
+});

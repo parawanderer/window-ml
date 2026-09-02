@@ -117,7 +117,9 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingIsFi
                 <span class="sp" />
                 <span class="rc-total tt">
                     {formatBytes(used)} / {formatBytes(ceiling)}
-                    <span class="tt-pop left" role="tooltip">
+                    {/* RIGHT-anchored (the default): this figure sits at the panel's right edge, so a
+                        left-anchored pop extends rightward and is clipped. `wrap` because it is prose. */}
+                    <span class="tt-pop wrap" role="tooltip">
                         {ceilingIsFit
                             ? "Capacity as Ollama reports it (cuDeviceTotalMem) — the figure placement decides against. Slightly below what nvidia-smi shows, which this server doesn't report."
                             : "Total as the driver reports it, matching nvidia-smi. Ollama places against a slightly lower figure."}

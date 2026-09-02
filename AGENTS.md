@@ -685,6 +685,82 @@ mark covers stays blank — the sidebar's gutter is
 unselectable and markdown has no equivalent, so baking times into the output would make an exported log
 un-pasteable (and the raw-view rule already demands the model-facing text stay verbatim).
 
+**Tool tokens are POINTERS, not just citations (`dereference`).** An `@tool:<id>` was only a way to embed an
+output in the final answer. It is also a HANDLE the model can read back mid-run. The loop already retained
+every non-failed citable output keyed by that id, so the value was there — there was just no way to reach it.
+`dereference` (offered only when `toolTokens` is on) reads it, optionally reduced by a `pipe` first, and it
+reaches the FULL capture rather than the ~500-char copy the model was shown — data that was otherwise
+unreachable without re-running a side-effecting tool. It is answered **in the loop** (`derefLocally`), not
+delegated: a pure read of run state the loop owns, so it behaves identically on the page-hosted and
+background-hosted paths with no page round-trip and no approval.
+- The **pipe is the existing bash sub-dialect** (`text-pipe.ts`), extended with the structural stages it
+  lacked: `keys` · `values` · `schema` (alias `jsonschema`) · `type` · `count` · and jq-style `.a.b[0]` paths,
+  composing with the line verbs in either order. Bare words are verbs, a leading dot is a path, so the two
+  families can never collide — `.keys()` is spelled `keys`, and "the keys of that field" is `.items | keys`.
+  Structural stages REFUSE non-JSON rather than inventing a shape for prose. `count` is the structure-aware
+  size (`wc -l` counts LINES, so after a path stage it counts the lines of pretty-printed JSON — true and
+  useless). **`PIPE_CMDS` is the single source** for both the refusal message and the system prompt's verb
+  list, with a drift-guard test: a prompt that advertises a verb the dialect lacks costs the model a whole
+  turn, which happened once (`len`/`slice`, left over from a discarded dialect).
+- The pointer carries the value's **TYPE**, from the render descriptor the step already produced — so `keys`
+  on a DataFrame means its COLUMNS, and two casts the line dialect can't express work: `latex`, and `img`,
+  which never dumps the payload but says it IS base64 image data, how large, and what to do instead.
+- `token` takes a **short LABEL** as well as `true` (`token: "the pricing table"`). The string is both the
+  opt-in and the name; it is purely for the model, appearing in the deref header, the available list and the
+  fault candidates, and `nearest()` matches on it so recalling the NAME while inventing the hex still lands.
+  It is a model-authored CLAIM, so it always sits BESIDE the derived description, never instead of it.
+- Two failure modes are explicit. A pointer **aliases a snapshot with no invalidation**, so every read leads
+  with what the value is and how many steps ago it was captured. And an unresolvable reference is usually a
+  hallucinated token-SHAPED id, so it answers with a **MemoryFault** — the bad address, the nearest real
+  pointers with their edit distance (distance 1 is a typo; 6 means it invented one, and the message says so),
+  and an explicit note that the fault is RECOVERABLE, so a model pattern-matching "fault" to a crash doesn't
+  abandon the task.
+- **`look` accepts an image pointer**: `look { selector: "@tool:abc123" }` re-examines a screenshot the run
+  already took — a new question about the same pixels, instead of re-shooting a page that may have changed.
+  The loop resolves it and hands the image down, so `look` never learns about tokens.
+- **`ml.dereference(ref, { pipe })`** is the same thing as a primitive, `pipe` taking the dialect string or an
+  ARRAY of stages (which sidesteps quoting). Run-bound exactly like `ml.answer`: `tool-exec` binds a resolver
+  for the duration of a tool call and restores it after, so it is live inside an approved `exec` and throws
+  from a page's own console. The BACKGROUND path rings back over the same reverse channel the output stream
+  uses (`DEREF_TOKEN`, keyed by runId) — a page-only binding would have worked in off-mode and silently
+  returned nothing whenever a debug surface was open. `dereference` and `info` are both in the read-only exec
+  dialect (pure reads that spend nothing), with the adversarial tests the dialect rule requires.
+
+**`ml.info()` — machine capacity.** `ml.ps()` says what is RESIDENT; `ml.info()` says what there is room for
+(Ollama `/api/info`, via the same base discovery `/api/ps` uses). Returns **null** when the route isn't served
+— only a patched Ollama behind an OpenWebUI passthrough answers it, everything else replies with the SPA's
+HTML — which must read as "capacity unknown", never as zero. `LoadedModel` also gained exact
+`vramBytes`/`sizeBytes` beside the rounded GB, and `gpus[]` for per-device placement; a CPU-resident model has
+**no `gpus` key at all**, and that absence is the server's signal, preserved rather than normalised to `[]`.
+
+**Resource panel (VRAM/RAM).** `resource-model.ts` is the pure, unit-tested layer (parsing, bands, ceilings,
+series/tracks/presets, history segmentation); `sidebar/resource-chart.tsx` only draws. Spec + ASCII mocks +
+live captures from both a CUDA box and a Metal Mac: `docs/spec/RESOURCE_PANEL.md`. **Read it before touching
+this** — several of the numbers are counter-intuitive and getting one wrong produces a confidently wrong
+display rather than an obvious bug:
+- **All memory figures are raw BYTES and BINARY.** A card sold as "96GB" reports 94.97 GiB; dividing by 1000³
+  gives 101.97 GB, which reads as plausible and is 7.4% wrong. Keep bytes internally, convert once at the
+  render boundary through **`formatBytes`** — one formatter, never a hand-rolled `/1e9`, and never a bare
+  number. Model FILE sizes are normalised to GiB too, even though `ollama list` prints them decimal.
+- **Three totals, all correct**: nominal (no API reports it — never synthesise it by rounding), the driver
+  framebuffer total (`physical_memory`, what nvidia-smi shows — DISPLAY this), and `cuDeviceTotalMem`
+  (`total_memory`, what ollama places against — decide FIT against this).
+- **A device decomposes into three bands, never two**: attributed per model, the residual, then free. The
+  residual is named by MAGNITUDE — under ~1 GiB it is ollama's own driver context (an idle card holds ~0.55
+  GiB), above it something genuinely else is there. Calling it "other processes" invents a process.
+- **Unified memory (Metal) is one pool**: `runner` is the discriminator, occupancy comes from the HOST (a
+  Mac's device reported itself 11.84/11.84 GiB free while the system was 12.6 GiB deep in the same silicon),
+  and a GPU-resident model is attributed in FULL there (`size == size_vram`, so attributing only the spill
+  attributes nothing).
+- **History is session-only and per-BOX**: `boxSignature` identifies the machine, and pointing at a different
+  backend drops the old box's samples — including those taken before capacity was known, which would
+  otherwise be backfilled with the NEW ceiling. Gaps stay gaps (`segments`), because polling is gated on the
+  panel being open and a line across a ten-minute hole is a confident claim about memory nobody measured.
+- **Presets are derived from the catalog** and validated by `presetRefusal` against `stackRefusal` — a preset
+  may never propose a layout the rule then rejects (Overview stacked several cards until a drift guard caught
+  it). Stacking asserts the parts sum to a real whole: true within one pool, false across cards or across
+  device+host on unified memory.
+
 **Two surfaces (in-page overlay + DevTools panel).** The same `sidebar-app` bundle runs
 in two places: the in-page **overlay** (a content-script shadow-root shell, `shell.ts`,
 hosting `sidebar.html` in an iframe) and an optional **DevTools panel** (`devtools.ts`
@@ -864,6 +940,15 @@ thing. The parts:
   decision (`resolve(key, …)`), all driven from the SW realm with the page walled off. Deterministic
   (fake-LLM, no model/key). Pace it with `PACE`/`HOLD` (ms). The automated assertions of the same flow
   are `approval.spec.mjs`.
+- **`resource-demo.mjs` / `resource-panel.spec.mjs`** — the VRAM/RAM panel against a scripted fake BOX.
+  `fake-llm.mjs` fakes the box as well as the model: **`setResident()`** drives `/api/ps` and
+  **`setCapacity()`** drives `/api/info`, both settable mid-run, so a demo or spec can make models load, move
+  card and evict on a timeline. `setCapacity(null)` reproduces a server without the patch, which answers that
+  route with the SPA's HTML rather than a 404. The demo walks: idle cards → a model onto CUDA0 → a second onto
+  CUDA1 → a CPU-resident third against System RAM → an eviction → the panel CLOSED for 20s (so the history
+  shows an honest GAP) → no `/api/info` at all → capacity restored. The spec asserts the same, plus a
+  **CUDA → Metal backend switch** (the panel re-shapes to one unified track and the old box's history is
+  dropped, since an 18 GiB reading redrawn against an 11.84 GiB pool clips and looks like a measurement).
 - **`stream-demo.mjs`** — a **narrated demo, not a test** of LIVE tool-output streaming: `npm run build &&
   node --import tsx tests/e2e/stream-demo.mjs` opens a headful browser, slides the overlay open on a real
   (background-hosted) run, and drives a deliberately SLOW `exec` (paced `console.log`) and `python_exec`
