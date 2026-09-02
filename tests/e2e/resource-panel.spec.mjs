@@ -234,3 +234,78 @@ test("resource panel: switching CUDA → Metal re-shapes the panel and drops the
         await fake.stop();
     }
 });
+
+// Resizing, with REAL geometry — the one thing jsdom cannot check. The panel is dragged tall (the chart must
+// actually grow into it), then collapsed to its floor, where the failure to catch is content OVERLAPPING:
+// at 80px the header, plot and rows could not fit and spilled over each other and over the session list.
+test("resource panel: drags to expand and collapse, and never overlaps at its smallest", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0), resident("qwen3.5:35b", 22 * GiB, 1)]);
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-plot").count(), { timeout: 20000 }).toBeGreaterThan(0);
+
+        const boxOf = (sel, i = 0) => frame.locator(sel).nth(i).boundingBox();
+        const drag = async (fromY, toY) => {
+            const grip = await frame.locator(".vram-grip").boundingBox();
+            await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+            await page.mouse.down();
+            await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2 + (toY - fromY), { steps: 8 });
+            await page.mouse.up();
+            await sleep(300);
+        };
+
+        // EXPAND: the chart itself must grow, not just the panel (a fixed-height plot would leave dead space).
+        const plot0 = await boxOf(".rc-plot");
+        const panel0 = await boxOf(".vram");
+        await drag(0, 220);
+        const plot1 = await boxOf(".rc-plot");
+        const panel1 = await boxOf(".vram");
+        expect(panel1.height).toBeGreaterThan(panel0.height + 100);
+        expect(plot1.height, "the chart grows with the panel, not empty space below it").toBeGreaterThan(plot0.height + 60);
+
+        // COLLAPSE: drag far past the floor; it must clamp rather than shrink into nothing.
+        // COLLAPSE: drag far past the floor. It must clamp to a usable size rather than shrink into nothing —
+        // and the grip must still be REACHABLE after the expand (it used to scroll away with the content).
+        await drag(0, -900);
+        const small = await boxOf(".vram");
+        expect(small.height, "collapses below the expanded size").toBeLessThan(panel1.height);
+        // Lands exactly on the floor rather than shrinking into nothing — the drag went far past it.
+        expect(Math.round(small.height), "clamps at the usable floor").toBe(190);
+
+        // …and at that smallest size NOTHING may overlap. Collect the panel's own stacked parts and assert
+        // each begins at or below the previous one's bottom.
+        const parts = [];
+        for (const sel of [".vram-head", ".rc-plot", ".rc-legend", ".vram-row"]) {
+            const n = await frame.locator(sel).count();
+            for (let i = 0; i < n; i++) {
+                const b = await frame.locator(sel).nth(i).boundingBox();
+                if (b && b.height > 0) parts.push({ sel, ...b });
+            }
+        }
+        expect(parts.length).toBeGreaterThan(2);
+        parts.sort((a, b) => a.y - b.y);
+        for (let i = 1; i < parts.length; i++) {
+            const prev = parts[i - 1], cur = parts[i];
+            expect(cur.y, `${cur.sel} overlaps ${prev.sel} at the panel's smallest size`)
+                .toBeGreaterThanOrEqual(prev.y + prev.height - 1.5);
+        }
+
+        // Nothing may spill past the panel into the session list below: what doesn't fit SCROLLS.
+        const scrolls = await frame.locator(".vram").evaluate((el) => el.scrollHeight > el.clientHeight + 1);
+        const spilled = await frame.locator(".vram").evaluate((el) => {
+            const box = el.getBoundingClientRect();
+            return [...el.children].some((c) => c.getBoundingClientRect().bottom > box.bottom + 2);
+        });
+        expect(spilled && !scrolls, "content past the bottom edge must scroll, not spill over the list").toBe(false);
+    } finally {
+        await ext.close();
+        await fake.stop();
+    }
+});

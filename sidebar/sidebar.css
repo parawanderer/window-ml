@@ -68,8 +68,11 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .vram[style*="height"] { overflow-y: auto; min-height: 190px; }
 /* The boundary between this panel and the session list, as a handle. It competes with the list for height, so
    which one you want more of depends on what you are doing — a drag, not a setting, and remembered. */
-.vram-grip { position: absolute; left: 0; right: 0; bottom: 0; height: 7px; cursor: ns-resize;
-             display: flex; align-items: center; justify-content: center; }
+/* STICKY, not absolute: the panel scrolls once a height is set, and an absolutely-positioned grip sits at the
+   bottom of the CONTENT — so it scrolled out of reach exactly when you most wanted to drag it back. Sticky
+   keeps it on the visible bottom edge. */
+.vram-grip { position: sticky; bottom: 0; margin-top: auto; height: 7px; flex: 0 0 auto; cursor: ns-resize;
+             display: flex; align-items: center; justify-content: center; background: var(--panel); }
 .vram-grip::after { content: ""; width: 34px; height: 3px; border-radius: 2px; background: var(--panel-2);
                     opacity: .55; transition: width .12s ease, opacity .12s ease; }
 .vram-grip:hover::after { width: 52px; opacity: 1; background: var(--panel-2-hover); }
