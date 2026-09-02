@@ -60,7 +60,15 @@ export interface DeviceCapacity {
     /** The server's label ("CUDA0"), not a marketing name. */
     name: string;
     runner: Runner;
+    /** `total_memory` — cuDeviceTotalMem, ollama's own view. The FIT figure: what placement decides against
+     *  (ollama actually reserves a little more still). Sits ~638 MiB below the driver's framebuffer total. */
     totalBytes: number;
+    /** `physical_memory` — the DRIVER's framebuffer total, what nvidia-smi shows. The DISPLAY figure for
+     *  "total VRAM on the machine", so a devtools panel doesn't appear to lose a gigabyte the rest of the
+     *  system says is there. Not in the API yet (a follow-up PR adds it), hence optional: absent → fall back
+     *  to `totalBytes` and label it honestly. NEVER synthesise the nominal figure by rounding — that breaks on
+     *  any card with ECC on or a non-round config. */
+    physicalBytes?: number;
     freeBytes: number;
     /** Metal: `totalBytes` is a recommended working set overlapping host RAM — never add it to the host total. */
     unified: boolean;
@@ -100,6 +108,7 @@ export function parseInfo(raw: unknown): Capacity | null {
             runner,
             totalBytes: total,
             freeBytes: Number.isFinite(free) ? free : 0,
+            ...(Number.isFinite(Number(g.physical_memory)) && Number(g.physical_memory) > 0 ? { physicalBytes: Number(g.physical_memory) } : {}),
             unified: !isDiscrete(runner),
         }];
     });
@@ -165,14 +174,28 @@ export function residencyFrom(raw: unknown): ModelResidency {
  *  system total is the hard limit, and the device's reported total is a RECOMMENDED WORKING SET inside it —
  *  the "will this model fit" number, not a second pool. Measured on a 16 GB Mac: 12.71 GB working set of a
  *  17.18 GB system. */
-export interface Ceilings { hardBytes: number; softBytes: number | null; softLabel: string | null }
+export interface Ceilings {
+    hardBytes: number;
+    softBytes: number | null;
+    softLabel: string | null;
+    /** What to show as "total on the machine" — the driver framebuffer total when the server reports it, else
+     *  ollama's own total. `displayIsFit` says which, so the UI can label it honestly rather than implying it
+     *  is the number nvidia-smi shows when it isn't. */
+    displayBytes: number;
+    displayIsFit: boolean;
+}
 export function ceilingsFor(sample: ResourceSample, deviceId: string): Ceilings | null {
     const cap = sample.capacity;
     const dev = cap?.devices.find((d) => d.id === deviceId);
     if (!cap || !dev) return null;
+    // THREE totals exist and all are correct: nominal (never reported by anything — never synthesise it), the
+    // driver framebuffer total (`physical_memory`, what nvidia-smi shows), and cuDeviceTotalMem
+    // (`total_memory`, what ollama places against). Display the driver's; decide fit against ollama's.
+    const display = dev.physicalBytes ?? dev.totalBytes;
+    const displayIsFit = dev.physicalBytes == null;
     return dev.unified
-        ? { hardBytes: cap.host.totalBytes, softBytes: dev.totalBytes, softLabel: "recommended working set" }
-        : { hardBytes: dev.totalBytes, softBytes: null, softLabel: null };
+        ? { hardBytes: cap.host.totalBytes, softBytes: dev.totalBytes, softLabel: "recommended working set", displayBytes: cap.host.totalBytes, displayIsFit: true }
+        : { hardBytes: dev.totalBytes, softBytes: null, softLabel: null, displayBytes: display, displayIsFit };
 }
 
 /** Is this model on the CPU? `gpus` absent (or nothing in VRAM) is the server's way of saying so. */
@@ -189,6 +212,12 @@ export type BandKind = "model" | "other" | "free" | "unknown";
  *  reconcile with "card has Y free". That residual is expected and is not worth trying to correct — but the
  *  band must not CLAIM to be other processes, or the reader will go looking for a process that isn't there. */
 export const OTHER_BAND_LABEL = "unattributed";
+/** Below this, a residual is ollama's own driver overhead, not another process. An IDLE card with nothing
+ *  loaded still shows ~0.55 GiB (ollama's discovery context, held on every visible card), and a loaded model
+ *  adds its CUDA context on top. Computing "used by other processes" naively therefore makes every idle card
+ *  display phantom third-party usage. */
+export const DRIVER_OVERHEAD_FLOOR = 1024 ** 3;
+export const DRIVER_BAND_LABEL = "driver overhead";
 export const OTHER_BAND_NOTE =
     "In use but not accounted for by a model's reported buffers — mostly each loaded model's CUDA context "
     + "(0.7-1.8 GiB per model, which no buffer line reports), plus anything else on the card.";
@@ -236,7 +265,10 @@ export function deviceBands(sample: ResourceSample, deviceId: string): Band[] {
     // Everything in use that we cannot attribute to a model of ours. Clamped: `free` is sampled independently
     // of `ps`, so a race can make the arithmetic go slightly negative.
     const used = Math.max(0, cap.totalBytes - cap.freeBytes);
-    bands.push({ key: "other", label: OTHER_BAND_LABEL, bytes: Math.max(0, used - attributed - unknown), kind: "other" });
+    const residual = Math.max(0, used - attributed - unknown);
+    // Name the residual by MAGNITUDE: under the floor it is the driver's own context (present even on an idle
+    // card), above it there is genuinely something else on the card worth telling the reader about.
+    bands.push({ key: "other", label: residual < DRIVER_OVERHEAD_FLOOR ? DRIVER_BAND_LABEL : OTHER_BAND_LABEL, bytes: residual, kind: "other" });
     bands.push({ key: "free", label: "free", bytes: Math.max(0, cap.freeBytes), kind: "free" });
     return bands;
 }

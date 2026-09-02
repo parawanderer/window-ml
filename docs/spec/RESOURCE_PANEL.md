@@ -184,15 +184,46 @@ Per entry in `compute.supported_gpus`:
 | `total_memory` | what the driver reports for the card, already minus its own reserve |
 | `free_memory` | what is currently unallocated |
 
-On gpubox `total_memory` is **94.97 GiB** against a nominal 96 GiB. That ~1 GiB gap is real and
-expected — 417 MiB of firmware/display reservation, plus ~638 MiB because ollama reads the total
-from inside a live CUDA context whose own allocation is already excluded. **Never present that gap
-as an error or try to reconcile it to 96.**
+### Three different totals, all correct
 
-`total_memory` is the figure to show as a card's usable capacity. Ollama makes its own fit decisions
-against a slightly lower number (`total_memory` minus a minimum reserve — 94.4 GiB here), so **if
-the panel ever renders a "will it fit" judgement, that is the figure to compare against.** That
-reserve is not exposed by the API today, which is the open question in §6.
+```
+1  96.00 GiB   nominal / marketing        no API reports this
+2  95.59 GiB   driver framebuffer total   nvidia-smi, NVML     (417 MiB below nominal)
+3  94.97 GiB   cuDeviceTotalMem           ollama total_memory  (638 MiB below driver)
+```
+
+Tier 1 is a spec-sheet figure and cannot be queried from anything. The 417 MiB below it is board
+firmware reservation that is never addressable; the further 638 MiB is the CUDA driver's own
+reservation. **None of that gap is memory occupied by another process** — other processes appear in
+`free_memory`, which tracks them correctly, so never present the gap as an error.
+
+Which to display:
+
+- **"Total VRAM on the machine" → tier 2**, the driver framebuffer total. This is the devtools-facing
+  number: it is what `nvidia-smi` shows, so a panel using it agrees with everything else on the user's
+  machine rather than appearing to lose a gigabyte.
+- **"Will this model fit" → tier 3** (`total_memory`), or more precisely `total_memory` minus ollama's
+  minimum reserve (94.4 GiB here). This is what placement is actually decided against.
+
+Tier 2 is **not in the API yet** — a follow-up PR adds `physical_memory` alongside `total_memory`.
+`parseInfo` already reads it when present, and `ceilingsFor` returns `displayBytes` plus
+`displayIsFit`, so until it lands the panel shows `total_memory` and labels it honestly. **Never
+synthesise 96 GiB by rounding** — that breaks on any card with ECC enabled or a non-round config.
+
+### Do not compute "used by other processes" naively
+
+The obvious formula does not return zero on an idle card:
+
+```
+capacity - free - sum(ollama models)
+GPU0 (model loaded)   94.97 - 81.10 - 11.97 = +1.90 GiB
+GPU1 (nothing loaded) 94.97 - 94.42 -  0.00 = +0.55 GiB   <- no third party involved
+```
+
+The floor is ollama's own discovery context, held on every visible card whether or not anything is
+loaded; the rest is a loaded model's CUDA overhead that no buffer line reports. So the residual band
+is named by MAGNITUDE (`DRIVER_OVERHEAD_FLOOR`, ~1 GiB): below it, "driver overhead"; above it,
+"unattributed". Without that, every idle card displays phantom third-party usage.
 
 ### The unattributed band is not "other processes"
 

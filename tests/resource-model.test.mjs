@@ -275,16 +275,52 @@ test("formatBytes: never a bare number — an unlabelled figure is a support tic
 // `size_vram` is llama-server's buffer accounting; the driver reports 0.7-1.8 GiB more per model (the CUDA
 // context, which no buffer line reports). So the unattributed band holds OUR models' overhead too, and must
 // not claim to be other processes — or the reader goes hunting for a process that isn't there.
-test("the unattributed band doesn't claim to be other processes", () => {
-    const cap = M.parseInfo(CUDA_INFO);
-    cap.devices[0].freeBytes = cap.devices[0].totalBytes - 21 * GB;   // 20 GiB of model + ~1 GiB of context
-    const sample = { t: 1, capacity: cap, models: [
-        M.residencyFrom({ name: "m", size: 20 * GB, size_vram: 20 * GB, gpus: [{ gpu_id: "0", size_vram: 20 * GB }] }),
-    ] };
-    const other = M.deviceBands(sample, "0").find((b) => b.kind === "other");
-    assert.equal(other.label, M.OTHER_BAND_LABEL);
-    assert.equal(other.label, "unattributed");
-    assert.ok(!/other process/i.test(other.label), "the residual is largely our own model's CUDA context");
-    assert.match(M.OTHER_BAND_NOTE, /CUDA context/, "and the note explains where it comes from");
-    assert.ok(other.bytes > 0, "the residual really is there — it never reconciles to zero");
+test("the residual band is named by MAGNITUDE, so an idle card shows no phantom usage", () => {
+    const mk = (usedBytes, modelBytes) => {
+        const cap = M.parseInfo(CUDA_INFO);
+        cap.devices[0].freeBytes = cap.devices[0].totalBytes - usedBytes;
+        const models = modelBytes ? [M.residencyFrom({ name: "m", size: modelBytes, size_vram: modelBytes, gpus: [{ gpu_id: "0", size_vram: modelBytes }] })] : [];
+        return M.deviceBands({ t: 1, capacity: cap, models }, "0").find((b) => b.kind === "other");
+    };
+    // An IDLE card is the case the naive formula gets wrong: ~0.55 GiB is ollama's discovery context, held on
+    // every visible card whether or not anything is loaded. Calling that "other processes" invents a process.
+    const idle = mk(0.55 * GB, 0);
+    assert.equal(idle.label, "driver overhead");
+    assert.equal(idle.label, M.DRIVER_BAND_LABEL);
+    // A loaded model adds its CUDA context on top — size_vram is llama-server's buffer accounting and the
+    // driver reports 0.7-1.8 GiB more, so this residual is still OURS, not a third party.
+    assert.equal(mk(21 * GB, 20 * GB).label, "driver overhead", "a model's context stays under the floor");
+    // Clear the floor and there really is something else on the card worth naming.
+    const foreign = mk(30 * GB, 20 * GB);
+    assert.equal(foreign.label, M.OTHER_BAND_LABEL);
+    assert.equal(foreign.label, "unattributed");
+    assert.ok(!/other process/i.test(foreign.label), "still never claims to be a process we can point at");
+    assert.match(M.OTHER_BAND_NOTE, /CUDA context/);
+});
+
+// Three totals exist and all are correct: nominal (no API reports it), the driver framebuffer total
+// (physical_memory, what nvidia-smi shows), and cuDeviceTotalMem (total_memory, what ollama places against).
+test("ceilings: display the DRIVER total when reported, decide fit against ollama's", () => {
+    const withPhysical = { compute: { ...CUDA_INFO.compute, supported_gpus: [
+        { ...CUDA_INFO.compute.supported_gpus[0], physical_memory: 102638980956 },   // 95.59 GiB — the driver framebuffer total nvidia-smi shows
+    ] } };
+    const cap = M.parseInfo(withPhysical);
+    assert.equal(M.formatBytes(cap.devices[0].physicalBytes), "95.59 GiB", "the driver framebuffer total");
+    assert.equal(M.formatBytes(cap.devices[0].totalBytes), "94.97 GiB", "…and ollama's, ~638 MiB below it");
+
+    const c = M.ceilingsFor({ t: 1, models: [], capacity: cap }, "0");
+    assert.equal(M.formatBytes(c.displayBytes), "95.59 GiB", "shown as 'total on the machine' — matches nvidia-smi");
+    assert.equal(c.displayIsFit, false, "…and flagged as NOT the fit figure");
+    assert.equal(M.formatBytes(c.hardBytes), "94.97 GiB", "placement decides against ollama's total");
+});
+
+test("ceilings: without physical_memory, fall back honestly rather than synthesising the nominal size", () => {
+    const cap = M.parseInfo(CUDA_INFO);   // today's server: no physical_memory
+    assert.equal(cap.devices[0].physicalBytes, undefined);
+    const c = M.ceilingsFor({ t: 1, models: [], capacity: cap }, "0");
+    assert.equal(M.formatBytes(c.displayBytes), "94.97 GiB", "shows what IS reported");
+    assert.equal(c.displayIsFit, true, "flagged so the UI can label it honestly");
+    // The nominal 96 GiB is a spec-sheet number no API reports; rounding up to it breaks on ECC or an odd
+    // config, so nothing here may ever produce it.
+    assert.ok(!M.formatBytes(c.displayBytes).startsWith("96"), "never synthesised by rounding");
 });
