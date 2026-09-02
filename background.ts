@@ -114,7 +114,7 @@ async function purgeAllBgRuns(): Promise<void> {
     for (const runId of [...hydratedRuns]) {
         const snap = bgRuns.get(runId);
         if (snap) untrackRun(snap.tabId, runId);
-        bgRuns.delete(runId); hydratedRuns.delete(runId);
+        bgRuns.delete(runId); hydratedRuns.delete(runId); releaseSessionTokens(runId);
     }
     resurrectedRuns.clear();
 }
@@ -222,8 +222,10 @@ const trackRun = (tabId: number, runId: string, rebuild?: import("./contract").R
 const tabHasBgRun = (tabId: number): boolean => { for (const r of bgRuns.values()) if (r.tabId === tabId) return true; return false; };
 const untrackRun = (tabId: number, runId: string): void => {
     runRebuilds.delete(runId);
-    derefByRun.delete(runId);   // the run's pointers die with it — a later read must not resolve against it
-    tokensByRun.delete(runId);
+    derefByRun.delete(runId);   // the resolver is a per-TURN closure over that turn's loop — it must not outlive it
+    // NOT tokensByRun: this runs in each TURN's finally (the run stays resumable in bgRuns), so dropping the
+    // pointer store here emptied it between turns — the exact bug the session-scoped store was meant to fix.
+    // Its life is the SESSION's, so it is released with the bgRuns entry instead (see releaseSessionTokens).
 
     const s = activeRuns.get(tabId);
     if (!s) return;
@@ -358,14 +360,23 @@ const derefByRun = new Map<string, (ref: string, pipe?: string | string[]) => st
 // `{}` — it would rehydrate as a plain object and blow up on the first read. Bounded by TokenStore.CAP, and
 // dropped with the run in untrackRun. An SW eviction loses it, like the rest of the run's in-memory state.
 const tokensByRun = new Map<string, TokenStore>();
+/** How many SESSIONS' pointer stores to keep. Each is itself capped (TokenStore.CAP); this bounds the number
+ *  of them, so a service worker that outlives many runs can't accumulate without limit. */
+const MAX_TOKEN_SESSIONS = 24;
+
 /** This run's pointer store, created on the first turn and REUSED by every later turn of the same session. */
 const sessionTokens = (runId: string): TokenStore => {
     const existing = tokensByRun.get(runId);
-    if (existing) return existing;
+    if (existing) { tokensByRun.delete(runId); tokensByRun.set(runId, existing); return existing; }   // keep it fresh
     const fresh = new TokenStore();
     tokensByRun.set(runId, fresh);
+    while (tokensByRun.size > MAX_TOKEN_SESSIONS) tokensByRun.delete(tokensByRun.keys().next().value as string);
     return fresh;
 };
+
+/** Release a SESSION's pointers — only when the session itself is gone (its bgRuns entry dropped), never at the
+ *  end of a turn. Paired with every `bgRuns.delete` so the two lifetimes cannot drift apart again. */
+const releaseSessionTokens = (runId: string): void => { tokensByRun.delete(runId); };
 // LIVE tool-output streaming on the BACKGROUND path: the in-flight delegated tool's onStream, keyed by runId.
 // The loop delegates tool calls SEQUENTIALLY (one in flight per run), so runId alone correlates a page-posted
 // PAGE_TOOL_STREAM chunk to the right callback. Set in delegateTool while a streaming call runs, deleted after.

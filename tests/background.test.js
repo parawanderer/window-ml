@@ -2962,3 +2962,73 @@ test("OLLAMA_INFO returns the machine's capacity, and null when the route isn't 
     const wrong = loadBackground({ config: baseConfig(), onFetch: () => jsonResponse({ hello: 1 }) });
     assert.equal((await wrong.send({ type: "OLLAMA_INFO", payload: {} }, { tab: { id: 1 } })).data, null);
 });
+
+// REGRESSION. `@tool:` pointers are the run's own memory, and a SESSION is what the model sees as one
+// conversation — so a follow-up turn must still read what an earlier turn captured, and a tool NAME must still
+// mean "the latest call of that tool" even when that call happened in an older turn. This broke twice, in two
+// different places: first because the store was created per runAgentLoop call, then because `untrackRun` —
+// which fires in EACH TURN's finally, not at session end — dropped the background store beside the per-turn
+// deref resolver. A model hitting it was told "Nothing has been captured in this run yet" about a tool it had
+// just watched itself run, and concluded pointers were per-turn.
+test("tool pointers persist ACROSS a session's turns, and a tool name still means its latest call", async () => {
+    const PY_TOOL = { name: "python_exec", requiresApproval: false, description: "", parameters: { type: "object", properties: {} }, capabilities: [] };
+    const DEREF_TOOL = { name: "dereference", requiresApproval: false, description: "", parameters: { type: "object", properties: {} }, capabilities: [] };
+    const script = [];          // one entry per model call, in order
+    const toolResults = [];     // every tool result the MODEL was handed
+    let pyRun = 0;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            // Record the tool result from the previous step, so assertions read what the model actually saw.
+            const tr = [...(call.body?.messages || [])].reverse().find(m => m.role === "tool");
+            if (tr) toolResults.push(typeof tr.content === "string" ? tr.content : JSON.stringify(tr.content));
+            const next = script.shift();
+            return jsonResponse({ choices: [{ message: next }] });
+        },
+        onTabMessage: async (_tabId, msg) => {
+            if (msg?.type === "RUN_TOOL_IN_PAGE" && msg.payload?.name === "python_exec" && !msg.payload?.renderOnly) {
+                return { result: `ROWS-FROM-CALL-${++pyRun}` };
+            }
+            return undefined;
+        },
+    });
+    const callPy = { content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "python_exec", arguments: JSON.stringify({ code: "df", token: true }) } }] };
+    const deref = (token) => ({ content: "", tool_calls: [{ id: "c2", type: "function", function: { name: "dereference", arguments: JSON.stringify({ token }) } }] });
+    const start = (payload) => bg.send({ type: "START_RUN", payload: { systemPrompt: "S", tools: [PY_TOOL, DEREF_TOOL], model: "m", think: null, maxSteps: 6, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools", toolTokens: true, ...payload } }, { tab: { id: 7 } });
+    const resume = (task) => bg.send({ type: "RESUME_RUN", payload: { runId: "sess1", task } }, { tab: { id: 7 } });
+
+    // Turn 1: run python_exec, keep its output.
+    script.push(callPy, { content: "turn one done" });
+    await start({ runId: "sess1", task: "compute" });
+    const firstToolResult = toolResults.find((r) => r.includes("ROWS-FROM-CALL-1"));
+    const pinned = /@tool:([0-9a-f]{6})/.exec(firstToolResult)?.[1];
+    assert.ok(pinned, "turn 1 minted a pointer");
+
+    // Turn 2: a follow-up reads it BY NAME. This is the exact call that used to fault.
+    toolResults.length = 0;
+    script.push(deref("python_exec"), { content: "turn two done" });
+    await resume("how did you compute that?");
+    const acrossTurns = toolResults.at(-1) ?? toolResults[0];
+    assert.doesNotMatch(acrossTurns, /MemoryFault|Nothing has been captured/, "an earlier turn's output is still readable");
+    assert.match(acrossTurns, /ROWS-FROM-CALL-1/, "…and it is the value that turn captured");
+
+    // Turn 3: the name still reaches BACK past a turn boundary — the last python_exec is two turns old now.
+    toolResults.length = 0;
+    script.push(deref("python_exec"), { content: "turn three done" });
+    await resume("and again?");
+    assert.match(toolResults.at(-1) ?? toolResults[0], /ROWS-FROM-CALL-1/, "the alias reaches a call from an OLDER turn");
+
+    // Turn 4: run it again, then read by name — the alias follows the NEWEST call, across turns…
+    toolResults.length = 0;
+    script.push(callPy, deref("python_exec"), { content: "turn four done" });
+    await resume("recompute");
+    const latest = toolResults.at(-1);
+    assert.match(latest, /ROWS-FROM-CALL-2/, "the name means the latest call");
+    assert.doesNotMatch(latest, /ROWS-FROM-CALL-1/);
+
+    // …while the id pinned in turn 1 still means THAT call. That is the point of handing the id over.
+    toolResults.length = 0;
+    script.push(deref(`@tool:${pinned}`), { content: "turn five done" });
+    await resume("and the original?");
+    assert.match(toolResults.at(-1) ?? toolResults[0], /ROWS-FROM-CALL-1/, "a pinned id does not move");
+});
