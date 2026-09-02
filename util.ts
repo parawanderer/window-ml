@@ -2,7 +2,7 @@
 // and element-rect screenshot cropping. Pure-ish (args + browser globals); bundled
 // into injected.js.
 
-import { truncate, shadowRootStats, iframeStats } from "./dom";
+import { truncate, shadowRootStats, iframeStats, markdownTwin } from "./dom";
 import type { ShotBox, VisionMemory } from "./contract";
 
 /**
@@ -136,6 +136,15 @@ export const pageContext = (): string => {
                 // private console diagnostic — deliberately NOT named here so the model doesn't fixate on it.)
                 (s.closed ? `${s.open ? "; " : ", "}~${s.closed} custom element${s.closed === 1 ? "" : "s"} expose no light DOM (mostly EMPTY — unopened menus/outlets; a few may seal content — reach any visible one with locate/@pt)` : "") + ".");
         }
+    } catch {}
+    // Markdown twin: many docs platforms publish a clean, agent-oriented Markdown version of the page. When the
+    // page DECLARES one it is free to read (a <head> lookup — no network, no consent) and authoritative, and it
+    // steers the model to one fetch instead of surveying a rendered docs page. Same-origin, so fetching it needs
+    // no approval. Undeclared, a copy-as-Markdown control is the weaker hint that fetch_url will still find one.
+    try {
+        const md = markdownTwin();
+        if (md.url) parts.push(`Markdown: this page declares a Markdown version at ${md.url} — fetch_url it (same-origin, no approval) rather than surveying the DOM.`);
+        else if (md.affordance) parts.push("Markdown: not declared, but the page offers a copy-as-Markdown control — fetch_url on this URL may still return one.");
     } catch {}
     // Iframe orientation: same-origin frames the DOM tools cross (`>>>`); cross-origin ones are SOP-walled.
     try {

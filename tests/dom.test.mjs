@@ -1,7 +1,8 @@
 // Pure dom.ts helpers.
 import { test } from "node:test";
 import assert from "node:assert";
-import { elementReference, classifyOverlay, navTarget, typeFromHeader, typeFromContent, typeFromExtension, classifyContent, jsonShape, askReaderNumCtx, isCspEvalBlocked } from "../dom.ts";
+import { JSDOM } from "jsdom";
+import { elementReference, classifyOverlay, navTarget, typeFromHeader, typeFromContent, typeFromExtension, classifyContent, jsonShape, askReaderNumCtx, isCspEvalBlocked, markdownAlternateHref, resolveMarkdownAlternate, markdownAffordance, markdownTwin } from "../dom.ts";
 
 // --- ml.fetch content classification (header / content / extension → a HEURISTIC type for chaining) ---
 test("typeFromHeader: specific content-types map; generic ones return null (defer to content/extension)", () => {
@@ -194,4 +195,73 @@ test("isCspEvalBlocked: recognizes a CSP / Trusted-Types eval BLOCK (→ escalat
     assert.ok(!isCspEvalBlocked("TypeError: x.map is not a function"));
     assert.ok(!isCspEvalBlocked("ReferenceError: foo is not defined"));
     assert.ok(!isCspEvalBlocked(""));
+});
+
+// --- site-authored Markdown: the `<link rel="alternate" type="text/markdown">` a page declares ---
+// Shapes taken verbatim from a probe of 12 docs platforms — attribute order, quoting and extra attributes all
+// vary, so each attribute is matched by name rather than positionally.
+test("markdownAlternateHref: finds the declaration across real-world tag shapes", () => {
+    assert.equal(markdownAlternateHref('<link rel="alternate" type="text/markdown" href="https://nextjs.org/docs/x.md"/>'),
+        "https://nextjs.org/docs/x.md");
+    assert.equal(markdownAlternateHref('<link rel="alternate" type="text/markdown" href="/docs/installation.md" data-head=""/>'),
+        "/docs/installation.md", "relative hrefs come back verbatim — resolving is a separate, guarded step");
+    // GitHub Docs: href sits BEFORE other attributes, and the URL is an API endpoint no derivation would guess.
+    assert.equal(markdownAlternateHref('<link rel="alternate" type="text/markdown" href="https://docs.github.com/api/article/body?pathname=/en/actions/quickstart" title="Markdown version" data-llm-hint="Hey agent!"/>'),
+        "https://docs.github.com/api/article/body?pathname=/en/actions/quickstart");
+    assert.equal(markdownAlternateHref("<link rel=alternate type=text/markdown href=/a.md>"), "/a.md", "unquoted attributes");
+    assert.equal(markdownAlternateHref('<link rel="alternate" type="text/x-markdown" href="/b.md">'), "/b.md");
+    assert.equal(markdownAlternateHref('<link rel="alternate" type="text/markdown" href="/a?x=1&amp;y=2">'), "/a?x=1&y=2", "entity-encoded query");
+    // Picks the markdown one out of a head full of other alternates (hreflang, RSS) — every site had several.
+    assert.equal(markdownAlternateHref('<link rel="alternate" type="application/rss+xml" href="/rss.xml"/><link rel="alternate" hrefLang="ja" href="/ja"/><link rel="alternate" type="text/markdown" href="/x.md"/>'),
+        "/x.md");
+    assert.equal(markdownAlternateHref('<link rel="alternate" type="application/rss+xml" href="/rss.xml"/>'), null);
+    assert.equal(markdownAlternateHref('<link rel="stylesheet" type="text/markdown" href="/x.md"/>'), null, "rel must be alternate");
+    assert.equal(markdownAlternateHref("<html><body>no head links</body></html>"), null);
+});
+
+// A declaration is PAGE-CONTROLLED content, unlike a derived `.md` sibling. Following a cross-origin one under
+// the page's own grant would turn "read this page as Markdown" into "fetch whatever the page names".
+test("resolveMarkdownAlternate: resolves relative, and refuses anything not same-origin http(s)", () => {
+    const page = "https://bun.sh/docs/installation";
+    assert.equal(resolveMarkdownAlternate("/docs/installation.md", page), "https://bun.sh/docs/installation.md");
+    assert.equal(resolveMarkdownAlternate("installation.md", page), "https://bun.sh/docs/installation.md");
+    assert.equal(resolveMarkdownAlternate("https://bun.sh/other.md", page), "https://bun.sh/other.md");
+    // The attacks the origin guard exists for.
+    assert.equal(resolveMarkdownAlternate("https://evil.test/x.md", page), null, "cross-origin declaration");
+    assert.equal(resolveMarkdownAlternate("//evil.test/x.md", page), null, "protocol-relative to another host");
+    assert.equal(resolveMarkdownAlternate("http://bun.sh/x.md", page), null, "scheme downgrade is a different origin");
+    assert.equal(resolveMarkdownAlternate("https://bun.sh.evil.test/x.md", page), null, "suffix-confusable host");
+    assert.equal(resolveMarkdownAlternate("javascript:alert(1)", page), null);
+    assert.equal(resolveMarkdownAlternate("data:text/markdown,hi", page), null);
+    assert.equal(resolveMarkdownAlternate(null, page), null);
+    assert.equal(resolveMarkdownAlternate("/x.md", "not a url"), null);
+});
+
+// The live-document read behind pageInfo's "Markdown:" line. The declaration is authoritative; the
+// copy-as-Markdown control is the weaker fallback for the sites that serve a twin without declaring one.
+const doc = (html, url = "https://docs.test/guide") => new JSDOM(html, { url }).window.document;
+
+test("markdownTwin: a declared same-origin twin wins; a hostile declaration is dropped", () => {
+    assert.deepEqual(
+        markdownTwin(doc('<head><link rel="alternate" type="text/markdown" href="/guide.md"></head><body></body>')),
+        { url: "https://docs.test/guide.md", affordance: false });
+    // Cross-origin declaration → no URL. It does NOT fall back to the affordance hint being suppressed:
+    // there is no control here either, so the page simply reports nothing.
+    assert.deepEqual(
+        markdownTwin(doc('<head><link rel="alternate" type="text/markdown" href="https://evil.test/x.md"></head><body></body>')),
+        { url: null, affordance: false });
+    assert.deepEqual(markdownTwin(doc("<head></head><body></body>")), { url: null, affordance: false });
+});
+
+test("markdownAffordance: a copy/view CONTROL counts, a page merely about Markdown does not", () => {
+    assert.equal(markdownAffordance(doc('<body><button>Copy Page as Markdown</button></body>')), true);
+    assert.equal(markdownAffordance(doc('<body><button aria-label="View as Markdown"></button></body>')), true);
+    assert.equal(markdownAffordance(doc('<body><a role="button">Copy markdown</a></body>')), true);
+    // The false positive the verb requirement exists to prevent: a docs nav linking to a Markdown article.
+    assert.equal(markdownAffordance(doc('<body><a href="/markdown">Markdown</a><a href="/x">Markdown syntax guide</a></body>')), false);
+    assert.equal(markdownAffordance(doc("<body><button>Copy</button></body>")), false);
+    // A declaration outranks the control, so the two signals are never reported together.
+    assert.deepEqual(
+        markdownTwin(doc('<head><link rel="alternate" type="text/markdown" href="/g.md"></head><body><button>Copy as Markdown</button></body>')),
+        { url: "https://docs.test/g.md", affordance: false });
 });

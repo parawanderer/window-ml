@@ -658,7 +658,9 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
             summary: "Reports the page URL, title, and size.",
             description: "Where and when you are: the page URL, title, language, and the current " +
                 "date/time + locale/timezone. Use it to ground time-relative tasks (what counts as " +
-                "'today'?) and to confirm the site and language before matching text.",
+                "'today'?) and to confirm the site and language before matching text. It also reports " +
+                "whether this page publishes a clean MARKDOWN version of itself — on a docs page, fetching " +
+                "that is far cheaper and cleaner than surveying the rendered DOM.",
             parameters: { type: "object", properties: {} },
             run: (): string => pageContext()
         }),
