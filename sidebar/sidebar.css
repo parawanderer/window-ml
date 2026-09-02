@@ -719,6 +719,9 @@ details.io[open] > summary .io-preview { display: none; }
    explicit label, so the fuller human view is never mistaken for what the model actually read. */
 .r-unseen-lbl { margin: 6px 0 3px; font-size: 10px; letter-spacing: .04em; text-transform: uppercase; color: var(--fg-faint); cursor: help; }
 .r-unseen { opacity: .55; border-left: 2px dashed var(--border); padding-left: 6px; }
+.r-unseen-lbl.live { color: var(--fg-faint); text-transform: none; letter-spacing: 0; font-style: italic; }
+.r-unseen-q { display: inline-flex; align-items: center; justify-content: center; width: 13px; height: 13px;
+              margin-left: 3px; border: 1px solid var(--border); border-radius: 50%; font-size: 9px; font-style: normal; }
 
 /* Live tool output (ctx.stream) filling in while a step runs — a pulsing accent rail marks it as still going. */
 .astep-streaming { border-left: 2px solid var(--accent); padding-left: 6px; animation: astep-live 1.2s ease-in-out infinite; }

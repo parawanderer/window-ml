@@ -68,10 +68,12 @@ test("atBottomOf: parked at the bottom follows; scrolled up holds", () => {
 
 /* ---------------- the cell + its find bar (rendered) ---------------- */
 
-test("output cell: renders a scroller with a resize grip, and NO find bar until asked", async () => {
+test("output cell: renders a scroller, no grip until it overflows, and no find bar until asked", async () => {
     const cell = await mount("alpha\nbeta\n");
     assert.ok(cell.querySelector(".r-outscroll"), "the content scrolls inside the cell");
-    assert.ok(cell.querySelector(".r-outgrip"), "and can be resized by dragging the grip");
+    // This cell now wraps EVERY tool's output, so a short one-line result must not grow a drag handle.
+    // (jsdom has no layout → nothing overflows here; the real overflow case is the e2e scroll spec.)
+    assert.equal(cell.querySelector(".r-outgrip"), null, "no resize grip while there's nothing to resize");
     assert.equal(cell.querySelector(".r-find"), null, "find is closed until Ctrl+F");
 });
 

@@ -3570,3 +3570,20 @@ test("exec Out: the UI keeps MORE than the model got, and records where the mode
     assert.ok(out.render.stdout.length > 500, "while the UI keeps far more than the model got");
     assert.doesNotMatch(out.render.stdout, /truncated/, "the UI copy isn't clipped at the model's cap");
 });
+
+// Custom cutoffs: a model may ask the human for a LARGER per-call output cap (maxChars + maxCharsReason,
+// only granted post-approval). The "what the model saw" boundary must move with it — otherwise the UI would
+// mark text as unseen that the model actually read.
+test("exec Out: a raised (approved) output cap moves where the model's view ends", async () => {
+    const { ml } = loadDomWorld();
+    const exec = ml.domTools.find(t => t.name === "exec");
+    const js = "for (let i=0;i<200;i++) console.log('y'.repeat(9)); 1";   // ~2000 chars of console
+    const dflt = await exec.run({ js }, {});
+    assert.equal(dflt.render.seen, 500, "the default cap bounds the model's view");
+    const raised = await exec.run({ js, maxChars: 1200, maxCharsReason: "need the whole dump" }, {});
+    assert.equal(raised.render.seen, 1200, "a raised cap moves the boundary with it");
+    assert.ok(raised.render.stdout.length > 1200, "the UI still keeps more than the model got");
+    // A TIGHTER cap is always allowed (no approval needed) and must also be honoured.
+    const tighter = await exec.run({ js, maxChars: 100 }, {});
+    assert.equal(tighter.render.seen, 100, "a smaller cap is honoured too");
+});

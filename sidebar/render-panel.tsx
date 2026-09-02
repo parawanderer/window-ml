@@ -226,13 +226,18 @@ export const atBottomOf = (el: { scrollHeight: number; scrollTop: number; client
  *  context budget, but the UI keeps far more (UI_OUT_CAP) — so without this you'd read the surplus as "what the
  *  model saw". Everything past `seen` chars renders dimmed under an explicit label. Shared by python_exec and
  *  exec (and any future tool that reports a `seen` boundary). No boundary → plain output, unchanged. */
-export function SeenSplit({ text, seen }: { text: string; seen?: number }) {
+export function SeenSplit({ text, seen, live }: { text: string; seen?: number; live?: boolean }) {
     if (seen == null || seen >= text.length) return <Code text={text} lang="text" />;
     return (
         <>
             <Code text={text.slice(0, seen)} lang="text" />
-            <div class="r-unseen-lbl" title="The tool captured this, but it was clipped out of the result sent to the model (its output cap). The model never read it.">
-                ↓ captured, but NOT sent to the model
+            {/* While the tool is still RUNNING we already know where the model's cut will fall, so mark it as it
+                streams rather than springing it on you at the end — greyed, with a "?" that explains why. */}
+            <div class={`r-unseen-lbl${live ? " live" : ""}`}
+                title={live
+                    ? "Past this point the output is beyond the model's per-call output cap — it is still being captured for you, but it will NOT be part of the result sent to the model."
+                    : "The tool captured this, but it was clipped out of the result sent to the model (its output cap). The model never read it."}>
+                {live ? "beyond the model's cutoff " : "↓ captured, but NOT sent to the model"}{live ? <span class="r-unseen-q">?</span> : null}
             </div>
             <div class="r-unseen"><Code text={text.slice(seen)} lang="text" /></div>
         </>
@@ -319,8 +324,17 @@ export function OutputCell({ children }: { children: ComponentChildren }) {
     const input = useRef<HTMLInputElement>(null);
     const cap = dragH ?? outMaxH.value;
 
+    const [overflows, setOverflows] = useState(false);
     // Runs after EVERY render — i.e. on each streamed delta — so the newest line stays visible while following.
-    useEffect(() => { const el = box.current; if (el && follow.current) el.scrollTop = el.scrollHeight; });
+    useEffect(() => {
+        const el = box.current;
+        if (!el) return;
+        if (follow.current) el.scrollTop = el.scrollHeight;
+        // Only offer the resize grip once there's something to resize — this cell wraps EVERY tool's output,
+        // and a one-line result shouldn't grow a drag handle.
+        const over = el.scrollHeight - el.clientHeight > 2;
+        if (over !== overflows) setOverflows(over);
+    });
     // Re-run the search whenever the query/case changes — and on every render, so a STREAMING cell keeps its
     // match count honest as new output lands.
     useEffect(() => {
@@ -334,12 +348,21 @@ export function OutputCell({ children }: { children: ComponentChildren }) {
     useEffect(() => () => { if (findOwner.value === id) { findOwner.value = 0; clearFindPaint(); } }, []);   // unmount → drop the paint
 
     const jump = (delta: number): void => {
-        if (!box.current || !count) return;
+        const el = box.current;
+        if (!el || !count) return;
         const next = (idx + delta + count) % count;
         setIdx(next);
-        const rs = rangesFor(box.current, q, cs);
+        const rs = rangesFor(el, q, cs);
         const r = rs[next];
-        if (r) { paintFind(rs, r); (r.startContainer.parentElement)?.scrollIntoView({ block: "nearest" }); }
+        if (!r) return;
+        paintFind(rs, r);
+        // Stepping through matches means the reader took control — stop tail-following, or the next streamed
+        // delta would immediately yank them back to the bottom (why the arrows "didn't scroll" before).
+        follow.current = false;
+        // Scroll THIS container only (scrollIntoView would also scroll the panel/page, and `nearest` no-ops
+        // when the match is already on screen). Park the match about a third of the way down.
+        const box0 = el.getBoundingClientRect(), hit = r.getBoundingClientRect();
+        el.scrollTop += (hit.top - box0.top) - el.clientHeight / 3;
     };
     const closeFind = (): void => { findOwner.value = 0; clearFindPaint(); setQ(""); setCount(0); setIdx(0); };
     const onKey = (e: any): void => {
@@ -379,7 +402,7 @@ export function OutputCell({ children }: { children: ComponentChildren }) {
             ) : null}
             <div class="r-outscroll" ref={box} tabIndex={0} onKeyDown={onKey} onScroll={onScroll}
                 style={cap > 0 ? { maxHeight: `${cap}px` } : undefined}>{children}</div>
-            <div class="r-outgrip" role="separator" aria-label="Drag to resize this output" title="Drag to resize this output" onPointerDown={onGrab} />
+            {overflows || dragH != null ? <div class="r-outgrip" role="separator" aria-label="Drag to resize this output" title="Drag to resize this output" onPointerDown={onGrab} /> : null}
         </div>
     );
 }
@@ -394,8 +417,10 @@ function PyOutSection({ label, cls, children }: { label: string; cls: string; ch
 // @pt·@box token / the raw value / a Python traceback.
 function PythonOutRender({ d }: { d: Extract<RenderDescriptor, { type: "python-out" }> }) {
     return (
-        <div class="r-python r-py-out"><OutputCell>
-            {d.stdout ? <PyOutSection label="stdout" cls="r-py-stdout"><SeenSplit text={d.stdout} seen={d.seen} /></PyOutSection> : null}
+        <div class="r-python r-py-out">
+            {/* Only the captured OUTPUT scrolls (and hosts the find bar) — the returned value/table/image sit
+                below it, always visible, like a notebook cell's result. */}
+            {d.stdout ? <PyOutSection label="stdout" cls="r-py-stdout"><OutputCell><SeenSplit text={d.stdout} seen={d.seen} /></OutputCell></PyOutSection> : null}
             {d.image ? <div class="r-image"><ClickableImg src={d.image} alt="output image" /><div class="r-image-label">returned image</div></div> : null}
             {d.token ? <PyOutSection label="token" cls="r-py-token"><code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code></PyOutSection> : null}
             {d.error ? <PyOutSection label="error" cls="r-py-err"><Code text={d.error} lang="text" /></PyOutSection> : null}
@@ -403,7 +428,7 @@ function PythonOutRender({ d }: { d: Extract<RenderDescriptor, { type: "python-o
             {/* A sympy return auto-flagged `latex` → typeset the value (display mode), not a raw code block. */}
             {d.latex && d.value != null && !d.image && !d.token && !d.error && !d.df ? <PyOutSection label="value (LaTeX)" cls="r-py-val"><div class="md" dangerouslySetInnerHTML={{ __html: markdown(`\\[${d.value}\\]`, { math: true }) }} /></PyOutSection> : null}
             {d.value != null && !d.latex && !d.image && !d.token && !d.error && !d.df ? <PyOutSection label="value" cls="r-py-val"><Code text={d.value} lang="json" /></PyOutSection> : null}
-        </OutputCell></div>
+        </div>
     );
 }
 
@@ -412,12 +437,12 @@ function PythonOutRender({ d }: { d: Extract<RenderDescriptor, { type: "python-o
 // tools share one look; "console" (not "stdout") because that's what the JS side actually captured.
 function ExecOutRender({ d }: { d: Extract<RenderDescriptor, { type: "exec-out" }> }) {
     return (
-        <div class="r-python r-py-out"><OutputCell>
-            {d.stdout ? <PyOutSection label="console" cls="r-py-stdout"><SeenSplit text={d.stdout} seen={d.seen} /></PyOutSection> : null}
+        <div class="r-python r-py-out">
+            {d.stdout ? <PyOutSection label="console" cls="r-py-stdout"><OutputCell><SeenSplit text={d.stdout} seen={d.seen} /></OutputCell></PyOutSection> : null}
             {d.token ? <PyOutSection label="token" cls="r-py-token"><code class="r-hoverable" onPointerEnter={() => highlightToken(d.token!)} onPointerLeave={clearHighlight}>{d.token}</code></PyOutSection> : null}
             {d.error ? <PyOutSection label="error" cls="r-py-err"><Code text={d.error} lang="text" /></PyOutSection> : null}
             {d.value != null && !d.error ? <PyOutSection label="value" cls="r-py-val"><Code text={d.value} lang="json" /></PyOutSection> : null}
-        </OutputCell></div>
+        </div>
     );
 }
 

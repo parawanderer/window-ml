@@ -18,7 +18,7 @@ import {
     decideGate, decidedSteps, stepKey, grantHostPattern, inlineJson, inlineText,
 } from "./ui-kit";
 import { FeedbackBlock, ReusedBlock } from "./answer-render";
-import { RenderPanel, OutputCell } from "./render-panel";
+import { RenderPanel, OutputCell, SeenSplit } from "./render-panel";
 import { ReplyBubble } from "./reply";
 import { CodeExplain, codeOf } from "./summaries";
 import { groupTurns } from "./debug-reducer";
@@ -40,9 +40,12 @@ export function IoBlock({ label, tip, preview, render, raw }: { label: string; t
                             <span class="tt"><button class={showRaw ? "" : "on"} onClick={() => setShowRaw(false)}>rendered</button><span class="tt-pop left" role="tooltip">A debug visualisation for you — not shown to the model.</span></span>
                             <span class="tt"><button class={showRaw ? "on" : ""} onClick={() => setShowRaw(true)}>raw</button><span class="tt-pop left" role="tooltip">Exactly what the model sent/received. All it knows.</span></span>
                         </div>
-                        {showRaw ? raw : <RenderPanel d={render} />}
+                        {showRaw ? <OutputCell>{raw}</OutputCell> : <RenderPanel d={render} />}
                     </>
-                    : raw}
+                    // The RAW view is every tool's model-facing text — a fetch_url page, a big sampleText dump —
+                    // so it gets the same capped/scrollable/findable cell the code tools' output does. (A tool
+                    // with its own renderer scrolls inside that renderer instead; see python-out / exec-out.)
+                    : <OutputCell>{raw}</OutputCell>}
             </div>
         </details>
     );
@@ -80,6 +83,16 @@ export function ThoughtBlock({ thought, live }: { thought: string; live?: boolea
                 : null}
         </div>
     );
+}
+
+// Where the MODEL's copy of this tool's output will be cut, for a step that's still streaming — so the
+// doomed tail can be greyed AS IT ARRIVES instead of springing the truncation on you at the end. Derived from
+// the call's own args, so a model-requested (human-approved) larger cap is respected automatically. Only the
+// tools that HAVE an output cap report one; everything else streams unmarked.
+export function liveCutoff(st: AgentStep): number | undefined {
+    if (st.tool !== "exec" && st.tool !== "python_exec") return undefined;
+    const a = st.arguments || {};
+    return resolveOutputCap(st.tool, a.maxChars, a.maxCharsReason).cap;
 }
 
 export const toolFailed = (result?: string): boolean => !!result && /^(Error:|Denied)/.test(result);
@@ -254,7 +267,7 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                         raw={st.pending
                             ? (st.streamOutput != null
                                 // LIVE tool output (ctx.stream — console.log / print) filling in Jupyter-style while it runs.
-                                ? <div class="astep-streaming"><OutputCell><Code text={st.streamOutput} lang="text" /></OutputCell></div>
+                                ? <div class="astep-streaming"><SeenSplit text={st.streamOutput} seen={liveCutoff(st)} live /></div>
                                 : <span class="dim">running…</span>)
                             : (st.modelResult ?? st.result) ? <Code text={st.modelResult ?? st.result ?? ""} lang="text" /> : <span class="dim">(no output)</span>} />
                     {st.feedback ? <FeedbackBlock fb={st.feedback} /> : null}

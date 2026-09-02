@@ -5245,13 +5245,17 @@ test("tool output cell: python_exec AND exec both render into the shared capped/
     await w.dispatch(agentResult("outcell", "done", 2));
     await openRun(w);
     for (const head of [...w.shadow.querySelectorAll(".astep.tool .astep-head")]) { head.click(); await w.tick(); }
-    const cells = w.shadow.querySelectorAll(".r-outcell");
-    assert.equal(cells.length, 2, "BOTH tools' Out render into the shared cell (not one bespoke each)");
-    for (const cell of cells) {
+    // Each code tool's OUT renders its captured output through the shared cell…
+    const outCells = w.shadow.querySelectorAll(".r-py-out .r-outcell");
+    assert.equal(outCells.length, 2, "BOTH tools' Out use the shared cell (not one bespoke each)");
+    // …and the SAME component wraps every other tool's plain raw view (here: each step's In args), so a big
+    // fetch_url page or sampleText dump is scrollable + findable too.
+    assert.ok(w.shadow.querySelectorAll(".r-outcell").length > outCells.length,
+        "the generic raw views reuse the same cell");
+    for (const cell of outCells) {
         const scroll = cell.querySelector(".r-outscroll");
         assert.ok(scroll, "the cell scrolls its overflow");
         assert.match(scroll.getAttribute("style") || "", /max-height:\s*260px/, "capped at the configured height");
-        assert.ok(cell.querySelector(".r-outgrip"), "and offers a drag grip to resize just this cell");
     }
     const labels = [...w.shadow.querySelectorAll(".r-py-lbl")].map(e => e.textContent);
     assert.ok(labels.includes("stdout"), "python's captured output is labelled stdout");
@@ -5275,4 +5279,23 @@ test("tool output: the part the model never received renders marked, not as plai
     assert.match(marked.textContent, /UNSEEN/, "…and it holds the text past the model's cut");
     assert.doesNotMatch(marked.textContent, /^SEEN[^U]/, "the part the model DID read stays in the normal block");
     assert.match(w.shadow.querySelector(".r-unseen-lbl").textContent, /NOT sent to the model/i, "labelled explicitly");
+});
+
+// While a step is STILL RUNNING we already know where the model's cut will fall, so the doomed tail is greyed
+// as it streams (with a "?" explainer) rather than springing the truncation on you at the end. The boundary
+// comes from the call's own args, so a model-requested (approved) larger cap is respected live.
+test("live output: the doomed tail is marked AS IT STREAMS, at the call's own raised cap", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("livecut", "run it"));
+    await w.dispatch(agentStep("livecut", 1, { seq: 1, pending: true, tool: "exec",
+        arguments: { js: "loop()", maxChars: 600, maxCharsReason: "need the whole dump" } }));
+    await w.dispatch(agentStep("livecut", 1, { seq: 1, streamOutput: "A".repeat(700) }));
+    await openRun(w);
+    w.shadow.querySelector(".astep.tool .astep-head").click(); await w.tick();
+    const lbl = w.shadow.querySelector(".r-unseen-lbl.live");
+    assert.ok(lbl, "the streaming view marks where the model's cut will fall");
+    assert.match(lbl.textContent, /cutoff/i, "…labelled as the model's cutoff, not a past-tense 'was clipped'");
+    assert.match(lbl.getAttribute("title") || "", /NOT be part of the result sent to the model/i, "with a hover explainer");
+    const tail = w.shadow.querySelector(".r-unseen");
+    assert.ok(tail && tail.textContent.trim().length >= 100, "exactly the text past the RAISED 600-char cap is marked");
 });

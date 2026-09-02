@@ -836,7 +836,7 @@ export function Settings() {
                         <option value="420">Tall (420px)</option>
                         <option value="0">Uncapped</option>
                     </select></label>
-                <div class="set-note">How tall a tool's output cell (python_exec / exec) grows before it scrolls — Jupyter-style, so a chatty run can't bury the transcript. Drag the grip under any cell to resize just that one. While you're scrolled to the bottom it follows new streamed output; scroll up and it holds still.</div>
+                <div class="set-note">How tall ANY tool's output grows before it scrolls (python_exec, exec, a big fetch_url page — every tool's output uses the same cell) — Jupyter-style, so a chatty run can't bury the transcript. Drag the grip under any cell to resize just that one, and Ctrl+F inside one to search it. While you're scrolled to the bottom it follows new streamed output; scroll up and it holds still.</div>
                 <label class="set-check">
                     <input type="checkbox" checked={codeLineNumbers.value}
                         onChange={(e: any) => { codeLineNumbers.value = e.target.checked; applyCodePrefs(); chrome.storage.local.set({ [LINES_KEY]: codeLineNumbers.value }); }} />
