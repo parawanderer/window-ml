@@ -693,7 +693,9 @@ details.io[open] > summary .io-preview { display: none; }
 /* Shared tool OUTPUT CELL (python_exec / exec / any future tool): capped height → scrolls, with a drag grip.
    Jupyter's output area — tall output can't bury the transcript, and tail-follow keeps the newest line in view. */
 .r-outcell { position: relative; }
-.r-outscroll { overflow: auto; overscroll-behavior: contain; }
+/* Vertical only: the cell exists to CAP HEIGHT. Horizontal is the inner code block's job (it honours the
+   wrap/scroll pref), so letting the cell scroll sideways too just produced a stray bar under short content. */
+.r-outscroll { overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
 .r-outgrip { height: 7px; margin-top: 2px; border-radius: 4px; cursor: ns-resize; background: var(--panel-2); opacity: .5; }
 .r-outgrip:hover { opacity: 1; background: var(--panel-2-hover); }
 
@@ -723,6 +725,7 @@ details.io[open] > summary .io-preview { display: none; }
    so copying the output copies only the output. */
 .r-timed { display: block; }
 .r-ts-row { display: flex; gap: 8px; white-space: pre; }
+.r-timed.short .r-ts { width: 38px; }   /* mm:ss — the hour is the current one, shown on hover */
 .r-ts { flex: 0 0 auto; width: 56px; text-align: right; color: var(--fg-faint); opacity: .8;
         font-variant-numeric: tabular-nums; user-select: none; -webkit-user-select: none; }
 .r-ts-line { flex: 1 1 auto; white-space: pre-wrap; word-break: break-word; }

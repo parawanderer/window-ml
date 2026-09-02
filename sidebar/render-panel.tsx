@@ -244,6 +244,16 @@ export function timeForOffset(marks: [number, number][] | undefined, offset: num
     return ts;
 }
 const hhmmss = (ts: number): string => new Date(ts).toTimeString().slice(0, 8);
+// A timestamp's LOCAL hour bucket (date + hour), so "same hour" is exact across midnight and half-hour zones.
+const hourKey = (ts: number): string => { const d = new Date(ts); return `${d.toDateString()} ${d.getHours()}`; };
+/** Drop the HOUR from the gutter? Only when EVERY mark falls in the hour we're in right now — then "14:" is
+ *  noise you can infer from context. A run that spans an hour boundary, or one you're reading back later,
+ *  keeps the full clock so it can never be misread. The hover always carries the full time either way. */
+export function elideHour(marks: [number, number][] | undefined, now: number = Date.now()): boolean {
+    if (!marks?.length) return false;
+    const k = hourKey(now);
+    return marks.every(([, t]) => hourKey(t) === k);
+}
 // Full precision for the hover — the gutter stays hh:mm:ss (narrow, scannable) but the underlying marks are
 // epoch MILLISECONDS, so the tooltip can show the exact instant and a meaningful gap.
 const hhmmssms = (ts: number): string => `${hhmmss(ts)}.${String(new Date(ts).getMilliseconds()).padStart(3, "0")}`;
@@ -259,11 +269,12 @@ export const fmtDelta = (ms: number): string =>
 export function TimedOutput({ text, marks }: { text: string; marks?: [number, number][] }) {
     if (!showOutTimes.value || !marks || !marks.length) return <Code text={text} lang="text" />;
     const lines = text.split("\n");
+    const short = elideHour(marks);   // current hour throughout → show mm:ss, not hh:mm:ss
     let off = 0, shown = "", prevTs: number | null = null;
     const rows = lines.map((line, i) => {
         const ts = timeForOffset(marks, off);
         off += line.length + 1;
-        const label = ts == null ? "" : hhmmss(ts);
+        const label = ts == null ? "" : (short ? hhmmss(ts).slice(3) : hhmmss(ts));
         const repeat = !!label && label === shown;
         if (label) shown = label;
         // Hover shows the exact instant (to the millisecond) and the gap since the previous timestamped line —
@@ -278,7 +289,7 @@ export function TimedOutput({ text, marks }: { text: string; marks?: [number, nu
             </div>
         );
     });
-    return <div class="code r-timed">{rows}</div>;
+    return <div class={`code r-timed${short ? " short" : ""}`}>{rows}</div>;
 }
 
 export function SeenSplit({ text, seen, live, marks }: { text: string; seen?: number; live?: boolean; marks?: [number, number][] }) {

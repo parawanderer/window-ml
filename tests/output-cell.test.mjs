@@ -152,3 +152,16 @@ test("alignedMarks: marks that don't index into the rendered text are DROPPED, n
     assert.equal(alignedMarks(undefined, "abc"), undefined);
     assert.equal(alignedMarks(marks, undefined), undefined);
 });
+
+test("elideHour: drops the hour only when every mark is in the CURRENT hour", async () => {
+    const { elideHour } = await import("../sidebar/render-panel.tsx");
+    const now = new Date("2026-09-02T14:17:30").getTime();
+    const t = (hh, mm) => new Date(`2026-09-02T${hh}:${mm}:00`).getTime();
+    assert.equal(elideHour([[0, t("14", "17")], [9, t("14", "19")]], now), true, "all in the current hour → elide");
+    assert.equal(elideHour([[0, t("13", "59")], [9, t("14", "01")]], now), false, "spans an hour boundary → keep it");
+    assert.equal(elideHour([[0, t("13", "17")]], now), false, "a different hour → keep it");
+    // Read back the next day at the same clock hour: same getHours(), different day — must NOT elide.
+    const tomorrow = new Date("2026-09-03T14:17:30").getTime();
+    assert.equal(elideHour([[0, t("14", "17")]], tomorrow), false, "same hour-of-day but a different DAY → keep it");
+    assert.equal(elideHour([], now), false);
+});

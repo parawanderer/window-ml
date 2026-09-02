@@ -30,6 +30,10 @@ import type { AgentTurnGroup } from "./debug-reducer";
 // In renders pretty JS while its Out stays raw). `raw` is the plain fallback.
 export function IoBlock({ label, tip, preview, render, raw, marks }: { label: string; tip?: string; preview: string; render?: RenderDescriptor; raw: ComponentChildren; marks?: [number, number][] }) {
     const [showRaw, setShowRaw] = useState(false);   // rendered by default when a descriptor targets this block
+    // The capped/scrollable/findable cell is for tool OUTPUT — a fetch_url page, a big sampleText dump. The In
+    // block is the CALL (args / the code being run): short, and it already renders in its own code block, so
+    // wrapping it there only added chrome (and a stray horizontal scrollbar) for nothing.
+    const cell = (body: ComponentChildren) => label === "Out" ? <OutputCell>{body}</OutputCell> : <>{body}</>;
     return (
         <details class="io" open>
             <summary class="io-label" title={tip}>{label}: <span class="io-preview">{preview}</span></summary>
@@ -40,12 +44,9 @@ export function IoBlock({ label, tip, preview, render, raw, marks }: { label: st
                             <span class="tt"><button class={showRaw ? "" : "on"} onClick={() => setShowRaw(false)}>rendered</button><span class="tt-pop left" role="tooltip">A debug visualisation for you — not shown to the model.</span></span>
                             <span class="tt"><button class={showRaw ? "on" : ""} onClick={() => setShowRaw(true)}>raw</button><span class="tt-pop left" role="tooltip">Exactly what the model sent/received. All it knows.</span></span>
                         </div>
-                        {showRaw ? <OutputCell>{raw}</OutputCell> : <RenderPanel d={render} marks={marks} />}
+                        {showRaw ? cell(raw) : <RenderPanel d={render} marks={marks} />}
                     </>
-                    // The RAW view is every tool's model-facing text — a fetch_url page, a big sampleText dump —
-                    // so it gets the same capped/scrollable/findable cell the code tools' output does. (A tool
-                    // with its own renderer scrolls inside that renderer instead; see python-out / exec-out.)
-                    : <OutputCell>{raw}</OutputCell>}
+                    : cell(raw)}
             </div>
         </details>
     );

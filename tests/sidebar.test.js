@@ -5242,16 +5242,19 @@ test("tool output cell: python_exec AND exec both render into the shared capped/
         seq: 2, tool: "exec", arguments: { js: "console.log('a'); 7" }, result: "console:\na\n\nvalue: 7",
         renderOut: { type: "exec-out", stdout: "a", value: "7" },
     }));
-    await w.dispatch(agentResult("outcell", "done", 2));
+    // A tool with NO renderer at all — its plain Out (a fetch_url page, a sampleText dump) must reuse the
+    // SAME cell, which is the whole point of putting it on the generic path.
+    await w.dispatch(agentStep("outcell", 3, { seq: 3, tool: "fetch_url", arguments: { url: "http://x/" }, result: "Fetched http://x/ — HTTP 200.\n\nsome page text" }));
+    await w.dispatch(agentResult("outcell", "done", 3));
     await openRun(w);
     for (const head of [...w.shadow.querySelectorAll(".astep.tool .astep-head")]) { head.click(); await w.tick(); }
     // Each code tool's OUT renders its captured output through the shared cell…
     const outCells = w.shadow.querySelectorAll(".r-py-out .r-outcell");
     assert.equal(outCells.length, 2, "BOTH tools' Out use the shared cell (not one bespoke each)");
-    // …and the SAME component wraps every other tool's plain raw view (here: each step's In args), so a big
-    // fetch_url page or sampleText dump is scrollable + findable too.
-    assert.ok(w.shadow.querySelectorAll(".r-outcell").length > outCells.length,
-        "the generic raw views reuse the same cell");
+    // …and the SAME component wraps a descriptor-less tool's plain OUT, so a big fetch_url page is
+    // scrollable + findable too. (The IN block is the call — short, already a code block — so it gets no cell.)
+    assert.equal(w.shadow.querySelectorAll(".r-outcell").length, outCells.length + 1,
+        "the descriptor-less tool's Out reuses the same cell — and nothing wraps the In");
     for (const cell of outCells) {
         const scroll = cell.querySelector(".r-outscroll");
         assert.ok(scroll, "the cell scrolls its overflow");
@@ -5317,4 +5320,21 @@ test("streamed timestamps survive the DONE and time the settled output", async (
     assert.ok(stamps.length >= 2, "the settled output still shows the executor's timestamps");
     assert.notEqual(stamps[0], stamps[1], "and a later line shows its own (changed) time");
     assert.match(w.shadow.querySelector(".r-ts[title]").getAttribute("title"), /\d\d:\d\d:\d\d\.\d\d\d/, "hover carries millisecond precision");
+});
+
+// Settings copy must stay attached to the control it describes: inserting a new toggle between a select and
+// its explanatory note orphans the note under the wrong control (which is exactly what happened once).
+test("settings (Appearance): each explanatory note stays under its own control", async () => {
+    const w = await loadSidebarWorld();
+    await openSettings(w, "Appearance");
+    const texts = [...w.shadow.querySelectorAll(".set-field > span, .set-check span, .set-note")].map(e => e.textContent || "");
+    const at = (re) => texts.findIndex(t => re.test(t));
+    const heightCtl = at(/Tool output height/);
+    const heightNote = at(/How tall ANY tool/);
+    const stampsCtl = at(/Timestamp streamed output lines/);
+    const stampsNote = at(/gutter beside it/);
+    assert.ok(heightCtl >= 0 && heightNote >= 0 && stampsCtl >= 0 && stampsNote >= 0, "all four are rendered");
+    assert.ok(heightCtl < heightNote, "the height note follows the height control");
+    assert.ok(heightNote < stampsCtl, "…and comes BEFORE the next control (not orphaned under it)");
+    assert.ok(stampsCtl < stampsNote, "the timestamp note follows the timestamp toggle");
 });
