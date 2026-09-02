@@ -104,6 +104,7 @@ function loadBackground({ config = {}, local = {}, onFetch, onCaptureTab, onPyRu
     const tabsRemoved = [];     // chrome.tabs.remove ids
     const pyRuns = [];          // PY_RUN payloads relayed to the offscreen doc (for python_exec tests)
     const debuggerCalls = [];   // chrome.debugger attach/sendCommand/detach, for CDP_CLICK tests
+    const debuggerEventListeners = new Set();   // chrome.debugger.onEvent listeners (CDP streaming)
     let permsHeld = new Set(debuggerPermission ? ["debugger"] : []);
     const listeners = [];
     const connectListeners = [];
@@ -194,6 +195,12 @@ function loadBackground({ config = {}, local = {}, onFetch, onCaptureTab, onPyRu
                 sendCommand: async (target, method, params) => { debuggerCalls.push(["sendCommand", target, method, params]); return onDebuggerCommand ? onDebuggerCommand(method, params) : undefined; },
                 detach: async (target) => { debuggerCalls.push(["detach", target]); },
                 onDetach: { addListener: () => {} },   // the SW listens for an external detach (DevTools opened, target gone)
+                // CDP EVENTS (Runtime.bindingCalled — how a strict-page exec streams its console out live).
+                // Tests fire one with bg.emitDebuggerEvent(target, method, params).
+                onEvent: {
+                    addListener: (fn) => { debuggerEventListeners.add(fn); },
+                    removeListener: (fn) => { debuggerEventListeners.delete(fn); },
+                },
             },
             tabs: {
                 // Records args so tests can assert the windowId; onCaptureTab (if
@@ -224,6 +231,9 @@ function loadBackground({ config = {}, local = {}, onFetch, onCaptureTab, onPyRu
         tabsRemoved,
         pyRuns,
         debuggerCalls,
+        debuggerEventListeners,
+        /** Fire a CDP event at every listener the SW registered (e.g. Runtime.bindingCalled). */
+        emitDebuggerEvent: (target, method, params) => { [...debuggerEventListeners].forEach(fn => fn(target, method, params)); },
         stored,
         localStore,   // chrome.storage.local contents — tests assert a snapshot was kept/removed
         context,      // the vm sandbox — reach test-only globalThis hooks (e.g. __mlSeedBgRunForTest)

@@ -3,10 +3,13 @@
 // server JSON is genuinely opaque, so it's typed `any`; our own data uses the
 // shared contract types.
 import type { NeutralMessage, ToolCall, TokenUsage, StartRunPayload, SetApprovalPayload, CancelRunPayload, ResumeRunPayload, InjectMessagePayload, ApprovalDecision } from "./contract";
-import { modelFilterAllows, bgRunResumable, pushReplay } from "./contract";   // single source of truth (see contract.ts)
+import { modelFilterAllows, bgRunResumable, pushReplay, UI_OUT_CAP } from "./contract";   // single source of truth (see contract.ts)
 import { runBackgroundAgent } from "./agent-host";   // design A: the background-hosted agent loop
 import type { ToolMeta } from "./agent-loop";
-import { externalSheetIds, googleSheetId } from "./dom";   // track approved external sheets across a run + the choke-point grants
+import { externalSheetIds, googleSheetId, clipOut } from "./dom";   // track approved external sheets across a run + the choke-point grants
+// The model-facing cap cdpEval clips its console to (exec's default per-slot cap) — the UI keeps far more, so
+// `seen` marks where the model's copy stopped, exactly like the main-world exec path.
+const CDP_EXEC_CAP = 500;
 import { extractGrants } from "./grant-extract";   // button #3: static egress-grant extraction for "Approve + remember"
 import { createNavBarrier } from "./nav-barrier";   // cross-page persistence: hold delegated tools while a run's tab navigates
 import { isSelfSourceUrl } from "./self-source";   // trusted-side enforcement of the self-source auto-approve (uncredentialed own-repo reads)
@@ -949,8 +952,17 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                             if (!approvedSource) return { result: env.result || "", renderIn: env.renderIn, renderOut: env.renderOut };
                             const cfg = await getConfig();
                             if (!cfg.cdp) return { result: `${env.result || ""}\n\nRunning it needs Debugger-based actions (CDP), which are OFF — enable them in window.ml Settings → Advanced (the debugger clears the page's CSP/Trusted-Types), or fall back to a read-only survey / ml.fetch.`, renderIn: env.renderIn, renderOut: env.renderOut };
-                            const r = await cdpEval(tabId, approvedSource);
-                            if ("ok" in r) return { result: r.value, renderIn: env.renderIn, renderOut: env.renderOut };
+                            const r = await cdpEval(tabId, approvedSource, onStream);
+                            if ("ok" in r) {
+                                // Rebuild the Out cell from the CDP run's own console/value. `env.renderOut` is
+                                // the page's CSP-BLOCKED render (an exec-out carrying that error), so forwarding
+                                // it would show a red "this page blocks eval" next to a successful result — and
+                                // would wipe the output the user just watched stream in.
+                                const stdout = r.logs.join("\n");
+                                const seen = Math.min(stdout.length, CDP_EXEC_CAP);
+                                return { result: r.text, renderIn: env.renderIn,
+                                    renderOut: { type: "exec-out", stdout: clipOut(stdout, UI_OUT_CAP), seen, value: r.value } };
+                            }
                             return { result: `${env.result || ""}\n\n${r.error}`, renderIn: env.renderIn, renderOut: env.renderOut };
                         }
                         // The page already computed the rendered In/Out slots (descriptorFor) — forward them so

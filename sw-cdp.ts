@@ -88,7 +88,7 @@ export async function cdpClick(tabId: number, x: number, y: number): Promise<{ o
  *  banner is the honest "the browser is being driven" signal), evaluates, ALWAYS detaches. Two shapes, like
  *  the main-world exec: a trailing-expression first (REPL value), then a statement body (the model `return`s).
  *  See docs/spec/EXEC_STRICT_CSP.md. */
-export async function cdpEval(tabId: number, source: string): Promise<{ ok: true; value: string } | { error: string; needsPermission?: true }> {
+export async function cdpEval(tabId: number, source: string, onStream?: (text: string, ts?: number) => void): Promise<{ ok: true; value: string; logs: string[]; text: string } | { error: string; needsPermission?: true }> {
     const at = await ensureDebuggerAttached(tabId);   // reuses a live attachment; attach/detach is the dominant per-exec cost on a strict page
     if ("error" in at) return { error: `Couldn't attach the debugger to run exec (${at.error}). Another debugger (DevTools?) may be attached to this tab.`, ...(at.needsPermission ? { needsPermission: true } : {}) };
     const target: chrome.debugger.Debuggee = { tabId };
@@ -101,13 +101,36 @@ export async function cdpEval(tabId: number, source: string): Promise<{ ok: true
     // console, and a `Runtime.evaluate` that only returns the completion value silently drops every console.log
     // (the reported "logs got lost in CDP"). Patch console INSIDE the page (via the wrapper), collect the lines,
     // stringify the completion value there too (so returnByValue always gets a clean string[]+string), restore.
-    // TODO(cdp-stream): LIVE-stream this console output (generic tool `ctx.stream`, the `streaming` flag) —
-    // Runtime.evaluate returns once, so it needs a Runtime.consoleAPICalled subscription for the eval's
-    // duration, forwarding each call through ctx.stream. Deferred; strict pages just don't stream live (the
-    // full output still lands at DONE). See memory idea-cdp-exec-live-streaming.
+    // LIVE output (the generic `ctx.stream` capability, gated by the run's `streaming` flag). Runtime.evaluate
+    // returns ONCE, so the lines have to leave the page while it is still running. `Runtime.consoleAPICalled`
+    // is the obvious hook but it can't work here: our wrapper REPLACES console.* with a collector that never
+    // calls through, so no console event is ever emitted. `Runtime.addBinding` is the purpose-built page →
+    // debugger-client channel instead — it puts a function on the page's global that raises
+    // `Runtime.bindingCalled` on our client — so the already-patched console pushes each line straight out.
+    // No RemoteObject serialization (we already stringify in-page) and no console pollution.
+    // The page is the EXECUTOR here, so it stamps `ts` itself (same contract as python stamping in the worker).
+    const BINDING = "__mlCdpStream";
+    let bound = false;
+    const onEvent = (src: chrome.debugger.Debuggee, method: string, params?: object) => {
+        if (src.tabId !== tabId || method !== "Runtime.bindingCalled") return;
+        const p = params as { name?: string; payload?: string } | undefined;
+        if (!p || p.name !== BINDING) return;
+        try { const m = JSON.parse(p.payload || "{}") as { text?: string; ts?: number }; if (m.text) onStream!(m.text, m.ts); } catch { /* a malformed payload is not worth failing the exec over */ }
+    };
+    if (onStream) {
+        try {
+            await chrome.debugger.sendCommand(target, "Runtime.enable");
+            await chrome.debugger.sendCommand(target, "Runtime.addBinding", { name: BINDING });
+            chrome.debugger.onEvent.addListener(onEvent);
+            bound = true;
+        } catch { bound = false; }   // streaming is a nicety — never fail the exec because the binding didn't take
+    }
+    // Emit each console line the instant it happens, in ADDITION to collecting it (the collected array is
+    // still what the model is shown, so a failed binding degrades to exactly the old behaviour).
+    const tee = bound ? `try { ${BINDING}(JSON.stringify({ text: __s + '\\n', ts: Date.now() })); } catch (e) {}` : "";
     const wrap = (inner: string) => `(async () => {
         const __logs = [], __M = ['log','info','warn','error','debug'], __S = {};
-        for (const m of __M) { __S[m] = console[m]; console[m] = (...a) => __logs.push(a.map(x => { try { return typeof x === 'string' ? x : JSON.stringify(x); } catch { return String(x); } }).join(' ')); }
+        for (const m of __M) { __S[m] = console[m]; console[m] = (...a) => { const __s = a.map(x => { try { return typeof x === 'string' ? x : JSON.stringify(x); } catch { return String(x); } }).join(' '); __logs.push(__s); ${tee} }; }
         try {
             const __v = await (${inner});
             const __vs = __v === undefined ? '(undefined)' : typeof __v === 'string' ? __v : (() => { try { return JSON.stringify(__v); } catch { return String(__v); } })();
@@ -127,10 +150,18 @@ export async function cdpEval(tabId: number, source: string): Promise<{ ok: true
         const logs = out && Array.isArray(out.logs) ? out.logs : [];
         // Prefix captured console output onto the value, exactly like the main-world path's `withLogs`.
         const combined = logs.length ? `console:\n${clipOut(logs.join("\n"), CAP)}\n\nvalue: ${value}` : value;
-        return { ok: true, value: combined };
+        // `logs`/`value` come back structurally too, so the caller can build the same rendered Out cell the
+        // main-world exec produces (console / value sections) instead of leaving the CSP-blocked error render.
+        return { ok: true, value, logs, text: combined };
     } catch (e) {
         return { error: `The CDP exec failed (${(e as Error)?.message || e}).` };
     } finally {
+        if (bound) {
+            chrome.debugger.onEvent.removeListener(onEvent);
+            // Leave Runtime enabled (harmless, and the attachment is shared across a run's execs); just drop
+            // the binding so a later page script can't call into a listener that is gone.
+            await chrome.debugger.sendCommand(target, "Runtime.removeBinding", { name: BINDING }).catch(() => {});
+        }
         touchDebugger(tabId);   // keep the attachment for the next exec; the run's finally (or the idle timer) detaches
     }
 }

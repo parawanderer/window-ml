@@ -744,6 +744,12 @@ details.io[open] > summary .io-preview { display: none; }
 .r-ts.hoverable { cursor: help; }
 .r-ts.hoverable:hover { opacity: 1; color: var(--fg-dim); }
 .r-ts-line { flex: 1 1 auto; white-space: pre-wrap; word-break: break-word; }
+/* Midnight: the gutter shows time only, so a day change gets its own divider — without it 00:00:01 sits
+   directly under 23:59:58 and reads as one second later. */
+.r-ts-day { display: flex; align-items: center; gap: 8px; margin: 5px 0 3px; user-select: none; -webkit-user-select: none; }
+.r-ts-day::before, .r-ts-day::after { content: ""; flex: 1 1 auto; border-top: 1px dashed var(--border); }
+.r-ts-day::before { flex: 0 0 48px; }
+.r-ts-day-lbl { flex: 0 0 auto; font-size: 10px; letter-spacing: .04em; color: var(--fg-faint); font-variant-numeric: tabular-nums; }
 
 .r-unseen-lbl.live { color: var(--fg-faint); text-transform: none; letter-spacing: 0; font-style: italic; }
 .r-unseen-q { display: inline-flex; align-items: center; justify-content: center; width: 13px; height: 13px;

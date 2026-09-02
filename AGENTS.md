@@ -635,9 +635,15 @@ an `agent-step` DELTA carrying only `{ step, seq, streamOutput }` (no `tool`), w
 JS callback — `_ml_stdout_cb`, set only when streaming — and rides worker → offscreen → SW → page → the tool's
 ctx.stream). Works on BOTH paths: the page loop, and the BACKGROUND-hosted (design A) path via a reverse channel
 (`RUN_TOOL_IN_PAGE {stream}` → the page posts `PAGE_TOOL_STREAM {runId, chunk}` → SW → the in-flight call's sink,
-keyed by runId since the loop delegates tools sequentially). **CDP exec on strict-CSP pages is the one path that
-does NOT stream** (`Runtime.evaluate` returns once — it needs a `Runtime.consoleAPICalled` subscription); it
-degrades to the full output at DONE. See the `// TODO(cdp-stream)` in sw-cdp.ts.
+keyed by runId since the loop delegates tools sequentially). **CDP exec on strict-CSP pages streams too**, by a
+different mechanism: `Runtime.evaluate` returns ONCE, and `Runtime.consoleAPICalled` can't help because our wrapper
+REPLACES `console.*` with a collector that never calls through, so no console event is ever raised. So `cdpEval`
+installs a **`Runtime.addBinding`** (the purpose-built page → debugger-client channel) and the patched console tees
+each line through it, raising `Runtime.bindingCalled` on our client mid-eval — no RemoteObject serialization (the
+page already stringifies) and no console pollution. The PAGE stamps `ts`; it is the executor. It degrades safely: a
+binding that won't install compiles no tee into the wrapper and the full output still lands at DONE. A successful
+CDP exec also REBUILDS its Out descriptor from the run's own console/value — forwarding the page's CSP-blocked
+render would show that error beside a successful result and wipe the output you just watched stream in.
 
 *Streaming vs truncation.* The model's result is clipped to its context budget, but the UI keeps far more
 (`UI_OUT_CAP`) — otherwise output you watched stream in would visibly SHRINK when the step landed. So the render
@@ -666,7 +672,9 @@ instant to the **millisecond** plus the gap since the previous line. The **hour 
 every mark is in the hour we're in *right now* — and since that is answered at render time, a `hourNow` signal
 bumped by ONE self-terminating timeout (armed at the next boundary, `unref`'d, re-armed only from a render)
 widens every gutter to hh:mm:ss together when the clock rolls over. Time-only, no date: a run spanning
-midnight is correct on both sides but unmarked. The mapping is pure and shared — **`sidebar/timestamps.ts`**
+midnight gets a **day divider** at the change (`dayBreaks` — a dashed rule + the ISO date, in the gutter and both
+exports), since a time-only gutter would otherwise put `00:00:01` directly under `23:59:58` and read as one second
+later. The mapping is pure and shared — **`sidebar/timestamps.ts`**
 (`timeForOffset`/`alignedMarks`/`elideHour`/`timedText`), imported by the sidebar gutter AND by both export
 sinks, so they can't drift; `render-panel.tsx` re-exports it. The **exports** carry the times as a collapsed
 `Out · timed` block BESIDE the verbatim Out rather than prefixed onto it — the sidebar's gutter is

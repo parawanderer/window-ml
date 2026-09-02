@@ -306,3 +306,46 @@ test("timedText: the export's plain-text gutter mirrors the sidebar's", async ()
     assert.equal(timedText("short", [[0, t0], [400, t0]], now), null, "marks that don't fit the text → no guess");
     assert.equal(timedText("alpha", undefined, now), null, "no marks (a non-streaming run) → nothing to time");
 });
+
+// Midnight. The gutter is time-only, so without a divider 00:00:01 sits directly under 23:59:58 and reads as
+// one second later rather than the next day.
+test("day change: the gutter draws a divider, and only at the change", async () => {
+    const { TimedOutput } = await import("../sidebar/render-panel.tsx");
+    const { dayBreaks } = await import("../sidebar/timestamps.ts");
+    const host = doc.getElementById("root");
+    const late = new Date("2026-09-02T23:59:58").getTime();
+    const past = new Date("2026-09-03T00:00:01").getTime();
+    const text = "before\nmidnight\nafter\n";
+    const marks = [[0, late], [7, late + 1000], [16, past]];
+
+    assert.deepEqual([...dayBreaks(text, marks)], [[2, "2026-09-03"]], "one break, on the first line of the new day");
+    assert.deepEqual([...dayBreaks(text, [[0, late]])], [], "a run inside ONE day gets no divider");
+    assert.deepEqual([...dayBreaks(text, undefined)], [], "no marks → nothing to divide");
+
+    render(null, host);
+    render(h(TimedOutput, { text, marks }), host);
+    await tick();
+    const days = [...host.querySelectorAll(".r-ts-day-lbl")].map((n) => n.textContent);
+    assert.deepEqual(days, ["2026-09-03"], "the divider is rendered, labelled with the new day");
+    // It sits ABOVE the first line of the new day, not at the end of the old one.
+    const rows = [...host.querySelector(".r-timed").children];
+    const divider = rows.findIndex((n) => n.classList.contains("r-ts-day"));
+    assert.match(rows[divider + 1].textContent, /after/, "the divider precedes the first line after midnight");
+    assert.match(rows[divider - 1].textContent, /midnight/, "…and follows the last line before it");
+    // A run that crosses midnight can never elide the hour, so both sides carry the full clock.
+    assert.equal(host.querySelector(".r-timed").className.includes("short"), false);
+    render(null, host);
+});
+
+test("timedText: the export marks the day change too", async () => {
+    const { timedText } = await import("../sidebar/timestamps.ts");
+    const late = new Date("2026-09-02T23:59:58").getTime();
+    const past = new Date("2026-09-03T00:00:01").getTime();
+    const out = timedText("before\nmidnight\nafter", [[0, late], [7, late + 1000], [16, past]], past);
+    assert.deepEqual(out.split("\n"), [
+        "23:59:58  before",
+        "23:59:59  midnight",
+        "────────  ── 2026-09-03 ──",
+        "00:00:01  after",
+    ], "the divider lands between the days, and the first stamp after it is never elided as a repeat");
+});

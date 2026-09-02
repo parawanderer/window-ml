@@ -8,7 +8,7 @@ import { signal } from "@preact/signals";
 import type { RenderDescriptor, LocateSubstep, TableSource } from "../contract";
 import { elementReference } from "../dom";
 import { rev, view, sessionMap, outMaxH, showOutTimes } from "./store";
-import { timeForOffset, alignedMarks, elideHour, hhmmss, hhmmssms, fmtDelta, hourNow, armHourTick } from "./timestamps";
+import { timeForOffset, alignedMarks, elideHour, hhmmss, hhmmssms, fmtDelta, hourNow, armHourTick, dayBreaks } from "./timestamps";
 import { markdown, truncate, pretty } from "./format";
 import {
     openCtxMenu, copyText, ClickableImg, Code, SheetChip, inlineText,
@@ -245,8 +245,15 @@ export function TimedOutput({ text, marks }: { text: string; marks?: [number, nu
     // only from a render, so the timer stops itself once no timestamped output is mounted.
     armHourTick();
     const short = elideHour(marks, hourNow.value);   // current hour throughout → show mm:ss, not hh:mm:ss
+    // The gutter is time-only, so a run crossing midnight would put 00:00:01 directly under 23:59:58 with
+    // nothing marking the day. A divider row goes in at each change (and resets the repeat elision, so the
+    // first stamp of the new day always prints).
+    const breaks = dayBreaks(text, marks);
     let off = 0, shown = "", prevTs: number | null = null;
-    const rows = lines.map((line, i) => {
+    const rows: preact.ComponentChild[] = [];
+    lines.forEach((line, i) => {
+        const day = breaks.get(i);
+        if (day) { shown = ""; rows.push(<div class="r-ts-day" key={`d${i}`}><span class="r-ts-day-lbl">{day}</span></div>); }
         const ts = timeForOffset(marks, off);
         off += line.length + 1;
         const label = ts == null ? "" : (short ? hhmmss(ts).slice(3) : hhmmss(ts));
@@ -257,11 +264,11 @@ export function TimedOutput({ text, marks }: { text: string; marks?: [number, nu
         const tip = ts == null ? undefined
             : `${hhmmssms(ts)}${prevTs != null && ts !== prevTs ? ` · +${fmtDelta(ts - prevTs)} since the previous line` : ""}`;
         if (ts != null) prevTs = ts;
-        return (
+        rows.push(
             <div class="r-ts-row" key={i}>
                 <span class={`r-ts${tip ? " hoverable" : ""}`} title={tip}>{repeat ? "" : label}</span>
                 <span class="r-ts-line">{line}</span>
-            </div>
+            </div>,
         );
     });
     return <div class={`code r-timed${short ? " short" : ""}`}>{rows}</div>;

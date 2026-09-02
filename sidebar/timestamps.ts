@@ -70,6 +70,31 @@ export function stopHourTick(): void {
     if (hourTimer != null) { clearTimeout(hourTimer); hourTimer = null; }
 }
 
+// A mark's LOCAL calendar day: the key groups, the label is what a reader sees. ISO so it can't be misread
+// across locales (and sorts), unlike "3/9" vs "9/3".
+const dayKey = (ts: number): string => new Date(ts).toDateString();
+const p2 = (n: number): string => String(n).padStart(2, "0");
+export const dayLabel = (ts: number): string => { const d = new Date(ts); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`; };
+
+/** Line indices where the calendar DAY changes, → the new day's label. The gutter is time-only, so a run that
+ *  crosses midnight would otherwise show `23:59:58` directly above `00:00:01` with nothing saying a day passed
+ *  — the times are right and the reading is wrong. Never marks the FIRST day (there is nothing to separate). */
+export function dayBreaks(text: string, marks: [number, number][] | undefined): Map<number, string> {
+    const breaks = new Map<number, string>();
+    const m = alignedMarks(marks, text);
+    if (!m) return breaks;
+    let off = 0, prev: string | null = null;
+    text.split("\n").forEach((line, i) => {
+        const ts = timeForOffset(m, off);
+        off += line.length + 1;
+        if (ts == null) return;                       // no mark covers it → we don't know its day, so say nothing
+        const k = dayKey(ts);
+        if (prev != null && k !== prev) breaks.set(i, dayLabel(ts));
+        prev = k;
+    });
+    return breaks;
+}
+
 /** The output with a produced-at gutter, as PLAIN TEXT — for the exports, which have no way to make a column
  *  unselectable the way the sidebar does. Repeats are blanked, exactly like the gutter. Returns null when the
  *  marks don't describe this text, so a caller can fall back to the untimed output. */
@@ -78,12 +103,18 @@ export function timedText(text: string, marks: [number, number][] | undefined, n
     if (!m) return null;
     const short = elideHour(m, now);
     const width = short ? 5 : 8;
+    const breaks = dayBreaks(text, m);
     let off = 0, shown = "";
-    return text.split("\n").map((line) => {
+    const out: string[] = [];
+    text.split("\n").forEach((line, i) => {
+        const day = breaks.get(i);
+        // A day divider resets the repeat-elision: the first stamp after midnight always prints.
+        if (day) { out.push(`${"─".repeat(width)}  ── ${day} ──`); shown = ""; }
         const ts = timeForOffset(m, off);
         off += line.length + 1;
         let label = ts == null ? "" : (short ? hhmmss(ts).slice(3) : hhmmss(ts));
         if (label && label === shown) label = ""; else if (label) shown = label;
-        return `${label.padStart(width)}  ${line}`;
-    }).join("\n");
+        out.push(`${label.padStart(width)}  ${line}`);
+    });
+    return out.join("\n");
 }
