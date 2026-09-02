@@ -1632,7 +1632,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     // The body to read/return: converted Markdown for HTML (unless raw), else the JSON/raw text.
                     // ml.fetch already attached `.markdown` for HTML; reuse it (fall back to a fresh conversion).
                     const bodyText = (): string => r.json !== undefined ? JSON.stringify(r.json, null, 2) : (converted ? (r.markdown ?? htmlToMarkdown(r.text)) : r.text);
-                    // `pipe`: SCAN/FILTER the body through the safe grep/head/tail/wc/sort/uniq pipeline. Applied to
+                    // `pipe`: SCAN/FILTER the body through the safe line-scanning dialect (PIPE_CMDS). Applied to
                     // BOTH the default view AND (BEFORE) the ask-reader input, so both see the filtered stream. Pure
                     // text; on a bad command it returns { err } → an actionable message pointing at the exec escape
                     // hatch. The FOOTER states the result's size (lines / chars, vs source) so the model has a

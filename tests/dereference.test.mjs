@@ -200,3 +200,71 @@ test("dereference: separate runs with no shared store stay isolated", async () =
     const next = await drive([call("dereference", { token: "python_exec" })], () => ({ result: "" }));
     assert.match(derefResult(next), /MemoryFault|Nothing has been captured/, "a fresh run has no prior pointers");
 });
+
+// A model often only decides an output is worth SHOWING after it has narrowed it. A piped dereference is a
+// reduction the model just constructed, so it gets its own pointer — otherwise its only options are citing the
+// whole original or retyping the view into the answer (which costs context and loses the render).
+test("dereference: a PIPED view mints its own pointer, and that pointer resolves", async () => {
+    const rows = ["q1 1455", "q2 1590", "q3 1555", "q4 1660", "TOTAL 6260"].join("\n");
+    const { results } = await drive(
+        [call("python_exec", { code: "df", token: true }), call("dereference", { token: "python_exec", pipe: "grep TOTAL" })],
+        (name) => name === "python_exec" ? { result: rows } : { result: "" });
+    const out = derefResult(results ? { results } : { results });
+    assert.match(out, /TOTAL 6260/, "the reduction itself");
+    const id = /\[this view is @tool:([0-9a-f]{6})/.exec(out)?.[1];
+    assert.ok(id, "the view was given a pointer");
+    assert.match(out, new RegExp(`!\\[label\\]\\(@tool:${id}:out\\)`), "…and says how to show it");
+
+    // That pointer is real: a later step reads it back.
+    const second = await drive(
+        [call("python_exec", { code: "df", token: true }), call("dereference", { token: "python_exec", pipe: "grep TOTAL" }), call("dereference", { token: "dereference" })],
+        (name) => name === "python_exec" ? { result: rows } : { result: "" });
+    const reads = second.results.filter((r) => r.name === "dereference");
+    assert.match(reads[1].result, /TOTAL 6260/, "the minted view is readable by name");
+    assert.doesNotMatch(reads[1].result, /q1 1455/, "and holds the REDUCTION, not the original");
+    assert.match(reads[1].result, /dereference: "python_exec \| grep TOTAL"/, "labelled with what produced it");
+});
+
+// The original exclusion still stands where it was right: with no pipe there is no new data, and the header
+// already names the source's id, so a second handle for identical bytes would just clutter the store.
+test("dereference: a read that transforms NOTHING mints no pointer", async () => {
+    const run = async (args) => {
+        const { results } = await drive(
+            [call("python_exec", { code: "df", token: true }), call("dereference", args)],
+            (name) => name === "python_exec" ? { result: "just one line" } : { result: "" });
+        return results.filter((r) => r.name === "dereference").pop().result;
+    };
+    assert.doesNotMatch(await run({ token: "python_exec" }), /this view is @tool:/, "no pipe → no mint");
+    assert.doesNotMatch(await run({ token: "python_exec", pipe: "  " }), /this view is @tool:/, "blank pipe → no mint");
+    assert.doesNotMatch(await run({ token: "python_exec", pipe: "cat" }), /this view is @tool:/, "a pipe that changes nothing → no mint");
+});
+
+// The point of reading by NAME: `python_exec` means "the latest python_exec call" and MOVES when the tool runs
+// again. A model that didn't pass `token: true` was never told that call's id, and it often only decides an
+// output is worth keeping after seeing it — so the read hands back the stable id and says it is one.
+test("dereference: reading by NAME hands back the stable id, and that id does not move", async () => {
+    const { results } = await drive(
+        [call("python_exec", { code: "first" }), call("dereference", { token: "python_exec" }),
+         call("python_exec", { code: "second" }), call("dereference", { token: "python_exec" })],
+        (name, args) => name === "python_exec" ? { result: args.code === "first" ? "ONE" : "TWO" } : { result: "" });
+    const reads = results.filter((r) => r.name === "dereference");
+
+    const pinned = /\[pinned: this call is @tool:([0-9a-f]{6})\./.exec(reads[0].result)?.[1];
+    assert.ok(pinned, "reading by name pins the call it resolved to");
+    assert.match(reads[0].result, /always means the LATEST python_exec call and will move/, "…and says the name moves");
+    assert.match(reads[0].result, /ONE/);
+
+    // The SAME name now resolves to the second call — the alias moved, exactly as the pin line warned.
+    assert.match(reads[1].result, /TWO/, "the alias followed the newer call");
+    const pinned2 = /\[pinned: this call is @tool:([0-9a-f]{6})\./.exec(reads[1].result)?.[1];
+    assert.notEqual(pinned2, pinned, "…so it pins a different id");
+
+    // …while the FIRST pin still means the first call. That is the whole point of handing it over.
+    const after = await drive(
+        [call("python_exec", { code: "first" }), call("dereference", { token: "python_exec" }),
+         call("python_exec", { code: "second" }), call("dereference", { token: `@tool:${pinned}` })],
+        (name, args) => name === "python_exec" ? { result: args.code === "first" ? "ONE" : "TWO" } : { result: "" });
+    const byId = after.results.filter((r) => r.name === "dereference")[1].result;
+    assert.match(byId, /ONE/, "the pinned id still reads the ORIGINAL call after the alias moved");
+    assert.doesNotMatch(byId, /\[pinned:/, "and a read BY id doesn't re-pin — it already holds the handle");
+});

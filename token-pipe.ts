@@ -17,6 +17,10 @@ import { runPipe, splitStages } from "./text-pipe";
 /** The tool name, shared by the loop (which answers it) and the toolset builder (which advertises it). */
 export const DEREF_TOOL = "dereference";
 
+/** Was this reference a tool NAME (the moving "latest call" alias) rather than the id it resolved to? The loop
+ *  uses it to decide whether to hand the model the stable id — see the "Pinned:" line in agent-loop. */
+export const isAliasRef = (ref: string, resolvedId: string): boolean => normRef(ref) !== resolvedId;
+
 /** What the value at a pointer actually IS. The loop already knows — it holds the step's `RenderDescriptor` —
  *  so the pointer carries the type rather than flattening everything to a string the model must re-sniff. The
  *  value stays str-renderable regardless (`out` is always readable); the type just makes the pipe smarter. */
@@ -172,21 +176,35 @@ export class TokenStore {
      *  or a long conversation grows without limit. ~10 turns of heavy tool use at the default 20-step cap. */
     static readonly CAP = 200;
 
+    // Eviction is LRU, and a READ counts as a use — a pointer the model keeps consulting must not be dropped
+    // before ones it has never looked at. Tracked SEPARATELY from `byId`'s insertion order, because that order
+    // is what makes the tool-name alias mean "the latest CALL": refreshing it on a read would make an old
+    // python_exec output masquerade as the newest one.
+    private used = new Map<string, number>();
+    private clock = 0;
+
     note(v: TokenValue): void {
         this.byId.delete(v.id);   // re-noting an id moves it to the END, so the tool-name alias still means "latest"
         this.byId.set(v.id, v);
-        // Drop the OLDEST beyond the cap — also the least likely to still be referenced. Ids are unique across
-        // turns (the loop offsets each turn's seq base), so eviction is the only thing that removes a pointer.
-        while (this.byId.size > TokenStore.CAP) this.byId.delete(this.byId.keys().next().value as string);
+        this.used.set(v.id, ++this.clock);
+        while (this.byId.size > TokenStore.CAP) {
+            // The least recently USED (noted or read), not simply the oldest.
+            let oldest: string | null = null, min = Infinity;
+            for (const id of this.byId.keys()) { const u = this.used.get(id) ?? 0; if (u < min) { min = u; oldest = id; } }
+            if (oldest == null) break;
+            this.byId.delete(oldest); this.used.delete(oldest);
+        }
     }
 
     /** Resolve `@tool:<id>`, a bare id, or a tool-name alias. Null when nothing matches. */
     get(ref: string): TokenValue | null {
         const id = normRef(ref);
         const exact = this.byId.get(id);
-        if (exact) return exact;
+        if (exact) { this.used.set(exact.id, ++this.clock); return exact; }
         const ofTool = [...this.byId.values()].filter((v) => v.tool === id);
-        return ofTool.length ? ofTool[ofTool.length - 1] : null;
+        const latest = ofTool.length ? ofTool[ofTool.length - 1] : null;
+        if (latest) this.used.set(latest.id, ++this.clock);
+        return latest;
     }
 
     /** The captured pointers most similar to a reference that didn't resolve. Models hallucinate token-SHAPED

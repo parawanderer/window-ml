@@ -251,18 +251,35 @@ test("DRIFT GUARD: every model-facing description of the dialect is derived, not
     }
     // Both name the `.path` stage, which isn't a verb in PIPE_CMDS but is part of the dialect.
     assert.ok(PIPE_HINT.includes(".path") && PIPE_SYNTAX.includes(".path"));
-    // No source file may spell the verb list out by hand again. Catches the exact stale list that was copied
-    // into four places (fetch_url's param + error, navigate's verify error, interactives' error).
+    // No source file may spell the verb list out by hand again. The invariant is not "never name a verb" —
+    // a pipeline EXAMPLE ("grep -i pricing | head -20") is exactly what a doc should show, and no regex
+    // separates an example from a stale list. What separates them is COMPLETENESS: an example names two verbs,
+    // a list names many. So a line naming THREE OR MORE distinct verbs is a list, and a list must be complete.
+    // Catches both real cases — the five copies stuck at six verbs, and the dereference tool's
+    // "schema | keys | values | len | type | head N | tail N | grep TEXT", which also advertised `len` and
+    // `slice`, verbs the dialect never had.
     const { readdirSync, readFileSync } = await import("node:fs");
     const stale = [];
     for (const f of readdirSync(new URL("../", import.meta.url)).filter((f) => f.endsWith(".ts"))) {
         if (f === "text-pipe.ts") continue;        // the single source is allowed to name them
         if (f.endsWith(".gen.ts")) continue;      // generated (build-info embeds a diff of the working tree)
-        const src = readFileSync(new URL(`../${f}`, import.meta.url), "utf8");
-        // Two verbs in a row, joined the way every hardcoded copy joined them.
-        if (/grep\s*[·|]\s*head|grep \(flags|grep \(-i/.test(src)) stale.push(f);
+        const lines = readFileSync(new URL(`../${f}`, import.meta.url), "utf8").split("\n");
+        lines.forEach((line, i) => {
+            // Scan PROSE only — comments and string literals. Every false positive was ordinary CODE
+            // (`schema.type`, `Object.keys(...)`, `pipe: { type: "string" }`), because five verb names are also
+            // ordinary identifiers; every real offender was a sentence a human wrote.
+            const prose = [...line.matchAll(/"([^"\\\\]*(?:\\\\.[^"\\\\]*)*)"/g)].map((m) => m[1]).join(" ")
+                + " " + (line.includes("//") ? line.slice(line.indexOf("//")) : "");
+            // An explicit ellipsis or "e.g." IS the disclaimer — an abbreviated reference ("the grep/head/tail/…
+            // pipeline", "e.g. 'schema', 'keys'") claims nothing about completeness.
+            if (/…|\.\.\.|e\.g\./.test(prose)) return;
+            const named = PIPE_CMDS.filter((v) => new RegExp(`\\b${v}\\b`).test(prose));
+            if (named.length < 3) return;                                   // an example, not a list
+            const missing = PIPE_CMDS.filter((v) => !named.includes(v));
+            if (missing.length) stale.push(`${f}:${i + 1} (omits ${missing.join(", ")})`);
+        });
     }
-    assert.deepEqual(stale, [], `these hardcode a verb list instead of importing PIPE_HINT / PIPE_SYNTAX: ${stale.join(", ")}`);
+    assert.deepEqual(stale, [], `these hand-write an INCOMPLETE verb list instead of using PIPE_SYNTAX / PIPE_HINT:\n  ${stale.join("\n  ")}`);
 });
 
 // ---- ml.pipe: the dialect over ANY string, callable from exec ----

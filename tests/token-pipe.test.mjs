@@ -344,3 +344,19 @@ test("TokenStore: bounded, evicting the OLDEST, and re-noting an id keeps it 'la
     assert.equal(s2.get("python_exec").out, "AGAIN", "re-noting moves it to the end");
     assert.equal(s2.size, 2, "…without duplicating it");
 });
+
+// Eviction is LRU, not FIFO: "bind it before it goes out of scope" only works if consulting a pointer keeps it
+// alive. The recency used for eviction is tracked apart from insertion order, because insertion order is what
+// makes the tool-name alias mean "the latest CALL".
+test("TokenStore: a READ keeps a pointer alive, without making it look like the newest call", () => {
+    const store = new P.TokenStore();
+    const put = (id, out) => store.note({ id, tool: "exec", kind: "text", out, t: 1, step: 1 });
+    for (let i = 0; i < P.TokenStore.CAP; i++) put(`id${i}`, `v${i}`);
+    store.get("id0");                       // consult the OLDEST — it must now outlive id1
+    put("fresh", "new");                    // pushes one entry out
+    assert.ok(store.get("id0"), "the pointer the model just read survived");
+    assert.equal(store.get("id1"), null, "the least recently USED went instead");
+    // Reading must NOT reorder the alias: id0 is an old call, not the latest exec.
+    assert.notEqual(store.get("exec").id, "id0", "a read never promotes an old call to 'latest'");
+    assert.equal(store.get("exec").id, "fresh");
+});

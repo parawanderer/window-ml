@@ -449,7 +449,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 }
                 if (els.length > count) out.push(`…(${count} of ${els.length} shown)`);
                 let content = out.join("\n");
-                // Optional `pipe`: scan/filter the sampled lines (grep/head/tail/wc/sort/uniq). Pure text; the
+                // Optional `pipe`: scan/filter the sampled lines through the dialect (PIPE_CMDS). Pure text; the
                 // `elements` side-channel still holds the full sample (a text-only view). Bad command → actionable.
                 if (typeof pipe === "string" && pipe.trim()) {
                     try { content = runPipe(content, pipe.trim()); }
@@ -921,7 +921,10 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
 export function buildDereferenceTool(defineTool: (tool?: Partial<MlTool>) => MlTool): MlTool {
     return defineTool({
         name: DEREF_TOOL,
-        description: "Read an output this run already produced, by its @tool:<id> pointer — instead of re-running a tool or retyping a value. Free, changes nothing, and can read MORE than the truncated copy you were shown. Optional `pipe` reduces it first: schema | keys | values | len | type | head N | tail N | grep TEXT | slice A B, or a path like .items[0].name; chain with '|'. The reply says what the value is and when it was captured (a pointer is a snapshot — the page may have changed since).",
+        description: "Read an output this run already produced, by its @tool:<id> pointer — instead of re-running a tool or retyping a value. Free, changes nothing, and can read MORE than the truncated copy you were shown. " +
+            "BINDING: reading a builtin by NAME ('python_exec') resolves to its LATEST call and replies with that call's STABLE @tool:<id> — so if you didn't ask for a token when you ran it but now want to keep or show the output, read it here and you get a pinned id you can cite. The name is a moving target (it follows the newest call); the id is not. " +
+            "A `pipe`d read is itself given a pointer, so you can cite the REDUCTION you just made rather than the whole output. Optional `pipe` reduces the value first. " + PIPE_SYNTAX +
+            " The reply says what the value is and when it was captured (a pointer is a snapshot — the page may have changed since).",
         parameters: {
             type: "object",
             properties: {

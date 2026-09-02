@@ -17,7 +17,7 @@ import { runStats, fmtTokPerSec, UI_OUT_CAP } from "./contract";
 import type { TokenRender } from "./contract";
 import { UNATTENDED_REFUSAL } from "./prompts";
 import { toolToken } from "./util";
-import { TokenStore, derefPipe, describeToken, extraBeyondModel, memoryFault, cleanLabel, nameOf, DEREF_TOOL, type TokenKind } from "./token-pipe";
+import { TokenStore, derefPipe, describeToken, extraBeyondModel, memoryFault, cleanLabel, nameOf, isAliasRef, DEREF_TOOL, type TokenKind, type TokenValue } from "./token-pipe";
 
 export type Approval = "readonly" | "sandbox" | "same-origin" | "consented" | "self-source" | "user" | "denied" | "skipped" | "cancelled";
 export interface ToolMeta { name: string; requiresApproval?: boolean; capabilities?: string[]; }
@@ -282,11 +282,26 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     // "Nothing has been captured in this run yet". Ids stay unique across turns via `seqBase`, so a shared
     // store cannot collide. No store passed (a one-shot run) → a fresh one, as before.
     const tokenStore = opts.tokenStore ?? new TokenStore();
+    /** Give a PIPED dereference view its own pointer, so the model can cite the reduction it just built instead
+     *  of the whole original. Returns the line telling it the new id (empty when tool tokens are off). */
+    const mintView = (src: TokenValue, text: string, args: Record<string, unknown>, step: number, seq: number): string => {
+        if (!opts.toolTokens || !opts.runHash) return "";
+        const id = toolToken(opts.runHash, (opts.seqBase ?? 0) + seq);
+        tokenStore.note({
+            id, tool: DEREF_TOOL, kind: /^\s*[[{]/.test(text) ? "json" : "text", out: text,
+            // The label says what this view IS — its source and the reduction that produced it — so a later
+            // read (or the nearest-pointer list on a typo) reads as "dereference: python_exec | .rows | head 5".
+            label: cleanLabel(`${nameOf(src)} | ${String(args?.pipe ?? "")}`),
+            in: JSON.stringify(args), t: Date.now(), step,
+        });
+        tokenRenders.push({ id, tool: DEREF_TOOL, render: undefined, result: text });   // citable in the answer
+        return `\n\n[this view is @tool:${id} — to SHOW this reduction rather than the whole output, embed it with image syntax: ![label](@tool:${id}:out). It expands in place; don't retype it.]`;
+    };
     /** Resolve a `dereference` call against this run's pointer store. Side-effect-free by construction (it only
      *  reads values already captured), so it needs no approval and never touches the page. Every answer leads
      *  with WHAT is at the pointer and WHEN it was captured: a pointer aliases a snapshot with no invalidation,
      *  so a survey taken before a click still resolves, and a model would otherwise read it as current. */
-    const derefLocally = (args: Record<string, unknown>, step: number): ToolRunResult => {
+    const derefLocally = (args: Record<string, unknown>, step: number, seq: number): ToolRunResult => {
         const ref = String(args?.token ?? "").trim();
         const pipe = args?.pipe == null ? "" : String(args.pipe);
         if (!ref) return { result: `Error: "token" is required — the @tool:<id> of an output you want to read. Available: ${tokenList()}` };
@@ -303,7 +318,27 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         // follows it — the label is a claim it wrote, the description is what the value actually is.
         const head = `@tool:${v.id} (${nameOf(v)}${slot === "in" ? ", the call" : ""}) — ${describeToken(v)}${extraBeyondModel(v)}, ${when}.`;
         try {
-            return { result: `${head}\n\n${derefPipe(v, slot, pipe)}` };
+            const text = derefPipe(v, slot, pipe);
+            // MINT a pointer for a PIPED view. A no-pipe read really is "no new data" — the header above already
+            // names the source's id, so a second handle for identical bytes would just clutter the store (the
+            // reason `dereference` is excluded from `citable`). A PIPE is the case that reasoning doesn't cover:
+            // the reduction is something the model just CONSTRUCTED, and a model often only decides an output is
+            // worth showing after it has narrowed it. Without a pointer its only options are citing the whole
+            // original or retyping the view into the answer — the second costs context and loses the render.
+            // Minted here rather than through `citable` because the generic path would read this tool's `token`
+            // PARAMETER (the pointer being read) as the model's opt-in/label. Uses the call's own seq, which the
+            // generic path leaves unused for dereference, so ids cannot collide.
+            const derived = pipe.trim() && text !== derefPipe(v, slot, "") ? mintView(v, text, args, step, seq) : "";
+            // BIND the alias. `python_exec` means "the LATEST python_exec call" — a moving target that changes
+            // the next time the tool runs. A model that didn't pass `token: true` at the time was never told
+            // that call's id (it is minted for a citable builtin either way, just not surfaced), so the alias is
+            // the only handle it has, and it often only decides an output is worth keeping AFTER seeing it.
+            // Reading through the alias is exactly that moment, so hand back the stable id and say it is one.
+            // Only when the model came in via a NAME: given the hex it already holds the pin.
+            const pin = isAliasRef(ref, v.id)
+                ? `\n\n[pinned: this call is @tool:${v.id}. "${nameOf(v)}" always means the LATEST ${v.tool} call and will move when you run it again — @tool:${v.id} always means THIS one. Cite it with ![label](@tool:${v.id}:out).]`
+                : "";
+            return { result: `${head}\n\n${text}${derived}${pin}` };
         } catch (e) {
             // Any stage that fails throws with an actionable message — the pipe dialect's existing contract.
             // Surface it verbatim so the model corrects the pipe rather than abandoning the pointer.
@@ -343,8 +378,8 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         return r.error ? { error: r.error } : { args: r.args! };
     };
     /** Every tool dispatch goes through here so `dereference` is answered from run state instead of delegated. */
-    const runTool = (name: string, a: Record<string, unknown>, push: ((t: string, ts?: number) => void) | undefined, step: number): Promise<ToolRunResult> | ToolRunResult =>
-        name === DEREF_TOOL ? derefLocally(a, step) : (() => {
+    const runTool = (name: string, a: Record<string, unknown>, push: ((t: string, ts?: number) => void) | undefined, step: number, seq: number): Promise<ToolRunResult> | ToolRunResult =>
+        name === DEREF_TOOL ? derefLocally(a, step, seq) : (() => {
             const l = lookArgs(name, a, step);
             return "error" in l ? { result: `Error: ${l.error}` } : deps.runTool(name, l.args, push);
         })();
@@ -432,7 +467,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                     tr = ro; result = ro.result;   // the interpreter already produced the result
                 } else if (auto) {
                     approval = auto.approval;
-                    tr = await runTool(call.name, args, fan?.push, step); result = tr.result;   // trusted auto-approve → execute
+                    tr = await runTool(call.name, args, fan?.push, step, s); result = tr.result;   // trusted auto-approve → execute
                     if (auto.reused?.length) tr = { ...tr, reused: [...(tr.reused || []), ...auto.reused] };   // surface the reused grants
                 } else if (deps.precheck && (result = (await deps.precheck(call.name, args)) || "")) {
                     // Doomed-action skip: a side-effect-free precheck (click/type target resolution) found
@@ -474,12 +509,12 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                         } else {
                             approval = "user";
                             args = d.arguments;                                   // possibly gate-edited
-                            tr = await runTool(call.name, args, fan?.push, step); result = tr.result;   // EXECUTE ONLY AFTER APPROVE
+                            tr = await runTool(call.name, args, fan?.push, step, s); result = tr.result;   // EXECUTE ONLY AFTER APPROVE
                         }
                     }
                 }
             } else {
-                tr = await runTool(call.name, args, fan?.push, step); result = tr.result;   // non-approval tool
+                tr = await runTool(call.name, args, fan?.push, step, s); result = tr.result;   // non-approval tool
             }
             fan?.done();   // the tool finished — stop any trailing live emit; the DONE below carries the full result
             result = String(result);
