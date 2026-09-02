@@ -398,23 +398,61 @@ A gap renders as a gap:
 │                 panel closed, not sampled     │
 ```
 
-### 4.5 Events (later slice, but the buffer is shaped for it now)
+### 4.5 Events: what happened, and what it cost
+
+This is the slice that changes what the panel is *for* — from "what is in memory" to "what happened,
+and what did it cost". The memory trace answers the first; events answer the second, on the same axis.
+
+Two kinds, and they are orthogonal:
+
+- **Instants** — vertical rules: a model loaded or evicted, a run started, a context reloaded, an OOM.
+- **Spans** — horizontal bars under the plot: a generation, from first token request to completion.
+  A span has a duration, which an instant does not, and that duration is the interesting part.
 
 ```
+│ 95.0 ┤                                        │
 │      │        ▂▂▃▃▅███████████████████        │
-│  90% ┤- - - - - - - - - - - - - - - - - - -  │  ← threshold rule (horizontal)
-│      │    ╷         ╷      ╷                  │  ← event rules (vertical)
-│      └────┴─────────┴──────┴─────────────────│
-│  events  ▲         ▲      ▲                   │  ← lane; hover for the label
-│         run    load qwen  evict               │
+│  90% ┤- - - - - - - - - - - - - - - - - - -   │  ← threshold rule (horizontal)
+│      │    ╷         ╷            ╷            │  ← instants (vertical)
+│      └────┴─────────┴────────────┴────────────│
+│ runs   ▐███████▌   ▐████▌   ▐██████████▌      │  ← spans: one generation each
+│        ▲         ▲              ▲             │
+│      run start  load qwen     evict           │
 ```
 
-Two orthogonal things, both cheap: **horizontal** rules are thresholds (capacity, a warning line),
-**vertical** rules are events. The event lane mirrors the output cell's timestamp gutter — a tick
-per instant, hover for detail.
+**Hover a span** for what it cost: tokens in / out, tokens per second, which model, how long.
+`RunStats` (contract.ts) already computes exactly that per call — `runStats(usages)` returns
+`{ inTokens, outTokens, tokPerSec, genBasis }`, and `genBasis` says whether the rate came from
+Ollama's own eval timings or from wall clock, which the tooltip should show rather than implying a
+precision it does not have.
 
-Source: the debug bus already emits `agent` / `agent-step` / `chat-result`, which covers run start,
-tool calls, and completion; load/evict come from residency diffs between samples.
+**Click a span** to jump to that generation — the session detail for that run, scrolled to the step.
+Sessions are already addressable by hash and steps by `seq`, so the target exists; the event only
+needs to carry `{ hash, seq }`.
+
+**Why it belongs on THIS chart specifically.** A generation span sitting next to the memory trace
+answers a question neither view answers alone: *did that 40-second turn spend its time loading a
+model?* A span that begins right after a step in the VRAM curve says yes, and one that begins during
+a flat stretch says the model was already resident and the time went elsewhere. That is the whole
+argument for putting them on a shared axis rather than in a separate list.
+
+**Source.** Nothing new needs collecting:
+
+| Event | Where it comes from |
+| --- | --- |
+| run start / end | the debug bus's `agent` and `agent-result` |
+| generation span | `chat-result` — it already carries model, usage and timing |
+| tool step | `agent-step` (instant, or a span for a long tool) |
+| model load / evict | a residency diff between consecutive samples — no source needed at all |
+
+**What the data model already has.** `ResourceEvent { t, kind, label, model? }` and
+`eventsIn(events, from, to)` are written and tested. Samples carry epoch `t`, so events and memory
+already share an axis. Two additions are needed: an optional `until` on an event (making it a span
+rather than an instant), and a `ref?: { hash, seq }` for the click target.
+
+**Ordering note.** Events arrive from a different source than samples and on a different cadence, so
+they must be looked up by TIME, never by sample index — and a span may begin before the window and
+end after it, so clipping is the window's job, not the event's.
 
 ### 4.6 Track editor
 
@@ -447,8 +485,27 @@ Each step is useful on its own.
 2. **History + the stacked chart** — session-long samples in a module signal, three-band rendering,
    a real ceiling. Fixes the denominator and the attribution on its own.
 3. **Series, tracks, presets** — the configurable panel.
-4. **Scrub** — the overview strip and live pinning.
-5. **Events** — the lane, vertical rules, threshold rules.
+4. **Scrub** — the overview strip and live pinning. History is 900 samples (~30 min at 2s),
+   session-only, so this is a window onto what is already in memory.
+5. **Events** — spans and instants on the shared axis, hover for cost, click to jump (§4.5).
+
+## 5.1 Decided while building
+
+- **Preset picker**: a dropdown in the header row the panel already has (`.vram-head`), not tabs — tabs
+  cost a permanent row in a panel competing for height, and imply switching more often than this is
+  switched. The track editor sits behind a small badge that expands it.
+- **Presets and the editor are one state**: `TrackDef[]`. A preset populates it; editing it flips the
+  picker to *Custom*. `presetRefusal` keeps the two honest — a preset may never propose a layout
+  `stackRefusal` then rejects, which it did (Overview stacked several cards) until a drift guard caught it.
+- **A layout that does not fit the box** falls back to the default preset rather than rendering a track
+  for a card that is not there.
+- **Capacity is re-fetched every 5 polls (10s)**, not once per open: `free_memory` rides in the same
+  payload and is not slow-moving, so fetching once froze the free and residual bands.
+- **History is per-box.** `boxSignature` identifies the machine; pointing the extension at a different
+  backend drops the old box's samples, including those taken before capacity was known (which would
+  otherwise be backfilled with the NEW ceiling — an 18 GiB reading clipped against an 11.84 GiB pool).
+- **Hover names the band**: the same facts as the legend row, from one shared component, so a badge
+  added later appears in both.
 
 ## 6. Open questions
 
