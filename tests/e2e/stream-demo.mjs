@@ -162,7 +162,9 @@ const main = async () => {
         await cell.click({ position: { x: 20, y: 20 } }).catch(() => {});
         await page.keyboard.press("Control+f");
         await sleep(250);
-        await page.keyboard.type("line 1");
+        // The LAST cell is fetch_url's fetched page (not the exec/python streams), so search for a term that
+        // is actually in it — otherwise the shot captures a truthful but pointless "No results".
+        await page.keyboard.type("step");
         await sleep(500);
         await page.screenshot({ path: path.join(ART, "find-bar.png") }).catch(() => {});
         const n = await frame.locator(".r-find-n").first().textContent().catch(() => null);
