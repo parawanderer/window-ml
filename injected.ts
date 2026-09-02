@@ -1826,9 +1826,23 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             // [name, src] list; every source auto-dispatches by shape (a Sheets URL / 'current' →
             // sheet, else a DOM selector/Element) so one call can join a page table and a sheet.
             const specs: { name: string; src: string | Element }[] = [];
-            if (tables != null) {
-                if (typeof tables === "string" || (typeof Element !== "undefined" && tables instanceof Element)) specs.push({ name: "df", src: tables as string | Element });
-                else for (const [name, src] of Object.entries(tables)) {
+            // Args arrive off the wire as JSON, so `tables` can be any shape regardless of the declared type.
+            // An ARRAY is neither documented form, but models write `tables: ["current"]` — the schema is a
+            // `oneOf`, and wrapping a lone value in a list is an easy slip. A ONE-element array is unambiguous
+            // (it IS the single source), so take it rather than burning a turn. More than one carries no NAMES,
+            // which is the entire point of the map form, so say that — instead of letting Object.entries turn
+            // the indices into "0"/"1" and reporting `"0" isn't a valid Python variable name`, a name the model
+            // never wrote and could not act on (it retried the same call and looped).
+            let tableArg: unknown = tables;
+            if (Array.isArray(tableArg)) {
+                if (tableArg.length === 0) tableArg = null;
+                else if (tableArg.length === 1) tableArg = tableArg[0];
+                else throw new Error(`pythonExec tables: got an array of ${tableArg.length} sources, which carries no variable NAMES — a list can't say what to call each DataFrame. Pass a MAP so each one has a name you can use in the code, e.g. {"sales": ${JSON.stringify(String(tableArg[0]))}, "targets": ${JSON.stringify(String(tableArg[1]))}}. For ONE table, pass the source string on its own and it loads as \`df\`.`);
+            }
+            if (tableArg != null) {
+                if (typeof tableArg === "string" || (typeof Element !== "undefined" && tableArg instanceof Element)) specs.push({ name: "df", src: tableArg as string | Element });
+                else if (typeof tableArg !== "object") throw new Error(`pythonExec tables: expected a source string or a {name: source} map, got ${typeof tableArg}.`);
+                else for (const [name, src] of Object.entries(tableArg as Record<string, string>)) {
                     const nameErr = pyVarNameError(name);
                     if (nameErr) throw new Error(`pythonExec tables: ${nameErr}`);
                     specs.push({ name, src });

@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
-import { elementReference, classifyOverlay, navTarget, typeFromHeader, typeFromContent, typeFromExtension, classifyContent, jsonShape, askReaderNumCtx, isCspEvalBlocked, markdownAlternateHref, resolveMarkdownAlternate, markdownAffordance, markdownTwin } from "../dom.ts";
+import { elementReference, classifyOverlay, navTarget, typeFromHeader, typeFromContent, typeFromExtension, classifyContent, jsonShape, askReaderNumCtx, isCspEvalBlocked, markdownAlternateHref, resolveMarkdownAlternate, markdownAffordance, markdownTwin, externalSheetIds } from "../dom.ts";
 
 // --- ml.fetch content classification (header / content / extension → a HEURISTIC type for chaining) ---
 test("typeFromHeader: specific content-types map; generic ones return null (defer to content/extension)", () => {
@@ -264,4 +264,20 @@ test("markdownAffordance: a copy/view CONTROL counts, a page merely about Markdo
     assert.deepEqual(
         markdownTwin(doc('<head><link rel="alternate" type="text/markdown" href="/g.md"></head><body><button>Copy as Markdown</button></body>')),
         { url: "https://docs.test/g.md", affordance: false });
+});
+
+// The external-Google-Sheet approval escalation scans python_exec's `tables` arg. python_exec accepts a
+// ONE-element array (models write `tables: ["current"]`), so this scan must see into an array too — it does,
+// because Object.values() on an array yields its elements. Pinned, since a hole here would let a privileged
+// credentialed sheet read skip its consent prompt by being wrapped in a list.
+test("externalSheetIds: finds sheets in a string, a map, AND an array", () => {
+    const A = "https://docs.google.com/spreadsheets/d/ABC123/edit#gid=0";
+    const B = "https://docs.google.com/spreadsheets/d/XYZ789/edit";
+    assert.deepEqual(externalSheetIds({ tables: A }), ["ABC123"]);
+    assert.deepEqual(externalSheetIds({ tables: { a: A, b: B } }), ["ABC123", "XYZ789"]);
+    assert.deepEqual(externalSheetIds({ tables: [A] }), ["ABC123"], "a wrapped source must not escape the gate");
+    assert.deepEqual(externalSheetIds({ tables: [A, B] }), ["ABC123", "XYZ789"]);
+    assert.deepEqual(externalSheetIds({ tables: ["current"] }), [], "'current' is the page you are on, not external");
+    assert.deepEqual(externalSheetIds({ tables: "#sales" }), []);
+    assert.deepEqual(externalSheetIds({}), []);
 });

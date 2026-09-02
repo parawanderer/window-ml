@@ -21,7 +21,7 @@ export const validateArgs = (schema: JsonSchema | undefined, args: Record<string
     // arg is "unknown" against a tool that never declared its shape, and blocking on
     // that would reject legitimate calls to schema-less tools.
     if (!schema || schema.type !== "object" || !schema.properties || !Object.keys(schema.properties).length) return [];
-    const props = schema.properties as Record<string, { type?: string; enum?: unknown[] }>;
+    const props = schema.properties as Record<string, { type?: string; enum?: unknown[]; oneOf?: { type?: string }[]; anyOf?: { type?: string }[] }>;
     const issues: string[] = [];
     for (const req of (schema.required || [])) if (!(req in args)) issues.push(`missing required "${req}"`);
     const jsType = (v: unknown): string => Array.isArray(v) ? "array" : v === null ? "null" : typeof v;
@@ -36,10 +36,25 @@ export const validateArgs = (schema: JsonSchema | undefined, args: Record<string
             default: return true;
         }
     };
+    // A property may be a UNION (`oneOf`/`anyOf`) rather than one `type` — python_exec's `tables` is "a source
+    // string OR a { name: source } map". Reading only `spec.type` meant a union property was validated as
+    // NOTHING AT ALL: an array, a number and null all passed silently, and `tables: ["current"]` then reached
+    // the tool, where Object.keys(["current"]) is ["0"] and the model was told `"0" isn't a valid Python
+    // variable name` — a message about a name it never wrote, which it could not act on.
+    // Only checked when EVERY branch names a type; a branch without one means "anything", so there is nothing
+    // to assert. Still not a full validator (no per-branch shape checking) — see the file header.
+    const unionTypes = (spec: { oneOf?: { type?: string }[]; anyOf?: { type?: string }[] }): string[] | null => {
+        const branches = Array.isArray(spec.oneOf) ? spec.oneOf : Array.isArray(spec.anyOf) ? spec.anyOf : null;
+        if (!branches?.length) return null;
+        const types = branches.map(b => b?.type).filter((t): t is string => typeof t === "string");
+        return types.length === branches.length ? types : null;
+    };
     for (const [k, v] of Object.entries(args)) {
         const spec = props[k];
         if (!spec) { issues.push(`unknown property "${k}"`); continue; }
         if (spec.type && !okType(v, spec.type)) issues.push(`"${k}" should be ${spec.type} (got ${jsType(v)})`);
+        const union = spec.type ? null : unionTypes(spec);
+        if (union && !union.some(t => okType(v, t))) issues.push(`"${k}" should be ${union.join(" or ")} (got ${jsType(v)})`);
         if (Array.isArray(spec.enum) && !spec.enum.includes(v)) issues.push(`"${k}" not in [${spec.enum.join(", ")}]`);
     }
     return issues;

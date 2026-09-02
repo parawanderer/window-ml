@@ -2442,6 +2442,38 @@ test("an EXTERNAL sheet inside a `tables` MAP escalates to approval (not just a 
     assert.equal(step.approval, "user");
 });
 
+// REGRESSION (observed in a real run). The model sent `tables: ["current"]` — an ARRAY, which is neither
+// documented form. `tables`'s schema is a `oneOf`, which validateArgs used to skip entirely, so nothing
+// flagged it; the tool then did Object.keys(["current"]) === ["0"] and reported `"0" isn't a valid Python
+// variable name`. The model had never written "0", so it could not act on that and retried the same call,
+// burning its step budget. A one-element array is unambiguous — take it.
+test("tables: a ONE-element array is the single source (models wrap a lone value in a list)", async () => {
+    const wrapped = await runPyAgent({ config: { autoApprovePython: true }, code: "return df.sum()", args: { tables: ["current"] } });
+    const bare = await runPyAgent({ config: { autoApprovePython: true }, code: "return df.sum()", args: { tables: "current" } });
+    // Equivalence is the claim, so compare against the documented form rather than pinning this page's outcome.
+    // The wrapped call additionally carries the schema warning — both halves of the fix in one result: the tool
+    // does the right thing, AND the model is told the shape it should have sent so it corrects next time.
+    assert.ok(String(wrapped.step.result).startsWith(String(bare.step.result)), "['current'] does what 'current' does");
+    assert.match(String(wrapped.step.result), /Argument schema issue.*"tables" should be string or object \(got array\)/, "and the union is now validated");
+    assert.equal(wrapped.approvals, bare.approvals, "same approval path");
+    assert.equal(wrapped.step.approval, bare.step.approval);
+    assert.doesNotMatch(String(wrapped.step.result), /valid Python variable name/, "never reports a name the model didn't write");
+});
+
+// The security invariant must survive that accommodation: wrapping a sheet URL in a list cannot skip consent.
+test("tables: an external sheet wrapped in an array still escalates to approval", async () => {
+    const { approvals, step } = await runPyAgent({ config: { autoApprovePython: true }, code: "return df.sum()", args: { tables: ["https://docs.google.com/spreadsheets/d/WRAP1/edit"] } });
+    assert.equal(approvals, 1, "a wrapped external sheet is still an external sheet");
+    assert.equal(step.approval, "user");
+});
+
+test("tables: a MULTI-element array names the real problem (no names) instead of failing on \"0\"", async () => {
+    const { step } = await runPyAgent({ config: { autoApprovePython: true }, code: "return 1", args: { tables: ["#a", "#b"] } });
+    assert.doesNotMatch(String(step.result), /"0" isn't a valid Python variable name/, "the old message pointed at an index");
+    assert.match(String(step.result), /carries no variable NAMES/, "says WHY a list can't work");
+    assert.match(String(step.result), /"sales": "#a"/, "and shows the map form built from what was actually passed");
+});
+
 test("a `tables` map of only DOM selectors / 'current' is auto-approved (no external escalation)", async () => {
     const { approvals, step } = await runPyAgent({ config: { autoApprovePython: true }, code: "return 1", args: { tables: { a: "#t", b: "current" } } });
     assert.equal(approvals, 0, "no external sheet → the readonly sandbox path (no prompt)");
