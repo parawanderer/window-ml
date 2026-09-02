@@ -6,7 +6,8 @@
 // is already clipped.
 //
 // A MODELED dialect (like readonly-exec): only the modeled verbs/flags run; anything else throws an actionable
-// error — it is NOT a real shell. Supported verbs: grep · head · tail · wc · sort · uniq, chained with `|`.
+// error — it is NOT a real shell. The verbs are PIPE_CMDS below (the single source for every message,
+// prompt and tool-parameter description that names them); chain them with `|`.
 // The input text is the pipeline's stdin (no `cat`); each stage transforms the lines and feeds the next.
 
 import { jsonShape } from "./dom";
@@ -16,30 +17,100 @@ import { jsonShape } from "./dom";
  *  turn to discover, which has happened once already; deriving both from this makes that drift impossible. */
 export const PIPE_CMDS = ["grep", "head", "tail", "wc", "count", "sort", "uniq", "keys", "values", "schema", "type"] as const;
 const CMDS = `${PIPE_CMDS.join(" · ")} · a .path`;
+
+/** What each verb ACCEPTS, in the model's words — the flags and the one-line semantics. Typed as a total
+ *  Record over {@link PIPE_CMDS}, so adding a verb without describing it is a COMPILE error, not a doc that
+ *  quietly goes stale. Feeds {@link PIPE_SYNTAX}; nothing else should spell a verb list out by hand. */
+const PIPE_USAGE: Record<(typeof PIPE_CMDS)[number], string> = {
+    grep: "grep PATTERN (-i -v -n -c -F -w -o -E, context -A/-B/-C N)",
+    head: "head (-n N)",
+    tail: "tail (-n N)",
+    wc: "wc (-l -w -c)",
+    count: "count (structure-aware size: array elements, table rows, object keys, else lines)",
+    sort: "sort (-n -r -u -f)",
+    uniq: "uniq (-c -i; adjacent only, so sort first)",
+    keys: "keys (an object's keys, or a table's columns)",
+    values: "values (an object's values)",
+    schema: "schema (the SHAPE of a JSON value, not the data — the cheapest read of something big)",
+    type: "type (what the value actually is)",
+};
+
+/** The one-line hint every pipe ERROR path shows the model. Derived from {@link PIPE_CMDS} so a failed pipe
+ *  can never advertise a SMALLER dialect than the one that just refused it — a model told the set is
+ *  "grep · head · tail · wc · sort · uniq" will never reach for `schema` or a `.path`. */
+export const PIPE_HINT = `The pipe is a small line-scanner (${CMDS}), NOT a real shell.`;
+
+/** The hint to append to a FAILED pipe's message — {@link PIPE_HINT}, or nothing when the dialect's own error
+ *  already named the verbs (the unknown-command refusal does). Without this the model reads the same twelve
+ *  verbs twice in one tool result, which is noise it pays for in context. Returns a leading blank line so a
+ *  caller can concatenate it unconditionally. */
+export function pipeHint(message: string): string {
+    return message.includes(CMDS) ? "" : `\n\n${PIPE_HINT}`;
+}
+
+/** The model-facing DESCRIPTION of the dialect: the single source for every `pipe` tool PARAMETER (fetch_url,
+ *  navigate's text verify, interactives). Each tool prepends its own lead-in and appends its own escape hatch;
+ *  the dialect itself is described here once. */
+export const PIPE_SYNTAX =
+    "It's an interpreted line-based environment (NOT a real shell); supported commands, chained with `|`: " +
+    `${PIPE_CMDS.map(c => PIPE_USAGE[c]).join(", ")}, or a \`.path\` into JSON (\`.rows[0].name\`). ` +
+    "E.g. \"grep -i pricing | head -n 20\", or \"grep -o '[0-9]+' | sort -n | tail -n 1\". " +
+    "A stage's argument needs quoting if it contains spaces; you can also pass an ARRAY with one stage per " +
+    "entry ([\"grep -E error|warn\", \"head 5\"]), which is never re-split, so a `|` inside a stage needs no quotes.";
 const escapeRegex = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 /** Split on newlines, dropping a single trailing "\n" so a text that ends in a newline isn't seen as having a
  *  phantom empty last line (matches how the shell tools treat a trailing line terminator). */
 const toLines = (text: string): string[] => text.replace(/\n$/, "").split("\n");
 const fromLines = (lines: string[]): string => lines.join("\n");
 
-/** Quote-aware parse of a pipeline string into stages of argv. Respects '…' and "…" (both literal — no
- *  expansion, so a `|` or space inside quotes stays part of the argument, e.g. `grep 'a|b'`). An unquoted `|`
- *  ends a stage; unquoted whitespace ends an argument. Throws on an unterminated quote. */
-function parsePipeline(str: string): string[][] {
-    const stages: string[][] = [];
-    let argv: string[] = [], cur = "", hasCur = false, q = "";
+/** Quote-aware split of a pipeline STRING into stage strings, on unquoted `|` only. Respects '…' and "…"
+ *  (both literal — no expansion, so a `|` inside quotes stays part of the argument, e.g. `grep 'a|b'`), and
+ *  keeps the quotes so {@link parseArgv} can still see them. Throws on an unterminated quote.
+ *
+ *  This is deliberately SEPARATE from argv parsing, and stages are never re-joined into a string once split:
+ *  a stage carrying an unquoted `|` (an array entry — `["grep -E head|tail"]`) would be torn in two by a
+ *  second split, which used to silently grep for `head` and then run `tail` as its own stage. */
+export function splitStages(pipe: string): string[] {
+    const out: string[] = [];
+    let cur = "", q = "";
+    for (const c of pipe) {
+        if (q) { cur += c; if (c === q) q = ""; continue; }        // inside quotes: copy verbatim, `|` included
+        if (c === "'" || c === '"') { q = c; cur += c; continue; }
+        if (c === "|") { out.push(cur); cur = ""; continue; }
+        cur += c;
+    }
+    if (q) throw new Error(`unterminated quote (${q}) in the pipe.`);
+    out.push(cur);
+    return out.map(s => s.trim()).filter(Boolean);   // drop empty stages (leading/trailing/`||`)
+}
+
+/** Quote-aware parse of ONE stage into argv. Unquoted whitespace ends an argument; quotes are literal (no
+ *  expansion) and are consumed, so `grep 'a|b'` yields the two args `grep` and `a|b`. A `|` here is an
+ *  ORDINARY character — the stage boundary was already decided by {@link splitStages} or by the caller
+ *  handing us an array. Throws on an unterminated quote. */
+function parseArgv(stage: string): string[] {
+    const argv: string[] = [];
+    let cur = "", hasCur = false, q = "";
     const endArg = () => { if (hasCur) { argv.push(cur); cur = ""; hasCur = false; } };
-    const endStage = () => { endArg(); stages.push(argv); argv = []; };
-    for (const c of str) {
+    for (const c of stage) {
         if (q) { if (c === q) q = ""; else { cur += c; hasCur = true; } continue; }
         if (c === "'" || c === '"') { q = c; hasCur = true; continue; }   // an empty '' is still an (empty) arg
-        if (c === "|") { endStage(); continue; }
         if (c === " " || c === "\t" || c === "\n") { endArg(); continue; }
         cur += c; hasCur = true;
     }
     if (q) throw new Error(`unterminated quote (${q}) in the pipe.`);
-    endStage();
-    return stages.filter(s => s.length);   // drop empty stages (leading/trailing/`||`)
+    endArg();
+    return argv;
+}
+
+/** Resolve a pipe to its stages' argv. A STRING is split on unquoted `|`; an ARRAY is already one entry per
+ *  stage and is NEVER re-split, so an entry may contain a bare `|` (regex alternation) with no quoting at
+ *  all — the whole point of the array form. */
+function pipelineArgv(pipe: string | string[]): string[][] {
+    const stages = Array.isArray(pipe)
+        ? pipe.filter(s => typeof s === "string" && s.trim()).map(s => s.trim())
+        : splitStages(pipe);
+    return stages.map(parseArgv).filter(a => a.length);
 }
 
 /** Peel single-char boolean flags + numeric flags from an argv, returning the set of flags, a map of numeric
@@ -224,10 +295,42 @@ function keysOf(lines: string[]): string[] {
     return emit(Object.keys(j));
 }
 
+/** `ml.pipe(source, pipe)` — the dialect over ANY string, not just a fetched body.
+ *
+ *  The `pipe` PARAMETER on fetch_url / navigate's verify / interactives only ever reaches that one tool's own
+ *  output. A model holding text from anywhere else (a DOM survey, python's stdout, two fetches concatenated,
+ *  something on `ml.state`) had to hand-roll the equivalent JS, and models write shell pipelines far more
+ *  reliably than they write `.split("\n").filter(...).slice(...)`. This is the same dialect, callable inline —
+ *  and it inverts the `pipe` parameter's own escape hatch ("for anything more complex, use exec"): from inside
+ *  exec you can now go the other way too.
+ *
+ *  `source` is a string, or anything with a `.text` (a {@link FetchResult}), in which case its readable form is
+ *  used — `.markdown` when the fetch distilled one, else `.text`. Accepting the whole result object is
+ *  deliberate: a model WILL write `ml.pipe(await ml.fetch(url), ...)`, the same accommodation the Python
+ *  prelude makes for `pd.read_csv('current')`.
+ *
+ *  Pure: no I/O, no DOM, no tokens spent. Throws the dialect's own actionable Error on a bad stage. */
+export function mlPipe(source: unknown, pipe?: string | string[] | null): string {
+    let text: unknown = source;
+    if (source && typeof source === "object") {
+        const r = source as { markdown?: unknown; text?: unknown };
+        if (typeof r.text === "string" || typeof r.markdown === "string") text = r.markdown ?? r.text;
+    }
+    if (typeof text !== "string") {
+        throw new Error(`ml.pipe needs a string (or a fetch result), got ${text === null ? "null" : Array.isArray(text) ? "an array" : typeof text}. For an object, JSON.stringify it first — the \`.path\`/keys/schema stages then read it.`);
+    }
+    if (pipe == null || (Array.isArray(pipe) ? !pipe.length : !pipe.trim())) return text;   // no stages = unchanged
+    return runPipe(text, pipe);
+}
+
 /** Run a `grep | head | …` pipeline over `text`, returning the transformed text. Throws an actionable Error on
- *  an unknown/misused command (the caller surfaces it to the model). Pure — no side effects. */
-export function runPipe(text: string, pipe: string): string {
-    const stages = parsePipeline(pipe);
+ *  an unknown/misused command (the caller surfaces it to the model). Pure — no side effects.
+ *
+ *  `pipe` is either the dialect STRING (`"grep -i x | head 5"`, split on unquoted `|`) or an ARRAY with one
+ *  stage per entry (`["grep -E error|warn", "head 5"]`), which is never re-split — so a stage may contain a
+ *  bare `|` with no quoting. The two forms are equivalent for stages that contain no `|`. */
+export function runPipe(text: string, pipe: string | string[]): string {
+    const stages = pipelineArgv(pipe);
     let lines = toLines(text);
     for (const argv of stages) {
         const cmd = argv[0];

@@ -15,7 +15,7 @@ export type CaptureAnswer = (els: Element[], note?: string, show?: "inline" | "h
 // domTools stay ml-free. Used by describeElement to reveal content a page selector can't enter.
 export type ShadowResolve = (selector: string) => Promise<{ line: string }[] | null>;
 import { truncate, clipOut, errText, elPath, normalizeText, clickSelector, elLine, describeSkeleton, queryAll, deepQueryAll, closedShadowHosts, frameHostOf, selectorError, isCspEvalBlocked, firstHopSealed, isSealedHost } from "./dom";
-import { runPipe } from "./text-pipe";
+import { runPipe, pipeHint, PIPE_SYNTAX } from "./text-pipe";
 import { DEREF_TOOL } from "./token-pipe";
 import { INTERACTIVE_SEL, roleOf, accessibleName, placeholderText, ariaState, hasLayout, styleHidden, isFaded } from "./a11y";
 import { pageContext, browserInfo, agentState } from "./util";
@@ -432,7 +432,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 properties: {
                     selector: { type: "string", description: "CSS selector for possible matches." },
                     n: { type: "integer", description: "How many matches to sample (default 5; raise it when you'll `pipe`)." },
-                    pipe: { type: "string", description: "Optional. Scan/filter the sampled lines through a small shell-style pipeline (NOT a real shell): grep (-i -v -n -c -F -w -o -E, -A/-B/-C N), head/tail (-n N), wc (-l -w -c), sort (-n -r -u -f), uniq (-c -i), chained with `|`. E.g. \"grep -i sold out\" or \"sort | uniq -c\"." }
+                    pipe: { type: "string", description: "Optional. Scan/filter the sampled lines before they reach you. " + PIPE_SYNTAX }
                 },
                 required: ["selector"]
             },
@@ -449,11 +449,11 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 }
                 if (els.length > count) out.push(`…(${count} of ${els.length} shown)`);
                 let content = out.join("\n");
-                // Optional `pipe`: scan/filter the sampled lines (grep/head/tail/wc/sort/uniq). Pure text; the
+                // Optional `pipe`: scan/filter the sampled lines through the dialect (PIPE_CMDS). Pure text; the
                 // `elements` side-channel still holds the full sample (a text-only view). Bad command → actionable.
                 if (typeof pipe === "string" && pipe.trim()) {
                     try { content = runPipe(content, pipe.trim()); }
-                    catch (e) { const escape = ctx?.hasTool("exec") ? " For more, use exec: `[...document.querySelectorAll(sel)].map(e => e.innerText)` and process the array." : ""; return `Pipe error: ${errText(e as Error)}\n\nThe pipe is a small line-scanner (grep · head · tail · wc · sort · uniq), not a real shell.${escape}`; }
+                    catch (e) { const escape = ctx?.hasTool("exec") ? " For more, use exec: `[...document.querySelectorAll(sel)].map(e => e.innerText)` and process the array." : ""; return `Pipe error: ${errText(e as Error)}${pipeHint(errText(e as Error))}${escape}`; }
                     content += `\n\n(piped through \`${pipe.trim()}\`)`;
                 }
                 return { content, elements: sampled };
@@ -482,6 +482,12 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 "prompt; anything else is still allowed but falls back to real `eval` and asks the user first. " +
                 "So for a read-only survey prefer `.map`/`.filter`/`.reduce`/`for…of` + `ml.range(n)` — reach " +
                 "for mutation or a while-loop only when the task actually needs it. " +
+                // Advertise ml.pipe HERE rather than in the system prompt or the tools' `pipe` parameter: exec
+                // is where you'd reach for it, and inside exec its availability is self-evident (naming it on
+                // another tool would name a capability that needs exec, which the run may not have).
+                "FILTERING TEXT: `ml.pipe(text, \"grep -i pricing | head -20\")` runs the same small dialect the " +
+                "tools' `pipe` parameter takes, over ANY string — a survey's output, a fetch, python's stdout. " +
+                "Cheaper to write (and to get right) than the equivalent `.split`/`.filter`/`.slice` chain. " +
                 "SHADOW DOM / IFRAMES: use `ml.queryAll('host >>> inner')` — a shadow/iframe-piercing " +
                 "querySelectorAll that returns an Array and understands the same selector dialect the DOM " +
                 "tools use (`>>>` crosses each OPEN shadow root / same-origin iframe; a trailing " +
@@ -658,9 +664,11 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
             summary: "Reports the page URL, title, and size.",
             description: "Where and when you are: the page URL, title, language, and the current " +
                 "date/time + locale/timezone. Use it to ground time-relative tasks (what counts as " +
-                "'today'?) and to confirm the site and language before matching text.",
+                "'today'?) and to confirm the site and language before matching text. It also reports " +
+                "whether this page publishes a clean MARKDOWN version of itself — on a docs page, fetching " +
+                "that is far cheaper and cleaner than surveying the rendered DOM.",
             parameters: { type: "object", properties: {} },
-            run: (): string => pageContext()
+            run: (_args: unknown, ctx?: ToolContext): string => pageContext(n => !!ctx?.hasTool(n))
         }),
         T({
             name: "agent_api_docs",
@@ -913,7 +921,10 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
 export function buildDereferenceTool(defineTool: (tool?: Partial<MlTool>) => MlTool): MlTool {
     return defineTool({
         name: DEREF_TOOL,
-        description: "Read an output this run already produced, by its @tool:<id> pointer — instead of re-running a tool or retyping a value. Free, changes nothing, and can read MORE than the truncated copy you were shown. Optional `pipe` reduces it first: schema | keys | values | len | type | head N | tail N | grep TEXT | slice A B, or a path like .items[0].name; chain with '|'. The reply says what the value is and when it was captured (a pointer is a snapshot — the page may have changed since).",
+        description: "Read an output this run already produced, by its @tool:<id> pointer — instead of re-running a tool or retyping a value. Free, changes nothing, and can read MORE than the truncated copy you were shown. " +
+            "BINDING: reading a builtin by NAME ('python_exec') resolves to its LATEST call and replies with that call's STABLE @tool:<id> — so if you didn't ask for a token when you ran it but now want to keep or show the output, read it here and you get a pinned id you can cite. The name is a moving target (it follows the newest call); the id is not. " +
+            "A `pipe`d read is itself given a pointer, so you can cite the REDUCTION you just made rather than the whole output. Optional `pipe` reduces the value first. " + PIPE_SYNTAX +
+            " The reply says what the value is and when it was captured (a pointer is a snapshot — the page may have changed since).",
         parameters: {
             type: "object",
             properties: {

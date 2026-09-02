@@ -766,7 +766,7 @@ test("sampleText pipe: scans the sampled lines through the grep/sort pipeline", 
     assert.match(res.content, /piped through `grep -i banana \| wc -l`/, "notes the pipe");
     // A bad command → an actionable error; the exec suggestion is gated on exec being wired.
     const err = tool.run({ selector: "p", n: 10, pipe: "sed x" }, { hasTool: (n) => n === "exec" });
-    assert.match(String(err), /Pipe error.*not a real shell.*use exec/s);
+    assert.match(String(err), /Pipe error.*not a real shell.*use exec/is);
 });
 
 test("exec on a strict page (CSP / Trusted-Types block) → signals cdpExec with the SOURCE, not a plain error", async () => {
@@ -2289,7 +2289,7 @@ test("fetch_url pipe: filters the returned text through the grep/head pipeline (
     assert.match(String(err), /const \{ markdown \} = await ml\.fetch/, "with exec wired → points at the exec escape hatch");
     // Without exec wired, the hint is omitted (no misleading suggestion to use a tool it doesn't have).
     const errNoExec = await tool.run({ url, pipe: "sed 's/a/b/'" }, { hasTool: () => false, tools: [], model: null, capabilities: null });
-    assert.match(String(errNoExec), /not a real shell/, "still explains the dialect");
+    assert.match(String(errNoExec), /not a real shell/i, "still explains the dialect");
     assert.doesNotMatch(String(errNoExec), /use exec/, "no exec suggestion when exec isn't available");
 
     // Grepping RAW HTML is ALLOWED — but a MINIFIED (one-line) page can't be split by line tools, so nudge.
@@ -2440,6 +2440,38 @@ test("an EXTERNAL sheet inside a `tables` MAP escalates to approval (not just a 
     const { approvals, step } = await runPyAgent({ config: { autoApprovePython: true }, code: "return df_t.sum()", args: { tables: { df_t: "https://docs.google.com/spreadsheets/d/MAP1/edit" } } });
     assert.equal(approvals, 1, "an external sheet in the map still prompts");
     assert.equal(step.approval, "user");
+});
+
+// REGRESSION (observed in a real run). The model sent `tables: ["current"]` — an ARRAY, which is neither
+// documented form. `tables`'s schema is a `oneOf`, which validateArgs used to skip entirely, so nothing
+// flagged it; the tool then did Object.keys(["current"]) === ["0"] and reported `"0" isn't a valid Python
+// variable name`. The model had never written "0", so it could not act on that and retried the same call,
+// burning its step budget. A one-element array is unambiguous — take it.
+test("tables: a ONE-element array is the single source (models wrap a lone value in a list)", async () => {
+    const wrapped = await runPyAgent({ config: { autoApprovePython: true }, code: "return df.sum()", args: { tables: ["current"] } });
+    const bare = await runPyAgent({ config: { autoApprovePython: true }, code: "return df.sum()", args: { tables: "current" } });
+    // Equivalence is the claim, so compare against the documented form rather than pinning this page's outcome.
+    // The wrapped call additionally carries the schema warning — both halves of the fix in one result: the tool
+    // does the right thing, AND the model is told the shape it should have sent so it corrects next time.
+    assert.ok(String(wrapped.step.result).startsWith(String(bare.step.result)), "['current'] does what 'current' does");
+    assert.match(String(wrapped.step.result), /Argument schema issue.*"tables" should be string or object \(got array\)/, "and the union is now validated");
+    assert.equal(wrapped.approvals, bare.approvals, "same approval path");
+    assert.equal(wrapped.step.approval, bare.step.approval);
+    assert.doesNotMatch(String(wrapped.step.result), /valid Python variable name/, "never reports a name the model didn't write");
+});
+
+// The security invariant must survive that accommodation: wrapping a sheet URL in a list cannot skip consent.
+test("tables: an external sheet wrapped in an array still escalates to approval", async () => {
+    const { approvals, step } = await runPyAgent({ config: { autoApprovePython: true }, code: "return df.sum()", args: { tables: ["https://docs.google.com/spreadsheets/d/WRAP1/edit"] } });
+    assert.equal(approvals, 1, "a wrapped external sheet is still an external sheet");
+    assert.equal(step.approval, "user");
+});
+
+test("tables: a MULTI-element array names the real problem (no names) instead of failing on \"0\"", async () => {
+    const { step } = await runPyAgent({ config: { autoApprovePython: true }, code: "return 1", args: { tables: ["#a", "#b"] } });
+    assert.doesNotMatch(String(step.result), /"0" isn't a valid Python variable name/, "the old message pointed at an index");
+    assert.match(String(step.result), /carries no variable NAMES/, "says WHY a list can't work");
+    assert.match(String(step.result), /"sales": "#a"/, "and shows the map form built from what was actually passed");
 });
 
 test("a `tables` map of only DOM selectors / 'current' is auto-approved (no external escalation)", async () => {

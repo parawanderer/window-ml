@@ -18,7 +18,7 @@ import { captureVerify, captureVerifyElement } from "./builtin-tools";
 import { htmlToMarkdown } from "./html-to-md";
 import { clipOut, elLine, errText } from "./dom";
 import { makeAnswerFacade, finalizeAnswer } from "./answer-set";
-import { runPipe } from "./text-pipe";
+import { runPipe, pipeHint } from "./text-pipe";
 import { descriptorFor } from "./render-descriptor";
 import { evalReadonly } from "./readonly-exec";
 import { formatReadonlyExec } from "./approval";
@@ -106,7 +106,7 @@ export async function runDelegatedTool(runId: string, name: string, args: Record
             try { md = runPipe(src, p); }
             catch (e) {
                 const escape = ("exec" in run.byName) ? " For anything more complex, read the page in an exec survey instead." : "";
-                return { result: `Destination page — pipe error: ${errText(e)}\n\nThe pipe is a small line-scanner (grep · head · tail · wc · sort · uniq), not a real shell.${escape}` };
+                return { result: `Destination page — pipe error: ${errText(e)}${pipeHint(errText(e))}${escape}` };
             }
             footer = `\n\n(piped through \`${p}\`: ${nlines(md)} lines, ${md.length.toLocaleString()} chars — filtered from ${nlines(src)} source lines)`;
         }

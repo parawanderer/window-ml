@@ -35,7 +35,7 @@ import type {
 import { detectGroundingModel, DEFAULT_GROUNDING_RANGE, outputCapEscalated } from "./contract";
 import { evalReadonly } from "./readonly-exec";
 import { htmlToMarkdown } from "./html-to-md";
-import { runPipe } from "./text-pipe";
+import { runPipe, mlPipe, pipeHint, PIPE_SYNTAX } from "./text-pipe";
 import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement, navTarget, clipOut, askReaderNumCtx, jsonShape, shadowHostReport, clickSelector, elLine } from "./dom";
 import { makeAnswerFacade, finalizeAnswer, resolveOutputs } from "./answer-set";
 import { isSelfSourceUrl } from "./self-source";
@@ -48,7 +48,7 @@ import { annotate, pickAccentColorForTarget } from "./locate";
 import { suspiciousArgsWarning, suspiciousChars } from "./security";
 import { emitDebug, debugId, shortHash, sessionRegistry, agentRegistry, handleRegistry, enterAgentRun, exitAgentRun, resetSubcallUsage, subcallUsage } from "./bus";
 import { makeDomTools, buildDereferenceTool } from "./tools";
-import { normalizePipe } from "./token-pipe";
+import { pipeStages, TokenStore } from "./token-pipe";
 import { hideSidebarForShot, makeBackgroundTaskPromise, makeChatRequest, makeStreamingTaskPromise } from "./bridge";
 import { validateArgs, validateExtend } from "./validate";
 import { renderArgs, logStep, defaultApprove, normalizeApproval, formatReadonlyExec } from "./approval";
@@ -128,15 +128,19 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          * @param ref A pointer: `@tool:<id>`, the bare id, or a builtin's name for its latest call. `:in` reads
          *            the call/arguments instead of the result.
          * @param options `pipe` reduces the value first — the text-pipe dialect as a string
-         *                (`".rows | head 5"`), or as an ARRAY of stages (`[".rows", "head 5"]`), which avoids
-         *                quoting entirely.
+         *                (`".rows | head 5"`, split on unquoted `|`), or as an ARRAY with one stage per entry
+         *                (`[".rows", "head 5"]`), which is never re-split. Reach for the array when a stage
+         *                contains a `|` — `["grep -E error|warn"]` needs no quoting, where the string form
+         *                needs `"grep -E 'error|warn'"`. (Quoting an argument with SPACES is unchanged in
+         *                both forms: `grep -i 'pricing plan'`.)
          * @returns The value, reduced by the pipe. Rejects with an actionable message when the pointer doesn't
          *          exist (a MemoryFault naming the nearest real pointers) or a pipe stage is wrong.
          */
         dereference: async function(ref: string, { pipe = null }: { pipe?: string | string[] | null } = {}): Promise<string> {
             const fn = currentDeref();
             if (!fn) throw new Error("ml.dereference is only live inside an ml.agent run (it reads that run's captured tool outputs).");
-            return await fn(String(ref ?? ""), normalizePipe(pipe));
+            // STAGES cross the boundary, not a joined string — a stage may hold a bare `|` (see pipeStages).
+            return await fn(String(ref ?? ""), pipeStages(pipe));
         },
         /**
          * Create a stateful multi-turn chat session.
@@ -680,7 +684,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             }
             if (hints) systemPrompt += `\n\nTask-specific notes:\n${hints}`;
             if (env) {
-                const ctx = pageContext();
+                const ctx = pageContext(n => toolset.some(t => t.name === n));
                 if (ctx) systemPrompt += `\n\nCurrent page context:\n${ctx}`;
             }
             // The run's curated answer set lives on the ToolContext (built at `toolCtx` below); the loop reads
@@ -909,7 +913,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             // `ml.dereference` inside an approved exec: the loop hands its pointer resolver to `tokenSink`
             // below, and this closure is what the ToolContext binds — so the primitive is live only while a
             // tool of THIS run is executing (see tool-exec's activeDeref), and resolves against this run.
-            let pageDeref: ((ref: string, pipe?: string) => string) | null = null;
+            let pageDeref: ((ref: string, pipe?: string | string[]) => string) | null = null;
             toolCtx.deref = async (ref, pipe) => {
                 if (!pageDeref) throw new Error("This run has no captured outputs yet.");
                 return pageDeref(ref, pipe);
@@ -1048,7 +1052,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 answerSet.clear();   // the answer set reflects THIS turn's designations only
                 enterAgentRun();   // suppress orphan chat sessions from a tool's internal ml.chat; finally-decremented
                 try {
-                    const r = await runAgentLoop(t, { tools: toolMetas, maxSteps: () => control.maxSteps, signal, unattended, toolTokens, runHash, seqBase: control.seqBase, stream, tokenSink: (fn) => { pageDeref = fn; } }, deps);
+                    const r = await runAgentLoop(t, { tools: toolMetas, maxSteps: () => control.maxSteps, signal, unattended, toolTokens, runHash, seqBase: control.seqBase, stream, tokenStore: (control.tokens ??= new TokenStore()), tokenSink: (fn) => { pageDeref = fn; } }, deps);
                     control.seqBase += turnMaxSeq; turnMaxSeq = 0;   // next turn's step seqs continue past this turn's
                     control.stepBase += turnMaxStep; turnMaxStep = 0;   // …and its step numbers, so turn groups stay distinct
                     // The bottom-of-answer render: the outputs the model DESIGNATED into the answer set, minus
@@ -1505,7 +1509,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     properties: {
                         url: { type: "string", description: "The URL to go to (absolute or site-relative, e.g. \"/dashboard\")." },
                         verify: { type: "string", enum: ["viewport", "text", "text-all"], description: "Fold a view of the DESTINATION page into the result (saves a `wait`+`look`/`fetch` turn to see where you landed). \"viewport\" = a SCREENSHOT (an inline look); \"text\" = the page distilled to clean Markdown (nav/chrome stripped — cheaper, no vision needed); \"text-all\" = the same Markdown but keeping nav/header/footer. Omit to skip." },
-                        pipe: { type: "string", description: "Optional, only with verify:\"text\"/\"text-all\". Scan/filter the destination page's Markdown through a small shell-style pipeline before it reaches you (NOT a real shell): grep (-i -v -n -c -F -w -o -E, -A/-B/-C N), head/tail (-n N), wc (-l -w -c), sort (-n -r -u -f), uniq (-c -i), chained with `|`. E.g. \"grep -i '^## ' | head\" to see just the headings of where you landed." },
+                        pipe: { type: "string", description: "Optional, only with verify:\"text\"/\"text-all\". Scan/filter the destination page's Markdown before it reaches you — e.g. \"grep -i '^## ' | head\" to see just the headings of where you landed. " + PIPE_SYNTAX },
                     },
                     required: ["url"],
                 },
@@ -1597,7 +1601,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                         rendered: { type: "boolean", description: "If true, load the URL in a background tab so its JavaScript runs, then return the SETTLED DOM — for client-rendered/SPA pages a raw GET returns empty. Renders in INCOGNITO (no session/cookies): same-origin is FREE, cross-origin asks once then remembered (needs 'Allow in Incognito'). Add credentials:true to render in the user's SESSION (a normal tab with cookies) — always re-asks. Slower/heavier; never cached." },
                         ask: { type: "string", description: "If set, a fast reader model reads the fetched content and answers THIS question; you get the answer, not the body (keeps a large page out of your context). Takes precedence over `schema`." },
                         raw: { type: "boolean", description: "If true, return an HTML page's ORIGINAL raw HTML instead of the auto-converted Markdown (HTML is converted to clean Markdown by default for readability; non-HTML is unaffected)." },
-                        pipe: { type: "string", description: "Optional. SCAN/FILTER the returned text through a small shell-style pipeline BEFORE it reaches you — so you read only the relevant lines instead of the whole doc (cheaper). It's an interpreted line-based environment (NOT a real shell); supported commands, chained with `|`: grep (flags -i -v -n -c -F -w -o -E, context -A/-B/-C N), head/tail (-n N), wc (-l -w -c), sort (-n -r -u -f), uniq (-c -i). E.g. \"grep -i pricing | head -20\", or \"grep -o '[0-9]+' | sort -n | tail -1\". For anything MORE COMPLEX than this dialect, use exec instead: `const { markdown } = await ml.fetch('<the url>');` then process that string with JS." },
+                        pipe: { type: "string", description: "Optional. SCAN/FILTER the returned text through a small shell-style pipeline BEFORE it reaches you — so you read only the relevant lines instead of the whole doc (cheaper). " + PIPE_SYNTAX + " For anything MORE COMPLEX than this dialect, use exec instead: `const { markdown } = await ml.fetch('<the url>');` then process that string with JS." },
                     },
                     required: ["url"],
                 },
@@ -1628,7 +1632,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     // The body to read/return: converted Markdown for HTML (unless raw), else the JSON/raw text.
                     // ml.fetch already attached `.markdown` for HTML; reuse it (fall back to a fresh conversion).
                     const bodyText = (): string => r.json !== undefined ? JSON.stringify(r.json, null, 2) : (converted ? (r.markdown ?? htmlToMarkdown(r.text)) : r.text);
-                    // `pipe`: SCAN/FILTER the body through the safe grep/head/tail/wc/sort/uniq pipeline. Applied to
+                    // `pipe`: SCAN/FILTER the body through the safe line-scanning dialect (PIPE_CMDS). Applied to
                     // BOTH the default view AND (BEFORE) the ask-reader input, so both see the filtered stream. Pure
                     // text; on a bad command it returns { err } → an actionable message pointing at the exec escape
                     // hatch. The FOOTER states the result's size (lines / chars, vs source) so the model has a
@@ -1640,7 +1644,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                         let out: string;
                         try { out = runPipe(src, pipeStr); }
                         // The exec escape-hatch hint only makes sense when `exec` is actually wired this run — gate it.
-                        catch (e) { const escape = ctx?.hasTool("exec") ? ` For anything more complex, use exec: \`const { markdown } = await ml.fetch(${JSON.stringify(r.url)});\` then process the string in JS.` : ""; return { text: src, footer: "", err: `${head}\n\nPipe error: ${errText(e)}\n\nThe pipe is a small line-scanner (grep · head · tail · wc · sort · uniq), not a real shell.${escape}` }; }
+                        catch (e) { const escape = ctx?.hasTool("exec") ? ` For anything more complex, use exec: \`const { markdown } = await ml.fetch(${JSON.stringify(r.url)});\` then process the string in JS.` : ""; return { text: src, footer: "", err: `${head}\n\nPipe error: ${errText(e)}${pipeHint(errText(e))}${escape}` }; }
                         // Minified source (essentially one line, but large) → line tools can't split it usefully. This
                         // is the RAW-HTML footgun: grep/head over a one-line minified page is near-useless. Nudge to
                         // drop raw:true (the default HTML→Markdown lines up cleanly) or otherwise reformat first.
@@ -1822,9 +1826,23 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             // [name, src] list; every source auto-dispatches by shape (a Sheets URL / 'current' →
             // sheet, else a DOM selector/Element) so one call can join a page table and a sheet.
             const specs: { name: string; src: string | Element }[] = [];
-            if (tables != null) {
-                if (typeof tables === "string" || (typeof Element !== "undefined" && tables instanceof Element)) specs.push({ name: "df", src: tables as string | Element });
-                else for (const [name, src] of Object.entries(tables)) {
+            // Args arrive off the wire as JSON, so `tables` can be any shape regardless of the declared type.
+            // An ARRAY is neither documented form, but models write `tables: ["current"]` — the schema is a
+            // `oneOf`, and wrapping a lone value in a list is an easy slip. A ONE-element array is unambiguous
+            // (it IS the single source), so take it rather than burning a turn. More than one carries no NAMES,
+            // which is the entire point of the map form, so say that — instead of letting Object.entries turn
+            // the indices into "0"/"1" and reporting `"0" isn't a valid Python variable name`, a name the model
+            // never wrote and could not act on (it retried the same call and looped).
+            let tableArg: unknown = tables;
+            if (Array.isArray(tableArg)) {
+                if (tableArg.length === 0) tableArg = null;
+                else if (tableArg.length === 1) tableArg = tableArg[0];
+                else throw new Error(`pythonExec tables: got an array of ${tableArg.length} sources, which carries no variable NAMES — a list can't say what to call each DataFrame. Pass a MAP so each one has a name you can use in the code, e.g. {"sales": ${JSON.stringify(String(tableArg[0]))}, "targets": ${JSON.stringify(String(tableArg[1]))}}. For ONE table, pass the source string on its own and it loads as \`df\`.`);
+            }
+            if (tableArg != null) {
+                if (typeof tableArg === "string" || (typeof Element !== "undefined" && tableArg instanceof Element)) specs.push({ name: "df", src: tableArg as string | Element });
+                else if (typeof tableArg !== "object") throw new Error(`pythonExec tables: expected a source string or a {name: source} map, got ${typeof tableArg}.`);
+                else for (const [name, src] of Object.entries(tableArg as Record<string, string>)) {
                     const nameErr = pyVarNameError(name);
                     if (nameErr) throw new Error(`pythonExec tables: ${nameErr}`);
                     specs.push({ name, src });
@@ -2277,6 +2295,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          * @returns {number[]} The integer sequence.
          */
         range: mlRange,
+        pipe: mlPipe,
         /**
          * GET a URL's content via the background worker — bypasses CORS (host permissions), and by DEFAULT sends
          * no cookies (uncredentialed; `credentials`/`rendered` opt in — see below). Use it to READ a page/file
@@ -2440,7 +2459,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
         catch { /* rebuild failed → the barrier times out and the loop gets a clear "no active run" error */ }
         // Carry the DESTINATION page's context back: the background folds it into the `navigate` tool's
         // result, so the model's next turn is oriented on the new page without a wasted look()/pageInfo turn.
-        window.postMessage({ type: "RUN_READOPTED", runId, pageInfo: pageContext() }, "*");
+        window.postMessage({ type: "RUN_READOPTED", runId, pageInfo: pageContext(n => (rebuild.toolNames || []).includes(n)) }, "*");
         // Durable resume: an INTERRUPTED (SW-evicted) run auto-CONTINUES from its checkpointed history — the
         // resume handle _adoptRun just re-registered drives a RESUME_RUN (empty follow-up = "carry on").
         if (resume) {

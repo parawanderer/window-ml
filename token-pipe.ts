@@ -1,8 +1,8 @@
 // The POINTER layer behind `dereference`: what a `@tool:<id>` token points at, and how to read part of it.
 //
-// The pipe language itself is NOT here — it is `text-pipe.ts`, the existing modeled bash sub-dialect
-// (grep · head · tail · wc · sort · uniq, plus the structural keys · values · schema · type · `.path` stages
-// added for this). This module adds only what a POINTER knows that a bare string doesn't:
+// The pipe language itself is NOT here — it is `text-pipe.ts`, the existing modeled bash sub-dialect (its
+// verbs are PIPE_CMDS there, the single source for every message and tool-parameter description that names
+// them). This module adds only what a POINTER knows that a bare string doesn't:
 //
 //   • its TYPE (a table, an image, code, JSON, text) — so `keys` on a DataFrame means its COLUMNS, and the
 //     model is told what it is holding before it decides how to slice it;
@@ -12,10 +12,14 @@
 //
 // Pure: no DOM, no chrome, no I/O.
 
-import { runPipe } from "./text-pipe";
+import { runPipe, splitStages } from "./text-pipe";
 
 /** The tool name, shared by the loop (which answers it) and the toolset builder (which advertises it). */
 export const DEREF_TOOL = "dereference";
+
+/** Was this reference a tool NAME (the moving "latest call" alias) rather than the id it resolved to? The loop
+ *  uses it to decide whether to hand the model the stable id — see the "Pinned:" line in agent-loop. */
+export const isAliasRef = (ref: string, resolvedId: string): boolean => normRef(ref) !== resolvedId;
 
 /** What the value at a pointer actually IS. The loop already knows — it holds the step's `RenderDescriptor` —
  *  so the pointer carries the type rather than flattening everything to a string the model must re-sniff. The
@@ -116,8 +120,8 @@ export function pipeInput(v: TokenValue, slot: "in" | "out" = "out"): string {
 /** Read a pointer through `pipe`. A leading `latex` / `img` cast is applied first (it needs the typed value);
  *  everything after is the ordinary text-pipe dialect. Any stage that fails THROWS with an actionable message —
  *  the dialect's existing contract — and the caller turns that into a tool error the model can correct. */
-export function derefPipe(v: TokenValue, slot: "in" | "out", pipe?: string | null): string {
-    const stages = (pipe ?? "").split("|").map((s) => s.trim()).filter(Boolean);
+export function derefPipe(v: TokenValue, slot: "in" | "out", pipe?: string | string[] | null): string {
+    const stages = pipeStages(pipe);
     // With NO pipe the model wants the value as it would read it — the rendered table, not the {columns,rows}
     // JSON that only exists so the structural stages have something to work on.
     if (!stages.length) return slot === "in" ? (v.in ?? "") : (v.full ?? v.out);
@@ -135,13 +139,28 @@ export function derefPipe(v: TokenValue, slot: "in" | "out", pipe?: string | nul
         if (/^(latex|img|image)$/i.test(later))
             throw new Error(`\`${later}\` only works as the FIRST stage — it reads the output's type, not the text an earlier stage produced.`);
     }
-    return rest.length ? runPipe(text, rest.join(" | ")) : text;
+    // The remaining stages go through as an ARRAY, never re-joined into a string: joining and letting runPipe
+    // re-split is what used to tear `grep -E 'error|warn'` into two stages (silently returning nothing, or —
+    // for `'head|tail'` — a plausible wrong answer).
+    return rest.length ? runPipe(text, rest) : text;
 }
 
-/** Normalise `ml.dereference`'s `pipe` argument. An ARRAY of stages is the ergonomic form — no quoting, no
- *  escaping, which is the part models fumble — and joins to exactly the dialect string it is shorthand for.
- *  Blank entries are dropped so a conditionally-built array doesn't produce an empty stage. */
-export function normalizePipe(pipe: string | string[] | null | undefined): string {
+/** Resolve a `pipe` argument to its STAGES — the canonical form for EXECUTION. A string is split on unquoted
+ *  `|` (quote-aware, via the dialect's own splitter); an array is already one stage per entry and is passed
+ *  through untouched, so an entry may contain a bare `|` (regex alternation) with no quoting at all. Blank
+ *  entries are dropped so a conditionally-built array doesn't produce an empty stage.
+ *
+ *  Never re-join these for execution — see {@link derefPipe}. */
+export function pipeStages(pipe: string | string[] | null | undefined): string[] {
+    if (Array.isArray(pipe)) return pipe.filter((s) => typeof s === "string" && s.trim()).map((s) => s.trim());
+    return typeof pipe === "string" && pipe.trim() ? splitStages(pipe) : [];
+}
+
+/** The pipe as ONE human-readable line, for DISPLAY only — the sidebar's `bash` block, the approval card, the
+ *  export. Deliberately lossy: a stage containing an unquoted `|` reads ambiguously here, which is fine for a
+ *  label and is exactly why {@link pipeStages} is what execution uses. Never throws (a malformed pipe still
+ *  has to render), so it does not validate quoting. */
+export function displayPipe(pipe: string | string[] | null | undefined): string {
     if (Array.isArray(pipe)) return pipe.filter((s) => typeof s === "string" && s.trim()).map((s) => s.trim()).join(" | ");
     return typeof pipe === "string" ? pipe : "";
 }
@@ -152,15 +171,40 @@ export function normalizePipe(pipe: string | string[] | null | undefined): strin
 export class TokenStore {
     private byId = new Map<string, TokenValue>();
 
-    note(v: TokenValue): void { this.byId.set(v.id, v); }
+    /** How many pointers a store keeps. A store lives for a whole SESSION (every turn of an agent handle), not
+     *  one turn, and an entry can carry a big `full` capture or a screenshot data URL — so it has to be bounded
+     *  or a long conversation grows without limit. ~10 turns of heavy tool use at the default 20-step cap. */
+    static readonly CAP = 200;
+
+    // Eviction is LRU, and a READ counts as a use — a pointer the model keeps consulting must not be dropped
+    // before ones it has never looked at. Tracked SEPARATELY from `byId`'s insertion order, because that order
+    // is what makes the tool-name alias mean "the latest CALL": refreshing it on a read would make an old
+    // python_exec output masquerade as the newest one.
+    private used = new Map<string, number>();
+    private clock = 0;
+
+    note(v: TokenValue): void {
+        this.byId.delete(v.id);   // re-noting an id moves it to the END, so the tool-name alias still means "latest"
+        this.byId.set(v.id, v);
+        this.used.set(v.id, ++this.clock);
+        while (this.byId.size > TokenStore.CAP) {
+            // The least recently USED (noted or read), not simply the oldest.
+            let oldest: string | null = null, min = Infinity;
+            for (const id of this.byId.keys()) { const u = this.used.get(id) ?? 0; if (u < min) { min = u; oldest = id; } }
+            if (oldest == null) break;
+            this.byId.delete(oldest); this.used.delete(oldest);
+        }
+    }
 
     /** Resolve `@tool:<id>`, a bare id, or a tool-name alias. Null when nothing matches. */
     get(ref: string): TokenValue | null {
         const id = normRef(ref);
         const exact = this.byId.get(id);
-        if (exact) return exact;
+        if (exact) { this.used.set(exact.id, ++this.clock); return exact; }
         const ofTool = [...this.byId.values()].filter((v) => v.tool === id);
-        return ofTool.length ? ofTool[ofTool.length - 1] : null;
+        const latest = ofTool.length ? ofTool[ofTool.length - 1] : null;
+        if (latest) this.used.set(latest.id, ++this.clock);
+        return latest;
     }
 
     /** The captured pointers most similar to a reference that didn't resolve. Models hallucinate token-SHAPED

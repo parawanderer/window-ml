@@ -255,15 +255,44 @@ test("the loop hands out a resolver bound to ITS OWN store (the page-hosted path
     assert.throws(() => resolver("@tool:exec", "jq .x"), /isn't a supported text command/);
 });
 
-test("normalizePipe: an array of stages is shorthand for the dialect string", () => {
-    assert.equal(P.normalizePipe([".rows", "head 5"]), ".rows | head 5", "no quoting, no escaping — the part models fumble");
-    assert.equal(P.normalizePipe(".rows | head 5"), ".rows | head 5", "a string passes through unchanged");
-    assert.equal(P.normalizePipe([" .rows ", "  head 5"]), ".rows | head 5", "entries are trimmed");
+test("pipeStages: a pipe resolves to STAGES — an array entry is one stage, never re-split", () => {
+    assert.deepEqual(P.pipeStages([".rows", "head 5"]), [".rows", "head 5"]);
+    assert.deepEqual(P.pipeStages(".rows | head 5"), [".rows", "head 5"], "a string splits on unquoted |");
+    assert.deepEqual(P.pipeStages([" .rows ", "  head 5"]), [".rows", "head 5"], "entries are trimmed");
     // A conditionally-built array shouldn't produce an empty stage the dialect would then refuse.
-    assert.equal(P.normalizePipe([".rows", "", null, "head 5"]), ".rows | head 5");
-    assert.equal(P.normalizePipe([]), "");
-    assert.equal(P.normalizePipe(null), "");
-    assert.equal(P.normalizePipe(undefined), "");
+    assert.deepEqual(P.pipeStages([".rows", "", null, "head 5"]), [".rows", "head 5"]);
+    assert.deepEqual(P.pipeStages([]), []);
+    assert.deepEqual(P.pipeStages(null), []);
+    assert.deepEqual(P.pipeStages(undefined), []);
+    // The point of the array form: a stage may hold a bare `|` (regex alternation) with NO quoting, and it
+    // stays ONE stage. Splitting it would make "warn" a command — or, worse, silently run a real one.
+    assert.deepEqual(P.pipeStages(["grep -E error|warn", "head 5"]), ["grep -E error|warn", "head 5"]);
+    // The string form gets the same protection from quotes, which the splitter respects.
+    assert.deepEqual(P.pipeStages("grep -E 'error|warn' | head 5"), ["grep -E 'error|warn'", "head 5"]);
+});
+
+test("displayPipe: joins for DISPLAY only, and never throws on a malformed pipe", () => {
+    assert.equal(P.displayPipe([".rows", "head 5"]), ".rows | head 5");
+    assert.equal(P.displayPipe(".rows | head 5"), ".rows | head 5");
+    assert.equal(P.displayPipe(null), "");
+    // Unterminated quotes are an EXECUTION error; a label still has to render.
+    assert.equal(P.displayPipe("grep 'foo"), "grep 'foo");
+    assert.doesNotThrow(() => P.displayPipe(["grep 'foo"]));
+});
+
+// REGRESSION. derefPipe used to split the pipe with a naive `split("|")` and then re-join the surviving
+// stages with " | " for runPipe to split AGAIN. Both halves corrupted a regex alternation, and neither
+// raised: `'error|warn'` came back EMPTY (reads as "no matches"), and `'head|tail'` came back with the
+// result of grepping "head " and then running `tail` as its own stage — a plausible wrong answer.
+test("derefPipe: a regex alternation survives — as a quoted string AND as an array stage", () => {
+    const v = tok({ out: "head of report\nerror: disk full\nwarn: slow\ntail of report", full: "head of report\nerror: disk full\nwarn: slow\ntail of report" });
+    assert.equal(P.derefPipe(v, "out", "grep -E 'error|warn'"), "error: disk full\nwarn: slow");
+    assert.equal(P.derefPipe(v, "out", ["grep -E error|warn"]), "error: disk full\nwarn: slow", "array: no quoting needed at all");
+    // The nastiest case: both alternatives are real command names, so the old code ran one of them silently.
+    assert.equal(P.derefPipe(v, "out", "grep -E 'head|tail'"), "head of report\ntail of report");
+    assert.equal(P.derefPipe(v, "out", ["grep -E head|tail"]), "head of report\ntail of report");
+    // …and a genuine multi-stage pipe still behaves.
+    assert.equal(P.derefPipe(v, "out", ["grep -E error|warn", "head 1"]), "error: disk full");
 });
 
 // A self-authored LABEL turns a hex address into a named variable — purely for the model's own recall.
@@ -295,4 +324,39 @@ test("labels: nearest() finds a pointer by the NAME the model gave it", () => {
     const msg = P.memoryFault("@tool:zzzzzz", s.nearest("zzzzzz"), 4);
     assert.match(msg, /python_exec: "the pricing table"/);
     assert.match(msg, /exec: "nav links"/);
+});
+
+// A store now lives for a whole SESSION, and an entry can carry a full capture or a screenshot data URL, so
+// it must be bounded or a long conversation grows without limit.
+test("TokenStore: bounded, evicting the OLDEST, and re-noting an id keeps it 'latest' for the name alias", () => {
+    const store = new P.TokenStore();
+    const put = (id, out, tool = "exec") => store.note({ id, tool, kind: "text", out, t: 1000, step: 1 });
+    for (let i = 0; i < P.TokenStore.CAP + 10; i++) put(`id${i}`, `v${i}`);
+    assert.equal(store.size, P.TokenStore.CAP, "capped");
+    assert.equal(store.get("id0"), null, "the oldest were evicted");
+    assert.ok(store.get(`id${P.TokenStore.CAP + 9}`), "the newest survive");
+    // The tool-name alias resolves to the most recently NOTED entry of that tool.
+    const s2 = new P.TokenStore();
+    s2.note({ id: "aaa", tool: "python_exec", kind: "text", out: "FIRST", t: 1, step: 1 });
+    s2.note({ id: "bbb", tool: "python_exec", kind: "text", out: "SECOND", t: 2, step: 2 });
+    assert.equal(s2.get("python_exec").out, "SECOND");
+    s2.note({ id: "aaa", tool: "python_exec", kind: "text", out: "AGAIN", t: 3, step: 3 });
+    assert.equal(s2.get("python_exec").out, "AGAIN", "re-noting moves it to the end");
+    assert.equal(s2.size, 2, "…without duplicating it");
+});
+
+// Eviction is LRU, not FIFO: "bind it before it goes out of scope" only works if consulting a pointer keeps it
+// alive. The recency used for eviction is tracked apart from insertion order, because insertion order is what
+// makes the tool-name alias mean "the latest CALL".
+test("TokenStore: a READ keeps a pointer alive, without making it look like the newest call", () => {
+    const store = new P.TokenStore();
+    const put = (id, out) => store.note({ id, tool: "exec", kind: "text", out, t: 1, step: 1 });
+    for (let i = 0; i < P.TokenStore.CAP; i++) put(`id${i}`, `v${i}`);
+    store.get("id0");                       // consult the OLDEST — it must now outlive id1
+    put("fresh", "new");                    // pushes one entry out
+    assert.ok(store.get("id0"), "the pointer the model just read survived");
+    assert.equal(store.get("id1"), null, "the least recently USED went instead");
+    // Reading must NOT reorder the alias: id0 is an old call, not the latest exec.
+    assert.notEqual(store.get("exec").id, "id0", "a read never promotes an old call to 'latest'");
+    assert.equal(store.get("exec").id, "fresh");
 });

@@ -4,7 +4,7 @@
 // pipe chaining, quote-aware parsing, and the actionable errors for the un-modeled cases.
 import { test } from "node:test";
 import assert from "node:assert";
-import { runPipe } from "../text-pipe.ts";
+import { runPipe, mlPipe } from "../text-pipe.ts";
 
 const DOC = ["Apple 3", "banana 10", "Cherry 2", "apple 7", "date", "banana 10"].join("\n");
 
@@ -90,6 +90,24 @@ test("pipes: stages chain left to right", () => {
 });
 test("quote-aware: a `|` and spaces inside quotes stay part of the grep pattern", () => {
     assert.equal(runPipe("a|b\nac\nxyz", "grep 'a|b'"), "a|b\nac", "the quoted | is regex alternation, not a stage split");
+});
+
+// REGRESSION. An ARRAY is one entry per stage and must never be re-split: the old code joined it with " | "
+// and re-parsed, tearing `["grep -E head|tail"]` into a grep for "head" followed by a real `tail` stage —
+// which returned a plausible WRONG answer with no error at all.
+test("pipe: an array entry is ONE stage, so it can hold a bare | with no quoting", () => {
+    const doc = "head of report\nerror: disk full\nwarn: slow\ntail of report";
+    assert.equal(runPipe(doc, ["grep -E error|warn"]), "error: disk full\nwarn: slow");
+    assert.equal(runPipe(doc, ["grep -E head|tail"]), "head of report\ntail of report", "both alternatives are real command names");
+    assert.equal(runPipe(doc, ["grep -E error|warn", "head 1"]), "error: disk full", "…and it still pipes");
+    // The two forms agree whenever no stage contains a `|`.
+    assert.equal(runPipe(doc, ["grep -i report", "head 1"]), runPipe(doc, "grep -i report | head 1"));
+    // Array housekeeping matches the string form's: blanks dropped, entries trimmed.
+    assert.equal(runPipe(doc, ["  grep -i report  ", "", "head 1"]), "head of report");
+    assert.equal(runPipe(doc, []), doc, "no stages = unchanged");
+    // A malformed stage still raises the dialect's own actionable error.
+    assert.throws(() => runPipe(doc, ["grep 'foo"]), /unterminated quote/);
+    assert.throws(() => runPipe(doc, ["jq .x"]), /isn't a supported text command/);
     assert.equal(runPipe("foo bar\nfoo\nbar", "grep 'foo bar'"), "foo bar");
 });
 test("cat is a harmless no-op (models prefix it out of habit)", () => {
@@ -220,4 +238,78 @@ test("DRIFT GUARD: every verb the dialect exports exists, and the prompt names e
     for (const gone of ["len", "slice"]) {
         assert.ok(!new RegExp(`\\b${gone}\\b`).test(DEREF_CLAUSE), `the prompt still advertises the removed \`${gone}\``);
     }
+});
+
+// The prompt was single-sourced from PIPE_CMDS; the ERROR paths and TOOL PARAMETERS were not, and had drifted
+// to a six-verb list while the dialect had twelve. A model told the set is smaller than it is never reaches
+// for `schema` or a `.path` — the same wasted turn the PIPE_CMDS comment describes, on a different surface.
+test("DRIFT GUARD: every model-facing description of the dialect is derived, not hardcoded", async () => {
+    const { PIPE_CMDS, PIPE_HINT, PIPE_SYNTAX } = await import("../text-pipe.ts");
+    for (const v of PIPE_CMDS) {
+        assert.ok(PIPE_HINT.includes(v), `the pipe-error hint doesn't name \`${v}\``);
+        assert.ok(PIPE_SYNTAX.includes(v), `the pipe parameter description doesn't name \`${v}\``);
+    }
+    // Both name the `.path` stage, which isn't a verb in PIPE_CMDS but is part of the dialect.
+    assert.ok(PIPE_HINT.includes(".path") && PIPE_SYNTAX.includes(".path"));
+    // No source file may spell the verb list out by hand again. The invariant is not "never name a verb" —
+    // a pipeline EXAMPLE ("grep -i pricing | head -20") is exactly what a doc should show, and no regex
+    // separates an example from a stale list. What separates them is COMPLETENESS: an example names two verbs,
+    // a list names many. So a line naming THREE OR MORE distinct verbs is a list, and a list must be complete.
+    // Catches both real cases — the five copies stuck at six verbs, and the dereference tool's
+    // "schema | keys | values | len | type | head N | tail N | grep TEXT", which also advertised `len` and
+    // `slice`, verbs the dialect never had.
+    const { readdirSync, readFileSync } = await import("node:fs");
+    const stale = [];
+    for (const f of readdirSync(new URL("../", import.meta.url)).filter((f) => f.endsWith(".ts"))) {
+        if (f === "text-pipe.ts") continue;        // the single source is allowed to name them
+        if (f.endsWith(".gen.ts")) continue;      // generated (build-info embeds a diff of the working tree)
+        const lines = readFileSync(new URL(`../${f}`, import.meta.url), "utf8").split("\n");
+        lines.forEach((line, i) => {
+            // Scan PROSE only — comments and string literals. Every false positive was ordinary CODE
+            // (`schema.type`, `Object.keys(...)`, `pipe: { type: "string" }`), because five verb names are also
+            // ordinary identifiers; every real offender was a sentence a human wrote.
+            const prose = [...line.matchAll(/"([^"\\\\]*(?:\\\\.[^"\\\\]*)*)"/g)].map((m) => m[1]).join(" ")
+                + " " + (line.includes("//") ? line.slice(line.indexOf("//")) : "");
+            // An explicit ellipsis or "e.g." IS the disclaimer — an abbreviated reference ("the grep/head/tail/…
+            // pipeline", "e.g. 'schema', 'keys'") claims nothing about completeness.
+            if (/…|\.\.\.|e\.g\./.test(prose)) return;
+            const named = PIPE_CMDS.filter((v) => new RegExp(`\\b${v}\\b`).test(prose));
+            if (named.length < 3) return;                                   // an example, not a list
+            const missing = PIPE_CMDS.filter((v) => !named.includes(v));
+            if (missing.length) stale.push(`${f}:${i + 1} (omits ${missing.join(", ")})`);
+        });
+    }
+    assert.deepEqual(stale, [], `these hand-write an INCOMPLETE verb list instead of using PIPE_SYNTAX / PIPE_HINT:\n  ${stale.join("\n  ")}`);
+});
+
+// ---- ml.pipe: the dialect over ANY string, callable from exec ----
+// The `pipe` PARAMETER only ever reaches one tool's own output; this is the same dialect inline, so text from
+// a survey / python stdout / two fetches can be filtered without hand-rolling the JS equivalent.
+const LOG = "head of report\nerror: disk full\nwarn: slow\ntail of report";
+
+test("mlPipe: takes a string, and the array form works the same as it does in a tool", () => {
+    assert.equal(mlPipe(LOG, "grep -E 'error|warn'"), "error: disk full\nwarn: slow");
+    assert.equal(mlPipe(LOG, ["grep -E error|warn", "head 1"]), "error: disk full");
+    assert.equal(mlPipe('{"rows":[1,2,3]}', ".rows | count"), "3", "the structural stages too");
+});
+
+// A model WILL write `ml.pipe(await ml.fetch(url), …)` rather than reaching into the result, so accept the
+// whole object — the same accommodation the Python prelude makes for `pd.read_csv('current')`.
+test("mlPipe: a fetch result is accepted whole, and its READABLE form is used", () => {
+    assert.equal(mlPipe({ type: "html", text: "<h1>Hi</h1><h2>There</h2>", markdown: "# Hi\n## There" }, "grep '^##'"),
+        "## There", "prefers .markdown — .text is the raw tag soup");
+    assert.equal(mlPipe({ type: "json", text: '{"rows":[1,2]}' }, ".rows | count"), "2", "falls back to .text when there is no markdown");
+});
+
+test("mlPipe: no pipe returns the source unchanged; a bad source or stage throws actionably", () => {
+    assert.equal(mlPipe(LOG), LOG);
+    assert.equal(mlPipe(LOG, null), LOG);
+    assert.equal(mlPipe(LOG, []), LOG);
+    assert.equal(mlPipe(LOG, "   "), LOG);
+    // An object that isn't a fetch result names the fix rather than stringifying to "[object Object]".
+    assert.throws(() => mlPipe({ a: 1 }, "head"), /needs a string \(or a fetch result\), got object.*JSON\.stringify/s);
+    assert.throws(() => mlPipe(42, "head"), /got number/);
+    assert.throws(() => mlPipe(null, "head"), /got null/);
+    // A bad stage raises the dialect's own error, naming the real verb set.
+    assert.throws(() => mlPipe(LOG, "jq .x"), /isn't a supported text command/);
 });

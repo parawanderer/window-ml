@@ -37,6 +37,7 @@ export interface RunAgentConfig {
     stream?: boolean;              // opt-in live streaming: the model's thinking AND each tool's live output (ctx.stream)
     runId?: string;                // the run's hash — seeds the deterministic tool-token ids
     seqBase?: number;              // per-turn seq offset so a multi-turn run mints globally-unique token ids (see AgentLoopOptions.seqBase)
+    tokenStore?: import("./token-pipe").TokenStore;   // the SESSION's `@tool:` pointer store, so pointers span a handle's turns
     resumeMessages?: NeutralMessage[];   // RESUME: continue this prior history (+ `task` as a new user turn) instead of a fresh system+task
     images?: string[];   // native-vision composer attachments (data URLs) → attached to THIS turn's user message. The OCR fallback for a text-only driver already folded into `task` page-side.
 }
@@ -63,7 +64,7 @@ export interface RunAgentHostDeps {
     tryReadonly?(name: string, args: Record<string, unknown>): Promise<ToolRunResult | null>;
     /** Receives this run's pointer resolver at start, so the host can answer a page-side `ml.dereference`
      *  (the loop, and the store, live here; the tool runs in the page). See background's derefByRun. */
-    tokenSink?(resolve: (ref: string, pipe?: string) => string): void;
+    tokenSink?(resolve: (ref: string, pipe?: string | string[]) => string): void;
     // Pre-run In render for a PENDING step (streaming runs) — the page computes the tool's In descriptor
     // without running it, so a watched streaming step shows a pretty In, not raw JSON args.
     renderFor?: AgentLoopDeps["renderFor"];
@@ -196,6 +197,6 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
         chatMeta: deps.chatMeta,   // resolve model/caps/window SW-side (background provides the caches)
         subcallTokens: deps.subcallTokens,   // this turn's delegated vision sub-call tally (background-accumulated)
     };
-    return runAgentLoop(cfg.task, { tools: cfg.tools, maxSteps: cfg.maxSteps, signal: deps.signal, unattended: cfg.unattended, toolTokens: cfg.toolTokens, runHash: cfg.runId, seqBase: cfg.seqBase, stream: cfg.stream, tokenSink: deps.tokenSink }, loopDeps)
+    return runAgentLoop(cfg.task, { tools: cfg.tools, maxSteps: cfg.maxSteps, signal: deps.signal, unattended: cfg.unattended, toolTokens: cfg.toolTokens, runHash: cfg.runId, seqBase: cfg.seqBase, stream: cfg.stream, tokenStore: cfg.tokenStore, tokenSink: deps.tokenSink }, loopDeps)
         .then(result => ({ result, messages: built }));
 }

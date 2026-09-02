@@ -723,7 +723,7 @@ export interface ToolContext {
     answer?: AnswerSet;
     /** Read a `@tool:<id>` pointer from THIS run — what `ml.dereference` binds to inside a tool call. Absent
      *  outside a run, which is why the page can't reach it from its own console. */
-    deref?: (ref: string, pipe?: string) => Promise<string>;
+    deref?: (ref: string, pipe?: string | string[]) => Promise<string>;
     /** LIVE partial output — a GENERIC tool-streaming capability. A tool's `run` may call `ctx.stream(text)`
      *  to stream output AS IT WORKS (Jupyter-style: `exec`'s console.log, `python_exec`'s print), so the step's
      *  Out fills in live instead of only appearing at completion. Present ONLY when the run opted into
@@ -1615,7 +1615,8 @@ export interface MlApi {
     readonly answer: MlAnswer;
     /** Read a `@tool:<id>` pointer — an output this run already produced — instead of re-running the tool that
      *  made it. Reaches the FULL capture, not the truncated copy the model was shown. `pipe` reduces it first,
-     *  as a dialect string (".rows | head 5") or an array of stages ([".rows", "head 5"]). Run-bound like
+     *  as a dialect string (".rows | head 5") or an array with one stage per entry ([".rows", "head 5"]) —
+     *  an array entry is never re-split, so use it when a stage holds a `|` (["grep -E error|warn"]). Run-bound like
      *  `ml.answer`: live inside a tool call (an approved `exec`), throws from the console outside a run. */
     dereference(ref: string, options?: { pipe?: string | string[] | null }): Promise<string>;
     /* ---- chat ---- */
@@ -1725,6 +1726,13 @@ export interface MlApi {
      *  `for`/`while`): `ml.range(8).map(i => …)`. `range(stop)` / `range(start, stop)` / `range(start,
      *  stop, step)`. Returns a real array capped at 100k (over → throws), so it can never run away. */
     range(a: number, b?: number, step?: number): number[];
+    /** Scan/filter a string with the same small shell-style dialect the tools' `pipe` parameter takes, but over
+     *  ANY text — not just one tool's output. `ml.pipe(await ml.fetch(url), "grep -i pricing | head -20")`.
+     *  Pass a fetch result directly and its readable form is used (`.markdown`, else `.text`). The pipe is the
+     *  dialect string, or an ARRAY with one stage per entry (never re-split, so a stage may hold a bare `|`:
+     *  `["grep -E error|warn", "head 5"]`). Synchronous and pure — no network, no tokens. Throws an actionable
+     *  Error naming the supported verbs if a stage is wrong. */
+    pipe(source: string | FetchResult, pipe?: string | string[] | null): string;
     /** GET a URL's content via the background (bypasses CORS; UNCREDENTIALED BY DEFAULT — no cookies unless you
      *  ask). Use it to READ a page/file the current DOM can't reach — a raw file, a JSON API, another site —
      *  instead of navigating there. Returns a {@link FetchResult}: `.type` classifies the body (json/csv/html/

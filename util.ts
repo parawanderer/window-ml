@@ -2,7 +2,7 @@
 // and element-rect screenshot cropping. Pure-ish (args + browser globals); bundled
 // into injected.js.
 
-import { truncate, shadowRootStats, iframeStats } from "./dom";
+import { truncate, shadowRootStats, iframeStats, markdownTwin } from "./dom";
 import type { ShotBox, VisionMemory } from "./contract";
 
 /**
@@ -107,7 +107,7 @@ export const incognitoEnableSteps = (info?: BrowserInfo, extId?: string): string
  * and the pageInfo tool exposes it on demand. Guarded so it degrades when a global
  * is missing (e.g. in tests).
  */
-export const pageContext = (): string => {
+export const pageContext = (hasTool?: (name: string) => boolean): string => {
     const parts = [];
     try { if (typeof location !== "undefined" && location.href) parts.push(`URL: ${location.href}`); } catch {}
     try { if (typeof document !== "undefined" && document.title) parts.push(`Title: ${truncate(document.title, 80)}`); } catch {}
@@ -136,6 +136,23 @@ export const pageContext = (): string => {
                 // private console diagnostic — deliberately NOT named here so the model doesn't fixate on it.)
                 (s.closed ? `${s.open ? "; " : ", "}~${s.closed} custom element${s.closed === 1 ? "" : "s"} expose no light DOM (mostly EMPTY — unopened menus/outlets; a few may seal content — reach any visible one with locate/@pt)` : "") + ".");
         }
+    } catch {}
+    // Markdown twin: many docs platforms publish a clean, agent-oriented Markdown version of the page. When the
+    // page DECLARES one it is free to read (a <head> lookup — no network, no consent) and authoritative, and it
+    // steers the model to one fetch instead of surveying a rendered docs page. Same-origin, so fetching it needs
+    // no approval. Undeclared, a copy-as-Markdown control is the weaker hint that fetch_url will still find one.
+    try {
+        const md = markdownTwin();
+        // Name a TOOL only when this run actually HAS it. An agent can be built with `fetch: false`, a custom
+        // `tools` array, or the unattended toolset, and advice pointing at a tool that isn't wired costs the
+        // model a turn to discover — the same reason the pipe errors gate their exec hint on ctx.hasTool.
+        // The FACT (a twin exists, at this URL) holds either way, so that half is unconditional: even without
+        // fetch_url the model can `navigate` there.
+        const canFetch = !!hasTool?.("fetch_url");
+        if (md.url) parts.push(`Markdown: this page declares a Markdown version at ${md.url}${canFetch ? " — fetch_url it (same-origin, so no approval) rather than surveying the DOM" : ""}.`);
+        // The affordance is only ACTIONABLE through a fetch (it's a control, not a URL), so it's worth a line
+        // only when fetching is possible at all.
+        else if (md.affordance && canFetch) parts.push("Markdown: not declared, but the page offers a copy-as-Markdown control — fetch_url on this URL may still return one.");
     } catch {}
     // Iframe orientation: same-origin frames the DOM tools cross (`>>>`); cross-origin ones are SOP-walled.
     try {

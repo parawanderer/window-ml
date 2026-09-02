@@ -4,7 +4,8 @@
 // in the VIEWPORT.
 import { test } from "node:test";
 import assert from "node:assert";
-import { projectShotPoint, projectShotBox, browserInfo, incognitoEnableSteps, extensionDetailsUrl, mlRange, RANGE_MAX } from "../util.ts";
+import { JSDOM } from "jsdom";
+import { projectShotPoint, projectShotBox, browserInfo, incognitoEnableSteps, extensionDetailsUrl, mlRange, RANGE_MAX, pageContext } from "../util.ts";
 
 // ---- mlRange: the bounded counter loop (ml.range) ----
 test("mlRange: the three forms (stop / start,stop / start,stop,step) incl. a descending range", () => {
@@ -163,4 +164,53 @@ test("toolToken: deterministic 6-hex id from (runHash, seq); opaque + varies", a
     assert.equal(toolToken("abcd1234", 3), t, "deterministic — same inputs, same id (survives replay)");
     assert.notEqual(toolToken("abcd1234", 4), t, "differs by seq");
     assert.notEqual(toolToken("wxyz9999", 3), t, "differs by run");
+});
+
+// ---- pageContext: the "Markdown:" line, and WHOSE tools it may name ----
+// pageContext reads browser globals, so stand a jsdom document up as `document`/`location` for the call.
+function withPage(html, url, fn) {
+    const dom = new JSDOM(html, { url });
+    const saved = [globalThis.document, globalThis.location];
+    globalThis.document = dom.window.document;
+    Object.defineProperty(globalThis, "location", { value: dom.window.location, configurable: true, writable: true });
+    try { return fn(); }
+    finally {
+        globalThis.document = saved[0];
+        Object.defineProperty(globalThis, "location", { value: saved[1], configurable: true, writable: true });
+        dom.window.close();
+    }
+}
+const DECLARED = '<head><link rel="alternate" type="text/markdown" href="/guide.md"></head><body></body>';
+const AFFORDANCE = "<head></head><body><button>Copy Page as Markdown</button></body>";
+const line = (out) => (out.split("\n").find((l) => l.startsWith("Markdown:")) ?? "");
+
+// A run can be built with `fetch: false`, a custom `tools` array, or the unattended toolset. Advice naming a
+// tool that isn't wired costs the model a turn to discover it doesn't exist.
+test("pageContext: the FACT is unconditional, the tool advice is gated on the run actually having it", () => {
+    withPage(DECLARED, "https://docs.test/guide", () => {
+        const withFetch = line(pageContext((n) => n === "fetch_url"));
+        assert.match(withFetch, /declares a Markdown version at https:\/\/docs\.test\/guide\.md/);
+        assert.match(withFetch, /fetch_url it/, "names the tool when the run has it");
+
+        // No fetch_url wired: the URL is still worth knowing (the model can navigate there) — but nothing
+        // may point at a tool that isn't there.
+        const without = line(pageContext((n) => n === "click"));
+        assert.match(without, /declares a Markdown version at https:\/\/docs\.test\/guide\.md/);
+        assert.doesNotMatch(without, /fetch_url/, "must not name a tool this run lacks");
+
+        // No predicate at all (the callers that have no toolset to consult) behaves like "no tools known".
+        assert.doesNotMatch(line(pageContext()), /fetch_url/);
+    });
+});
+
+// The affordance is a CONTROL, not a URL — there is nothing to act on without a fetch, so it earns no line.
+test("pageContext: the copy-as-Markdown hint appears only when fetch_url is wired", () => {
+    withPage(AFFORDANCE, "https://docs.test/guide", () => {
+        assert.match(line(pageContext((n) => n === "fetch_url")), /copy-as-Markdown control/);
+        assert.equal(line(pageContext(() => false)), "", "no fetch_url → no line at all");
+    });
+    // A page with neither says nothing either way.
+    withPage("<head></head><body></body>", "https://docs.test/guide", () => {
+        assert.equal(line(pageContext(() => true)), "");
+    });
 });

@@ -1314,6 +1314,86 @@ export function jsonShape(value: unknown, opts: { maxDepth?: number; maxKeys?: n
  *  `type` (+ a `language` for code). Precedence: a SPECIFIC header wins; else STRUCTURED content (json/html/
  *  xml/csv, which is unambiguous); else the extension (catches code/markdown a server sent as text/plain);
  *  else plain text. Surfaces every cue so the agent sees a mislabel and can still chain. Pure — unit-tested. */
+// ---- site-authored Markdown ("the page declares its own twin") ----
+// Many docs platforms publish a clean, agent-oriented Markdown version of each page and DECLARE it in <head>:
+//   <link rel="alternate" type="text/markdown" href="…/installation.md">
+// Reading that is free (no network, no consent) and AUTHORITATIVE — GitHub Docs' twin lives at
+// `…/api/article/body?pathname=…`, which no URL derivation would ever guess. Measured across 12 docs sites:
+// 6 declare it, 5 more serve one without declaring (those need the fetch ladder), 1 has none.
+
+/** How much of a fetched HTML body to scan for the declaration. `<head>` is at the top, so this bounds the
+ *  cost on a multi-megabyte page instead of walking all of it. */
+const MD_LINK_SCAN = 200_000;
+
+/** Read one attribute off a raw `<link …>` tag. Attribute ORDER varies between platforms (GitHub puts `href`
+ *  after `title`, others put it first), so each is matched by name rather than by a single positional regex. */
+function linkAttr(tag: string, name: string): string | null {
+    const m = new RegExp(`\\b${name}\\s*=\\s*("([^"]*)"|'([^']*)'|([^\\s>]+))`, "i").exec(tag);
+    const v = m ? (m[2] ?? m[3] ?? m[4]) : null;
+    return v == null ? null : v.replace(/&amp;/gi, "&").trim();   // a declared href may carry a query string
+}
+
+/** The `<link rel="alternate" type="text/markdown">` href declared in an HTML STRING, or null. Used where
+ *  there is no DOM to query — the service worker, which has no DOMParser. Returns the href VERBATIM (still
+ *  possibly relative); resolve it with {@link resolveMarkdownAlternate}, which is what applies the origin
+ *  guard. Pure. */
+export function markdownAlternateHref(html: string): string | null {
+    for (const m of html.slice(0, MD_LINK_SCAN).matchAll(/<link\b[^>]*>/gi)) {
+        const tag = m[0];
+        if (!/\balternate\b/i.test(linkAttr(tag, "rel") || "")) continue;      // rel is space-separated (rel~=)
+        const type = (linkAttr(tag, "type") || "").toLowerCase();
+        if (type !== "text/markdown" && type !== "text/x-markdown") continue;
+        const href = linkAttr(tag, "href");
+        if (href) return href;
+    }
+    return null;
+}
+
+/** Resolve a declared markdown-alternate href against the page URL — absolute, http(s), and SAME-ORIGIN only.
+ *
+ *  The origin check is the security half. A declaration is PAGE-CONTROLLED content: unlike a derived `.md`
+ *  sibling (deterministic, same-origin by construction), a hostile page can point `rel="alternate"` at any
+ *  host. Following it under the page's own grant would turn "read this page as Markdown" into "fetch whatever
+ *  the page names". A cross-origin declaration returns null here and can still be fetched — through the
+ *  ordinary per-URL consent gate, like any other cross-origin read. Pure. */
+export function resolveMarkdownAlternate(href: string | null | undefined, pageUrl: string): string | null {
+    if (!href) return null;
+    try {
+        const u = new URL(href, pageUrl);
+        if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+        return u.origin === new URL(pageUrl).origin ? u.href : null;
+    } catch { return null; }
+}
+
+/** Cap on the interactive elements scanned for a "copy as Markdown" control (see {@link markdownAffordance}). */
+const MD_AFFORDANCE_SCAN = 400;
+
+/** Whether the page offers a "Copy/View as Markdown" CONTROL — the weaker, heuristic signal for the sites that
+ *  serve a twin without declaring one (fumadocs, ai-sdk). A VERB is required, so a docs page that merely links
+ *  to an article about Markdown doesn't match. Bounded scan; never throws. */
+export function markdownAffordance(root: ParentNode = document): boolean {
+    try {
+        const els = root.querySelectorAll('button, a, [role="button"]');
+        for (let i = 0; i < Math.min(els.length, MD_AFFORDANCE_SCAN); i++) {
+            const el = els[i] as HTMLElement;
+            if (/(copy|view|open|download)[^]{0,16}markdown/i.test(`${el.getAttribute("aria-label") || ""} ${el.textContent || ""}`)) return true;
+        }
+    } catch { /* no DOM / detached root */ }
+    return false;
+}
+
+/** The markdown twin of the LIVE document: the declared same-origin URL if there is one, else whether the page
+ *  at least offers a copy-as-Markdown control. Guarded so it degrades to "nothing known" outside a browser. */
+export function markdownTwin(doc: Document = document, pageUrl?: string): { url: string | null; affordance: boolean } {
+    let url: string | null = null;
+    try {
+        const el = doc.querySelector('link[rel~="alternate"][type="text/markdown"], link[rel~="alternate"][type="text/x-markdown"]');
+        const href = el?.getAttribute("href");
+        url = resolveMarkdownAlternate(href, pageUrl ?? doc.location?.href ?? "");
+    } catch { /* no document */ }
+    return { url, affordance: url ? false : markdownAffordance(doc) };
+}
+
 export function classifyContent(contentType: string, body: string, url = ""): {
     type: ContentKind; language?: string; byHeader: ContentKind | null; byContent: ContentKind; byExtension: { type: ContentKind; language?: string } | null;
 } {
