@@ -426,6 +426,13 @@ Two kinds, and they are orthogonal:
 Ollama's own eval timings or from wall clock, which the tooltip should show rather than implying a
 precision it does not have.
 
+**Per-model stats on hover** belong to this slice too, for the same reason: they need usage aggregated across
+the session, which is what events collect. Hovering a model ROW (which already shows placement and splits from
+residency) should also carry what that model has COST — average tokens/second, tokens in and out, how many
+calls — aggregated from this session's `chat-result` events for that model id. Residency answers "what is
+loaded"; this answers "and was it worth the VRAM". Note the same `genBasis` caveat: say whether the rate came
+from Ollama's own eval timings or from wall clock.
+
 **Click a span** to jump to that generation — the session detail for that run, scrolled to the step.
 Sessions are already addressable by hash and steps by `seq`, so the target exists; the event only
 needs to carry `{ hash, seq }`.
