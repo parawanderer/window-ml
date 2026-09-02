@@ -17,7 +17,7 @@ import { runStats, fmtTokPerSec, UI_OUT_CAP } from "./contract";
 import type { TokenRender } from "./contract";
 import { UNATTENDED_REFUSAL } from "./prompts";
 import { toolToken } from "./util";
-import { TokenStore, derefPipe, describeToken, memoryFault, DEREF_TOOL, type TokenKind } from "./token-pipe";
+import { TokenStore, derefPipe, describeToken, extraBeyondModel, memoryFault, DEREF_TOOL, type TokenKind } from "./token-pipe";
 
 export type Approval = "readonly" | "sandbox" | "same-origin" | "consented" | "self-source" | "user" | "denied" | "skipped" | "cancelled";
 export interface ToolMeta { name: string; requiresApproval?: boolean; capabilities?: string[]; }
@@ -287,7 +287,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         const age = step - v.step;
         // The staleness line is not decoration: this is the failure mode of pointer-passing.
         const when = age <= 0 ? "captured this step" : `captured at step ${v.step}, ${age} step${age === 1 ? "" : "s"} ago — the page may have changed since`;
-        const head = `@tool:${v.id} (${v.tool}${slot === "in" ? ", the call" : ""}) — ${describeToken(v)}, ${when}.`;
+        const head = `@tool:${v.id} (${v.tool}${slot === "in" ? ", the call" : ""}) — ${describeToken(v)}${extraBeyondModel(v)}, ${when}.`;
         try {
             return { result: `${head}\n\n${derefPipe(v, slot, pipe)}` };
         } catch (e) {
@@ -298,9 +298,32 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     };
     const tokenList = (): string =>
         tokenStore.size ? tokenStore.all().map(v => `@tool:${v.id} (${v.tool}, step ${v.step})`).join(", ") : "(nothing captured yet)";
+    /** `look` at an IMAGE POINTER. A screenshot the run already captured is addressable like any other output,
+     *  so `look { selector: "@tool:abc123" }` re-examines it — a different question about the SAME pixels —
+     *  instead of re-screenshotting a page that has since scrolled or changed. The store lives here, so the
+     *  loop resolves the pointer and hands the image down; `look` never learns about tokens.
+     *  Returns null when the selector isn't a pointer (the ordinary path), or an error string when it is one
+     *  but can't be looked at. */
+    const resolveLookPointer = (args: Record<string, unknown>, step: number): { args?: Record<string, unknown>; error?: string } | null => {
+        const sel = String(args?.selector ?? "").trim();
+        if (!/^@tool:/.test(sel)) return null;
+        const v = tokenStore.get(sel);
+        if (!v) return { error: memoryFault(sel, tokenStore.nearest(sel), step) };
+        if (!v.image) return { error: `@tool:${v.id} is ${describeToken(v)}, not an image — there is nothing to look at. Read it with dereference instead.` };
+        return { args: { ...args, _image: v.image, _imageLabel: `@tool:${v.id} (captured at step ${v.step})` } };
+    };
+    /** Rewrite a `look` at an image pointer into a look at that image; anything else passes through. An
+     *  unresolvable pointer throws, which the loop's own try/catch turns into the tool result. */
+    const lookArgs = (name: string, a: Record<string, unknown>, step: number): Record<string, unknown> => {
+        if (name !== "look") return a;
+        const r = resolveLookPointer(a, step);
+        if (!r) return a;
+        if (r.error) throw new Error(r.error);
+        return r.args!;
+    };
     /** Every tool dispatch goes through here so `dereference` is answered from run state instead of delegated. */
     const runTool = (name: string, a: Record<string, unknown>, push: ((t: string, ts?: number) => void) | undefined, step: number): Promise<ToolRunResult> | ToolRunResult =>
-        name === DEREF_TOOL ? derefLocally(a, step) : deps.runTool(name, a, push);
+        name === DEREF_TOOL ? derefLocally(a, step) : deps.runTool(name, lookArgs(name, a, step), push);
     let seq = 0;
     // Live token stats for the chat_metadata tool: promptLast = the last call's prompt tokens (current
     // context occupancy), genTotal = completion tokens summed across the run. Accurate on both worlds since
@@ -487,7 +510,13 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                     : (r?.type === "image" || r?.type === "look") ? "image"
                     : (r?.type === "code" || r?.type === "python-in") ? "code"
                     : looksJson ? "json" : "text";
-                tokenStore.note({ id: tokenId, tool: call.name, kind, out: result, in: JSON.stringify(args), t: Date.now(), step, ...(tbl ? { table: tbl } : {}) });
+                // Store the FULLER capture beside the model-facing one. `result` is already clipped to the
+                // model's context budget, so a pointer holding only that would hand back exactly what the model
+                // already has — useless. The render descriptor kept far more (UI_OUT_CAP), and reaching THAT is
+                // the main reason to dereference at all.
+                const fuller = (r?.type === "python-out" || r?.type === "exec-out") ? r.stdout : undefined;
+                const full = fuller && fuller.length > result.length ? fuller : undefined;
+                tokenStore.note({ id: tokenId, tool: call.name, kind, out: result, ...(full ? { full } : {}), in: JSON.stringify(args), t: Date.now(), step, ...(tbl ? { table: tbl } : {}) });
             }
             const forModel = (tokenId && wantsToken)
                 ? `${result}\n\n[output token @tool:${tokenId} — EMBED this exact output in your final answer with image syntax: ![label](@tool:${tokenId}:out) (use ":in" for the call/code). It expands in place; don't retype it.]`

@@ -26,8 +26,12 @@ export interface TokenValue {
     id: string;
     tool: string;
     kind: TokenKind;
-    /** Str-renderable: what the model saw, or would see. Always present, whatever the kind. */
+    /** Str-renderable: exactly what the model saw — already clipped to its context budget. */
     out: string;
+    /** The FULLER capture the UI retained (UI_OUT_CAP), when there is more than the model was shown. This is
+     *  the point of the pointer: the clipped copy is what the model already has, so dereferencing it would be
+     *  useless. Reads prefer this, and say how much more it holds. */
+    full?: string;
     /** The call/arguments — what `@tool:<id>:in` reads. */
     in?: string;
     /** The structural value when there is one, so the pipe needn't reparse a rendered grid. */
@@ -40,17 +44,25 @@ export interface TokenValue {
     step: number;
 }
 
+/** How much MORE the pointer holds than the model was shown — the sentence that tells it this read was worth
+ *  a step. Empty when the model already has the whole value. */
+export function extraBeyondModel(v: TokenValue): string {
+    const extra = (v.full?.length ?? 0) - v.out.length;
+    return extra > 0 ? ` — ${extra} chars MORE than you were shown (your copy was truncated)` : "";
+}
+
 /** A one-line description of what sits at a pointer — prefixed onto every read so the model knows what it is
  *  holding before it decides how to slice it. */
 export function describeToken(v: TokenValue): string {
+    const text = v.full ?? v.out;
     if (v.kind === "table" && v.table) {
         const cols = v.table.columns.slice(0, 6).join(", ");
         return `a ${v.table.rows.length}x${v.table.columns.length} table (${cols}${v.table.columns.length > 6 ? ", …" : ""})`;
     }
     if (v.kind === "image") return "an image";
-    if (v.kind === "json") return `JSON, ${v.out.length} chars`;
-    if (v.kind === "code") return `code, ${v.out.split("\n").length} lines`;
-    return `text, ${v.out.length} chars / ${v.out.split("\n").length} lines`;
+    if (v.kind === "json") return `JSON, ${text.length} chars`;
+    if (v.kind === "code") return `code, ${text.split("\n").length} lines`;
+    return `text, ${text.length} chars / ${text.split("\n").length} lines`;
 }
 
 /** How much of a base64 image to show: enough to identify the media type, far short of flooding the context
@@ -84,7 +96,7 @@ function typeCast(v: TokenValue, stage: string): string | null {
 export function pipeInput(v: TokenValue, slot: "in" | "out" = "out"): string {
     if (slot === "in") return v.in ?? "";
     if (v.kind === "table" && v.table) return JSON.stringify({ columns: v.table.columns, rows: v.table.rows }, null, 2);
-    return v.out;
+    return v.full ?? v.out;
 }
 
 /** Read a pointer through `pipe`. A leading `latex` / `img` cast is applied first (it needs the typed value);
@@ -94,7 +106,7 @@ export function derefPipe(v: TokenValue, slot: "in" | "out", pipe?: string | nul
     const stages = (pipe ?? "").split("|").map((s) => s.trim()).filter(Boolean);
     // With NO pipe the model wants the value as it would read it — the rendered table, not the {columns,rows}
     // JSON that only exists so the structural stages have something to work on.
-    if (!stages.length) return slot === "in" ? (v.in ?? "") : v.out;
+    if (!stages.length) return slot === "in" ? (v.in ?? "") : (v.full ?? v.out);
     let text = pipeInput(v, slot);
     let i = 0;
     for (; i < stages.length; i++) {

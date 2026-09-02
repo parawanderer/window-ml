@@ -151,3 +151,23 @@ test("memoryFault: an empty run says there is nothing to point at yet", () => {
     assert.match(msg, /Run a tool first/);
     assert.doesNotMatch(msg, /Nearest valid pointers/, "no empty candidate list");
 });
+
+// The pointer's headline benefit: it reaches the FULL capture, not the copy the model was already shown.
+// Storing only the model-facing string would hand back what the model already has — useless, and it was the
+// original bug (a real run dereferenced 7 times against a value truncated before the line it needed).
+test("a pointer prefers the FULL capture over the model's truncated copy", () => {
+    const full = Array.from({ length: 200 }, (_, i) => `row ${i + 1}: value`).join("\n");
+    const shown = full.slice(0, 400) + "… [+3000 chars truncated]";
+    const v = tok({ out: shown, full });
+
+    assert.match(P.derefPipe(v, "out", "grep 'row 137:'"), /row 137: value/,
+        "the line the model never saw is reachable");
+    assert.equal(P.derefPipe(v, "out", ""), full, "no pipe → the full capture, not the clipped copy");
+    assert.match(P.describeToken(v), new RegExp(`${full.length} chars`), "the description sizes the FULL value");
+    // And the read says how much more it holds, so the model can tell the step was worth spending.
+    assert.match(P.extraBeyondModel(v), /chars MORE than you were shown/);
+    assert.match(P.extraBeyondModel(v), new RegExp(String(full.length - shown.length)));
+    // When the model already has the whole thing, there is nothing extra to advertise.
+    assert.equal(P.extraBeyondModel(tok({ out: "short" })), "");
+    assert.equal(P.extraBeyondModel(tok({ out: "same", full: "same" })), "");
+});
