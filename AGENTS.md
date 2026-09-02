@@ -677,7 +677,11 @@ exports), since a time-only gutter would otherwise put `00:00:01` directly under
 later. The mapping is pure and shared — **`sidebar/timestamps.ts`**
 (`timeForOffset`/`alignedMarks`/`elideHour`/`timedText`), imported by the sidebar gutter AND by both export
 sinks, so they can't drift; `render-panel.tsx` re-exports it. The **exports** carry the times as a collapsed
-`Out · timed` block BESIDE the verbatim Out rather than prefixed onto it — the sidebar's gutter is
+`Out · timed` block BESIDE the verbatim Out rather than prefixed onto it (a `<pre>` inside `<details open>`, so
+the PDF prints it expanded and monospaced, alignment intact). There EVERY line carries its own stamp — the
+sidebar blanks a repeat to keep a burst reading as one moment, but a text file has the opposite ergonomics: a
+blank means "look upwards" and can't be hovered, so each line is self-contained and greppable. Only an offset no
+mark covers stays blank — the sidebar's gutter is
 unselectable and markdown has no equivalent, so baking times into the output would make an exported log
 un-pasteable (and the raw-view rule already demands the model-facing text stay verbatim).
 

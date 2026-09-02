@@ -296,12 +296,15 @@ test("timedText: the export's plain-text gutter mirrors the sidebar's", async ()
     const marks = [[0, t0], [11, t0 + 61000]];   // 11 = where "gamma" starts ("alpha\n" 6 + "beta\n" 5)
 
     const same = timedText(text, marks, now);
-    assert.deepEqual(same.split("\n"), ["17:30  alpha", "       beta", "18:31  gamma"],
-        "current hour → mm:ss, and a repeated stamp is blanked exactly like the gutter");
+    assert.deepEqual(same.split("\n"), ["17:30  alpha", "17:30  beta", "18:31  gamma"],
+        "current hour → mm:ss, and EVERY line carries its own stamp (a text file can't be hovered)");
 
     // Read back later (or a run that spans the boundary) → the full clock, same as the sidebar.
     const later = timedText(text, marks, new Date("2026-09-02T15:30:00").getTime());
-    assert.deepEqual(later.split("\n"), ["14:17:30  alpha", "          beta", "14:18:31  gamma"]);
+    assert.deepEqual(later.split("\n"), ["14:17:30  alpha", "14:17:30  beta", "14:18:31  gamma"]);
+
+    // A trailing newline must not become a row of trailing spaces in the exported file.
+    assert.equal(timedText("solo\n", [[0, t0]], now), "17:30  solo\n", "the empty last line gets no gutter");
 
     assert.equal(timedText("short", [[0, t0], [400, t0]], now), null, "marks that don't fit the text → no guess");
     assert.equal(timedText("alpha", undefined, now), null, "no marks (a non-streaming run) → nothing to time");
@@ -347,5 +350,5 @@ test("timedText: the export marks the day change too", async () => {
         "23:59:59  midnight",
         "────────  ── 2026-09-03 ──",
         "00:00:01  after",
-    ], "the divider lands between the days, and the first stamp after it is never elided as a repeat");
+    ], "the divider lands between the days");
 });

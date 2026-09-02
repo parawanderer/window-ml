@@ -202,6 +202,7 @@ test("streamed output: the export carries a timed view BESIDE the verbatim Out (
     // The run spans an hour boundary → the FULL clock, so no line can be misread as the wrong hour.
     assert.match(md, /14:17:30 {2}alpha/, "line 1 carries the executor's stamp");
     assert.match(md, /14:17:31 {2}beta/, "line 2 carries its own (a later mark within the same burst)");
+    assert.doesNotMatch(md, /^ +$/m, "no line is left as trailing whitespace (the log's final newline)");
     assert.match(md, /15:17:30 {2}gamma/, "line 3 shows the hour it actually landed in");
     // The verbatim output is still there, untouched — a copy from the Out block yields clean text.
     assert.ok(md.includes("\nalpha\nbeta\ngamma\n"), "the raw Out survives without a gutter baked into it");

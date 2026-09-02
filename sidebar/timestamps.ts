@@ -104,17 +104,22 @@ export function timedText(text: string, marks: [number, number][] | undefined, n
     const short = elideHour(m, now);
     const width = short ? 5 : 8;
     const breaks = dayBreaks(text, m);
-    let off = 0, shown = "";
+    let off = 0;
     const out: string[] = [];
     text.split("\n").forEach((line, i) => {
         const day = breaks.get(i);
-        // A day divider resets the repeat-elision: the first stamp after midnight always prints.
-        if (day) { out.push(`${"─".repeat(width)}  ── ${day} ──`); shown = ""; }
+        if (day) out.push(`${"─".repeat(width)}  ── ${day} ──`);
         const ts = timeForOffset(m, off);
         off += line.length + 1;
-        let label = ts == null ? "" : (short ? hhmmss(ts).slice(3) : hhmmss(ts));
-        if (label && label === shown) label = ""; else if (label) shown = label;
-        out.push(`${label.padStart(width)}  ${line}`);
+        // EVERY line carries its own stamp here, unlike the sidebar gutter, which blanks a repeat to keep a
+        // burst reading as one moment. A text file has the opposite ergonomics: a blank means "look upwards",
+        // and you cannot hover it — so each line is self-contained and greppable (`grep 23:59 run.md`). It is
+        // not invented: lines sharing a mark genuinely arrived together. Only an offset NO mark covers stays
+        // blank, because there the time really is unknown.
+        const label = ts == null ? "" : (short ? hhmmss(ts).slice(3) : hhmmss(ts));
+        // An empty content line gets no gutter — otherwise the trailing newline every log ends with becomes a
+        // row of trailing spaces in the exported file.
+        out.push(line === "" ? "" : `${label.padStart(width)}  ${line}`);
     });
     return out.join("\n");
 }
