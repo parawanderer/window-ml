@@ -68,7 +68,10 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* The view picker and its editor badge sit in the header row that already exists, so they cost no vertical
    space in a panel competing for height with the session list. */
 .rc-preset { font: inherit; font-size: 0.78em; color: var(--fg-dim); background: var(--panel-2);
-             border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px; margin-left: 6px; }
+             border: 1px solid var(--border); border-radius: 4px; padding: 1px 4px;
+             /* Breathing room on BOTH sides: it sits between the in-use total and "Free VRAM", and butted up
+                against either it reads as part of that control rather than its own. */
+             margin: 0 8px; }
 /* Sits after "Free VRAM": the picker is what you reach for, this is the rarer follow-up. It is an .hbtn, so
    it inherits the header buttons' sizing and hover — a font-sized glyph could never match them. */
 .rc-cog { margin-left: 6px; }
