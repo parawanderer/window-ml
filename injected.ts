@@ -57,132 +57,14 @@ import { autoApprovePython } from "./auto-approve";
 import { executeTool, toolContext, currentAnswer } from "./tool-exec";
 import { runAgentLoop, shotTurnMessage, CITABLE_TOOLS } from "./agent-loop";
 import type { AgentLoopDeps } from "./agent-loop";
-
-/** The mutable state of ONE agent session, shared between ml.agent's page loop and (for a handle) the
- *  ml.createAgent handle that steers it. A plain ml.agent() call makes a throwaway one per call; a handle
- *  keeps its own so run()/say()/maxSteps span turns. Page-loop only — a background-hosted run's history
- *  lives in the service worker (see Phase 2). */
-interface AgentControl {
-    hash: string | null;          // the session hash (minted on the first turn, then stable)
-    messages: NeutralMessage[];   // the live history — the source of truth; the loop mutates it in place
-    inbox: { id: string; text: string }[];   // say()'d messages waiting to be injected at the next step boundary (id = "seen"-indicator key)
-    maxSteps: number;             // the step cap, read live so a handle can raise it mid-run
-    running: boolean;             // is a loop in flight?
-    seqBase: number;              // monotonic step-seq base so seqs stay session-unique across turns
-    stepBase: number;             // monotonic STEP base so turn groups stay distinct in the sidebar across turns
-    bg?: boolean;                 // the CURRENT run routed to the background → a mid-run say() steers via INJECT_MESSAGE
-}
 import { installToolDelegation, registerRun, endRun, runAnswer } from "./run-delegation";
 import { descriptorFor } from "./render-descriptor";
-
-// Monotonic id per mid-run steer (a.say()), so the "seen" indicator can key an `agent-say-seen` event
-// back to its `agent-say` bubble. Globally unique across handles/turns — a plain counter suffices.
-let steerSeq = 0;
-const nextSteerId = (): string => `sy_${++steerSeq}`;
-
-/** Is a `navigate(url)` target SAME-ORIGIN as the current page? Cross-origin navs need consent (the gate);
- *  same-origin auto-approve. Reuses navTarget's origin logic; a bad URL counts as same-origin (the tool
- *  errors on it anyway, so no pointless prompt). Used by the page loop's autoApprove. */
-const sameOriginNav = (url: string): boolean => {
-    const t = navTarget(url, location.href, { allowCrossOrigin: true });
-    return "error" in t ? true : !t.crossOrigin;
-};
-
-/** Is a `fetch_url` target SAME-ORIGIN as the current page? An uncredentialed same-origin fetch is FREE (the
- *  page can already `fetch()` its own origin), like a same-origin navigate. A bad URL → not same-origin (let the
- *  normal gate handle it). Used by the page loop's autoApprove. */
-const sameOriginFetch = (url: string): boolean => {
-    try { return new URL(url, location.href).origin === location.origin; } catch { return false; }
-};
+import { AgentHandle, sameOriginNav, sameOriginFetch } from "./ml-agent";   // run-control object (createAgent/agent) + page-loop same-origin auto-approve predicates
+import type { AgentControl } from "./ml-agent";
 
 /** One resolved `python_exec` table source: its var name, provenance, and the payload the sandbox
  *  builds a DataFrame from (rows or read_html html). Internal to injected.ts. */
 type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; columns: string[]; rows: (string | number | null)[][] } | { kind: "html"; html: string } };
-
-/** The object ml.createAgent returns. It IS the session's AgentControl — the same instance is threaded
- *  into ml.agent as `_control`, so the loop mutates the very fields (hash/messages/inbox/seqBase) the
- *  handle exposes. `say` writes a user message into the session (steer if a loop is running, else queue
- *  for the next run()); `run` executes the loop; `maxSteps` is live (raise it mid-run). Page-loop only —
- *  a background-hosted run's history lives in the service worker (see Phase 2). */
-class AgentHandle implements MlAgentHandle, AgentControl {
-    hash: string | null = null;
-    messages: NeutralMessage[] = [];
-    inbox: { id: string; text: string }[] = [];
-    running = false;
-    seqBase = 0;
-    stepBase = 0;
-    bg = false;   // set by ml.agent when the current run routes to the background (say() then uses INJECT_MESSAGE)
-    private _maxSteps: number;
-    private _ctrl = new AbortController();
-    private _transcript: AgentTranscriptEntry[] = [];   // the WHOLE session's actions (accumulated across turns)
-    constructor(private _ml: MlApi, private _opts: AgentOptions) { this._maxSteps = _opts.maxSteps ?? 10; }
-
-    get maxSteps(): number { return this._maxSteps; }
-    set maxSteps(n: number) {
-        this._maxSteps = n;
-        // Reflect the new cap in the sidebar/HUD the instant it's set — the running loop reads it live for
-        // the "STEP x/N" display. Only meaningful once a run has minted the session hash.
-        if (this.hash) emitDebug({ kind: "agent-cap", id: this.hash, ts: Date.now(), save: false, session: { hash: this.hash, turn: 0 }, maxSteps: n });
-    }
-
-    /** Run a full loop until the agent completes its turn. Call again for the next turn (same session).
-     *  Rejects while a loop is in flight. No task → runs over whatever say() has queued into history. */
-    async run(task?: string, images?: (string | HTMLImageElement)[]): Promise<AgentResult> {
-        if (this.running) throw new Error("ml.createAgent: a run is already in flight — use say() to add to it, or cancel() first.");
-        // Flush any leftover steering into the history so it's never lost: a mid-run say() that a background
-        // loop couldn't drain live (arrived after its last step) sits in the inbox — pick it up this run.
-        // Processing it now IS the agent seeing it, so flip the "seen" indicator on each flushed bubble.
-        for (const { id, text } of this.inbox.splice(0)) {
-            this.messages.push({ role: "user", content: text });
-            if (this.hash) emitDebug({ kind: "agent-say-seen", id: this.hash, ts: Date.now(), save: false, session: { hash: this.hash, turn: 0 }, sayId: id });
-        }
-        // Fresh controller PER RUN: a prior cancel() aborted the previous one for good, so reusing it would
-        // insta-cancel this turn. (A caller-supplied signal still governs — cancel() then only aborts ours.)
-        this._ctrl = new AbortController();
-        this.running = true;
-        try {
-            // images are PER-TURN (a composer paste), so they override any left on _opts.
-            const r = await this._ml.agent(task ?? "", { ...this._opts, images: images || [], signal: this._opts.signal || this._ctrl.signal, _control: this } as AgentOptions);
-            // Accumulate: a handle's transcript is the WHOLE conversation's actions, not just this turn's
-            // (mirrors messages/hash spanning turns). ml.agent()'s per-call transcript is unchanged.
-            this._transcript.push(...r.transcript);
-            return { ...r, transcript: this._transcript.slice() };
-        } finally { this.running = false; }
-    }
-
-    /** Put a user message into the session. Mid-run → steer (queued for the next step boundary, shown in
-     *  the UI immediately); idle → append to history for the next run(), with a console note. Never throws. */
-    say(text: string): void {
-        if (this.running) {
-            // A stable id ties this steer's bubble to its later "seen" flip (page loop drains → agent-say-seen;
-            // a bg loop fans the same event from the SW, keyed by this same id via INJECT_MESSAGE.sayId).
-            const sayId = nextSteerId();
-            // Steer the live loop. A BACKGROUND run's loop is in the service worker, so route the message
-            // there (INJECT_MESSAGE, drained at its next step); a PAGE-loop run drains the local inbox.
-            if (this.bg && this.hash) makeBackgroundTaskPromise("INJECT_MESSAGE_REQUEST", "INJECT_MESSAGE_RESPONSE", { runId: this.hash, text, sayId }).catch(() => { /* run finished first → the next run()'s flush catches it */ });
-            this.inbox.push({ id: sayId, text });   // page loop drains this; for a bg run it's the run()-flush safety net
-            if (this.hash) emitDebug({ kind: "agent-say", id: this.hash, ts: Date.now(), save: false, session: { hash: this.hash, turn: 0 }, text, sayId });
-        } else {
-            this.messages.push({ role: "user", content: text });
-            console.info("ml.agent: no run in flight — say() queued the message into history; call run() to have the agent process it.");
-        }
-    }
-
-    cancel(): void {
-        this._ctrl.abort();
-        // A background run's loop lives in the service worker. Aborting the page controller only rejects the
-        // round-trip (→ ABORT_TASK, which kills a FETCH_LLM, not the run), so the SW loop would keep stepping
-        // and emit a stale approval AFTER the "cancelled" bubble. Relay CANCEL_RUN to actually stop it.
-        if (this.bg && this.hash) window.postMessage({ type: "CANCEL_RUN_REQUEST", payload: { runId: this.hash } }, "*");
-    }
-
-    /** A new handle (fresh hash) seeded with a COPY of this history — diverge without touching this one. */
-    fork(): MlAgentHandle {
-        const f = new AgentHandle(this._ml, this._opts);
-        f.messages = this.messages.map(m => ({ ...m }));
-        return f;
-    }
-}
 
 (function() {
 
