@@ -5141,3 +5141,32 @@ test("HUD card: the SAME cross-turn tool-name citation resolves (parity with the
     assert.ok(w.shadow.querySelector(".answer-rendered .tok-ref"),
         "the citation renders as a resolved block on the corner card");
 });
+
+// The HUD orb's live liveness readout (sidebar/orb-status.ts, wired into hud-card). STREAMING gets the rich
+// detail (a ticking token count); NON-STREAMING can't know tokens mid-generation, so it degrades to the
+// humanized phase + a stall heartbeat. Both must reach the rendered orb caption. (Pure-fn coverage lives in
+// tests/orb-status.test.mjs; these prove the wiring renders.)
+test("HUD orb (streaming): the thinking phase carries a LIVE token count in the orb caption", async () => {
+    const w = await loadSidebarWorld();
+    await w.raw({ __mlSidebarSurface: "card" });
+    await w.dispatch(agentStart("orbtok", "compute stats", "m", 20, streamConfig({ stream: true })));
+    // A long reasoning stream (no reply content yet) → the calm thinking orb, decorated with a ticking count.
+    await w.dispatch({ kind: "agent-stream", id: "orbtok", ts: Date.now(), save: false, session: { hash: "orbtok", turn: 1 }, step: 1, localStep: 1, reasoning: "z".repeat(4800) });
+    await w.flush();
+    const label = w.shadow.querySelector(".card-orb-label");
+    assert.ok(label, "the streaming orb auto-expands to a caption (there's live detail to show)");
+    assert.match(label.textContent, /~1\.2k tok/, "the live token count rides the thinking phase");
+});
+
+test("HUD orb (non-streaming): a STALLED run shows an elapsed heartbeat + phase, and NO token count", async () => {
+    const w = await loadSidebarWorld();
+    await w.raw({ __mlSidebarSurface: "card" });
+    await w.dispatch(agentStart("orbstall", "survey", "m", 20, streamConfig()));   // stream OFF
+    // A pending tool whose last activity was 8s ago, with nothing streaming — the "did the glue break?" case.
+    await w.dispatch({ ...agentStep("orbstall", 1, { seq: 1, pending: true, tool: "look", arguments: {} }), ts: Date.now() - 8000 });
+    await w.flush();
+    const label = w.shadow.querySelector(".card-orb-label");
+    assert.ok(label, "the stalled orb auto-expands so the liveness readout is visible");
+    assert.match(label.textContent, /Viewing the screen… · \d+s/, "the elapsed heartbeat proves the pipe is alive");
+    assert.doesNotMatch(label.textContent, /tok/, "non-streaming has no live token count (can't know mid-generation)");
+});

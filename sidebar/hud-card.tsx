@@ -9,7 +9,8 @@ import { signal } from "@preact/signals";
 import { isBackendUnreachable } from "../contract";
 import { sessionMap, rev, view, config, backendError, cardShowWorkHash, surface } from "./store";
 import type { Session, AgentStep } from "./store";
-import { truncate, markdown, stripFormatting } from "./format";
+import { truncate, markdown } from "./format";
+import { orbStatus } from "./orb-status";   // the orb's live status projection (humanized tool phase + live token count + stall heartbeat)
 import { exportSession, printSession } from "./export";
 import { IconChevron, IconWarn, IconSend } from "./icons";
 import { AnswerMediaGallery, ContextMenu, clearHighlight, decideGate, decidedSteps, stepKey } from "./ui-kit";
@@ -39,58 +40,6 @@ import { ComposerCard } from "./card-composer";
  */
 
 
-// The live "working" pill's per-tool icon + hover label (headless progress — see the tool running).
-export const ACTIVITY: Record<string, { icon: string; label: string; short: string }> = {
-    look: { icon: "👁", label: "Viewing the screen…", short: "look" },
-    findByText: { icon: "🔎", label: "Searching the page…", short: "find" },
-    interactives: { icon: "🔎", label: "Finding controls…", short: "controls" },
-    describeElement: { icon: "🔬", label: "Inspecting an element…", short: "inspect" },
-    ancestors: { icon: "🧭", label: "Tracing the DOM…", short: "ancestors" },
-    sampleText: { icon: "📄", label: "Reading text…", short: "read" },
-    countMatches: { icon: "🔢", label: "Counting matches…", short: "count" },
-    locate: { icon: "🎯", label: "Locating an element…", short: "locate" },
-    click: { icon: "👆", label: "Clicking…", short: "click" },
-    type: { icon: "⌨️", label: "Typing…", short: "type" },
-    wait: { icon: "⏳", label: "Waiting for the page…", short: "wait" },
-    exec: { icon: "λ", label: "Running JavaScript…", short: "exec" },
-    python_exec: { icon: "🐍", label: "Running Python…", short: "python" },
-    scroll: { icon: "🖱", label: "Scrolling…", short: "scroll" },
-    screenshot: { icon: "📷", label: "Capturing…", short: "capture" },
-    fetch_url: { icon: "🌐", label: "Fetching a URL…", short: "fetch" },
-    navigate: { icon: "🧭", label: "Navigating…", short: "navigate" },
-    answer: { icon: "📌", label: "Marking the answer…", short: "answer" },
-    agent_api_docs: { icon: "📖", label: "Reading its own manual…", short: "docs" },
-};
-export function activityFor(run: Session): { icon: string; label: string; short: string } {
-    const steps = run.steps || [];
-    // Scope to the CURRENT (in-flight) turn's steps — those AFTER the last follow-up prompt's step position.
-    // Within a turn, show the running tool, else the most-recent COMPLETED tool (the model is still processing
-    // its result — don't snap to "thinking" the instant a look finishes). Bare "thinking" only at the START of
-    // a turn (no tool yet) — including a fresh reply-turn, where the PREVIOUS turn's tools must not leak in.
-    const turnStart = Math.max(0, ...(run.says || []).map(s => s.atStep || 0));
-    const cur = steps.filter(s => (s.step || 0) > turnStart);
-    const tool = [...cur].reverse().find(s => s.pending && s.tool) || [...cur].reverse().find(s => s.tool);
-    if (!tool?.tool) return { icon: "💭", label: "Thinking…", short: "thinking" };
-    return ACTIVITY[tool.tool] || { icon: "⚙️", label: `Running ${tool.tool}…`, short: tool.tool };
-}
-// The model's latest between-step PROSE (its `thought` — narration, not the hidden `reasoning`) within the
-// CURRENT turn. Powers the live caption pill in Progress mode. Null until the model says something this turn.
-export function liveProseFor(run: Session): string | null {
-    const steps = run.steps || [];
-    const turnStart = Math.max(0, ...(run.says || []).map(s => s.atStep || 0));
-    const cur = steps.filter(s => (s.step || 0) > turnStart);
-    if (!cur.length) return null;
-    // Only the CURRENT (latest) step's narration. Walking back to an earlier step's thought left a stale
-    // caption up — e.g. "Scanning the settings panel…" stayed while the agent had moved on to click/wait
-    // several steps later. No prose on the current step → null, and the pill falls back to that step's tool
-    // activity label (activityFor), which is always accurate. (A step emits its thought and its tool as
-    // separate entries sharing one `step`, so scan every entry at the latest step number.)
-    const latest = Math.max(0, ...cur.map(s => s.step || 0));
-    const t = cur.filter(s => (s.step || 0) === latest).map(s => (s.thought || "").trim()).find(Boolean);
-    // Strip markdown/HTML — the pill is one plain line, so a model's `**bold**`/`<b>`/backticks would show
-    // as literal syntax. (The detail-view prose keeps rendered markdown.)
-    return t ? (stripFormatting(t) || null) : null;
-}
 // Right-click the card/pill → ask the shell to draw the "move to corner" menu (drawn shell-side so the
 // tiny pill iframe can't clip it). Coords are iframe-local; the shell offsets by the frame's position.
 // Carry the run hash (for Copy run id / Cancel) + whether it's still live (Cancel only shows then).
@@ -108,6 +57,12 @@ export const cardCtxMenu = (e: any) => {
 // to it would be orphaned the instant it's swapped (the "stuck, can't grab, mouse-is-a-magnet" bug: the
 // drop never fires so it never snaps). documentElement is never re-rendered; capture keeps the moves
 // flowing even when the pointer leaves the tiny orb iframe.
+// Heartbeat: a 1s tick that advances the orb's elapsed "· Ns" liveness readout during a stall (a run that's
+// gone quiet — no events to re-render it otherwise). Holds the latest tick timestamp; CardApp reads it (so a
+// tick re-renders the orb) and gates the interval to only run while the orb is up, so no timer leaks/spins
+// when idle. The 90ms-throttled stream deltas already re-render fast enough on their own; this covers silence.
+const nowTick = signal(0);
+
 let orbDragging = false;   // true during an active drag → suppress the hover-capsule so it can't resize mid-drag
 // Cleanup for the CURRENT card drag (removes its listeners + resets orbDragging/orbHover). Held at module
 // scope so a new drag can force-end a prior stuck one, and the shell's window-level safety net can end it
@@ -290,7 +245,11 @@ export function CardApp() {
     // Live prose: the model's between-step narration (its `thought`, NOT the hidden reasoning). In PROGRESS
     // mode it auto-expands the orb into a caption pill so you see what it's doing without hovering; QUIET
     // suppresses it (the run is already !showOrb there). Not for the "Starting…" bridge (no run steps yet).
-    const liveProse = (showOrb && !starting) ? liveProseFor(run!) : null;
+    // The orb's live status — humanized tool phase ("Running Python…" / "Thinking about the Python output…"),
+    // decorated with a live token count while streaming or an elapsed heartbeat once it stalls. Reading
+    // nowTick subscribes this render to the 1s heartbeat so a stall's elapsed advances; the ticker is gated
+    // below to only run while the orb is up. `caption` = there's live detail worth auto-expanding for.
+    const orb = (showOrb && !starting) ? orbStatus(run!, nowTick.value || Date.now()) : null;
     // Orb-steer: while a run is LIVE and its steer box is open, force the card OPEN (out of the orb) so the
     // input is reachable. Only meaningful for a running run — it self-clears the instant the run finishes.
     const steering = !!run && running && cardSteerHash.value === run.hash;
@@ -303,7 +262,7 @@ export function CardApp() {
         : pending ? "expanded"                                 // an approval: show the action directly (even for a silent run)
         : streamingAnswer ? "expanded"                         // the answer is streaming in → open the card to show it live
             : (tabs && anyContent) ? (cardDetail.value ? "expanded" : "toast")   // multi-run with content: tabbed detail ⇄ calm summary toast (one card-level toggle)
-                : showOrb ? (liveProse ? "orbprose" : hovering ? "orblabel" : "orb")   // in flight → orb; caption when narrating; capsule on hover (single run, or several all merely working)
+                : showOrb ? (orb?.caption ? "orbprose" : hovering ? "orblabel" : "orb")   // in flight → orb; auto-caption when there's live detail (streaming tokens / narration / stall); capsule on hover
                     : (done && !silent) ? (isCardCollapsed(run!.hash) ? "toast" : (cardMaximizedHash.value === run!.hash ? "maximized" : "expanded"))   // single finished run: the answer — MAXIMISED into a corner window when toggled
                         : "hidden";
 
@@ -312,6 +271,15 @@ export function CardApp() {
     // reopen the capsule (orblabel) when the orb next appears (e.g. the "Starting…" bridge). So a fresh
     // orb always starts circular until a real pointerenter.
     useEffect(() => { if (state !== "orb" && state !== "orblabel" && state !== "orbprose") orbHover.value = false; }, [state]);
+    // Heartbeat: while the orb is up, tick once a second so a STALLED run's elapsed "· Ns" advances even when
+    // no events arrive to re-render it (the "did it hang?" case). Gated on showOrb + cleaned up, so no timer
+    // runs — or leaks (jsdom) — when idle/done. Streaming runs already re-render on their 90ms deltas; this is
+    // the silence cover. (An answer that's streaming — state "expanded" — fills in live on its own, no tick.)
+    useEffect(() => {
+        if (!showOrb) return;
+        const id = window.setInterval(() => { nowTick.value = Date.now(); }, 1000);
+        return () => clearInterval(id);
+    }, [showOrb]);
     // Close the steer box once the run is no longer live (it finished / failed / was cancelled) — the box is
     // meaningless without a running loop, and this snaps the card to its finished-answer form cleanly.
     useEffect(() => { if (!running && cardSteerHash.value === run?.hash) cardSteerHash.value = ""; }, [running]);
@@ -476,12 +444,11 @@ export function CardApp() {
     if (state === "hidden") return <div class="card-app" data-rev={r} />;
 
     if (state === "orbprose") {
-        // The live caption: current tool icon + the model's latest between-step narration (one ellipsized line).
-        return <Orb icon={activityFor(run).icon} label={liveProse || activityFor(run).label} wide prose />;
+        // The live caption: current phase + a live token count (streaming) / narration / stall heartbeat.
+        return <Orb icon={orb!.icon} label={orb!.label} wide prose />;
     }
     if (state === "orb" || state === "orblabel") {
-        const a = activityFor(run);
-        return <Orb icon={a.icon} label={a.label} wide={state === "orblabel"} />;
+        return <Orb icon={orb!.icon} label={orb!.label} wide={state === "orblabel"} />;
     }
     if (state === "toast") {
         // MULTI-RUN collapsed → a calm SUMMARY: 🤖 + a generic status + a count badge, no per-run title, no
@@ -549,7 +516,7 @@ export function CardApp() {
                                 // HUD is answer-first: no "Running JavaScript…" activity line and no model-chip /
                                 // reply-bubble chrome (that's DevTools/sidebar detail — the LiveStream component).
                                 ? <div class="card-answer md" dangerouslySetInnerHTML={{ __html: markdown(run.liveStream.content, { math: true }) }} />
-                                : <div class="card-answer dim card-working"><span class="card-work-ic" aria-hidden="true">{activityFor(run).icon}</span>{liveProseFor(run) || activityFor(run).label}<span class="pill-dots"><i /><i /><i /></span></div>}
+                                : (() => { const o = orbStatus(run, nowTick.value || Date.now()); return <div class="card-answer dim card-working"><span class="card-work-ic" aria-hidden="true">{o.icon}</span>{o.label}<span class="pill-dots"><i /><i /><i /></span></div>; })()}
                           </>
                         : <>
                             {/* "Show work" sits ABOVE the answer now — the audit trail is the header, the answer
