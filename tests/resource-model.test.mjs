@@ -220,14 +220,16 @@ test("presetsFor: the default layout follows the hardware", () => {
     assert.equal(multi[0].tracks[0].mode, "overlay");
     const withRam = multi.find((p) => p.id === "memory");
     assert.equal(withRam.tracks.length, 3, "GPU + RAM breaks the same data into a track per pool");
-    const placement = multi.find((p) => p.id === "placement");
-    assert.equal(placement.tracks.length, 2, "placement narrows to the cards — small multiples, no shared axis");
+    // There is deliberately no cards-only preset: it would be GPU + RAM minus the host track, and what that
+    // hides is your CPU-resident models. The editor can drop the track for anyone who wants it.
+    assert.deepEqual(multi.map((p) => p.id), ["overview", "memory"]);
+    assert.ok(!multi.some((p) => p.id === "placement"));
 
     // The Mac: ONE pool, so one preset with one track — not a GPU view and a RAM view of the same silicon.
     const single = M.presetsFor({ t: 1, capacity: M.parseInfo(METAL_INFO), models: [] });
     assert.deepEqual(single.map((p) => p.id), ["memory"]);
     assert.deepEqual(single[0].tracks.map((t) => t.series), [["mem"]], "the one pool, once");
-    assert.ok(!single.some((p) => p.id === "placement"), "and no per-card view of one card");
+    assert.ok(!single.some((p) => p.id === "placement"));
 });
 
 test("segments: history breaks at a hole instead of drawing across it", () => {

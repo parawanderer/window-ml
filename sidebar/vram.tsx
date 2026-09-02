@@ -60,8 +60,14 @@ export const resourceHistory = signal<ResourceSample[]>([]);
 export const CAPACITY_EVERY = 5;   // ps polls between capacity refreshes (5 x 2s = 10s)
 let psSinceCapacity = 0;
 export const capacity = signal<Capacity | null>(null);
+// Whether we have ASKED yet. `capacity: null` alone can't tell "the fetch hasn't come back" from "this server
+// doesn't serve /api/info", and the fallback for the second is the old sparkline — so on every open the panel
+// flashed the legacy chart for a moment before the tracks replaced it. Until the first answer lands the plot
+// is simply empty.
+export const capacityAsked = signal(false);
 export function fetchCapacity(): void {
     chrome.runtime.sendMessage({ type: "OLLAMA_INFO", payload: {} }, (resp: any) => {
+        capacityAsked.value = true;
         if (chrome.runtime.lastError || !resp || resp.error) return;   // leave capacity unknown
         const next = parseInfo(resp.data);
         // Pointing at a DIFFERENT machine (a CUDA server, then a Metal Mac) invalidates the history: those
@@ -448,8 +454,13 @@ export function VramPanel() {
             <RowTip sample={latestSample} />
             {capacity.value
                 ? <ResourceTracks samples={resourceHistory.value} capacity={capacity.value} hidden={hidden} layout={layout.value} />
-                /* No /api/info (stock Ollama, or an OpenWebUI without the passthrough): capacity is UNKNOWN,
-                   so fall back to the old auto-scaled shape rather than drawing a ceiling we don't have. */
+                : !capacityAsked.value
+                /* Haven't heard back yet — hold an empty plot rather than flashing the legacy chart and
+                   replacing it a moment later. */
+                ? <div class="rc"><div class="rc-track"><div class="rc-plot" /></div></div>
+                /* Asked, and this server doesn't serve /api/info (stock Ollama, or an OpenWebUI without the
+                   passthrough): capacity is UNKNOWN, so fall back to the old auto-scaled shape rather than
+                   drawing a ceiling we don't have. */
                 : <svg class="vram-spark" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
                     {pts ? <polyline points={pts} fill="none" stroke="var(--accent)" stroke-width="1.5" /> : null}
                 </svg>}

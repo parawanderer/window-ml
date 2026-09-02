@@ -5762,3 +5762,30 @@ test("overview: the line tooltip gives size, usage and the consumers", async () 
     assert.match(tip.textContent, /19\.00 GiB|20\.00 GiB/, "how much of it is consumed");
     assert.match(tip.textContent, /onzero/, "and BY WHAT — the consumers, named again in the tip");
 });
+
+// Opening the panel used to flash the OLD sparkline before the tracks replaced it: `capacity: null` could not
+// distinguish "the fetch hasn't come back" from "this server has no /api/info", and the fallback for the
+// second is that legacy chart.
+test("panel open: holds an empty plot until capacity answers, never flashes the old chart", async () => {
+    let release;
+    const held = new Promise((r) => { release = r; });
+    const w = await loadSidebarWorld({
+        vram: [{ model: "a", vramGB: 8, vramBytes: 8 * 1024 ** 3, expiresAt: null }],
+        info: INFO_2CARD,
+        holdInfo: held,   // the harness waits on this before answering OLLAMA_INFO
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+
+    // Capacity has not answered yet.
+    assert.equal(w.shadow.querySelectorAll(".vram-spark").length, 0,
+        "the legacy sparkline must NOT appear while we are still waiting");
+    assert.equal(w.shadow.querySelectorAll(".rc-plot").length, 1, "an empty plot holds the space instead");
+
+    release();
+    await w.flush();
+    await w.flush();
+    assert.ok(w.shadow.querySelectorAll(".rc-key").length > 0, "…and the real tracks replace it once it lands");
+    assert.equal(w.shadow.querySelectorAll(".vram-spark").length, 0, "still no legacy chart");
+});

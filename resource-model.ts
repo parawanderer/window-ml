@@ -435,20 +435,19 @@ export function presetsFor(sample: ResourceSample): Preset[] {
         tracks: ([{ ...track("overview", [...devices.map((d) => `vram.${d.id}`), "ram"]),
                     mode: (devices.length > 1 ? "overlay" : "stack") as TrackDef["mode"] }] as TrackDef[]).filter(nonEmpty),
     };
-    const placement: Preset = {
-        id: "placement", label: "Placement", description: "One track per card, so you can see where a model landed.",
-        tracks: devices.map((d) => track(`dev-${d.id}`, [`vram.${d.id}`])).filter(nonEmpty),
-    };
     const withRam: Preset = {
-        id: "memory", label: "GPU + RAM", description: "Accelerator memory alongside system RAM.",
+        id: "memory", label: "GPU + RAM", description: "A track per pool, with the models stacked in each.",
         tracks: [...devices.map((d) => track(`dev-${d.id}`, [`vram.${d.id}`])), track("ram", ["ram"])].filter(nonEmpty),
     };
-    // OVERVIEW leads: it is the most COMPACT (one track for the whole machine, in a panel that competes for
-    // height with the session list) and — now that it includes the host pool — it hides nothing. That was the
-    // blocker: a cards-only overview made a CPU-resident model vanish from the chart, which is why the default
-    // must never be a view that omits something resident. GPU + RAM breaks the same data into a track per pool
-    // when you want the per-model bands; Placement narrows further, to the accelerators only.
-    return devices.length > 1 ? [overview, withRam, placement] : [overview, withRam];
+    // TWO views, and they differ in KIND rather than in scope: Overview is one compact track with every pool
+    // overlaid (how full is each), GPU + RAM is a track per pool with per-model bands (what is in each). Both
+    // include the host, because a CPU-resident model holds no VRAM and a view that omits the host pool makes
+    // it vanish from the chart while it sits in the legend below.
+    //
+    // There was a third, "Placement" — GPU + RAM minus the host track. It was exactly that flaw as a named
+    // option: strictly narrower, and what it narrowed AWAY was your CPU-resident models. Anyone who genuinely
+    // wants cards-only can drop the RAM track in the editor, which is one click and says what it did.
+    return [overview, withRam];
 }
 
 /** A stable identity for the MACHINE this capacity describes — its devices (id, name, runner, size) and its
