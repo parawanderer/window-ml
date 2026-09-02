@@ -874,9 +874,9 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             // The run's curated answer set (created per run on the ToolContext). The `answer` tool mutates it
             // directly — no per-call accumulation here — and the loop reads it at assembly.
             const answerSet = toolCtx.answer!;
-            const runToolDep = async (name: string, args: Record<string, unknown>) => {
+            const runToolDep = async (name: string, args: Record<string, unknown>, onStream?: (text: string) => void) => {
                 const tool = byName[name];
-                const env = await executeTool(tool, args, toolCtx);
+                const env = await executeTool(tool, args, toolCtx, onStream);
                 const { in: renderIn, out: renderOut } = descriptorFor(tool, env, args);
                 // A CUSTOM answer-capable tool just returns nodes (it doesn't know about the answer set) →
                 // accumulate them for the user. The built-in `answer` tool curates the set itself and flags
@@ -1005,7 +1005,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 answerSet.clear();   // the answer set reflects THIS turn's designations only
                 enterAgentRun();   // suppress orphan chat sessions from a tool's internal ml.chat; finally-decremented
                 try {
-                    const r = await runAgentLoop(t, { tools: toolMetas, maxSteps: () => control.maxSteps, signal, unattended, toolTokens, runHash, seqBase: control.seqBase }, deps);
+                    const r = await runAgentLoop(t, { tools: toolMetas, maxSteps: () => control.maxSteps, signal, unattended, toolTokens, runHash, seqBase: control.seqBase, stream }, deps);
                     control.seqBase += turnMaxSeq; turnMaxSeq = 0;   // next turn's step seqs continue past this turn's
                     control.stepBase += turnMaxStep; turnMaxStep = 0;   // …and its step numbers, so turn groups stay distinct
                     // The bottom-of-answer render: the outputs the model DESIGNATED into the answer set, minus

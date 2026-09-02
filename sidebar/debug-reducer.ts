@@ -69,6 +69,15 @@ export function onDebug(ev: MlDebugEvent): void {
     if (ev.kind === "agent-step") {
         const s = sessionMap.get(ev.session.hash);
         if (!s) { queueOrphan(ev.session.hash, ev); return; }   // no start yet → hold it, don't manufacture a phantom
+        // LIVE tool-output delta (ctx.stream): carries ONLY { step, seq, streamOutput } (no tool) — patch it
+        // ADDITIVELY onto the pending row (never rebuild the step, which would wipe tool/args). The DONE (with
+        // a result + tool) supersedes it below. Ignore a delta whose START hasn't landed yet.
+        if (ev.streamOutput != null && ev.tool == null && ev.seq != null) {
+            const steps0 = s.steps || [];
+            const j = steps0.findIndex(x => x.seq === ev.seq);
+            if (j >= 0) { s.steps = steps0.map((x, k) => k === j ? { ...x, streamOutput: ev.streamOutput } : x); s.lastTs = ev.ts; rev.value++; }
+            return;
+        }
         const step = { step: ev.step, localStep: ev.localStep, seq: ev.seq, pending: ev.pending, awaitingApproval: ev.awaitingApproval, thought: ev.thought, reasoning: ev.reasoning, tool: ev.tool, arguments: ev.arguments, result: ev.result, modelResult: ev.modelResult, token: ev.token, elements: ev.elements, renderIn: ev.renderIn, renderOut: ev.renderOut, feedback: ev.feedback, argIssues: ev.argIssues, approval: ev.approval, usage: ev.usage, subUsage: ev.subUsage, grants: ev.grants, reused: ev.reused };
         const steps = s.steps || [];
         // In-flight: a tool step arrives twice — a pending START then the DONE, sharing a `seq`.

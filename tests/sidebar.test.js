@@ -5206,3 +5206,24 @@ test("DevTools run-stats bar: renders nothing before any usage is reported", asy
     await openRun(w);
     assert.equal(w.shadow.querySelector(".run-stats"), null, "no bar until the model reports token counts");
 });
+
+// Live tool output (ctx.stream): a stream delta patches the running step's Out ADDITIVELY (Jupyter-style),
+// and the DONE (with a result) supersedes it. The delta carries no `tool`, so it must not rebuild the row.
+test("live tool output (sidebar): a stream delta fills the running step's Out; the DONE supersedes it", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("liveout", "run code"));
+    await w.dispatch(agentStep("liveout", 1, { seq: 1, pending: true, tool: "exec", arguments: { js: "loop()" } }));
+    await w.dispatch(agentStep("liveout", 1, { seq: 1, streamOutput: "tick 1\ntick 2\n" }));   // a delta — NO tool
+    await openRun(w);
+    assert.match(w.shadow.querySelector(".astep-preview").textContent, /tick/, "the live output shows in the collapsed step preview (not 'running…')");
+    w.shadow.querySelector(".astep-head").click(); await w.tick();
+    const live = w.shadow.querySelector(".astep-streaming");
+    assert.ok(live, "the live output renders in the Out block while the step runs");
+    assert.match(live.textContent, /tick 1[\s\S]*tick 2/, "the streamed console output fills in");
+    // A late delta keeps the pending row intact (tool/args preserved — the additive patch).
+    assert.match(w.shadow.querySelector(".astep-head").textContent, /exec/, "the tool identity survived the additive delta");
+    // DONE: the real result supersedes the live block.
+    await w.dispatch(agentStep("liveout", 1, { seq: 1, tool: "exec", arguments: { js: "loop()" }, result: "console:\ntick 1\ntick 2\n\nvalue: 2" }));
+    await w.tick();
+    assert.equal(w.shadow.querySelector(".astep-streaming"), null, "the live block clears once the result lands");
+});

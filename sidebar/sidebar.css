@@ -690,6 +690,10 @@ details.io[open] > summary .io-preview { display: none; }
 .run-stats .rstat-ic { opacity: .7; margin-right: 3px; }
 .run-stats .rstat-tps { color: var(--fg-dim); }
 
+/* Live tool output (ctx.stream) filling in while a step runs — a pulsing accent rail marks it as still going. */
+.astep-streaming { border-left: 2px solid var(--accent); padding-left: 6px; animation: astep-live 1.2s ease-in-out infinite; }
+@keyframes astep-live { 0%, 100% { border-left-color: var(--accent); } 50% { border-left-color: transparent; } }
+
 .icon-btn {
     display: inline-flex; align-items: center; justify-content: center; line-height: 0;
     background: transparent; border: none; color: var(--fg-faint); cursor: pointer;

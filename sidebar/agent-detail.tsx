@@ -238,7 +238,7 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                 {st.approval ? <ApprovalBadge approval={st.approval} /> : null}
                 {st.elements ? <span class="tt el-count">{st.elements} el<span class="tt-pop wrap" role="tooltip">DOM nodes returned (reach them in the console via onStep).</span></span> : null}
                 {issues ? <span class="arg-warn" title={issues.join("; ")}><IconWarn />{issues.length}</span> : null}
-                {!open ? <span class="astep-preview">{awaiting ? <span class="dim">needs approval</span> : st.pending ? <span class="dim">running…</span> : collapsedPreview(st.result || "").text}</span> : null}
+                {!open ? <span class="astep-preview">{awaiting ? <span class="dim">needs approval</span> : st.pending ? (st.streamOutput ? <span class="astep-livepreview">{collapsedPreview(st.streamOutput).text}</span> : <span class="dim">running…</span>) : collapsedPreview(st.result || "").text}</span> : null}
             </button>
             {open
                 ? <div class="astep-body">
@@ -250,8 +250,13 @@ export function ToolStep({ st, hash }: { st: AgentStep; hash?: string }) {
                             raw={<RawArgs args={args || {}} schema={paramSchema} />} />
                         : null}
                     <IoBlock label="Out" tip="What the tool returned to the model."
-                        preview={st.pending ? "running…" : inlineText(st.result || "")} render={outRender}
-                        raw={(st.modelResult ?? st.result) ? <Code text={st.modelResult ?? st.result ?? ""} lang="text" /> : <span class="dim">{st.pending ? "running…" : "(no output)"}</span>} />
+                        preview={st.pending ? (st.streamOutput ? inlineText(st.streamOutput) : "running…") : inlineText(st.result || "")} render={outRender}
+                        raw={st.pending
+                            ? (st.streamOutput != null
+                                // LIVE tool output (ctx.stream — console.log / print) filling in Jupyter-style while it runs.
+                                ? <div class="astep-streaming"><Code text={st.streamOutput} lang="text" /></div>
+                                : <span class="dim">running…</span>)
+                            : (st.modelResult ?? st.result) ? <Code text={st.modelResult ?? st.result ?? ""} lang="text" /> : <span class="dim">(no output)</span>} />
                     {st.feedback ? <FeedbackBlock fb={st.feedback} /> : null}
                 </div>
                 : null}

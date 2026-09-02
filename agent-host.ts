@@ -129,6 +129,10 @@ export function runBackgroundAgent(cfg: RunAgentConfig, deps: RunAgentHostDeps):
 
     const loopDeps: AgentLoopDeps = {
         callModel: (messages, o) => deps.callModel(messages as NeutralMessage[], { tools: o.tools, model: cfg.model, think: cfg.think, step: o.step }),
+        // TODO(bg-stream): forward `onStream` to the delegated page tool for LIVE tool-output streaming on the
+        // background-hosted path — needs a reverse channel (page ctx.stream → PAGE_TOOL_STREAM → SW → this
+        // onStream), correlated by runId+seq. Today a background-delegated tool returns its full output at DONE
+        // (the page loop streams fully). See memory idea-cdp-exec-live-streaming.
         runTool: (name, args) => deps.delegateTool(name, args),
         tryReadonly: deps.tryReadonly,
         precheck: deps.precheck,

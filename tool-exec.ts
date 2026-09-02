@@ -69,7 +69,7 @@ export interface ToolEnvelope {
     answerManaged?: boolean;
 }
 
-export async function executeTool(tool: MlTool, args: Record<string, unknown>, ctx?: ToolContext): Promise<ToolEnvelope> {
+export async function executeTool(tool: MlTool, args: Record<string, unknown>, ctx?: ToolContext, onStream?: (text: string) => void): Promise<ToolEnvelope> {
     // Check the model's args against the tool's schema (the same validateArgs that feeds the debug ⚠
     // strip) and surface it to the MODEL, not just the sidebar. A MISSING REQUIRED arg means the tool
     // can't run usefully (e.g. click with no `selector` → a baffling "No element matches undefined"),
@@ -94,7 +94,11 @@ export async function executeTool(tool: MlTool, args: Record<string, unknown>, c
         ctx.docsMemory.shown.clear();
     }
     try {
-        const raw = await tool.run(args, ctx);
+        // Per-call live-output channel: when the loop supplied `onStream` (opt-in streaming), hand the tool a
+        // ctx carrying `stream` so `run` can push partial output. A shallow copy per call (never mutate the
+        // shared run ctx). A tool that doesn't support streaming just ignores `ctx.stream`.
+        const runCtx = onStream && ctx ? { ...ctx, stream: onStream } : ctx;
+        const raw = await tool.run(args, runCtx);
         // A tool may return a plain string, or { content, elements, image?, render?, renderIn? } to
         // also hand back real DOM nodes / a screenshot (routed to onStep/the transcript, never the model).
         if (raw && typeof raw === "object" && typeof (raw as ToolResult).content === "string") {

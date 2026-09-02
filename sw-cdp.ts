@@ -101,6 +101,10 @@ export async function cdpEval(tabId: number, source: string): Promise<{ ok: true
     // console, and a `Runtime.evaluate` that only returns the completion value silently drops every console.log
     // (the reported "logs got lost in CDP"). Patch console INSIDE the page (via the wrapper), collect the lines,
     // stringify the completion value there too (so returnByValue always gets a clean string[]+string), restore.
+    // TODO(cdp-stream): LIVE-stream this console output (generic tool `ctx.stream`, the `streaming` flag) —
+    // Runtime.evaluate returns once, so it needs a Runtime.consoleAPICalled subscription for the eval's
+    // duration, forwarding each call through ctx.stream. Deferred; strict pages just don't stream live (the
+    // full output still lands at DONE). See memory idea-cdp-exec-live-streaming.
     const wrap = (inner: string) => `(async () => {
         const __logs = [], __M = ['log','info','warn','error','debug'], __S = {};
         for (const m of __M) { __S[m] = console[m]; console[m] = (...a) => __logs.push(a.map(x => { try { return typeof x === 'string' ? x : JSON.stringify(x); } catch { return String(x); } }).join(' ')); }

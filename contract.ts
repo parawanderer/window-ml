@@ -712,6 +712,12 @@ export interface ToolContext {
     /** The run's curated user-facing answer set — the `answer` tool adds/removes/clears it, `ml.answer`
      *  mirrors it, and the loop reads it to assemble AgentResult. Per run (keyed by the toolset). */
     answer?: AnswerSet;
+    /** LIVE partial output — a GENERIC tool-streaming capability. A tool's `run` may call `ctx.stream(text)`
+     *  to stream output AS IT WORKS (Jupyter-style: `exec`'s console.log, `python_exec`'s print), so the step's
+     *  Out fills in live instead of only appearing at completion. Present ONLY when the run opted into
+     *  `streaming` — a tool checks `if (ctx.stream)` and streams if it can; absent → it just returns the full
+     *  result at the end (unchanged). The loop throttles + caps the fan; the final result still supersedes it. */
+    stream?: (text: string) => void;
 }
 
 /** `agent_api_docs`'s per-run memory: which reference chunks have been shown in the CURRENT burst of docs
@@ -1457,6 +1463,10 @@ export interface DebugAgentStep extends DebugBase {
      *  appended `@tool:<id>` token line. Kept so the log's raw view stays complete (the AGENTS raw-view rule);
      *  the pretty Out shows `result`, a collapsed "raw · as the model saw it" shows this. */
     modelResult?: string;
+    /** LIVE partial output streamed by the tool as it runs (`ctx.stream` — console.log / print), for the
+     *  in-flight Jupyter-style Out. A delta emit carries ONLY `{ step, seq, streamOutput }` (no `tool`) so the
+     *  reducer patches it additively onto the pending row; the DONE (with `result`) supersedes it. */
+    streamOutput?: string;
     /** the `@tool:<id>` this step was MINTED (opt-in `token:true` on a citable call). The answer renderer matches
      *  it EXACTLY to resolve a `[label](@tool:<id>)` citation — no re-derivation, so it can't drift. */
     token?: string;

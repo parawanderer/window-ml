@@ -32,7 +32,9 @@ export interface AgentLoopDeps {
     callModel(messages: unknown[], opts: { tools: ToolMeta[]; step: number }): Promise<{ content?: string | null; tool_calls?: ToolCall[]; usage?: unknown; reasoning?: unknown }>;
     // Execute a tool by name — LOCAL (page-side today) or DELEGATED (background → page, safe mode).
     // Reached for a requiresApproval tool ONLY after the gate. This is the untrusted delegation point.
-    runTool(name: string, args: Record<string, unknown>): Promise<ToolRunResult>;
+    // `onStream`, when provided (opt-in `stream`), is handed to the tool as `ctx.stream` so it can stream live
+    // output as it runs (the loop throttles + fans it). Ignored by tools that don't support streaming.
+    runTool(name: string, args: Record<string, unknown>, onStream?: (text: string) => void): Promise<ToolRunResult>;
     // The approval gate (UI). Reached ONLY for a requiresApproval tool that isn't auto-approved. `seq`
     // and `step` identify the pending step so a background gate can correlate its async decision to it.
     approve(req: { tool: string; arguments: Record<string, unknown>; seq?: number; step?: number }): Promise<ApprovalDecision>;
@@ -66,7 +68,7 @@ export interface AgentLoopDeps {
     // `elements` carries the tool's real result nodes on a DONE (page-side only — nodes can't cross the
     // bus, so the background path leaves it undefined and assembles answer nodes separately). The page's
     // emit uses them for onStep + the debug event's element COUNT.
-    emit?(ev: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: unknown; tool?: string; arguments?: Record<string, unknown>; result?: string; modelResult?: string; token?: string; approval?: Approval; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; usage?: unknown; elements?: unknown[]; reused?: import("./contract").ReusedGrant[] }): void;
+    emit?(ev: { step: number; seq?: number; pending?: boolean; thought?: string; reasoning?: unknown; tool?: string; arguments?: Record<string, unknown>; result?: string; modelResult?: string; token?: string; approval?: Approval; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; usage?: unknown; elements?: unknown[]; reused?: import("./contract").ReusedGrant[]; streamOutput?: string }): void;
     // Mid-run STEERING (a.say()): drained at each step boundary (before the model call) — returns any user
     // messages queued since the last step, injected via pushUser so the model sees them on its next turn.
     // Omit → no steering. The queue lives in the caller's world (page handle / SW inbox).
@@ -193,6 +195,31 @@ export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number | (() =
     // citation would resolve to the earlier step. The caller passes its running base (the same one it offsets the
     // stored step.seq by), so the minted id matches a session-unique step exactly.
     toolTokens?: boolean; runHash?: string; seqBase?: number;
+    /** Opt-in LIVE tool-output streaming (same flag as the streamed thinking): when set, each tool call gets a
+     *  throttled `ctx.stream(text)` so a tool that supports it (exec's console.log, python_exec's print) streams
+     *  its output as it runs. Off → tools return the full result at the end, unchanged. */
+    stream?: boolean;
+}
+
+// Live tool-output streaming: throttle the fan (a chatty loop can't flood the bus) and cap the accumulated
+// text (a runaway print can't blow up a message). The DONE emit carries the full result and supersedes this,
+// so the cap only bounds the LIVE view. Mirrors the LLM stream's 90ms cadence.
+const STREAM_EMIT_MS = 90;
+const STREAM_OUTPUT_CAP = 4000;
+/** Build the per-tool-call streaming fan (or null when streaming is off). `push` accumulates + throttled-emits
+ *  the running output; `done` stops any pending trailing emit (the DONE supersedes it). */
+function makeStreamFan(on: boolean | undefined, emit: (out: string) => void): { push: (text: string) => void; done: () => void } | null {
+    if (!on) return null;
+    let acc = "", last = 0, timer: ReturnType<typeof setTimeout> | null = null;
+    const send = (): void => { last = Date.now(); emit(acc); };
+    return {
+        push(text: string): void {
+            if (acc.length < STREAM_OUTPUT_CAP) acc = (acc + String(text)).slice(0, STREAM_OUTPUT_CAP);   // keep the HEAD, like the final clip
+            if (Date.now() - last >= STREAM_EMIT_MS) { if (timer) { clearTimeout(timer); timer = null; } send(); }   // leading edge
+            else if (!timer) timer = setTimeout(() => { timer = null; send(); }, STREAM_EMIT_MS);                    // trailing, coalesced
+        },
+        done(): void { if (timer) { clearTimeout(timer); timer = null; } },   // the DONE result supersedes the live view
+    };
 }
 
 // Normalize an approval gate's return (boolean OR the rich contract) into a decision. Inlined (not
@@ -277,6 +304,9 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             let args = (call.arguments || {}) as Record<string, unknown>;
             const s = ++seq;
             deps.emit?.({ step, seq: s, pending: true, tool: call.name, arguments: args });   // in-flight START
+            // Live tool-output fan for THIS call (opt-in `stream`): a delta emit carries only { step, seq,
+            // streamOutput } so the reducer patches the pending row additively; the DONE below supersedes it.
+            const fan = makeStreamFan(opts.stream, (out) => deps.emit?.({ step, seq: s, streamOutput: out }));
             let result: string, approval: Approval | undefined;
             let tr: ToolRunResult | undefined;   // the full result — its render slots ride the DONE emit
             if (!meta) {
@@ -299,7 +329,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                     tr = ro; result = ro.result;   // the interpreter already produced the result
                 } else if (auto) {
                     approval = auto.approval;
-                    tr = await deps.runTool(call.name, args); result = tr.result;   // trusted auto-approve → execute
+                    tr = await deps.runTool(call.name, args, fan?.push); result = tr.result;   // trusted auto-approve → execute
                     if (auto.reused?.length) tr = { ...tr, reused: [...(tr.reused || []), ...auto.reused] };   // surface the reused grants
                 } else if (deps.precheck && (result = (await deps.precheck(call.name, args)) || "")) {
                     // Doomed-action skip: a side-effect-free precheck (click/type target resolution) found
@@ -341,13 +371,14 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                         } else {
                             approval = "user";
                             args = d.arguments;                                   // possibly gate-edited
-                            tr = await deps.runTool(call.name, args); result = tr.result;   // EXECUTE ONLY AFTER APPROVE
+                            tr = await deps.runTool(call.name, args, fan?.push); result = tr.result;   // EXECUTE ONLY AFTER APPROVE
                         }
                     }
                 }
             } else {
-                tr = await deps.runTool(call.name, args); result = tr.result;   // non-approval tool
+                tr = await deps.runTool(call.name, args, fan?.push); result = tr.result;   // non-approval tool
             }
+            fan?.done();   // the tool finished — stop any trailing live emit; the DONE below carries the full result
             result = String(result);
             const entry: AgentTranscriptEntry = { tool: call.name, arguments: args, result };
             // Real result nodes ride the transcript ENTRY too (page-side only — undefined for the delegated

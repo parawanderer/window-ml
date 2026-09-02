@@ -25,7 +25,7 @@ export interface Turn {
     reasoning?: string | null;  // separate thinking/reasoning text, if the model produced any
     usage?: TokenUsage | null;  // token counts for this turn, when the server reports them
 }
-export interface AgentStep { step: number; localStep?: number; seq?: number; pending?: boolean; awaitingApproval?: boolean; thought?: string; reasoning?: string | null; tool?: string; arguments?: Record<string, unknown>; result?: string; modelResult?: string; token?: string; elements?: number; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; argIssues?: string[]; approval?: "readonly" | "sandbox" | "same-origin" | "consented" | "self-source" | "user" | "denied" | "skipped" | "cancelled"; usage?: TokenUsage | null; subUsage?: SubcallUsage; grants?: PersistGrant[]; reused?: ReusedGrant[]; }
+export interface AgentStep { step: number; localStep?: number; seq?: number; pending?: boolean; awaitingApproval?: boolean; thought?: string; reasoning?: string | null; tool?: string; arguments?: Record<string, unknown>; result?: string; modelResult?: string; streamOutput?: string; token?: string; elements?: number; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; argIssues?: string[]; approval?: "readonly" | "sandbox" | "same-origin" | "consented" | "self-source" | "user" | "denied" | "skipped" | "cancelled"; usage?: TokenUsage | null; subUsage?: SubcallUsage; grants?: PersistGrant[]; reused?: ReusedGrant[]; }
 
 // The agent's TURN count — the number of distinct `.step` values, NOT `steps.length`.
 // One turn (one LLM call) emits several `AgentStep` events (its thought + one per tool

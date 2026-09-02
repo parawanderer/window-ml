@@ -528,7 +528,7 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
             // A raise of maxChars beyond the default with no justification is DOOMED (it will just ask for one) —
             // skip the gate and steer the model to supply `maxCharsReason` (then the human sees it on the card).
             precheck: (args) => outputCapPrecheck("exec", args as Record<string, unknown>),
-            run: async ({ js, maxChars, maxCharsReason }: { js: string; maxChars?: number; maxCharsReason?: string }): Promise<string | ToolResult> => {
+            run: async ({ js, maxChars, maxCharsReason }: { js: string; maxChars?: number; maxCharsReason?: string }, ctx?: import("./contract").ToolContext): Promise<string | ToolResult> => {
                 // Effective per-slot output cap. Default 500; a raise past it is only reachable AFTER the human
                 // gate (the readonly try refuses to auto-approve an escalated call), clamped to the ceiling.
                 const { cap, clamped } = resolveOutputCap("exec", maxChars, maxCharsReason);
@@ -541,10 +541,14 @@ export const makeDomTools = (defineTool: (tool?: Partial<MlTool>) => MlTool, ver
                 const saved: Record<string, typeof console.log> = {};
                 for (const m of methods) {
                     saved[m] = console[m];
-                    console[m] = (...a: unknown[]) => logs.push(a.map(x => {
-                        if (typeof x === "string") return x;
-                        try { return JSON.stringify(x); } catch { return String(x); }
-                    }).join(" "));
+                    console[m] = (...a: unknown[]) => {
+                        const line = a.map(x => {
+                            if (typeof x === "string") return x;
+                            try { return JSON.stringify(x); } catch { return String(x); }
+                        }).join(" ");
+                        logs.push(line);
+                        ctx?.stream?.(line + "\n");   // LIVE: stream each console line (Jupyter-style) when streaming is on
+                    };
                 }
 
                 let result: unknown;

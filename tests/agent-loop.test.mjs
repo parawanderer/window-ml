@@ -380,3 +380,29 @@ test("denial attribution: a UI/user rejection (no source, or source:'user') stil
     const res = await runAgentLoop("x", { tools: [danger2] }, deps);
     assert.match(res.transcript[0].result, /Denied by the user/);
 });
+
+test("live tool output: opt-in `stream` hands the tool a throttled ctx.stream that fans streamOutput deltas", async () => {
+    // A non-approval tool that streams two lines >throttle apart (so both flush past the 90ms leading edge).
+    const { deps, calls } = makeDeps({ turns: [toolCall("myTool", {}), reply("done")] });
+    deps.runTool = async (name, args, onStream) => {
+        onStream?.("line 1\n");
+        await new Promise(r => setTimeout(r, 120));
+        onStream?.("line 2\n");
+        return { result: "console:\nline 1\nline 2\n\nvalue: ok" };
+    };
+    await runAgentLoop("x", { tools: [{ name: "myTool" }], stream: true }, deps);
+    const deltas = calls.emits.filter(e => e.streamOutput != null && e.tool == null);
+    assert.ok(deltas.length >= 1, "the loop fanned live stream deltas");
+    assert.match(deltas.at(-1).streamOutput, /line 1[\s\S]*line 2/, "the delta accumulates the streamed output");
+    // Every delta carries the seq (to patch the pending row) and NO tool (so the reducer patches additively).
+    assert.ok(deltas.every(d => d.seq != null && d.tool == null), "deltas patch by seq, never rebuild the step");
+});
+
+test("live tool output: with streaming OFF, the tool gets no ctx.stream (undefined) and nothing is fanned", async () => {
+    const { deps, calls } = makeDeps({ turns: [toolCall("myTool", {}), reply("done")] });
+    let onStreamWas = "unset";
+    deps.runTool = async (name, args, onStream) => { onStreamWas = onStream === undefined ? "undefined" : "provided"; return { result: "ok" }; };
+    await runAgentLoop("x", { tools: [{ name: "myTool" }] }, deps);   // no `stream`
+    assert.equal(onStreamWas, "undefined", "runTool gets no onStream when streaming is off (fan?.push is undefined)");
+    assert.equal(calls.emits.filter(e => e.streamOutput != null).length, 0, "no stream deltas emitted");
+});
