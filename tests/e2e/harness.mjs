@@ -11,10 +11,16 @@ import { chromium } from "@playwright/test";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../dist");
+const DEFAULT_DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../dist");
 
-/** Launch Chromium with the built extension. Returns { context, sw, extensionId, close }. */
-export async function launchExtension() {
+/**
+ * Launch Chromium with the built extension. Returns { context, sw, extensionId, close }.
+ *
+ * `dist` loads a DIFFERENT build directory than `dist/` — how the bench runs an experimental variant
+ * (an esbuild `--define`d build in its own outdir) without the experiment ever becoming a product flag.
+ */
+export async function launchExtension({ dist } = {}) {
+    const DIST = dist ? path.resolve(dist) : DEFAULT_DIST;
     const context = await chromium.launchPersistentContext("", {
         // Headful by default — an MV3 extension's service worker does NOT register under headless Chromium
         // (verified). CI runs this under xvfb; locally it opens a real window. Opt into headless (e.g. to
