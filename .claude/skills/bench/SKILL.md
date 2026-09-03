@@ -13,6 +13,24 @@ Reach for **observe** to understand ONE run. Reach for **bench** when the questi
 does this model follow the rules better than that one, does this prompt change help, does an
 experimental identifier format reduce re-emission.
 
+**Two audiences, one run.** You define the experiment in code, run it, and read the terminal. A human
+watching over your shoulder opens the live page (`--serve`). Same data, rendered for whoever is looking —
+so START A SWEEP WITH `--serve` AND HAND THE HUMAN THE URL. It prints as a banner for exactly that:
+
+```
+  ┌─────────────────────────────┐
+  │   http://127.0.0.1:58828    │
+  └─────────────────────────────┘
+  watch it live ↑  (120 runs)
+```
+
+The page shows every run with its state and what is queued next, the in-flight run's step against its
+budget and the tool it is in right now, the last thing that happened, elapsed time, mean time per run and
+per step, and an ETA (withheld until a few runs land — an estimate from one sample is a guess wearing a
+number's clothes). Rows link to each run's `run.md` and `run.json`. It is a SINK, not a second brain: the
+server recomputes the table with the same `aggregate()` the report uses, so the page cannot disagree with
+`report.md`.
+
 ```
 npm run build
 node --import tsx tests/e2e/bench/run.mjs tests/e2e/bench/specs/smoke.bench.ts --repeats 1
@@ -41,6 +59,11 @@ The same calibration is automated in three places, all of which must stay green:
   silently marks every arm the same way and reads like a finding.
 
 ## Writing a spec
+
+The two specs in `specs/` are worked examples, and `specs/README.md` is the walkthrough for a human who is
+not using this skill. `smoke.bench.ts` is the shortest complete one; `pointer-ids.bench.ts` is a real
+experiment with a build-time dimension and a seeded history.
+
 
 Specs are TypeScript so the config is typed as you fill it in — the dimension keys you declare are the
 keys `apply()` receives, and their values are the union it accepts.
@@ -84,6 +107,8 @@ task usable for measuring behaviour when correctness is not the question.
 | `--repeats N` | Override the spec's repeat count — use `--repeats 1` while iterating on a spec. |
 | `--dry` | Print the matrix and its cell keys, run nothing. Do this before any long sweep. |
 | `--no-cache` | Re-run cells that are already measured. |
+| `--serve` | Serve the live page and print its URL. Costs nothing when nobody opens it; SSE, no dependency, no build step. |
+| `--open` | `--serve` plus launch a browser. |
 | `--pdf` | Also render each run to `run.html` + `run.pdf`. Off by default: it roughly triples a cell's disk and adds a render per run. The HTML is written alongside deliberately — it is searchable and diffable where a PDF is neither, and it is the only way to see why a PDF looks wrong. |
 
 Backend selection is the same as observe: `USE_ENV=1` reads `.env`, `E2E_BACKEND`/`E2E_MODEL`/`E2E_KEY`
@@ -122,6 +147,10 @@ a mean of five hides the one that went wrong, which is usually the one worth rea
 - **Metrics come from artifacts, never new instrumentation.** Everything derives from the `__mlDebug`
   stream. If a metric cannot be computed from it, that is a signal the stream is missing something the
   PRODUCT should have — fix it there, not in `metrics.mjs`. Adding a column is one entry in `COLUMNS`.
+- **A predicate is CODE, and a wrong one does not fail.** It scores every arm identically and reads like a
+  finding rather than a bug — after the GPU time is spent. `tests/bench-specs.test.mjs` scores each spec's
+  predicates against answers a model plausibly writes and against wrong ones; add yours. `pointer-ids`'
+  first predicate looked for `502981` where the columns sum to `502980.90`, so nothing correct could match.
 - **`--dry` first for anything long.** 4 formats x 3 tasks x 2 models x 5 repeats is 120 runs and hours
   of GPU. Trim cells that do not discriminate rather than repeating them five times.
 
