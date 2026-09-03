@@ -196,6 +196,28 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rc-tip-pool { flex-direction: column; align-items: stretch; gap: 1px; min-width: 150px; }
 .rc-tip-line { display: flex; justify-content: space-between; gap: 12px; }
 .rc-tip-line .rc-tip-name { font-weight: 600; }
+/* The event lane: what happened, under the memory it happened to. Segments mirror .rc-seg exactly (same flex
+   weights, same order) so a bar sits under the moment it describes — the axis is segmented, not linear. */
+.rc-lane { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 0; }
+.rc-lane-row { position: relative; display: flex; gap: 3px; height: 9px; }
+.rc-lane-seg { position: relative; min-width: 2px; height: 100%; }
+.rc-ev { position: absolute; top: 0; height: 100%; min-width: 3px; padding: 0; border: none; border-radius: 2px;
+         cursor: default; background: var(--fg-faint); opacity: .75; }
+.rc-ev.linked { cursor: pointer; }
+.rc-ev:hover { opacity: 1; outline: 1px solid var(--fg-dim); }
+/* One block, two halves: the model generating the call, then the tool running it. A hard gradient stop rather
+   than two elements, so it stays one thing to hover and click. */
+.rc-ev-tool { background: linear-gradient(to right, var(--accent) 0 var(--cut, 50%),
+              color-mix(in srgb, var(--accent) 35%, transparent) var(--cut, 50%) 100%); }
+.rc-ev-gen { background: var(--accent); }
+/* A background embedding call: a small model working BESIDE the driver rather than in its sequence, so it is
+   quieter and reads as something happening underneath. */
+.rc-ev-embed { background: color-mix(in srgb, var(--ok, #22c55e) 60%, transparent); }
+.rc-ev-run { background: color-mix(in srgb, var(--fg-dim) 45%, transparent); }
+/* A load is the wait before a token — striped, because it is time spent NOT generating. */
+.rc-ev-load { background: repeating-linear-gradient(45deg, var(--warn, #f59e0b) 0 3px, transparent 3px 6px), var(--panel-2); }
+.rc-tip-event { flex-direction: column; align-items: stretch; gap: 2px; min-width: 150px; }
+.rc-tip-rule { height: 1px; margin: 2px 0; background: var(--border); }
 .rc-tip-pct { opacity: .7; font-variant-numeric: tabular-nums; }
 .rc-tip-gone { padding: 0 4px; font-size: 0.9em; color: var(--fg-faint); border: 1px solid var(--border); border-radius: 3px; }
 .rc-tip-dim { color: var(--fg-faint); }

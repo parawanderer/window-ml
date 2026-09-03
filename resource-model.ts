@@ -547,10 +547,65 @@ export interface EventPlacement {
     clipped: boolean;
 }
 
+/** EVICTIONS, read straight off consecutive samples. Nothing reports them — a model simply stops being in
+ *  `ps` — so the diff IS the source, and it is the one event kind that needs no cooperation from anything.
+ *  Loads are NOT inferred here: `load_duration` gives a real span with a real duration, and a second inferred
+ *  instant for the same load would double-report it. A model that APPEARS with no load span behind it (loaded
+ *  by another client, or while the panel was closed) is reported, because otherwise it arrives from nowhere. */
+export function residencyEvents(samples: ResourceSample[], knownLoads: ResourceEvent[] = []): ResourceEvent[] {
+    const out: ResourceEvent[] = [];
+    for (let i = 1; i < samples.length; i++) {
+        const before = new Set(samples[i - 1].models.map((m) => m.model));
+        const after = new Set(samples[i].models.map((m) => m.model));
+        const t = samples[i].t;
+        for (const m of before) if (!after.has(m)) out.push({ t, kind: "evict", label: `${m} evicted`, model: m });
+        for (const m of after) {
+            if (before.has(m)) continue;
+            // Within a poll of a load span for the same model → that span already tells the story.
+            const covered = knownLoads.some((e) => e.model === m && e.kind === "load" &&
+                t >= e.t - MAX_SAMPLE_GAP_MS && t <= (e.until ?? e.t) + MAX_SAMPLE_GAP_MS);
+            if (!covered) out.push({ t, kind: "load", label: `${m} appeared`, model: m });
+        }
+    }
+    return out;
+}
+
+/** Pack placed events into non-overlapping ROWS, greedily and in time order: an event goes in the first row
+ *  whose last event ends before it starts. Spans that overlap in TIME must not overlap on screen — two bars on
+ *  one line read as a single longer one, which is a false statement about what happened.
+ *
+ *  Concurrency is the normal case here, not an edge: a run contains its generations, a generation may have a
+ *  background embedding call beside it, and each nests under the one that contains it —
+ *
+ *      [                    run                      ]
+ *           [ generation ]            [ tool ]
+ *                [ embed ]
+ *
+ *  which falls out of "first free row, earliest start first" without special-casing nesting: the longest span
+ *  starts first, so it takes the top row and everything inside it goes below. */
+export function laneRows(placed: EventPlacement[], maxRows = 4): EventPlacement[][] {
+    const rows: EventPlacement[][] = [];
+    const ends: number[] = [];   // per row: [run, to] as a comparable number
+    const key = (p: EventPlacement, edge: "from" | "to") => p.run + p[edge];
+    for (const p of [...placed].sort((a, b) => key(a, "from") - key(b, "from"))) {
+        let r = ends.findIndex((e) => e <= key(p, "from"));
+        if (r < 0) {
+            if (rows.length >= maxRows) r = rows.length - 1;   // out of rows: crowd the last one rather than drop the event
+            else { rows.push([]); ends.push(0); r = rows.length - 1; }
+        }
+        rows[r].push(p);
+        ends[r] = Math.max(ends[r], key(p, "to"));
+    }
+    return rows;
+}
+
 /** Place events onto segmented runs. `runs` is what the chart draws: one array of samples per contiguous run,
  *  in order. Events that fall entirely in a gap are DROPPED — see above. */
-export function placeEvents(runs: { t: number }[][], events: ResourceEvent[]): EventPlacement[] {
-    const spans = runs.map((r) => ({ from: r[0]?.t ?? 0, to: r.at(-1)?.t ?? 0 }));
+export function placeEvents(runs: { t: number }[][], events: ResourceEvent[], graceMs = 0): EventPlacement[] {
+    // The last sample is up to one poll OLD, but the chart's right edge means "now" — so an event from the
+    // last couple of seconds belongs to the final run rather than to nowhere. Without this grace the newest
+    // events, which are the ones you are watching for, are the only ones that never appear.
+    const spans = runs.map((r, i) => ({ from: r[0]?.t ?? 0, to: (r.at(-1)?.t ?? 0) + (i === runs.length - 1 ? graceMs : 0) }));
     const out: EventPlacement[] = [];
     for (const e of events) {
         const end = e.until ?? e.t;
@@ -560,7 +615,9 @@ export function placeEvents(runs: { t: number }[][], events: ResourceEvent[]): E
         if (idx < 0) idx = spans.findIndex((r) => end >= r.from && e.t <= r.to);
         if (idx < 0) continue;   // entirely inside a gap (or outside every run): nothing measured, nothing drawn
         const r = spans[idx];
-        const width = r.to - r.from;
+        // Width is the run's own span, NOT the graced one: the grace decides membership, and using it as a
+        // denominator would squash every bar toward the left by however long the poll happens to be.
+        const width = (runs[idx].at(-1)?.t ?? 0) - r.from;
         const at = (t: number) => (width > 0 ? Math.min(1, Math.max(0, (t - r.from) / width)) : 0);
         out.push({ event: e, run: idx, from: at(e.t), to: at(Math.min(end, r.to)), clipped: end > r.to });
     }
@@ -576,7 +633,11 @@ export interface ResourceEvent {
      *  span (a bar in the lane), and the duration is the interesting part: a 40-second turn that spent 30 of
      *  them loading a model is a different story from one that didn't. */
     until?: number;
-    kind: "run" | "gen" | "tool" | "load" | "evict" | "error" | "note";
+    /** `embed` is for background embedding calls — a small model resolving something (a tool-call label) while
+     *  the driver runs. It is NOT produced yet; the kind exists so that when it is, it renders and hovers like
+     *  everything else instead of arriving as an unlabelled bar. Its whole point is that it OVERLAPS the
+     *  driver's own events rather than following them, which the lane's row packing already handles. */
+    kind: "run" | "gen" | "tool" | "embed" | "load" | "evict" | "error" | "note";
     label: string;
     model?: string;
     /** Where this happened, so a click can go there: a session hash, and the step within it. Events are

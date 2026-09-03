@@ -536,3 +536,56 @@ test("placeEvents: a run of one sample has no width to place within", () => {
     const got = M.placeEvents([[{ t: 500 }]], [{ t: 500, kind: "note", label: "only" }]);
     assert.equal(got[0].from, 0, "no division by zero, and no fabricated position");
 });
+
+test("residencyEvents: an eviction is a diff; a load already told as a span isn't repeated", () => {
+    const model = (name) => ({ model: name, vramBytes: 1, ramBytes: 0, sizeBytes: 1, gpus: [] });
+    const samples = [
+        { t: 1000, models: [model("a"), model("b")], capacity: null },
+        { t: 3000, models: [model("a")], capacity: null },                    // b evicted
+        { t: 5000, models: [model("a"), model("c")], capacity: null },        // c appeared
+        { t: 7000, models: [model("a"), model("c"), model("d")], capacity: null },
+    ];
+    // A load span already covers d — nothing reports an eviction, but a load DOES report itself.
+    const loads = [{ t: 6000, until: 6900, kind: "load", label: "loading d", model: "d" }];
+    const evs = M.residencyEvents(samples, loads);
+    const labels = evs.map((e) => e.label);
+    assert.ok(labels.includes("b evicted"), "a model leaving ps is only knowable as a diff");
+    assert.ok(labels.includes("c appeared"), "…and one arriving with no load span behind it comes from nowhere otherwise");
+    assert.ok(!labels.some((l) => /^d /.test(l)), "d's load is already a span with a real duration — not double-reported");
+    assert.deepEqual(evs.find((e) => e.label === "b evicted").t, 3000, "stamped at the sample that noticed");
+});
+
+test("laneRows: overlapping spans never share a line", () => {
+    const p = (run, from, to) => ({ event: { t: from, kind: "gen", label: `${run}:${from}` }, run, from, to, clipped: false });
+    const rows = M.laneRows([p(0, 0, 0.5), p(0, 0.2, 0.7), p(0, 0.8, 0.9), p(0, 0.85, 1)]);
+    assert.equal(rows.length, 2, "two overlapping pairs need two rows");
+    // Two bars on one line read as a single longer one — a false statement about what happened.
+    for (const row of rows) {
+        for (let i = 1; i < row.length; i++) {
+            assert.ok(row[i].run + row[i].from >= row[i - 1].run + row[i - 1].to, "no overlap within a row");
+        }
+    }
+    // Past the row budget, events crowd the last row rather than vanishing: a dropped event is a lie by
+    // omission, an overlapping one is merely ugly.
+    const many = Array.from({ length: 12 }, (_, i) => p(0, 0, 1));
+    const capped = M.laneRows(many, 3);
+    assert.equal(capped.length, 3);
+    assert.equal(capped.flat().length, 12, "every event is still drawn");
+});
+
+// Concurrency is the normal case in this lane, not an edge: a run contains its generations, a generation may
+// have a background embedding call beside it, and each nests under the one that contains it.
+test("laneRows: nested and overlapping events stack under the one that contains them", () => {
+    const p = (label, from, to) => ({ event: { t: from, until: to, kind: "gen", label }, run: 0, from, to, clipped: false });
+    const rows = M.laneRows([
+        p("run", 0, 1),          // the driver, spanning everything
+        p("generation", 0.1, 0.35),
+        p("embed", 0.15, 0.3),   // a background embedding, INSIDE the generation
+        p("tool", 0.6, 0.8),
+    ]);
+    const at = (label) => rows.findIndex((r) => r.some((x) => x.event.label === label));
+    assert.equal(at("run"), 0, "the longest span starts first, so it takes the top row");
+    assert.equal(at("generation"), 1, "what it contains goes below it");
+    assert.equal(at("embed"), 2, "…and what THAT contains goes below again");
+    assert.equal(at("tool"), 1, "a later sibling reuses the freed row rather than opening a new one");
+});

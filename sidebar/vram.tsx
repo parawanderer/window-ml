@@ -14,9 +14,9 @@ import { normModel, seenContext } from "./model";
 import { IconVram, IconEye, IconEyeOff, IconBench, IconGear } from "./icons";
 import { tipStyle } from "./tip";
 import { VRAMH_KEY, vramH, resWindowS } from "./store";
-import { usageByModel, type UsageSource } from "./model-stats";
+import { usageByModel, eventsFrom, type UsageSource } from "./model-stats";
 import type { RunStats } from "../contract";
-import { parseInfo, holdCapacity, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
+import { parseInfo, holdCapacity, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, type ResourceEvent, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
 import { ResourceTracks } from "./resource-chart";
 import type { LoadedModel } from "../contract";
 
@@ -290,6 +290,15 @@ export const isEmbedding = (model: string): boolean => !!modelCaps.value[model]?
 export function costOf(model: string): RunStats | null {
     void rev.value;
     return usageByModel([...sessionMap.values()] as UsageSource[])[model] ?? null;
+}
+
+/** Everything that happened this browsing session, on the machine's timeline: generations, tool steps, model
+ *  loads (from the sessions), and evictions (from the samples themselves, since nothing else reports them).
+ *  Recomputed per render for the same reason the cost ledger is — the session map IS the record. */
+export function timeline(): ResourceEvent[] {
+    void rev.value;
+    const fromSessions = eventsFrom([...sessionMap.values()] as UsageSource[]);
+    return [...fromSessions, ...residencyEvents(resourceHistory.value, fromSessions)].sort((a, b) => a.t - b.t);
 }
 
 /** The cost line under a model's name: what it spent, and how fast — with the rate's BASIS said out loud,
@@ -761,7 +770,7 @@ export function VramPanel() {
             </div> : null}
             <RowTip sample={latestSample} />
             {capacity.value
-                ? <ResourceTracks samples={resourceHistory.value} capacity={capacity.value} hidden={hidden} layout={layout.value} />
+                ? <ResourceTracks samples={resourceHistory.value} capacity={capacity.value} hidden={hidden} layout={layout.value} events={timeline()} />
                 : !capacityAsked.value
                 /* Haven't heard back yet — hold an empty plot rather than flashing the legacy chart and
                    replacing it a moment later. */

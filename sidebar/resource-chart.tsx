@@ -12,12 +12,14 @@
 import { useMemo } from "preact/hooks";
 import {
     deviceBands, hostBands, ceilingsFor, segments, formatBytes, formatShare, percentOf, isCpuResident,
+    placeEvents, laneRows, eventsIn, type ResourceEvent, type EventPlacement,
     OTHER_BAND_NOTE, DRIVER_BAND_LABEL,
     presetsFor,
     type ResourceSample, type Band, type Capacity, type TrackDef,
 } from "../resource-model";
-import { colorFor, poolColor, hoverModel, poolHover, poolFacts, ModelFacts, CostFacts } from "./vram";
-import { loadedModels, resWindowS } from "./store";
+import { colorFor, poolColor, hoverModel, poolHover, poolFacts, ModelFacts, CostFacts, VRAM_POLL_MS } from "./vram";
+import { loadedModels, resWindowS, view } from "./store";
+import { scrollToStepSeq } from "./answer-render";
 import { tipStyle } from "./tip";
 import { signal } from "@preact/signals";
 
@@ -405,7 +407,96 @@ function OverlayView({ def, samples, latest, hidden }: { def: TrackDef; samples:
 
 /** The panel's tracks, from the chosen LAYOUT. A layout is just `TrackDef[]`; a preset is a named starting
  *  point for it (see `presetsFor`), and editing one is the same operation on the same state. */
-export function ResourceTracks({ samples, capacity, hidden, layout }: { samples: ResourceSample[]; capacity: Capacity | null; hidden: Set<string>; layout?: TrackDef[] | null }) {
+/** The hovered event, following the cursor like the other tips. */
+const eventHover = signal<{ p: EventPlacement } | null>(null);
+
+function EventTip() {
+    const h = eventHover.value, at = hoverAt.value;
+    if (!h || !at) return null;
+    const e = h.p.event;
+    const dur = (e.until ?? e.t) - e.t;
+    const ms = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}s` : `${Math.round(n)}ms`);
+    return (
+        <div class="rc-tip rc-tip-event" role="tooltip" style={tipStyle(at)}>
+            {/* The model half, then the tool half, in the order they happened. */}
+            <div class="rc-tip-line"><span class="rc-tip-name">{e.model || e.label}</span>
+                <span class="rc-tip-size">{e.split != null ? ms(e.split - e.t) : ms(dur)}</span></div>
+            {e.cost ? (
+                <div class="rc-tip-line rc-tip-dim">
+                    <span>{e.cost.inTokens.toLocaleString()} in / {e.cost.outTokens.toLocaleString()} out</span>
+                    <span>{e.cost.tokPerSec != null ? `${e.cost.tokPerSec.toFixed(1)} tok/s` : ""}</span>
+                </div>
+            ) : null}
+            {/* A rate's basis is part of the rate: generation-only and wall-clock are different measurements. */}
+            {e.cost?.genBasis ? <div class="rc-tip-line rc-tip-dim"><span>{e.cost.genBasis === "eval" ? "generation only" : e.cost.genBasis === "wall" ? "incl. network + queue" : "mixed timing"}</span></div> : null}
+            {e.split != null ? (
+                <>
+                    <div class="rc-tip-rule" />
+                    <div class="rc-tip-line"><span class="rc-tip-name">{e.tool}</span>
+                        <span class="rc-tip-size">{ms((e.until ?? e.t) - e.split)}</span></div>
+                </>
+            ) : null}
+            {e.kind === "load" ? <div class="rc-tip-line rc-tip-dim"><span>the model wasn't resident — this is the wait before a token</span></div> : null}
+            {h.p.clipped ? <div class="rc-tip-line rc-tip-dim"><span>continues past what was measured</span></div> : null}
+            {e.ref ? <div class="rc-tip-line rc-tip-dim"><span>click to open this step</span></div> : null}
+        </div>
+    );
+}
+
+/** What HAPPENED, on the same axis as what was in memory — the question neither view answers alone: did that
+ *  forty-second turn spend its time loading a model, or was the model already there?
+ *
+ *  Spans are bars in the lane; instants (an eviction) are rules. Both are placed inside the run that contains
+ *  them, because the axis is segmented by gaps and is not linear in time. */
+function EventLane({ samples, events }: { samples: ResourceSample[]; events: ResourceEvent[] }) {
+    const runs = useMemo(() => segments(samples).filter((r) => r.length > 1), [samples]);
+    const from = runs[0]?.[0]?.t ?? 0, to = runs.at(-1)?.at(-1)?.t ?? 0;
+    // The window admits a poll's worth past the last sample, for the same reason placeEvents does.
+    const placed = useMemo(() => placeEvents(runs, eventsIn(events, from, to + VRAM_POLL_MS), VRAM_POLL_MS),
+        [runs, events, from, to]);
+    if (!runs.length || !placed.length) return null;
+    const spans = placed.filter((p) => p.event.until != null);
+    const rows = laneRows(spans);
+    const open = (e: ResourceEvent) => {
+        if (!e.ref) return;
+        view.value = { name: "detail", hash: e.ref.hash };
+        scrollToStepSeq(e.ref.seq, e.ref.hash);
+    };
+    return (
+        <div class="rc-lane" onPointerLeave={() => { eventHover.value = null; hoverAt.value = null; }}>
+            {rows.map((row, ri) => (
+                <div class="rc-lane-row" key={ri}
+                    onPointerMove={(ev: PointerEvent) => { const el = ev.currentTarget as HTMLElement; hoverAt.value = { x: ev.offsetX, y: ev.offsetY, w: el.clientWidth }; }}>
+                    {runs.map((run, i) => (
+                        <div class="rc-lane-seg" key={i} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
+                            {row.filter((p) => p.run === i).map((p, k) => {
+                                const e = p.event;
+                                const w = Math.max(0.6, (p.to - p.from) * 100);
+                                // A composite tool span is ONE block with two halves: the model generating the
+                                // call, then the tool running it. Drawn as a gradient stop rather than two
+                                // elements, so it hovers, highlights and clicks as the single thing it is.
+                                const cut = e.split != null && p.to > p.from
+                                    ? Math.min(100, Math.max(0, ((e.split - e.t) / ((e.until ?? e.t) - e.t)) * 100))
+                                    : null;
+                                return (
+                                    <button class={`rc-ev rc-ev-${e.kind}${e.ref ? " linked" : ""}`} key={k}
+                                        style={{ left: `${p.from * 100}%`, width: `${w}%`,
+                                                 ...(cut != null ? { "--cut": `${cut}%` } : {}) }}
+                                        title=""
+                                        onPointerEnter={() => (eventHover.value = { p })}
+                                        onClick={() => open(e)} />
+                                );
+                            })}
+                        </div>
+                    ))}
+                </div>
+            ))}
+            <EventTip />
+        </div>
+    );
+}
+
+export function ResourceTracks({ samples, capacity, hidden, layout, events = [] }: { samples: ResourceSample[]; capacity: Capacity | null; hidden: Set<string>; layout?: TrackDef[] | null; events?: ResourceEvent[] }) {
     // Capacity is fetched once per open and arrives AFTER the first ps poll, so the earliest samples carry
     // none. Backfill the current one rather than dropping them: capacity is slow-moving (a card doesn't change
     // size), and the alternative is a panel that renders nothing for the first two seconds every time.
@@ -420,9 +511,13 @@ export function ResourceTracks({ samples, capacity, hidden, layout }: { samples:
     if (!latest?.capacity) return null;
     const tracks = layout && layout.length ? layout : (presetsFor(latest)[0]?.tracks ?? []);
     return (
-        <div class="rc">
-            {tracks.map((t) => <TrackView key={t.id} def={t} samples={filled} latest={latest} hidden={hidden} />)}
-        </div>
+        <>
+            <div class="rc">
+                {tracks.map((t) => <TrackView key={t.id} def={t} samples={filled} latest={latest} hidden={hidden} />)}
+            </div>
+            {/* Below every track, sharing their x-axis: what happened, against what was in memory while it did. */}
+            <EventLane samples={filled} events={events} />
+        </>
     );
 }
 

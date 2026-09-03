@@ -6754,3 +6754,52 @@ test("model tooltips: carry what the model has cost, with the rate's basis said 
     assert.doesNotMatch(w.shadow.querySelector(".vram-rowtip").textContent, /tok\/s|call/,
         "a model that hasn't run reports nothing, not zeroes");
 });
+
+// The lane: what HAPPENED, on the same axis as what was in memory — which answers the question neither view
+// answers alone (did that slow turn spend its time LOADING a model, or was the model already there?).
+test("event lane: spans render, a tool step is one split block, and clicking opens its step", async () => {
+    const w = await loadSidebarWorld({
+        vram: [{ model: "qwen3.8:27b", vramGB: 19, vramBytes: 19 * 1024 ** 3, sizeBytes: 19 * 1024 ** 3,
+                 gpus: [{ id: "0", runner: "CUDA", vramBytes: 19 * 1024 ** 3 }], expiresAt: null }],
+        info: INFO_2CARD,
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    // Let a couple of samples land, so there is an axis to place events on.
+    for (let i = 0; i < 20 && w.shadow.querySelectorAll(".rc-seg").length < 1; i++) {
+        await w.flush(); await new Promise((r) => setTimeout(r, 150));
+    }
+    // A run whose steps sit INSIDE the sampled window: one tool step (model, then tool) and one that had to
+    // wait for the model to load.
+    const now = Date.now();
+    await w.dispatch(agentStart("ev1", "do it", "qwen3.8:27b"));
+    await w.dispatch({ ...agentStep("ev1", 1, { seq: 1, tool: "python_exec", toolMs: 900,
+        usage: { promptTokens: 500, completionTokens: 60, totalTokens: 560, genMs: 700, loadMs: 4000 } }), ts: now });
+    await w.flush();
+    await w.flush();
+
+    assert.ok(w.shadow.querySelectorAll(".rc-ev").length >= 1, "the lane draws the run's events");
+    const tool = w.shadow.querySelector(".rc-ev-tool");
+    assert.ok(tool, "a tool step is ONE block…");
+    assert.match(tool.getAttribute("style") || "", /--cut:/, "…with the split where the model handed over");
+    // The LOAD span in this fixture ran before the first sample, so it is correctly absent: nothing was
+    // measured then, and the lane never draws over a stretch the chart can't speak for. (Its placement is
+    // covered in resource-model.test.mjs, where the window is a fixture rather than the wall clock.)
+    assert.equal(w.shadow.querySelectorAll(".rc-ev-load").length, 0);
+
+    // Hovering names both halves, in the order they happened, with the rate's basis.
+    tool.dispatchEvent(new w.window.MouseEvent("pointerenter", { bubbles: true }));
+    tool.parentElement.dispatchEvent(new w.window.MouseEvent("pointermove", { bubbles: true }));
+    await w.flush();
+    const tip = w.shadow.querySelector(".rc-tip-event");
+    assert.ok(tip, "the lane has its own tooltip");
+    assert.match(tip.textContent, /qwen3\.8:27b/, "the model half");
+    assert.match(tip.textContent, /python_exec/, "…then the tool half");
+    assert.match(tip.textContent, /500 in \/ 60 out/, "what the model call cost");
+    assert.ok(tip.querySelector(".rc-tip-rule"), "the two halves are separated, not run together");
+
+    // Clicking goes to the step that produced it.
+    tool.click();
+    await w.flush();
+    assert.match(w.shadow.body.innerHTML, /astep|agent/, "it navigated into the run");
+});
