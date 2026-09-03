@@ -207,6 +207,43 @@ access to the run** — validating a citation inside an exported transcript. Not
 
 ---
 
+## 5b. Why reading a pointer is asynchronous
+
+A recurring reaction, and a fair one: a *primitive* should not need ceremony. `ml.dereference` is `async`,
+and on the page-hosted path it does not need to be — the resolver behind it is synchronous, a pure read of
+in-memory run state, and the `await` is pure ceremony.
+
+It is async for the **background-hosted** path (design A, the default whenever a debug surface is open),
+where the pointer store lives in the service worker and the read is a `postMessage` round trip. The
+signature cannot vary by host: the same call must work either way, and returning a value in one case and a
+promise in the other would be an invisible footgun.
+
+**The useful way to think about it:** this is not a cast. A cast is compile-time and cannot fail. This is a
+read from a store that may live in another process — closer to a memory access that can page-fault, which is
+exactly why a bad one is already called a `MemoryFault`. **The `await` is the page fault.**
+
+Measured against the read-only dialect, which is the one place we control the language:
+
+```
+top level, WITH await     -> "VALUE(@tool:aaa1111)"
+top level, NO await       -> "VALUE(@tool:aaa1111)"     the facade auto-awaits: no ceremony needed
+Promise.all (parallel)    -> ["VALUE(a)","VALUE(b)"]    the one genuine deferred use case, and it works
+inside .map callback      -> NotInDialect: await is not supported inside a callback
+```
+
+Three things follow.
+
+1. **In the dialect you already do not await it.** The complaint is answered where it can be.
+2. **There is exactly one deferred use case** — `Promise.all` over several reads, which on the background
+   path really does halve the latency. Worth milliseconds, so it is not an argument *for* async; but making
+   the primitive synchronous would remove it.
+3. **The real gap is callbacks, not `await`.** `.map(id => ml.dereference(id))` fails with or without an
+   await, because the dialect's `runSync` driver — which exists so a callback can never return a silently
+   Promise-valued answer — cannot suspend. Closing it means teaching the interpreter to drive host array
+   methods itself: a change to the evaluation model of a security-sensitive component, carrying the
+   adversarial-test rule, for a case where a model usually reads ONE pointer rather than N. Not judged
+   worth it; recorded so the next reader does not re-derive the question.
+
 ## 6. Unvalidated — what needs an A/B
 
 Everything above concerns whether a *corrupted* id is safe. None of it measures the thing that
