@@ -160,3 +160,61 @@ test("a rung that throws is recorded and the ladder continues", async () => {
     assert.equal(rung(r, "declared").outcome, "error");
     assert.match(rung(r, "declared").note, /network down/);
 });
+
+// A DECLARED url is the site's own claim, and a claim can be wrong — a stale link, a moved endpoint, an SPA
+// catch-all behind it. Trusting it because the page said so would strand the ladder one rung early.
+test("a declared twin that isn't markdown falls through to the derived sibling", async () => {
+    net({
+        "https://decl.test/guide": page(declaring("https://decl.test/stale.md")),
+        "https://decl.test/stale.md": page("<!doctype html><html><body>moved</body></html>"),
+        "https://decl.test/guide.md": md("# Recovered"),
+    });
+    const r = await fetchUrlContent("https://decl.test/guide");
+    assert.equal(by(r), "sibling", "the ladder kept going");
+    assert.equal(rung(r, "declared").outcome, "not-markdown");
+    assert.match(r.text, /# Recovered/);
+});
+
+// Some URLs have no sibling to derive: a site root, or a url that already names a markdown file. The rung
+// must say so rather than fetching something invented.
+test("a URL with nothing to derive skips the sibling rung with a reason", async () => {
+    net({ "https://root.test/": page(PLAIN_PAGE) });
+    const r = await fetchUrlContent("https://root.test/");
+    assert.equal(rung(r, "sibling").outcome, "skipped");
+    assert.match(rung(r, "sibling").note, /nothing to derive/);
+    assert.equal(by(r), "convert", "…and the ladder still finishes");
+});
+
+// The sibling is a GUESS at a url that may not exist, so a network failure there is expected traffic, not an
+// exception the caller should see. (The declared-rung throw is covered above; this is the other one.)
+test("a sibling fetch that THROWS is recorded and the ladder still finishes", async () => {
+    net({
+        "https://boom2.test/guide": page(PLAIN_PAGE),
+        "https://boom2.test/guide.md": () => { throw new Error("DNS failure"); },
+    });
+    const r = await fetchUrlContent("https://boom2.test/guide");
+    assert.equal(by(r), "convert");
+    assert.equal(rung(r, "sibling").outcome, "error");
+    assert.match(rung(r, "sibling").note, /DNS failure/);
+});
+
+// A credentialed fetch is the gated as-you path. Every rung must carry that decision — a twin fetched
+// WITHOUT the user's session would silently be the logged-out page, which is a different document.
+test("credentials carry to every rung, not just the first request", async () => {
+    const seen = [];
+    globalThis.fetch = async (url, init) => {
+        seen.push({ url, credentials: init?.credentials });
+        if (url === "https://cred.test/guide") return res(url, 200, HTML, PLAIN_PAGE);
+        if (url === "https://cred.test/guide.md") return md("# Private")(url);
+        return res(url, 404, HTML, "nope");
+    };
+    const r = await fetchUrlContent("https://cred.test/guide", true);
+    assert.equal(by(r), "sibling");
+    assert.ok(seen.length >= 2, "more than one request was made");
+    for (const call of seen) assert.equal(call.credentials, "include", `${call.url} lost the session`);
+
+    // …and the uncredentialed default must NOT send cookies on any rung either.
+    seen.length = 0;
+    await fetchUrlContent("https://cred2.test/guide").catch(() => {});
+    for (const call of seen) assert.equal(call.credentials, "omit", `${call.url} sent cookies it should not have`);
+});
