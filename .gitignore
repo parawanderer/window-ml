@@ -1,4 +1,4 @@
-node_modules/
+node_modules
 .DS_Store
 .env
 __pycache__
@@ -11,7 +11,7 @@ tmp/
 *.gen.ts
 tools/annotate-preview.html
 tools/legend-notebook.html
-pyodide-wheels/
+pyodide-wheels
 
 # Playwright E2E output
 test-results/
