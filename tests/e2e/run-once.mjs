@@ -26,6 +26,7 @@ const MANIFEST_VERSION = await import("node:fs/promises")
 import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
+import { renderMarkdownPage } from "./viewer.mjs";
 import { mkdir, writeFile, readFile } from "node:fs/promises";
 import path from "node:path";
 
@@ -145,6 +146,18 @@ function makeDumper(artDir) {
                 const { md, images, json } = renderRun(snap);
                 await writeFile(path.join(artDir, "run.md"), md);
                 if (json) await writeFile(path.join(artDir, "run.json"), json);
+                // The same markdown as a page, beside it. Written with RELATIVE asset paths, which is what
+                // lets ONE file answer both cases: opened from the filesystem it finds its own
+                // `images/`, and served under `/artifacts/<run>/` it finds them there too. A server-side
+                // render would have been a second implementation to keep in step with this one.
+                await writeFile(path.join(artDir, "run.md.html"), renderMarkdownPage(md, {
+                    title: (/^#\s+(.+)$/m.exec(md)?.[1] || path.basename(artDir)).trim(),
+                    assetBase: "",
+                    links: [
+                        { label: "run.md", href: "run.md" },
+                        ...(json ? [{ label: "run.json", href: "run.json" }] : []),
+                    ],
+                }));
                 for (const img of images) {
                     await mkdir(path.dirname(path.join(artDir, img.name)), { recursive: true });
                     await writeFile(path.join(artDir, img.name), img.bytes);
@@ -290,7 +303,7 @@ export function decideApproval(policy, gate) {
  * @param {number} [cfg.timeoutMs] how long to wait for the terminal agent-result
  * @param {(s: string) => void} [cfg.log] where progress lines go
  * @param {(ev: object) => void} [cfg.onEvent] called with every debug event as it arrives
- * @returns {Promise<{events, session, runMd, runJson, images, result, error, runMs, stepCount, approvals, transcript, finalUrl, startUrl, backendLabel, seedBoundaryStep, captured}>}
+ * @returns {Promise<{events, session, runMd, runJson, images, result, error, runMs, stepCount, approvals, transcript, finalUrl, startUrl, backendLabel, models, seedBoundaryStep, captured}>}
  */
 export async function runOnce(cfg = {}) {
     const {
@@ -380,6 +393,16 @@ export async function runOnce(cfg = {}) {
 
         const startUrl = site.url + start;
         const backendLabel = backend ? `${backend.chatUrl} (model ${backend.model})` : "fake-LLM";
+        // The three ROLES a run can call on, kept apart rather than folded into one label. "which model
+        // answered this" is really three questions — the driver runs the loop, a delegated `look`/`locate`
+        // goes to the vision reader, and `extend:"utility"` goes to the utility model — and a result is
+        // not interpretable without knowing which was which. Reported even when unused: "no vision model
+        // was configured" is itself an answer to why a run never looked at anything.
+        const models = {
+            driver: backend?.model || "fake-model",
+            vision: backend?.visionModel || null,
+            utility: backend?.utilityModel || null,
+        };
         await page.goto(startUrl);
         await waitForMl(page);
 
@@ -531,7 +554,7 @@ export async function runOnce(cfg = {}) {
             await new Promise((resolve) => { ext.context.on("close", resolve); process.on("SIGINT", resolve); });
         }
 
-        return { events, session, runMd: md, runJson: json, images, result, error, runMs, stepCount, approvals, transcript, finalUrl, startUrl, backendLabel, seedBoundaryStep, captured };
+        return { events, session, runMd: md, runJson: json, images, result, error, runMs, stepCount, approvals, transcript, finalUrl, startUrl, backendLabel, models, seedBoundaryStep, captured };
     } catch (thrown) {
         // An UNEXPECTED failure — the interesting one. A capture in `finally` would run after the context
         // is torn down; doing it here, before rethrowing, is the only place the page still exists.

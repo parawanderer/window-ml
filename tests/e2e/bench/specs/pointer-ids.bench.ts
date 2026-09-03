@@ -57,7 +57,12 @@ export default defineBench({
             task: "Read the sales table and tell me which region had the highest revenue.",
             followup: "Now show me the underlying rows you used.",
             tools: ["findByText", "sampleText", "exec", "answer"],
-            succeeded: ({ answer }) => /north/i.test(answer),
+            // EAST, not North. The page's own answer key says East=2440 is the top region; the North in
+            // CAPTURED belongs to the SEEDED table, which this task never loads. Writing the predicate
+            // against the wrong dataset would have scored every run in both arms incorrect — the same
+            // silent failure the read-back total had. tests/bench-specs.test.mjs now reads the region out
+            // of examples/spreadsheet.html rather than restating it, so the page is the source of truth.
+            succeeded: ({ answer }) => /east/i.test(answer),
         },
         {
             // RECOVERY, measured directly rather than waited for. The seeded turn ends holding a pointer;

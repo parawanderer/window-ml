@@ -77,11 +77,46 @@ const PAGE = /* html */ `<!doctype html>
   tr.next td:first-child::before { content:"▸ "; color:var(--run) }
   .flight { color:var(--fg) }
   .budget { color:var(--dim) }
+  /* The inline run viewer. A sheet rather than a full takeover: the index stays visible behind it, so
+     reading one run and moving to the next is two clicks and never a back-navigation. */
+  .overlay { position:fixed; inset:0; z-index:50; background:rgba(0,0,0,.42); display:none;
+             padding:26px clamp(10px,4vw,60px) 30px }
+  .overlay.on { display:block }
+  .sheet { display:flex; flex-direction:column; height:100%; max-width:1000px; margin:0 auto;
+           background:var(--bg); border:1px solid var(--line); border-radius:9px; overflow:hidden;
+           box-shadow:0 14px 44px rgba(0,0,0,.3) }
+  .obar { display:flex; gap:12px; align-items:center; padding:7px 12px; border-bottom:1px solid var(--line);
+          background:var(--panel) }
+  .obar .otitle { font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--dim);
+                  overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+  .obar .sp { flex:1 }
+  .obar a { font-size:12px; text-decoration:none }
+  .oclose { border:0; background:none; color:var(--dim); font-size:15px; cursor:pointer; padding:0 2px }
+  .oclose:hover { color:var(--fg) }
+  .sheet iframe { flex:1; width:100%; border:0; background:var(--bg) }
+  a.view { font-weight:600 }
+  .chip { border:1px solid var(--line); background:var(--panel); color:var(--dim); border-radius:9px;
+          font:11px/1.5 inherit; padding:0 8px; cursor:pointer; margin-right:8px }
+  .chip:hover { color:var(--fg) }
+  .mset { margin-right:16px }
+  .role { margin-right:10px }
+  .role .rk { color:var(--dim); font-size:11px; text-transform:uppercase; letter-spacing:.05em }
+  .role.none { color:var(--dim); font-style:italic }
+  /* The outcome doubles as the link to the evidence, so it must not read as a link until you go near it
+     — a table where every status is blue is harder to scan, not easier. */
+  a.outcome { text-decoration:none; color:inherit }
+  a.outcome:hover { text-decoration:underline }
+  a.outcome.tofail::after { content:"↳"; margin-left:5px; color:var(--dim); font-weight:400 }
+  /* The agent run's own hash, so a row can be matched by eye to the transcript that names it. Monospace
+     because it is read character by character, and that is the only way two of them compare at a glance. */
+  .pill.hash { font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--dim); letter-spacing:.02em }
+  tr:hover .pill.hash { color:var(--fg) }
 </style>
 <h1 id="name">bench</h1>
 <p class="sub" id="desc"></p>
 <div class="bar"><i id="fill" style="width:0"></i></div>
 <p class="counts" id="counts">waiting for the sweep…</p>
+<p class="counts dim" id="models"></p>
 <div id="stats" class="stats"></div>
 <div id="flight" class="flight-panel"></div>
 <p id="last" class="last"></p>
@@ -96,6 +131,9 @@ const PAGE = /* html */ `<!doctype html>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
 let dims = [], cols = [], lastSeen = "";
+// Remembered, because the page redraws on every pushed frame and a preference that resets several times
+// a minute is not a preference. Guarded: a saved report opened from file:// can throw on localStorage.
+let modelsOpen = (() => { try { return localStorage.getItem("benchModels") === "1"; } catch { return false; } })();
 
 /**
  * labels: how many LEADING columns are names rather than numbers. Names left, numbers right — a
@@ -150,19 +188,97 @@ function outcome(r, now) {
     return r.succeeded ? '<span class="ok">ok · correct</span>' : '<span class="warn">ok · wrong</span>';
 }
 
+/**
+ * A run's artifacts. \`run.md.html\` is the markdown RENDERED, written beside the markdown itself, so the
+ * link works the same served from \`/artifacts/\` or opened relative to a saved \`report.html\`.
+ *
+ * \`run.html\` is the OTHER render — the extension's own export sink, via \`--pdf\` — and is offered only
+ * when the sweep produced it. Where they disagree that one is authoritative; this one is always there.
+ */
+/**
+ * The outcome, linked into the transcript AT the step that broke where one is identifiable.
+ *
+ * The whole point of the index is to get from "this cell went wrong" to the evidence, and a run.md is
+ * fifty screens; landing at the top means scrolling to find the failure, which is the work the link
+ * was supposed to save. The 'focus' comes from the measurement (metrics.mjs focusStep), so the anchor is
+ * derived from the run's own event stream rather than guessed at here.
+ *
+ * A clean WRONG run has no failing step — every tool worked, the answer is simply not the expected one
+ * — so it stays a plain link to the top and the tooltip does not pretend otherwise.
+ */
+function outcomeLink(r, now, dir) {
+    const html = outcome(r, now);
+    if (!dir || r.state !== "done") return html;
+    const f = r.focus;
+    // The tool makes the anchor land on the CALL that failed rather than on the reasoning that preceded
+    // it; the viewer's heading slugs are lower-cased, so this has to be too (sampleText -> sampletext).
+    const anchor = f ? "#step-" + f.step + (f.tool ? "-" + String(f.tool).toLowerCase() : "") : "";
+    const href = dir + "/run.md.html" + anchor;
+    const tip = f ? \`step \${f.step} — \${f.why}\` : "open the transcript";
+    const who = [r.taskId, ...dims.map((d) => r.combo[d]), "r" + r.repeat].filter(Boolean).join(" · ");
+    return \`<a class="view outcome\${f ? " tofail" : ""}" href="\${href}" title="\${esc(tip)}" data-title="\${esc(who)}">\${html}</a>\`;
+}
+
+function links(dir, r) {
+    const who = [r.taskId, ...dims.map((d) => r.combo[d]), "r" + r.repeat, r.hash].filter(Boolean).join(" · ");
+    const pdf = window.__SWEEP_PDF__
+        ? \` <span class="dim">·</span> <a href="\${dir}/run.html" target="_blank" rel="noopener">export</a>\`
+        : "";
+    return \`<a href="\${dir}/run.md.html" class="view" data-title="\${esc(who)}">read</a>\`
+        + \` <span class="dim">·</span> <a href="\${dir}/run.md">md</a>\`
+        + \` <span class="dim">·</span> <a href="\${dir}/run.json">json</a>\`
+        + pdf;
+}
+
+/**
+ * Open a rendered run WITHOUT leaving the index.
+ *
+ * An iframe rather than injecting the HTML: the run page is a complete document with its own stylesheet,
+ * and a hundred runs' worth of \`<details>\` and highlighted code has no business sharing a style scope
+ * with the dashboard. It also means the very same URL a normal click opens is what the overlay shows.
+ *
+ * Plain clicks are intercepted; cmd/ctrl/middle-click and the keyboard fall through to the browser, so
+ * "open in a new tab" keeps working.
+ */
+function initViewer() {
+    const ov = document.createElement("div");
+    ov.className = "overlay";
+    ov.innerHTML = '<div class="sheet"><div class="obar">'
+        + '<span class="otitle"></span><span class="sp"></span>'
+        + '<a class="opop" target="_blank" rel="noopener">open ↗</a>'
+        + '<button class="oclose" aria-label="Close">✕</button>'
+        + '</div><iframe title="run"></iframe></div>';
+    document.body.appendChild(ov);
+    const frame = ov.querySelector("iframe");
+    const close = () => { ov.classList.remove("on"); frame.src = "about:blank"; };
+    ov.addEventListener("click", (e) => { if (e.target === ov || e.target.closest(".oclose")) close(); });
+    document.addEventListener("keydown", (e) => { if (e.key === "Escape" && ov.classList.contains("on")) close(); });
+    document.addEventListener("click", (e) => {
+        const a = e.target.closest("a.view");
+        if (!a || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+        e.preventDefault();
+        ov.querySelector(".otitle").textContent = a.dataset.title || "run";
+        ov.querySelector(".opop").href = a.href;
+        frame.src = a.href;
+        ov.classList.add("on");
+    });
+}
+
 function renderRuns(runs, base) {
     if (!runs?.length) return;
     const now = Date.now();
     const nextUp = runs.findIndex((r) => r.state === "pending");
     $("runs").className = "";
     $("runs").innerHTML = table(
-        [...dims, "task", "run", "status", "steps", "secs", "artifacts"],
+        [...dims, "task", "run", "agent", "status", "steps", "secs", "artifacts"],
         runs.map((r) => [
             ...dims.map((d) => \`<code>\${esc(r.combo[d])}</code>\`),
-            esc(r.taskId), "r" + r.repeat, outcome(r, now),
+            esc(r.taskId), "r" + r.repeat,
+            r.hash ? \`<span class="pill hash">\${esc(r.hash)}</span>\` : '<span class="dim">–</span>',
+            outcomeLink(r, now, r.path ? base + encodeURI(r.path) : ""),
             r.steps ?? '<span class="dim">–</span>',
             r.secs != null ? r.secs.toFixed(1) : '<span class="dim">–</span>',
-            r.path ? \`<a href="\${base}\${encodeURI(r.path)}/run.md">run.md</a> <span class="dim">·</span> <a href="\${base}\${encodeURI(r.path)}/run.json">json</a>\` : "",
+            r.path ? links(base + encodeURI(r.path), r) : "",
         ]),
         dims.length + 2,
         (i) => runs[i].state === "running" ? ' class="live"' : (i === nextUp ? ' class="next"' : ""),
@@ -247,6 +363,31 @@ function renderHead(s) {
         (s.finished ? \` · <span class="pill">done in \${((s.finished - s.started) / 60000).toFixed(1)} min</span>\`
                     : \` · <span class="dim">\${s.jobs} job\${s.jobs > 1 ? "s" : ""}</span>\`) +
         (s.dirty ? ' · <span class="warn">dirty tree</span>' : "");
+    // WHICH MODEL(S) this measured. A sweep that varies the model as a dimension lists each one, so the
+    // header answers "what am I looking at" without opening a run. Empty until something has run,
+    // rather than a placeholder dash that reads as a missing measurement.
+    // Three ROLES, not one model. A delegated look goes to the vision reader and an extend:"utility"
+    // call to the utility model, so "which model produced this" has three answers and a run is not
+    // interpretable from the driver alone. Collapsed to the driver by default — that is the one being
+    // compared — and the toggle expands the rest rather than spending header space on them always.
+    const seen = new Map();
+    for (const r of s.runs) {
+        const m = r.models;
+        if (!m) continue;
+        const key = [m.driver, m.vision, m.utility].join("\u0000");
+        if (!seen.has(key)) seen.set(key, m);
+    }
+    const sets = [...seen.values()];
+    const role = (label, v) => v
+        ? \`<span class="role"><span class="rk">\${label}</span> <code>\${esc(v)}</code></span>\`
+        : \`<span class="role none"><span class="rk">\${label}</span> none</span>\`;
+    $("models").innerHTML = !sets.length ? "" :
+        \`<button id="mtoggle" class="chip" aria-expanded="\${modelsOpen}">\${modelsOpen ? "▾" : "▸"} models</button> \`
+        + sets.map((m) => modelsOpen
+            ? \`<span class="mset">\${role("driver", m.driver)}\${role("vision", m.vision)}\${role("utility", m.utility)}</span>\`
+            : \`<span class="mset">\${role("driver", m.driver)}</span>\`).join("");
+    const btn = $("mtoggle");
+    if (btn) btn.onclick = () => { modelsOpen = !modelsOpen; try { localStorage.setItem("benchModels", modelsOpen ? "1" : "0"); } catch { /* private mode */ } draw(); };
     document.title = s.finished ? \`✓ \${s.name}\` : \`\${pct}% \${s.name}\`;
 }
 
@@ -257,6 +398,7 @@ let latest = window.__BENCH_STATE__ || null;
 const draw = () => {
     if (!latest) return;
     const now = Date.now();
+    window.__SWEEP_PDF__ = !!latest.pdf;
     renderHead(latest); renderStats(latest, now); renderFlight(latest, now);
     renderAgg(latest.rows); renderRuns(latest.runs, latest.artifactBase ?? "/artifacts/");
 };
@@ -276,6 +418,8 @@ if (latest) {
 }
 // Redraw on a timer as well as on a push: the elapsed clocks and the ETA move with the wall, not with
 // events, and a run that sits in one tool for a minute would otherwise look frozen.
+initViewer();
+
 const tick = setInterval(() => {
     if (!latest || latest.finished) return clearInterval(tick);   // nothing left to advance
     draw();

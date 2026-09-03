@@ -32,7 +32,13 @@ so the tab stays valid across sweeps: reload it rather than reopening.
 The page shows every run with its state and what is queued next, the in-flight run's step against its
 budget and the tool it is in right now, the last thing that happened, elapsed time, mean time per run and
 per step, and an ETA (withheld until a few runs land — an estimate from one sample is a guess wearing a
-number's clothes). Rows link to each run's `run.md` and `run.json`. It is a SINK, not a second brain: the
+number's clothes), and which MODEL(s) the sweep ran against. Each row carries the agent run's own hash as
+a pill, so a row can be matched by eye to the transcript that names it, and links to that run's artifacts:
+`read` (the rendered transcript, which opens in an overlay without leaving the index), `md`, `json`, and
+`export` when `--pdf` produced one. **A run that failed links its STATUS straight to the step that broke**
+— a memory fault, else a tool that returned an error, else the last step of a run that crashed or hit the
+cap. A run that merely got the answer WRONG with every tool working links to the top instead: there is no
+failing step, and pointing at one would send you to an innocent call. It is a SINK, not a second brain: the
 server recomputes the table with the same `aggregate()` the report uses, so the page cannot disagree with
 `report.md`.
 
@@ -127,12 +133,22 @@ deterministic). `apply()`'s `backend.model` overrides the model per cell.
 individual run, for further analysis), and one directory per RUN at
 `<task>/<combo>/r<N>/`, each containing that run's full observe-style artifacts:
 
-- **`run.md`** — the transcript to read. Same canonical markdown observe writes.
+- **`run.md`** — the transcript to read. Same canonical markdown observe writes. **This is the one an
+  agent should read**; the two HTML renders below exist for humans.
+- **`run.md.html`** — the same markdown RENDERED, written beside it. Asset paths are relative, which is
+  what lets one file serve both cases: opened straight off the disk it finds its own `images/`, and served
+  under `/artifacts/<run>/` it finds them there too. Every h2 is a collapsible section with two anchors —
+  `#step-4-exec` (the exact call) and a bare `#step-4` — so the index can link INTO the transcript at the
+  step that failed rather than at the top of a fifty-screen document. Opening such a link folds everything
+  else to an outline and expands the failing call plus the reasoning that produced it. `collapse all` /
+  `expand all` are in the header. The page denies script by CSP except its own, admitted by hash.
 - **`run.json`** — the machine-readable export. **Diff two runs with this, not the markdown** — a markdown
   diff is dominated by layout. Strip `VOLATILE_FIELDS` and apply `canonicalizeText` first (export-schema.ts)
   or you will diff timestamps and pointer ids instead of behaviour.
 - `events.json`, `transcript.txt`, a screenshot per step, and `cell.json` (the cached measurement).
-- `run.html` + `run.pdf` with `--pdf`.
+- `run.html` + `run.pdf` with `--pdf` — the OTHER HTML render, produced by the extension's own export sink
+  rather than by `marked`. Higher fidelity, and authoritative where the two disagree; it is just expensive
+  enough not to be the default. The dashboard offers it as `export` when the sweep produced it.
 
 `run.md`, `run.json` and `events.json` are rewritten on EVERY event, not at the end — a run that hangs or
 is interrupted still leaves a readable partial rather than an empty directory. `report.md`, `report.html`

@@ -9,6 +9,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 
 const load = async (name) => (await import(`../tests/e2e/bench/specs/${name}.bench.ts`)).default;
 const task = (spec, id) => {
@@ -45,11 +46,28 @@ test("pointer-ids/read-back rejects a plausible WRONG total", async () => {
     ]) assert.equal(scores(t, bad), false, `should reject ${bad}`);
 });
 
-test("pointer-ids/cite-or-retype scores the region, not the number", async () => {
+test("pointer-ids/cite-or-retype scores the region the PAGE says wins", async () => {
+    // The ground truth is read out of the example page, not restated here. A predicate test can only ever
+    // catch internal inconsistency — the read-back total was caught that way, because 502981 contradicts
+    // its own arithmetic — and is blind to a predicate that is coherent but describes the wrong DATA.
+    // This one was: it looked for North, which is the top region in the SEEDED table (CAPTURED), while
+    // this task loads /spreadsheet, where East wins. Both arms would have scored 0 and it would have read
+    // as a task too hard rather than a broken bench. Restating the answer here would have re-encoded
+    // exactly the same assumption, so the page is asked instead.
+    const html = await readFile(new URL("../examples/spreadsheet.html", import.meta.url), "utf8");
+    const key = /Highest-grossing region\s*=\s*(\w+)/.exec(html);
+    assert.ok(key, "examples/spreadsheet.html no longer declares a highest-grossing region in its answer key");
+    const winner = key[1];
+
     const t = task(await load("pointer-ids"), "cite-or-retype");
-    assert.ok(scores(t, "North had the highest revenue."));
-    assert.ok(scores(t, "north"));
-    assert.equal(scores(t, "South, at 99,120.10"), false);
+    assert.ok(scores(t, `${winner} had the highest revenue.`), `must accept the page's own winner (${winner})`);
+    assert.ok(scores(t, winner.toLowerCase()), "case must not matter — a model writes it either way");
+
+    // And must reject every OTHER region on the page, or the predicate is not measuring the answer.
+    const others = [...new Set([...html.matchAll(/<td>(North|South|East|West)<\/td>/g)].map((m) => m[1]))]
+        .filter((r) => r !== winner);
+    assert.ok(others.length >= 2, "expected several regions to distinguish between");
+    for (const r of others) assert.equal(scores(t, `${r} had the highest revenue.`), false, `must reject ${r}`);
 });
 
 test("smoke/read-code accepts only a real page code", async () => {
