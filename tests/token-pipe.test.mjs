@@ -124,11 +124,15 @@ test("memoryFault: names the fault, ranks the candidates, and says it is recover
     assert.match(msg, /^MemoryFault: pointer '@tool:af21e0d' does not exist\./, "the fault names the bad address");
     assert.match(msg, /Nearest valid pointers:/);
     // Distance from the CURRENT step, which is the actionable half ("2 steps back" beats "step 2").
-    assert.match(msg, /- @tool:af21d0d \(2 steps back: python_exec\)\s+text \d+ chars\s+\[edit_dist=1\]/);
-    assert.match(msg, /- @tool:bf21d0e \(3 steps back: exec\)\s+text \d+ chars\s+\[edit_dist=3\]/);
-    // The candidate columns line up, so the list is scannable rather than ragged.
-    const cols = msg.split("\n").filter((l) => l.includes("edit_dist")).map((l) => l.indexOf("[edit_dist"));
-    assert.equal(new Set(cols).size, 1, "the edit_dist column is aligned across candidates");
+    assert.match(msg, /- @tool:af21d0d \(2 steps back: python_exec\) text \d+ chars \[dist 1\]/);
+    assert.match(msg, /- @tool:bf21d0e \(3 steps back: exec\) text \d+ chars \[dist 3\]/);
+    // NOT column-aligned. This string is read by a MODEL, which parses the fields either way and pays for
+    // every space; padding to a common width is a human scanning affordance and was 10% of a three-candidate
+    // message. A mechanism that exists to stop the model re-emitting data must not spend context on
+    // whitespace — the human-facing view of the same list is the sidebar, which can align in CSS for free.
+    for (const line of msg.split("\n").filter((l) => l.includes("[dist "))) {
+        assert.doesNotMatch(line.trimStart(), / {2,}/, `candidate line is padded: ${JSON.stringify(line)}`);
+    }
     // Without this a model pattern-matching "fault" to a segfault may report a crash or abandon the task.
     assert.match(msg, /recoverable/i, "the fault says it can be retried");
     assert.match(msg, /re-run the tool if you need the data fresh/, "…and names the other valid recovery");

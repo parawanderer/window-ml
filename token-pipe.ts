@@ -308,11 +308,15 @@ export function memoryFault(ref: string, near: TokenValue[], currentStep: number
         const where = back <= 0 ? "this step" : `${back} step${back === 1 ? "" : "s"} back`;
         // The TYPE is what makes this list pickable: "a 12x3 table" vs "a screenshot" usually decides it
         // outright, where two similar-looking ids and step numbers do not.
-        return { left: `  - @tool:${v.id}`, mid: `(${where}: ${nameOf(v)})`, type: shortType(v), d: distanceTo(q, v) };
+        const d = distanceTo(q, v);
+        return { line: `  - @tool:${v.id} (${where}: ${nameOf(v)}) ${shortType(v)} [dist ${d}]`, d };
     });
-    const w = Math.max(...rows.map((r) => r.mid.length));
-    const tw = Math.max(...rows.map((r) => r.type.length));
-    const body = rows.map((r) => `${r.left} ${r.mid.padEnd(w)} ${r.type.padEnd(tw)} [edit_dist=${r.d}]`).join("\n");
+    // NOT column-aligned. Padding to a common width is a HUMAN scanning affordance, and this string is read
+    // by a model — which parses the fields either way and pays for every space. On a three-candidate list the
+    // padding was 10% of the message, and it grows with the label lengths. A mechanism whose whole purpose is
+    // to stop the model re-emitting data should not spend context on whitespace. The human-facing view of the
+    // same list is the sidebar/export, which can align in CSS for free.
+    const body = rows.map((r) => r.line).join("\n");
     const unrelated = rows.every((r) => r.d > FAR_ENOUGH_TO_BE_UNRELATED)
         ? "\nNone of these is close, so you may be recalling an output from an earlier turn or inventing the id."
         : "";
