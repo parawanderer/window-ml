@@ -67,14 +67,28 @@ words, the crop box, and expected-vs-actual. The workflow also writes a pointer 
 
 ## Known-bad, so you don't chase them
 
-Check these BEFORE assuming a failure is yours — and re-check that the claim is still true rather than
-trusting this list blindly:
+Check these BEFORE assuming a failure is yours — and **re-verify the claim rather than trusting the
+list**. Every entry here has an expiry nobody sets: the branch that caused it gets fixed, and a stale
+entry then teaches you to ignore a real failure. Two commands settle it:
 
-- **`tool-tokens.spec.mjs` › `res.outputs` (2D matrix)** — arrived broken from the `md-negotiation`
-  branch (verified failing at that branch's own commit, in a clean worktree). Another session's
-  in-flight feature; not caused by anything here.
+```bash
+npx playwright test tests/e2e/<spec>.spec.mjs   # does it still fail locally?
+gh run list --branch main --limit 3             # does MAIN fail it too? then it is not yours
+```
+
 - **`cross-page.spec.mjs` › `fetch_url rendered: the DOM-quiet settle…`** — timing-sensitive, carries
-  `retries: 2`, and usually passes on retry. Reported as *flaky*, not failed.
+  `retries: 2`, and usually passes on retry. Reported as *flaky*, not failed. A **flaky** line is not a
+  red check; a **failed** one is.
+
+Recently removed, recorded so nobody re-adds them from memory:
+
+- ~~`tool-tokens.spec.mjs` › `res.outputs` (2D matrix)~~ — **fixed.** It hardcoded `@tool:([0-9a-f]{6})`
+  and ids became SEVEN characters when the check character shipped, so the fake model cited the first six
+  of a real id and nothing resolved. It builds its pattern from `TOKEN_HEX_SRC` now, which is the rule the
+  rest of the tree follows: a hardcoded copy of a shape does not fail when the shape changes, it silently
+  keeps testing the old one.
+- ~~`resource-panel.spec.mjs` › the event lane hover~~ — **fixed.** Arrived with the lane-hover race PR
+  and failed on main's own CI for a while; main is green.
 
 A failure that is genuinely not yours goes in the PR body, named, with the evidence — never silently
 ignored, and never "fixed" by re-running until it passes.
@@ -85,6 +99,12 @@ ignored, and never "fixed" by re-running until it passes.
   "it's just the flaky one" unless the run says *flaky* rather than *failed*.
 - **Re-run only to test a flake hypothesis** (`gh run rerun <id> --failed`), and say so. Re-running to
   get a different answer is how a real intermittent bug becomes permanent.
+- **A fresh worktree needs `npm ci`.** Worktrees do not get `node_modules`, and since `@types/node`
+  became a devDependency a stale one fails with `Cannot find type definition file for 'node'` — which
+  reads like a tsconfig problem rather than a missing install. Symlinking the main checkout's
+  `node_modules` works for running, but not after a dependency changes.
+- **`npm run lint`** is format + types, and is what the pre-commit hook runs a subset of. Cheaper than
+  waiting for CI to tell you about a trailing space.
 - **Reproduce locally first when you can**: `npm test` for the fast suite, `npx playwright test
   tests/e2e/<spec>` for one e2e, `npm run typecheck` for types. CI is slower than you are.
 - **The workflow cancels superseded runs per branch** (`concurrency`), so pushing a fix supersedes the
