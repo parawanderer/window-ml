@@ -107,7 +107,7 @@ function scanInterfaces(src, file) {
                 continue;
             }
             if (/^\s*(\/\/|\*)/.test(l) || !l.trim()) continue;
-            const mm = l.match(/^\s*(\w+)(\?)?:\s*(.+?);\s*(?:\/\/.*)?$/);
+            const mm = l.match(/^\s*([\w$]+)(\?)?:\s*(.+?);\s*(?:\/\/.*)?$/);
             if (!mm) { pending = []; continue; }
             members.push({ name: mm[1], optional: !!mm[2], type: mm[3].trim(), doc: jsdocText(pending) });
             pending = [];
@@ -349,7 +349,7 @@ export function buildSchema() {
     delete $defs.ExportDocument;
     return {
         $schema: "https://json-schema.org/draft/2020-12/schema",
-        $id: "https://github.com/parawanderer/window-ml/blob/main/docs/spec/export.schema.json",
+        $id: "https://raw.githubusercontent.com/parawanderer/window-ml/main/docs/spec/export.schema.json",
         title: "window.ml run export",
         description: `A window.ml session export, schema version ${version}. GENERATED from export-schema.ts by scripts/gen-export-schema.mjs — do not edit by hand. The TypeScript file is normative; this is its language-neutral twin, for writing a parser or generating models in another language.`,
         "x-schemaVersion": Number(version),

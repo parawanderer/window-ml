@@ -5,6 +5,7 @@
 //   … --only idFormat=label --only task=two-tables      re-measure a subset
 //   … --repeats 2 --dry   print the matrix and stop
 //   … --no-cache          re-run cells that are already measured
+//   … --pdf               also render each run to run.html + run.pdf (slower, and much larger)
 //
 // The sweep is RESUMABLE: each cell's measurement is written under a content-addressed key covering the
 // cell's configuration AND the build it ran against, so a six-hour sweep that dies at hour five resumes
@@ -14,6 +15,7 @@
 // This is a self-tool, not a test: `npm test` globs tests/*.test.* and never picks it up. See the `bench`
 // skill for the playbook.
 
+import { chromium } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, writeFile, readFile, rm } from "node:fs/promises";
@@ -31,7 +33,7 @@ const ARTROOT = path.join(ROOT, "tests/e2e/artifacts/bench");
 const BUILDROOT = path.join(ROOT, "tests/e2e/artifacts/builds");
 
 function parseArgv(argv) {
-    const args = { specPath: null, jobs: 1, only: [], skip: [], repeats: undefined, dry: false, cache: true };
+    const args = { specPath: null, jobs: 1, only: [], skip: [], repeats: undefined, dry: false, cache: true, pdf: false };
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i];
         if (a === "--jobs") args.jobs = Math.max(1, Number(argv[++i]) || 1);
@@ -40,6 +42,7 @@ function parseArgv(argv) {
         else if (a === "--repeats") args.repeats = Math.max(1, Number(argv[++i]) || 1);
         else if (a === "--dry") args.dry = true;
         else if (a === "--no-cache") args.cache = false;
+        else if (a === "--pdf") args.pdf = true;
         else if (!a.startsWith("--")) args.specPath = a;
     }
     return args;
@@ -80,6 +83,33 @@ async function buildVariant(group, fingerprint, log) {
     const defines = Object.entries(group.defines).flatMap(([k, v]) => ["--define", `${k}=${v}`]);
     execFileSync("node", ["build.mjs", "--outdir", dir, ...defines], { cwd: ROOT, stdio: "pipe" });
     return dir;
+}
+
+/**
+ * Render a finished run to `run.html` + `run.pdf`.
+ *
+ * The HTML is the same self-contained print document the sidebar's PDF export builds, and it is written
+ * alongside the PDF rather than thrown away: it costs nothing (it IS the input), it is searchable and
+ * diffable where a PDF is neither, and when a PDF looks wrong it is the only way to see why.
+ *
+ * Rendered by a PLAIN headless Chromium, not the harness's own browser — `page.pdf()` is headless-only and
+ * the extension one runs headful (an MV3 service worker does not register headless). Nothing about this
+ * page needs the extension: it is a static document.
+ */
+let pdfBrowser = null;   // shared: launching one per cell would dominate the runtime of a sweep
+async function renderPdf(session, dir, name) {
+    const { sessionToHtml } = await import("../../../sidebar/export.ts");
+    const html = sessionToHtml(session, name);
+    await writeFile(path.join(dir, "run.html"), html);
+    // `||=` on a promise, not on the browser: with --jobs N several cells reach here at once, and awaiting
+    // the value would let each start its own launch.
+    pdfBrowser ||= chromium.launch({ headless: true });
+    const page = await (await pdfBrowser).newPage();
+    try {
+        await page.setContent(html, { waitUntil: "load" });
+        await page.pdf({ path: path.join(dir, "run.pdf"), format: "A4", printBackground: true,
+            margin: { top: "12mm", bottom: "12mm", left: "10mm", right: "10mm" } });
+    } finally { await page.close().catch(() => {}); }
 }
 
 /** Run one cell (or read it back from cache) and return its measurement. */
@@ -132,6 +162,11 @@ async function runCell(cell, ctx) {
     }
 
     const measurement = measureRun(run, t);
+    // Best-effort: a failed render must not lose the cell's measurement, which is the expensive part.
+    if (ctx.pdf && run.session) {
+        await renderPdf(run.session, dir, `${slug(ctx.spec.name)}-${t.id}-r${cell.repeat}`)
+            .catch((e) => ctx.log(`  (pdf render failed for ${label}: ${String(e).slice(0, 80)})`));
+    }
     const saved = { key, combo: cell.combo, taskId: t.id, repeat: cell.repeat, measurement };
     await writeFile(cacheFile, JSON.stringify(saved, null, 2));
     ctx.ran++;
@@ -190,11 +225,12 @@ const main = async () => {
         spec, fingerprint, sweepDir, backend, buildDirs, cache: args.cache,
         // Warming is a VRAM concern for a local model, and pointless against a hosted API or the fake.
         warm: !!backend && process.env.WARM !== "0",
-        cached: 0, ran: 0, log: (s) => console.log(s),
+        cached: 0, ran: 0, pdf: args.pdf, log: (s) => console.log(s),
     };
     const started = Date.now();
     const results = await pool(cells, args.jobs, (cell) => runCell(cell, ctx));
     const finished = Date.now();
+    if (pdfBrowser) await (await pdfBrowser).close().catch(() => {});
 
     // Aggregate: one row per (combination x task), over that cell's repeats.
     const byCell = new Map();
@@ -208,13 +244,21 @@ const main = async () => {
         ...r, agg: aggregate(r.measurements),
         firstError: r.measurements.find((m) => m.error)?.error || null,
     }));
+    // Every individual run, with where it landed — the aggregate table says WHICH cell is interesting,
+    // this says which of its repeats to open.
+    const runs = cells.map((c, i) => ({
+        combo: c.combo, taskId: c.task.id, repeat: c.repeat,
+        ok: results[i].measurement.ok, succeeded: results[i].measurement.succeeded,
+        steps: results[i].measurement.steps, cached: results[i].fromCache,
+        path: path.relative(ROOT, results[i].dir),
+    }));
 
-    const sweep = { spec, rows, fingerprint, dirty, started, finished, cached: ctx.cached, ran: ctx.ran, jobs: args.jobs };
+    const sweep = { spec, rows, runs, fingerprint, dirty, started, finished, cached: ctx.cached, ran: ctx.ran, jobs: args.jobs, pdf: args.pdf };
     writeReport(sweep, terminalSink());
     const md = writeReport(sweep, mdSink());
     const reportPath = path.join(sweepDir, "report.md");
     await writeFile(reportPath, md);
-    await writeFile(path.join(sweepDir, "rows.json"), JSON.stringify({ fingerprint, dirty, started, finished, rows }, null, 2));
+    await writeFile(path.join(sweepDir, "rows.json"), JSON.stringify({ fingerprint, dirty, started, finished, rows, runs }, null, 2));
     console.log(`\n  report: ${path.relative(ROOT, reportPath)}\n`);
 };
 

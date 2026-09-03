@@ -16,7 +16,7 @@ import type {
     ExportDocument, ExportSession, ExportBuild, ExportPage, ExportStep, ExportMessage,
     ExportOutcome, ExportTotals, ExportModelUsage, ExportStatus, IsoTimestamp,
 } from "../export-schema";
-import { EXPORT_SCHEMA_VERSION } from "../export-schema";
+import { EXPORT_SCHEMA_VERSION, schemaUrl } from "../export-schema";
 
 /** Epoch ms → ISO 8601. Invalid/absent stamps are dropped rather than exported as an
  *  epoch-zero date, which would read as a real 1970 timestamp to a consumer. */
@@ -285,10 +285,13 @@ export function sessionToJson(s: Session, prov?: ExportProvenance | string): Exp
         steps: isAgent ? steps : undefined,
     });
 
+    const build = buildOf(p);
     return {
+        // First, by convention: an editor looks at the head of the file for it.
+        ...(schemaUrl(build) ? { $schema: schemaUrl(build) } : {}),
         schema: EXPORT_SCHEMA_VERSION,
         exportedAt: new Date().toISOString(),
-        generator: compact({ name: "window.ml", version: p.version, build: buildOf(p) }),
+        generator: compact({ name: "window.ml", version: p.version, build }),
         session,
     };
 }

@@ -92,7 +92,19 @@ export function writeReport(sweep, sink) {
         sink.list(failed.map((r) => `${comboLabel(r.combo)} · ${r.taskId} — ${r.agg.errors} of ${r.agg.runs}: ${r.firstError || "unknown"}`));
     }
 
-    sink.heading("Artifacts");
-    sink.list(rows.slice(0, 200).map((r) => `${comboLabel(r.combo)} · ${r.taskId} → ${r.path}`));
+    // Every run, individually. The aggregate above says which CELL is worth opening; this says which of
+    // its repeats — a mean of five hides the one that went wrong, which is usually the one to read.
+    sink.heading("Runs");
+    const dimCols = dims.length ? dims : [];
+    sink.table([...dimCols, "task", "run", "outcome", "steps", "artifacts"],
+        (sweep.runs || []).map((r) => [
+            ...dimCols.map((d) => String(r.combo[d])),
+            r.taskId,
+            `r${r.repeat}`,
+            !r.ok ? "FAILED" : r.succeeded === null ? "ok" : r.succeeded ? "ok · correct" : "ok · WRONG",
+            String(r.steps),
+            r.path,
+        ]));
+    sink.note(`Each directory holds \`run.md\` (the transcript to read), \`run.json\` (the machine-readable export — diff two runs with this, not the markdown), \`events.json\`, \`transcript.txt\` and a screenshot per step.${sweep.pdf ? " `--pdf` also wrote `run.html` + `run.pdf`." : " Add `--pdf` for `run.html` + `run.pdf` as well."}`);
     return sink.done();
 }

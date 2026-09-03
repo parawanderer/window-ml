@@ -75,6 +75,7 @@ task usable for measuring behaviour when correctness is not the question.
 | `--repeats N` | Override the spec's repeat count — use `--repeats 1` while iterating on a spec. |
 | `--dry` | Print the matrix and its cell keys, run nothing. Do this before any long sweep. |
 | `--no-cache` | Re-run cells that are already measured. |
+| `--pdf` | Also render each run to `run.html` + `run.pdf`. Off by default: it roughly triples a cell's disk and adds a render per run. The HTML is written alongside deliberately — it is searchable and diffable where a PDF is neither, and it is the only way to see why a PDF looks wrong. |
 
 Backend selection is the same as observe: `USE_ENV=1` reads `.env`, `E2E_BACKEND`/`E2E_MODEL`/`E2E_KEY`
 set one explicitly, and with neither it runs the scripted fake-LLM (which is what makes the smoke spec
@@ -82,10 +83,20 @@ deterministic). `apply()`'s `backend.model` overrides the model per cell.
 
 ## What it writes
 
-`tests/e2e/artifacts/bench/<spec>/` holds `report.md`, `rows.json` (the aggregate, for further
-analysis), and per-cell directories each containing that run's full observe-style artifacts — `run.md`,
-`events.json`, screenshots — plus `cell.json`, the cached measurement. So a surprising row can always be
-read down to the actual transcript that produced it.
+`tests/e2e/artifacts/bench/<spec>/` (gitignored) holds `report.md`, `rows.json` (the aggregate AND every
+individual run, for further analysis), and one directory per RUN at
+`<task>/<combo>/r<N>/`, each containing that run's full observe-style artifacts:
+
+- **`run.md`** — the transcript to read. Same canonical markdown observe writes.
+- **`run.json`** — the machine-readable export. **Diff two runs with this, not the markdown** — a markdown
+  diff is dominated by layout. Strip `VOLATILE_FIELDS` and apply `canonicalizeText` first (export-schema.ts)
+  or you will diff timestamps and pointer ids instead of behaviour.
+- `events.json`, `transcript.txt`, a screenshot per step, and `cell.json` (the cached measurement).
+- `run.html` + `run.pdf` with `--pdf`.
+
+So a surprising row is always readable down to the transcript that produced it. The report's **Runs**
+table is the index: the aggregate says which CELL is interesting, that says which of its repeats to open —
+a mean of five hides the one that went wrong, which is usually the one worth reading.
 
 ## Things that will bite you
 

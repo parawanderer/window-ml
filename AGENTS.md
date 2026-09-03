@@ -1088,7 +1088,12 @@ for the same reason `gen-api-docs.mjs` is (typescript@7 is the Go port, no JS co
 type it cannot map rather than silently emitting "anything". Unlike the other generated files the output is
 **checked in** — a spec people link to cannot be a build artifact — and `tests/export-schema.test.mjs`
 regenerates, diffs, and validates real agent AND chat exports against it, including a test that the
-validator itself can fail. `generator.build` carries the COMMIT (a manifest version only moves on releases,
+validator itself can fail. Each document opens with a **`$schema`** URL pinned to that BUILD's commit on
+raw.githubusercontent (`schemaUrl()`, best-effort — omitted when there is no GitHub remote or no commit,
+since a wrong URL gets validated against and quietly misleads; still emitted for a DIRTY build, with
+`build.dirty` beside it as the caveat). It is the conventional key editors use to validate a file with no
+setup, and it points at the commit rather than `main` because `main` drifts away from what the file is.
+`generator.build` carries the COMMIT (a manifest version only moves on releases,
 so it cannot answer "are these two runs comparable"); its `dirtyDiff` is opt-in via
 `ExportProvenance.includeDirtyDiff` — on for a harness artifact whose job is reproducing a run, off for a
 download the user shares, since it is unpublished source. `session.page` records where the run STARTED,
@@ -1119,7 +1124,11 @@ previously recoverable only by regexing the system prompt.
   cites instead (0.00) and one that hides a re-emission in a seeded turn (0.00), and it caught two real
   extractor bugs before any GPU time. Assertions: `tests/bench-metrics.test.mjs` (fast, synthetic
   streams) and `tests/e2e/bench-selftest.spec.mjs` (real streams — the only thing that catches an
-  extractor reading a field the product never emits). One walk, N sinks: terminal + markdown today.
+  extractor reading a field the product never emits). One walk, N sinks: terminal + markdown today. Artifacts land per RUN under
+  `tests/e2e/artifacts/bench/<spec>/<task>/<combo>/r<N>/` (gitignored) — `run.md` to read, **`run.json` to
+  DIFF** (a markdown diff is mostly layout; strip `VOLATILE_FIELDS` + `canonicalizeText` first), plus
+  events/transcript/screenshots, and `run.html`+`run.pdf` behind `--pdf`. The report's **Runs** table
+  indexes every individual run, since the aggregate hides the one repeat that went wrong.
 - **`approval-demo.mjs`** — a **narrated demo, not a test**: `npm run build && node --import tsx
   tests/e2e/approval-demo.mjs` opens a headful browser and walks the approval-over-IPC flow (idea #2)
   three times — a manual APPROVE, a manual REJECT, and a POLICY driver that auto-approves read-only

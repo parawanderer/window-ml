@@ -15,6 +15,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { buildSchema } from "../scripts/gen-export-schema.mjs";
 const { sessionToJson } = await import("../sidebar/export-json.ts");
+const { schemaUrl } = await import("../export-schema.ts");
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SCHEMA_PATH = join(ROOT, "docs/spec/export.schema.json");
@@ -145,4 +146,34 @@ test("the borrowed types INSIDE the promise are resolved, not left as anything",
     // TokenUsage is imported from contract.ts; a consumer needs its real shape, not an opaque object.
     assert.ok(schema.$defs.TokenUsage?.properties?.promptTokens, "TokenUsage must be inlined with its fields");
     assert.equal(schema.$defs.ExportStep.properties.usage.$ref, "#/$defs/TokenUsage");
+});
+
+test("$schema pins the COMMIT, so a document says exactly what described it", () => {
+    // Not `main`: main drifts away from what this file actually is, and a URL that describes a later
+    // format is worse than no URL. raw.githubusercontent, not the github.com blob page, so it is
+    // fetchable JSON.
+    const url = schemaUrl({ repoUrl: "https://github.com/parawanderer/window-ml", commit: "a".repeat(40) });
+    assert.equal(url, `https://raw.githubusercontent.com/parawanderer/window-ml/${"a".repeat(40)}/docs/spec/export.schema.json`);
+
+    const doc = sessionToJson(agentSession(), { build: { repoUrl: "https://github.com/parawanderer/window-ml", commit: "b".repeat(40) } });
+    assert.ok(doc.$schema.includes("b".repeat(40)));
+    assert.equal(Object.keys(doc)[0], "$schema", "it goes first — an editor looks at the head of the file");
+});
+
+test("$schema is omitted rather than guessed when there is nothing to pin to", () => {
+    // A wrong URL gets validated against and quietly misleads, which is worse than its absence.
+    assert.equal(schemaUrl(undefined), undefined);
+    assert.equal(schemaUrl({ commit: "a".repeat(40) }), undefined, "no remote");
+    assert.equal(schemaUrl({ repoUrl: "https://github.com/o/r" }), undefined, "no commit");
+    assert.equal(schemaUrl({ repoUrl: "https://gitlab.com/o/r", commit: "a" }), undefined, "not GitHub");
+    assert.equal(schemaUrl({ repoUrl: "git@github.com:o/r.git", commit: "a" }), undefined, "an unnormalised ssh remote is not a https URL");
+    assert.ok(!("$schema" in sessionToJson(agentSession())), "no build stamp, no claim");
+});
+
+test("$schema is still emitted for a DIRTY build — best effort, flagged beside it", () => {
+    // The commit's schema is the nearest published thing rather than an exact match. Suppressing the URL
+    // would lose a mostly-right answer; `generator.build.dirty` is how a consumer knows to be careful.
+    const doc = sessionToJson(agentSession(), { build: { repoUrl: "https://github.com/o/r", commit: "c".repeat(40), dirty: true } });
+    assert.ok(doc.$schema.includes("c".repeat(40)));
+    assert.equal(doc.generator.build.dirty, true);
 });

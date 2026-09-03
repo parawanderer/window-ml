@@ -49,12 +49,44 @@ export const EXPORT_SCHEMA_VERSION = 1;
  *  these a differ should ignore. */
 export type IsoTimestamp = string;
 
+/** Path of the generated schema within the repo. */
+export const SCHEMA_PATH = "docs/spec/export.schema.json";
+
+/**
+ * The `$schema` URL for a document produced by a given build: the generated schema as it stood at that
+ * commit, on raw.githubusercontent so it is fetchable JSON rather than a GitHub HTML page.
+ *
+ * Returns undefined rather than guessing when there is nothing to pin to — no commit, no remote, or a
+ * remote that is not GitHub. A wrong URL would be validated against and quietly mislead.
+ *
+ * @param build the extension's build stamp (`repoUrl` + `commit`)
+ */
+export function schemaUrl(build?: { repoUrl?: string; commit?: string }): string | undefined {
+    const { repoUrl, commit } = build || {};
+    if (!repoUrl || !commit) return undefined;
+    const m = repoUrl.replace(/\.git$/, "").match(/^https:\/\/(?:www\.)?github\.com\/([^/]+)\/([^/]+)\/?$/);
+    if (!m) return undefined;
+    return `https://raw.githubusercontent.com/${m[1]}/${m[2]}/${commit}/${SCHEMA_PATH}`;
+}
+
 /** A run's terminal state, mirroring the sidebar's own. */
 export type ExportStatus = "pending" | "ok" | "err";
 
 /* ------------------------------- envelope ------------------------------- */
 
 export interface ExportDocument {
+    /**
+     * URL of the JSON Schema this document was written against, pinned to the COMMIT that produced it —
+     * the conventional `$schema` key, which editors (VS Code and friends) pick up to validate and
+     * autocomplete a file with no configuration.
+     *
+     * Pinned to the commit rather than to `main` because `main` drifts away from what this file actually
+     * is; a URL that describes a later format is worse than none. BEST EFFORT: it is absent when the
+     * build had no git remote or the remote is not GitHub, and when the build was DIRTY the commit's
+     * schema is the nearest published thing rather than an exact match — `generator.build.dirty` sitting
+     * beside it is how a consumer knows.
+     */
+    $schema?: string;
     /** {@link EXPORT_SCHEMA_VERSION} at the time of writing. Check this before parsing. */
     schema: number;
     /** When the export was produced — not when the run happened. Volatile. */
