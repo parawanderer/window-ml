@@ -25,7 +25,7 @@ import {
     composerOpen, composerElement, composerTarget, selectedRun, cardSteerHash, setCardCollapsed,
 } from "./card-state";
 import { shownModel, sessionProfile } from "./model";
-import { exportSession, printSession } from "./export";
+import { exportSession, exportSessionJson, printSession } from "./export";
 import { applyTheme, applyFont, applyCodePrefs, initThemeStyle } from "./prefs";
 import { IconWarn, IconGear, IconExport, IconVram, IconBench } from "./icons";
 import { Settings } from "./settings";
@@ -125,6 +125,9 @@ function ExportMenu({ hash }: { hash: string }) {
                     </button>
                     <button class="menu-item" role="menuitem" onClick={() => pick(printSession)}>
                         PDF<span class="menu-hint">opens the print dialog</span>
+                    </button>
+                    <button class="menu-item" role="menuitem" onClick={() => pick(exportSessionJson)}>
+                        JSON<span class="menu-hint">for other programs</span>
                     </button>
                 </div>
             ) : null}
