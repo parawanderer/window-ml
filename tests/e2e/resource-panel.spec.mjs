@@ -1009,3 +1009,56 @@ test("resource panel: no two lane bars overlap on the same row", async () => {
         await fake.stop();
     }
 });
+
+// The scrub strip's round trip, which needs a session long enough that "dragged back" is genuinely not "at
+// the tail" — in a few seconds of history every position is within one poll of live (TAIL_SLACK_MS), so this
+// only means anything here.
+test("resource panel: scrubbing back unpins live, and the live button returns", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        // A short window, so the session outgrows it quickly.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_res_window: 4 }));
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-plot").count(), { timeout: 20000 }).toBeGreaterThan(0);
+        // Long enough that the far end of the strip is well outside the tail slack.
+        await expect.poll(() => frame.locator(".rc-scrub").count(), { timeout: 30000 }).toBe(1);
+        await sleep(14000);
+
+        const live = frame.locator(".rc-scrub-live");
+        await expect(live).toHaveText("live");
+        const before = await frame.locator(".rc-scrub-win").evaluate((e) => e.style.left);
+
+        // Drag the window box to the start of the session.
+        const track = await frame.locator(".rc-scrub-track").boundingBox();
+        const y = track.y + track.height / 2;
+        await page.mouse.move(track.x + track.width * 0.9, y);
+        await page.mouse.down();
+        await page.mouse.move(track.x + 2, y, { steps: 8 });
+        await page.mouse.up();
+        await sleep(600);
+
+        // It stopped following: the button now offers the way back, and the panel says it is holding a range.
+        await expect(live).toHaveText(/⏸/);
+        await expect(frame.locator(".vram-zoom")).toBeVisible();
+        expect(await frame.locator(".rc-scrub-win").evaluate((e) => e.style.left)).not.toBe(before);
+        // The chart is showing that earlier stretch, not the newest samples.
+        const shown = await frame.locator(".rc-seg").count();
+        expect(shown, "the chart still draws the scrubbed-to window").toBeGreaterThan(0);
+
+        // And back to live — a view that has silently stopped following is the failure this prevents.
+        await live.click();
+        await sleep(600);
+        await expect(live).toHaveText("live");
+        expect(await frame.locator(".vram-zoom").count()).toBe(0);
+    } finally {
+        await ext.close();
+        await fake.stop();
+    }
+});

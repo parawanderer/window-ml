@@ -697,3 +697,47 @@ test("placementOf: a model on a card that stopped being reported says so", () =>
     assert.match(where, /no longer reported/, `honest about the missing card (${where})`);
     assert.doesNotMatch(where, /^device 1 8/, "not a bare id printed as though the card were still there");
 });
+
+// The scrub strip: an overview of the whole session, with a box showing which slice the chart is drawing.
+test("scrubExtent: where the window sits, and when there is nothing to scrub", () => {
+    const samples = Array.from({ length: 10 }, (_, i) => ({ t: 1000 + i * 1000 }));   // 1s..10s
+    // A window over the last three seconds sits at the right-hand end, and counts as AT THE TAIL.
+    const tail = M.scrubExtent(samples, { from: 7000, to: 10_000 });
+    assert.equal(tail.from, 1000);
+    assert.equal(tail.to, 10_000);
+    assert.ok(Math.abs(tail.windowFrom - 6 / 9) < 1e-9);
+    assert.equal(tail.windowTo, 1);
+    assert.equal(tail.atTail, true);
+
+    // Dragged back: the same width, earlier, and no longer following live.
+    const back = M.scrubExtent(samples, { from: 3000, to: 6000 });
+    assert.ok(Math.abs(back.windowFrom - 2 / 9) < 1e-9);
+    assert.equal(back.atTail, false);
+
+    // A window pinned to live is always a poll behind the newest sample — calling that "scrolled back" would
+    // unpin the view for nobody.
+    assert.equal(M.scrubExtent(samples, { from: 7000, to: 8500 }).atTail, true, "within the slack");
+    assert.equal(M.scrubExtent(samples, { from: 5000, to: 6500 }).atTail, false, "…but not this far back");
+
+    // Nothing to scrub: a strip whose box is the whole strip is a control that cannot do anything, and
+    // drawing one implies otherwise.
+    assert.equal(M.scrubExtent(samples, { from: 0, to: 99_999 }), null, "the window covers everything");
+    assert.equal(M.scrubExtent(samples, null), null, "no window means the whole session is shown");
+    assert.equal(M.scrubExtent([{ t: 1 }], { from: 0, to: 2 }), null, "one sample is not a session");
+    assert.equal(M.scrubExtent([], null), null);
+});
+
+test("scrubTo: dragging the box scrolls time, and never past the ends", () => {
+    const extent = { from: 0, to: 10_000 };
+    const win = { from: 7000, to: 10_000 };   // 3s wide
+    // Centred where you dropped it, same width — the box scrolls, it does not zoom.
+    const mid = M.scrubTo(extent, win, 0.5);
+    assert.deepEqual(mid, { from: 3500, to: 6500 });
+    assert.equal(mid.to - mid.from, 3000, "the duration is preserved");
+    // Past either end it parks against it rather than scrolling into time nothing was measured in.
+    assert.deepEqual(M.scrubTo(extent, win, 0), { from: 0, to: 3000 });
+    assert.deepEqual(M.scrubTo(extent, win, 1), { from: 7000, to: 10_000 });
+    assert.deepEqual(M.scrubTo(extent, win, 5), { from: 7000, to: 10_000 }, "clamped, not extrapolated");
+    // A window wider than the session sits over all of it rather than being squeezed into it.
+    assert.deepEqual(M.scrubTo(extent, { from: -5000, to: 30_000 }, 0.2), { from: 0, to: 10_000 });
+});
