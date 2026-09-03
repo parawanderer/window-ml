@@ -190,3 +190,19 @@ test("eventsFrom: a delegated sub-call is its own span, parented to the step tha
     assert.equal(sub.cost.inTokens, 700, "and it carries its own cost, not the driver's");
     assert.deepEqual(sub.ref, { hash: "r", seq: 2 }, "clicking it opens the step it belongs to");
 });
+
+test("eventsFrom: a run starts when it STARTED, so it contains its own first call", () => {
+    const evs = M.eventsFrom([{
+        hash: "r", model: "gemma4:31b", createdTs: 1000, lastTs: 40_000,
+        // One step, finishing at 30s: 20s of it was waiting for the model to load.
+        steps: [{ seq: 1, ts: 30_000, tool: "exec", toolMs: 500,
+                  usage: usage(10, 10, { genMs: 2000, loadMs: 20_000 }) }],
+    }]);
+    const run = evs.find((e) => e.kind === "run");
+    const load = evs.find((e) => e.kind === "load");
+    // A step's timestamp is when it FINISHED. Measured from steps alone the run would begin at 30s — after
+    // its own first model call, with the load it waited through sitting outside it.
+    assert.equal(run.t, 1000, "the run begins when the agent started");
+    assert.equal(run.until, 40_000);
+    assert.ok(load.t >= run.t && (load.until ?? 0) <= run.until, "…so the load it caused is INSIDE it");
+});

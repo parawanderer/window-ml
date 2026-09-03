@@ -352,3 +352,18 @@ test("timedText: the export marks the day change too", async () => {
         "00:00:01  after",
     ], "the divider lands between the days");
 });
+
+// The resource chart's crosshair label is shown at the resolution a PIXEL affords. Over five minutes of
+// history a pixel is worth the better part of a second, so millisecond digits would move faster than the
+// pointer can mean anything by them; zoomed into a few seconds they are the whole point. (This is the
+// pointer's resolution, not the data's: the chart samples on a 2s poll, so a crosshair between two samples
+// is interpolated — event times, which come from real timings, are exact and shown to the ms in their own tip.)
+test("clockAt: milliseconds only when a pixel is worth a few of them", async () => {
+    const { clockAt } = await import("../sidebar/timestamps.ts");
+    const t = new Date("2026-09-03T14:15:16.789").getTime();
+    assert.equal(clockAt(t, 750), "14:15:16", "5 minutes across a panel — seconds");
+    assert.equal(clockAt(t, 25), "14:15:16.789", "zoomed to seconds — milliseconds mean something");
+    // No idea → the coarse label. Implying precision is the failure mode here, not lacking it.
+    assert.equal(clockAt(t, Infinity), "14:15:16");
+    assert.equal(clockAt(t, 0), "14:15:16");
+});

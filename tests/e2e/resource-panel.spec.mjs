@@ -842,3 +842,62 @@ test("resource panel: drag selects a range, mirrored across every track, Esc lea
         await fake.stop();
     }
 });
+
+// Grafana's crosshair: hovering any plot draws a line in EVERY track at the same instant, labelled with the
+// time. Reading one pool against another at a given moment is the whole reason these are small multiples,
+// and doing it by eye across three plots is exactly what a shared line removes.
+test("resource panel: the crosshair is mirrored across tracks and names the instant", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        await seedStacked(ext);
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-track").count(), { timeout: 20000 }).toBe(3);
+        await sleep(7000);
+
+        // Park the pointer off the chart first: opening the panel leaves it wherever the last click was, which
+        // may well be over a plot.
+        const plot = await frame.locator(".rc-plot").first().boundingBox();
+        const head0 = await frame.locator(".vram-head").boundingBox();
+        await page.mouse.move(head0.x + head0.width / 2, head0.y + head0.height / 2);
+        await sleep(250);
+        expect(await frame.locator(".rc-cross").count(), "nothing until you hover").toBe(0);
+        await page.mouse.move(plot.x + plot.width * 0.4, plot.y + plot.height / 2);
+        await sleep(250);
+
+        const lines = await frame.locator(".rc-cross").evaluateAll((els) => els.map((e) => {
+            const r = e.getBoundingClientRect(), p = e.parentElement.getBoundingClientRect();
+            return { frac: (r.x - p.x) / p.width, label: e.textContent.trim() };
+        }));
+        expect(lines.length, "one line per track").toBe(3);
+        for (const l of lines) expect(Math.abs(l.frac - 0.4), "at the same instant in each").toBeLessThan(0.03);
+        // The time is the point: a line with no label says where, not when. Milliseconds appear only when a
+        // pixel is worth a few of them — this window is seconds wide, so they do (clockAt).
+        for (const l of lines) expect(l.label, `labelled (${JSON.stringify(lines)})`).toMatch(/^\d{2}:\d{2}:\d{2}(\.\d{3})?$/);
+        // And they all name the SAME instant — three plots disagreeing about the moment would be worse than none.
+        expect(new Set(lines.map((l) => l.label)).size).toBe(1);
+
+        // It follows the pointer, and leaves with it.
+        await page.mouse.move(plot.x + plot.width * 0.8, plot.y + plot.height / 2);
+        await sleep(250);
+        const moved = await frame.locator(".rc-cross").first().evaluate((e) => {
+            const r = e.getBoundingClientRect(), p = e.parentElement.getBoundingClientRect();
+            return (r.x - p.x) / p.width;
+        });
+        expect(Math.abs(moved - 0.8)).toBeLessThan(0.03);
+        // Off the chart entirely — onto the panel header, which is inside the same frame.
+        const head = await frame.locator(".vram-head").boundingBox();
+        await page.mouse.move(head.x + head.width / 2, head.y + head.height / 2);
+        await sleep(300);
+        expect(await frame.locator(".rc-cross").count(), "the line leaves with the pointer").toBe(0);
+    } finally {
+        await ext.close();
+        await fake.stop();
+    }
+});

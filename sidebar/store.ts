@@ -97,6 +97,10 @@ export const vramH = signal(0);   // px; 0 = size to content (the default)
 export const zoomRange = signal<{ from: number; to: number } | null>(null);
 /** The drag in progress, as fractions of the plot's width, so every track can mirror it live. */
 export const brush = signal<{ from: number; to: number } | null>(null);
+/** Where the pointer is on the time axis, for the crosshair every track draws. `frac` positions it, `t` is
+ *  the moment it names — one signal, so the line appears on all the graphs at once and they cannot disagree
+ *  about which instant is being pointed at. */
+export const crosshair = signal<{ frac: number; t: number | null; msPerPx?: number } | null>(null);
 export const resWindowS = signal(RESWIN_DEFAULT);  // seconds of history the resource chart shows (Settings → Appearance)
 export const outMaxH = signal(OUTMAX_DEFAULT); // max height of a tool output cell (Settings → Appearance); 0 = uncapped
 export const config = signal<MlConfig>(DEFAULT_CONFIG);   // live mirror of chrome.storage.sync

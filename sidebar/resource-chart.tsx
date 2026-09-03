@@ -12,13 +12,14 @@
 import { useMemo, useRef, useState, useLayoutEffect } from "preact/hooks";
 import {
     deviceBands, hostBands, ceilingsFor, segments, formatBytes, formatShare, percentOf, isCpuResident,
-    placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, type ResourceEvent, type EventPlacement,
+    placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, MIN_EV_SPAN, type ResourceEvent, type EventPlacement,
     OTHER_BAND_NOTE, DRIVER_BAND_LABEL,
     presetsFor,
     type ResourceSample, type Band, type Capacity, type TrackDef,
 } from "../resource-model";
 import { colorFor, poolColor, hoverModel, poolHover, poolFacts, ModelFacts, CostFacts, VRAM_POLL_MS } from "./vram";
-import { loadedModels, resWindowS, view, zoomRange, brush } from "./store";
+import { loadedModels, resWindowS, view, zoomRange, brush, crosshair } from "./store";
+import { clockAt } from "./timestamps";
 import { scrollToStepSeq } from "./answer-render";
 import { useTipPlacement } from "./use-tip";
 import { signal } from "@preact/signals";
@@ -166,8 +167,8 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
             </div>
             <div class="rc-plot"
                 onPointerDown={startBrush(runs)}
-                onPointerMove={trackCursor(scope)}
-                onPointerLeave={() => { hoverAt.value = null; hoverModel.value = null; eventHover.value = null; }}>
+                onPointerMove={(e: PointerEvent) => { trackCursor(scope)(e); trackCrosshair(runs)(e); }}
+                onPointerLeave={() => { hoverAt.value = null; hoverModel.value = null; eventHover.value = null; crosshair.value = null; }}>
                 {runs.map((run, i) => (
                     <div class="rc-seg" key={i} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
                         <StackedArea frames={run.map(bandsOf)} ceiling={ceiling} hidden={hidden} scope={scope} />
@@ -186,6 +187,7 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
                     </div>
                 ))}
                 <BrushOverlay />
+                <Crosshair />
                 {soft ? <div class="rc-soft" style={{ bottom: `${Math.min(100, (soft.bytes / ceiling) * 100)}%` }}
                     title={soft.label} /> : null}
                 <BandTip bands={bands} history={samples.map(bandsOf)} ceiling={ceiling} scope={scope} />
@@ -391,9 +393,10 @@ function OverlayView({ def, samples, latest, hidden }: { def: TrackDef; samples:
             </div>
             <div class="rc-plot"
                 onPointerDown={startBrush(runs)}
-                onPointerMove={trackCursor("overlay")}
-                onPointerLeave={() => { hoverAt.value = null; leavePool(); }}>
+                onPointerMove={(e: PointerEvent) => { trackCursor("overlay")(e); trackCrosshair(runs)(e); }}
+                onPointerLeave={() => { hoverAt.value = null; leavePool(); crosshair.value = null; }}>
                 <BrushOverlay />
+                <Crosshair />
                 <PoolTip latest={latest} />
                 {runs.map((run, ri) => (
                     <div class="rc-seg" key={ri} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
@@ -465,6 +468,15 @@ function OverlayView({ def, samples, latest, hidden }: { def: TrackDef; samples:
  *  to arrive is not the model working, so it must not look like a solid block of its time — but it IS that
  *  model's wait, so the colour stays. (A plain model-coloured bar is what the inline colouring made of it,
  *  which is exactly the confusion the stripes exist to prevent.) */
+/** A phase's swatch, matching its stripe in the bar exactly — so the tooltip's sections and the block's parts
+ *  are visibly the same three things, rather than a list you have to map onto a picture yourself. */
+const phaseFill = (kind: string, model?: string): string => {
+    const base = model ? colorFor(model) : "var(--accent)";
+    return kind === "model" ? base
+        : kind === "wait" ? "color-mix(in srgb, var(--fg-faint) 45%, transparent)"
+        : `color-mix(in srgb, ${base} 38%, transparent)`;
+};
+
 const loadStripes = (model?: string): string => {
     const c = model ? colorFor(model) : "var(--warn, #f59e0b)";
     return `repeating-linear-gradient(45deg, ${c} 0 3px, var(--panel) 3px 8px)`;
@@ -472,10 +484,7 @@ const loadStripes = (model?: string): string => {
 
 function phaseGradient(phases: { kind: string; until: number }[], from: number, total: number, model?: string): string {
     const base = model ? colorFor(model) : "var(--accent)";
-    // The wait is a hollow neutral — a person deciding is not work, and it must not read as any model's time.
-    const fill = (kind: string) => (kind === "model" ? base
-        : kind === "wait" ? "color-mix(in srgb, var(--fg-faint) 45%, transparent)"
-        : `color-mix(in srgb, ${base} 38%, transparent)`);
+    const fill = (kind: string) => phaseFill(kind, model);
     const stops: string[] = [];
     let at = 0;
     for (const ph of phases) {
@@ -485,6 +494,34 @@ function phaseGradient(phases: { kind: string; until: number }[], from: number, 
     }
     return `linear-gradient(to right, ${stops.join(", ")})`;
 }
+
+/** The crosshair, mirrored into every track: a line where the pointer is, and the instant it names. Reading
+ *  one pool against another at a given moment is the whole reason these are small multiples, and doing it by
+ *  eye across three plots is exactly what a shared line removes. */
+function Crosshair() {
+    const c = crosshair.value;
+    if (!c) return null;
+    // Past the middle the label would run off the right edge, so it hangs on the other side of the line.
+    const flip = c.frac > 0.72;
+    return (
+        <div class="rc-cross" style={{ left: `${c.frac * 100}%` }}>
+            {c.t != null ? <span class={`rc-cross-t${flip ? " flip" : ""}`}>{clockAt(c.t, c.msPerPx ?? Infinity)}</span> : null}
+        </div>
+    );
+}
+
+/** Track the pointer along the time axis. The fraction positions the line; the TIME comes from the same
+ *  segmented mapping the brush uses, because the axis is not linear and a label read off the pixels would
+ *  name the wrong instant. */
+const trackCrosshair = (runs: ResourceSample[][]) => (e: PointerEvent) => {
+    const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const frac = Math.min(1, Math.max(0, (e.clientX - box.left) / Math.max(1, box.width)));
+    // How much time ONE PIXEL is worth here, which is what decides whether milliseconds mean anything in the
+    // label: zoomed into ten seconds they do, over five minutes of history they are noise.
+    const first = runs[0]?.[0]?.t, last = runs.at(-1)?.at(-1)?.t;
+    const msPerPx = first != null && last != null && box.width > 0 ? (last - first) / box.width : Infinity;
+    crosshair.value = { frac, t: timeAtFraction(runs, frac), msPerPx };
+};
 
 /** The selection, mirrored. Every track draws the same fractions, so a drag on ONE plot is visibly a drag on
  *  the whole chart — the ranges only mean anything compared across pools. */
@@ -546,35 +583,49 @@ function EventTip({ scope }: { scope: string }) {
     const phases = (e.phases || []).map((ph, i) => ({ ...ph, from: i ? e.phases![i - 1].until : e.t }));
     const first = phases[0];
     const nameFor = (kind: string) => (kind === "model" ? e.model || "model" : kind === "wait" ? "waiting for approval" : e.tool || "tool");
+    // A run span has no phases and no cost of its own — it is the CONTAINER. Saying "click to open this step"
+    // under it was wrong twice over: it is not a step, and its ref carries no seq to scroll to.
+    const isRun = e.kind === "run";
     return (
         <div class="rc-tip rc-tip-event" role="tooltip" ref={ref} style={style}>
             {/* Each phase, in the order it happened: the model, the human deciding, then the tool. */}
             <div class="rc-tip-line">
-                {/* The model's own colour, the same dot its row and its bands carry — the tip should be
-                    identifiable at a glance from the list below it. A tool phase gets none: a tool is not a
-                    model and giving it a dot would imply one. */}
-                {e.model && (!first || first.kind === "model") ? <i class="rc-tip-dot" style={{ background: colorFor(e.model) }} /> : null}
-                <span class="rc-tip-name">{first ? nameFor(first.kind) : e.model || e.label}</span>
+                {/* Each section carries the swatch of the stripe it describes, so the tooltip and the block
+                    read as the same three things. */}
+                {first || e.model ? <i class="rc-tip-dot" style={{ background: phaseFill(first?.kind ?? "model", e.model) }} /> : null}
+                <span class="rc-tip-name">{first ? nameFor(first.kind) : isRun ? <>run · {e.model || "agent"}</> : e.model || e.label}</span>
                 <span class="rc-tip-size">{first ? ms(first.until - first.from) : ms(dur)}</span></div>
+            {/* The figures as BADGES, the same little blocks the model rows use. Loose text on two dim lines
+                gave no way to tell which numbers belonged together; a chip is visibly one fact. */}
             {e.cost ? (
-                <div class="rc-tip-line rc-tip-dim">
-                    <span>{e.cost.inTokens.toLocaleString()} in / {e.cost.outTokens.toLocaleString()} out</span>
-                    <span>{e.cost.tokPerSec != null ? `${e.cost.tokPerSec.toFixed(1)} tok/s` : ""}</span>
+                <div class="rc-tip-chips">
+                    <span class="rc-chip">{e.cost.inTokens.toLocaleString()} in</span>
+                    <span class="rc-chip">{e.cost.outTokens.toLocaleString()} out</span>
+                    {e.cost.tokPerSec != null ? <span class="rc-chip">{e.cost.tokPerSec.toFixed(1)} tok/s</span> : null}
+                    {/* A rate's basis is part of the rate: generation-only and wall-clock measure different
+                        things, and the bare number would imply a precision it doesn't have. */}
+                    {e.cost.genBasis ? <span class="rc-chip rc-chip-dim">{e.cost.genBasis === "eval" ? "generation only" : e.cost.genBasis === "wall" ? "incl. network" : "mixed timing"}</span> : null}
                 </div>
             ) : null}
-            {/* A rate's basis is part of the rate: generation-only and wall-clock are different measurements. */}
-            {e.cost?.genBasis ? <div class="rc-tip-line rc-tip-dim"><span>{e.cost.genBasis === "eval" ? "generation only" : e.cost.genBasis === "wall" ? "incl. network + queue" : "mixed timing"}</span></div> : null}
             {phases.slice(1).map((ph, i) => (
                 <>
                     <div class="rc-tip-rule" key={`r${i}`} />
-                    <div class={`rc-tip-line${ph.kind === "wait" ? " rc-tip-dim" : ""}`} key={i}>
-                        <span class="rc-tip-name">{nameFor(ph.kind)}</span>
+                    <div class="rc-tip-line" key={i}>
+                        <i class="rc-tip-dot" style={{ background: phaseFill(ph.kind, e.model) }} />
+                        {/* A bare "exec" reads as a label of unknown kind. Saying what it IS — a tool call,
+                            with the name as code — is the difference between a word and an identifier. */}
+                        <span class="rc-tip-name">{ph.kind === "tool"
+                            ? <>tool call: <code>{e.tool}</code></>
+                            : nameFor(ph.kind)}</span>
                         <span class="rc-tip-size">{ms(ph.until - ph.from)}</span></div>
                 </>
             ))}
-            {e.kind === "load" ? <div class="rc-tip-line rc-tip-dim"><span>the model wasn't resident — this is the wait before a token</span></div> : null}
-            {h.p.clipped ? <div class="rc-tip-line rc-tip-dim"><span>continues past what was measured</span></div> : null}
-            {e.ref ? <div class="rc-tip-line rc-tip-dim"><span>click to open this step</span></div> : null}
+            {/* A rule before the notes: they are about the BLOCK, and without it "click to open this step"
+                read as part of whatever phase happened to be last. */}
+            {(e.kind === "load" || h.p.clipped || e.ref) ? <div class="rc-tip-rule" /> : null}
+            {e.kind === "load" ? <div class="rc-tip-note">the model wasn't resident — this is the wait before a token</div> : null}
+            {h.p.clipped ? <div class="rc-tip-note">continues past what was measured</div> : null}
+            {e.ref ? <div class="rc-tip-note">click to open this {e.ref.seq != null ? "step" : "run"}</div> : null}
         </div>
     );
 }
@@ -608,7 +659,7 @@ function EventLane({ samples, events }: { samples: ResourceSample[]; events: Res
                         <div class="rc-lane-seg" key={i} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
                             {row.filter((p) => p.run === i).map((p, k) => {
                                 const e = p.event;
-                                const w = Math.max(0.6, (p.to - p.from) * 100);
+                                const w = Math.max(MIN_EV_SPAN * 100, (p.to - p.from) * 100);   // packed at this width too
                                 // A composite span is ONE block whose parts are different KINDS of time: the
                                 // model, the human deciding, the tool. Drawn as gradient stops rather than
                                 // separate elements, so it still hovers and clicks as the single step it is.

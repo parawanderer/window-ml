@@ -15,7 +15,11 @@ export interface UsageSource {
     hash: string;
     /** The model the run/chat resolved to — the fallback owner of any usage a turn doesn't name itself. */
     model?: string | null;
+    /** When the run STARTED and when it was last heard from. A step's timestamp is when it FINISHED, so a run
+     *  measured from its steps alone begins after its own first model call — and the load that call waited
+     *  through then sits outside the run that caused it. */
     createdTs?: number;
+    lastTs?: number;
     turns?: { ts?: number; model?: string | null; usage?: TokenUsage | null }[];
     steps?: {
         seq?: number; step?: number; ts?: number;
@@ -157,10 +161,19 @@ export function eventsFrom(sessions: readonly UsageSource[]): ResourceEvent[] {
         }
         // The run itself, so a generation can be read against the turn that contained it.
         const stamps = steps.map((st) => st.ts).filter((t): t is number => !!t);
+        // Bounded by the session's own start/end where they exist: a step stamp is an END, so the run would
+        // otherwise begin after its first call finished.
+        if (s.createdTs) stamps.push(s.createdTs);
+        if (s.lastTs) stamps.push(s.lastTs);
         if (stamps.length > 1) {
+            // The run's own cost is the sum of its steps — a container bar with nothing to read is just a
+            // shape, and this is the one place the whole turn's spend is visible against the memory trace.
+            const runCost = runStats(steps.map((st) => st.usage));
             out.push({ t: Math.min(...stamps), until: Math.max(...stamps), kind: "run",
                        label: s.model ? `run · ${s.model}` : "run", model: s.model || undefined,
-                       id: runId, ref: { hash: s.hash } });
+                       id: runId, ref: { hash: s.hash },
+                       ...(runCost.calls ? { cost: { inTokens: runCost.inTokens, outTokens: runCost.outTokens,
+                                                     tokPerSec: runCost.tokPerSec, genBasis: runCost.genBasis } } : {}) });
         }
     }
     return out.sort((a, b) => a.t - b.t);

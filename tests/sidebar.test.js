@@ -6804,7 +6804,9 @@ test("event lane: spans render, a tool step is one phased block, and clicking op
     assert.ok(tip, "the lane has its own tooltip");
     assert.match(tip.textContent, /qwen3\.8:27b/, "the model half");
     assert.match(tip.textContent, /python_exec/, "…then the tool half");
-    assert.match(tip.textContent, /500 in \/ 60 out/, "what the model call cost");
+    // The figures are BADGES — one chip per fact, so it is visible which numbers belong together.
+    const chips = [...tip.querySelectorAll(".rc-chip")].map((c) => c.textContent);
+    assert.ok(chips.includes("500 in") && chips.includes("60 out"), `what the model call cost (${chips.join(", ")})`);
     assert.ok(tip.querySelector(".rc-tip-rule"), "the two halves are separated, not run together");
 
     // Clicking goes to the step that produced it.
@@ -6967,8 +6969,14 @@ test("event lane: the tooltip's model line carries the model's colour", async ()
     // The SAME colour the row below uses — a different one would be a second colour scheme for one model.
     const rowDot = w.shadow.querySelector(".vram-row .vram-dot");
     assert.equal(dot.getAttribute("style"), rowDot.getAttribute("style"));
-    // The tool half is not a model, so it gets no dot: one would imply it is.
-    assert.equal(tip.querySelectorAll(".rc-tip-dot").length, 1);
+    // Every phase carries the swatch of the stripe it describes, so the tooltip's sections and the block's
+    // parts read as the same things rather than a list you map onto a picture yourself.
+    const dots = [...tip.querySelectorAll(".rc-tip-dot")];
+    assert.equal(dots.length, 2, "one per phase: the model, then the tool");
+    assert.notEqual(dots[0].getAttribute("style"), dots[1].getAttribute("style"), "…and they differ, as the stripes do");
+    // The tool phase says WHAT it is: a bare "exec" reads as a label of unknown kind.
+    assert.match(tip.textContent, /tool call:/);
+    assert.ok(tip.querySelector("code"), "…with the tool name as an identifier");
 });
 
 // The pool tip lists what is resident, so each MODEL there carries its own dot — the same colour its row

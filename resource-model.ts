@@ -629,10 +629,17 @@ export function lineageOf(events: readonly ResourceEvent[], id: string | undefin
  *
  *  which falls out of "first free row, earliest start first" without special-casing nesting: the longest span
  *  starts first, so it takes the top row and everything inside it goes below. */
-export function laneRows(placed: EventPlacement[], maxRows = 4): EventPlacement[][] {
+/** The smallest fraction of the plot a bar is DRAWN at. A shorter event is widened to this so it stays
+ *  visible — which means packing has to reserve the same width, or two events that do not overlap in time
+ *  are drawn overlapping and read as one longer bar. */
+export const MIN_EV_SPAN = 0.006;
+
+export function laneRows(placed: EventPlacement[], maxRows = 4, minSpan = MIN_EV_SPAN): EventPlacement[][] {
     const rows: EventPlacement[][] = [];
     const ends: number[] = [];   // per row: [run, to] as a comparable number
-    const key = (p: EventPlacement, edge: "from" | "to") => p.run + p[edge];
+    // The END is the DRAWN end, not the true one: see MIN_EV_SPAN.
+    const key = (p: EventPlacement, edge: "from" | "to") =>
+        p.run + (edge === "from" ? p.from : Math.max(p.to, p.from + minSpan));
     for (const p of [...placed].sort((a, b) => key(a, "from") - key(b, "from"))) {
         let r = ends.findIndex((e) => e <= key(p, "from"));
         if (r < 0) {

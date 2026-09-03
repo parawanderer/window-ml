@@ -640,3 +640,14 @@ test("timeAtFraction: the inverse of placeEvents, across weighted segments", () 
     assert.equal(M.timeAtFraction(runs, 9), 11_000);
     assert.equal(M.timeAtFraction([], 0.5), null, "no samples → no answer, not a guess");
 });
+
+// A very short event is WIDENED so it stays visible, so packing has to reserve the same width — otherwise
+// two events that don't overlap in time are drawn overlapping, which reads as one longer bar.
+test("laneRows: packs at the DRAWN width, not the true one", () => {
+    const p = (label, from, to) => ({ event: { t: from, until: to, kind: "embed", label }, run: 0, from, to, clipped: false });
+    // Two instants a hair apart: true extents don't overlap, drawn ones do.
+    const rows = M.laneRows([p("a", 0.30, 0.3005), p("b", 0.302, 0.3025)]);
+    assert.equal(rows.length, 2, "they need separate rows because they are DRAWN overlapping");
+    // Far enough apart to share a row.
+    assert.equal(M.laneRows([p("a", 0.1, 0.11), p("b", 0.5, 0.51)]).length, 1);
+});
