@@ -115,6 +115,15 @@ export interface BenchSpec<D extends Dimensions = Dimensions> {
     timeoutMs?: number;
     /** approval policy for every run in the sweep */
     approve?: ApprovePolicy;
+    /**
+     * When to snapshot the BROWSER — every open page, a screenshot plus the DOM.
+     *
+     * `"failure"` (default) fires only when a run errored, timed out or threw. That is the case where the
+     * transcript simply stops and the page holds the explanation: a modal nobody dismissed, a login wall,
+     * a spinner that never resolved. `"always"` also captures a clean run, for comparing what two models
+     * were LOOKING at rather than what they did. `"never"` for a long sweep where disk beats diagnosis.
+     */
+    capture?: "failure" | "always" | "never";
     /** the axes of the matrix */
     dimensions: D;
     /** the tasks each combination is run against */
