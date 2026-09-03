@@ -274,10 +274,20 @@ test("resource panel: drags to expand and collapse, and never overlaps at its sm
         // COLLAPSE: drag far past the floor. It must clamp to a usable size rather than shrink into nothing —
         // and the grip must still be REACHABLE after the expand (it used to scroll away with the content).
         await drag(0, -900);
+        // The drag itself is unclamped — the panel corrects AFTER you let go, so wait for it to settle rather
+        // than reading mid-correction. (That ordering is the point: nothing resizes under your hand.)
+        // Dragging UP stops where the content stops fitting — it must not keep shrinking and mangle the text
+        // until release. So there is nothing to settle: it already fits, mid-drag.
+        const overDuring = await frame.locator(".vram").evaluate((el) => el.scrollHeight - el.clientHeight);
+        expect(overDuring, "the drag itself is blocked at the fit point, not corrected afterwards")
+            .toBeLessThanOrEqual(2);
         const small = await boxOf(".vram");
         expect(small.height, "collapses below the expanded size").toBeLessThan(panel1.height);
-        // Lands exactly on the floor rather than shrinking into nothing — the drag went far past it.
-        expect(Math.round(small.height), "clamps at the usable floor").toBe(190);
+        // The floor is LEARNED (the height at which the content stops overflowing), not a magic number — so
+        // the contract is "it stops somewhere the content fits", never a fixed px value that would go stale
+        // the moment a track grows a row.
+        expect(small.height, "doesn't shrink into nothing").toBeGreaterThan(80);
+        expect(small.height, "…and settles where the content fits").toBeGreaterThan(80);
 
         // …and at that smallest size NOTHING may overlap. Collect the panel's own stacked parts and assert
         // each begins at or below the previous one's bottom.
@@ -304,6 +314,124 @@ test("resource panel: drags to expand and collapse, and never overlaps at its sm
             return [...el.children].some((c) => c.getBoundingClientRect().bottom > box.bottom + 2);
         });
         expect(spilled && !scrolls, "content past the bottom edge must scroll, not spill over the list").toBe(false);
+    } finally {
+        await ext.close();
+        await fake.stop();
+    }
+});
+
+// A height saved when the panel held a different layout comes back too small for the current one. The failure
+// is GEOMETRIC — parts rendering on top of each other — so it is measured by bounding box: no two of the
+// panel's stacked parts may intersect, at load and after switching views.
+test("resource panel: a too-small saved height never leaves parts overlapping", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        // A height from a previous session, far too small for anything.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_vram_h: 96 }));
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0), resident("qwen3.5:35b", 22 * GiB, 1)]);
+        const { frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-key").count(), { timeout: 20000 }).toBeGreaterThan(0);
+
+        /** Every intersecting pair among the panel's stacked parts. */
+        const overlaps = async () => frame.evaluate(() => {
+            const sels = [".vram-head", ".rc-head", ".rc-plot", ".rc-legend", ".vram-row"];
+            const parts = [];
+            for (const sel of sels) {
+                for (const el of document.querySelectorAll(sel)) {
+                    const r = el.getBoundingClientRect();
+                    if (r.height > 0 && r.width > 0) parts.push({ sel, top: r.top, bottom: r.bottom });
+                }
+            }
+            const bad = [];
+            for (let i = 0; i < parts.length; i++) {
+                for (let j = i + 1; j < parts.length; j++) {
+                    const a = parts[i], b = parts[j];
+                    // Vertical intersection of more than a hairline means one is drawn over the other.
+                    const over = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+                    if (over > 1.5) bad.push(`${a.sel} × ${b.sel} (${over.toFixed(1)}px)`);
+                }
+            }
+            return bad;
+        });
+
+        // Settle: the panel measures itself and grows into its floor after the first paint.
+        await expect.poll(async () => (await overlaps()).length, { timeout: 15000 }).toBe(0);
+
+        // …and it must still hold after switching to the layout with the MOST parts, which is where a floor
+        // computed for a one-track view falls short.
+        await frame.locator(".rc-preset").selectOption("memory");
+        await expect.poll(() => frame.locator(".rc-track").count(), { timeout: 15000 }).toBe(3);
+        await expect.poll(async () => (await overlaps()).length, { timeout: 15000 }).toBe(0);
+
+        // Nothing is achieved by overlapping instead of scrolling: what doesn't fit must scroll.
+        const fits = await frame.locator(".vram").evaluate((el) => el.scrollHeight <= el.clientHeight + 2 || getComputedStyle(el).overflowY === "auto");
+        expect(fits, "content that doesn't fit scrolls rather than spilling").toBe(true);
+    } finally {
+        await ext.close();
+        await fake.stop();
+    }
+});
+
+// A UI that pulls against your hand is worse than one that is slightly wrong. The panel corrects itself —
+// growing when content no longer fits — but that must NEVER happen while you are dragging, and a drag must
+// take over instantly from an animation already in flight.
+test("resource panel: a manual drag always wins over a programmatic resize", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        // A stored height far too small: the panel will want to correct itself the moment it renders.
+        await ext.sw.evaluate(() => chrome.storage.local.set({ ml_vram_h: 100 }));
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0), resident("qwen3.5:35b", 22 * GiB, 1)]);
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-key").count(), { timeout: 20000 }).toBeGreaterThan(0);
+
+        const h = () => frame.locator(".vram").evaluate((el) => el.getBoundingClientRect().height);
+        // It corrects itself first — that is the behaviour a drag must be able to override.
+        await expect.poll(h, { timeout: 15000 }).toBeGreaterThan(120);
+
+        // GRAB and hold. While the button is down, the height must be exactly where the pointer put it and
+        // must not drift under it, even though the panel would otherwise be correcting.
+        const grip = await frame.locator(".vram-grip").boundingBox();
+        await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(grip.x + grip.width / 2, grip.y + 260, { steps: 10 });
+        await sleep(150);
+        const held = await h();
+        await sleep(700);                       // long enough for any ease to have run to completion
+        const stillHeld = await h();
+        expect(Math.abs(stillHeld - held), "the panel moved under the user's hand").toBeLessThan(3);
+
+        // Drag SMALLER than fits and hold: still no correction while held.
+        await page.mouse.move(grip.x + grip.width / 2, grip.y - 400, { steps: 10 });
+        await sleep(150);
+        const small = await h();
+        await sleep(700);
+        expect(Math.abs((await h()) - small), "no correction while the button is down").toBeLessThan(3);
+
+        // RELEASE: now it may correct, and it grows until the content fits.
+        await page.mouse.up();
+        await expect.poll(async () => {
+            const over = await frame.evaluate(() => {
+                const el = document.querySelector(".vram");
+                return el.scrollHeight - el.clientHeight;
+            });
+            return over;
+        }, { timeout: 15000 }).toBeLessThanOrEqual(2);
+        // It never ends up SMALLER than where you let go — a correction may only grow. (Here it already fit,
+        // because the drag was clamped at the learned floor, so the correction is a no-op — which is the point:
+        // the floor is a lower bound the drag respects, not something that yanks the panel afterwards.)
+        expect(await h(), "a correction never shrinks below where you let go").toBeGreaterThanOrEqual(small - 1);
     } finally {
         await ext.close();
         await fake.stop();

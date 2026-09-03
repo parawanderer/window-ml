@@ -278,20 +278,47 @@ export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean 
  *  a row that shifts the layout under the cursor. */
 export const poolHover = signal<{ name: string; ceiling: number; used: number; consumers: { label: string; bytes: number }[] } | null>(null);
 
-// The smallest the panel may be dragged. It is NOT a constant — a one-track Overview and a three-track
-// GPU + RAM need very different room — and it is MEASURED rather than estimated: hardcoded part heights are a
-// guess that font scale, a wrapped model name, or a new row in a track would each break silently, and the
-// symptom is content overlapping, which nobody notices until they see it.
+// The smallest the panel may be dragged is LEARNED, not computed. Summing the parts is a guess about which
+// parts exist and how tall they are — it goes stale the moment a track grows a row, the font scale changes, or
+// a model name wraps, and the symptom is content rendering on top of itself.
 //
-// What is measured: every part of the panel that has a fixed size (the header, each track's name row and
-// legend, the model rows, the grip). What is added: the plot's own floor per track, since the plot is the
-// flexible part and is the thing that must not be squeezed to nothing.
+// Instead the panel measures its own SHORTFALL: `scrollHeight - clientHeight` is exactly how much content does
+// not fit, whatever that content turns out to be. Grow by that much and the overlap is gone by construction.
+// The result is remembered as the floor for this layout, and dragging can only EXPAND past it.
 export const PLOT_MIN_H = 44;   // matches .rc-plot's min-height
 
-/** Animate the panel to a height with a cubic ease. Used when the size changes on its OWN — switching views
- *  raises the floor, a restored layout needs more room — where a snap reads as a glitch. A live DRAG never
+/** True while the user's hand is on the grip. Every programmatic resize stands down until it is false: the
+ *  panel may correct itself before or after a drag, never during one. */
+export const dragging = signal(false);
+/** When the drag last produced an event. A release can be MISSED entirely — the pointer leaves the frame, the
+ *  window loses focus, the OS takes the gesture — and a `dragging` flag stuck true silently disables every
+ *  later self-correction. So a drag that has gone quiet is treated as over. */
+export let lastDragAt = 0;
+export const DRAG_IDLE_MS = 900;
+export const noteDrag = (t = Date.now()): void => { lastDragAt = t; };
+/** Has the drag gone quiet long enough to be considered finished? */
+export const dragStale = (now = Date.now()): boolean => dragging.value && now - lastDragAt > DRAG_IDLE_MS;
+
+/** How much taller the panel must be for its content to fit. 0 when it already does. */
+export function shortfall(el: HTMLElement | null): number {
+    if (!el) return 0;
+    return Math.max(0, el.scrollHeight - el.clientHeight);
+}
+
+/** What the panel currently looks like, so a learned floor is discarded when the layout changes rather than
+ *  ratcheting upward forever — switching to a smaller view must be able to shrink again. */
+export const layoutKey = (tracks: number, rows: number): string => `${tracks}:${rows}`;
+
+/** Animate the panel to a height with a cubic ease. Used when the size changes on its OWN — the panel
+ *  correcting an overlap, or a layout needing more room — where a snap reads as a glitch. A live DRAG never
  *  uses this: dragging must track the pointer exactly, and easing it would feel like lag. */
+// Bumped by cancelEase(); an in-flight animation checks it every frame and gives up if it is no longer the
+// current one. The user's hand ALWAYS wins — a panel that keeps animating while you drag it is fighting you.
+let easeToken = 0;
+export function cancelEase(): void { easeToken++; }
+
 export function easeVramH(to: number, ms = 220): void {
+    const mine = ++easeToken;
     const from = vramH.value;
     if (!from || Math.abs(to - from) < 2) { vramH.value = to; return; }
     // ONE clock: rAF timestamps share performance.now()'s origin, and Date.now() does not — mixing them makes
@@ -300,8 +327,9 @@ export function easeVramH(to: number, ms = 220): void {
     const t0 = clock();
     const raf = typeof requestAnimationFrame === "function" ? requestAnimationFrame : (f: FrameRequestCallback) => setTimeout(() => f(clock()), 16) as unknown as number;
     const step = (now: number) => {
-        // Clamped at BOTH ends: a frame timestamped before t0 (a clock that isn't the one we sampled) must
-        // never drive the panel outside the range it was asked to move through.
+        // Clamped at BOTH ends: a frame timestamped before t0 must never drive the panel outside the range it
+        // was asked to move through.
+        if (mine !== easeToken) return;   // something else took over — a drag, or a newer correction
         const t = Math.max(0, Math.min(1, (now - t0) / ms));
         // cubic ease-out: fast to start, settling gently — a resize that decelerates reads as the panel
         // finding its size rather than jumping to it.
@@ -309,19 +337,6 @@ export function easeVramH(to: number, ms = 220): void {
         if (t < 1) raf(step);
     };
     raf(step);
-}
-
-/** Measure the floor from what is actually rendered. `el` is the panel. */
-export function measureMinH(el: HTMLElement | null): number {
-    if (!el) return 0;
-    const px = (sel: string) => [...el.querySelectorAll(sel)]
-        .reduce((n, x) => n + (x as HTMLElement).getBoundingClientRect().height, 0);
-    const style = getComputedStyle(el);
-    const chrome = parseFloat(style.paddingTop || "0") + parseFloat(style.paddingBottom || "0");
-    const tracks = el.querySelectorAll(".rc-track").length;
-    // Everything that does not flex, plus a plot floor for each track.
-    return Math.ceil(chrome + px(".vram-head") + px(".rc-head") + px(".rc-legend") + px(".vram-row")
-        + px(".vram-grip") + Math.max(1, tracks) * PLOT_MIN_H);
 }
 
 /** Pointer position for the model-row tip, in viewport coords (the row is not inside the plot). */
@@ -480,17 +495,32 @@ export function VramPanel() {
     const [, tick] = useState(0);
     useEffect(() => { const id = setInterval(() => tick(t => t + 1), 1000); return () => clearInterval(id); }, []);
     useEffect(() => { pollPs(); fetchCapacity(); }, []);   // immediate poll + the denominator
-    // The floor for whatever is on screen RIGHT NOW, measured after each render — switching views changes the
-    // track count, and the floor has to follow or the new view renders on top of itself.
+    // The learned floor for the layout on screen. Keyed by the layout, so switching to a smaller view drops
+    // the old floor instead of ratcheting the panel permanently taller.
     const panelRef = useRef<HTMLDivElement>(null);
-    const [minH, setMinH] = useState(0);
-    useEffect(() => {
-        const m = measureMinH(panelRef.current);
-        if (m && Math.abs(m - minH) > 1) setMinH(m);
-        // Switching views changes the track count and so the floor. If the current height no longer fits,
-        // grow into the new one — eased, because the change wasn't the user's hand on the grip.
-        if (m && vramH.value && vramH.value < m) easeVramH(m);
-    });
+    const [learned, setLearned] = useState<{ key: string; h: number }>({ key: "", h: 0 });
+    const key = layoutKey(layout.value?.length || 1, (loaded || []).length);
+    const minH = learned.key === key ? learned.h : 0;
+    /** Grow until the content fits, and remember that height as this layout's floor. Called after a render,
+     *  and again when a DRAG ENDS — `dragging` is only read inside effects, so flipping it back triggers no
+     *  re-render, and without this explicit call the panel stayed wherever the drag left it, overlapping. */
+    const correct = () => {
+        const el = panelRef.current;
+        if (!el || !vramH.value) return;
+        // A drag that has gone quiet is over, whether or not its release ever reached us.
+        if (dragging.value && dragStale()) dragging.value = false;
+        if (dragging.value) return;
+        const need = shortfall(el);
+        if (need <= 0) return;
+        // Exactly what does not fit — so the result is where the overlap stops, which IS the minimum here.
+        const floor = Math.ceil(el.getBoundingClientRect().height + need);
+        setLearned({ key, h: floor });
+        easeVramH(floor);
+    };
+    useEffect(correct);
+    // The panel already ticks once a second (the TTL countdowns); that is also what notices a drag whose
+    // release never arrived, so a missed pointerup self-heals within a second instead of wedging the panel.
+    useEffect(() => { const id = setInterval(correct, 1000); return () => clearInterval(id); }, [key]);
     // The newest sample, with capacity filled in — what the picker and editor describe.
     const latestSample = (() => {
         const last = resourceHistory.value.at(-1);
@@ -513,19 +543,62 @@ export function VramPanel() {
     // depends on what you are doing, so it is a drag rather than a setting, and it is remembered.
     const onGrab = (e: PointerEvent) => {
         e.preventDefault();
-        const el = (e.currentTarget as HTMLElement).parentElement as HTMLElement;
+        // Take over from anything the panel was doing to itself.
+        cancelEase();
+        dragging.value = true;
+        noteDrag();
+        const grip = e.currentTarget as HTMLElement;
+        const el = grip.parentElement as HTMLElement;
+        // CAPTURE the pointer: without it, releasing outside the frame (drag to the top of the screen and let
+        // go) delivers the pointerup somewhere else, the drag never ends, and every later self-correction is
+        // blocked by a `dragging` flag that is stuck true. Capture guarantees we hear the release.
+        try { grip.setPointerCapture(e.pointerId); } catch { /* older engines: the window listeners still cover the common case */ }
         const startY = e.clientY, startH = el.getBoundingClientRect().height;
         // 80px was not a usable panel: the header, a plot at its own floor, and the model rows cannot fit, so
         // the content spilled over the session list below. The floor is what the panel actually needs to hold
         // its parts.
-        const move = (ev: PointerEvent) => { vramH.value = Math.max(minH, startH + (ev.clientY - startY)); };
+        // NOT clamped to a remembered floor: a stale floor is exactly the thing that fights you. The drag goes
+        // where you put it, and the panel corrects once you let go — and learns the floor from that.
+        let liveFloor = Infinity;   // the smallest height seen this drag where the content still fits
+        const move = (ev: PointerEvent) => {
+            noteDrag();
+            // The button came up somewhere we never heard about — end the drag rather than staying "held".
+            if (ev.buttons === 0) return up();
+            const want = Math.max(1, startH + (ev.clientY - startY));
+            // Apply IMPERATIVELY first: the signal's render is async, so reading scrollHeight after it would
+            // measure the previous height. Writing the style forces layout now, which is what makes a live
+            // floor possible at all.
+            el.style.height = `${want}px`;
+            const need = shortfall(el);
+            // Dragging UP is blocked at the point the content stops fitting — otherwise the panel keeps
+            // shrinking and the text mangles until release. Dragging DOWN is never restricted.
+            const h = need > 0 ? want + need : want;
+            if (need <= 0) liveFloor = Math.min(liveFloor, h);
+            el.style.height = `${h}px`;
+            vramH.value = h;
+        };
         const up = () => {
             window.removeEventListener("pointermove", move);
             window.removeEventListener("pointerup", up);
+            window.removeEventListener("pointercancel", up);
+            grip.removeEventListener("pointerup", up);
+            grip.removeEventListener("pointercancel", up);
+            try { grip.releasePointerCapture(e.pointerId); } catch { /* already released */ }
+            // The floor is learned from the drag itself: the smallest height passed through where everything
+            // still fitted. Nothing to compute from parts, and nothing to discover after the fact.
+            if (Number.isFinite(liveFloor)) setLearned({ key, h: Math.ceil(liveFloor) });
+            dragging.value = false;
+            // Let the browser lay out at the released height first, then measure and correct.
+            requestAnimationFrame(() => requestAnimationFrame(correct));
             try { chrome.storage.local.set({ [VRAMH_KEY]: vramH.value }); } catch { /* opaque origin */ }
         };
         window.addEventListener("pointermove", move);
         window.addEventListener("pointerup", up);
+        // A cancelled gesture (the pointer leaves the surface, or the OS takes over) must end the drag too —
+        // otherwise it is indistinguishable from a drag that never finished.
+        window.addEventListener("pointercancel", up);
+        grip.addEventListener("pointerup", up);
+        grip.addEventListener("pointercancel", up);
     };
 
     // Total is the CURRENT visible resident set — read it straight from `loaded`,

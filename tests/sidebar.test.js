@@ -5934,7 +5934,7 @@ test("resource panel: drag the bottom edge to resize, and the height is remember
     assert.ok(grip, "the boundary with the session list is a handle");
 
     grip.dispatchEvent(new w.window.PointerEvent("pointerdown", { bubbles: true, clientY: 300 }));
-    w.window.dispatchEvent(new w.window.PointerEvent("pointermove", { clientY: 420 }));
+    w.window.dispatchEvent(new w.window.PointerEvent("pointermove", { clientY: 420, buttons: 1 }));
     await w.flush();
     const h = parseFloat(w.shadow.querySelector(".vram").style.height);
     assert.ok(h > 0, "dragging down sets a height");
@@ -5946,7 +5946,7 @@ test("resource panel: drag the bottom edge to resize, and the height is remember
     // A height can't be dragged to nothing. The floor is MEASURED from the rendered parts, and jsdom has no
     // layout — so this only checks the clamp holds at all; the real geometry is the e2e's job.
     grip.dispatchEvent(new w.window.PointerEvent("pointerdown", { bubbles: true, clientY: 300 }));
-    w.window.dispatchEvent(new w.window.PointerEvent("pointermove", { clientY: -5000 }));
+    w.window.dispatchEvent(new w.window.PointerEvent("pointermove", { clientY: -5000, buttons: 1 }));
     await w.flush();
     assert.ok(parseFloat(w.shadow.querySelector(".vram").style.height) > 0, "clamped, never dragged past zero");
     w.window.dispatchEvent(new w.window.PointerEvent("pointerup", {}));
@@ -6011,10 +6011,11 @@ test("resource panel: the chart flexes into the dragged height", async () => {
     for (const sel of [".rc", ".rc-track", ".rc-plot"]) {
         assert.match(rule(sel), /flex:\s*1 1/, `${sel} must grow with the panel`);
     }
-    // min-height:0 at each level, or a flex child refuses to shrink below its content and pushes the panel
-    // taller than you dragged it.
-    assert.match(rule(".rc"), /min-height:\s*0/);
-    assert.match(rule(".rc-track"), /min-height:\s*0/);
+    // …but they must NOT be allowed to shrink below their content: `min-height: 0` let the chart be squeezed
+    // past what fits, and a flex item smaller than its content overflows and renders ON TOP of the rows below.
+    // Too little room is the panel's problem to solve by scrolling.
+    assert.ok(!/min-height:\s*0/.test(rule(".rc")), ".rc must not shrink past its content");
+    assert.ok(!/min-height:\s*0/.test(rule(".rc-track")), ".rc-track must not shrink past its content");
     // The plot keeps a floor so it can't collapse to nothing.
     assert.match(rule(".rc-plot"), /min-height:\s*\d+px/);
     assert.match(css, /\.vram\[style\*="height"\] \.rc-plot \{ height: auto/, "a dragged height releases the fixed one");
@@ -6049,24 +6050,21 @@ test("resource panel: badge tooltips aren't clipped by the resizable panel", asy
 
 // A panel dragged too small cannot fit its header, plot and rows — the content spilled over the session list
 // below rather than shrinking. Both the drag and the stylesheet enforce a floor.
-test("resource panel: the floor is MEASURED from what is rendered, not guessed", async () => {
-    const { measureMinH, PLOT_MIN_H } = await import("../sidebar/vram.tsx");
-    // A hardcoded floor is a guess that font scale, a wrapped model name, or a new row in a track each break
-    // silently — and the symptom is overlapping content. So it is measured from the real parts.
-    const fake = (counts) => ({
-        querySelectorAll: (sel) => Array.from({ length: counts[sel] ?? 0 }, () => ({ getBoundingClientRect: () => ({ height: 20 }) })),
-    });
-    const el = fake({ ".vram-head": 1, ".rc-head": 3, ".rc-legend": 3, ".vram-row": 2, ".vram-grip": 1, ".rc-track": 3 });
-    globalThis.getComputedStyle = () => ({ paddingTop: "8px", paddingBottom: "10px" });
-    const three = measureMinH(el);
-    // 18 padding + 10 parts x 20 + 3 plots at their floor.
-    assert.equal(three, 18 + 10 * 20 + 3 * PLOT_MIN_H);
+test("resource panel: the floor is LEARNED from the actual shortfall, not summed from parts", async () => {
+    const { shortfall, layoutKey } = await import("../sidebar/vram.tsx");
+    // Summing the parts is a guess about which parts exist and how tall they are — it goes stale the moment a
+    // track grows a row or a name wraps, and the symptom is content rendering on top of itself. The shortfall
+    // is what does not fit, whatever that content turns out to be.
+    assert.equal(shortfall({ scrollHeight: 400, clientHeight: 300 }), 100, "exactly the height that is missing");
+    assert.equal(shortfall({ scrollHeight: 300, clientHeight: 300 }), 0, "it fits → nothing to learn");
+    assert.equal(shortfall({ scrollHeight: 200, clientHeight: 300 }), 0, "never negative — room to spare is not a floor");
+    assert.equal(shortfall(null), 0);
 
-    // One track needs materially less — which is the whole point: a floor sized for Overview would let
-    // GPU + RAM render on top of itself, and one sized for GPU + RAM would strand Overview at a huge minimum.
-    const one = measureMinH(fake({ ".vram-head": 1, ".rc-head": 1, ".rc-legend": 1, ".vram-row": 2, ".vram-grip": 1, ".rc-track": 1 }));
-    assert.ok(one < three, `one track needs less room than three (${one} < ${three})`);
-    assert.equal(measureMinH(null), 0, "nothing rendered yet → no floor to enforce");
+    // The floor is keyed by the LAYOUT, so switching to a smaller view can shrink again rather than the panel
+    // ratcheting permanently taller.
+    assert.equal(layoutKey(3, 2), layoutKey(3, 2));
+    assert.notEqual(layoutKey(3, 2), layoutKey(1, 2), "fewer tracks is a different floor");
+    assert.notEqual(layoutKey(3, 2), layoutKey(3, 5), "…and so is a longer model list");
 });
 
 // The reported bug: the model quoted an output inline AND designated the same one with the `answer` tool, so

@@ -117,10 +117,13 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* The chart FILLS whatever height the panel has been dragged to: the grip resizes .vram, and without this
    chain the extra space just went empty below a fixed-height plot. min-height:0 at each level so a flex child
    is allowed to shrink below its content instead of forcing the panel taller. */
-.rc { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 2px; flex: 1 1 auto; min-height: 0; }
+/* Grows into a dragged height, but NEVER shrinks below its content: `min-height: 0` let it be squeezed past
+   what fits, and a flex item smaller than its content overflows its box and lands ON TOP of the rows below.
+   Too little room is the panel's problem to solve by scrolling, not the chart's by overlapping. */
+.rc { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 2px; flex: 1 1 auto; }
 /* One rule, not two: a second `.rc-track {` later in the file made the first look like it carried the flex
    sizing when it didn't. `position: relative` so a tip escaping the plot is still contained by something sane. */
-.rc-track { position: relative; display: flex; flex-direction: column; gap: 2px; flex: 1 1 0; min-height: 0; }
+.rc-track { position: relative; display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; }
 .rc-head { display: flex; align-items: baseline; gap: 6px; font-size: 0.8em; }
 .rc-name { color: var(--fg-dim); }
 .rc-total { color: var(--fg); font-variant-numeric: tabular-nums; cursor: help; }
