@@ -186,10 +186,18 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* ONE look for every cursor-following tip (chart band, pool line, model row). Sized off the ROOT (--fs), not
    the parent's em: these are anchored in rows and legends of different sizes, and an em would make otherwise
    identical popups render at different sizes a centimetre apart. Same reasoning as .tt-pop. */
-.rc-tip { position: absolute; top: 4px; left: 4px; z-index: 5; display: flex; align-items: center; white-space: nowrap;
-          gap: 5px; padding: 4px 7px; font-size: calc(var(--fs) * 0.8); line-height: 1.4; pointer-events: none;
+/* FIXED, not absolute: these follow the cursor and are positioned against the viewport (see tip.ts), so they
+   flip at the window's edges instead of being trapped inside a 9px lane row — which is how one ended up
+   sitting directly under the pointer. */
+.rc-tip { position: fixed; top: 4px; left: 4px; z-index: 30; display: flex; align-items: center; flex-wrap: wrap;
+          max-width: min(300px, 92vw);
+          gap: 4px 5px; padding: 4px 7px; font-size: calc(var(--fs) * 0.8); line-height: 1.4; pointer-events: none;
           color: var(--fg); background: var(--panel); border: 1px solid var(--border); border-radius: 5px;
           box-shadow: 0 2px 10px rgba(0,0,0,.35); }
+/* The model's own name and figure lead; its badges (context window, TTL, embed) and its cost each take a line
+   of their own, so a long name can't push the number that matters off the edge. */
+.rc-tip-name { white-space: nowrap; }
+.rc-tip-facts { flex-basis: 100%; display: flex; align-items: center; gap: 4px; }
 .rc-tip-dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
 /* The pool tip is a small table, not a one-liner: how big, how much is used, and BY WHAT — the consumer list
    is repeated here so the answer is complete without looking away from the cursor. */
@@ -200,10 +208,15 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
    weights, same order) so a bar sits under the moment it describes — the axis is segmented, not linear. */
 /* An instant, ruled THROUGH the plot: an eviction's meaning is where the curve steps, so it belongs on the
    memory trace rather than in the lane below. Wider than it looks — the hit area is what you aim at. */
-.rc-rule { position: absolute; top: 0; bottom: 0; width: 7px; margin-left: -3px; cursor: help;
-           background: linear-gradient(to right, transparent 3px, var(--fg-dim) 3px 4px, transparent 4px); }
-.rc-rule:hover { background: linear-gradient(to right, transparent 2px, var(--fg) 2px 5px, transparent 5px); }
-.rc-rule-evict { background: linear-gradient(to right, transparent 3px, var(--danger, #ef4444) 3px 4px, transparent 4px); opacity: .8; }
+/* DASHED, not solid: an instant is an annotation on the trace, and a solid rule reads as part of the chart
+   (a ceiling, an axis) rather than as something that happened. The wide box is the hit area; the visible line
+   is the ::before inside it. */
+.rc-rule { position: absolute; top: 0; bottom: 0; width: 9px; margin-left: -4px; cursor: help; }
+.rc-rule::before { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 1px;
+    background: repeating-linear-gradient(to bottom, var(--fg-dim) 0 3px, transparent 3px 6px); }
+.rc-rule-evict::before { background: repeating-linear-gradient(to bottom, var(--danger, #ef4444) 0 3px, transparent 3px 6px); opacity: .85; }
+/* Hovered — in THIS plot or any other, since one eviction is drawn in all of them. */
+.rc-rule:hover::before, .rc-rule.hot::before { width: 3px; left: 3px; opacity: 1; }
 .rc-lane { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 0; }
 .rc-lane-row { position: relative; display: flex; gap: 3px; height: 9px; }
 .rc-lane-seg { position: relative; min-width: 2px; height: 100%; }

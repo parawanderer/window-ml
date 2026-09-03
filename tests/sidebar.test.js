@@ -6859,6 +6859,20 @@ test("event lane: an eviction rules through the plot and names itself", async ()
     assert.match(rule.getAttribute("style") || "", /left:/);
     assert.ok(rule.closest(".rc-seg"), "…inside the run that contains it");
 
+    // The SAME eviction is drawn in every track (it happened to the machine, not to one card), so hovering it
+    // in one plot must thicken it in all of them — otherwise three copies of one moment read as three moments.
+    const allRules = [...w.shadow.querySelectorAll(".rc-rule-evict")];
+    assert.ok(allRules.length >= 2, "every track draws the moment");
+    assert.equal(w.shadow.querySelectorAll(".rc-rule.hot").length, 0, "nothing highlighted at rest");
+    rule.dispatchEvent(new w.window.MouseEvent("pointerenter", { bubbles: true }));
+    await w.flush();
+    assert.equal(w.shadow.querySelectorAll(".rc-rule.hot").length, allRules.length,
+        "hovering one highlights the same moment everywhere");
+    // A dashed rule, not solid: a solid line reads as part of the chart (a ceiling, an axis) rather than as
+    // something that happened.
+    const css = require("node:fs").readFileSync("sidebar/sidebar.css", "utf8");
+    assert.match(css.slice(css.indexOf(".rc-rule::before")), /repeating-linear-gradient/);
+
     rule.dispatchEvent(new w.window.MouseEvent("pointerenter", { bubbles: true }));
     w.shadow.querySelector(".rc-plot").dispatchEvent(new w.window.MouseEvent("pointermove", { bubbles: true }));
     await w.flush();
