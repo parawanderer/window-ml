@@ -236,7 +236,10 @@ export function placementOf(m: ModelResidency, cap: Capacity | null, fmt: (b: nu
     const parts: string[] = [];
     let unknown = false;
     for (const [id, bytes] of Object.entries(m.perDevice)) {
-        const name = cap?.devices.find((d) => d.id === id)?.name ?? `device ${id}`;
+        const dev = cap?.devices.find((d) => d.id === id);
+        // A card can stop being reported while a model is still resident on it (a driver crash, a reset). The
+        // honest label says the device is gone rather than printing an id as though it were still there.
+        const name = dev?.name ?? (cap ? `device ${id} (no longer reported)` : `device ${id}`);
         if (bytes == null) { unknown = true; parts.push(`${name} (unknown)`); continue; }
         if (bytes > 0) parts.push(`${name} ${fmt(bytes)}`);
     }
@@ -490,7 +493,34 @@ export function boxSignature(cap: Capacity | null): string {
     return `${devs}#${cap.host.totalBytes}`;
 }
 
-/** Samples that describe the CURRENT box. Anything recorded against a different machine is dropped rather than
+/** How the box CHANGED between two capacity readings. Not every difference is a different machine, and the
+ *  distinction decides whether the history survives:
+ *
+ *  - `same` — nothing that matters moved.
+ *  - `shrank` — a device stopped being reported. A card can vanish mid-session (a driver crash, a GPU reset,
+ *    a container losing its device), and that is an INCIDENT: the samples leading up to it are the most
+ *    valuable ones on screen, so they are kept and the vanished pool's series simply ends.
+ *  - `grew` — a device appeared. Nothing measured before is invalidated by that either.
+ *  - `switched` — a device's identity changed under the same id (different name, runner or total), or the
+ *    host total changed. THAT is another machine, and its readings cannot be redrawn against this one's
+ *    ceilings: an 18 GiB band against a 12 GiB pool clips to full height and looks like a measurement.
+ */
+export function boxChange(prev: Capacity | null, next: Capacity | null): "same" | "grew" | "shrank" | "switched" {
+    if (!prev || !next) return "same";                       // nothing to compare against
+    if (prev.host.totalBytes !== next.host.totalBytes) return "switched";
+    const ident = (d: DeviceCapacity) => `${d.name}:${d.runner}:${d.totalBytes}`;
+    const before = new Map(prev.devices.map((d) => [d.id, ident(d)]));
+    const after = new Map(next.devices.map((d) => [d.id, ident(d)]));
+    for (const [id, sig] of after) if (before.has(id) && before.get(id) !== sig) return "switched";
+    const gone = [...before.keys()].filter((id) => !after.has(id));
+    const added = [...after.keys()].filter((id) => !before.has(id));
+    if (gone.length && added.length) return "switched";      // one replaced by another is a different box
+    if (gone.length) return "shrank";
+    if (added.length) return "grew";
+    return "same";
+}
+
+/** Samples that describe the CURRENT box./** Samples that describe the CURRENT box. Anything recorded against a different machine is dropped rather than
  *  redrawn against a ceiling it was never measured under.
  *
  *  `switched` is the case that bites: a sample taken before capacity was first known carries none, and a
@@ -499,9 +529,11 @@ export function boxSignature(cap: Capacity | null): string {
  *  CUDA server, backfilled with a Mac's 16 GiB pool, clips to the full height and looks like a measurement. So
  *  when the box changed, an unattributable sample is dropped rather than assumed to belong to either machine. */
 export function sameBoxOnly(samples: ResourceSample[], cap: Capacity | null, switched = false): ResourceSample[] {
-    const sig = boxSignature(cap);
-    if (!sig) return samples;   // capacity unknown → nothing to contradict; keep what we have
-    return samples.filter((s) => (s.capacity ? boxSignature(s.capacity) === sig : !switched));
+    if (!cap) return samples;   // capacity unknown → nothing to contradict; keep what we have
+    // Compared through boxChange, not by whole signature: a sample taken while a now-vanished card was still
+    // reported describes THIS machine, one card ago. Comparing signatures dropped exactly the samples that
+    // show what happened just before the card went — the reason to look at all.
+    return samples.filter((s) => (s.capacity ? boxChange(s.capacity, cap) !== "switched" : !switched));
 }
 
 // --- history ------------------------------------------------------------------------------------------------

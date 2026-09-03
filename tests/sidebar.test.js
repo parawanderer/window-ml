@@ -7140,3 +7140,57 @@ test("event lane: the tooltip separates generation time from the network", async
     // against a log needs the clock.
     assert.match(tip.querySelector(".rc-tip-when").textContent, /\d{2}:\d{2}:\d{2}\.\d{3} → \d{2}:\d{2}:\d{2}\.\d{3}/);
 });
+
+// A GPU disappearing mid-session: a driver crash, a GPU reset, a container losing its device. Three things
+// must hold — the panel re-shapes without breaking, the history leading up to it SURVIVES (that trace is the
+// incident), and a model still resident on the missing card is not quietly dropped or mislabelled.
+test("a card that vanishes mid-session: re-shape, keep the trace, say what happened", async () => {
+    const GB = 1024 ** 3;
+    let cards = 2;
+    const info = () => ({ compute: {
+        system_compute: { cpu_cores: 32, total_memory: 130142785536, free_memory: 40 * GB },
+        supported_gpus: [0, 1].slice(0, cards).map((i) => ({
+            gpu_id: String(i), name: `CUDA${i}`, runner: "CUDA",
+            total_memory: 101972967424, physical_memory: 102641958912, free_memory: 80 * GB })),
+    } });
+    // The model lives on the card that is about to disappear.
+    const onCard1 = [{ model: "orphan:22b", vramGB: 22, vramBytes: 22 * GB, sizeBytes: 22 * GB, contextLength: 262144,
+                       gpus: [{ id: "1", runner: "CUDA", vramBytes: 22 * GB }], expiresAt: null }];
+    const w = await loadSidebarWorld({ vram: onCard1, info, ...STACKED_LAYOUT });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    for (let i = 0; i < 25 && w.shadow.querySelectorAll(".rc-track").length < 3; i++) {
+        await w.flush(); await new Promise((r) => setTimeout(r, 150));
+    }
+    assert.deepEqual([...w.shadow.querySelectorAll(".rc-name")].map((e) => e.textContent),
+        ["CUDA0", "CUDA1", "System RAM"]);
+    // Sample for long enough to have a trace worth keeping.
+    for (let i = 0; i < 10; i++) { await w.flush(); await new Promise((r) => setTimeout(r, 150)); }
+    const segsBefore = w.shadow.querySelectorAll(".rc-seg").length;
+    assert.ok(segsBefore > 0, "there is a trace on screen");
+
+    // CUDA1 stops being reported. The panel must re-fetch capacity to notice, which happens on reopen.
+    cards = 1;
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    for (let i = 0; i < 40 && w.shadow.querySelectorAll(".rc-name").length !== 2; i++) {
+        await w.flush(); await new Promise((r) => setTimeout(r, 150));
+    }
+
+    // 1. It re-shapes to the devices that are actually there — a track for a device that is gone would render
+    //    nothing and look broken.
+    assert.deepEqual([...w.shadow.querySelectorAll(".rc-name")].map((e) => e.textContent), ["CUDA0", "System RAM"]);
+    // 2. The trace survives: a vanished card is an incident, not a different machine, and the samples leading
+    //    up to it are the most valuable ones on screen.
+    assert.ok(w.shadow.querySelectorAll(".rc-seg").length > 0, "the history was not wiped");
+    // 3. The model is still listed — ps still reports it resident — and its placement is honest about the
+    //    card being gone rather than printing a bare device id.
+    const row = [...w.shadow.querySelectorAll(".vram-row")].find((r) => r.textContent.includes("orphan:22b"));
+    assert.ok(row, "a model resident on the missing card is not quietly dropped");
+    row.dispatchEvent(new w.window.MouseEvent("pointerenter", {}));
+    row.dispatchEvent(new w.window.MouseEvent("pointermove", { clientX: 40, clientY: 40 }));
+    await w.flush();
+    assert.match(w.shadow.querySelector(".vram-rowtip").textContent, /no longer reported/,
+        "…and the tooltip says the card it was on is gone");
+});

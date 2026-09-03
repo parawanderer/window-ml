@@ -651,3 +651,49 @@ test("laneRows: packs at the DRAWN width, not the true one", () => {
     // Far enough apart to share a row.
     assert.equal(M.laneRows([p("a", 0.1, 0.11), p("b", 0.5, 0.51)]).length, 1);
 });
+
+// A card can stop being reported mid-session: a driver crash, a GPU reset, a container losing its device.
+// That is an INCIDENT, and the samples leading up to it are the most valuable ones on screen — so it must not
+// be treated as "a different machine", which is what drops the history.
+test("boxChange: a vanished card is not a different box", () => {
+    const box = (gpus, hostBytes = 130142785536) => M.parseInfo({ compute: {
+        system_compute: { cpu_cores: 32, total_memory: hostBytes, free_memory: 8 * GB },
+        supported_gpus: gpus,
+    } });
+    const c0 = { gpu_id: "0", name: "CUDA0", runner: "CUDA", total_memory: 25 * GB, free_memory: 6 * GB };
+    const c1 = { gpu_id: "1", name: "CUDA1", runner: "CUDA", total_memory: 25 * GB, free_memory: 20 * GB };
+
+    assert.equal(M.boxChange(box([c0, c1]), box([c0, c1])), "same", "the same devices, whatever their free memory");
+    assert.equal(M.boxChange(box([c0, c1]), box([c0])), "shrank", "a card vanished");
+    assert.equal(M.boxChange(box([c0]), box([c0, c1])), "grew", "one appeared");
+    // A device's identity changing under the same id IS other hardware, and its readings cannot be redrawn
+    // against these ceilings.
+    assert.equal(M.boxChange(box([c0]), box([{ ...c0, name: "MTL0", runner: "Metal", total_memory: 12 * GB }])), "switched");
+    assert.equal(M.boxChange(box([c0]), box([c0], 68719476736)), "switched", "…and so does the host's total");
+    // One replaced by another in the same reading is a swap, not a growth.
+    assert.equal(M.boxChange(box([c0]), box([c1])), "switched");
+    // Nothing to compare against yet → nothing to conclude.
+    assert.equal(M.boxChange(null, box([c0])), "same");
+
+    // And the SAMPLES survive a shrink: sameBoxOnly is only told to drop unattributable ones on a switch.
+    // And the SAMPLES survive it: one taken while the vanished card was still reported describes THIS
+    // machine, one card ago — comparing whole signatures dropped exactly the samples showing what happened
+    // just before it went.
+    const samples = [{ t: 1, models: [], capacity: box([c0, c1]) }, { t: 2, models: [], capacity: null }];
+    assert.equal(M.sameBoxOnly(samples, box([c0]), false).length, 2, "kept: the pre-incident trace, and one that carries no capacity");
+    // A real switch still drops both — the reading and the unattributable one.
+    const metal = box([{ ...c0, name: "MTL0", runner: "Metal", total_memory: 12 * GB }], 68719476736);
+    assert.equal(M.sameBoxOnly(samples, metal, true).length, 0, "another machine's ceilings cannot redraw these");
+});
+
+test("placementOf: a model on a card that stopped being reported says so", () => {
+    const cap = M.parseInfo({ compute: {
+        system_compute: { cpu_cores: 8, total_memory: 68719476736, free_memory: 8 * GB },
+        supported_gpus: [{ gpu_id: "0", name: "CUDA0", runner: "CUDA", total_memory: 25 * GB, free_memory: 6 * GB }],
+    } });
+    // ps still reports it on device 1, which capacity no longer lists.
+    const m = M.residencyFrom({ name: "orphan:8b", size: 8 * GB, size_vram: 8 * GB, gpus: [{ gpu_id: "1", size_vram: 8 * GB }] });
+    const where = M.placementOf(m, cap, M.formatBytes);
+    assert.match(where, /no longer reported/, `honest about the missing card (${where})`);
+    assert.doesNotMatch(where, /^device 1 8/, "not a bare id printed as though the card were still there");
+});

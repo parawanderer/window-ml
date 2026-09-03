@@ -16,7 +16,7 @@ import { useTipPlacement } from "./use-tip";
 import { VRAMH_KEY, vramH, resWindowS, zoomRange } from "./store";
 import { usageByModel, eventsFrom, type UsageSource } from "./model-stats";
 import type { RunStats } from "../contract";
-import { parseInfo, holdCapacity, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, type ResourceEvent, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
+import { parseInfo, holdCapacity, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, boxChange, type ResourceEvent, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
 import { ResourceTracks } from "./resource-chart";
 import type { LoadedModel } from "../contract";
 
@@ -100,12 +100,18 @@ export function fetchCapacity(): void {
         // A SWITCH means one known box replaced by a different known box. The first fetch (unknown → known)
         // is not one: treating it as such would drop every sample taken before capacity arrived, which on a
         // fresh open is all of them — the panel would render nothing until the next poll.
-        const switched = !!capacity.value && boxSignature(next) !== boxSignature(capacity.value);
+        // Not every difference is a different machine. A card that VANISHES mid-session is an incident, and
+        // the samples leading up to it are the most valuable ones on screen — so only a genuine switch (other
+        // hardware, or a device's identity changing under the same id) drops the history.
+        const change = boxChange(capacity.value, next);
+        const switched = change === "switched";
         // On a switch, drop samples that can't be attributed to EITHER box as well — an unattributed sample is
         // backfilled with the current capacity at render, which after a switch means drawing the old machine's
         // readings against the new machine's ceiling.
-        if (switched) {
-            resourceHistory.value = sameBoxOnly(resourceHistory.value, next, true);
+        // A device set that grew or shrank still invalidates the LAYOUT — a track naming a device that is no
+        // longer there would silently render nothing — so the layout is re-derived either way.
+        if (switched || change === "shrank" || change === "grew") {
+            resourceHistory.value = sameBoxOnly(resourceHistory.value, next, switched);
             // The LAYOUT is per-box too: one naming `vram.1` is meaningless on a machine with one device, and
             // TrackView would silently drop those tracks rather than falling back to something that fits.
             // Clearing it re-runs restoreLayout against the NEW box, where presetRefusal rejects a stale saved
