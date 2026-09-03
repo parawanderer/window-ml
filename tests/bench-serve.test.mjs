@@ -69,6 +69,26 @@ test("the page is self-contained — no build step, no CDN, no dependency", asyn
     } finally { await d.stop(); }
 });
 
+test("the page's script PARSES — a blank dashboard is otherwise indistinguishable from an idle one", async () => {
+    // The page is authored inside a template literal, so an escape that is right in the SOURCE can be
+    // wrong in the OUTPUT: `class=\"live\"` unescaped to a bare quote and broke the whole script, and the
+    // page then sat on "waiting for the sweep…" forever — which is exactly what a not-yet-started sweep
+    // looks like. Checking that `EventSource(` appears in the text did not catch it, because the text was
+    // fine; the PROGRAM was not.
+    const { sweep } = await fixture();
+    const d = await startDashboard({ artifactRoot: sweep });
+    try {
+        const html = await (await fetch(`${d.url}/`)).text();
+        const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]);
+        assert.ok(scripts.length, "the page must carry a script");
+        for (const src of scripts) {
+            // Compiled, never run: it touches document/EventSource, which do not exist here. A SyntaxError
+            // throws at construction, which is the failure being guarded.
+            assert.doesNotThrow(() => new Function(src), "the page script does not parse");
+        }
+    } finally { await d.stop(); }
+});
+
 test("a late subscriber gets the CURRENT state, not an empty page", async () => {
     // A sweep runs for hours; opening the tab at hour three must not show "nothing has started".
     const { sweep } = await fixture();

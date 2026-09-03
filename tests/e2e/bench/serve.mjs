@@ -140,7 +140,9 @@ function renderRuns(runs) {
         [...dims, "task", "run", "status", "steps", "secs", "artifacts"].map((h, i) =>
             \`<th\${i === 0 ? ' class="l"' : ""}>\${esc(h)}</th>\`).join("") + "</tr></thead><tbody>" +
         runs.map((r, i) => {
-            const cls = r.state === "running" ? " class=\"live\"" : (i === nextUp ? " class=\"next\"" : "");
+            // Single quotes on purpose: this source lives inside a template literal, so a \" here would
+            // unescape to a bare quote and break the ATTRIBUTE, which is a page-wide syntax error.
+            const cls = r.state === "running" ? ' class="live"' : (i === nextUp ? ' class="next"' : "");
             const cells = [
                 ...dims.map((d) => \`<code>\${esc(r.combo[d])}</code>\`),
                 esc(r.taskId), "r" + r.repeat, outcome(r, now),
