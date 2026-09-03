@@ -83,6 +83,27 @@ await h.chat("Now explain it like I'm five");
 There is **no** root-level `/v1/chat/completions` on OpenWebUI (tested 0.9.5
 and 0.10.2) — unknown routes return the frontend HTML page.
 
+### Two features want a patched backend
+
+Everything above runs against a **stock** Ollama behind a **stock** OpenWebUI. Two
+things don't, and they degrade rather than break:
+
+- The **resource panel** and `ml.info()` read `GET /api/info` (machine capacity) and
+  `gpus[]` on `/api/ps` (which card a model is on, how a split model is divided).
+  Those come from a patched Ollama — [`parawanderer/ollama`](https://github.com/parawanderer/ollama),
+  branch `local/ps-gpu-attribution`. On stock Ollama the route isn't there, so
+  OpenWebUI answers with its SPA's HTML: `ml.info()` returns `null`, the panel says
+  **capacity unknown** and draws no ceiling, and a multi-GPU box can't attribute a
+  model to a card. A patched Ollama behind a *stock* OpenWebUI is fine — the
+  `/ollama/*` passthrough is generic.
+- `POST /api/v1/tools/id/{id}/execute` on
+  [`parawanderer/open-webui`](https://github.com/parawanderer/open-webui) (branch
+  `ml/tool-execute-endpoint`) runs a configured tool directly, so a client can drive
+  its own loop instead of handing the whole loop to a model. **Not called yet** —
+  server tools go through upstream's `tool_ids` today.
+
+Details, and exactly what each field feeds: [`docs/FORKED-BACKENDS.md`](docs/FORKED-BACKENDS.md).
+
 ### Feature support by API format
 
 The **API format** is one global switch, and two capability sets live on

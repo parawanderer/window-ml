@@ -1191,6 +1191,25 @@ BACKGROUND (`gh pr checks --watch`, ~5 minutes for a full run), read only the fa
 KNOWN-BAD failures that arrived from other branches, so a red check that is not yours is named in the PR
 body rather than chased or silently re-run.
 
+## Forked backends (two features need a patched server)
+
+Most of this runs against stock Ollama + stock OpenWebUI. Two capabilities do not, and
+**`docs/FORKED-BACKENDS.md`** is the accounting — read it before assuming a resource-panel field is
+broken:
+
+- **`GET /api/info`** (machine capacity) and **`gpus[]` on `/api/ps`** (which card a model is on, and how
+  a split is divided) come from `parawanderer/ollama`, branch `local/ps-gpu-attribution`. Stock Ollama
+  doesn't serve `/api/info` at all — OpenWebUI answers with its SPA's HTML, which is why a non-JSON body
+  is read as "unknown", never as an error. Without them `ml.info()` is `null`, the panel draws no ceiling
+  and says so, and a multi-GPU box cannot attribute a model to a card.
+- **`POST /api/v1/tools/id/{id}/execute`** comes from `parawanderer/open-webui`, branch
+  `ml/tool-execute-endpoint` — it runs the callable the chat pipeline would, so an external client can
+  drive its own loop over OpenWebUI-configured tools. **The extension does not call it yet**: server
+  tools go through upstream's `tool_ids` + `function_calling` loop (hence the `SERVER_TOOL_MODES` probe).
+
+A patched Ollama behind a STOCK OpenWebUI is fine — the `/ollama/*` passthrough is generic, so the
+OpenWebUI fork is not needed for the capacity work.
+
 ## Security invariants (don't regress these)
 
 - **Config overrides (URL/key) are accepted only from the popup.** Page-relayed
