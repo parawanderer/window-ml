@@ -14,7 +14,7 @@
 
 /** One piece of a split answer: literal markdown, or a resolved-later token reference. `embed` = image form
  *  (`![…]`, expand in place); else the link form (`[…]`, a clickable jump to the output). */
-import { TOKEN_HEX_SRC, isTokenShape } from "./token-id";
+import { TOKEN_HEX_SRC, TOOL_NAME_SRC, isTokenShape } from "./token-id";
 
 export type AnswerSegment =
     | { kind: "prose"; text: string }
@@ -27,7 +27,7 @@ export type AnswerSegment =
 // token ONLY when a caller-supplied `isAlias(name)` confirms that tool actually ran (else it's ordinary markdown,
 // left as prose — the grammar gate). A bare `@tool:`, a normal link, etc. never match. `g` for matchAll; built
 // fresh each call so no shared lastIndex state.
-const tokenLinkRe = (): RegExp => new RegExp(`(!?)\\[([^\\]]*)\\]\\(@tool:(${TOKEN_HEX_SRC}|[a-z][a-z0-9_]*)(?::(in|out))?(?:\\s*\\|\\s*([a-z][a-z0-9]*))?\\)`, "g");
+const tokenLinkRe = (): RegExp => new RegExp(`(!?)\\[([^\\]]*)\\]\\(@tool:(${TOKEN_HEX_SRC}|${TOOL_NAME_SRC})(?::(in|out))?(?:\\s*\\|\\s*([a-z][a-z0-9]*))?\\)`, "g");
 const isHex6 = (s: string): boolean => isTokenShape(s);
 
 /**

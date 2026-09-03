@@ -46,3 +46,33 @@ export function isTokenShape(s: string): boolean {
 export function isTokenValid(s: string): boolean {
     return isTokenShape(s) && s[TOKEN_PAYLOAD_LEN] === checkChar(s.slice(0, TOKEN_PAYLOAD_LEN));
 }
+
+
+// ---- the OTHER half of the namespace: tool names ----
+// A `@tool:` reference has three DISJOINT forms, and they are told apart by SHAPE alone:
+//   @tool:"a label"    quoted        -> the model's own label
+//   @tool:a1b2c3f      token-shaped  -> a minted id
+//   @tool:python_exec  bare word     -> a tool alias
+// That only works if a tool name can never be mistaken for an id. The charset does NOT give this for free:
+// `deadbee` is a perfectly good identifier AND a valid token shape. So the rule is enforced here, at the one
+// place tools are defined, rather than assumed and documented.
+
+/** The shape a tool name must have: an identifier, no spaces, not starting with a digit. Also the alias
+ *  branch of the answer grammar, so a tool that can be defined can always be cited by name. */
+export const TOOL_NAME_SRC = "[A-Za-z_][A-Za-z0-9_]*";
+
+/** Why this tool name is unusable, or null if it is fine. Returned rather than thrown so the caller can
+ *  phrase the error (`ml.defineTool` throws; a test can assert). */
+export function toolNameError(name: unknown): string | null {
+    if (typeof name !== "string" || !name) return "a tool needs a name";
+    if (!new RegExp(`^${TOOL_NAME_SRC}$`).test(name)) {
+        return `tool name ${JSON.stringify(name)} must be letters, digits and underscores only, not starting with a digit `
+            + `(it is used bare in a @tool: reference, where a space or punctuation would not parse)`;
+    }
+    // The collision the shape-based dispatch depends on not existing.
+    if (isTokenShape(name)) {
+        return `tool name ${JSON.stringify(name)} looks like a generated output id (${TOKEN_LEN} hex characters), `
+            + `so @tool:${name} would be ambiguous — rename it`;
+    }
+    return null;
+}

@@ -13,6 +13,7 @@
 // Pure: no DOM, no chrome, no I/O.
 
 import { runPipe, splitStages } from "./text-pipe";
+import { isTokenShape } from "./token-id";
 
 /** The tool name, shared by the loop (which answers it) and the toolset builder (which advertises it). */
 export const DEREF_TOOL = "dereference";
@@ -197,14 +198,46 @@ export class TokenStore {
     }
 
     /** Resolve `@tool:<id>`, a bare id, or a tool-name alias. Null when nothing matches. */
-    get(ref: string): TokenValue | null {
-        const id = normRef(ref);
-        const exact = this.byId.get(id);
-        if (exact) { this.used.set(exact.id, ++this.clock); return exact; }
+    /** The LATEST value whose own label matches, or null. Latest-wins mirrors the tool-name alias ("that
+     *  tool's most recent call"), so the two named forms behave the same way when reused. */
+    private byLabel(label: string): TokenValue | null {
+        const want = labelKey(label);
+        if (!want) return null;
+        const hits = [...this.byId.values()].filter((v) => v.label && labelKey(v.label) === want);
+        return hits.length ? hits[hits.length - 1] : null;
+    }
+
+    /** Resolve `@tool:<id>`, a bare id, a tool-name alias, or the model's own LABEL — quoted
+     *  (`@tool:"the sales table"`, unambiguous) or, as a last resort, bare. Null when nothing matches.
+     *
+     *  A label is the most reliable handle a model has, because it CHOSE it at the moment it knew what the
+     *  output was for: it is recalled rather than transcribed, so it degrades gracefully where a hex id
+     *  degrades into garbage. Before this, a labelled output could be named in a fault's candidate list but
+     *  not actually resolved — the store knew the name and still refused it.
+     *
+     *  Order matters. A QUOTED ref is a label lookup and nothing else. An UNQUOTED one tries id, then tool
+     *  name, then label — label last, so a label can never shadow a real id or a tool alias. */
+    get(ref: string): TokenValue | null { return this.resolveRef(ref).value; }
+
+    /** {@link get}, plus HOW it resolved — so a caller can hand back the canonical handle. An unquoted label
+     *  works but teaches nothing; the reply says what the quoted form would have been, the same way reading
+     *  through a tool-name alias hands over the stable id. */
+    resolveRef(ref: string): { value: TokenValue | null; via: "id" | "tool" | "label" } {
+        const { label, id } = parseRef(ref);
+        const touch = (v: TokenValue | null): TokenValue | null => { if (v) this.used.set(v.id, ++this.clock); return v; };
+        // THREE DISJOINT FORMS, dispatched on SHAPE rather than tried in order:
+        //   @tool:"a label"   quoted     -> the model's own label
+        //   @tool:a1b2c3f     token-shaped -> a minted id
+        //   @tool:python_exec bare       -> a tool alias, that tool's latest call
+        // Dispatching on form rather than falling through means each spelling has exactly ONE meaning, so
+        // there is no precedence rule to teach and nothing can shadow anything. It also keeps a corrupted id
+        // in the id branch — it MISSES and faults, instead of being retried as a tool or a label and possibly
+        // resolving to something unrelated. (Rests on ids and tool names being distinguishable by shape: no
+        // tool is named as seven hex characters. Asserted in tests, not assumed.)
+        if (label != null) return { value: touch(this.byLabel(label)), via: "label" };
+        if (isTokenShape(id)) return { value: touch(this.byId.get(id) ?? null), via: "id" };
         const ofTool = [...this.byId.values()].filter((v) => v.tool === id);
-        const latest = ofTool.length ? ofTool[ofTool.length - 1] : null;
-        if (latest) this.used.set(latest.id, ++this.clock);
-        return latest;
+        return { value: touch(ofTool.length ? ofTool[ofTool.length - 1] : null), via: "tool" };
     }
 
     /** The captured pointers most similar to a reference that didn't resolve. Models hallucinate token-SHAPED
@@ -249,6 +282,12 @@ export const nameOf = (v: TokenValue): string => v.label ? `${v.tool}: "${v.labe
 
 export function memoryFault(ref: string, near: TokenValue[], currentStep: number): string {
     const head = `MemoryFault: pointer '@tool:${normRef(ref)}' does not exist.`;
+    // The commonest near-miss now: the model wrote its own LABEL without quotes. A bare ref is a TOOL alias,
+    // so it misses — but the store knows that label, and saying so in the canonical form teaches the syntax
+    // in the same step it recovers. (Resolving it silently would work once and teach nothing.)
+    const bare = normRef(ref);
+    const labelled = near.find((v) => v.label && v.label.trim().toLowerCase().replace(/\s+/g, " ") === bare.trim().toLowerCase().replace(/\s+/g, " "));
+    if (labelled) return `${head}\nThat is a LABEL, and a label must be quoted: read it with @tool:${JSON.stringify(labelled.label)} (an unquoted @tool:<name> means a TOOL's latest call).`;
     if (!near.length) return `${head}\nNothing has been captured in this run yet, so there is no pointer to read. Run a tool first.`;
     const q = normRef(ref).toLowerCase();
     const rows = near.map((v) => {
@@ -274,6 +313,29 @@ function distanceTo(q: string, v: TokenValue): number {
 }
 
 const normRef = (ref: string): string => String(ref).trim().replace(/^@tool:/, "").replace(/:(in|out)$/, "");
+
+/** A QUOTED reference — `@tool:"the sales table"` — names the model's own LABEL rather than an id or a tool.
+ *  The quotes earn their place twice: they delimit a label containing spaces, and they make the lookup
+ *  UNAMBIGUOUS, so a label that happens to read like a tool name or an id can never shadow one. Both quote
+ *  styles are accepted because models mix them. */
+const QUOTED = /^["'](.*)["']$/s;
+
+/** Undo the escaping inside a quoted label: `\"` is a literal quote, `\\` a literal backslash. A label is
+ *  free text the model wrote, so it can contain the delimiter; escaping is what makes the form closed rather
+ *  than merely usually-right. Anything else after a backslash is left alone (a Windows path in a label should
+ *  survive being read back). */
+const unescapeLabel = (s: string): string => s.replace(/\\(["'\\])/g, "$1");
+
+/** Compare labels forgivingly — case and inner whitespace are not what the model is trying to communicate,
+ *  and the entire reason labels exist is that they are RECALLED rather than transcribed. */
+const labelKey = (s: string): string => s.trim().toLowerCase().replace(/\s+/g, " ");
+
+/** Split a reference into "this is a label" vs "this is an id or a tool name". */
+function parseRef(ref: string): { label?: string; id: string } {
+    const bare = normRef(ref);
+    const q = QUOTED.exec(bare);
+    return q ? { label: unescapeLabel(q[1]), id: "" } : { id: bare };
+}
 
 /** Levenshtein distance — tiny inputs (a 6-hex id or a tool name), so the simple row form is fine. */
 export function editDistance(a: string, b: string): number {

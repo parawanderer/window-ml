@@ -49,6 +49,7 @@ import { suspiciousArgsWarning, suspiciousChars } from "./security";
 import { emitDebug, debugId, shortHash, sessionRegistry, agentRegistry, handleRegistry, enterAgentRun, exitAgentRun, resetSubcallUsage, subcallUsage } from "./bus";
 import { makeDomTools, buildDereferenceTool } from "./tools";
 import { pipeStages, TokenStore } from "./token-pipe";
+import { toolNameError } from "./token-id";
 import { hideSidebarForShot, makeBackgroundTaskPromise, makeChatRequest, makeStreamingTaskPromise } from "./bridge";
 import { validateArgs, validateExtend } from "./validate";
 import { renderArgs, logStep, defaultApprove, normalizeApproval, formatReadonlyExec } from "./approval";
@@ -396,6 +397,12 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             if (!name || typeof run !== "function") {
                 throw new Error("ml.defineTool needs a name and a run(args) function");
             }
+            // The name goes into a `@tool:<name>` reference bare, so it has to be shaped like one — and must
+            // not look like a generated id, which is what keeps the three reference forms tellable apart.
+            // Thrown at DEFINITION time: a custom tool with an unusable name should fail where it is written,
+            // not silently become uncitable halfway through a run.
+            const nameErr = toolNameError(name);
+            if (nameErr) throw new Error(`ml.defineTool: ${nameErr}`);
             return { name, description, summary, parameters, run, requiresApproval, capabilities, render, precheck };
         },
         /**

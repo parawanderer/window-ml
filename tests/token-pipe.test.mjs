@@ -331,16 +331,17 @@ test("labels: nearest() finds a pointer by the NAME the model gave it", () => {
 test("TokenStore: bounded, evicting the OLDEST, and re-noting an id keeps it 'latest' for the name alias", () => {
     const store = new P.TokenStore();
     const put = (id, out, tool = "exec") => store.note({ id, tool, kind: "text", out, t: 1000, step: 1 });
-    for (let i = 0; i < P.TokenStore.CAP + 10; i++) put(`id${i}`, `v${i}`);
+    const hex = (i) => i.toString(16).padStart(7, "0");   // ids dispatch on SHAPE, so fixtures must be id-shaped
+    for (let i = 0; i < P.TokenStore.CAP + 10; i++) put(hex(i), `v${i}`);
     assert.equal(store.size, P.TokenStore.CAP, "capped");
-    assert.equal(store.get("id0"), null, "the oldest were evicted");
-    assert.ok(store.get(`id${P.TokenStore.CAP + 9}`), "the newest survive");
+    assert.equal(store.get(hex(0)), null, "the oldest were evicted");
+    assert.ok(store.get(hex(P.TokenStore.CAP + 9)), "the newest survive");
     // The tool-name alias resolves to the most recently NOTED entry of that tool.
     const s2 = new P.TokenStore();
-    s2.note({ id: "aaa", tool: "python_exec", kind: "text", out: "FIRST", t: 1, step: 1 });
-    s2.note({ id: "bbb", tool: "python_exec", kind: "text", out: "SECOND", t: 2, step: 2 });
+    s2.note({ id: "aaaaaaa", tool: "python_exec", kind: "text", out: "FIRST", t: 1, step: 1 });
+    s2.note({ id: "bbbbbbb", tool: "python_exec", kind: "text", out: "SECOND", t: 2, step: 2 });
     assert.equal(s2.get("python_exec").out, "SECOND");
-    s2.note({ id: "aaa", tool: "python_exec", kind: "text", out: "AGAIN", t: 3, step: 3 });
+    s2.note({ id: "aaaaaaa", tool: "python_exec", kind: "text", out: "AGAIN", t: 3, step: 3 });
     assert.equal(s2.get("python_exec").out, "AGAIN", "re-noting moves it to the end");
     assert.equal(s2.size, 2, "…without duplicating it");
 });
@@ -351,12 +352,104 @@ test("TokenStore: bounded, evicting the OLDEST, and re-noting an id keeps it 'la
 test("TokenStore: a READ keeps a pointer alive, without making it look like the newest call", () => {
     const store = new P.TokenStore();
     const put = (id, out) => store.note({ id, tool: "exec", kind: "text", out, t: 1, step: 1 });
-    for (let i = 0; i < P.TokenStore.CAP; i++) put(`id${i}`, `v${i}`);
-    store.get("id0");                       // consult the OLDEST — it must now outlive id1
-    put("fresh", "new");                    // pushes one entry out
-    assert.ok(store.get("id0"), "the pointer the model just read survived");
-    assert.equal(store.get("id1"), null, "the least recently USED went instead");
+    const hex = (i) => i.toString(16).padStart(7, "0");
+    for (let i = 0; i < P.TokenStore.CAP; i++) put(hex(i), `v${i}`);
+    store.get(hex(0));                      // consult the OLDEST — it must now outlive the next one
+    put("fffffff", "new");                  // pushes one entry out
+    assert.ok(store.get(hex(0)), "the pointer the model just read survived");
+    assert.equal(store.get(hex(1)), null, "the least recently USED went instead");
     // Reading must NOT reorder the alias: id0 is an old call, not the latest exec.
-    assert.notEqual(store.get("exec").id, "id0", "a read never promotes an old call to 'latest'");
-    assert.equal(store.get("exec").id, "fresh");
+    assert.notEqual(store.get("exec").id, hex(0), "a read never promotes an old call to 'latest'");
+    assert.equal(store.get("exec").id, "fffffff");
+});
+
+// A label is the handle a model actually remembers: it CHOSE it at the moment it knew what the output was
+// for, so it is recalled rather than transcribed. Before this the store knew the label — `nearest()` would
+// even name it in a fault — and still refused to resolve it.
+test("labels resolve: QUOTED is the canonical form, and quoting is what disambiguates", () => {
+    const s = new P.TokenStore();
+    s.note(tok({ id: "a1b2c3f", tool: "python_exec", out: "TABLE", label: "the sales table", step: 1 }));
+
+    assert.equal(s.get('@tool:"the sales table"').out, "TABLE");
+    assert.equal(s.get(`@tool:'the sales table'`).out, "TABLE", "models mix quote styles; accept both");
+    assert.equal(s.get('@tool:"the sales table":out').out, "TABLE", "a slot suffix still parses");
+    assert.equal(s.get('"the sales table"').out, "TABLE", "the @tool: prefix is optional, as for an id");
+    // Recall, not transcription: case and inner spacing are not what the model was trying to say.
+    assert.equal(s.get('@tool:"The Sales Table"').out, "TABLE");
+    assert.equal(s.get('@tool:"the  sales   table"').out, "TABLE");
+    assert.equal(s.get('@tool:"  the sales table  "').out, "TABLE");
+    // Quoting is REQUIRED: a bare ref is a tool alias, so it misses (see the fault test below).
+    assert.equal(s.get("the sales table"), null);
+    assert.equal(s.resolveRef('@tool:"the sales table"').via, "label");
+    assert.equal(s.get('@tool:"no such label"'), null);
+    assert.equal(s.get('@tool:""'), null, "an empty label matches nothing, rather than the first thing");
+});
+
+// ADVERSARIAL. A label is free text the model wrote, so it can look like anything else in the namespace.
+// Quoting must settle every one of these, and an UNQUOTED label must never shadow a real id or tool alias.
+test("labels resolve: a label that impersonates an id or a tool cannot shadow one", () => {
+    const s = new P.TokenStore();
+    s.note(tok({ id: "a1b2c3f", tool: "python_exec", out: "REAL-PY", step: 1 }));
+    s.note(tok({ id: "d4e5f6b", tool: "exec", out: "LABELLED-PY", label: "python_exec", step: 2 }));
+    s.note(tok({ id: "9a8b7c7", tool: "look", out: "LABELLED-ID", label: "a1b2c3f", step: 3 }));
+
+    // Unquoted: id wins, then tool name — the label NEVER pre-empts either.
+    assert.equal(s.get("a1b2c3f").out, "REAL-PY", "id-shaped -> the id, never a label spelling it");
+    assert.equal(s.get("python_exec").out, "REAL-PY", "bare -> the tool alias, never a label spelling it");
+    // Quoted: unambiguously the label, which is the whole reason the syntax exists.
+    assert.equal(s.get('@tool:"python_exec"').out, "LABELLED-PY");
+    assert.equal(s.get('@tool:"a1b2c3f"').out, "LABELLED-ID");
+    // Latest-wins on a duplicate label, mirroring the tool-name alias rather than inventing a second rule.
+    s.note(tok({ id: "eeee11e", tool: "exec", out: "NEWER", label: "python_exec", step: 4 }));
+    assert.equal(s.get('@tool:"python_exec"').out, "NEWER");
+    // An unlabelled value is never reachable by label, however the ref is spelled.
+    assert.equal(s.get('@tool:"REAL-PY"'), null);
+    // A corrupted ID stays in the id branch and MISSES — it is never retried as a tool or a label.
+    assert.equal(s.get("a1b2c3e"), null, "one character out is a miss, not a fallback to something else");
+});
+
+test("labels resolve: a quote or a backslash inside the label survives", () => {
+    const s = new P.TokenStore();
+    s.note(tok({ id: "a1b2c3f", tool: "exec", out: "QUOTED", label: 'the "sales" table', step: 1 }));
+    s.note(tok({ id: "d4e5f6b", tool: "exec", out: "PATH", label: "C:\\reports\\q3", step: 2 }));
+
+    assert.equal(s.get('@tool:"the \\"sales\\" table"').out, "QUOTED", "the escaped form — canonical");
+    assert.equal(s.get('@tool:"the "sales" table"').out, "QUOTED", "unescaped still lands (greedy to the last quote)");
+    // A backslash that isn't an escape is left alone, so a path in a label reads back intact.
+    assert.equal(s.get('@tool:"C:\\reports\\q3"').out, "PATH");
+});
+
+// The three reference forms are told apart by SHAPE, so they must actually be distinguishable. The charset
+// alone does not give that: `deadbee` is a fine identifier AND a valid token shape. `ml.defineTool` therefore
+// rejects both malformed names and id-shaped ones, at definition time.
+test("tool names: the namespace guarantee is ENFORCED, not assumed", async () => {
+    const { toolNameError, isTokenShape } = await import("../token-id.ts");
+
+    for (const ok of ["python_exec", "exec", "fetch_url", "look", "_private", "Tool2", "a"]) {
+        assert.equal(toolNameError(ok), null, `${ok} should be a legal tool name`);
+    }
+    // Spaces and punctuation would not survive being written bare in a @tool: reference.
+    for (const bad of ["my tool", "fetch-url", "tool!", "café", "", "  ", "2fast"]) {
+        assert.match(String(toolNameError(bad)), /letters, digits and underscores|needs a name/, `${JSON.stringify(bad)} should be rejected`);
+    }
+    assert.equal(toolNameError(null), "a tool needs a name");
+    // The collision that the shape dispatch depends on not existing — a legal identifier that is ALSO an id.
+    assert.ok(isTokenShape("deadbee"), "precondition: this is id-shaped");
+    assert.match(String(toolNameError("deadbee")), /looks like a generated output id/);
+    assert.equal(toolNameError("deadbeef"), null, "one character longer is not an id, so it is fine");
+});
+
+// A bare reference is a TOOL alias, so an unquoted label misses — and the fault says so in the canonical
+// form. Resolving it silently would work once and teach nothing.
+test("labels: an UNQUOTED label misses, and the fault teaches the quoted form", () => {
+    const s = new P.TokenStore();
+    s.note(tok({ id: "a1b2c3f", tool: "python_exec", out: "TABLE", label: "the sales table", step: 1 }));
+
+    assert.equal(s.get("the sales table"), null, "bare means a TOOL alias; there is no such tool");
+    const msg = P.memoryFault("@tool:the sales table", s.nearest("the sales table"), 3);
+    assert.match(msg, /That is a LABEL, and a label must be quoted/);
+    assert.match(msg, /@tool:"the sales table"/, "shows the exact form to use");
+    assert.match(msg, /an unquoted @tool:<name> means a TOOL's latest call/, "…and why");
+    // The quoted form is the one that works.
+    assert.equal(s.get('@tool:"the sales table"').out, "TABLE");
 });
