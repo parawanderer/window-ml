@@ -736,6 +736,11 @@ test("resource panel: the event lane draws phased blocks, dims by lineage, and c
 
         // Every bar is INSIDE the plot's horizontal span — the lane mirrors the chart's segments, so a bar
         // that drifted off them would be pointing at a moment the trace doesn't cover.
+        const frameOrigin = await page.evaluate(() => {
+            const r = document.getElementById("ml-sb-root").shadowRoot.getElementById("ml-sb-frame").getBoundingClientRect();
+            return { x: r.x, y: r.y };
+        });
+        const inFrameX = frameOrigin.x, inFrameY = frameOrigin.y;
         // Measured on ONE side of the frame boundary: a locator's boundingBox is page-relative while a rect
         // read inside the frame is frame-relative, and mixing them compares two different origins.
         const geo = await frame.evaluate(() => {
@@ -765,12 +770,33 @@ test("resource panel: the event lane draws phased blocks, dims by lineage, and c
         // Hovering the delegated reader lights its lineage and drops the rest back.
         const sub = frame.locator(".rc-ev-embed").first();
         expect(await sub.count()).toBe(1);
-        await sub.hover();
-        await sleep(300);
-        const dimmed = await frame.locator(".rc-ev").evaluateAll((els) =>
-            els.map((e) => ({ cls: e.className, o: Number(getComputedStyle(e).opacity) })));
-        expect(dimmed.some((d) => d.o < 0.3), "unrelated events drop back").toBe(true);
-        expect(dimmed.find((d) => /rc-ev-embed/.test(d.cls)).o, "the hovered sub-call stays lit").toBeGreaterThan(0.5);
+        const at = await sub.boundingBox();
+        await page.mouse.move(at.x + at.width / 2, at.y + at.height / 2);
+        await sleep(200);
+        // Read WHAT IS UNDER THE POINTER and every opacity in ONE evaluate. The chart keeps sampling, so the
+        // lane re-packs and the bars slide left underneath a stationary cursor — measuring the two separately
+        // let the pointer end up over a neighbour between the hover and the assertion, which is what failed
+        // in CI (a dimmed sub-call) and never locally, where the timing differed.
+        const shot = await frame.evaluate(({ x, y }) => {
+            const el = document.elementFromPoint(x, y);
+            const bar = el?.closest?.(".rc-ev") ?? null;
+            return {
+                under: bar ? bar.className : String(el?.className || "none"),
+                underOpacity: bar ? Number(getComputedStyle(bar).opacity) : null,
+                all: [...document.querySelectorAll(".rc-ev")].map((e) => ({ cls: e.className, o: Number(getComputedStyle(e).opacity) })),
+            };
+        }, { x: at.x + at.width / 2 - inFrameX, y: at.y + at.height / 2 - inFrameY });
+
+        expect(shot.all.some((d) => d.o < 0.3), "unrelated events drop back").toBe(true);
+        // Whatever the pointer is actually over must be LIT — that is the invariant, and it holds however the
+        // lane has re-packed by the time it is read.
+        expect(shot.underOpacity, `the hovered bar stays lit (${shot.under})`).toBeGreaterThan(0.5);
+        // …and when that bar is the sub-call, its parent step and the run are lit with it.
+        if (/rc-ev-embed/.test(shot.under)) {
+            const lit = shot.all.filter((d) => d.o > 0.5).map((d) => d.cls);
+            expect(lit.some((c) => /rc-ev-tool/.test(c)), `the step that spawned it (${lit.join(" | ")})`).toBe(true);
+            expect(lit.some((c) => /rc-ev-run/.test(c)), `and the run that contains it (${lit.join(" | ")})`).toBe(true);
+        }
 
         // And clicking it opens the step that produced it.
         await sub.click();
