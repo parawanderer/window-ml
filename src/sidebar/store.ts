@@ -50,6 +50,8 @@ export interface Session {
     kind?: "agent";
     task?: string;
     taskImages?: string[];   // composer attachments the user pasted with the initial task (data URLs)
+    pageUrl?: string;        // the page the run STARTED on (a run that navigates ends elsewhere)
+    pageTitle?: string;
     steps?: AgentStep[];
     summary?: string;
     answerMedia?: AnswerMedia[];   // serialized visuals of `answer`-designated elements → the HUD completion card (NOT the debug sidebar)

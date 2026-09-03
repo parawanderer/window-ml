@@ -60,7 +60,7 @@ export function onDebug(ev: MlDebugEvent): void {
         }
         sessionMap.set(ev.session.hash, {
             hash: ev.session.hash, model: ev.model, tag: "session", kind: "agent",
-            createdTs: ev.ts, lastTs: ev.ts, status: "pending", turns: [], steps: [], task: ev.task, taskImages: ev.images, maxSteps: ev.maxSteps, agentConfig: ev.config, resumed: ev.resumed,
+            createdTs: ev.ts, lastTs: ev.ts, status: "pending", turns: [], steps: [], task: ev.task, taskImages: ev.images, pageUrl: ev.pageUrl, pageTitle: ev.pageTitle, maxSteps: ev.maxSteps, agentConfig: ev.config, resumed: ev.resumed,
             config: { system: null, model: ev.model, think: null, schema: false, toolIds: null, maxTokens: null, save: false },
         });
         drainOrphans(ev.session.hash);   // apply any step/result that raced ahead of this start (cross-page replay)

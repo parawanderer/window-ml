@@ -769,7 +769,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             // `runModel` (resolved once up top) is the driver model — config default when none was passed —
             // so the sidebar shows the REAL model (not "default") and can tell when a vision sub-call reused it.
             const mlApi = this as unknown as MlApi;   // typed self-ref for the deps' chatMeta (capabilities/ps)
-            if (firstTurn) emitDebug({ kind: "agent", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, task, images: turnImages.length ? turnImages : undefined, model: runModel, maxSteps, config: {
+            if (firstTurn) emitDebug({ kind: "agent", id: runHash, ts: Date.now(), save: false, session: { hash: runHash, turn: 0 }, task, images: turnImages.length ? turnImages : undefined, model: runModel, maxSteps, pageUrl: location.href, pageTitle: document.title || undefined, config: {
                 system: systemPrompt, customSystem: !!system,
                 tools: toolset.map(t => ({ name: t.name, requiresApproval: !!t.requiresApproval, vision: !!(t.capabilities && t.capabilities.includes("vision")), description: t.description, parameters: t.parameters, summary: t.summary })),
                 maxSteps, think: (think === true || think === false) ? think : null, env, vision: vision ?? null,
@@ -869,6 +869,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                         crossOrigin,   // may leave the origin (cross-origin nav gates for consent)
                         approvalRouting,   // where privileged gates resolve (idea #2): ui | both | external
                         pageOrigin: location.origin,   // seeds the run's consented-origins (cross-origin nav consent)
+                        pageUrl: location.href, pageTitle: document.title || undefined,   // provenance: WHICH page this ran on
                         rebuild: {
                             toolNames: toolset.map(t => t.name),
                             model: runModel, driverSees, visionModel: runVisionModel,

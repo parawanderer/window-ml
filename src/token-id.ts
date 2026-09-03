@@ -14,14 +14,55 @@
 // and has to give both the same advice; with it, `@tool:` + 7 hex that fails the check is definitively a
 // TYPO, and the model can be told to re-read the id rather than to go run a tool.
 
+// ---- the id's surface FORM, which is an experiment ----
+// Whether a model uses a pointer instead of retyping the data is a behavioural question about models, so
+// the form is a build-time variant (`--define __ML_TOKEN_FORMAT__`) rather than a config flag: a
+// hypothesis that may well conclude "hex was fine" should add nothing to the product. See
+// docs/POINTER-IDENTIFIERS.md §6 and the `bench` skill.
+//
+// `syllable` is a strict TRANSCODING of `hex`, one syllable per hex character, which is what makes the
+// comparison controlled: the payload, the check character, the collision space and every validity rule are
+// bit-identical, and the ONLY thing that varies is what the model reads. A word-pair form would have
+// changed the error model at the same time — a misremembered `brisk-otter` becomes `quick-otter`, a
+// plausible OTHER id, where a misremembered syllable is far more likely to be nothing at all.
+
+/** The id form this build mints. Replaced at build time; `hex` is what ships. */
+export type TokenFormat = "hex" | "syllable";
+declare const __ML_TOKEN_FORMAT__: string | undefined;
+export const TOKEN_FORMAT: TokenFormat =
+    (typeof __ML_TOKEN_FORMAT__ === "string" && __ML_TOKEN_FORMAT__ === "syllable") ? "syllable" : "hex";
+
+/** One pronounceable syllable per hex digit — consonant + vowel, so an id reads as a word and can be said
+ *  aloud. Chosen to be visually and audibly distinct from each other; no `l`/`r` pair, no `m`/`n` pair. */
+const SYLLABLES = ["ba", "ke", "di", "fo", "gu", "ha", "ji", "lo", "mu", "ne", "pi", "ro", "sa", "te", "vi", "zo"] as const;
+
+/** Transcode a hex id to its syllable form, character for character. */
+export function toSyllables(hex: string): string {
+    return [...hex].map((c) => SYLLABLES[parseInt(c, 16)] ?? "").join("");
+}
+
+/** Transcode a syllable id back to hex, or null if it is not one. */
+export function fromSyllables(sy: string): string | null {
+    const out = [];
+    for (let i = 0; i < sy.length; i += 2) {
+        const idx = SYLLABLES.indexOf(sy.slice(i, i + 2) as typeof SYLLABLES[number]);
+        if (idx < 0) return null;
+        out.push(idx.toString(16));
+    }
+    return out.length ? out.join("") : null;
+}
+
 /** Hex characters of hash in an id, before the check character. */
 export const TOKEN_PAYLOAD_LEN = 6;
 /** Total id length. 7 = 6 payload + 1 check; the payload width is what sets the collision space, so the
  *  check is ADDED rather than taken out of the 6 (spending a payload character would have made an INVENTED
  *  id 16x more likely to hit a live one — the more common failure — to fix the rarer typo). */
 export const TOKEN_LEN = TOKEN_PAYLOAD_LEN + 1;
-/** The id's regex SOURCE, so every place that parses `@tool:<id>` builds its pattern from one definition. */
-export const TOKEN_HEX_SRC = `[0-9a-f]{${TOKEN_LEN}}`;
+/** The id's regex SOURCE, so every place that parses `@tool:<id>` builds its pattern from one definition.
+ *  Named for history rather than accuracy: under `syllable` it matches syllables, not hex. */
+export const TOKEN_HEX_SRC = TOKEN_FORMAT === "syllable"
+    ? `(?:${SYLLABLES.join("|")}){${TOKEN_LEN}}`
+    : `[0-9a-f]{${TOKEN_LEN}}`;
 
 /** Positional weights for the check character. All ODD, therefore coprime to 16, which is what makes every
  *  single-character substitution detectable: changing digit `d` to `d'` at position `i` shifts the sum by
@@ -41,10 +82,23 @@ export function isTokenShape(s: string): boolean {
     return new RegExp(`^${TOKEN_HEX_SRC}$`).test(s);
 }
 
+/** The hex behind an id in whatever form this build mints — the one place that knows about transcoding, so
+ *  the check-character logic below never learns the form exists. */
+function payloadOf(s: string): string | null {
+    return TOKEN_FORMAT === "syllable" ? fromSyllables(s) : s;
+}
+
+/** Render a hex id in this build's form. The mint calls this; nothing else needs to. */
+export function formatToken(hex: string): string {
+    return TOKEN_FORMAT === "syllable" ? toSyllables(hex) : hex;
+}
+
 /** Is this a WELL-FORMED id — right shape AND a matching check character? A false here on something that
  *  {@link isTokenShape} accepts means the model corrupted a real id rather than inventing one. */
 export function isTokenValid(s: string): boolean {
-    return isTokenShape(s) && s[TOKEN_PAYLOAD_LEN] === checkChar(s.slice(0, TOKEN_PAYLOAD_LEN));
+    if (!isTokenShape(s)) return false;
+    const hex = payloadOf(s);
+    return !!hex && hex[TOKEN_PAYLOAD_LEN] === checkChar(hex.slice(0, TOKEN_PAYLOAD_LEN));
 }
 
 

@@ -11,6 +11,7 @@ import { generatePreview } from "./tools/preview-annotate.mjs";
 import { generatePreview as generateLegendPreview } from "./tools/preview-legend.mjs";
 import { writeApiDocs } from "./scripts/gen-api-docs.mjs";
 import { writeBuildInfo } from "./scripts/gen-build-info.mjs";
+import { writeSchema } from "./scripts/gen-export-schema.mjs";
 
 // output name (dist/<name>.js)  ->  source entry
 const ENTRIES = {
@@ -53,24 +54,38 @@ const ASSETS = [
 
 const watch = process.argv.includes("--watch");
 
+// --outdir <dir> and --define K=V build a VARIANT of the extension somewhere other than dist/. The bench
+// uses them to compile an experimental dimension in (see tests/e2e/bench/), so a hypothesis that may well
+// conclude "the current design was fine" costs the product no config flag. Default behaviour is unchanged.
+function argValue(flag) {
+    const i = process.argv.indexOf(flag);
+    return i >= 0 ? process.argv[i + 1] : null;
+}
+const OUTDIR = argValue("--outdir") || "dist";
+const DEFINES = Object.fromEntries(process.argv
+    .map((a, i) => (a === "--define" ? process.argv[i + 1] : null))
+    .filter(Boolean)
+    .map((kv) => { const i = kv.indexOf("="); return [kv.slice(0, i), kv.slice(i + 1)]; }));
+
 // Core (injected/content/background/popup/sidebar-shell) is left UNminified so
 // injected.js stays readable when inspected in devtools. The sidebar app is a
 // compiled Preact bundle (not meant to be read) and pulls in highlight.js, so
 // it's minified.
 const { "sidebar-app": sidebarApp, ...coreEntries } = ENTRIES;
 const base = {
-    outdir: "dist",
+    outdir: OUTDIR,
     bundle: true,
     format: "iife",      // classic scripts — required for content/injected scripts
     target: ["chrome114"],
     jsx: "automatic",    // the sidebar entry is Preact TSX
     jsxImportSource: "preact",
     loader: { ".css": "text" },   // import highlight.js theme CSS as a string (injected into the shadow root)
+    ...(Object.keys(DEFINES).length ? { define: DEFINES } : {}),
     logLevel: "info",
 };
 
 function copyAssets() {
-    for (const [src, dst] of ASSETS) cpSync(src, `dist/${dst}`);
+    for (const [src, dst] of ASSETS) cpSync(src, `${OUTDIR}/${dst}`);
 }
 
 // KaTeX web fonts → dist/fonts/. katex.min.css (bundled into sidebar-app as text, injected as a
@@ -79,8 +94,8 @@ function copyAssets() {
 function copyKatexFonts() {
     const dir = "node_modules/katex/dist/fonts";
     if (!existsSync(dir)) { console.warn("⚠ katex not installed — math rendering disabled (npm i)."); return; }
-    mkdirSync("dist/fonts", { recursive: true });
-    for (const f of readdirSync(dir)) if (f.endsWith(".woff2")) cpSync(`${dir}/${f}`, `dist/fonts/${f}`);
+    mkdirSync(`${OUTDIR}/fonts`, { recursive: true });
+    for (const f of readdirSync(dir)) if (f.endsWith(".woff2")) cpSync(`${dir}/${f}`, `${OUTDIR}/fonts/${f}`);
 }
 
 // Offline python_exec runtime → dist/pyodide/: the Pyodide CORE (from the `pyodide` npm
@@ -90,17 +105,17 @@ function copyKatexFonts() {
 const PYODIDE_CORE = ["pyodide.mjs", "pyodide.asm.mjs", "pyodide.asm.wasm", "python_stdlib.zip", "pyodide-lock.json"];
 function copyPyodide() {
     if (!existsSync("node_modules/pyodide")) { console.warn("⚠ pyodide not installed — python_exec disabled (npm i)."); return; }
-    mkdirSync("dist/pyodide", { recursive: true });
-    for (const f of PYODIDE_CORE) cpSync(`node_modules/pyodide/${f}`, `dist/pyodide/${f}`);
+    mkdirSync(`${OUTDIR}/pyodide`, { recursive: true });
+    for (const f of PYODIDE_CORE) cpSync(`node_modules/pyodide/${f}`, `${OUTDIR}/pyodide/${f}`);
     if (existsSync("pyodide-wheels")) {
-        for (const w of readdirSync("pyodide-wheels")) cpSync(`pyodide-wheels/${w}`, `dist/pyodide/${w}`);
+        for (const w of readdirSync("pyodide-wheels")) cpSync(`pyodide-wheels/${w}`, `${OUTDIR}/pyodide/${w}`);
     } else {
         console.warn("⚠ pyodide-wheels/ missing — run `npm run fetch-pyodide` to enable python_exec (numpy/Pillow).");
     }
 }
 
-rmSync("dist", { recursive: true, force: true });
-mkdirSync("dist", { recursive: true });
+rmSync(OUTDIR, { recursive: true, force: true });
+mkdirSync(OUTDIR, { recursive: true });
 
 // api-docs.gen.ts — the agent_api_docs tool's payload, lifted from contract.ts. Generated
 // BEFORE bundling (tools.ts imports it) and gitignored, so the shipped reference can never
@@ -109,6 +124,11 @@ writeApiDocs();
 // build-info.gen.ts — the harness's own provenance (repo URL, commit + date, build time) that
 // agent_api_docs reports, captured from git at build time (gitignored; the extension can't run git live).
 writeBuildInfo();
+// docs/spec/export.schema.json — the JSON export contract in a language-neutral form, lifted from
+// export-schema.ts. CHECKED IN (not gitignored like the two above): it is a published spec people link to
+// and generate parsers from, so it has to exist in the repo, and `tests/export-schema.test.mjs` fails if
+// an edit left it stale.
+writeSchema();
 
 if (watch) {
     const copyPlugin = { name: "copy-assets", setup(b) { b.onEnd(() => copyAssets()); } };
@@ -117,7 +137,7 @@ if (watch) {
     await coreCtx.watch();
     await sidebarCtx.watch();
     copyPyodide(); copyKatexFonts();   // once — static, not worth recopying on every rebuild
-    console.log("watching… (dist/)");
+    console.log(`watching… (${OUTDIR}/)`);
 } else {
     await esbuild.build({ ...base, entryPoints: coreEntries });
     await esbuild.build({ ...base, entryPoints: { "sidebar-app": sidebarApp }, minify: true });
@@ -134,5 +154,5 @@ if (watch) {
     // the latter so a failing legend case can be reviewed by eye). Open the HTMLs in a browser.
     await generatePreview();
     await generateLegendPreview();
-    console.log("built dist/ (+ tools/annotate-preview.html, tools/legend-notebook.html)");
+    console.log(`built ${OUTDIR}/ (+ tools/annotate-preview.html, tools/legend-notebook.html)`);
 }

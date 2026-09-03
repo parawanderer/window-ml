@@ -48,6 +48,17 @@ async function startDyingBackend() {
 const BACKEND = process.env.E2E_BACKEND;   // real-backend override (skips the fake)
 let ext, fake, site;
 
+// A SCRIPTED test cannot run against a real model: it sets an exact turn sequence and reads `fake.calls()`
+// back to prove what the pipeline did. With `E2E_BACKEND` set there is no fake, and those tests were not
+// skipping — they were dereferencing null and failing with `Cannot read properties of null (reading
+// 'setScript')`, which reads as a product bug in the nightly real-model job rather than as "this test does
+// not apply". Only the two tagged `@real-ok` guard their fake usage (`if (fake) …`) and assert on the run's
+// own result, so only those mean anything against a real model.
+test.beforeEach(({}, testInfo) => {
+    test.skip(!fake && !testInfo.title.includes("@real-ok"),
+        "scripted test: needs the fake-LLM, and E2E_BACKEND is set");
+});
+
 test.beforeAll(async () => {
     fake = BACKEND ? null : await startFakeLlm({ model: "fake-model" });
     site = await startPageServer({});
@@ -70,7 +81,7 @@ test.afterAll(async () => {
 
 // Smoke: proves the whole harness — the extension loads, window.ml is live in the page main world, the
 // background loop reaches the (fake) backend, and a one-shot agent run resolves with the model's reply.
-test("smoke: the extension loads and window.ml runs a one-shot agent", async () => {
+test("smoke: the extension loads and window.ml runs a one-shot agent @real-ok", async () => {
     const page = await ext.context.newPage();
     await page.goto(site.url + "/");
     await waitForMl(page);
@@ -343,7 +354,7 @@ test("approval: resolving a gate clears the approve/deny box on other surfaces i
 // A real-shape sanity check that ALSO runs in the non-blocking real-model job: the agent reads a value off
 // the page with a DOM tool and answers it. Deterministic under the fake (a hard gate); a genuine "can a
 // real OpenAI-shaped model actually drive a tool and answer" probe under E2E_BACKEND.
-test("sanity: the agent reads a value off the page via a DOM tool and answers with it", async () => {
+test("sanity: the agent reads a value off the page via a DOM tool and answers with it @real-ok", async () => {
     const page = await ext.context.newPage();
     await page.goto(site.url + "/step3");
     await waitForMl(page);

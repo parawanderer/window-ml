@@ -774,6 +774,9 @@ export interface TableSource { kind: "dom" | "sheet-current" | "sheet-external";
  *  rows preview (`columns`+`rows`) or `html: true` (loaded via `pd.read_html`, no clean preview). */
 export interface TablePreview { name: string; source: TableSource; columns?: string[]; rows?: (string | number | null)[][]; html?: boolean; }
 
+/** @unstable INTERNAL, and reachable from the published JSON export — a new variant/member may
+ *  appear in any release, so the generated `docs/spec/export.schema.json` marks it open rather
+ *  than pinning it. Adding to it is NOT a breaking export change. */
 export type RenderDescriptor = (
     | { type: "image"; src: string; label?: string }
     | { type: "code"; text: string; lang?: string; format?: boolean }   // format: let the sidebar beautify the source (e.g. exec's JS)
@@ -1304,6 +1307,10 @@ export interface StartRunPayload {
     /** the page's origin when the run started — seeds the run's consented-origins so a same-site nav needs no
      *  prompt while a NEW cross-origin one does (the cross-origin consent gate). */
     pageOrigin?: string;
+    /** The full start URL + title, for the run's `agent` start event. `pageOrigin` exists for the
+     *  cross-origin consent gate and is deliberately only an origin; this is for provenance. */
+    pageUrl?: string;
+    pageTitle?: string;
     /** may this run navigate to OTHER SITES? false → the `navigate` tool refuses cross-origin; true → a new
      *  cross-origin nav gates for consent (see navNeedsConsent). */
     crossOrigin?: boolean;
@@ -1605,6 +1612,9 @@ export interface DebugChatRequest {
  *  `ml.createChat({ think: true })`). This is what the sidebar shows as the
  *  "options" block, kept distinct from the per-turn request + message history
  *  (full history is a separate export feature). */
+/** @unstable INTERNAL, and reachable from the published JSON export — a new variant/member may
+ *  appear in any release, so the generated `docs/spec/export.schema.json` marks it open rather
+ *  than pinning it. Adding to it is NOT a breaking export change. */
 export interface DebugSessionConfig {
     system: string | null;
     model: string | null;
@@ -1630,6 +1640,9 @@ export interface DebugChatError extends DebugBase { kind: "chat-error"; error: s
  *  result), then a result. `elements` is a COUNT — real DOM nodes can't cross the
  *  window bus (they reach the console via onStep instead). */
 /** The agent run's resolved setup — for the sidebar's "agent options" block. */
+/** @unstable INTERNAL, and reachable from the published JSON export — a new variant/member may
+ *  appear in any release, so the generated `docs/spec/export.schema.json` marks it open rather
+ *  than pinning it. Adding to it is NOT a breaking export change. */
 export interface DebugAgentConfig {
     /** the resolved system prompt the model actually received */
     system: string;
@@ -1665,7 +1678,10 @@ export interface DebugAgentConfig {
  *  Carries the ACCUMULATED-so-far reasoning/content (the UI REPLACES, not appends, so a dropped/duplicated
  *  event still converges). Lets a long "thinking" phase show its text live instead of a frozen token count. */
 export interface DebugAgentStream extends DebugBase { kind: "agent-stream"; step: number; localStep?: number; reasoning?: string; content?: string; }
-export interface DebugAgentStart extends DebugBase { kind: "agent"; task: string; images?: string[]; model: string | null; maxSteps: number; config: DebugAgentConfig; resumed?: boolean; }
+/** `pageUrl`/`pageTitle` are where the run STARTED. Recorded because "which page" is close to a primary
+ *  key when comparing runs, and was otherwise recoverable only by regexing it back out of the system
+ *  prompt — prose, and only present when `env` was on. A run that navigates ends somewhere else. */
+export interface DebugAgentStart extends DebugBase { kind: "agent"; task: string; images?: string[]; model: string | null; maxSteps: number; config: DebugAgentConfig; resumed?: boolean; pageUrl?: string; pageTitle?: string; }
 export interface DebugAgentStep extends DebugBase {
     kind: "agent-step"; step: number;
     /** The PER-TURN step number (1-based, resets each run()), for the "STEP x/maxSteps" display — `step`

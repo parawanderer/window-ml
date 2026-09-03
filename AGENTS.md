@@ -1085,7 +1085,12 @@ thing. The parts:
   — the final answer can echo a value a real DOM tool read off the page). This is the CI gate.
 - **`cross-page.spec.mjs`** — a `smoke` (extension loads + one-shot agent) + a `sanity` (agent
   reads a page value via a DOM tool and answers it) that run under BOTH the fake and a real
-  backend, plus the skipped cross-page acceptance test (see `tmp/cross-page-agent.md`).
+  backend, plus the skipped cross-page acceptance test (see `tmp/cross-page-agent.md`). Those two
+  are tagged **`@real-ok`**, and a `beforeEach` SKIPS every other test in the file when
+  `E2E_BACKEND` is set: the rest script an exact turn sequence and read `fake.calls()` back, so
+  they cannot mean anything against a real model — and without the skip they dereferenced a null
+  `fake` and failed, which reads as a product bug in the nightly real-model job. Tag a new test
+  `@real-ok` only if it guards its fake usage (`if (fake) …`) and asserts on the run's own result.
 - **`observe.mjs`** — a **debug/observation wrapper, not a test** (see the `observe` skill for the
   full playbook): `node --import tsx tests/e2e/observe.mjs` drives ONE agent run in a real Chromium
   and writes ARTIFACTS to `tests/e2e/artifacts/<RUN_LABEL|timestamp>/` (gitignored): **`run.md`** =
@@ -1114,6 +1119,77 @@ thing. The parts:
     click. **`WATCH=1`** additionally HOLDS the browser open at the end (close the window / Ctrl+C to
     exit) instead of tearing down — for inspecting a finished run; without it the browser closes when the
     run completes.
+**Programmatic export (`export-schema.ts` + `docs/spec/export.schema.json`).** The JSON export is a
+PUBLISHED contract, and `export-schema.ts` (root, beside contract.ts) is normative. Two things about it are
+easy to get wrong. **Internal types are RESOLVED, and tag their own instability**: the
+generator chases every referenced type out of contract.ts lazily and transitively — no hand-kept list,
+because one goes stale silently and the schema would then describe less than it claims while still
+looking complete — so a consumer gets real types for `renderIn`/`renderOut`/`config` instead of an opaque
+object. The ones that WILL grow carry **`@unstable`** in the JSDoc above their declaration; the generator
+marks those `x-unstable`, says so in the description, and gives an unstable UNION a trailing branch that
+accepts anything, so adding a render-descriptor variant does not start failing an old consumer's
+validator. A union inherits its members' instability, which is what makes an inline
+`DebugSessionConfig | DebugAgentConfig` permissive without being tagged itself. Put `@unstable` on a type
+and the schema follows: that is the whole mechanism. **And a differ needs more than the field list**: `VOLATILE_FIELDS` names the fields to strip,
+but a pointer id is also surfaced *as text* (an `@tool:` citation in an answer, a `dereference` ref, the
+token line on a result), so removing `steps[].token` leaves every copy behind — `VOLATILE_PATTERNS` +
+`canonicalizeText()` handle those, and the session hash is deliberately NOT a pattern (eight bare hex
+characters would strike colours and short commits too; its value is known from `session.hash`).
+`scripts/gen-export-schema.mjs` lifts the interfaces into **JSON Schema draft 2020-12** so a Python or Go
+consumer can generate models (`datamodel-code-generator` → Pydantic, `quicktype`, …). It is a line scanner
+for the same reason `gen-api-docs.mjs` is (typescript@7 is the Go port, no JS compiler API) and THROWS on a
+type it cannot map rather than silently emitting "anything". Unlike the other generated files the output is
+**checked in** — a spec people link to cannot be a build artifact — and `tests/export-schema.test.mjs`
+regenerates, diffs, and validates real agent AND chat exports against it, including a test that the
+validator itself can fail. Each document opens with a **`$schema`** URL pinned to that BUILD's commit on
+raw.githubusercontent (`schemaUrl()`, best-effort — omitted when there is no GitHub remote or no commit,
+since a wrong URL gets validated against and quietly misleads; still emitted for a DIRTY build, with
+`build.dirty` beside it as the caveat). It is the conventional key editors use to validate a file with no
+setup, and it points at the commit rather than `main` because `main` drifts away from what the file is.
+`generator.build` carries the COMMIT (a manifest version only moves on releases,
+so it cannot answer "are these two runs comparable"); its `dirtyDiff` is opt-in via
+`ExportProvenance.includeDirtyDiff` — on for a harness artifact whose job is reproducing a run, off for a
+download the user shares, since it is unpublished source. `session.page` records where the run STARTED,
+previously recoverable only by regexing the system prompt.
+
+- **`run-once.mjs`** — the run-driving CORE both CLIs share: `runOnce(config)` drives ONE agent run in a
+  real Chromium and RETURNS `{ events, session, runMd, result, … }` instead of only writing files.
+  `observe.mjs` is a thin env-var CLI over it; the bench is a matrix over it. Every piece of run state is
+  a local (not a module global) so `--jobs N` can call it concurrently. It also owns **seeded histories**
+  (`seed: { task, script }`): turn 1 runs against the SCRIPTED fake so an experiment decides exactly what
+  the model will find in context — a corrupted pointer, a failed call, a large captured output — then the
+  backend swaps to the real model and the task continues in the SAME session. Nothing is fabricated (the
+  real loop produced that history), and `seedBoundarySeq` marks where the seed ends so the script's own
+  behaviour is never scored as the model's.
+- **`bench/`** — a **matrix over `runOnce`, not a test** (see the `bench` skill for the playbook):
+  `node --import tsx tests/e2e/bench/run.mjs <spec>.bench.ts` runs every combination of the spec's
+  dimensions x tasks x repeats and reports re-emission, pointer use split by fault cause, recovery, token
+  cost and correctness with **spread, not a point estimate** (models are stochastic; N>=5 per cell). A
+  spec is **typed TypeScript** (`spec.ts`, `defineBench`), so the dimension keys you declare are the keys
+  `apply()` receives — a mistyped axis is a compile error, not a cell that silently never varies. Four
+  rules keep it honest: metrics derive ONLY from the existing `__mlDebug` stream (a metric that can't be
+  computed from it means the PRODUCT is missing an event — fix it there); an experimental dimension is a
+  build-time `--define` (`build.mjs --outdir <dir> --define K=V`) so a hypothesis that may conclude "the
+  current design was fine" adds zero product surface; cells are content-addressed by config AND build
+  fingerprint, so a long sweep resumes and an edit invalidates what it invalidates instead of mixing two
+  builds into one table; and the extractors are calibrated FIRST against the scripted fake-LLM. That last
+  rule is not ceremony — `specs/smoke.bench.ts` scripts a run that re-emits (must read 1.00), one that
+  cites instead (0.00) and one that hides a re-emission in a seeded turn (0.00), and it caught two real
+  extractor bugs before any GPU time. Assertions: `tests/bench-metrics.test.mjs` (fast, synthetic
+  streams) and `tests/e2e/bench-selftest.spec.mjs` (real streams — the only thing that catches an
+  extractor reading a field the product never emits). One walk, N sinks: terminal + markdown today. **Two audiences, one run:** the terminal is for the agent, and
+  **`--serve`** prints a banner URL for a live page a human watches — every run's state and what is
+  queued, the in-flight run's step against its budget and the tool it is in, elapsed / mean-per-run /
+  mean-per-step / ETA, and links to each `run.md`. Dependency-free (node:http + SSE) and a SINK, not a
+  second brain: it recomputes with the same `aggregate()` the report uses, so it cannot disagree with
+  `report.md`. Worked example specs live in `tests/e2e/bench/specs/` with a `README.md` for humans.
+  **CI runs it as its own `bench` job**
+  (`npm run bench:calibrate` → build, smoke sweep, `check-calibration.mjs`), deliberately separate from
+  `test`/`e2e` so a broken INSTRUMENT names itself instead of reading as a broken extension. Artifacts land per RUN under
+  `tests/e2e/artifacts/bench/<spec>/<task>/<combo>/r<N>/` (gitignored) — `run.md` to read, **`run.json` to
+  DIFF** (a markdown diff is mostly layout; strip `VOLATILE_FIELDS` + `canonicalizeText` first), plus
+  events/transcript/screenshots, and `run.html`+`run.pdf` behind `--pdf`. The report's **Runs** table
+  indexes every individual run, since the aggregate hides the one repeat that went wrong.
 - **`approval-demo.mjs`** — a **narrated demo, not a test**: `npm run build && node --import tsx
   tests/e2e/approval-demo.mjs` opens a headful browser and walks the approval-over-IPC flow (idea #2)
   three times — a manual APPROVE, a manual REJECT, and a POLICY driver that auto-approves read-only
@@ -1164,10 +1240,15 @@ thing. The parts:
 
 **CI (`.github/workflows/tests.yml`):** two Playwright jobs. `e2e` is the **deterministic gate**
 (fake-LLM, every push/PR, under `xvfb`). `e2e-real-model` is a **non-blocking** sanity check
-(`continue-on-error`, `workflow_dispatch` + nightly) against a free hosted OpenAI-shaped model —
+(`continue-on-error`, `workflow_dispatch` + nightly) that runs **only the `@real-ok` tests** (everything
+else scripts the model, so it skips or tests something a real model has no bearing on) against a free
+hosted OpenAI-shaped model —
 default **Groq**, enabled by the repo secret `GROQ_API_KEY_FREE`, overridable via repo variables
-`E2E_REAL_BACKEND`/`E2E_REAL_MODEL`; it self-skips without the secret. Hard-won findings: **GitHub
-Models is retired** (its API 410s a "retirement brownout" — don't use it); **`llama-3.3-70b` on
+`E2E_REAL_BACKEND`/`E2E_REAL_MODEL`; it self-skips without the secret. Hard-won findings: a real model on this job produced a Groq
+`tool_use_failed` 400 — `attempted to call tool 'orient' which was not in request.tools` — having invented
+a tool from the system prompt's own numbered method ("1. ORIENT — get your bearings"). Groq validates tool
+calls server-side, so a hallucinated name is a hard 400 rather than a recoverable step, which is one more
+reason this job is non-blocking. **GitHub Models is retired** (its API 410s a "retirement brownout" — don't use it); **`llama-3.3-70b` on
 Groq emits malformed `<function=…>` tool calls** — use an `openai/gpt-oss-*` model, which complies;
 the Groq **free tier is 8000 TPM**, so a multi-turn agent (the ~3.2k-token system prompt re-sends
 each turn) trips it — hence the rate-limit backoff below. GPU-less CI runners can't run a real model

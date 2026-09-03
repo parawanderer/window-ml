@@ -37,10 +37,10 @@ test("tool tokens e2e: a computed output flows through the REAL loop → res.ans
         { tool: "compute", args: { token: true } },
         (reqBody) => {
             const toolMsg = [...(reqBody.messages || [])].reverse().find((m) => m.role === "tool");
-            // Built from TOKEN_HEX_SRC, not hardcoded: this read `{6}` and silently kept working as a
-            // WRONG test when the check character made ids 7 characters. It captured the first six, the
-            // model cited a truncated id, nothing resolved, and `res.outputs` came back empty — a failure
-            // that reads as "the token pipeline is broken" rather than "the test is".
+            // Built from TOKEN_HEX_SRC, not hardcoded: this used to read `{6}` and silently kept working
+            // as a WRONG test when the check character made ids 7 characters. It captured the first six,
+            // the model cited a truncated id, nothing resolved, and `outputs` came back empty — a failure
+            // that looks like the token pipeline is broken rather than the test.
             const id = String(toolMsg?.content || "").match(new RegExp(`@tool:(${TOKEN_HEX_SRC})`))?.[1];
             return { content: `The totals are ![the totals](@tool:${id}:out).` };
         },

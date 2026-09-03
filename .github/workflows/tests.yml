@@ -127,9 +127,39 @@ jobs:
         run: npm run fetch-pyodide
       # `test:e2e` runs `pretest:e2e` (npm run build) first, so it exercises the built dist/. The harness is
       # headless now (full Chromium in --headless=new); xvfb stays as a safety net for anything that asks
-      # for a window (the narrated demos, E2E_HEADFUL=1) so such a run fails on its assertion, not DISPLAY.
+      # for a window (the narrated demos, E2E_HEADFUL=1) so such a run fails on its assertion, not on DISPLAY.
       - name: Run E2E
         run: xvfb-run -a npm run test:e2e
+
+  # The BENCH's own instrument check — separate from `test`/`e2e` so a failure names the right thing. A
+  # broken measurement tool is not a broken extension, and reading "e2e failed" sends you to look at the
+  # wrong code. It also runs the bench CLI end to end, which nothing else does: the unit tests cover the
+  # extractors and the e2e spec covers real event streams, but only this exercises spec loading, matrix
+  # expansion, the cache, the sinks and the written report together.
+  #
+  # `smoke.bench.ts` is scripted so every reading is known before it runs (a run that retypes must read
+  # 1.00, one that cites 0.00, one whose re-emission is in a SEEDED turn 0.00); check-calibration.mjs
+  # asserts exactly those. Deterministic — fake-LLM, no model, no key. Headful under xvfb like the e2e job.
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Calibrate the bench
+        run: xvfb-run -a npm run bench:calibrate
+      - name: Upload the sweep
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-smoke-sweep
+          path: tests/e2e/artifacts/bench/smoke/
+          retention-days: 7
 
   # Non-blocking sanity check against a REAL, free, OpenAI-shaped model (default: Groq). NOT a gate — a real
   # model is non-deterministic + rate-limited, so it runs only on demand / nightly and never fails the
@@ -159,7 +189,13 @@ jobs:
           E2E_BACKEND: ${{ vars.E2E_REAL_BACKEND || 'https://api.groq.com/openai/v1/chat/completions' }}
           E2E_MODEL: ${{ vars.E2E_REAL_MODEL || 'openai/gpt-oss-20b' }}   # llama-3.3 emitted malformed tool calls; gpt-oss complies
           E2E_KEY: ${{ secrets.GROQ_API_KEY_FREE }}
-        run: xvfb-run -a npm run test:e2e
+        # ONLY the @real-ok tests. Everything else in the suite scripts the model — it sets an exact turn
+        # sequence and reads fake.calls() back — so it either skips (cross-page's beforeEach) or, like
+        # python-stream, starts its own fake and tests something a real model has no bearing on. Running
+        # them here cost four minutes to learn nothing, and python-stream additionally failed for want of
+        # the pyodide wheels this job has no reason to fetch. What remains is the two tests that actually
+        # exercise a real model end to end.
+        run: xvfb-run -a npm run test:e2e -- --grep "@real-ok"
       - uses: actions/upload-artifact@v4
         if: always() && steps.gate.outputs.have_key == 'true'
         with:
