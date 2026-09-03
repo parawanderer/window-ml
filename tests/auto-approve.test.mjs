@@ -3,7 +3,7 @@
 // Pure, so it's tested directly — the SAME function the page loop uses today.
 import { test } from "node:test";
 import assert from "node:assert";
-import { autoApprovePython } from "../auto-approve.ts";
+import { autoApprovePython } from "../src/auto-approve.ts";
 
 const ON = { autoApprovePython: true };
 const yes = () => true, no = () => false;

@@ -3,7 +3,7 @@
 // breaks the docs streak (past a 1-step leniency). Pure enough to unit-test with stub tools.
 import { test } from "node:test";
 import assert from "node:assert";
-import { toolContext, executeTool } from "../tool-exec.ts";
+import { toolContext, executeTool } from "../src/tool-exec.ts";
 
 const permissive = { type: "object", properties: {} };
 const stubTool = (name) => ({ name, description: "", parameters: permissive, run: () => "ok" });

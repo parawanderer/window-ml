@@ -6,8 +6,8 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
-import { buildTypeTool, buildClickTool, setCdpEnabled } from "../builtin-tools.ts";
-import { mintPoint } from "../util.ts";
+import { buildTypeTool, buildClickTool, setCdpEnabled } from "../src/builtin-tools.ts";
+import { mintPoint } from "../src/util.ts";
 
 function mount(html = "") {
     const dom = new JSDOM(`<!doctype html><body>${html}</body>`);

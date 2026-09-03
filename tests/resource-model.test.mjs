@@ -4,7 +4,7 @@
 // docs/spec/RESOURCE_PANEL.md, which also lists the Metal samples still to be pinned down.
 import { test } from "node:test";
 import assert from "node:assert";
-const M = await import("../resource-model.ts");
+const M = await import("../src/resource-model.ts");
 
 const GB = 1e9;
 // Live gpubox: 2x ~102 GB CUDA cards, 130 GB system. Both cards idle here (~0.59 GB held by something else).

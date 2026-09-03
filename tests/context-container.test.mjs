@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
-import { resolveContextContainer } from "../dom.ts";
+import { resolveContextContainer } from "../src/dom.ts";
 
 function mount(html) {
     const dom = new JSDOM(`<!doctype html><body>${html}</body>`);
@@ -54,7 +54,7 @@ test("nav junk: clicking a link in a link-dense nav does NOT grab the nav", () =
 });
 
 // -------------------------------------------------------------------- domToContext (extraction) ---
-import { domToContext } from "../dom.ts";
+import { domToContext } from "../src/dom.ts";
 
 test("domToContext: block-structured text + media + links + scope selector + anchor", () => {
     mount(`<article id="post">
@@ -96,7 +96,7 @@ test("domToContext: script/style content is not included in the text", () => {
 });
 
 // ------------------------------------------------------- askAboutTask (right-click task framing) ---
-import { askAboutTask } from "../prompts.ts";
+import { askAboutTask } from "../src/prompts.ts";
 
 test("askAboutTask frames the element content + scope selector around the user's question", () => {
     const ctx = {

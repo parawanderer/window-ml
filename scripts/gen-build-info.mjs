@@ -11,7 +11,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const OUT = join(ROOT, "build-info.gen.ts");
+const OUT = join(ROOT, "src", "build-info.gen.ts");
 
 /** Run a git command in the repo, returning trimmed stdout — or "" if git/history is unavailable. */
 function git(args) {

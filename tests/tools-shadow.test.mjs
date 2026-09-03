@@ -9,7 +9,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
-import { makeDomTools } from "../tools.ts";
+import { makeDomTools } from "../src/tools.ts";
 
 function mount(html) {
     const dom = new JSDOM(`<!doctype html><body>${html}</body>`);

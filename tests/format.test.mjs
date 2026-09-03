@@ -3,7 +3,7 @@
 // wrong: nested bullets, ordered lists, and `---` thematic breaks. Escapes untrusted model output first.
 import { test } from "node:test";
 import assert from "node:assert";
-import { markdown } from "../sidebar/format.ts";
+import { markdown } from "../src/sidebar/format.ts";
 
 test("nested bullets build nested <ul> (2-space / tab indent)", () => {
     const html = markdown("- A\n  - A1\n  - A2\n- B");

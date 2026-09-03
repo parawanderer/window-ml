@@ -11,7 +11,7 @@ import fs from "node:fs";
 import { createRequire } from "node:module";
 // Static (not conditional-require) — python-runtime.ts is chrome-free and side-effect-free,
 // so importing it costs nothing when the wheels are absent; `skip` still gates every test.
-import { wrapUserCode, harden, unharden } from "../python-runtime.ts";
+import { wrapUserCode, harden, unharden } from "../src/python-runtime.ts";
 // For the sympy→UI INTEGRATION test: the sidebar app (jsdom) to render the real WASM output. CommonJS helper.
 const { loadSidebarWorld, closeSidebarWorlds } = createRequire(import.meta.url)("./helpers");
 after(closeSidebarWorlds);   // close jsdom windows so their timers don't keep the runner alive (the leak gotcha)

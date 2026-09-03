@@ -3,7 +3,7 @@
 // exec/python run + the readonly/sandbox gates use).
 import { test } from "node:test";
 import assert from "node:assert";
-import { resolveOutputCap, outputCapEscalated, outputCapPrecheck, OUTPUT_CAP } from "../contract.ts";
+import { resolveOutputCap, outputCapEscalated, outputCapPrecheck, OUTPUT_CAP } from "../src/contract.ts";
 
 test("absent maxChars → the tool default, no escalation", () => {
     const e = resolveOutputCap("exec", undefined, undefined);

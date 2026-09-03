@@ -3,7 +3,7 @@
 // set is rendered under the reply, so the table appeared twice — once where it was quoted, once appended.
 import { test } from "node:test";
 import assert from "node:assert";
-const { answerWithoutShown, tokenIdsIn } = await import("../answer-tokens.ts");
+const { answerWithoutShown, tokenIdsIn } = await import("../src/answer-tokens.ts");
 
 // Two steps, each with a minted token. `resolve` maps an id to the STEP it points at — which is the identity
 // dedup must use, because the same output can be cited by hex in one place and by tool name in the other.

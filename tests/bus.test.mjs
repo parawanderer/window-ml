@@ -8,7 +8,7 @@ import assert from "node:assert";
 
 // bus.ts calls window.addEventListener at module load — stub a minimal window BEFORE importing it.
 globalThis.window = { addEventListener() {}, postMessage() {} };
-const { emitDebug, enterAgentRun, exitAgentRun, resetSubcallUsage, subcallUsage } = await import("../bus.ts");
+const { emitDebug, enterAgentRun, exitAgentRun, resetSubcallUsage, subcallUsage } = await import("../src/bus.ts");
 
 const chatResult = (prompt, completion) => ({ kind: "chat-result", id: "x", ts: 0, save: false, session: { hash: "h", turn: 0 }, content: "", sources: null, structured: false, model: "m", extend: null, reasoning: null, usage: { promptTokens: prompt, completionTokens: completion, totalTokens: prompt + completion } });
 

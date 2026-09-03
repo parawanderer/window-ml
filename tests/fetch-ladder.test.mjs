@@ -2,7 +2,7 @@
 // sinks, so the two views cannot drift. Pure.
 import { test } from "node:test";
 import assert from "node:assert";
-import { ladderLines, rungLabel, rungMeta, bytes, RUNG_LABEL, RESOLVED_LABEL, GLYPH } from "../sidebar/fetch-ladder.ts";
+import { ladderLines, rungLabel, rungMeta, bytes, RUNG_LABEL, RESOLVED_LABEL, GLYPH } from "../src/sidebar/fetch-ladder.ts";
 
 const A = (o) => ({ strategy: "accept", url: "https://d.test/x", outcome: "hit", ...o });
 

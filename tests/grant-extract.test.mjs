@@ -4,7 +4,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
-import { extractGrants, fetchUrlLiterals } from "../grant-extract.ts";
+import { extractGrants, fetchUrlLiterals } from "../src/grant-extract.ts";
 
 test("extracts ml.fetch string literals from exec", () => {
     const grants = extractGrants("exec", { js: `const a = await ml.fetch("https://x.test/data.json"); a.text` });

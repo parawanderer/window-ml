@@ -3,7 +3,7 @@
 // recorded, so the panel's second half needs no new collection.
 import { test } from "node:test";
 import assert from "node:assert";
-const M = await import("../sidebar/model-stats.ts");
+const M = await import("../src/sidebar/model-stats.ts");
 
 const usage = (p, c, extra = {}) => ({ promptTokens: p, completionTokens: c, totalTokens: p + c, ...extra });
 

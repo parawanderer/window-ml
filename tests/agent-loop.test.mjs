@@ -4,7 +4,7 @@
 // grants it — the decision never depends on the executor, so a hostile executor can't self-approve.
 import { test } from "node:test";
 import assert from "node:assert";
-import { runAgentLoop } from "../agent-loop.ts";
+import { runAgentLoop } from "../src/agent-loop.ts";
 
 // Deps factory: scripted model turns + spies recording the ORDER of approve/runTool calls.
 function makeDeps({ turns = [], approve, autoApprove } = {}) {

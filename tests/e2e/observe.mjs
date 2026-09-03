@@ -10,8 +10,8 @@
 // Writes tests/e2e/artifacts/: run.md (canonical), transcript.txt, events.json, step-<n>.png, final.png.
 
 import "../stub-css.mjs";   // export.ts imports a bundled .css → stub it (both loader paths) before the import below
-const { serializeSession } = await import("../../sidebar/export.ts");
-const { serializeSessionJson } = await import("../../sidebar/export-json.ts");
+const { serializeSession } = await import("../../src/sidebar/export.ts");
+const { serializeSessionJson } = await import("../../src/sidebar/export-json.ts");
 
 import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
