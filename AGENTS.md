@@ -851,6 +851,16 @@ date is YOUR responsibility** — every time you change a self-tool's behaviour,
 mention in the same change. Do this proactively, never ask the user whether to. (Skills live in
 `.claude/skills/`; the `observe` skill is the reference example.)
 
+**RULE — never pad model-facing text for alignment.** Column-aligning a list with `padEnd` is a HUMAN
+scanning affordance. A model parses the fields either way and pays for every space, so padding is pure
+context cost on a path whose whole purpose is usually to SAVE context. Measured on the `dereference`
+candidate list: 55 of 557 characters — 10% — were padding, and it grows with the field widths. Use a single
+space or a delimiter, and let the fields be ragged. This covers every string a model reads: tool results and
+errors, tool/parameter descriptions, prompt clauses, fault messages. **Human-facing surfaces are the
+opposite** — the sidebar, the HUD and the exports should align freely, and the sidebar gets it for free in
+CSS, so nothing is lost by keeping the model-facing string dense. Testable: assert no run of two or more
+spaces in the generated string (see `tests/token-pipe.test.mjs`, memoryFault).
+
 - **Plain JS in docs/examples** — `document.querySelector`, never jQuery-style
   `$`/`$$` (those are devtools-only and read as dated).
 - **Document functions with JSDoc** (`/** … */`, `@param`/`@returns` where useful),
