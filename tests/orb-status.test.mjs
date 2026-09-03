@@ -4,7 +4,7 @@
 // (the humanized tool phase + a stall heartbeat), with no live token count (it can't, mid-generation).
 import { test } from "node:test";
 import assert from "node:assert";
-import { orbStatus, activityFor, liveProseFor, liveTokensFor, fmtTokens, STALL_MS } from "../sidebar/orb-status.ts";
+import { orbStatus, startupPhase, activityFor, liveProseFor, liveTokensFor, fmtTokens, STALL_MS } from "../sidebar/orb-status.ts";
 
 // Minimal Session fixtures — only the fields the projection reads.
 const run = (over = {}) => ({ steps: [], says: [], lastTs: Date.now(), ...over });
@@ -24,8 +24,10 @@ test("activityFor: a FINISHED tool → 'Thinking about the <output>…' (context
     assert.equal(a.icon, "💭");
 });
 
-test("activityFor: no tool yet this turn → bare 'Thinking…'", () => {
-    assert.equal(activityFor(run({ steps: [step({ thought: "hmm" })] })).label, "Thinking…");
+// "Thinking" is not a catch-all for "nothing has come back yet" — see startupPhase. Before anything streams
+// the model is waiting (prompt processing / queued), or AWAKENING if it isn't even resident.
+test("activityFor: nothing streamed yet → 'Waiting for the model…', not a claim about thinking", () => {
+    assert.equal(activityFor(run({ steps: [step({ thought: "hmm" })] })).label, "Waiting for the model…");
 });
 
 test("activityFor: a CUSTOM tool with no registered message degrades gracefully (running + finished)", () => {
@@ -40,7 +42,7 @@ test("activityFor: scopes to the CURRENT turn — a prior turn's tool doesn't le
     // A follow-up turn (say at step 1) then a thinking-only step 2: the turn-1 python_exec must NOT surface.
     const r = run({ steps: [step({ step: 1, tool: "python_exec", pending: false }), step({ step: 2, thought: "next" })],
         says: [{ text: "follow up", atStep: 1 }] });
-    assert.equal(activityFor(r).label, "Thinking…");   // scoped past the say boundary → no leak
+    assert.equal(activityFor(r).label, "Waiting for the model…");   // scoped past the say boundary → no leak
 });
 
 // ---- STREAMING: live token count + live reply prose ----
@@ -98,4 +100,34 @@ test("orbStatus (non-streaming): a STALLED run appends an elapsed heartbeat and 
 test("liveProseFor: the model's latest narration (its thought), stripped to one line; null without one", () => {
     assert.equal(liveProseFor(run({ steps: [step({ thought: "**Scanning** the table" })] })), "Scanning the table");
     assert.equal(liveProseFor(run({ steps: [step({ tool: "look" })] })), null);
+});
+
+
+// A local model spends its first many seconds LOADING, not thinking — and "Thinking… 17s" invites you to
+// wonder what it could possibly be pondering. Now that the panel knows what is resident, the orb can say so.
+test("startupPhase: names what is actually happening before anything streams", () => {
+    const base = { steps: [], says: [] };
+    // Not resident → the time is going into loading tens of GiB into VRAM.
+    assert.equal(startupPhase(base, false).label, "Awakening…");
+    assert.equal(startupPhase(base, false).short, "loading");
+    // Resident, nothing back yet → prompt processing or a queue. Still not thinking.
+    assert.equal(startupPhase(base, true).label, "Waiting for the model…");
+    // Residency unknown (no capacity data) → don't claim it is loading.
+    assert.equal(startupPhase(base, undefined).label, "Waiting for the model…");
+});
+
+test("startupPhase: THINKING means reasoning tokens are arriving; content means writing", () => {
+    // The word should mean what it says.
+    assert.equal(startupPhase({ steps: [], liveStream: { reasoning: "let me…" } }, true).label, "Thinking…");
+    assert.equal(startupPhase({ steps: [], liveStream: { content: "The answer" } }, true).label, "Writing…");
+    // Reasoning wins while both are present — it is the phase that is still in progress.
+    assert.equal(startupPhase({ steps: [], liveStream: { reasoning: "…", content: "x" } }, true).label, "Thinking…");
+    // …and it beats "not resident": tokens are arriving, so whatever loading there was is over.
+    assert.equal(startupPhase({ steps: [], liveStream: { reasoning: "…" } }, false).label, "Thinking…");
+});
+
+test("activityFor: after a tool returns, 'thinking about' becomes 'writing about' once prose streams", () => {
+    const withStream = (ls) => ({ ...run({ steps: [step({ tool: "python_exec", pending: false })] }), liveStream: ls });
+    assert.equal(activityFor(withStream({ reasoning: "hm" })).label, "Thinking about the Python output…");
+    assert.equal(activityFor(withStream({ content: "The total is" })).label, "Writing about the Python output…");
 });

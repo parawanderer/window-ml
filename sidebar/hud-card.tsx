@@ -10,6 +10,7 @@ import { isBackendUnreachable } from "../contract";
 import { sessionMap, rev, view, config, backendError, cardShowWorkHash, surface } from "./store";
 import type { Session, AgentStep } from "./store";
 import { truncate, markdown } from "./format";
+import { residentNow } from "./vram";
 import { orbStatus } from "./orb-status";   // the orb's live status projection (humanized tool phase + live token count + stall heartbeat)
 import { exportSession, printSession } from "./export";
 import { IconChevron, IconWarn, IconSend } from "./icons";
@@ -249,7 +250,10 @@ export function CardApp() {
     // decorated with a live token count while streaming or an elapsed heartbeat once it stalls. Reading
     // nowTick subscribes this render to the 1s heartbeat so a stall's elapsed advances; the ticker is gated
     // below to only run while the orb is up. `caption` = there's live detail worth auto-expanding for.
-    const orb = (showOrb && !starting) ? orbStatus(run!, nowTick.value || Date.now()) : null;
+    // Is this run's model actually LOADED? The resource panel already polls /api/ps, so the orb can say
+    // "Awakening…" instead of claiming a model that is still being read off disk is thinking. `undefined`
+    // when we have no residency data at all — then it makes no claim either way.
+    const orb = (showOrb && !starting) ? orbStatus(run!, nowTick.value || Date.now(), residentNow(run!.model)) : null;
     // Orb-steer: while a run is LIVE and its steer box is open, force the card OPEN (out of the orb) so the
     // input is reachable. Only meaningful for a running run — it self-clears the instant the run finishes.
     const steering = !!run && running && cardSteerHash.value === run.hash;
@@ -516,7 +520,7 @@ export function CardApp() {
                                 // HUD is answer-first: no "Running JavaScript…" activity line and no model-chip /
                                 // reply-bubble chrome (that's DevTools/sidebar detail — the LiveStream component).
                                 ? <div class="card-answer md" dangerouslySetInnerHTML={{ __html: markdown(run.liveStream.content, { math: true }) }} />
-                                : (() => { const o = orbStatus(run, nowTick.value || Date.now()); return <div class="card-answer dim card-working"><span class="card-work-ic" aria-hidden="true">{o.icon}</span>{o.label}<span class="pill-dots"><i /><i /><i /></span></div>; })()}
+                                : (() => { const o = orbStatus(run, nowTick.value || Date.now(), residentNow(run.model)); return <div class="card-answer dim card-working"><span class="card-work-ic" aria-hidden="true">{o.icon}</span>{o.label}<span class="pill-dots"><i /><i /><i /></span></div>; })()}
                           </>
                         : <>
                             {/* "Show work" sits ABOVE the answer now — the audit trail is the header, the answer

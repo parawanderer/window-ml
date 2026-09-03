@@ -18,6 +18,15 @@ import { parseInfo, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRe
 import { ResourceTracks } from "./resource-chart";
 import type { LoadedModel } from "../contract";
 
+/** Is this model resident right now? `undefined` when we have no `/api/ps` answer yet — the caller must not
+ *  read that as "not loaded", since the difference between "loading" and "we don't know" matters to what the
+ *  UI claims. Matches on the tagged name, normalising `:latest` like the rest of the model plumbing. */
+export function residentNow(model?: string | null): boolean | undefined {
+    const loaded = loadedModels.value;
+    if (!model || !loaded) return undefined;
+    return loaded.some((m) => normModel(m.model) === normModel(model));
+}
+
 /** A LoadedModel (the ps relay's shape) → the residency the chart works in. Bytes, never the rounded GB: the
  *  bands subtract these from exact capacity figures. `gpus` absent means CPU-resident, and that absence is
  *  preserved as an empty device map rather than invented placement. */

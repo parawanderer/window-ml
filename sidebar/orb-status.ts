@@ -129,7 +129,7 @@ export const STALL_MS = 4000;
 /** Compose the orb's live status. Priority: (1) STREAMING reply prose the model is typing right now → stream
  *  it live; else (2) the tool/thinking phase from activityFor, decorated with a live token count when
  *  streaming, or an elapsed heartbeat once it's gone quiet. `now` is injected so the heartbeat is testable. */
-export function orbStatus(run: Session, now: number = Date.now()): OrbStatus {
+export function orbStatus(run: Session, now: number = Date.now(), modelResident?: boolean): OrbStatus {
     const tokens = liveTokensFor(run);
     const tokSuffix = tokens != null ? ` (${fmtTokens(tokens)})` : "";
 
@@ -140,7 +140,7 @@ export function orbStatus(run: Session, now: number = Date.now()): OrbStatus {
 
     // (2) Tool or thinking phase. A narrated `thought` (if any) rides as the caption over the phase label.
     const prose = liveProseFor(run);
-    const a = activityFor(run);
+    const a = activityFor(run, modelResident);
     let label = prose || a.label;
     let caption = !!prose || !!tokSuffix;                                // narrating or streaming → expand to show it
     if (tokSuffix) label += tokSuffix;                                   // streaming → live count (it's moving)
