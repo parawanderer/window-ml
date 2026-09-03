@@ -8,6 +8,13 @@ object you call from any page's devtools console or from userscripts.
 See `README.md` for the user-facing API and `docs/` for setup, cloud models,
 and OCR. This file is the map for *extending* the code.
 
+## Layout
+
+The extension's own sources live in **`src/`** — every `.ts`/`.tsx`, `src/sidebar/`, and the two
+extension pages (`popup.html`, `offscreen.html`). Everything else stays at the root: `tests/`,
+`scripts/`, `tools/`, `docs/`, `manifest.json`, `build.mjs`. Paths in this file name files by their
+bare name (`background.ts`, `sw-llm.ts`) — they are all under `src/`.
+
 ## Architecture (4 files + popup)
 
 Requests flow: **page → content script → background worker → OpenWebUI**, and
@@ -615,7 +622,7 @@ own way. A third format = a third sink, not a third walker.
   theme, images inlined — a print doc has nowhere to put sidecars). `printSession`
   **routes the doc to the background** (`PRINT_SESSION` → `chrome.runtime.sendMessage`,
   which reaches it from BOTH surfaces), which opens a bundled **`print.html` tab**
-  (`sidebar/print.ts`) that fetches the doc by key (`GET_PRINT_DOC`, one-shot),
+  (`src/sidebar/print.ts`) that fetches the doc by key (`GET_PRINT_DOC`, one-shot),
   drops it into an iframe, prints THAT, and closes itself (`CLOSE_PRINT_TAB`). This
   is because `window.print()` is **SUPPRESSED for a frame inside DOCKED DevTools**
   (the panel surface) — a real top-level tab prints fine; markdown export was
@@ -659,7 +666,7 @@ descriptors carry **`seen`**: how many characters the model actually received. E
 what the model read (the raw view still shows the model-facing text verbatim).
 
 *The output cell.* `python_exec` and `exec` render their Out through ONE shared **`OutputCell`**
-(sidebar/render-panel.tsx) — a future code-ish tool (a `bash_exec`, say) wraps its own sections in it and
+(src/sidebar/render-panel.tsx) — a future code-ish tool (a `bash_exec`, say) wraps its own sections in it and
 inherits everything: a height cap (Settings → Appearance, per-cell drag-to-resize), scrolling, **tail-follow**
 (new output scrolls into view only while you're parked at the bottom; scroll up and it holds), and an in-cell
 **Ctrl+F find** (substring only — no regex — with a case toggle, match count, ↑/↓ navigation, painted via the
@@ -681,7 +688,7 @@ bumped by ONE self-terminating timeout (armed at the next boundary, `unref`'d, r
 widens every gutter to hh:mm:ss together when the clock rolls over. Time-only, no date: a run spanning
 midnight gets a **day divider** at the change (`dayBreaks` — a dashed rule + the ISO date, in the gutter and both
 exports), since a time-only gutter would otherwise put `00:00:01` directly under `23:59:58` and read as one second
-later. The mapping is pure and shared — **`sidebar/timestamps.ts`**
+later. The mapping is pure and shared — **`src/sidebar/timestamps.ts`**
 (`timeForOffset`/`alignedMarks`/`elideHour`/`timedText`), imported by the sidebar gutter AND by both export
 sinks, so they can't drift; `render-panel.tsx` re-exports it. The **exports** carry the times as a collapsed
 `Out · timed` block BESIDE the verbatim Out rather than prefixed onto it (a `<pre>` inside `<details open>`, so
@@ -813,7 +820,7 @@ HTML — which must read as "capacity unknown", never as zero. `LoadedModel` als
 **no `gpus` key at all**, and that absence is the server's signal, preserved rather than normalised to `[]`.
 
 **Resource panel (VRAM/RAM).** `resource-model.ts` is the pure, unit-tested layer (parsing, bands, ceilings,
-series/tracks/presets, history segmentation); `sidebar/resource-chart.tsx` only draws. Spec + ASCII mocks +
+series/tracks/presets, history segmentation); `src/sidebar/resource-chart.tsx` only draws. Spec + ASCII mocks +
 live captures from both a CUDA box and a Metal Mac: `docs/spec/RESOURCE_PANEL.md`. **Read it before touching
 this** — several of the numbers are counter-intuitive and getting one wrong produces a confidently wrong
 display rather than an obvious bug:
@@ -851,7 +858,7 @@ display rather than an obvious bug:
   keyed by width as well as layout — tiling needs less height, and the correction only ever grows.
 
 **The event lane (§4.5 of the spec).** Under the tracks, on the SAME segmented axis: what happened, against
-what memory was doing while it did. Nothing new is collected — `sidebar/model-stats.ts` derives it from what
+what memory was doing while it did. Nothing new is collected — `src/sidebar/model-stats.ts` derives it from what
 sessions already record. `usageByModel` is the per-model ledger (attributed to the model that RAN, with
 delegated sub-calls charged to the READER); `eventsFrom` builds the timeline.
 - **Spans run BACKWARDS from when a call finished** — the timestamp we hold is the end — else every bar sits
@@ -882,7 +889,7 @@ delegated sub-calls charged to the READER); `eventsFrom` builds the timeline.
 in two places: the in-page **overlay** (a content-script shadow-root shell, `shell.ts`,
 hosting `sidebar.html` in an iframe) and an optional **DevTools panel** (`devtools.ts`
 registers a "window.ml" panel; `panel.html`/`panel.ts` host the *same* `sidebar.html`
-iframe and play the same parent-relay role the shell does). `sidebar/app.tsx` is
+iframe and play the same parent-relay role the shell does). `src/sidebar/app.tsx` is
 untouched between them — the panel is byte-for-byte the overlay's app. Debug events reach
 the panel by an **event-agnostic ONE-WAY stream**: `injected.js` → shell (forwards
 `ML_DEBUG_EVENT`) → `background.ts` keeps a per-tab ring buffer (`DEBUG_BUFFER_CAP`) + fans
@@ -939,7 +946,7 @@ is how `…/guide` becomes `…/guide/`, which flips the sibling to `index.md`),
 page-controlled, so a cross-origin one is refused rather than followed under this page's grant. `raw` was
 replaced by `format` because it straddled "what do we FETCH" and "what does the model RECEIVE"; `format` is
 the fetch-level half, shared with `ml.fetch`. `FetchResult.negotiation` carries the trace, rendered as a
-resolution TREE in the In slot (`sidebar/fetch-ladder.ts` holds the labels once, for the sidebar AND both
+resolution TREE in the In slot (`src/sidebar/fetch-ladder.ts` holds the labels once, for the sidebar AND both
 export sinks) — not decoration: a stub twin is a valid 200 Markdown document that is simply the wrong page.
 `pageInfo` reports a declared twin too, so an agent standing on a docs page knows to fetch rather than survey.
 

@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
-import { projectShotPoint, projectShotBox, browserInfo, incognitoEnableSteps, extensionDetailsUrl, mlRange, RANGE_MAX, pageContext } from "../util.ts";
+import { projectShotPoint, projectShotBox, browserInfo, incognitoEnableSteps, extensionDetailsUrl, mlRange, RANGE_MAX, pageContext } from "../src/util.ts";
 
 // ---- mlRange: the bounded counter loop (ml.range) ----
 test("mlRange: the three forms (stop / start,stop / start,stop,step) incl. a descending range", () => {
@@ -125,7 +125,7 @@ test("projectShotBox projects both corners → the viewport box is dpr-shrunk + 
 // ---- near-area vision memory (locate snap-inject dedup) ----
 // markSeen/seenNearby track which spots the DRIVER has already been shown a crop of, so a re-snap
 // onto a near-identical point doesn't re-inject the same crop (the re-snap-loop case).
-import { markSeen, seenNearby, SEEN_RADIUS } from "../util.ts";
+import { markSeen, seenNearby, SEEN_RADIUS } from "../src/util.ts";
 
 test("seenNearby: false on empty memory, and a null memory never matches", () => {
     assert.equal(seenNearby({ seen: [] }, 100, 100), false);
@@ -158,7 +158,7 @@ test("markSeen: rounds coordinates and is a no-op on a null memory", () => {
 });
 
 test("toolToken: deterministic 6-hex id from (runHash, seq); opaque + varies", async () => {
-    const { toolToken } = await import("../util.ts");
+    const { toolToken } = await import("../src/util.ts");
     const t = toolToken("abcd1234", 3);
     assert.match(t, /^[0-9a-f]{7}$/, "6 hex");
     assert.equal(toolToken("abcd1234", 3), t, "deterministic — same inputs, same id (survives replay)");
@@ -174,7 +174,7 @@ test("toolToken: deterministic 6-hex id from (runHash, seq); opaque + varies", a
 // mistyping two characters landed on another LIVE pointer and read the wrong output with no error, which
 // MemoryFault cannot catch because it only fires on an id that resolves to nothing.
 test("toolToken: consecutive ids AVALANCHE — no position stays put, no near-collisions", async () => {
-    const { toolToken } = await import("../util.ts");
+    const { toolToken } = await import("../src/util.ts");
     const hamming = (a, b) => [...a].reduce((d, c, i) => d + (c === b[i] ? 0 : 1), 0);
 
     for (const run of ["7f45f80c", "abcd1234", "0", "a-longer-run-hash"]) {

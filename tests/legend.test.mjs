@@ -5,7 +5,7 @@
 //    match), short + mostly-visible only; boundaries name the actual iframe selector. jsdom, guarded globals.
 import { test, before, after } from "node:test";
 import assert from "node:assert";
-import { formatLegend, regionLegend, clipVisibleText } from "../legend.ts";
+import { formatLegend, regionLegend, clipVisibleText } from "../src/legend.ts";
 import { CLIP_CASES, toWords } from "../tools/legend-cases.mjs";
 const collapseWs = (s) => s.replace(/\s+/g, " ").trim();   // case-preserved, mirrors legend.ts
 

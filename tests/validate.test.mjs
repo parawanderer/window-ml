@@ -2,7 +2,7 @@
 // Not a full validator by design — but what it DOES cover must not silently skip a property.
 import { test } from "node:test";
 import assert from "node:assert";
-import { validateArgs } from "../validate.ts";
+import { validateArgs } from "../src/validate.ts";
 
 const schema = {
     type: "object",

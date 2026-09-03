@@ -5,7 +5,7 @@
 // fake-LLM, whose final step reads the minted id out of the tool result and cites it — exactly what a real model
 // does (there is NO auto-fallback: an uncited output is never surfaced).
 import { test, expect } from "@playwright/test";
-import { TOKEN_HEX_SRC } from "../../token-id.ts";
+import { TOKEN_HEX_SRC } from "../../src/token-id.ts";
 import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";

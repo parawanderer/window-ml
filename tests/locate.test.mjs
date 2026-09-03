@@ -6,7 +6,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
-import * as locate from "../locate.js";
+import * as locate from "../src/locate.js";
 
 // locate.ts reads global document/window/getComputedStyle at call time; wire them.
 function world(html) {

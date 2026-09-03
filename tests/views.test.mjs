@@ -5,8 +5,8 @@
 //  - lookViews (builtin-tools.ts): produce overlay / no-overlay / both crops from ONE viewport capture.
 import { test } from "node:test";
 import assert from "node:assert";
-import { boxIntersectsText } from "../dom.ts";
-import { lookViews } from "../builtin-tools.ts";
+import { boxIntersectsText } from "../src/dom.ts";
+import { lookViews } from "../src/builtin-tools.ts";
 
 // A minimal fake document: elementFromPoint + caret* + createRange, enough to drive the hit-test.
 function fakeDoc({ textRect, tag = "SPAN", caretText = "hello", el = null }) {

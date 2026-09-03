@@ -769,7 +769,7 @@ function withWindowBus(fn) {
 // uses. This drives the REAL page-side half (derefViaBackground → window.postMessage) against a stubbed
 // content script, so the message contract can't drift.
 test("ml.dereference (background-hosted): the page rings back to the SW, id-matched", async () => {
-    const { derefViaBackground } = await import("../ml-agent.ts");
+    const { derefViaBackground } = await import("../src/ml-agent.ts");
     await withWindowBus(async (window) => {
     const seen = [];
     // Stand in for content.ts: answer a PAGE_DEREF with a PAGE_DEREF_RESULT carrying the same id.
@@ -793,7 +793,7 @@ test("ml.dereference (background-hosted): the page rings back to the SW, id-matc
 });
 
 test("ml.dereference (background-hosted): an error from the SW rejects, and a foreign id is ignored", async () => {
-    const { derefViaBackground } = await import("../ml-agent.ts");
+    const { derefViaBackground } = await import("../src/ml-agent.ts");
     await withWindowBus(async (window) => {
     const onMsg = (e) => {
         const d = e.data;
@@ -838,7 +838,7 @@ test("ml.info(): the capacity round-trip, and null when the route isn't served",
 // An advisory (a label resolved by similarity) must survive the background relay ALONGSIDE the value, so the
 // page-side ml.dereference can console.warn it without touching the data the script is about to parse.
 test("ml.dereference (background-hosted): a soft-match advisory crosses the relay beside the value", async () => {
-    const { derefViaBackground } = await import("../ml-agent.ts");
+    const { derefViaBackground } = await import("../src/ml-agent.ts");
     await withWindowBus(async (window) => {
         const onMsg = (e) => {
             const d = e.data;
