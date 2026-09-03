@@ -5,7 +5,7 @@
  * The sink vocabulary is presentational, so a sink-shaped JSON would encode our layout
  * decisions rather than the run. This serializes the `Session` directly.
  *
- * The shape is specified in `export-schema.ts`; the reasoning is in
+ * The shape is specified in `../export-schema.ts` (root, beside contract.ts); the reasoning is in
  * `docs/spec/PROGRAMMATIC_EXPORT.md`.
  */
 
@@ -15,8 +15,8 @@ import type { TokenUsage } from "../contract";
 import type {
     ExportDocument, ExportSession, ExportStep, ExportMessage,
     ExportOutcome, ExportTotals, ExportModelUsage, ExportStatus, IsoTimestamp,
-} from "./export-schema";
-import { EXPORT_SCHEMA_VERSION } from "./export-schema";
+} from "../export-schema";
+import { EXPORT_SCHEMA_VERSION } from "../export-schema";
 
 /** Epoch ms → ISO 8601. Invalid/absent stamps are dropped rather than exported as an
  *  epoch-zero date, which would read as a real 1970 timestamp to a consumer. */

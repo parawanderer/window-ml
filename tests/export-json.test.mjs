@@ -1,7 +1,7 @@
 "use strict";
 // The JSON export: the machine-readable run format. Unlike the markdown/PDF sinks this
 // serializes the Session directly, so these tests are about FIDELITY (nothing invented,
-// nothing silently dropped) rather than layout. Schema: sidebar/export-schema.ts.
+// nothing silently dropped) rather than layout. Schema: export-schema.ts (root, beside contract.ts).
 import { test } from "node:test";
 import assert from "node:assert";
 const { sessionToJson, serializeSessionJson } = await import("../sidebar/export-json.ts");

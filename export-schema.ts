@@ -7,6 +7,10 @@
  * change to somebody else's parser: additive changes are free, anything else bumps
  * {@link EXPORT_SCHEMA_VERSION}.
  *
+ * Lives at the root beside `contract.ts`, not under `sidebar/`: it is a contract, not a
+ * detail of the debug UI, and it depends on nothing in there. The serializer that
+ * produces it does (it reads the sidebar's `Session`), so that stays in `sidebar/`.
+ *
  * Design notes live in `docs/spec/PROGRAMMATIC_EXPORT.md`. The short version:
  *  - It serializes the `Session` directly rather than walking it through a `Sink`. The
  *    sink vocabulary is presentational, so a sink-shaped JSON would encode our layout
@@ -23,7 +27,7 @@
 import type {
     RenderDescriptor, TokenUsage, SubcallUsage, ToolFeedback,
     PersistGrant, ReusedGrant, DebugAgentConfig, DebugSessionConfig,
-} from "../contract";
+} from "./contract";
 
 /** Bumped only on a BREAKING change. Adding an optional field is not breaking. */
 export const EXPORT_SCHEMA_VERSION = 1;
