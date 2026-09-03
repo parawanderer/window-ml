@@ -7,7 +7,7 @@ import { rev, cardShowWorkHash, revealSeq } from "./store";
 import { markdown, inlineMarkdown } from "./format";
 import { IconChevron } from "./icons";
 import { ClickableImg, inlineText } from "./ui-kit";
-import { exportSession, printSession } from "./export";
+import { exportSession, exportSessionJson, printSession } from "./export";
 import { AnswerBody } from "./answer-render";
 import { AgentTurn, SteerSeen } from "./agent-detail";
 import { buildRunBlocks, ensureBlockSummary, blockSummaries, blockKey, groupTurns } from "./debug-reducer";
@@ -74,6 +74,7 @@ export function ShowWork({ run }: { run: Session }) {
                         <div class="menu-head">Export this run</div>
                         <button class="menu-item" role="menuitem" onClick={() => exp(exportSession)}>Markdown<span class="menu-hint">.zip with screenshots</span></button>
                         <button class="menu-item" role="menuitem" onClick={() => exp(printSession)}>PDF<span class="menu-hint">opens the print dialog</span></button>
+                        <button class="menu-item" role="menuitem" onClick={() => exp(exportSessionJson)}>JSON<span class="menu-hint">for other programs</span></button>
                     </div>
                 ) : null}
             </div>

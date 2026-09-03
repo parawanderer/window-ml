@@ -1,12 +1,14 @@
 // observe.mjs — a standalone "let me watch a run end-to-end" harness so I (Claude) can debug the real
 // extension in a real browser by reading ARTIFACTS: the extension's OWN markdown transcript (run.md, via
-// serializeSession) + a screenshot per step + the raw event stream. Not a test — a debug tool.
+// serializeSession) + run.json (the machine-readable export) + a screenshot per step + the raw event
+// stream. Not a test — a debug tool.
 //
 //   node --import tsx tests/e2e/observe.mjs                 # deterministic: scripted fake-LLM
 //   E2E_BACKEND=<chatUrl> E2E_MODEL=<id> TASK="…" node --import tsx tests/e2e/observe.mjs   # real model
 //   (with .env holding OPENWEBUI_URL/KEY/MODEL, pass USE_ENV=1 to use it as the backend)
 //
-// Writes tests/e2e/artifacts/: run.md (canonical), transcript.txt, events.json, step-<n>.png, final.png.
+// Writes tests/e2e/artifacts/: run.md (canonical), run.json (programmatic), transcript.txt, events.json,
+// step-<n>.png, final.png.
 //
 // This file is a THIN CLI: env vars in, one `runOnce()` call, a summary out. The run-driving core lives in
 // run-once.mjs, shared with the bench — one function, two CLIs, so the core never learns what a benchmark
@@ -52,9 +54,11 @@ const main = async () => {
         warmAll: !!process.env.WARM_ALL,
         artDir: ART,
         // Sidebar focus is the DEFAULT: a human watching should never have to click. WATCH=1 additionally
-        // HOLDS the browser open at the end so a finished run can be inspected.
+        // HOLDS the browser open at the end so a finished run can be inspected. Tested by VALUE, not
+        // presence: `WATCH=0` is a non-empty string, so a truthiness check leaves a finished run looking
+        // hung. (WARM already read its value correctly.)
         focusSidebar: true,
-        hold: !!process.env.WATCH,
+        hold: !!process.env.WATCH && process.env.WATCH !== "0",
         log: (s) => console.log(s),
     });
 
@@ -64,7 +68,7 @@ const main = async () => {
         const by = r.approvals.reduce((m, a) => ((m[a.decision] = (m[a.decision] || 0) + 1), m), {});
         console.log(`  approvals: ${r.approvals.length} gate(s) — ${Object.entries(by).map(([k, v]) => `${v} ${k}`).join(", ")} (policy: ${approve})`);
     }
-    console.log(`  artifacts: ${path.relative(process.cwd(), ART)}/  (run.md, transcript.txt, events.json, step-*.png)\n`);
+    console.log(`  artifacts: ${path.relative(process.cwd(), ART)}/  (run.md, run.json, transcript.txt, events.json, step-*.png)\n`);
 };
 
 main().catch((e) => { console.error(e); process.exit(1); });

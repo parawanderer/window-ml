@@ -15,6 +15,7 @@
 
 import "../stub-css.mjs";   // export.ts imports a bundled .css → stub it (both loader paths) before the import below
 const { serializeSession } = await import("../../sidebar/export.ts");
+const { serializeSessionJson } = await import("../../sidebar/export-json.ts");
 
 import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
@@ -113,11 +114,14 @@ export function buildSession(events) {
  */
 export function renderRun(events) {
     const session = buildSession(events);
-    if (!session) return { session: null, md: "_(no agent events yet — is debugMode emitting?)_\n", images: [] };
-    try {
-        const { md, images } = serializeSession(session);
-        return { session, md, images };
-    } catch (e) { return { session, md: `_(serializeSession failed mid-run: ${e})_\n`, images: [] }; }
+    if (!session) return { session: null, md: "_(no agent events yet — is debugMode emitting?)_\n", images: [], json: null };
+    let md = "", images = [], json = null;
+    try { ({ md, images } = serializeSession(session)); }
+    catch (e) { md = `_(serializeSession failed mid-run: ${e})_\n`; }
+    // The machine-readable twin. Serialized independently of the markdown so one failing mid-run cannot
+    // take the other with it — a partial transcript is the whole point of dumping incrementally.
+    try { json = serializeSessionJson(session); } catch { json = null; }
+    return { session, md, images, json };
 }
 
 /** A per-call artifact writer: chained so concurrent events can't interleave writes, and never throws. */
@@ -129,8 +133,9 @@ function makeDumper(artDir) {
         chain = chain.then(async () => {
             try {
                 await writeFile(path.join(artDir, "events.json"), JSON.stringify(snap, null, 2));
-                const { md, images } = renderRun(snap);
+                const { md, images, json } = renderRun(snap);
                 await writeFile(path.join(artDir, "run.md"), md);
+                if (json) await writeFile(path.join(artDir, "run.json"), json);
                 for (const img of images) {
                     await mkdir(path.dirname(path.join(artDir, img.name)), { recursive: true });
                     await writeFile(path.join(artDir, img.name), img.bytes);
@@ -232,7 +237,7 @@ export function decideApproval(policy, gate) {
  * @param {number} [cfg.timeoutMs] how long to wait for the terminal agent-result
  * @param {(s: string) => void} [cfg.log] where progress lines go
  * @param {(ev: object) => void} [cfg.onEvent] called with every debug event as it arrives
- * @returns {Promise<{events, session, runMd, images, result, error, runMs, stepCount, approvals, transcript, finalUrl, startUrl, backendLabel, seedBoundarySeq}>}
+ * @returns {Promise<{events, session, runMd, runJson, images, result, error, runMs, stepCount, approvals, transcript, finalUrl, startUrl, backendLabel, seedBoundarySeq}>}
  */
 export async function runOnce(cfg = {}) {
     const {
@@ -442,7 +447,7 @@ export async function runOnce(cfg = {}) {
         if (artDir) { try { await page.screenshot({ path: path.join(artDir, "final.png") }); } catch { /* */ } }
         await dump(events);
         await settle();
-        const { session, md, images } = renderRun(events);
+        const { session, md, images, json } = renderRun(events);
 
         transcript.push({ kind: "result", task, finalUrl, steps: stepCount, runMs, error: error || null, result: result ?? null });
         if (artDir) {
@@ -457,7 +462,7 @@ export async function runOnce(cfg = {}) {
             await new Promise((resolve) => { ext.context.on("close", resolve); process.on("SIGINT", resolve); });
         }
 
-        return { events, session, runMd: md, images, result, error, runMs, stepCount, approvals, transcript, finalUrl, startUrl, backendLabel, seedBoundarySeq };
+        return { events, session, runMd: md, runJson: json, images, result, error, runMs, stepCount, approvals, transcript, finalUrl, startUrl, backendLabel, seedBoundarySeq };
     } finally {
         approvalLoopOn = false;
         await ext.close().catch(() => {});

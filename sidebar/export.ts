@@ -13,6 +13,7 @@ import atomOneLight from "highlight.js/styles/atom-one-light.css";
 import { ladderLines } from "./fetch-ladder";
 import katexCss from "katex/dist/katex.min.css";
 import { sessionMap, turnsRun, config } from "./store";
+import { serializeSessionJson } from "./export-json";
 import type { Session, AgentStep } from "./store";
 import { pretty, fullStamp, beautifyJs, escapeHtml, highlight, markdown } from "./format";
 import { splitAnswer, hasTokens, resolveTokenStep } from "../answer-tokens";
@@ -656,6 +657,21 @@ export function exportSession(hash: string): void {
     const { md, images } = serializeSession(s);
     if (!images.length) { downloadBlob(`${base}.md`, new Blob([md], { type: "text/markdown" })); return; }
     downloadBlob(`${base}.zip`, zipStore([{ name: "run.md", bytes: new TextEncoder().encode(md) }, ...images]));
+}
+
+/**
+ * Export the session as JSON, for programs rather than people. Always one file: images
+ * ride inline as data URLs, because something ingesting exports should not have to
+ * unarchive. See `docs/spec/PROGRAMMATIC_EXPORT.md`.
+ *
+ * @param {string} hash The session to export.
+ */
+export function exportSessionJson(hash: string): void {
+    const s = sessionMap.get(hash);
+    if (!s) return;
+    const version = (typeof chrome !== "undefined" && chrome.runtime?.getManifest)
+        ? chrome.runtime.getManifest().version : undefined;
+    downloadBlob(`${baseName(s)}.json`, new Blob([serializeSessionJson(s, version)], { type: "application/json" }));
 }
 
 // Print the session → the user chooses "Save as PDF" (or a real printer). We
