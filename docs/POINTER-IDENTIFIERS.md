@@ -177,33 +177,94 @@ transposition rates are asserted in `tests/util.test.mjs` and `tests/token-id`-a
 
 ---
 
-## 5. Reasoned: the design that falls out
+## 5. What was built, and why it took that shape
 
-**Optimise for recall, not for transcription fidelity.** Format barely matters if the model never
-has to reproduce an opaque string. Ranked by leverage:
+**Optimise for recall, not for transcription fidelity.** Format barely matters if the model never has to
+reproduce an opaque string. All of the below now ships; the reasoning is kept because the *shape* of each
+decision is the reusable part.
 
-1. **Never require transcription.** `@tool:python_exec` (the tool-name alias, = "that tool's
-   latest call") needs no memory at all. Reading through it now returns the call's **stable id**
-   with a note that the alias moves and the id does not — handing over the handle at the exact
-   moment the model has it in context, which is the one situation transcription is reliable.
-2. **Make the inventory a first-class read.** `tokenList()` already renders exactly the right
-   thing, but today a model must *trigger an error* to see it. A no-argument `dereference` should
-   be a legitimate read returning the inventory. Then the model looks rather than guesses.
-   *(Designed, not built.)*
-3. **Make labels resolvable.** The model already names an output at the moment it knows what it
-   is for (`token: "the pricing table"`). A self-chosen name is *recalled*, not transcribed, and
-   degrades gracefully — `nearest()` already matches on labels, so a near-miss becomes a good
-   suggestion. Needs `get()` to match labels, plus a mint-time collision check against ids and
-   tool names. *(Designed, not built.)*
-4. **Correct against the live set, never silently.** With the checksum saying "this was corrupted,
-   not invented", and 99.5% of runs having no ambiguous pair: if exactly one live id is close,
-   resolve it **and say so** ("you wrote X; I read Y"). Two or more → today's ranked fault.
-   *(Designed, not built.)*
-5. **Keep the hex as the machine handle.** It is right for the pin line and `:in`/`:out`
-   citations, where the model copies from adjacent context.
+### The namespace: three disjoint forms, dispatched on shape
 
-The one thing ECC-in-the-id would buy that set-matching cannot is correcting an id with **no
-access to the run** — validating a citation inside an exported transcript. Not a problem we have.
+```
+@tool:"the budget dataframe"   quoted        the model's own LABEL
+@tool:adf40ed                  7 hex         a generated id
+@tool:python_exec              bare word     a tool alias — that tool's latest call
+```
+
+Dispatched on **form**, never tried in order. Each spelling has exactly one meaning, so there is no
+precedence rule to teach and nothing can shadow anything — and a CORRUPTED id stays in the id branch, where
+it misses and faults, instead of being retried as a tool or label and resolving to something unrelated.
+
+The partition rests on ids and tool names being distinguishable, which the charset does **not** give for
+free: `deadbee` is a legal identifier *and* a valid token shape. So `ml.defineTool` throws on a name that is
+not an identifier or that is id-shaped. The guarantee is enforced at definition time rather than assumed.
+
+### Never require transcription
+
+`@tool:python_exec` needs no memory at all. Reading through it returns that call's **stable id** with a note
+that the alias moves and the id does not — handing over the handle at the exact moment the model has it in
+context, which is the one situation where transcription is reliable. A model that never asked for a token
+still gets one this way, which matters because it usually decides an output is worth keeping only *after*
+seeing it.
+
+`dereference` with **no argument** lists what the session holds — id, name, type, age. Previously that was
+reachable only by provoking the "token is required" error, which is backwards for a mechanism whose job is
+confidence: a model that cannot cheaply see what it has will guess, and one that expects to guess wrong
+retypes the data instead. That is the cost the whole mechanism exists to avoid.
+
+### Labels resolve, in tiers, and a near match is never silent
+
+A label is the handle worth having, because the model *chose* it when it knew what the output was for — it
+is recalled rather than transcribed, and degrades gracefully where a hex id degrades into garbage.
+
+| the reference | outcome |
+| --- | --- |
+| exact label | resolve, silently — nothing was approximated |
+| near, and clearly ahead of the runner-up | resolve, and **say so** |
+| near, but ambiguous | refuse; fault with candidates, types and scores |
+| id one character off | refuse — the check character and the sparse space make it miss |
+| bare word | a tool alias only, never fuzzy |
+
+**Separation is the guard, not a distance threshold**, and that distinction is the whole design. Given
+`model_fit_linear` and `model_fit_quadratic`, both candidates clear *any* absolute bar, so only a margin can
+refuse `model_fit` while still accepting `model_fit_linea` — a typo with a clear winner. A rule like
+"resolve if edit distance ≤ 2" has the appearance of determinism without the property: `baseline_loss` and
+`baseline_losses` are distance 2 apart, so with both in the table it is a coin flip.
+
+**The announcement channel differs by caller, and that is load-bearing.** The tool appends the note to its
+result, because there the model READS the result. `ml.dereference` inside `exec` returns a value the script
+is about to `JSON.parse`, split, or pipe — a note appended there would corrupt the data. So a read returns
+`{ value, warning? }` and the exec path `console.warn`s it, which exec already captures into both the step
+result and the live stream.
+
+### The metric is configurable, because it is genuinely undecided
+
+`labelMatch` (default `hybrid`) selects how near-misses are ranked. Exposed as a setting rather than a
+build-time define — unlike the identifier FORMAT — because the measurement says no metric wins outright and
+plain edit distance is actively misleading. See §6 for the numbers.
+
+### Correction comes from the live set, not from the id
+
+With the checksum saying "corrupted, not invented", and 99.5% of runs having no ambiguous pair, a corrupted
+id could be corrected against the live set. The one thing ECC-in-the-id would buy that set-matching cannot
+is correcting an id with **no access to the run** — validating a citation inside an exported transcript.
+Not a problem we have.
+
+### Semantic ranking is deliberately NOT wired in
+
+`ml.embed` exists as a primitive, but embeddings do not enter the resolve path, and a measurement supports
+that rather than mere caution. Against the query `"the table of sales"`:
+
+| candidate | embeddinggemma | qwen3-0.6b |
+| --- | --- | --- |
+| `the sales table` (correct) | 0.972 | 0.939 |
+| `the revenue table` (drift) | 0.768 | 0.825 |
+| `the pricing table` (**wrong table**) | 0.731 | 0.733 |
+
+The gap between the correct synonym and a *different table* is **0.037** — an order of magnitude below the
+separation guard. Embeddings rank drift above the wrong answer, but nowhere near confidently enough to
+auto-resolve it, and correctly so. **They would improve candidate ORDERING, not the resolve rate**, which is
+exactly the "explicit search, not a resolve-path fallback" split — now with a number behind it.
 
 ---
 
