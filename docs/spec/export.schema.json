@@ -178,6 +178,13 @@
           "items": {
             "$ref": "#/$defs/ExportStep"
           }
+        },
+        "events": {
+          "description": "The session's TIMELINE — what ran, when, and for how long. Derived; see ExportEvent.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ExportEvent"
+          }
         }
       },
       "required": [
@@ -1875,6 +1882,138 @@
     "SubcallUsage": {
       "type": "object",
       "properties": {},
+      "additionalProperties": true
+    },
+    "ExportEvent": {
+      "type": "object",
+      "description": "One thing that HAPPENED, on the wall clock: a run, a model call, a tool step, a delegated sub-call, a model being loaded. This is the session's timeline, and it is DERIVED — like ExportOutcome and ExportTotals, and for the same reason. Every input is already elsewhere in the document, but the arithmetic that turns step records into spans is easy to get subtly wrong and easy to disagree about, so it is published rather than left to each consumer: - A step's timestamp is when it FINISHED, so every span runs BACKWARDS from it. Reconstructed naively, each bar sits one generation to the right of the work it describes. - A tool step is ONE event with phases, because the model deciding, the human at the approval gate and the tool running are three different kinds of time inside one step. The wait is the step's wall clock but not the machine's work, and it is frequently the largest part. - A model LOAD is its own event rather than slow generation — the difference between \"the model was slow\" and \"the model wasn't there yet\". Only real loads appear: a resident model reports a few ms of bookkeeping on every call, which is floored out. - Delegated sub-calls (a vision reader) are separate events carrying parent, so a different model's work is attributable instead of hidden inside the step that spawned it. The panel's own lane draws EVICTIONS too, read off consecutive `/api/ps` polls. Those are facts about the BOX rather than about a session — nothing in a session records them — so they are not exported here.",
+      "properties": {
+        "kind": {
+          "description": "`run` the whole session · `gen` one model call · `tool` a tool step (with phases) · `embed` a delegated sub-call · `load` a model arriving in memory. The remaining kinds the panel models (`evict`, `error`, `note`) are not derivable from a session and do not appear in an export; they are listed so a consumer's switch is written against the whole set.",
+          "type": "string",
+          "enum": [
+            "run",
+            "gen",
+            "tool",
+            "embed",
+            "load",
+            "evict",
+            "error",
+            "note"
+          ]
+        },
+        "label": {
+          "description": "Human-readable, as the panel labels it — the model id for a generation, the tool name for a step.",
+          "type": "string"
+        },
+        "at": {
+          "description": "When it BEGAN. Volatile.",
+          "type": "string",
+          "format": "date-time"
+        },
+        "endedAt": {
+          "description": "When it ended. Absent means an instant (a point on the timeline, not a span). Volatile.",
+          "type": "string",
+          "format": "date-time"
+        },
+        "durationMs": {
+          "description": "`endedAt - at`, which is the number a timeline is usually read for. Absent on an instant. Volatile.",
+          "type": "number"
+        },
+        "model": {
+          "description": "The model that did the work, where one did. A sub-call names the READER, not the driver.",
+          "type": "string"
+        },
+        "id": {
+          "description": "This event's own id, and the event that SPAWNED it — a sub-call's parent is its step, a step's parent is the run. Following `parent` gives the lineage the panel lights up on hover. Opaque, and unique within this document only. They EMBED the session hash, which is volatile — pass strings through canonicalizeText before diffing, which handles it.",
+          "type": "string"
+        },
+        "parent": {
+          "type": "string"
+        },
+        "seq": {
+          "description": "The step this came from, matching seq — how a timeline event gets back to the record that produced it. Absent on events that belong to the session as a whole.",
+          "type": "number"
+        },
+        "tool": {
+          "description": "The tool that ran, on a `tool` event. Same value as label, named so a consumer switching on `kind` need not know that.",
+          "type": "string"
+        },
+        "phases": {
+          "description": "A `tool` event's parts, in the order they happened and contiguous from at. Durations rather than absolute ends, since that is what they are read as. Volatile.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ExportEventPhase"
+          }
+        },
+        "cost": {
+          "description": "What it cost, on the kinds that spend tokens.",
+          "$ref": "#/$defs/ExportEventCost"
+        }
+      },
+      "required": [
+        "kind",
+        "label",
+        "at"
+      ],
+      "additionalProperties": true
+    },
+    "ExportEventPhase": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "description": "`model` generating the call · `wait` a human at the approval gate · `tool` the call running.",
+          "type": "string",
+          "enum": [
+            "model",
+            "wait",
+            "tool"
+          ]
+        },
+        "ms": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "kind",
+        "ms"
+      ],
+      "additionalProperties": true
+    },
+    "ExportEventCost": {
+      "type": "object",
+      "properties": {
+        "inTokens": {
+          "type": "number"
+        },
+        "outTokens": {
+          "type": "number"
+        },
+        "tokPerSec": {
+          "description": "Output tokens per second. Absent when nothing timed the call. Volatile.",
+          "type": "number"
+        },
+        "genBasis": {
+          "description": "Which clock tokPerSec came from: Ollama's own generation timing, our wall clock, or a mix across several calls. A rate that silently mixed the two would imply a precision it does not have. Absent alongside the rate.",
+          "type": "string",
+          "enum": [
+            "eval",
+            "wall",
+            "mixed"
+          ]
+        },
+        "evalMs": {
+          "description": "Ollama's generation-only time and our wall clock for the SAME call, when both are known. Their difference is what the network and the queue cost, which no rate can recover. Volatile.",
+          "type": "number"
+        },
+        "wallMs": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "inTokens",
+        "outTokens"
+      ],
       "additionalProperties": true
     }
   }

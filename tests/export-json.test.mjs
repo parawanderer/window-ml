@@ -198,3 +198,107 @@ test("records sharing a seq keep their original order", () => {
     const steps = sessionToJson(s).session.steps;
     assert.deepEqual(steps.map(x => x.thought ?? x.result), ["first", "second", "third"]);
 });
+
+/* ------------------------------- the timeline ------------------------------- */
+// `session.events` is the resource panel's event lane, published. It is DERIVED, so what these
+// assert is the arithmetic a consumer would otherwise have to reinvent — and get wrong in the
+// same three ways every time: spans run backwards from a finish stamp, a tool step is one event
+// with phases rather than three events, and a delegated sub-call belongs to a different model.
+
+const timed = (p, c, over = {}) => ({ promptTokens: p, completionTokens: c, totalTokens: p + c, genMs: 900, evalMs: 800, ...over });
+
+/** An agent run with everything a timeline can carry: a load, a generation, a tool step that
+ *  waited at an approval gate, and a delegated sub-call underneath it. */
+const timedSession = () => ({
+    hash: "abc12345", kind: "agent", model: "gemma4:31b", tag: "session",
+    createdTs: 1_700_000_000_000, lastTs: 1_700_000_009_000, status: "ok", config: {}, turns: [],
+    task: "count the rows", maxSteps: 20,
+    steps: [
+        { step: 1, seq: 1, ts: 1_700_000_005_000, thought: "look", usage: timed(100, 20, { loadMs: 4000 }) },
+        { step: 1, seq: 2, ts: 1_700_000_008_000, toolMs: 800, approveMs: 1500, tool: "exec",
+          arguments: { js: "1" }, result: "42", usage: timed(10, 5),
+          subUsage: { byModel: [{ model: "reader:7b", prompt: 90, completion: 8, calls: 1 }],
+                      calls_: [{ model: "reader:7b", ts: 1_700_000_007_500, ms: 400, prompt: 90, completion: 8 }] } },
+    ],
+});
+
+const eventsOf = (s) => sessionToJson(s).session.events;
+const ofKind = (evts, kind) => evts.filter(e => e.kind === kind);
+
+test("timeline: a generation span runs BACKWARDS from the stamp, which is when it finished", () => {
+    const gen = ofKind(eventsOf(timedSession()), "gen")[0];
+    // The step is stamped at +5000 and the call took 900ms, so it began at +4100 — not at +5000.
+    assert.equal(gen.at, new Date(1_700_000_004_100).toISOString());
+    assert.equal(gen.endedAt, new Date(1_700_000_005_000).toISOString());
+    assert.equal(gen.durationMs, 900, "the duration rides along; deriving it from two ISO strings is every consumer's job otherwise");
+    assert.equal(gen.seq, 1, "and it points back at the step that produced it");
+});
+
+test("timeline: a tool step is ONE event whose phases separate the model, the human and the tool", () => {
+    const tool = ofKind(eventsOf(timedSession()), "tool")[0];
+
+    assert.equal(tool.tool, "exec");
+    assert.deepEqual(tool.phases, [
+        { kind: "model", ms: 900 },    // deciding to make the call
+        { kind: "wait", ms: 1500 },    // a human at the approval gate — wall clock, but not work
+        { kind: "tool", ms: 800 },     // the call itself
+    ]);
+    assert.equal(tool.durationMs, 3200);
+    assert.equal(tool.phases.reduce((n, p) => n + p.ms, 0), tool.durationMs,
+        "phases are contiguous from `at`, which is what makes durations lossless");
+});
+
+test("timeline: a delegated sub-call is its own event, under its step, naming the READER", () => {
+    const events = eventsOf(timedSession());
+    const sub = ofKind(events, "embed")[0];
+    const step = ofKind(events, "tool")[0];
+
+    assert.equal(sub.model, "reader:7b", "the vision reader's cost is attributable, not buried in the driver's step");
+    assert.equal(sub.parent, step.id, "lineage: the sub-call belongs to the step that spawned it");
+    assert.equal(step.parent, ofKind(events, "run")[0].id, "which in turn belongs to the run");
+    assert.deepEqual(sub.cost, { inTokens: 90, outTokens: 8, tokPerSec: 20, genBasis: "wall" });
+});
+
+test("timeline: a real model load is its own event — 'not there yet' is not 'slow'", () => {
+    const load = ofKind(eventsOf(timedSession()), "load")[0];
+    assert.equal(load.durationMs, 4000);
+    assert.equal(load.model, "gemma4:31b");
+
+    // A resident model reports a few ms of bookkeeping on EVERY call; drawing those would fill
+    // the timeline with loads that never happened.
+    const s = timedSession();
+    s.steps[0].usage.loadMs = 5;
+    assert.equal(ofKind(eventsOf(s), "load").length, 0);
+});
+
+test("timeline: an unmeasurable rate is OMITTED, not exported as null", () => {
+    const s = timedSession();
+    delete s.steps[0].usage.genMs;
+    delete s.steps[0].usage.evalMs;
+    delete s.steps[1].usage.genMs;
+    delete s.steps[1].usage.evalMs;
+
+    const run = ofKind(eventsOf(s), "run")[0];
+    assert.ok(!("tokPerSec" in run.cost), "nothing timed these calls, so there is no rate to report");
+    assert.ok(!("genBasis" in run.cost));
+    assert.equal(run.cost.inTokens, 110, "the tokens are still exact");
+});
+
+test("timeline: a CHAT session gets one too — turns generate, and wait for loads, like anything else", () => {
+    const doc = sessionToJson({
+        hash: "abc12345", kind: "chat", model: "gemma4:31b", tag: "session",
+        createdTs: 1_700_000_000_000, lastTs: 1_700_000_005_000, status: "ok", config: {},
+        turns: [{ user: "hi", assistant: "hello", ts: 1_700_000_002_000, status: "ok", usage: timed(5, 3) }],
+    });
+    // The session's own span first (a chat is a `run` too — the kind names a container, not an
+    // agent loop), then the generation inside it.
+    assert.deepEqual(doc.session.events.map(e => e.kind), ["run", "gen"]);
+    assert.equal(doc.session.events[1].durationMs, 900, "a chat turn's generation is timed like any other");
+});
+
+test("timeline: a session with nothing timed has no events key at all", () => {
+    const s = agentSession();
+    for (const st of s.steps) { delete st.usage; delete st.toolMs; delete st.ts; }
+    s.createdTs = s.lastTs = 0;
+    assert.ok(!("events" in sessionToJson(s).session), "an empty array would read as 'measured, and nothing happened'");
+});

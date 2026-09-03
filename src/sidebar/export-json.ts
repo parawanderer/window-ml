@@ -15,8 +15,11 @@ import type { TokenUsage } from "../contract";
 import type {
     ExportDocument, ExportSession, ExportBuild, ExportPage, ExportStep, ExportMessage,
     ExportOutcome, ExportTotals, ExportModelUsage, ExportStatus, IsoTimestamp,
+    ExportEvent, ExportEventCost,
 } from "../export-schema";
 import { EXPORT_SCHEMA_VERSION, schemaUrl } from "../export-schema";
+import { eventsFrom } from "./model-stats";
+import type { ResourceEvent } from "../resource-model";
 
 /** Epoch ms → ISO 8601. Invalid/absent stamps are dropped rather than exported as an
  *  epoch-zero date, which would read as a real 1970 timestamp to a consumer. */
@@ -79,6 +82,61 @@ function stepToJson(st: AgentStep): ExportStep {
         usage: st.usage ?? undefined,
         subUsage: st.subUsage,
     });
+}
+
+/**
+ * The panel's own timeline event, published.
+ *
+ * Two deliberate translations. Absolute stamps become ISO like everything else in the document, and the
+ * DURATION rides along beside them — it is what a timeline is read for, and computing it from two ISO
+ * strings is work every consumer would repeat. Phases become durations rather than absolute ends for the
+ * same reason: they are contiguous from the event's start, so nothing is lost.
+ *
+ * The `ref.hash` is dropped: an export is one session, so every event in it belongs to that session and
+ * repeating the hash on each one is noise. The step it points at survives, as `seq`.
+ */
+function eventToJson(e: ResourceEvent): ExportEvent {
+    const end = e.until;
+    let prev = e.t;
+    return compact<ExportEvent>({
+        kind: e.kind,
+        label: e.label,
+        at: iso(e.t) || new Date(0).toISOString(),
+        endedAt: iso(end),
+        durationMs: end != null ? Math.max(0, end - e.t) : undefined,
+        model: e.model,
+        id: e.id,
+        parent: e.parent,
+        seq: e.ref?.seq,
+        tool: e.tool,
+        phases: e.phases?.map((ph) => {
+            const ms = Math.max(0, ph.until - prev);
+            prev = ph.until;
+            return { kind: ph.kind, ms };
+        }),
+        cost: e.cost && compact<ExportEventCost>({
+            inTokens: e.cost.inTokens,
+            outTokens: e.cost.outTokens,
+            // Omitted rather than null when nothing timed the call, per the format's own convention —
+            // `"tokPerSec" in cost` then means the rate is real.
+            tokPerSec: e.cost.tokPerSec ?? undefined,
+            genBasis: e.cost.genBasis ?? undefined,
+            evalMs: e.cost.evalMs,
+            wallMs: e.cost.wallMs,
+        }),
+    });
+}
+
+/**
+ * The session's timeline, derived exactly as the resource panel's event lane derives it — same function,
+ * so the export and the panel cannot disagree about when something ran.
+ *
+ * Both session kinds get one: a chat has no steps, but its turns still carry generation spans and the
+ * model loads they waited through, which is most of what a timeline is for.
+ */
+function timeline(s: Session): ExportEvent[] | undefined {
+    const events = eventsFrom([s as never]).map(eventToJson);
+    return events.length ? events : undefined;
 }
 
 /** A chat turn becomes two messages, so `messages` reads uniformly for both kinds. */
@@ -283,6 +341,7 @@ export function sessionToJson(s: Session, prov?: ExportProvenance | string): Exp
         totals: totals(s, steps, messages),
         messages,
         steps: isAgent ? steps : undefined,
+        events: timeline(s),
     });
 
     const build = buildOf(p);

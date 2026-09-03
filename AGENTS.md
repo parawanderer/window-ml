@@ -1150,7 +1150,14 @@ setup, and it points at the commit rather than `main` because `main` drifts away
 so it cannot answer "are these two runs comparable"); its `dirtyDiff` is opt-in via
 `ExportProvenance.includeDirtyDiff` — on for a harness artifact whose job is reproducing a run, off for a
 download the user shares, since it is unpublished source. `session.page` records where the run STARTED,
-previously recoverable only by regexing the system prompt.
+previously recoverable only by regexing the system prompt. **`session.events` is the resource panel's event
+lane, published** — the run's TIMELINE, so it survives outside the panel that drew it. Derived by the same
+`eventsFrom` the panel uses, so the two cannot disagree, and derived deliberately: the arithmetic is wrong
+in the same three places every time a consumer redoes it (spans run BACKWARDS from a finish stamp; a tool
+step is ONE event with `phases` splitting model/human-at-the-gate/tool, not three; a model load is its own
+event because "slow" and "not there yet" are different answers). Sub-calls carry `parent`, so a reader
+model's cost is attributable. `evict` is in the kind union but never exported — it is read off `/api/ps`
+polls, a fact about the box rather than about a session.
 
 - **`run-once.mjs`** — the run-driving CORE both CLIs share: `runOnce(config)` drives ONE agent run in a
   real Chromium and RETURNS `{ events, session, runMd, result, … }` instead of only writing files.
