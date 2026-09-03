@@ -1,7 +1,8 @@
 # Editor defaults, so a contributor whose editor prefers 2-space indent does not produce a diff full of
 # reindentation. This is DESCRIPTIVE, not aspirational: it records what the tree already does (measured —
-# .ts/.tsx/.mjs are 4-space with no tabs anywhere, JSON and YAML are 2). It is not a formatter and it
-# rewrites nothing; it only tells the editor what to do as you type.
+# .ts/.tsx/.mjs are 4-space with no tabs anywhere, JSON and YAML are 2, and tools/preview-*.mjs are the
+# only 2-space exception). It is not a formatter and it rewrites nothing; it only tells the editor what to
+# do as you type.
 #
 # See https://editorconfig.org — honoured natively by most editors, including VS Code.
 
@@ -23,6 +24,11 @@ indent_size = 2
 # it silently changes rendering. Left alone deliberately.
 [*.md]
 trim_trailing_whitespace = false
+
+# These two predate the rest and are 2-space. Recorded rather than reindented: the point of this file is
+# to stop NEW drift, not to license a reformat of what already works.
+[tools/preview-*.mjs]
+indent_size = 2
 
 # The OpenWebUI workspace tools, which are real Python deliverables rather than embedded snippets.
 [*.py]

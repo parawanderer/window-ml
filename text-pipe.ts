@@ -253,7 +253,7 @@ export function describeValue(v: unknown): string {
 
 function parseJson(lines: string[], cmd: string): unknown {
     const text = fromLines(lines).trim();
-    if (!(text.startsWith("{") || text.startsWith("["))) 
+    if (!(text.startsWith("{") || text.startsWith("[")))
         throw new Error(`\`${cmd}\` needs JSON, but this is plain text (${text.length} chars). Use the line commands instead (${CMDS.split(" · ").slice(0, 6).join(" · ")}).`);
     try { return JSON.parse(text); }
     catch (e) { throw new Error(`\`${cmd}\` — this looks like JSON but doesn't parse (${(e as Error).message}).`); }
