@@ -697,3 +697,76 @@ test("placementOf: a model on a card that stopped being reported says so", () =>
     assert.match(where, /no longer reported/, `honest about the missing card (${where})`);
     assert.doesNotMatch(where, /^device 1 8/, "not a bare id printed as though the card were still there");
 });
+
+// The scrub strip: an overview of the whole session, with a box showing which slice the chart is drawing.
+test("scrubExtent: where the window sits, and when there is nothing to scrub", () => {
+    const samples = Array.from({ length: 10 }, (_, i) => ({ t: 1000 + i * 1000 }));   // 1s..10s
+    // A window over the last three seconds sits at the right-hand end, and counts as AT THE TAIL.
+    const tail = M.scrubExtent(samples, { from: 7000, to: 10_000 });
+    assert.equal(tail.from, 1000);
+    assert.equal(tail.to, 10_000);
+    assert.ok(Math.abs(tail.windowFrom - 6 / 9) < 1e-9);
+    assert.equal(tail.windowTo, 1);
+    assert.equal(tail.atTail, true);
+
+    // Dragged back: the same width, earlier, and no longer following live.
+    const back = M.scrubExtent(samples, { from: 3000, to: 6000 });
+    assert.ok(Math.abs(back.windowFrom - 2 / 9) < 1e-9);
+    assert.equal(back.atTail, false);
+
+    // A window pinned to live is always a poll behind the newest sample — calling that "scrolled back" would
+    // unpin the view for nobody.
+    assert.equal(M.scrubExtent(samples, { from: 7000, to: 8500 }).atTail, true, "within the slack");
+    assert.equal(M.scrubExtent(samples, { from: 5000, to: 6500 }).atTail, false, "…but not this far back");
+
+    // Nothing to scrub: a strip whose box is the whole strip is a control that cannot do anything, and
+    // drawing one implies otherwise.
+    assert.equal(M.scrubExtent(samples, { from: 0, to: 99_999 }), null, "the window covers everything");
+    assert.equal(M.scrubExtent(samples, null), null, "no window means the whole session is shown");
+    assert.equal(M.scrubExtent([{ t: 1 }], { from: 0, to: 2 }), null, "one sample is not a session");
+    assert.equal(M.scrubExtent([], null), null);
+});
+
+test("scrubTo: dragging the box scrolls time, and never past the ends", () => {
+    const extent = { from: 0, to: 10_000 };
+    const win = { from: 7000, to: 10_000 };   // 3s wide
+    // Centred where you dropped it, same width — the box scrolls, it does not zoom.
+    const mid = M.scrubTo(extent, win, 0.5);
+    assert.deepEqual(mid, { from: 3500, to: 6500 });
+    assert.equal(mid.to - mid.from, 3000, "the duration is preserved");
+    // Past either end it parks against it rather than scrolling into time nothing was measured in.
+    assert.deepEqual(M.scrubTo(extent, win, 0), { from: 0, to: 3000 });
+    assert.deepEqual(M.scrubTo(extent, win, 1), { from: 7000, to: 10_000 });
+    assert.deepEqual(M.scrubTo(extent, win, 5), { from: 7000, to: 10_000 }, "clamped, not extrapolated");
+    // A window wider than the session sits over all of it rather than being squeezed into it.
+    assert.deepEqual(M.scrubTo(extent, { from: -5000, to: 30_000 }, 0.2), { from: 0, to: 10_000 });
+});
+
+// The lane shows every session's events, which is right until a browsing session has a dozen runs in it.
+test("filterEvents: scope answers whose, kinds answer which — and machine events survive both", () => {
+    const evs = [
+        { t: 1, kind: "run", label: "run a", id: "run:a", ref: { hash: "a" } },
+        { t: 2, kind: "tool", label: "exec", id: "s:a:1", ref: { hash: "a", seq: 1 } },
+        { t: 3, kind: "embed", label: "reader", id: "s:a:1:sub0", ref: { hash: "a", seq: 1 } },
+        { t: 4, kind: "run", label: "run b", id: "run:b", ref: { hash: "b" } },
+        // An eviction belongs to the MACHINE, not to a run: it has no ref at all.
+        { t: 5, kind: "evict", label: "m evicted", model: "m" },
+    ];
+    // Everything, by default.
+    assert.equal(M.filterEvents(evs, M.EMPTY_LANE_FILTER).length, 5);
+
+    // Scoped to one run: the other run goes, and the machine's own event STAYS — it is what the memory trace
+    // is doing, and hiding it for having no owner would remove the events the chart exists for.
+    const scoped = M.filterEvents(evs, { hash: "a", hidden: [] });
+    assert.deepEqual(scoped.map((e) => e.label), ["run a", "exec", "reader", "m evicted"]);
+
+    // Kinds are an EXCLUSION list, so a kind added later shows up by default instead of being filtered out by
+    // a stored preference that predates it.
+    assert.deepEqual(M.filterEvents(evs, { hash: null, hidden: ["embed"] }).map((e) => e.label),
+        ["run a", "exec", "run b", "m evicted"]);
+    assert.deepEqual(M.filterEvents(evs, { hash: "a", hidden: ["embed", "run"] }).map((e) => e.label),
+        ["exec", "m evicted"]);
+
+    // And the control can say what it would hide rather than making you toggle blindly.
+    assert.deepEqual(M.countByKind(evs), { run: 2, tool: 1, embed: 1, evict: 1 });
+});

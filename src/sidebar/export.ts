@@ -671,7 +671,10 @@ export function exportSessionJson(hash: string): void {
     if (!s) return;
     const version = (typeof chrome !== "undefined" && chrome.runtime?.getManifest)
         ? chrome.runtime.getManifest().version : undefined;
-    downloadBlob(`${baseName(s)}.json`, new Blob([serializeSessionJson(s, version)], { type: "application/json" }));
+    // BUILD_INFO identifies the COMMIT, which is what says whether two exports are comparable; the
+    // manifest version only moves on releases. The uncommitted diff is left out of a file the user is
+    // about to download and share — see ExportProvenance.includeDirtyDiff.
+    downloadBlob(`${baseName(s)}.json`, new Blob([serializeSessionJson(s, { version, build: BUILD_INFO })], { type: "application/json" }));
 }
 
 // Print the session → the user chooses "Save as PDF" (or a real printer). We

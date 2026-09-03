@@ -9,6 +9,11 @@ description: Drive ONE window.ml agent run in a real Chromium and inspect it —
 artifacts you read back. It is a **debug/observation tool, not a test** — reach for it to see what an agent
 did, iterate on the extension, validate a fix against a real model, or watch a run live.
 
+Observe drives ONE run. When the question is comparative — which model, which prompt, which variant —
+use the [bench](../bench/SKILL.md) skill instead: it walks a matrix over the same `runOnce()` core and
+reports spread over repeats. Both CLIs share `tests/e2e/run-once.mjs`, so anything true of a run here is
+true of a bench cell.
+
 ## Run it
 
 ```

@@ -4,33 +4,35 @@
 // re-injection, the MV3 service worker). Keep E2E rare — only for behaviour that genuinely needs a real
 // browser (see CLAUDE.md "End-to-end tests"). Everything else stays in the fast node:test/jsdom suite.
 //
-// An MV3 extension only loads with a PERSISTENT context + --load-extension (and needs the FULL
-// browser, not the headless shell — see launchExtension). `dist/` must be built first (pretest:e2e).
+// An MV3 extension only loads with a PERSISTENT context + --load-extension (and needs the FULL browser, not
+// the headless shell — see launchExtension). `dist/` must be built first (pretest:e2e).
 
 import { chromium } from "@playwright/test";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../dist");
+const DEFAULT_DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../dist");
 
-/** Launch Chromium with the built extension. Returns { context, sw, extensionId, close }. */
-export async function launchExtension(/** @type {{ headful?: boolean, dist?: string }} */ { headful } = {}) {
+/**
+ * Launch Chromium with the built extension. Returns { context, sw, extensionId, close }.
+ *
+ * `dist` loads a DIFFERENT build directory than `dist/` — how the bench runs an experimental variant
+ * (an esbuild `--define`d build in its own outdir) without the experiment ever becoming a product flag.
+ */
+export async function launchExtension(/** @type {{ headful?: boolean, dist?: string }} */ { dist, headful } = {}) {
+    const DIST = dist ? path.resolve(dist) : DEFAULT_DIST;
     const context = await chromium.launchPersistentContext("", {
         // HEADLESS by default, via `channel: "chromium"`.
         //
         // This used to be headful, on the finding that an MV3 service worker does not register under
-        // headless Chromium. That finding was real but narrower than it read: plain `headless: true` runs
+        // headless Chromium. That finding was real but narrower than it read: `headless: true` alone runs
         // the headless SHELL, a separate stripped binary with no extension support at all. `channel:
         // "chromium"` runs the FULL browser in --headless=new, where the worker registers fine — measured
-        // at ~0.5s against 12s of timeout for the shell, and the whole e2e suite passes.
+        // at ~0.5s, and the whole e2e suite passes. A headful window steals focus and the mouse on every
+        // launch, which for a suite that launches one per spec makes the machine unusable while it runs.
         //
-        // This matters beyond tidiness: a headful window grabs focus and the mouse on every launch, and
-        // the suite launches one per spec, so running it makes the machine unusable for minutes. Nothing
-        // is lost for debugging — the sidebar still opens and screenshots still capture the full
-        // extension UI, because that is DOM work rather than a window manager's.
-        //
-        // Headful on request: `headful: true` from a caller that exists to be WATCHED (the narrated
-        // demos), or E2E_HEADFUL=1 for a one-off look at a test.
+        // Headful on request: `headful: true` from a caller that exists to be WATCHED (observe's WATCH,
+        // the narrated demos), or E2E_HEADFUL=1 for a one-off look at a test.
         headless: !(headful || process.env.E2E_HEADFUL === "1"),
         channel: "chromium",
         args: [
