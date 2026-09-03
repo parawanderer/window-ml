@@ -6,6 +6,9 @@
 //   npm run build && node --import tsx tests/e2e/resource-demo.mjs
 //
 // Env: HOLD=0 exits at the end instead of holding the browser open. PACE scales every wait.
+//      The final beats script a RUN (posted as the same __mlDebug events a real one emits) so the event lane
+//      has something in it: a model load, a delegated vision sub-call, and a step that waited at an approval
+//      gate — the three shapes the lane exists to tell apart.
 //      BOX=cuda (default) | amd | laptop | rig | lab | metal picks which machine to pretend to be — two
 //      discrete cards naming nvidia-smi, two naming rocm-smi, a 12 GiB laptop 4080 where a 27B model has to
 //      spill into RAM, four NVLinked 3090s a 70B is split across, an eight-A100 lab node (nine pools, past
