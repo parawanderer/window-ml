@@ -344,6 +344,9 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .vram-row.ghost { opacity: .55; }
 .vram-row.ghost .vram-name { text-decoration: none; }
 .ghost-dot { border: none; opacity: .8; }
+/* Its card stopped being reported: real memory with no pool to draw it against. */
+.vram-orphan { padding: 0 4px; font-size: 0.72em; color: var(--danger, #ef4444); border: 1px solid var(--danger, #ef4444);
+               border-radius: 3px; opacity: .85; }
 .vram-embed { padding: 0 4px; font-size: 0.72em; color: var(--fg-dim); border: 1px solid var(--border); border-radius: 3px; }
 /* Live keep-alive countdown — same chip shape as the context badge, sat beside it. */
 .vram-ttl { flex: 0 0 auto; color: var(--fg-faint); font-size: 0.9em; font-variant-numeric: tabular-nums;

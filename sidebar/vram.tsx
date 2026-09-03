@@ -327,14 +327,28 @@ export function CostFacts({ model }: { model: string }) {
     );
 }
 
+/** Device ids this model is resident on that capacity no longer reports. A card can vanish while ps still
+ *  lists what was loaded onto it, and then the model's VRAM is in the list with no track to appear in — true,
+ *  but asymmetric enough to need saying out loud. */
+export function orphanedOn(m: LoadedModel, cap: Capacity | null): string[] {
+    if (!cap) return [];   // capacity unknown → nothing to contradict
+    return (m.gpus || []).map((g) => g.id).filter((id) => !cap.devices.some((d) => d.id === id));
+}
+
 export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean }) {
     const ttl = fmtTTL(m.expiresAt);
+    const orphaned = orphanedOn(m, capacity.value);
     // Only the row's copy has its own tooltips to defer to; the chart tip renders these as plain text.
     const yieldTip = tips
         ? { onPointerEnter: () => (rowTipSuppressed.value = true), onPointerLeave: () => (rowTipSuppressed.value = false) }
         : {};
     return (
         <>
+            {orphaned.length ? (
+                <span class={tips ? "tt vram-orphan" : "vram-orphan"} {...yieldTip}>card gone
+                    {tips ? <span class="tt-pop left above" role="tooltip">Still resident on {orphaned.length > 1 ? "devices" : "device"} {orphaned.join(", ")}, which the server has stopped reporting — a driver crash, a GPU reset, or a container that lost the device. Its memory is real but has no pool to be drawn against, so it appears here and not in the chart.</span> : null}
+                </span>
+            ) : null}
             {isEmbedding(m.model) ? (
                 <span class={tips ? "tt vram-embed" : "vram-embed"} {...yieldTip}>embed
                     {tips ? <span class="tt-pop left above" role="tooltip">An EMBEDDING model — it turns text into vectors for search and retrieval; it doesn't chat. It holds its VRAM like any other resident model, and evicts the same way.</span> : null}

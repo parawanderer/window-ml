@@ -7193,4 +7193,9 @@ test("a card that vanishes mid-session: re-shape, keep the trace, say what happe
     await w.flush();
     assert.match(w.shadow.querySelector(".vram-rowtip").textContent, /no longer reported/,
         "…and the tooltip says the card it was on is gone");
+    // The row itself carries a warning: its memory is real but has no pool to be drawn against, so it is in
+    // the list and not in the chart — asymmetric enough to need saying out loud.
+    const chip = row.querySelector(".vram-orphan");
+    assert.ok(chip, "the row warns that its card is gone");
+    assert.match(chip.querySelector(".tt-pop").textContent, /stopped reporting/);
 });
