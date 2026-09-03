@@ -216,6 +216,12 @@ export function decideApproval(policy, gate) {
  * @param {boolean} [cfg.python] wire python_exec as an extraTool
  * @param {boolean} [cfg.toolTokens] enable tool tokens (pointers)
  * @param {object} [cfg.agentOptions] extra ml.agent options, merged last (the bench's dimension knob)
+ * @param {{task: string, script: Array}|null} [cfg.seed] SEED A HISTORY before the measured turn. Turn 1 runs
+ *   against the scripted fake-LLM (so it can be made to corrupt a pointer, fail a call, or capture data),
+ *   then the backend is swapped to `cfg.backend` and `cfg.task` runs as a FOLLOW-UP in the same session —
+ *   so a real model inherits a real history containing exactly the situation under test. Nothing is
+ *   fabricated: the fault is real because the real loop produced it. `seedBoundarySeq` in the result marks
+ *   where the seed ends, so metrics can score the measured turn alone.
  * @param {object|null} [cfg.backend] a real backend, or null for the scripted fake-LLM
  * @param {Array} [cfg.script] fake-LLM script (ignored with a real backend)
  * @param {string|null} [cfg.dist] a variant build directory to load instead of dist/
@@ -226,7 +232,7 @@ export function decideApproval(policy, gate) {
  * @param {number} [cfg.timeoutMs] how long to wait for the terminal agent-result
  * @param {(s: string) => void} [cfg.log] where progress lines go
  * @param {(ev: object) => void} [cfg.onEvent] called with every debug event as it arrives
- * @returns {Promise<{events, session, runMd, images, result, error, runMs, stepCount, approvals, transcript, finalUrl, startUrl, backendLabel}>}
+ * @returns {Promise<{events, session, runMd, images, result, error, runMs, stepCount, approvals, transcript, finalUrl, startUrl, backendLabel, seedBoundarySeq}>}
  */
 export async function runOnce(cfg = {}) {
     const {
@@ -242,7 +248,8 @@ export async function runOnce(cfg = {}) {
     if (artDir) await mkdir(artDir, { recursive: true });
     const { dump, settle } = makeDumper(artDir);
 
-    const fake = backend ? null : await startFakeLlm({ model: "fake-model" });
+    // A seeded run needs the fake even WITH a real backend: turn 1 is scripted, turn 2 is the real model.
+    const fake = (backend && !cfg.seed) ? null : await startFakeLlm({ model: "fake-model" });
     const site = await startPageServer({});
     const ext = await launchExtension({ dist });
     let approvalLoopOn = true;
@@ -252,18 +259,25 @@ export async function runOnce(cfg = {}) {
     let stepCount = 0;
 
     try {
-        await configureExtension(ext.sw, {
+        const seed = cfg.seed || null;
+        // The measured backend. While a seed turn runs we point the extension at the fake instead, and swap
+        // to this one between the turns (config is just chrome.storage.sync — the session is untouched).
+        const realCfg = {
             chatUrl: backend ? backend.chatUrl : fake.url,
             apiKey: backend?.key || "",
-            apiFormat: "openai",
             model: backend ? backend.model : "fake-model",
+        };
+        const seedCfg = { chatUrl: fake.url, apiKey: "", model: "fake-model" };
+        await configureExtension(ext.sw, {
+            ...(seed ? seedCfg : realCfg),
+            apiFormat: "openai",
             utilityModel: backend?.utilityModel || "",
             ocrModel: backend?.visionModel || "",
             modelFilter: "",
             autoApprovePython: true,   // wire python_exec (auto-approve readonly) so a DataFrame/table probe can run
             debugMode: "overlay",   // so injected emitDebug posts the event stream to the page window
         });
-        if (fake) fake.setScript(script);
+        if (fake) fake.setScript(seed ? seed.script : script);
 
         // Warm the model(s) into VRAM before timing. Only meaningful for a real backend; the fake needs none.
         // (Ollama's keep-alive TTL means successive runs within the window are already warm.)
@@ -325,9 +339,14 @@ export async function runOnce(cfg = {}) {
         })();
 
         let result = null, error = null;
+        let seedBoundarySeq = -1;
+        // A seeded or multi-turn run is driven from NODE, one turn at a time, so the backend can be swapped
+        // between turns and the seed boundary recorded. A plain single-turn run still goes through
+        // ml.agent() exactly as before — the path observe.mjs exercises stays untouched.
+        const needsHandle = !!(seed || followup);
         const t0 = Date.now();
         try {
-            await page.evaluate(({ task, followup, toolNames, toolTokens, python, extra }) => {
+            await page.evaluate(({ task, needsHandle, toolNames, toolTokens, python, extra }) => {
                 const opts = {
                     toolTokens,
                     approvalRouting: "both",   // gates show in the UI AND are resolvable via the __mlApprovals channel
@@ -347,21 +366,54 @@ export async function runOnce(cfg = {}) {
                 // python_exec is an extraTool, so it survives the tools subset filter above.
                 if (python) opts.extraTools = [window.ml.pythonTool()];
                 Object.assign(opts, extra);   // caller-supplied options win (the bench's dimension knob)
-                // ALWAYS fire the run NON-blocking — stash the promise, return immediately — so the caller can
+                // ALWAYS fire a turn NON-blocking — stash the promise, return immediately — so the caller can
                 // open the sidebar and click into the live session WHILE it runs. The result is picked up from
                 // the event stream, so nothing is lost by not awaiting here.
-                if (followup) {
-                    // Two turns in ONE session (same run hash: createAgent persists the handle across run()s).
-                    const a = window.ml.createAgent(opts);
-                    window.__mlObsRun = (async () => { await a.run(task); return a.run(followup); })()
-                        .catch((e) => { window.__obsErr = String((e && e.stack) || e); });
+                if (needsHandle) {
+                    // One handle, many turns, ONE session (createAgent persists the run hash across run()s).
+                    window.__mlAgent = window.ml.createAgent(opts);
                 } else {
                     window.__mlObsRun = window.ml.agent(task, opts);
                 }
                 return null;
-            }, { task, followup, toolNames: tools, toolTokens, python, extra: agentOptions });
+            }, { task, needsHandle, toolNames: tools, toolTokens, python, extra: agentOptions });
         } catch (e) { error = String(e); }
         if (error) log(`  [launch error] ${error.slice(0, 400)}`);
+
+        const results = () => events.filter((e) => e.kind === "agent-result").length;
+        const maxSeq = () => Math.max(-1, ...events.filter((e) => e.seq != null).map((e) => e.seq));
+        /** Fire one turn on the stashed handle, without awaiting it. */
+        const startTurn = (t) => page.evaluate((t) => {
+            window.__mlObsRun = window.__mlAgent.run(t).catch((e) => { window.__obsErr = String((e && e.stack) || e); });
+            return null;
+        }, t).catch((e) => { error = error || String(e); });
+        /** Wait until `n` turns have reported a terminal agent-result, or the deadline passes. */
+        const awaitResults = async (n, deadline) => {
+            while (Date.now() < deadline && results() < n) await new Promise((r) => setTimeout(r, 250));
+            return results() >= n;
+        };
+
+        const deadline = Date.now() + timeoutMs;
+        if (needsHandle) {
+            let turnsDone = 0;
+            if (seed) {
+                // Turn 1 against the SCRIPTED fake: whatever history the experiment needs — a corrupted
+                // pointer, a failed call, a captured table — produced by the real loop, so it is a real
+                // history and not a guess at the wire format.
+                log(`  seeding history: "${String(seed.task).slice(0, 80)}"`);
+                await startTurn(seed.task);
+                await awaitResults(++turnsDone, deadline);
+                seedBoundarySeq = maxSeq();
+                // Swap to the MEASURED backend mid-session. Config is chrome.storage.sync — the run's history,
+                // its pointer store and its session hash are all untouched by the change.
+                await configureExtension(ext.sw, { ...realCfg, apiFormat: "openai" });
+                if (fake) fake.setScript(script);
+                log(`  seeded through seq ${seedBoundarySeq}; measuring on ${backendLabel}`);
+            }
+            await startTurn(task);
+            await awaitResults(++turnsDone, deadline);
+            if (followup) { await startTurn(followup); await awaitResults(++turnsDone, deadline); }
+        }
 
         if (focusSidebar) await openSidebarAndFocus(page, artDir, log).catch((e) => log(`  (sidebar focus: ${e})`));
         const obsErr = await page.evaluate(() => window.__obsErr || null).catch(() => null);
@@ -370,10 +422,9 @@ export async function runOnce(cfg = {}) {
         // A cross-page / background run's ml.agent() promise dies with the navigated-away page context (that's
         // the caught error), but the run carries on in the BACKGROUND. Wait for its terminal agent-result event
         // (via the init-script bridge, which re-attaches each document) before we snapshot final state.
-        const need = followup ? 2 : 1;   // a follow-up run emits a SECOND agent-result — wait for both turns
+        const need = (seed ? 1 : 0) + 1 + (followup ? 1 : 0);   // every turn emits its own agent-result
         const hasResult = () => events.filter((e) => e.kind === "agent-result").length >= need;
         if (!hasResult()) {
-            const deadline = Date.now() + timeoutMs;
             while (Date.now() < deadline && !hasResult()) await new Promise((r) => setTimeout(r, 500));
         }
         const timedOut = !hasResult();
@@ -406,7 +457,7 @@ export async function runOnce(cfg = {}) {
             await new Promise((resolve) => { ext.context.on("close", resolve); process.on("SIGINT", resolve); });
         }
 
-        return { events, session, runMd: md, images, result, error, runMs, stepCount, approvals, transcript, finalUrl, startUrl, backendLabel };
+        return { events, session, runMd: md, images, result, error, runMs, stepCount, approvals, transcript, finalUrl, startUrl, backendLabel, seedBoundarySeq };
     } finally {
         approvalLoopOn = false;
         await ext.close().catch(() => {});

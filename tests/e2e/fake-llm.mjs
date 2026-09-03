@@ -34,6 +34,18 @@ const toChoice = (step) => {
         };
     }
     return { index: 0, finish_reason: "stop", message: { role: "assistant", content: (step && step.content) || "" } };
+}
+
+// A real OpenAI-shaped backend always reports token usage, so the fake does too — otherwise anything that
+// READS usage (the sidebar's meter, the bench's token-cost metric) is exercised only against a real model,
+// which is the one place a wrong reading is expensive to discover. Counts are a crude 4-chars-per-token
+// estimate over the actual request and reply: not accurate, but proportional to real work and never zero.
+function usageFor(body, step) {
+    const est = (s) => Math.max(1, Math.ceil(String(s || "").length / 4));
+    const prompt = (body.messages || []).reduce((n, m) => n + est(typeof m.content === "string" ? m.content : JSON.stringify(m.content || "")), 0)
+        + est(JSON.stringify(body.tools || []));
+    const completion = est(step && step.content) + (step && step.tool ? est(JSON.stringify(step.args || {})) : 0);
+    return { prompt_tokens: prompt, completion_tokens: completion, total_tokens: prompt + completion };
 };
 
 /**
@@ -97,6 +109,7 @@ export function startFakeLlm({ port = 0, model = "fake-model", streamDelayMs = 0
             return json(res, 200, {
                 id: `chatcmpl-${callSeq}`, object: "chat.completion", model,
                 choices: [toChoice(step)],
+                usage: usageFor(body, step),
             });
         }
         json(res, 404, { error: `no fake route for ${req.method} ${path}` });
