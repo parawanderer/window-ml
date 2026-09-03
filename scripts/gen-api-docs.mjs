@@ -24,8 +24,8 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const SOURCE = join(ROOT, "contract.ts");
-const OUT = join(ROOT, "api-docs.gen.ts");
+const SOURCE = join(ROOT, "src", "contract.ts");
+const OUT = join(ROOT, "src", "api-docs.gen.ts");
 
 // Types reachable from MlApi that a console caller never types out: the sidebar's
 // render descriptors (a big discriminated union that would triple the doc for zero

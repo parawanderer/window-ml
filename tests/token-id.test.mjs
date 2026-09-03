@@ -12,8 +12,8 @@ import assert from "node:assert/strict";
 const {
     TOKEN_FORMAT, TOKEN_LEN, TOKEN_PAYLOAD_LEN, checkChar, isTokenShape, isTokenValid,
     toSyllables, fromSyllables, formatToken, toolNameError,
-} = await import("../token-id.ts");
-const { toolToken } = await import("../util.ts");
+} = await import("../src/token-id.ts");
+const { toolToken } = await import("../src/util.ts");
 
 const HEX = "0123456789abcdef";
 /** A spread of ids across runs and steps, as the mint would produce them. */

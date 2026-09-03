@@ -15,41 +15,41 @@ import { writeSchema } from "./scripts/gen-export-schema.mjs";
 
 // output name (dist/<name>.js)  ->  source entry
 const ENTRIES = {
-    injected: "injected.ts",
-    content: "content.ts",
-    background: "background.ts",
-    popup: "popup.ts",
+    injected: "src/injected.ts",
+    content: "src/content.ts",
+    background: "src/background.ts",
+    popup: "src/popup.ts",
     // Tiny MAIN-world, document_start script that captures CLOSED shadow roots (opt-in
     // pierceClosedShadow feature) before page components attach them. See shadow-patch.ts.
-    "shadow-patch": "shadow-patch.ts",
+    "shadow-patch": "src/shadow-patch.ts",
     // Offscreen document hosting the Pyodide runtime for the python_exec tool, and the
     // dedicated worker it spawns to run Pyodide OFF the shared main thread (keeps the
     // sidebar UI responsive during a long run).
-    offscreen: "offscreen.ts",
-    "python-worker": "python-worker.ts",
+    offscreen: "src/offscreen.ts",
+    "python-worker": "src/python-worker.ts",
     // Content-script shell (hosts the iframe) + the Preact app that runs inside
     // the sidebar.html iframe.
-    "sidebar-shell": "sidebar/shell.ts",
-    "sidebar-app": "sidebar/app.tsx",
+    "sidebar-shell": "src/sidebar/shell.ts",
+    "sidebar-app": "src/sidebar/app.tsx",
     // Optional DevTools panel: a second surface for the same app. `devtools` registers
     // the panel; `panel` hosts the app iframe and relays the debug stream from the
     // background (see sidebar/panel.ts).
-    "devtools": "sidebar/devtools.ts",
-    "panel": "sidebar/panel.ts",
+    "devtools": "src/sidebar/devtools.ts",
+    "panel": "src/sidebar/panel.ts",
     // Standalone PDF-print tab (window.print() is suppressed inside docked DevTools; a real tab isn't).
-    "print": "sidebar/print.ts",
+    "print": "src/sidebar/print.ts",
 };
 
 // [source, dist-relative dest] — copied verbatim next to the bundles.
 const ASSETS = [
     ["manifest.json", "manifest.json"],
-    ["popup.html", "popup.html"],
-    ["sidebar/sidebar.html", "sidebar.html"],
-    ["sidebar/sidebar.css", "sidebar.css"],
-    ["sidebar/devtools.html", "devtools.html"],
-    ["sidebar/panel.html", "panel.html"],
-    ["sidebar/print.html", "print.html"],
-    ["offscreen.html", "offscreen.html"],
+    ["src/popup.html", "popup.html"],
+    ["src/sidebar/sidebar.html", "sidebar.html"],
+    ["src/sidebar/sidebar.css", "sidebar.css"],
+    ["src/sidebar/devtools.html", "devtools.html"],
+    ["src/sidebar/panel.html", "panel.html"],
+    ["src/sidebar/print.html", "print.html"],
+    ["src/offscreen.html", "offscreen.html"],
 ];
 
 const watch = process.argv.includes("--watch");

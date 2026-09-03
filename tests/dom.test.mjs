@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
-import { elementReference, classifyOverlay, navTarget, typeFromHeader, typeFromContent, typeFromExtension, classifyContent, jsonShape, askReaderNumCtx, isCspEvalBlocked, markdownAlternateHref, resolveMarkdownAlternate, markdownAffordance, markdownTwin, externalSheetIds, markdownSiblingUrl, isMarkdownResponse } from "../dom.ts";
+import { elementReference, classifyOverlay, navTarget, typeFromHeader, typeFromContent, typeFromExtension, classifyContent, jsonShape, askReaderNumCtx, isCspEvalBlocked, markdownAlternateHref, resolveMarkdownAlternate, markdownAffordance, markdownTwin, externalSheetIds, markdownSiblingUrl, isMarkdownResponse } from "../src/dom.ts";
 
 // --- ml.fetch content classification (header / content / extension → a HEURISTIC type for chaining) ---
 test("typeFromHeader: specific content-types map; generic ones return null (defer to content/extension)", () => {

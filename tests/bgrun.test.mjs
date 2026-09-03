@@ -5,7 +5,7 @@
 // glue (onInstalled purge, storage delete) lives in background.ts; this is the decision it hangs on.
 import { test } from "node:test";
 import assert from "node:assert";
-import { bgRunResumable, STALE_BGRUN_MS } from "../contract.ts";
+import { bgRunResumable, STALE_BGRUN_MS } from "../src/contract.ts";
 
 const V = "1.4.0";
 const now = 1_000_000_000_000;

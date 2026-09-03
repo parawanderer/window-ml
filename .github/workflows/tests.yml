@@ -44,7 +44,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: pyodide-wheels
-          key: pyodide-wheels-${{ hashFiles('package-lock.json', 'python-env.ts') }}
+          key: pyodide-wheels-${{ hashFiles('package-lock.json', 'src/python-env.ts') }}
       - if: steps.pyocache.outputs.cache-hit != 'true'
         run: npm run fetch-pyodide
       - run: npm test
@@ -89,7 +89,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: pyodide-wheels
-          key: pyodide-wheels-${{ hashFiles('package-lock.json', 'python-env.ts') }}
+          key: pyodide-wheels-${{ hashFiles('package-lock.json', 'src/python-env.ts') }}
       - if: steps.pyocache.outputs.cache-hit != 'true'
         run: npm run fetch-pyodide
       - run: npm run build
@@ -122,7 +122,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: pyodide-wheels
-          key: pyodide-wheels-${{ hashFiles('package-lock.json', 'python-env.ts') }}
+          key: pyodide-wheels-${{ hashFiles('package-lock.json', 'src/python-env.ts') }}
       - if: steps.pyocache.outputs.cache-hit != 'true'
         run: npm run fetch-pyodide
       # `test:e2e` runs `pretest:e2e` (npm run build) first, so it exercises the built dist/. The harness is

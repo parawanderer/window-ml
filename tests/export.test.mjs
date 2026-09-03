@@ -4,7 +4,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import "./stub-css.mjs";   // export.ts imports a bundled .css (hljs theme) — stub it (both loader paths) BEFORE the import below
-const { serializeSession, sessionToHtml } = await import("../sidebar/export.ts");
+const { serializeSession, sessionToHtml } = await import("../src/sidebar/export.ts");
 
 const PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 
@@ -50,7 +50,7 @@ test("fetch_url `ask`: the question + who-answered + tokens export in BOTH Markd
 });
 
 test("@tool citations in an answer RESOLVE to the cited step's output; unresolved ones show a note; raw kept", async () => {
-    const { toolToken } = await import("../util.ts");
+    const { toolToken } = await import("../src/util.ts");
     const hash = "run12345";
     const id = toolToken(hash, 1);   // the token for step seq 1
     const s = {
@@ -71,7 +71,7 @@ test("@tool :out of a python SCALAR renders the CLEAN value in the ANSWER, not t
     // structured descriptor's `value` is the clean "6260". The citation must render the CLEAN value — via the
     // descriptor field, not a regex, and not `step.result`. (The step TRACE keeps the model-facing result per the
     // raw-view rule, so we isolate the ANSWER section.)
-    const { toolToken } = await import("../util.ts");
+    const { toolToken } = await import("../src/util.ts");
     const hash = "pyrun01";
     const id = toolToken(hash, 1);
     const s = {
@@ -109,7 +109,7 @@ test("a step's model-facing Out (with an @tool token line) stays recoverable in 
 });
 
 test("PDF/HTML sink TYPESETS math (prose $…$/$$…$$ + a | latex / auto-latex citation); .md keeps it raw", async () => {
-    const { toolToken } = await import("../util.ts");
+    const { toolToken } = await import("../src/util.ts");
     const hash = "mathrun1";
     const id = toolToken(hash, 1);
     const s = {
@@ -130,8 +130,8 @@ test("PDF/HTML sink TYPESETS math (prose $…$/$$…$$ + a | latex / auto-latex 
     assert.ok(!md.includes("class=\"katex"), ".md does not run KaTeX");
 });
 
-import { config } from "../sidebar/store.ts";
-import { BUILD_INFO } from "../build-info.gen.ts";
+import { config } from "../src/sidebar/store.ts";
+import { BUILD_INFO } from "../src/build-info.gen.ts";
 
 test("run export: build hash + system-prompt size tag; tool defs gated on the setting (both sinks)", () => {
     const s = {

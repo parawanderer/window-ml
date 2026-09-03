@@ -3,7 +3,7 @@
 // endpoints (the prompt-injection surface), userinfo/traversal tricks, non-https.
 import { test } from "node:test";
 import assert from "node:assert";
-import { isSelfSourceUrl, parseRepo } from "../self-source.ts";
+import { isSelfSourceUrl, parseRepo } from "../src/self-source.ts";
 
 const REPO = "https://github.com/parawanderer/window-ml";
 const ok = (url, repo = REPO) => assert.equal(isSelfSourceUrl(url, repo), true, `should AUTO-APPROVE: ${url}`);

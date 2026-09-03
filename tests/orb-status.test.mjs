@@ -4,7 +4,7 @@
 // (the humanized tool phase + a stall heartbeat), with no live token count (it can't, mid-generation).
 import { test } from "node:test";
 import assert from "node:assert";
-import { orbStatus, startupPhase, activityFor, liveProseFor, liveTokensFor, fmtTokens, STALL_MS } from "../sidebar/orb-status.ts";
+import { orbStatus, startupPhase, activityFor, liveProseFor, liveTokensFor, fmtTokens, STALL_MS } from "../src/sidebar/orb-status.ts";
 
 // Minimal Session fixtures — only the fields the projection reads.
 const run = (over = {}) => ({ steps: [], says: [], lastTs: Date.now(), ...over });

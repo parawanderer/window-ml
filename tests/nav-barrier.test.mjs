@@ -3,7 +3,7 @@
 // run. Timers are injected so the timeout fallback is deterministic (no real clock).
 import { test } from "node:test";
 import assert from "node:assert";
-import { createNavBarrier } from "../nav-barrier.ts";
+import { createNavBarrier } from "../src/nav-barrier.ts";
 
 // A controllable timer: nothing fires until the test fires it.
 function manualTimers() {

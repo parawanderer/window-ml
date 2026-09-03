@@ -3,7 +3,7 @@
 // REAL generated parts (so the default/member/type/scan flows hold against the shipped reference).
 import { test } from "node:test";
 import assert from "node:assert";
-import { queryApiDocs, isDefaultQuery, GRAPH_BUDGET } from "../api-docs-query.ts";
+import { queryApiDocs, isDefaultQuery, GRAPH_BUDGET } from "../src/api-docs-query.ts";
 import { generateApiParts } from "../scripts/gen-api-docs.mjs";
 
 // A minimal fixture: two "types", an MlApi block whose members reference them, a preamble sentinel.

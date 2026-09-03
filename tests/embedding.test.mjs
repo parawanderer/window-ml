@@ -3,7 +3,7 @@
 // mode being guarded against is never an exception, it is a plausible-looking number that is meaningless.
 import { test } from "node:test";
 import assert from "node:assert";
-import { Embedding } from "../embedding.ts";
+import { Embedding } from "../src/embedding.ts";
 
 test("vectors are normalised on construction, so dot IS cosine", () => {
     // Cosine equals the dot product only for UNIT vectors. Every model measured returns them, which is

@@ -4,7 +4,7 @@
 // nothing silently dropped) rather than layout. Schema: export-schema.ts (root, beside contract.ts).
 import { test } from "node:test";
 import assert from "node:assert";
-const { sessionToJson, serializeSessionJson } = await import("../sidebar/export-json.ts");
+const { sessionToJson, serializeSessionJson } = await import("../src/sidebar/export-json.ts");
 
 const PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
 

@@ -2,7 +2,7 @@
 // ml.fetch looks like the user's own browser. Pure; the background's browserFetchHeaders relies on this shape.
 import { test } from "node:test";
 import assert from "node:assert";
-import { acceptLanguageFrom } from "../contract.ts";
+import { acceptLanguageFrom } from "../src/contract.ts";
 
 test("first language is q=1.0 (bare), the rest descend by 0.1", () => {
     assert.equal(acceptLanguageFrom(["en-US", "en", "fr"]), "en-US,en;q=0.9,fr;q=0.8");

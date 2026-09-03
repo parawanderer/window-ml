@@ -326,8 +326,8 @@ function interfaceToSchema(name, iface, ctx) {
 
 /** Build the whole document. Exported so the test can regenerate without shelling out. */
 export function buildSchema() {
-    const schemaSrc = readFileSync(join(ROOT, "export-schema.ts"), "utf8");
-    const contractSrc = readFileSync(join(ROOT, "contract.ts"), "utf8");
+    const schemaSrc = readFileSync(join(ROOT, "src/export-schema.ts"), "utf8");
+    const contractSrc = readFileSync(join(ROOT, "src/contract.ts"), "utf8");
 
     const own = scanInterfaces(schemaSrc, "export-schema.ts");
     if (!own.has("ExportDocument")) throw new Error("gen-export-schema: export-schema.ts no longer declares ExportDocument");

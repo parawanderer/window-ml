@@ -5,7 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
-import { registerRun, runDelegatedTool, endRun, getRun, runAnswer } from "../run-delegation.ts";
+import { registerRun, runDelegatedTool, endRun, getRun, runAnswer } from "../src/run-delegation.ts";
 import { loadPageWorld } from "./helpers.js";
 
 const tool = (over = {}) => ({

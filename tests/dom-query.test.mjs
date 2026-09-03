@@ -8,7 +8,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
-import { queryAll, shadowHostReport, firstHopSealed } from "../dom.ts";
+import { queryAll, shadowHostReport, firstHopSealed } from "../src/dom.ts";
 
 /** Boot a jsdom document and install it as the global queryAll reads. Returns the document. */
 function mount(html) {

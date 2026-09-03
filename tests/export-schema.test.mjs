@@ -14,8 +14,8 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { buildSchema } from "../scripts/gen-export-schema.mjs";
-const { sessionToJson } = await import("../sidebar/export-json.ts");
-const { schemaUrl } = await import("../export-schema.ts");
+const { sessionToJson } = await import("../src/sidebar/export-json.ts");
+const { schemaUrl } = await import("../src/export-schema.ts");
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const SCHEMA_PATH = join(ROOT, "docs/spec/export.schema.json");

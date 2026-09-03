@@ -767,6 +767,20 @@ test("resource panel: the event lane draws phased blocks, dims by lineage, and c
         expect(loadBg, "the load is striped").toContain("repeating-linear-gradient");
         expect(toolBg, "…and the tool block is not, so the two can't be confused").not.toContain("repeating-linear-gradient");
 
+        // FREEZE the chart first. The panel keeps sampling, so the window slides and every bar moves left
+        // underneath a stationary pointer — the hover then belongs to the bar that was entered while the
+        // assertion reads whatever is under the cursor now, which is a race no amount of waiting fixes. A
+        // drag-selected range pins the window (samples outside it are filtered out), so the geometry holds
+        // still while this is measured.
+        const plotBox = await frame.locator(".rc-plot").first().boundingBox();
+        const midY = plotBox.y + plotBox.height / 2;
+        await page.mouse.move(plotBox.x + plotBox.width * 0.02, midY);
+        await page.mouse.down();
+        await page.mouse.move(plotBox.x + plotBox.width * 0.98, midY, { steps: 6 });
+        await page.mouse.up();
+        await expect(frame.locator(".vram-zoom")).toBeVisible();
+        await sleep(500);
+
         // Hovering the delegated reader lights its lineage and drops the rest back.
         const sub = frame.locator(".rc-ev-embed").first();
         expect(await sub.count()).toBe(1);

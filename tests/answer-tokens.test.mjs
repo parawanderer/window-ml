@@ -2,8 +2,8 @@
 // surface relies on. Rendering is tested at the surfaces; this locks down what IS and ISN'T a token.
 import { test } from "node:test";
 import assert from "node:assert";
-import { splitAnswer, hasTokens, resolveTokenStep } from "../answer-tokens.ts";
-import { toolToken } from "../util.ts";
+import { splitAnswer, hasTokens, resolveTokenStep } from "../src/answer-tokens.ts";
+import { toolToken } from "../src/util.ts";
 
 test("splitAnswer: a token link splits into prose + token + prose; default slot is out; embed vs link", () => {
     // LINK form `[…]` → embed:false (renders as a clickable jump).

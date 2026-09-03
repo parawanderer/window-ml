@@ -6,7 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
 
-const { installTooltipLayer } = await import("../sidebar/tooltip-layer.ts");
+const { installTooltipLayer } = await import("../src/sidebar/tooltip-layer.ts");
 
 function world(html) {
     const dom = new JSDOM(`<body>${html}</body>`, { pretendToBeVisual: true });

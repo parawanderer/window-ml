@@ -40,7 +40,7 @@ test("CDP exec streams each console line live, via a Runtime binding", async () 
             return ["alpha", "beta"];
         },
     });
-    const { cdpEval } = await import("../sw-cdp.ts");
+    const { cdpEval } = await import("../src/sw-cdp.ts");
     const r = await cdpEval(7, "console.log('alpha')", (text, ts) => seen.push([text, ts]));
 
     assert.deepEqual(seen, [["alpha\n", 1000], ["beta\n", 1200]], "both lines arrived live, with the PAGE's stamps");
@@ -64,7 +64,7 @@ test("CDP exec streams each console line live, via a Runtime binding", async () 
 
 test("CDP exec without streaming installs no binding (and the wrapper carries no tee)", async () => {
     const { calls, listeners } = mockChrome({ onEval: () => ["only"] });
-    const { cdpEval } = await import("../sw-cdp.ts");
+    const { cdpEval } = await import("../src/sw-cdp.ts");
     const r = await cdpEval(7, "console.log('only')");
 
     const methods = calls.map(c => c[0]);
@@ -84,7 +84,7 @@ test("CDP exec survives a binding that won't install (streaming is a nicety, nev
         if (method === "Runtime.addBinding") throw new Error("no binding for you");
         return realSend(target, method, params);
     };
-    const { cdpEval } = await import("../sw-cdp.ts");
+    const { cdpEval } = await import("../src/sw-cdp.ts");
     const r = await cdpEval(7, "console.log('kept')", (t) => seen.push(t));
 
     assert.ok("ok" in r, "the exec ran anyway");
@@ -106,7 +106,7 @@ test("bindingCalled from ANOTHER tab or another binding is ignored", async () =>
             return ["mine"];
         },
     });
-    const { cdpEval } = await import("../sw-cdp.ts");
+    const { cdpEval } = await import("../src/sw-cdp.ts");
     await cdpEval(7, "console.log('mine')", (text, ts) => seen.push([text, ts]));
     assert.deepEqual(seen, [["mine\n", 5]], "only this tab's own binding, and a malformed payload is dropped");
 });

@@ -2,7 +2,7 @@
 // tsx (turndown bundles its own DOM — domino — so no jsdom needed here).
 import { test } from "node:test";
 import assert from "node:assert";
-import { htmlToMarkdown } from "../html-to-md.ts";
+import { htmlToMarkdown } from "../src/html-to-md.ts";
 
 test("converts headings, links, lists, and code to clean Markdown", () => {
     const md = htmlToMarkdown(`<h1>Title</h1><p>Some <a href="https://x.test">link</a> and <strong>bold</strong>.</p><ul><li>a</li><li>b</li></ul><pre><code>x = 1</code></pre>`);
