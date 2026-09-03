@@ -1037,7 +1037,12 @@ thing. The parts:
   — the final answer can echo a value a real DOM tool read off the page). This is the CI gate.
 - **`cross-page.spec.mjs`** — a `smoke` (extension loads + one-shot agent) + a `sanity` (agent
   reads a page value via a DOM tool and answers it) that run under BOTH the fake and a real
-  backend, plus the skipped cross-page acceptance test (see `tmp/cross-page-agent.md`).
+  backend, plus the skipped cross-page acceptance test (see `tmp/cross-page-agent.md`). Those two
+  are tagged **`@real-ok`**, and a `beforeEach` SKIPS every other test in the file when
+  `E2E_BACKEND` is set: the rest script an exact turn sequence and read `fake.calls()` back, so
+  they cannot mean anything against a real model — and without the skip they dereferenced a null
+  `fake` and failed, which reads as a product bug in the nightly real-model job. Tag a new test
+  `@real-ok` only if it guards its fake usage (`if (fake) …`) and asserts on the run's own result.
 - **`observe.mjs`** — a **debug/observation wrapper, not a test** (see the `observe` skill for the
   full playbook): `node --import tsx tests/e2e/observe.mjs` drives ONE agent run in a real Chromium
   and writes ARTIFACTS to `tests/e2e/artifacts/<RUN_LABEL|timestamp>/` (gitignored): **`run.md`** =
