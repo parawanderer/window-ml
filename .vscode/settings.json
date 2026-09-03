@@ -1,4 +1,13 @@
 {
+  // A run export (`run.json`) opens with a `$schema` URL pinned to the commit that produced it, on
+  // raw.githubusercontent. VS Code will not fetch a remote schema unless this is on — it reports
+  // "Location … is untrusted", which reads like a bad URL rather than a disabled setting. With it on,
+  // opening any exported run gets validation and completion against the exact contract that wrote it.
+  //
+  // It only ever fetches what a file's own `$schema` points at, and every export in this repo points at
+  // this repo. Turn it off if you would rather the editor made no network requests.
+  "json.schemaDownload.enable": true,
+
   // The unit tests (.mjs) import the .ts sources directly, which needs the tsx loader — same as
   // `npm test` (`node --import tsx …`). The Node.js Testing extension runs the worker from cwd `/`, so
   // a bare `tsx` doesn't resolve — point at tsx's loader by ${workspaceFolder}-absolute path.
