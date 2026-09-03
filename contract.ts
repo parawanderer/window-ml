@@ -191,7 +191,61 @@ export const producesEmbeddings = (caps: string[] | null): boolean => !!caps && 
  *  surface on a SIDE channel. The two exist separately because `ml.dereference` inside `exec` returns a value
  *  the script then operates on — JSON.parse it, split it, pipe it — so appending a note to `value` would
  *  corrupt the data. The tool path appends the advisory to its result text; the exec path console.warn()s it. */
-export interface DerefRead { value: string; warning?: string }
+/** What the value at a pointer actually IS. The loop knows — it holds the step's `RenderDescriptor` — so the
+ *  pointer carries its type rather than flattening everything to text the reader must re-sniff. */
+export type TokenKind = "text" | "json" | "table" | "image" | "code";
+
+/** The pointer's metadata, travelling BESIDE the text so a script can branch on what it got rather than
+ *  guessing from the bytes. Every field is JSON-serializable: the same read crosses the page↔background
+ *  relay when the run is background-hosted. */
+export interface DerefMeta {
+    /** The stable id, even when the read came in through a tool-name alias. */
+    id: string;
+    tool: string;
+    kind: TokenKind;
+    /** The step that captured it — with the reader's own step, this is the value's age. */
+    step: number;
+    /** The model's own short name for it, when it gave one. A claim, not a fact. */
+    label?: string;
+    /** The structural value, when the step produced a grid — no need to reparse a rendered table. */
+    table?: { columns: string[]; rows: unknown[][] };
+    /** A `data:image/…;base64,…` URL when the step produced an image. */
+    image?: string;
+    latex?: string;
+}
+
+export interface DerefRead { value: string; warning?: string; meta?: DerefMeta }
+
+/**
+ * What `ml.dereference` resolves to: the pointer's text, with what the loop knows about it attached.
+ *
+ * It IS a string at runtime (a `String` subclass), so everything that worked when this returned a bare
+ * string still does — `JSON.parse(await ml.dereference(id))`, template literals, `.split`, `.length`. The
+ * metadata rides along for the cases that had to guess before: whether a value is JSON worth parsing,
+ * whether it is an image rather than text, how old it is.
+ *
+ * The one behaviour that changes: `typeof` is `"object"`, so a `typeof x === "string"` check now fails.
+ * Compare `x.text`, or call `String(x)`.
+ */
+export interface DerefValue extends String {
+    /** The text, explicitly — the same string the previous contract returned. */
+    readonly text: string;
+    /** What this is, from the capturing step's render descriptor. */
+    readonly type: TokenKind;
+    readonly id: string;
+    readonly tool: string;
+    readonly step: number;
+    readonly label?: string;
+    /** The parsed body when the text is JSON, else undefined. Parsed once, lazily. */
+    readonly json?: unknown;
+    readonly table?: { columns: string[]; rows: unknown[][] };
+    readonly image?: string;
+    readonly latex?: string;
+    /** Reduce it further through the text-pipe dialect, resolving to a new value. */
+    pipe(stages: string | string[]): Promise<DerefValue>;
+    /** The TS-like shape of it, when it is JSON (see `ml.schema`). Throws on non-JSON. */
+    schema(): string;
+}
 
 /** Whether a model id passes the optional `modelFilter` regex whitelist. Empty /
  *  whitespace filter → everything allowed. An INVALID regex → everything allowed
@@ -1738,7 +1792,11 @@ export interface MlApi {
      *  as a dialect string (".rows | head 5") or an array with one stage per entry ([".rows", "head 5"]) —
      *  an array entry is never re-split, so use it when a stage holds a `|` (["grep -E error|warn"]). Run-bound like
      *  `ml.answer`: live inside a tool call (an approved `exec`), throws from the console outside a run. */
-    dereference(ref: string, options?: { pipe?: string | string[] | null }): Promise<string>;
+    dereference(ref: string, options?: { pipe?: string | string[] | null }): Promise<DerefValue>;
+    /** The TS-like type of some JSON — one document's shape, or the JOINED type of several. Same-shaped
+     *  documents collapse into one object with optional keys where they differ; different ones stay a
+     *  union. Arguments are awaited, so `ml.schema(ml.dereference(a), ml.dereference(b))` works. */
+    schema(...values: unknown[]): Promise<string>;
     /* ---- chat ---- */
     /** Create a stateful multi-turn chat session. Same raw-model contract as ml.chat —
      *  the turns accumulate, but the model still never sees the page. */

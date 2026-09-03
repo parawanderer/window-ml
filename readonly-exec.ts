@@ -636,7 +636,10 @@ const ANSWER_METHODS = new Set(["add", "remove", "clear", "dump"]);
 // captured — no page mutation, no egress, no token spend, and nothing it returns wasn't already produced by an
 // approved call. A survey that re-reads its own earlier output should not cost a prompt. (It is also run-bound
 // on the real API, so outside a run it throws before the facade is even reached.)
-export const ML_READONLY_METHODS = ["getModel", "config", "models", "capabilities", "ps", "serverTools", "queryAll", "range", "a11y", "dereference", "info"] as const;
+// `schema` is here rather than in ALLOWED_METHODS deliberately: the facade is dispatched by IDENTITY, so
+// this grants `ml.schema(…)` and nothing else, where allowing the NAME would grant `.schema()` on every
+// object the dialect can reach. Pure — it reads data and returns a type string, spending nothing.
+export const ML_READONLY_METHODS = ["getModel", "config", "models", "capabilities", "ps", "serverTools", "queryAll", "range", "a11y", "dereference", "info", "schema"] as const;
 
 /** Build the `ml` object the dialect sees: ONLY {@link ML_READONLY_METHODS}, bound to the real API.
  *  A purpose-built facade rather than `window.ml` itself, so the free set is enforced by what exists,

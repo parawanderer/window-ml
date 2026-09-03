@@ -887,3 +887,32 @@ test("ml.embed sends an ARRAY as one request, and returns one vector per input i
     assert.equal(out.length, 3, "one Embedding per input, in order");
     assert.ok(out.every((v) => Math.abs(v.dot(v) - 1) < 1e-12));
 });
+
+// `ml.schema` — the TS-like type of one JSON document, or the JOINED type of several. Pure (no relay), but
+// driven through the page world so the variadic/await/coercion wiring is the shipped code.
+test("ml.schema: one document is its shape; several are the type covering all of them", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: () => ({ data: "" }) });
+
+    assert.equal(await world.ml.schema({ id: 7, tags: ["a"] }), "{ id: number, tags: string[] /* 1 item */ }");
+    // separate documents, so NOT `[]` — and a key missing from one becomes optional
+    assert.equal(await world.ml.schema({ id: 1, name: "a" }, { id: 2 }), "{ id: number, name?: string }");
+});
+
+test("ml.schema AWAITS its arguments, so pointer reads pass straight in", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: () => ({ data: "" }) });
+    // this is the shape of `ml.schema(ml.dereference(a), ml.dereference(b))` — promises, un-awaited
+    const a = Promise.resolve('{"page":1,"rows":[{"x":1}]}');
+    const b = Promise.resolve('{"page":2,"rows":[{"x":1,"y":2}],"next":"u"}');
+
+    assert.equal(await world.ml.schema(a, b),
+        "{ page: number, rows: { x: number, y?: number }[] /* 2 items */, next?: string }");
+});
+
+test("ml.schema refuses prose, naming WHICH argument", async () => {
+    const world = loadPageWorld({ onRuntimeMessage: () => ({ data: "" }) });
+
+    await assert.rejects(() => world.ml.schema({ a: 1 }, "the page said hello"), /argument 2 is plain text/);
+    await assert.rejects(() => world.ml.schema(), /needs at least one value/);
+    // a single bad argument is named as "the argument", not "argument 1" — there is only one
+    await assert.rejects(() => world.ml.schema("prose"), /the argument is plain text/);
+});

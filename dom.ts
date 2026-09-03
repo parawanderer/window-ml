@@ -1264,50 +1264,218 @@ export function typeFromExtension(url: string): { type: ContentKind; language?: 
  *  `key?`, and differing leaf types union (`string | number`). Bounded by depth / keys / sample so even a huge
  *  payload reduces to a few lines — the schema a model needs to write code against a response WITHOUT seeing
  *  the whole thing. Pure + deterministic. e.g. `{ version: number, servers: { name: string, port?: number }[] }`. */
-export function jsonShape(value: unknown, opts: { maxDepth?: number; maxKeys?: number; sample?: number } = {}): string {
-    const maxDepth = opts.maxDepth ?? 6, maxKeys = opts.maxKeys ?? 40, sample = opts.sample ?? 25;
-    const keyStr = (k: string): string => /^[A-Za-z_$][\w$]*$/.test(k) ? k : JSON.stringify(k);
+/* ---- the type lattice ----
+ * Shapes MERGE, and merging has to happen on TYPES rather than on rendered text. The earlier version
+ * shaped each value to a string and set-unioned those, which merged only the top level: two elements
+ * differing one field deep produced `{ u: { a: number } | { a: number, b: number } }` instead of
+ * `{ u: { a: number, b?: number } }`, and the divergence compounded with every level and every element.
+ */
 
-    const shape = (v: unknown, depth: number): string => {
-        if (v === null) return "null";
-        if (Array.isArray(v)) {
-            const n = v.length;
-            if (!n) return "unknown[]";
-            if (depth >= maxDepth) return "unknown[]";
-            const es = elemShape(v.slice(0, sample), depth + 1);
-            // Parenthesise a top-level UNION element so `(number | string)[]` reads unambiguously (an object
-            // shape `{ … }` is already delimited, so it doesn't need it).
-            const el = es.includes(" | ") && !es.startsWith("{") ? `(${es})` : es;
-            return `${el}[] /* ${n} item${n === 1 ? "" : "s"} */`;
+type TNode =
+    | { k: "prim"; t: "string" | "number" | "boolean" | "null" }
+    | { k: "opaque"; t: "object" | "unknown[]" }        // past the depth cap
+    | { k: "obj"; props: Map<string, { t: TNode; n: number }>; total: number }
+    | { k: "arr"; el: TNode | null; count: number }     // count is the TRUE length, not the sampled one
+    | { k: "union"; of: TNode[] };
+
+interface ShapeOpts { maxDepth?: number; maxKeys?: number; sample?: number }
+
+/** Infer a value's type. `sample` bounds how many array elements are read; the reported count is not
+ *  sampled, so a 10k-item array still says so. */
+function inferType(v: unknown, depth: number, o: Required<ShapeOpts>): TNode {
+    if (v === null) return { k: "prim", t: "null" };
+
+    if (Array.isArray(v)) {
+        if (depth >= o.maxDepth) return { k: "opaque", t: "unknown[]" };
+        if (!v.length) return { k: "arr", el: null, count: 0 };
+        const el = v.slice(0, o.sample)
+            .map(e => inferType(e, depth + 1, o))
+            .reduce(mergeTypes);
+        return { k: "arr", el, count: v.length };
+    }
+
+    if (typeof v === "object") {
+        if (depth >= o.maxDepth) return { k: "opaque", t: "object" };
+        const props = new Map<string, { t: TNode; n: number }>();
+        for (const [key, val] of Object.entries(v as Record<string, unknown>)) {
+            props.set(key, { t: inferType(val, depth + 1, o), n: 1 });
         }
-        if (typeof v === "object") return depth >= maxDepth ? "object" : objShape(v as Record<string, unknown>, depth);
-        return typeof v;   // string / number / boolean / (undefined shouldn't occur in JSON)
-    };
+        return { k: "obj", props, total: 1 };
+    }
 
-    // Merge array-element shapes: all-objects → union of keys (optional where absent); else union of leaf shapes.
-    const elemShape = (elems: unknown[], depth: number): string => {
-        const objs = elems.filter(e => e !== null && typeof e === "object" && !Array.isArray(e)) as Record<string, unknown>[];
-        if (objs.length === elems.length && objs.length) {
-            const present = new Map<string, number>(), shapes = new Map<string, Set<string>>();
-            for (const e of objs) for (const k of Object.keys(e)) {
-                present.set(k, (present.get(k) ?? 0) + 1);
-                if (!shapes.has(k)) shapes.set(k, new Set());
-                shapes.get(k)!.add(shape(e[k], depth + 1));
+    const t = typeof v;
+    return { k: "prim", t: (t === "string" || t === "number" || t === "boolean") ? t : "null" };
+}
+
+/**
+ * Merge two types into the narrowest one that describes both.
+ *
+ * Objects merge KEY-WISE, carrying how many of the merged objects had each key so the renderer can mark
+ * the absentees optional. Arrays merge their element types and sum their counts. Unlike kinds become a
+ * union — and a union absorbs, merging a new member into a like-kinded one already there rather than
+ * appending, which is what makes `{a} | {a,b} | {a,c}` collapse to one object with two optionals.
+ */
+/** Whether merging these two narrows to a single type rather than producing alternatives. Objects and
+ *  arrays always do — that is the point. Primitives only when they are the same primitive. */
+function mergeable(a: TNode, b: TNode): boolean {
+    if (a.k !== b.k) return false;
+    if (a.k === "prim" && b.k === "prim") return a.t === b.t;
+    if (a.k === "opaque" && b.k === "opaque") return a.t === b.t;
+    return a.k !== "union";
+}
+
+function mergeTypes(a: TNode, b: TNode): TNode {
+    if (a.k === "union" || b.k === "union") {
+        const members = a.k === "union" ? [...a.of] : [a];
+        for (const add of b.k === "union" ? b.of : [b]) {
+            // Only fold into a member this can actually narrow WITH. Matching on kind alone folded
+            // `boolean` into `number` (both primitives), which nested a union inside a union and
+            // reordered the alternatives away from the order they were seen in.
+            const i = members.findIndex(m => mergeable(m, add));
+            if (i >= 0) members[i] = mergeTypes(members[i], add);
+            else members.push(add);
+        }
+        return members.length === 1 ? members[0] : { k: "union", of: members };
+    }
+
+    if (a.k !== b.k) return { k: "union", of: [a, b] };
+
+    if (a.k === "prim" && b.k === "prim") {
+        return a.t === b.t ? a : { k: "union", of: [a, b] };
+    }
+    if (a.k === "opaque" && b.k === "opaque") {
+        return a.t === b.t ? a : { k: "union", of: [a, b] };
+    }
+    if (a.k === "arr" && b.k === "arr") {
+        const el = a.el && b.el ? mergeTypes(a.el, b.el) : (a.el ?? b.el);
+        return { k: "arr", el, count: a.count + b.count };
+    }
+    if (a.k === "obj" && b.k === "obj") {
+        const props = new Map(a.props);
+        for (const [key, bp] of b.props) {
+            const ap = props.get(key);
+            props.set(key, ap ? { t: mergeTypes(ap.t, bp.t), n: ap.n + bp.n } : { ...bp });
+        }
+        return { k: "obj", props, total: a.total + b.total };
+    }
+    return a;
+}
+
+const keyStr = (k: string): string => /^[A-Za-z_$][\w$]*$/.test(k) ? k : JSON.stringify(k);
+
+/** Render a type as the TS-like text a model reads. `inArray` parenthesises a union in element position
+ *  so `(number | string)[]` cannot be misread; an object shape is already delimited. */
+function renderType(n: TNode, o: Required<ShapeOpts>, inArray = false): string {
+    switch (n.k) {
+        case "prim": case "opaque":
+            return n.t;
+        case "arr": {
+            if (!n.el) return "unknown[]";
+            const el = renderType(n.el, o, true);
+            const plural = n.count === 1 ? "" : "s";
+            return `${el}[] /* ${n.count} item${plural} */`;
+        }
+        case "obj": {
+            const all = [...n.props.keys()], keys = all.slice(0, o.maxKeys);
+            const parts = keys.map(k => {
+                const p = n.props.get(k)!;
+                return `${keyStr(k)}${p.n < n.total ? "?" : ""}: ${renderType(p.t, o)}`;
+            });
+            const rest = all.length > keys.length ? `, …+${all.length - keys.length}` : "";
+            return `{ ${parts.join(", ")}${rest} }`;
+        }
+        case "union": {
+            const body = n.of.map(m => renderType(m, o)).join(" | ");
+            return inArray && !body.startsWith("{") ? `(${body})` : body;
+        }
+    }
+}
+
+const shapeOpts = (o: ShapeOpts): Required<ShapeOpts> =>
+    ({ maxDepth: o.maxDepth ?? 6, maxKeys: o.maxKeys ?? 40, sample: o.sample ?? 25 });
+
+/** A compact, LLM-legible SHAPE of a parsed JSON value — a TypeScript-like type skeleton, NOT a JSONSchema
+ *  object (models read TS types natively). Leaves become their type; an array collapses to `T[]` with an item
+ *  count; object shapes are MERGED at every depth across a sample of an array's elements, so varying keys
+ *  surface as `key?` and differing leaf types union (`string | number`). Bounded by depth / keys / sample so
+ *  even a huge payload reduces to a few lines — the schema a model needs to write code against a response
+ *  WITHOUT seeing the whole thing. Pure + deterministic.
+ *
+ *  e.g. `{ version: number, servers: { name: string, port?: number }[] }`.
+ *
+ * @param {unknown} value The parsed JSON value.
+ * @param {ShapeOpts} [opts] Caps: `maxDepth` (6), `maxKeys` (40), `sample` (25 array elements read).
+ * @returns {string} The TS-like shape.
+ */
+export function jsonShape(value: unknown, opts: ShapeOpts = {}): string {
+    const o = shapeOpts(opts);
+    return renderType(inferType(value, 0, o), o);
+}
+
+/**
+ * The one type that describes EVERY value in a list — each is a separate document, so this is not
+ * `jsonShape(values)` (which would describe the list itself as `T[]`).
+ *
+ * Instances of the same thing collapse into one object whose sometimes-present keys are optional; genuinely
+ * different things stay a union, since merging them would invent an object that never existed. Use it to
+ * join several responses (three pages of an API, or the same endpoint across accounts) into the type you
+ * would actually write against them.
+ *
+ * @param {unknown[]} values The documents to join.
+ * @param {ShapeOpts} [opts] Same caps as {@link jsonShape}; `sample` bounds nested arrays, not this list.
+ * @returns {string} The joined TS-like shape; `"unknown"` for an empty list.
+ */
+/**
+ * Coerce one `ml.schema` argument into a parsed JSON value.
+ *
+ * Accepts what a caller actually has to hand: an already-parsed value, a fetch result (its `.json` when the
+ * body parsed, else its text), or a JSON string — which is what `ml.dereference` resolves to. Non-JSON text
+ * is REFUSED rather than shaped, on the same grounds as the pipe's structural stages: there is no honest
+ * type for prose, and inventing one hides the mistake.
+ *
+ * @param {unknown} source The argument.
+ * @param {string} where How to name it in an error (e.g. "argument 2").
+ * @returns {unknown} The parsed value.
+ */
+export function jsonValue(source: unknown, where: string): unknown {
+    let v = source;
+    if (v && typeof v === "object") {
+        const r = v as { json?: unknown; markdown?: unknown; text?: unknown };
+        // a fetch result: prefer the parsed body, fall back to its text so a JSON string still works
+        if ("json" in r && r.json !== undefined && r.json !== null) return r.json;
+        if (typeof r.text === "string" || typeof r.markdown === "string") v = r.text ?? r.markdown;
+        else {
+            // Only a PLAIN object or array is a JSON document. A host object (a DOM node, a Map, a class
+            // instance) has no JSON type to describe, and walking one would dump its property names as
+            // though they were data — so refuse it rather than producing an authoritative-looking shape
+            // of something that was never JSON.
+            // Identify by CONSTRUCTOR NAME, not by prototype identity: a plain object that crossed a realm
+            // (an iframe, a vm sandbox, a structured clone) has a different Object.prototype and would be
+            // refused by an identity check even though it is exactly the data this describes.
+            const ctor = (v as { constructor?: { name?: string } }).constructor;
+            const plain = Array.isArray(v) || !ctor || ctor.name === "Object";
+            if (!plain) {
+                throw new Error(`ml.schema: ${where} is a ${ctor.name || "host object"}, not JSON. Pass parsed JSON, a JSON string, or a fetch result.`);
             }
-            const keys = [...present.keys()].slice(0, maxKeys);
-            const parts = keys.map(k => `${keyStr(k)}${present.get(k)! < objs.length ? "?" : ""}: ${[...shapes.get(k)!].join(" | ")}`);
-            return `{ ${parts.join(", ")}${present.size > keys.length ? `, …+${present.size - keys.length}` : ""} }`;
+            return v;
         }
-        return [...new Set(elems.map(e => shape(e, depth)))].join(" | ") || "unknown";
-    };
+    }
+    if (typeof v !== "string") {
+        if (v === undefined) throw new Error(`ml.schema: ${where} is undefined. Pass a JSON value, a JSON string, or a fetch result.`);
+        return v;   // number / boolean / null are valid JSON values
+    }
+    const text = v.trim();
+    if (!(text.startsWith("{") || text.startsWith("["))) {
+        throw new Error(`ml.schema: ${where} is plain text (${text.length} chars), not JSON — there is no type to describe. If it came from a pointer, that output isn't a JSON document.`);
+    }
+    try { return JSON.parse(text); }
+    catch (e) { throw new Error(`ml.schema: ${where} looks like JSON but doesn't parse (${(e as Error).message}).`); }
+}
 
-    const objShape = (o: Record<string, unknown>, depth: number): string => {
-        const all = Object.keys(o), keys = all.slice(0, maxKeys);
-        const parts = keys.map(k => `${keyStr(k)}: ${shape(o[k], depth + 1)}`);
-        return `{ ${parts.join(", ")}${all.length > keys.length ? `, …+${all.length - keys.length}` : ""} }`;
-    };
-
-    return shape(value, 0);
+export function joinShapes(values: unknown[], opts: ShapeOpts = {}): string {
+    if (!values.length) return "unknown";
+    const o = shapeOpts(opts);
+    return renderType(values.map(v => inferType(v, 0, o)).reduce(mergeTypes), o);
 }
 
 /** Resolve a fetched body's kind from THREE cues — header, content, and URL extension — and pick a final
