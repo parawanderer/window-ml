@@ -477,3 +477,63 @@ test("shortType: a compact type for each candidate, and it reaches the fault lis
     assert.match(msg, /table 3x3/, "the table candidate says it is a table, and how big");
     assert.match(msg, /image/, "the screenshot candidate says it is an image");
 });
+
+// SOFT label resolution. A label is free text the model wrote, and it misremembers by rewording — so an
+// exact-only symbol table is brittle. But an address dereference must never silently change WHICH data the
+// computation runs on, so a near match is resolved only when it is both good enough AND clearly ahead of the
+// runner-up, and it is always reported.
+test("labels: a near match resolves only when it is unambiguous, and says what it matched", () => {
+    const mk = (...labels) => {
+        const s = new P.TokenStore();
+        labels.forEach((l, i) => s.note(tok({ id: `aaaaa${i}${i}`, tool: "python_exec", out: `V${i}`, label: l, step: i })));
+        return s;
+    };
+    const ref = (q) => `@tool:${JSON.stringify(q)}`;
+
+    // Reworded and reordered — the case exact matching misses and edit distance scores terribly.
+    const one = mk("the table of sales");
+    const r = one.resolveRef(ref("sales table"));
+    assert.equal(r.value.out, "V0");
+    assert.equal(r.matched, "the table of sales", "reports WHICH label it resolved to");
+    assert.ok(r.score >= 0.5, "…and how confident it was");
+
+    // An EXACT match is silent: nothing was approximated, so there is nothing to announce.
+    const exact = one.resolveRef(ref("the table of sales"));
+    assert.equal(exact.value.out, "V0");
+    assert.equal(exact.matched, undefined);
+
+    // THE DANGEROUS CASE. Two plausible symbols and an ambiguous query: refuse rather than pick. A fixed
+    // distance threshold cannot express this — both candidates would clear any absolute bar.
+    const two = mk("model_fit_linear", "model_fit_quadratic");
+    assert.equal(two.resolveRef(ref("model_fit")).value, null, "must not coin-flip between two plausible symbols");
+    // …yet a typo with a CLEAR winner still resolves, which is the whole point of the margin guard.
+    const typo = two.resolveRef(ref("model_fit_linea"));
+    assert.equal(typo.value.out, "V0");
+    assert.equal(typo.matched, "model_fit_linear");
+
+    // Nothing close enough at all.
+    assert.equal(mk("the sales table").resolveRef(ref("the dashboard screenshot")).value, null);
+    assert.equal(mk().resolveRef(ref("anything")).value, null, "no labels at all");
+});
+
+// Softness is confined to the LABEL form. The other two must fail hard: a corrupted id is caught by its check
+// character and the sparse id space, and a bare ref is a tool alias with nothing to be fuzzy about.
+test("labels: only the QUOTED form resolves softly — ids and tool aliases still fail hard", () => {
+    const s = new P.TokenStore();
+    s.note(tok({ id: "a1b2c3f", tool: "python_exec", out: "REAL", label: "the sales table", step: 1 }));
+
+    assert.equal(s.resolveRef("a1b2c3e").value, null, "a one-character-off id MISSES; it is never fuzzy-matched");
+    assert.equal(s.resolveRef("python_exe").value, null, "a near-miss on a tool name is not resolved either");
+    assert.equal(s.resolveRef("the sales table").value, null, "bare means a TOOL alias, however label-like it reads");
+    assert.equal(s.resolveRef('@tool:"the sales tabel"').value.out, "REAL", "…while the quoted form is soft");
+});
+
+test("labels: the similarity metric is swappable, and the guard travels with it", () => {
+    const s = new P.TokenStore();
+    s.note(tok({ id: "a1b2c3f", tool: "exec", out: "REWORDED", label: "the table of sales", step: 1 }));
+    const q = '@tool:"sales table"';
+    // token-set sees these as the same words; plain edit distance scores them 0.33 and refuses.
+    assert.equal(s.resolveRef(q, "tokenset").value.out, "REWORDED");
+    assert.equal(s.resolveRef(q, "edit").value, null, "edit distance cannot see past the rewording");
+    assert.equal(s.resolveRef(q).value.out, "REWORDED", "the default handles it");
+});

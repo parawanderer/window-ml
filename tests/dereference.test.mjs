@@ -268,3 +268,27 @@ test("dereference: reading by NAME hands back the stable id, and that id does no
     assert.match(byId, /ONE/, "the pinned id still reads the ORIGINAL call after the alias moved");
     assert.doesNotMatch(byId, /\[pinned:/, "and a read BY id doesn't re-pin — it already holds the handle");
 });
+
+// A soft label match must never be silent: an address dereference that quietly picks different data is the
+// failure that costs ten steps of the model explaining an anomaly it caused itself.
+test("dereference: a label resolved by SIMILARITY says so; an exact one says nothing", async () => {
+    const run = async (query) => {
+        const { results } = await drive(
+            [call("python_exec", { code: "df", token: "the table of sales" }), call("dereference", { token: `@tool:${JSON.stringify(query)}` })],
+            (name) => name === "python_exec" ? { result: "ROWS" } : { result: "" });
+        return derefResult({ results });
+    };
+
+    const soft = await run("sales table");
+    assert.match(soft, /ROWS/, "it did resolve");
+    assert.match(soft, /resolved by similarity, not an exact name/);
+    assert.match(soft, /you asked for "sales table"/, "echoes what the model actually wrote");
+    assert.match(soft, /closest label was "the table of sales"/, "…and what it got");
+    assert.match(soft, /\(1\.00\)/, "…with the score, so a weak match is visible as one");
+    assert.match(soft, /list what you have with dereference and no token/, "…and the way to check");
+
+    // An EXACT match approximated nothing, so it says nothing.
+    const exact = await run("the table of sales");
+    assert.match(exact, /ROWS/);
+    assert.doesNotMatch(exact, /resolved by similarity/);
+});

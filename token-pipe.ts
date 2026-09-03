@@ -14,6 +14,7 @@
 
 import { runPipe, splitStages } from "./text-pipe";
 import { isTokenShape } from "./token-id";
+import { lexicalSimilarity, type LexicalMetric } from "./label-match";
 
 /** The tool name, shared by the loop (which answers it) and the toolset builder (which advertises it). */
 export const DEREF_TOOL = "dereference";
@@ -198,6 +199,30 @@ export class TokenStore {
     }
 
     /** Resolve `@tool:<id>`, a bare id, or a tool-name alias. Null when nothing matches. */
+    /** A label must score at least this well to be resolved without being asked about. Measured on the
+     *  motivating cases: correct matches score 0.68-1.00 under the default metric, wrong ones 0.36 or below. */
+    private static readonly LABEL_MIN = 0.5;
+    /** …AND it must lead the runner-up by this much. The threshold alone is not the guard — the danger is two
+     *  SIMILAR labels ("model_fit_linear" / "model_fit_quadratic"), where the best candidate may clear any
+     *  absolute bar and still be a coin flip. Requiring separation encodes "never silently pick between two
+     *  plausible symbols" directly, instead of approximating it with a distance number. */
+    private static readonly LABEL_MARGIN = 0.15;
+
+    /** The best SOFT label match, when one is safe to resolve without asking. Applies only to the QUOTED
+     *  label form: an id-shaped ref that misses must stay missed (its checksum and the sparse id space are
+     *  what make a corrupted id fail loudly), and a bare ref is a tool alias with nothing to be fuzzy about. */
+    private fuzzyLabel(query: string, metric?: LexicalMetric): { value: TokenValue; score: number } | null {
+        const scored = [...this.byId.values()]
+            .filter((v) => v.label)
+            .map((v) => ({ value: v, score: lexicalSimilarity(metric, query, v.label!) }))
+            .sort((a, b) => b.score - a.score);
+        if (!scored.length) return null;
+        const [best, second] = scored;
+        if (best.score < TokenStore.LABEL_MIN) return null;
+        if (second && best.score - second.score < TokenStore.LABEL_MARGIN) return null;   // too close to call
+        return best;
+    }
+
     /** The LATEST value whose own label matches, or null. Latest-wins mirrors the tool-name alias ("that
      *  tool's most recent call"), so the two named forms behave the same way when reused. */
     private byLabel(label: string): TokenValue | null {
@@ -222,7 +247,7 @@ export class TokenStore {
     /** {@link get}, plus HOW it resolved — so a caller can hand back the canonical handle. An unquoted label
      *  works but teaches nothing; the reply says what the quoted form would have been, the same way reading
      *  through a tool-name alias hands over the stable id. */
-    resolveRef(ref: string): { value: TokenValue | null; via: "id" | "tool" | "label" } {
+    resolveRef(ref: string, metric?: LexicalMetric): { value: TokenValue | null; via: "id" | "tool" | "label"; matched?: string; score?: number } {
         const { label, id } = parseRef(ref);
         const touch = (v: TokenValue | null): TokenValue | null => { if (v) this.used.set(v.id, ++this.clock); return v; };
         // THREE DISJOINT FORMS, dispatched on SHAPE rather than tried in order:
@@ -234,7 +259,17 @@ export class TokenStore {
         // in the id branch — it MISSES and faults, instead of being retried as a tool or a label and possibly
         // resolving to something unrelated. (Rests on ids and tool names being distinguishable by shape: no
         // tool is named as seven hex characters. Asserted in tests, not assumed.)
-        if (label != null) return { value: touch(this.byLabel(label)), via: "label" };
+        if (label != null) {
+            const exact = this.byLabel(label);
+            if (exact) return { value: touch(exact), via: "label" };
+            // No exact symbol. A near match is resolved only when it is BOTH good and unambiguous — and it is
+            // always announced, never silent: an address dereference must not quietly change which data the
+            // computation runs on.
+            const soft = this.fuzzyLabel(label, metric);
+            return soft
+                ? { value: touch(soft.value), via: "label", matched: soft.value.label, score: soft.score }
+                : { value: null, via: "label" };
+        }
         if (isTokenShape(id)) return { value: touch(this.byId.get(id) ?? null), via: "id" };
         const ofTool = [...this.byId.values()].filter((v) => v.tool === id);
         return { value: touch(ofTool.length ? ofTool[ofTool.length - 1] : null), via: "tool" };
@@ -349,6 +384,10 @@ const unescapeLabel = (s: string): string => s.replace(/\\(["'\\])/g, "$1");
 /** Compare labels forgivingly — case and inner whitespace are not what the model is trying to communicate,
  *  and the entire reason labels exist is that they are RECALLED rather than transcribed. */
 const labelKey = (s: string): string => s.trim().toLowerCase().replace(/\s+/g, " ");
+
+/** The LABEL a quoted reference names, or null if the reference isn't the quoted form. Exported so a caller
+ *  can echo back what the model actually asked for when reporting a soft match. */
+export const parseLabel = (ref: string): string | null => parseRef(ref).label ?? null;
 
 /** Split a reference into "this is a label" vs "this is an id or a tool name". */
 function parseRef(ref: string): { label?: string; id: string } {

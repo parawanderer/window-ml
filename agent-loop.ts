@@ -17,7 +17,7 @@ import { runStats, fmtTokPerSec, UI_OUT_CAP } from "./contract";
 import type { TokenRender } from "./contract";
 import { UNATTENDED_REFUSAL } from "./prompts";
 import { toolToken } from "./util";
-import { TokenStore, derefPipe, describeToken, extraBeyondModel, memoryFault, cleanLabel, nameOf, isAliasRef, DEREF_TOOL, type TokenKind, type TokenValue } from "./token-pipe";
+import { TokenStore, derefPipe, describeToken, extraBeyondModel, memoryFault, cleanLabel, nameOf, isAliasRef, parseLabel, DEREF_TOOL, type TokenKind, type TokenValue } from "./token-pipe";
 
 export type Approval = "readonly" | "sandbox" | "same-origin" | "consented" | "self-source" | "user" | "denied" | "skipped" | "cancelled";
 export interface ToolMeta { name: string; requiresApproval?: boolean; capabilities?: string[]; }
@@ -305,7 +305,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         const ref = String(args?.token ?? "").trim();
         const pipe = args?.pipe == null ? "" : String(args.pipe);
         if (!ref) return { result: `Error: "token" is required — the @tool:<id> of an output you want to read. Available: ${tokenList()}` };
-        const v = tokenStore.get(ref);
+        const { value: v, matched, score } = tokenStore.resolveRef(ref);
         // A pointer that doesn't resolve is usually a HALLUCINATED id (six plausible hex characters that were
         // never minted), so name the closest real ones rather than just saying no — the model can then correct
         // itself in one step instead of guessing again.
@@ -335,10 +335,16 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             // the only handle it has, and it often only decides an output is worth keeping AFTER seeing it.
             // Reading through the alias is exactly that moment, so hand back the stable id and say it is one.
             // Only when the model came in via a NAME: given the hex it already holds the pin.
+            // A label that did NOT match exactly was resolved by similarity. Say so, every time: an address
+            // dereference must never quietly change which data the computation ran on, and the model can only
+            // notice a wrong resolution if it is told one happened.
+            const soft = matched
+                ? `\n\n[resolved by similarity, not an exact name: you asked for ${JSON.stringify(parseLabel(ref) ?? ref)} and the closest label was ${JSON.stringify(matched)} (${score?.toFixed(2)}). If that is not what you meant, list what you have with dereference and no token.]`
+                : "";
             const pin = isAliasRef(ref, v.id)
                 ? `\n\n[pinned: this call is @tool:${v.id}. "${nameOf(v)}" always means the LATEST ${v.tool} call and will move when you run it again — @tool:${v.id} always means THIS one. Cite it with ![label](@tool:${v.id}:out).]`
                 : "";
-            return { result: `${head}\n\n${text}${derived}${pin}` };
+            return { result: `${head}\n\n${text}${derived}${soft}${pin}` };
         } catch (e) {
             // Any stage that fails throws with an actionable message — the pipe dialect's existing contract.
             // Surface it verbatim so the model corrects the pipe rather than abandoning the pointer.
