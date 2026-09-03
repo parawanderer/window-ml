@@ -88,7 +88,13 @@ export function eventsFrom(sessions: readonly UsageSource[]): ResourceEvent[] {
     const out: ResourceEvent[] = [];
     const costOf = (u: TokenUsage): ResourceEvent["cost"] => {
         const s = runStats([u]);
-        return { inTokens: s.inTokens, outTokens: s.outTokens, tokPerSec: s.tokPerSec, genBasis: s.genBasis };
+        return {
+            inTokens: s.inTokens, outTokens: s.outTokens, tokPerSec: s.tokPerSec, genBasis: s.genBasis,
+            // Both timings ride along when both exist: their difference is the network and the queue, which is
+            // a different diagnosis from a slow model and cannot be recovered from the rate alone.
+            ...(u.evalMs != null ? { evalMs: u.evalMs } : {}),
+            ...(u.genMs != null ? { wallMs: u.genMs } : {}),
+        };
     };
     const call = (ts: number | undefined, u: TokenUsage | null | undefined, model: string | null | undefined,
                   ref: ResourceEvent["ref"], id?: string, parent?: string) => {

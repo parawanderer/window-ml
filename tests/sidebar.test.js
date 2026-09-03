@@ -7039,3 +7039,104 @@ test("event lane: evictions rule through the Overview track too, not just the pe
     await w.flush();
     assert.match(w.shadow.querySelector(".rc-tip-event").textContent, /doomed:12b/, "and it says what happened");
 });
+
+// EVERY figure on the panel has to follow the data — not just the ones with their own test. A stale number is
+// the worst failure this panel can have: it looks authoritative and it is wrong. So rather than asserting six
+// specific figures, this asserts the INVARIANT — after the resident set changes, no element anywhere in the
+// panel still shows a value from before it.
+test("every displayed figure updates: no stale number survives a change", async () => {
+    const GB = 1024 ** 3;
+    let gb = 19;   // what the model holds right now; the box's free memory follows from it
+    const model = () => [{ model: "big:27b", vramGB: gb, vramBytes: gb * GB, sizeBytes: gb * GB, contextLength: 262144,
+                           gpus: [{ id: "0", runner: "CUDA", vramBytes: gb * GB }], expiresAt: null }];
+    const boxInfo = () => ({ compute: {
+        system_compute: { cpu_cores: 32, total_memory: 130142785536, free_memory: 40 * GB },
+        supported_gpus: [
+            { gpu_id: "0", name: "CUDA0", runner: "CUDA", total_memory: 101972967424, physical_memory: 102641958912,
+              free_memory: 101972967424 - gb * GB - Math.round(0.55 * GB) },
+            { gpu_id: "1", name: "CUDA1", runner: "CUDA", total_memory: 101972967424, physical_memory: 102641958912,
+              free_memory: 101972967424 - Math.round(0.55 * GB) },
+        ],
+    } });
+
+    // Both layouts, because they display DIFFERENT figures: the per-pool tracks show bytes and a share each,
+    // the Overview shows a percentage per pool.
+    for (const layout of [STACKED_LAYOUT, {}]) {
+        gb = 19;
+        const w = await loadSidebarWorld({ vram: model(), info: boxInfo, ...layout });
+        await w.raw({ __mlSidebarOpen: true });
+        w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+        for (let i = 0; i < 25 && !w.shadow.querySelector(".rc-total"); i++) {
+            await w.flush(); await new Promise((r) => setTimeout(r, 150));
+        }
+        const panelText = () => w.shadow.querySelector(".vram")?.textContent ?? "";
+        // Everything that shows a number, by selector — the header total, each track's used/ceiling/share,
+        // every legend key, and the model rows.
+        const SELECTORS = [".vram-total", ".rc-total", ".rc-key", ".vram-row"];
+        const snap = () => SELECTORS.flatMap((sel) => [...w.shadow.querySelectorAll(sel)].map((e) => `${sel}: ${e.textContent.trim()}`));
+        const before = snap();
+        assert.ok(before.some((t) => /19\.00 GiB/.test(t)), `the starting figures are on screen (${before.join(" | ")})`);
+
+        // The model grows. Every figure derived from it must move: the header total, the card's used and its
+        // share, the free band beside it, and the row.
+        gb = 31;
+        w.setVram(model());
+        for (let i = 0; i < 40; i++) {
+            await w.flush(); await new Promise((r) => setTimeout(r, 150));
+            if (!/19\.00 GiB/.test(panelText()) && /31\.00 GiB/.test(panelText())) break;
+        }
+        const after = snap();
+        assert.ok(after.some((t) => /31\.00 GiB/.test(t)), `the new figure is shown (${after.join(" | ")})`);
+        // THE invariant: nothing anywhere still quotes the old value.
+        assert.doesNotMatch(panelText(), /19\.00 GiB/, `a stale figure survived: ${after.join(" | ")}`);
+        // The free band exists only in the per-pool layout — Overview shows a percentage per pool and no free
+        // key at all, so there is nothing to check there.
+        // The free band comes from CAPACITY, not from ps, and capacity is deliberately polled on a slower
+        // cadence (CAPACITY_EVERY) — so it lags by up to that interval by design. Reopening the panel forces
+        // a fresh fetch, which is the fastest honest way to see it follow.
+        if (/free \d/.test(panelText())) {
+            w.shadow.querySelector('[aria-label="VRAM monitor"]').click();   // closed
+            await w.flush();
+            w.shadow.querySelector('[aria-label="VRAM monitor"]').click();   // …and open again → refetch
+            for (let i = 0; i < 40 && !/free 63\.\d\d GiB/.test(panelText()); i++) {
+                await w.flush(); await new Promise((r) => setTimeout(r, 150));
+            }
+            assert.match(panelText(), /free 63\.\d\d GiB/, `the free band followed capacity (${snap().join(" | ")})`);
+        }
+        // Percentages are derived too, so they cannot be left behind either.
+        const pctBefore = before.join(" ").match(/\((\d+)%\)|\s(\d+)%/g) || [];
+        const pctAfter = snap().join(" ").match(/\((\d+)%\)|\s(\d+)%/g) || [];
+        if (pctBefore.length) assert.notDeepEqual(pctAfter, pctBefore, "the shares moved with the bytes");
+    }
+});
+
+// Both timings are reported by the native route: Ollama's own generation time, and our wall clock around the
+// fetch. Their difference is what getting TO the model cost, which is a different diagnosis from a slow model.
+test("event lane: the tooltip separates generation time from the network", async () => {
+    const w = await loadSidebarWorld({
+        vram: [{ model: "gemma4:31b", vramGB: 19, vramBytes: 19 * 1024 ** 3, sizeBytes: 19 * 1024 ** 3,
+                 gpus: [{ id: "0", runner: "CUDA", vramBytes: 19 * 1024 ** 3 }], expiresAt: null }],
+        info: INFO_2CARD,
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    for (let i = 0; i < 25 && w.shadow.querySelectorAll(".rc-seg").length < 1; i++) {
+        await w.flush(); await new Promise((r) => setTimeout(r, 150));
+    }
+    const now = Date.now();
+    await w.dispatch(agentStart("net", "go", "gemma4:31b"));
+    await w.dispatch({ ...agentStep("net", 1, { seq: 1, tool: "exec", toolMs: 50,
+        usage: { promptTokens: 100, completionTokens: 90, totalTokens: 190, genMs: 900, evalMs: 300 } }), ts: now });
+    await w.flush();
+    await w.flush();
+
+    w.shadow.querySelector(".rc-ev-tool").dispatchEvent(new w.window.MouseEvent("pointerenter", { bubbles: true }));
+    await w.flush();
+    const tip = w.shadow.querySelector(".rc-tip-event");
+    const chips = [...tip.querySelectorAll(".rc-chip")].map((c) => c.textContent);
+    assert.ok(chips.includes("generation only"), `the rate says what it measures (${chips.join(", ")})`);
+    assert.ok(chips.includes("+600ms network"), `…and what getting there cost (${chips.join(", ")})`);
+    // Exact start and end, to the millisecond: a duration says how long, not when, and lining a block up
+    // against a log needs the clock.
+    assert.match(tip.querySelector(".rc-tip-when").textContent, /\d{2}:\d{2}:\d{2}\.\d{3} → \d{2}:\d{2}:\d{2}\.\d{3}/);
+});

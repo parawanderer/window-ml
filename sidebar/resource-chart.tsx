@@ -19,7 +19,7 @@ import {
 } from "../resource-model";
 import { colorFor, poolColor, hoverModel, poolHover, poolFacts, ModelFacts, CostFacts, VRAM_POLL_MS } from "./vram";
 import { loadedModels, resWindowS, view, zoomRange, brush, crosshair } from "./store";
-import { clockAt, hhmmss } from "./timestamps";
+import { clockAt, hhmmssms } from "./timestamps";
 import { scrollToStepSeq } from "./answer-render";
 import { useTipPlacement } from "./use-tip";
 import { signal } from "@preact/signals";
@@ -593,6 +593,9 @@ function EventTip({ scope }: { scope: string }) {
     const ms = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}s` : `${Math.round(n)}ms`);
     // Each phase's own duration, from where the previous one ended.
     const { ref, style } = useTipPlacement(at);
+    // What getting TO the model cost, when we know both its own generation time and our wall clock.
+    const overheadMs = e.cost?.evalMs != null && e.cost.wallMs != null && e.cost.wallMs > e.cost.evalMs
+        ? e.cost.wallMs - e.cost.evalMs : null;
     const phases = (e.phases || []).map((ph, i) => ({ ...ph, from: i ? e.phases![i - 1].until : e.t }));
     const first = phases[0];
     const nameFor = (kind: string) => (kind === "model" ? e.model || "model" : kind === "wait" ? "waiting for approval" : e.tool || "tool");
@@ -608,7 +611,7 @@ function EventTip({ scope }: { scope: string }) {
                 {e.model ? <i class="rc-tip-dot" style={{ background: colorFor(e.model) }} /> : null}
                 <span class="rc-tip-name">{e.model || e.label}</span>
                 {/* WHEN, not how long: that is the only quantity a moment has. */}
-                <span class="rc-tip-size">{hhmmss(e.t)}</span>
+                <span class="rc-tip-size">{hhmmssms(e.t)}</span>
             </div>
             <div class="rc-tip-note">{e.kind === "evict"
                 ? "left memory here — nothing reports an eviction, so this is the sample where it stopped being resident"
@@ -635,6 +638,9 @@ function EventTip({ scope }: { scope: string }) {
                     {/* A rate's basis is part of the rate: generation-only and wall-clock measure different
                         things, and the bare number would imply a precision it doesn't have. */}
                     {e.cost.genBasis ? <span class="rc-chip rc-chip-dim">{e.cost.genBasis === "eval" ? "generation only" : e.cost.genBasis === "wall" ? "incl. network" : "mixed timing"}</span> : null}
+                    {/* When BOTH timings are known, their difference is the network and the queue — a
+                        different diagnosis from a slow model, and not recoverable from the rate alone. */}
+                    {overheadMs != null ? <span class="rc-chip rc-chip-dim">+{Math.round(overheadMs)}ms network</span> : null}
                 </div>
             ) : null}
             {phases.slice(1).map((ph, i) => (
@@ -650,6 +656,11 @@ function EventTip({ scope }: { scope: string }) {
                         <span class="rc-tip-size">{ms(ph.until - ph.from)}</span></div>
                 </>
             ))}
+            {/* WHEN, exactly. The durations say how long each part took; this is what lets a block be lined up
+                against another one, or against a timestamped log. Milliseconds because an event's own timings
+                are exact — unlike the crosshair, which interpolates between samples. */}
+            <div class="rc-tip-rule" />
+            <div class="rc-tip-when">{hhmmssms(e.t)} → {hhmmssms(e.until ?? e.t)}</div>
             {/* A rule before the notes: they are about the BLOCK, and without it "click to open this step"
                 read as part of whatever phase happened to be last. */}
             {(e.kind === "load" || h.p.clipped || e.ref) ? <div class="rc-tip-rule" /> : null}

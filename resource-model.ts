@@ -716,7 +716,16 @@ export interface ResourceEvent {
     tool?: string;
     /** What it cost, for the kinds that spend tokens. Plain numbers rather than a RunStats import: this module
      *  stays standalone, and the surface that renders it already knows how to say "eval" vs "wall". */
-    cost?: { inTokens: number; outTokens: number; tokPerSec: number | null; genBasis: "eval" | "wall" | "mixed" | null };
+    cost?: {
+        inTokens: number; outTokens: number; tokPerSec: number | null;
+        genBasis: "eval" | "wall" | "mixed" | null;
+        /** Ollama's generation-only time and our own wall clock for the same call, when both are known. Their
+         *  DIFFERENCE is what the network and the queue cost — the one number that separates "the model is
+         *  slow" from "getting to the model is slow", and it exists only where the native route reports
+         *  `eval_duration` beside our measurement. */
+        evalMs?: number;
+        wallMs?: number;
+    };
 }
 
 /** Events inside a window, in time order — what the chart's event lane draws, and what a vertical rule

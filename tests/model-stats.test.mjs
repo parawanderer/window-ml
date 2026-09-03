@@ -206,3 +206,22 @@ test("eventsFrom: a run starts when it STARTED, so it contains its own first cal
     assert.equal(run.until, 40_000);
     assert.ok(load.t >= run.t && (load.until ?? 0) <= run.until, "…so the load it caused is INSIDE it");
 });
+
+test("eventsFrom: both timings ride along, so the network cost is recoverable", () => {
+    const [ev] = M.eventsFrom([{
+        hash: "n", model: "m",
+        // Ollama says it generated for 3.0s; we measured 3.6s around the fetch. The 600ms difference is the
+        // network and the queue — a different diagnosis from a slow model, and not recoverable from the rate.
+        turns: [{ ts: 10_000, usage: usage(100, 90, { genMs: 3600, evalMs: 3000 }) }],
+    }]);
+    assert.equal(ev.cost.evalMs, 3000, "the model's own generation time");
+    assert.equal(ev.cost.wallMs, 3600, "…and the time we waited for it");
+    assert.equal(ev.cost.genBasis, "eval", "the rate divides by the generation time");
+    assert.ok(Math.abs(ev.cost.tokPerSec - 30) < 0.01);
+
+    // A cloud route reports no eval_duration, so there is nothing to subtract — and the tooltip must not
+    // invent an overhead from a single number.
+    const [cloud] = M.eventsFrom([{ hash: "c", model: "m", turns: [{ ts: 10_000, usage: usage(100, 90, { genMs: 3600 }) }] }]);
+    assert.equal(cloud.cost.evalMs, undefined);
+    assert.equal(cloud.cost.genBasis, "wall");
+});
