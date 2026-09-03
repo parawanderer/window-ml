@@ -128,7 +128,7 @@ async function runCell(cell, ctx) {
             log: () => {},
         });
     } catch (err) {
-        run = { events: [], result: null, error: String(err), runMs: 0, approvals: [], seedBoundarySeq: -1 };
+        run = { events: [], result: null, error: String(err), runMs: 0, approvals: [], seedBoundaryStep: -1 };
     }
 
     const measurement = measureRun(run, t);

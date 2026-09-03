@@ -57,7 +57,7 @@ test("a SEEDED history is installed, and its behaviour is not charged to the mea
         script: [{ content: "Done — the code was located above." }],
     });
     expect(run.error, `run failed: ${run.error}`).toBeFalsy();
-    expect(run.seedBoundarySeq, "the seed turn must have produced steps to divide on").toBeGreaterThanOrEqual(0);
+    expect(run.seedBoundaryStep, "the seed turn must have produced steps to divide on").toBeGreaterThanOrEqual(0);
 
     const measured = measureRun(run, {});
     expect(measured.seeded).toBe(true);
@@ -65,6 +65,6 @@ test("a SEEDED history is installed, and its behaviour is not charged to the mea
 
     // Scored WITHOUT the boundary, the same stream shows the seed's re-emission — proving the seed really
     // installed that history rather than the run simply never producing one.
-    const unscoped = measureRun({ ...run, seedBoundarySeq: -1 }, {});
+    const unscoped = measureRun({ ...run, seedBoundaryStep: -1 }, {});
     expect(unscoped.reEmission.rate).toBe(1);
 });

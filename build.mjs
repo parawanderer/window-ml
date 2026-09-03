@@ -11,6 +11,7 @@ import { generatePreview } from "./tools/preview-annotate.mjs";
 import { generatePreview as generateLegendPreview } from "./tools/preview-legend.mjs";
 import { writeApiDocs } from "./scripts/gen-api-docs.mjs";
 import { writeBuildInfo } from "./scripts/gen-build-info.mjs";
+import { writeSchema } from "./scripts/gen-export-schema.mjs";
 
 // output name (dist/<name>.js)  ->  source entry
 const ENTRIES = {
@@ -123,6 +124,11 @@ writeApiDocs();
 // build-info.gen.ts — the harness's own provenance (repo URL, commit + date, build time) that
 // agent_api_docs reports, captured from git at build time (gitignored; the extension can't run git live).
 writeBuildInfo();
+// docs/spec/export.schema.json — the JSON export contract in a language-neutral form, lifted from
+// export-schema.ts. CHECKED IN (not gitignored like the two above): it is a published spec people link to
+// and generate parsers from, so it has to exist in the repo, and `tests/export-schema.test.mjs` fails if
+// an edit left it stale.
+writeSchema();
 
 if (watch) {
     const copyPlugin = { name: "copy-assets", setup(b) { b.onEnd(() => copyAssets()); } };

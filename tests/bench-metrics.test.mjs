@@ -90,8 +90,10 @@ test("reEmission: counts a retyped output, and only from a LATER step", () => {
     assert.equal(r.outputs, 1);
     assert.equal(r.reEmitted, 1);
     assert.equal(r.rate, 1);
-    assert.equal(r.instances[0].fromSeq, 1);
-    assert.equal(r.instances[0].atSeq, 2);
+    // Positions are the total-order ordinal, not `seq` — which is not unique (a turn's thought and its
+    // tool call share one). All that matters is that the retyping happened strictly later.
+    assert.ok(r.instances[0].atOrder > r.instances[0].fromOrder);
+    assert.equal(r.instances[0].tool, "python_exec");
 });
 
 test("reEmission: a run that CITES instead of retyping scores zero", () => {
@@ -200,8 +202,8 @@ test("afterSeed: the seeded turn's steps are excluded from the measurement", () 
     assert.equal(reEmission(ev, 40).reEmitted, 1);
     // Scored from the boundary, only the measured turn counts.
     assert.equal(reEmission(afterSeed(ev, 2), 40).reEmitted, 0);
-    assert.equal(measureRun({ events: ev, seedBoundarySeq: 2 }).seeded, true);
-    assert.equal(measureRun({ events: ev, seedBoundarySeq: 2 }).reEmission.reEmitted, 0);
+    assert.equal(measureRun({ events: ev, seedBoundaryStep: 2 }).seeded, true);
+    assert.equal(measureRun({ events: ev, seedBoundaryStep: 2 }).reEmission.reEmitted, 0);
     assert.equal(measureRun({ events: ev }).reEmission.reEmitted, 1, "without a seed nothing is dropped");
 });
 

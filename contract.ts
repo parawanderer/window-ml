@@ -1250,6 +1250,10 @@ export interface StartRunPayload {
     /** the page's origin when the run started — seeds the run's consented-origins so a same-site nav needs no
      *  prompt while a NEW cross-origin one does (the cross-origin consent gate). */
     pageOrigin?: string;
+    /** The full start URL + title, for the run's `agent` start event. `pageOrigin` exists for the
+     *  cross-origin consent gate and is deliberately only an origin; this is for provenance. */
+    pageUrl?: string;
+    pageTitle?: string;
     /** may this run navigate to OTHER SITES? false → the `navigate` tool refuses cross-origin; true → a new
      *  cross-origin nav gates for consent (see navNeedsConsent). */
     crossOrigin?: boolean;
@@ -1611,7 +1615,10 @@ export interface DebugAgentConfig {
  *  Carries the ACCUMULATED-so-far reasoning/content (the UI REPLACES, not appends, so a dropped/duplicated
  *  event still converges). Lets a long "thinking" phase show its text live instead of a frozen token count. */
 export interface DebugAgentStream extends DebugBase { kind: "agent-stream"; step: number; localStep?: number; reasoning?: string; content?: string; }
-export interface DebugAgentStart extends DebugBase { kind: "agent"; task: string; images?: string[]; model: string | null; maxSteps: number; config: DebugAgentConfig; resumed?: boolean; }
+/** `pageUrl`/`pageTitle` are where the run STARTED. Recorded because "which page" is close to a primary
+ *  key when comparing runs, and was otherwise recoverable only by regexing it back out of the system
+ *  prompt — prose, and only present when `env` was on. A run that navigates ends somewhere else. */
+export interface DebugAgentStart extends DebugBase { kind: "agent"; task: string; images?: string[]; model: string | null; maxSteps: number; config: DebugAgentConfig; resumed?: boolean; pageUrl?: string; pageTitle?: string; }
 export interface DebugAgentStep extends DebugBase {
     kind: "agent-step"; step: number;
     /** The PER-TURN step number (1-based, resets each run()), for the "STEP x/maxSteps" display — `step`

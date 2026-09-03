@@ -1066,6 +1066,29 @@ thing. The parts:
     click. **`WATCH=1`** additionally HOLDS the browser open at the end (close the window / Ctrl+C to
     exit) instead of tearing down — for inspecting a finished run; without it the browser closes when the
     run completes.
+**Programmatic export (`export-schema.ts` + `docs/spec/export.schema.json`).** The JSON export is a
+PUBLISHED contract, and `export-schema.ts` (root, beside contract.ts) is normative. Two things about it are
+easy to get wrong. **The version promise has a boundary**: it covers this file's own shapes plus the
+borrowed `TokenUsage`/`SubcallUsage`/`ToolFeedback`/grants, but NOT `renderIn`/`renderOut`/`config`, whose
+types live in contract.ts and grow whenever the debug UI or `ml.agent` does — pinning them would either
+freeze the UI or bump the version for reasons no consumer cares about. Those emit as permissive objects
+that say so. **And a differ needs more than the field list**: `VOLATILE_FIELDS` names the fields to strip,
+but a pointer id is also surfaced *as text* (an `@tool:` citation in an answer, a `dereference` ref, the
+token line on a result), so removing `steps[].token` leaves every copy behind — `VOLATILE_PATTERNS` +
+`canonicalizeText()` handle those, and the session hash is deliberately NOT a pattern (eight bare hex
+characters would strike colours and short commits too; its value is known from `session.hash`).
+`scripts/gen-export-schema.mjs` lifts the interfaces into **JSON Schema draft 2020-12** so a Python or Go
+consumer can generate models (`datamodel-code-generator` → Pydantic, `quicktype`, …). It is a line scanner
+for the same reason `gen-api-docs.mjs` is (typescript@7 is the Go port, no JS compiler API) and THROWS on a
+type it cannot map rather than silently emitting "anything". Unlike the other generated files the output is
+**checked in** — a spec people link to cannot be a build artifact — and `tests/export-schema.test.mjs`
+regenerates, diffs, and validates real agent AND chat exports against it, including a test that the
+validator itself can fail. `generator.build` carries the COMMIT (a manifest version only moves on releases,
+so it cannot answer "are these two runs comparable"); its `dirtyDiff` is opt-in via
+`ExportProvenance.includeDirtyDiff` — on for a harness artifact whose job is reproducing a run, off for a
+download the user shares, since it is unpublished source. `session.page` records where the run STARTED,
+previously recoverable only by regexing the system prompt.
+
 - **`run-once.mjs`** — the run-driving CORE both CLIs share: `runOnce(config)` drives ONE agent run in a
   real Chromium and RETURNS `{ events, session, runMd, result, … }` instead of only writing files.
   `observe.mjs` is a thin env-var CLI over it; the bench is a matrix over it. Every piece of run state is

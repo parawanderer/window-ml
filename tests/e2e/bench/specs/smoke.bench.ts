@@ -11,7 +11,7 @@
 // and one deliberately puts the re-emission in a SEEDED turn that must not be charged to the measured one.
 // Their expected readings are asserted in tests/e2e/bench-selftest.spec.mjs.
 
-import { defineBench } from "../spec.ts";
+import { defineBench } from "../spec";
 
 /** Echo the previous tool result back verbatim — a model retyping data it was already given. */
 const echoLastToolResult = (req: { messages?: { role?: string; content?: unknown }[] }) => {

@@ -1,0 +1,685 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/parawanderer/window-ml/blob/main/docs/spec/export.schema.json",
+  "title": "window.ml run export",
+  "description": "A window.ml session export, schema version 1. GENERATED from export-schema.ts by scripts/gen-export-schema.mjs — do not edit by hand. The TypeScript file is normative; this is its language-neutral twin, for writing a parser or generating models in another language.",
+  "x-schemaVersion": 1,
+  "type": "object",
+  "properties": {
+    "schema": {
+      "description": "EXPORT_SCHEMA_VERSION at the time of writing. Check this before parsing.",
+      "type": "number"
+    },
+    "exportedAt": {
+      "description": "When the export was produced — not when the run happened. Volatile.",
+      "type": "string",
+      "format": "date-time"
+    },
+    "generator": {
+      "$ref": "#/$defs/ExportGenerator"
+    },
+    "session": {
+      "$ref": "#/$defs/ExportSession"
+    }
+  },
+  "required": [
+    "schema",
+    "exportedAt",
+    "generator",
+    "session"
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "ExportGenerator": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Always \"window.ml\". Present so an aggregator can tell exports apart by origin.",
+          "type": "string"
+        },
+        "version": {
+          "description": "The extension version that wrote the file, from the manifest. Coarse — it moves on releases, not on commits. build is what identifies the actual code.",
+          "type": "string"
+        },
+        "build": {
+          "description": "Which BUILD produced this run. Absent when the exporter had no build stamp to hand.",
+          "$ref": "#/$defs/ExportBuild"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": true
+    },
+    "ExportBuild": {
+      "type": "object",
+      "description": "The commit the extension was built from — the answer to \"are these two exports even comparable?\". A manifest version cannot answer that: two runs a week apart share it while the code moved underneath. Anything comparing runs (a benchmark sweep, a regression differ) needs the commit, and needs to know whether the tree was dirty, because a dirty build is not reproducible from any commit. Mirrors the extension's own `BUILD_INFO`, minus its `dirtyDiff` unless the exporter opts in — see dirtyDiff.",
+      "properties": {
+        "commit": {
+          "description": "Full commit SHA the extension was built from.",
+          "type": "string"
+        },
+        "shortCommit": {
+          "type": "string"
+        },
+        "dirty": {
+          "description": "The working tree had uncommitted changes at build time, so `commit` does NOT fully describe what ran. A sweep should treat runs from a dirty build as provisional.",
+          "type": "boolean"
+        },
+        "dirtyFiles": {
+          "description": "Paths that were modified, when dirty. Names only — cheap, and usually enough to know what moved.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "dirtyDiff": {
+          "description": "The full uncommitted diff, when the exporter asked for it. OPT-IN, and off by default for two reasons: it is frequently larger than the run it describes, and it puts unpublished source into a file that gets shared. Turn it on where the export is a local artifact and reproducing the exact build matters — a benchmark cell, a bug report you are keeping.",
+          "type": "string"
+        },
+        "commitDate": {
+          "description": "Committer date of commit, ISO 8601.",
+          "type": "string"
+        },
+        "repoUrl": {
+          "type": "string"
+        },
+        "commitUrl": {
+          "type": "string"
+        },
+        "buildTime": {
+          "description": "When the bundle was built. Volatile: rebuilding the same commit changes it.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "ExportSession": {
+      "type": "object",
+      "properties": {
+        "hash": {
+          "description": "The session hash the sidebar shows. Stable within a session, random across them, so a differ comparing two runs of the same task should ignore it.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "An agent run (a task and its steps) or a chat session (turns).",
+          "type": "string",
+          "enum": [
+            "agent",
+            "chat"
+          ]
+        },
+        "title": {
+          "description": "The AI-summarised title. Absent when it was never generated.",
+          "type": "string"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "lastAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "model": {
+          "description": "The model pinned for the session, when there is one. A per-turn/per-step `model` is the one that actually answered, which can differ (utility profile, server-side resolution).",
+          "type": "string"
+        },
+        "config": {
+          "description": "The options the session was created with, verbatim: `createChat`'s for a chat, `ml.agent`'s for a run.",
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": true,
+              "description": "The options the chat session was created with. Not covered by the schema version."
+            },
+            {
+              "type": "object",
+              "additionalProperties": true,
+              "description": "The options the agent run was created with. Grows whenever `ml.agent` gains an option, so it is NOT covered by the schema version. Read the keys you know."
+            }
+          ]
+        },
+        "task": {
+          "description": "The initial task. Agent runs only.",
+          "type": "string"
+        },
+        "page": {
+          "description": "The page the run STARTED on. Agent runs only, and absent on a run exported from a build that predates the field. Close to a primary key when comparing runs — the same task against a different page is a different experiment — and previously recoverable only by regexing the URL back out of `config.system`, which is prose and only present when `env` was on. A run that navigates ends somewhere else; this is where it began.",
+          "$ref": "#/$defs/ExportPage"
+        },
+        "taskImages": {
+          "description": "Images attached to the initial task, as data URLs. Agent runs only.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "outcome": {
+          "$ref": "#/$defs/ExportOutcome"
+        },
+        "totals": {
+          "$ref": "#/$defs/ExportTotals"
+        },
+        "messages": {
+          "description": "The conversation in order: the user's messages and the model's answers. For a chat these are its turns; for an agent run, its `say`s and answers interleaved with the steps by atStep.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ExportMessage"
+          }
+        },
+        "steps": {
+          "description": "The agent loop's steps, ordered by seq. Agent runs only.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ExportStep"
+          }
+        }
+      },
+      "required": [
+        "hash",
+        "kind",
+        "createdAt",
+        "lastAt",
+        "outcome",
+        "totals",
+        "messages"
+      ],
+      "additionalProperties": true
+    },
+    "ExportPage": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string"
+        },
+        "origin": {
+          "description": "Origin of url, split out so grouping by site needs no URL parsing.",
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "ExportOutcome": {
+      "type": "object",
+      "description": "Run-level flags, gathered rather than scattered as optional booleans. DERIVED, and deliberately so: several consumers want these and would otherwise each reconstruct them from different fields and disagree. Every input remains present elsewhere in the document, so a consumer that distrusts our arithmetic can redo it.",
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "ok",
+            "err"
+          ]
+        },
+        "hitCap": {
+          "description": "The loop stopped because it reached `maxSteps`, not because it finished.",
+          "type": "boolean"
+        },
+        "cancelled": {
+          "description": "Aborted via the HUD or an AbortSignal. The transcript is partial but real.",
+          "type": "boolean"
+        },
+        "resumed": {
+          "description": "Resurrected from storage after the service worker was evicted mid-run.",
+          "type": "boolean"
+        },
+        "error": {
+          "description": "A FATAL error (the model call failed, or the loop threw). Distinct from a tool returning an error string, which is a normal step result. Null when none.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "turnsRun": {
+          "description": "Distinct `step` values, NOT `steps.length` — one loop turn emits several steps (a thought plus one per tool call) sharing a `step`.",
+          "type": "number"
+        },
+        "maxSteps": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "status",
+        "hitCap",
+        "cancelled",
+        "resumed",
+        "error"
+      ],
+      "additionalProperties": true
+    },
+    "ExportTotals": {
+      "type": "object",
+      "description": "Summed counters. Derived for the same reason as ExportOutcome.",
+      "properties": {
+        "steps": {
+          "description": "Step records, i.e. `steps.length`. See turnsRun for the number the loop's cap is measured against.",
+          "type": "number"
+        },
+        "tokensIn": {
+          "description": "Prompt tokens across the run's own model calls. Excludes delegated sub-calls.",
+          "type": "number"
+        },
+        "tokensOut": {
+          "type": "number"
+        },
+        "subcallTokens": {
+          "description": "Tokens spent by DELEGATED sub-calls (`look`, `locate`, verify) — billed to the run but not part of the driver's own context.",
+          "type": "number"
+        },
+        "wallMs": {
+          "description": "ELAPSED wall-clock, first event to last — not time spent working. A multi-turn session includes whatever the human spent between turns, so a chat left open for an hour reports an hour. Dividing tokens by this gives throughput of the session, not of the model. Volatile.",
+          "type": "number"
+        },
+        "byModel": {
+          "description": "Per-model breakdown, so a sweep can attribute cost when a run used several (a driver plus a utility reader, say).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ExportModelUsage"
+          }
+        }
+      },
+      "required": [
+        "steps",
+        "tokensIn",
+        "tokensOut",
+        "subcallTokens",
+        "wallMs",
+        "byModel"
+      ],
+      "additionalProperties": true
+    },
+    "ExportModelUsage": {
+      "type": "object",
+      "properties": {
+        "model": {
+          "type": "string"
+        },
+        "calls": {
+          "type": "number"
+        },
+        "tokensIn": {
+          "type": "number"
+        },
+        "tokensOut": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "model",
+        "calls",
+        "tokensIn",
+        "tokensOut"
+      ],
+      "additionalProperties": true
+    },
+    "ExportMessage": {
+      "type": "object",
+      "description": "One conversational message. A chat turn carries both halves (`user` then `assistant`) as two entries so the array reads uniformly for both session kinds.",
+      "properties": {
+        "role": {
+          "type": "string",
+          "enum": [
+            "user",
+            "assistant"
+          ]
+        },
+        "text": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "atStep": {
+          "description": "The cumulative step count when this arrived, so a consumer can interleave messages with steps in the order they happened. Agent runs only.",
+          "type": "number"
+        },
+        "images": {
+          "description": "Attached images, as data URLs.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "model": {
+          "description": "Assistant only: the model that actually produced this, after server-side resolution. May differ from model.",
+          "type": "string"
+        },
+        "extend": {
+          "description": "Assistant only: which profile resolved the model — marks a utility-model reply apart from the default one.",
+          "type": "string"
+        },
+        "reasoning": {
+          "description": "Assistant only: separate thinking text, when the model emitted any.",
+          "type": "string"
+        },
+        "sources": {
+          "description": "Assistant only, chat sessions: provenance the server attached (RAG/tool sources).",
+          "type": "array",
+          "items": {}
+        },
+        "usage": {
+          "description": "Assistant only: token counts for this turn, when the server reported them.",
+          "$ref": "#/$defs/TokenUsage"
+        },
+        "error": {
+          "description": "Present when this message failed.",
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "ok",
+            "err"
+          ]
+        }
+      },
+      "required": [
+        "role",
+        "text",
+        "at"
+      ],
+      "additionalProperties": true
+    },
+    "ExportStep": {
+      "type": "object",
+      "description": "One agent step: either a thought, or a tool call with its arguments and result. Transient view state is NOT exported — `pending`, `awaitingApproval`, `liveStream`, `ended`/`endedStep` describe a live UI, not the run. A pending step never appears in an export; only its completed form does.",
+      "properties": {
+        "step": {
+          "description": "The loop turn this belongs to. Several steps share one.",
+          "type": "number"
+        },
+        "localStep": {
+          "description": "Index within the current turn of a multi-turn session (`run()` then `continue()`), where `step` keeps counting across turns.",
+          "type": "number"
+        },
+        "seq": {
+          "description": "Groups the records a single model turn emitted: a thought and the tool call it decided on share one `seq`. It is therefore NOT unique — 9 records over 5 turns carry 5 distinct values — so it identifies a turn's event group, not a record. ORDER: the `steps` array is already in the order things happened. Sort by `seq` only with a stable sort, or ties reorder; array order is authoritative.",
+          "type": "number"
+        },
+        "at": {
+          "description": "When the step completed. Volatile.",
+          "type": "string",
+          "format": "date-time"
+        },
+        "durationMs": {
+          "description": "How long the tool took, from `toolMs`. Frequently ABSENT — the loop records it per tool call, and a thought-only record has none. Volatile.",
+          "type": "number"
+        },
+        "thought": {
+          "description": "The model's narration for this step, when it produced any.",
+          "type": "string"
+        },
+        "reasoning": {
+          "description": "Separate reasoning/thinking text, distinct from `thought`.",
+          "type": "string"
+        },
+        "tool": {
+          "description": "The tool called. Absent on a thought-only step.",
+          "type": "string"
+        },
+        "arguments": {
+          "description": "The arguments the model emitted, verbatim — not normalised, not re-ordered.",
+          "type": "object",
+          "additionalProperties": true
+        },
+        "argIssues": {
+          "description": "Schema complaints about those arguments (required/type/enum/unknown-prop), as the sidebar's red strip shows them. Absent when the args were clean.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "result": {
+          "description": "The fuller captured output — what the UI shows, which can exceed what the model received (see modelResult).",
+          "type": "string"
+        },
+        "modelResult": {
+          "description": "What the model ACTUALLY received, when it differs from result — the result is clipped to a context budget while the UI keeps more. Omitted when the two are identical. Required by the project's raw-view rule: an export must always carry the model-facing text, never only the prettier one.",
+          "type": "string"
+        },
+        "streamOutput": {
+          "description": "Output the tool streamed as it worked, when it streamed.",
+          "type": "string"
+        },
+        "streamMarks": {
+          "description": "`[offsetInStreamOutput, epochMs]` per line, stamped by whatever produced the output. Lets a consumer reconstruct per-line timing. Volatile.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "token": {
+          "description": "The `@tool:<id>` token minted for this output, when one was, so a citation in an answer can be resolved back to the step that produced it. Volatile.",
+          "type": "string"
+        },
+        "approval": {
+          "description": "How a privileged call was approved: auto-approved by the read-only interpreter or sandbox, consented by origin, approved by the user, denied, and so on. Absent when the tool needed no approval.",
+          "type": "string"
+        },
+        "grants": {
+          "description": "Grants this step created / reused, for privileged fetches.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PersistGrant"
+          }
+        },
+        "reused": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ReusedGrant"
+          }
+        },
+        "elements": {
+          "description": "A COUNT of matched DOM elements. Never the nodes: they cannot cross the bus.",
+          "type": "number"
+        },
+        "renderIn": {
+          "description": "A visualisation payload, keyed by its `type` field. This is an OPEN registry that grows whenever the debug UI learns to draw something new, so it is NOT covered by the schema version. Switch on `type` and ignore what you do not recognise.",
+          "type": "object",
+          "additionalProperties": true
+        },
+        "renderOut": {
+          "description": "A visualisation payload, keyed by its `type` field. This is an OPEN registry that grows whenever the debug UI learns to draw something new, so it is NOT covered by the schema version. Switch on `type` and ignore what you do not recognise.",
+          "type": "object",
+          "additionalProperties": true
+        },
+        "feedback": {
+          "description": "What was fed back into the model's context off the back of this step (a crop after a `locate`, say), and why.",
+          "$ref": "#/$defs/ToolFeedback"
+        },
+        "usage": {
+          "description": "Token counts for the model call that produced this step. In practice this sits on the THOUGHT record of a turn, not on the tool call it led to — the tokens were spent deciding, and the tool call is the consequence. Do not expect it per tool. `session.totals.tokensIn` sums these, so it counts the re-sent conversation once per turn. That is what a run COST; it is not the count of distinct tokens.",
+          "$ref": "#/$defs/TokenUsage"
+        },
+        "subUsage": {
+          "description": "Tokens spent by delegated sub-calls made DURING this step.",
+          "$ref": "#/$defs/SubcallUsage"
+        }
+      },
+      "required": [
+        "step",
+        "seq"
+      ],
+      "additionalProperties": true
+    },
+    "TokenUsage": {
+      "type": "object",
+      "description": "Token accounting for ONE request, when the server reports it (OpenWebUI returns a `usage` block; Ollama-native returns prompt_eval_count/eval_count). IMPORTANT: `promptTokens` already covers the WHOLE conversation — every turn re-sends the full history — so live context occupancy is `promptTokens + completionTokens` of the LATEST call, never a sum across turns (summing would overcount quadratically). Only cumulative SPEND is a sum.",
+      "properties": {
+        "promptTokens": {
+          "type": "number"
+        },
+        "completionTokens": {
+          "type": "number"
+        },
+        "totalTokens": {
+          "type": "number"
+        },
+        "genMs": {
+          "description": "Wall-clock ms of THIS model call, measured at the source (around the fetch). ALWAYS available; it includes the call's own network/queue latency (TTFT) — the honest \"time spent waiting on the model\".",
+          "type": "number"
+        },
+        "evalMs": {
+          "description": "Ollama-native `eval_duration` (generation-only, ns → ms) when the native route reports it. PREFERRED over `genMs` for a tok/s rate (it excludes network/queue); absent for cloud / OpenWebUI-OpenAI.",
+          "type": "number"
+        },
+        "loadMs": {
+          "description": "Ollama-native `load_duration` (ns → ms): how long THIS call spent loading the model before generating. Small and constant when the model was already resident; seconds-to-a-minute when it was not — which is the difference between \"the model was slow\" and \"the model wasn't there yet\", and the only place that answer exists. Absent for cloud / OpenWebUI-OpenAI, which don't report it.",
+          "type": "number"
+        }
+      },
+      "required": [
+        "promptTokens",
+        "completionTokens",
+        "totalTokens"
+      ],
+      "additionalProperties": true
+    },
+    "SubcallUsage": {
+      "type": "object",
+      "properties": {
+        "prompt": {
+          "type": "number"
+        },
+        "completion": {
+          "type": "number"
+        },
+        "calls": {
+          "type": "number"
+        },
+        "byModel": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SubcallUsageByModel"
+          }
+        }
+      },
+      "required": [
+        "prompt",
+        "completion",
+        "calls"
+      ],
+      "additionalProperties": true
+    },
+    "SubcallUsageByModel": {
+      "type": "object",
+      "description": "Delegated-sub-call token tally (look/locate/verify's own vision calls). See DebugAgentStep.subUsage. `byModel` breaks the aggregate down per vision model, for chat_metadata's \"which model cost what\".",
+      "properties": {
+        "model": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "number"
+        },
+        "completion": {
+          "type": "number"
+        },
+        "calls": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "model",
+        "prompt",
+        "completion",
+        "calls"
+      ],
+      "additionalProperties": true
+    },
+    "ToolFeedback": {
+      "type": "object",
+      "description": "What a tool fed back INTO the model's context, for the debug render + export to surface (the model received it via the normal channels — an inline image, or appended result text). `locate`'s snap-inject sets it: a marked crop (vision driver) or a delegated description (text-only driver), plus the `reason` it was sent (a point is automatic; a selector/@box only when `verify:true`).",
+      "properties": {
+        "reason": {
+          "type": "string"
+        },
+        "via": {
+          "type": "string",
+          "enum": [
+            "image",
+            "text"
+          ]
+        },
+        "image": {
+          "description": "the marked crop (data URL) — shown in the render even for a text-only driver (what got described)",
+          "type": "string"
+        },
+        "text": {
+          "description": "the delegated description text (via:\"text\" only)",
+          "type": "string"
+        },
+        "prompt": {
+          "description": "the exact prompt the reader was asked over the crop (via:\"text\") — shown in the debug render + export",
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "reason",
+        "via"
+      ],
+      "additionalProperties": true
+    },
+    "PersistGrant": {
+      "type": "object",
+      "description": "A persistable egress consent a tool call would establish — the unit button #3 remembers for the session. Extracted STATICALLY, background-side (grant-extract.ts), so it holds only literal targets the human saw. `kind` keys the UI's per-kind rendering + the background's per-kind persistence (today: `ml.fetch` URLs).",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "const": "fetch-url"
+        },
+        "urls": {
+          "description": "the distinct static URLs this grant would remember",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "kind",
+        "urls"
+      ],
+      "additionalProperties": true
+    },
+    "ReusedGrant": {
+      "type": "object",
+      "description": "A prior grant a tool call REUSED (so it ran without a fresh prompt) — the transparency counterpart of PersistGrant. `kind` keys the per-kind label/icon; `detail` is the human-readable thing reused (the URL, the sheet name/id). Extensible: a new grant kind adds a `kind` + a detail here + one render branch.",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "fetch-url",
+            "sheet"
+          ]
+        },
+        "detail": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "detail"
+      ],
+      "additionalProperties": true
+    }
+  }
+}

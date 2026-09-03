@@ -20,35 +20,63 @@
  * counting them would credit the fake-LLM's re-emissions to the model under test. Events without a seq
  * (the lifecycle ones) are kept: the terminal agent-result is the measured turn's, being the last.
  */
-export function afterSeed(events, boundarySeq = -1) {
-    if (!(boundarySeq >= 0)) return events;
-    // The seed turn's own agent-result carries no seq, so dropping by seq alone would leave its ANSWER in
-    // the measured turn's authored text — and that answer is exactly where a seeded re-emission lives.
+export function afterSeed(events, boundaryStep = -1) {
+    if (!(boundaryStep >= 0)) return events;
+    // Bounded by `step`, not `seq`: a turn's THOUGHT record carries no seq in the raw stream, so a
+    // seq-based cut left every seeded thought behind. `step` is on every step record and keeps counting
+    // across turns, which is exactly the axis a turn boundary lives on.
+    //
+    // The seed's own agent-result has no step either, and dropping it matters more than it looks: that
+    // answer is where a seeded re-emission actually lives, so leaving it would charge the script's
+    // behaviour to the model.
     let seenSeedResult = false;
     return events.filter((e) => {
         if (e.kind === "agent-result" && !seenSeedResult) { seenSeedResult = true; return false; }
-        return e.seq == null || e.seq > boundarySeq;
+        if (e.kind === "agent-step") return (e.step ?? 0) > boundaryStep;
+        return true;
     });
 }
 
 /** Collapse whitespace so a reflowed copy of the same text still compares equal. */
 const norm = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
 
-/** The steps of the (single) agent session in an event stream, deduplicated by seq, in order. */
+/**
+ * The steps of the (single) agent session, in the order they happened, with each tool call's repeated
+ * emissions collapsed into one record.
+ *
+ * Two different things share a `seq`, and conflating them is the trap here. A tool call emits TWICE — a
+ * pending START with its args, then a DONE with the result — and those must merge. But a turn's THOUGHT
+ * record carries NO seq at all in the raw stream (agent-loop.ts emits `{ step, usage, reasoning }`), and
+ * it is a separate event that must not be folded into the tool call that followed it. Sorting seq-less
+ * records as seq 0 put every thought before every tool step, so a thought that repeated an earlier tool's
+ * output was compared against a later position and never counted as a re-emission.
+ *
+ * So: `step` is the real ordering axis (it counts turns and keeps counting across a multi-turn session),
+ * the thought sorts first within its turn because that is when the model wrote it, and each record gets a
+ * total-order `order` ordinal that the rest of this file compares on instead of `seq`.
+ */
 export function stepsOf(events) {
     const bySeq = new Map();
-    const noSeq = [];
+    const out = [];
     for (const ev of events) {
         if (ev.kind !== "agent-step") continue;
-        if (ev.seq == null) { noSeq.push(ev); continue; }
-        // A tool call emits twice (pending START, then DONE). Merge, letting the later event win field
-        // by field, so the DONE's result lands on top of the START's args.
+        if (ev.seq == null) { out.push({ ...ev, _hasSeq: false }); continue; }
         const prev = bySeq.get(ev.seq);
-        bySeq.set(ev.seq, prev ? { ...prev, ...Object.fromEntries(Object.entries(ev).filter(([, v]) => v !== undefined)) } : ev);
+        if (prev) {
+            // Later event wins field by field, so the DONE's result lands on top of the START's args.
+            Object.assign(prev, Object.fromEntries(Object.entries(ev).filter(([, v]) => v !== undefined)));
+            continue;
+        }
+        const rec = { ...ev, _hasSeq: true };
+        bySeq.set(ev.seq, rec);
+        out.push(rec);
     }
-    return [...bySeq.values(), ...noSeq]
+    return out
         .filter((s) => !s.pending || s.result != null || s.tool)
-        .sort((a, b) => (a.seq ?? 0) - (b.seq ?? 0));
+        .sort((a, b) => (a.step ?? 0) - (b.step ?? 0)
+            || (a._hasSeq ? 1 : 0) - (b._hasSeq ? 1 : 0)   // the turn's thought precedes its tool calls
+            || (a.seq ?? 0) - (b.seq ?? 0))
+        .map((s, i) => ({ ...s, order: i }));
 }
 
 /** The final agent-result event (the LAST turn's, when a follow-up ran). */
@@ -81,20 +109,26 @@ export function flatStrings(v, out = []) {
 export function authoredTexts(events) {
     const out = [];
     for (const s of stepsOf(events)) {
-        if (s.thought) out.push({ seq: s.seq ?? 0, kind: "thought", text: String(s.thought) });
+        if (s.thought) out.push({ order: s.order, kind: "thought", text: String(s.thought) });
         const args = flatStrings(s.arguments).join("\n");
-        if (args) out.push({ seq: s.seq ?? 0, kind: "args", text: args });
+        if (args) out.push({ order: s.order, kind: "args", text: args });
     }
     // EVERY turn's answer, not just the last one. A multi-turn session — a follow-up, or a seeded history —
     // has the model writing a final answer per turn, and reading only the terminal one makes an earlier
     // turn's re-emission invisible. Each answer is placed just after its own turn's last step (the .5), so
     // it stays ordered before the next turn's steps without colliding with an integer seq.
-    let lastSeq = 0;
+    const steps = stepsOf(events);
+    const lastOrderOfStep = new Map();   // the turn's LAST record: an answer follows its tool calls, not its thought
+    for (const st of steps) lastOrderOfStep.set(st.step ?? 0, st.order);
+    let lastStep = 0;
     for (const ev of events) {
-        if (ev.kind === "agent-step" && ev.seq != null) lastSeq = Math.max(lastSeq, ev.seq);
+        if (ev.kind === "agent-step" && ev.step != null) lastStep = Math.max(lastStep, ev.step);
         if (ev.kind !== "agent-result") continue;
-        if (ev.summary) out.push({ seq: lastSeq + 0.5, kind: "summary", text: String(ev.summary) });
-        if (ev.answer) out.push({ seq: lastSeq + 0.5, kind: "answer", text: flatStrings(ev.answer).join("\n") });
+        // Placed just after its own turn's last step (the .5), so it stays ordered before the next turn's
+        // steps without colliding with an integer ordinal.
+        const at = (lastOrderOfStep.get(lastStep) ?? steps.length - 1) + 0.5;
+        if (ev.summary) out.push({ order: at, kind: "summary", text: String(ev.summary) });
+        if (ev.answer) out.push({ order: at, kind: "answer", text: flatStrings(ev.answer).join("\n") });
     }
     return out;
 }
@@ -106,7 +140,7 @@ export function authoredTexts(events) {
 export function capturedOutputs(events) {
     return stepsOf(events)
         .filter((s) => s.tool && (s.modelResult != null || s.result != null))
-        .map((s) => ({ seq: s.seq ?? 0, tool: s.tool, text: String(s.modelResult ?? s.result ?? "") }));
+        .map((s) => ({ order: s.order, tool: s.tool, text: String(s.modelResult ?? s.result ?? "") }));
 }
 
 /**
@@ -141,8 +175,8 @@ export function reEmission(events, k = 40) {
     const authored = authoredTexts(events);
     const instances = [];
     for (const o of outputs) {
-        const hit = authored.find((t) => t.seq > o.seq && sharesRun(o.text, t.text, k));
-        if (hit) instances.push({ fromSeq: o.seq, tool: o.tool, atSeq: hit.seq, kind: hit.kind });
+        const hit = authored.find((t) => t.order > o.order && sharesRun(o.text, t.text, k));
+        if (hit) instances.push({ fromOrder: o.order, tool: o.tool, atOrder: hit.order, kind: hit.kind });
     }
     return { outputs: outputs.length, reEmitted: instances.length, rate: outputs.length ? instances.length / outputs.length : 0, instances };
 }
@@ -156,7 +190,7 @@ export function pointerRefs(events) {
         for (const m of t.text.match(TOKEN_RE) || []) {
             const body = m.slice("@tool:".length);
             const form = /^["']/.test(body) ? "label" : (/^[0-9a-f]{7}$/.test(body) ? "id" : "alias");
-            refs.push({ seq: t.seq, ref: m, form });
+            refs.push({ order: t.order, ref: m, form });
         }
     }
     return refs;
@@ -229,7 +263,7 @@ export function tokenCost(events) {
  */
 export function measureRun(run, task = {}, opts = {}) {
     const { result = null, runMs = 0, error = null, approvals = [] } = run;
-    const events = afterSeed(run.events || [], run.seedBoundarySeq ?? -1);
+    const events = afterSeed(run.events || [], run.seedBoundaryStep ?? -1);
     const k = opts.k ?? 40;
     const done = resultOf(events);
     const steps = stepsOf(events).filter((s) => s.tool);
@@ -240,7 +274,7 @@ export function measureRun(run, task = {}, opts = {}) {
         catch { succeeded = false; }   // a predicate that throws is a failed run, not a broken bench
     }
     return {
-        seeded: (run.seedBoundarySeq ?? -1) >= 0,
+        seeded: (run.seedBoundaryStep ?? -1) >= 0,
         ok: !error && !done?.error,
         succeeded,
         error: error || done?.error || null,

@@ -769,6 +769,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         const startEvent = {
             kind: "agent", id: runId, ts: Date.now(), save: false, session: { hash: runId, turn: 0 },
             task: resurrected ? (resumeOriginalTask ?? p.task) : p.task, model: p.model, maxSteps: p.maxSteps,
+            pageUrl: p.pageUrl, pageTitle: p.pageTitle,
             resumed: resurrected || undefined,   // the sidebar can mark it "resumed after interruption"
             config: {
                 system: p.systemPrompt, customSystem: false,
