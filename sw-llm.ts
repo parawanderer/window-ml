@@ -5,7 +5,7 @@
 // background.ts verbatim; it depends only on the shared contract (types + DEFAULT_CONFIG/modelFilterAllows)
 // and chrome/fetch. All server JSON is genuinely opaque, so it's typed `any`; our own data uses the contract.
 import type { MlConfig, ApiFormat, NeutralMessage, ToolCall, FetchLlmPayload, LlmResult, LoadedModel, ServerTool, JsonSchema, TokenUsage } from "./contract";
-import { DEFAULT_CONFIG, modelFilterAllows } from "./contract";   // single source of truth (see contract.ts)
+import { DEFAULT_CONFIG, modelFilterAllows, generatesText, producesEmbeddings } from "./contract";   // single source of truth (see contract.ts)
 
 // The wire body we assemble for a chat request (grows per format/options).
 interface ChatBody {
@@ -276,23 +276,6 @@ async function residentContextLength(config: MlConfig, model: string): Promise<n
 // Returns the array, or null when it can't be determined (non-Ollama backend,
 // old Ollama, cloud model, unreachable) — callers must treat null as "unknown"
 // and degrade gracefully, never as "no".
-/** Does this model generate TEXT? The right test for the chat/utility/vision pickers.
- *
- *  Measured against a real Ollama (2026-09-03): the obvious rule — "hide anything with `embedding`" — is
- *  WRONG. `qwen3-embedding:0.6b` reports `['tools','thinking','embedding']` and `:8b` reports
- *  `['tools','embedding']`, so an embedding model can advertise other capabilities too. Requiring
- *  `completion` is the semantically correct test, and no embedding model has it.
- *
- *  Unknown (null) capabilities mean a cloud/non-Ollama model, which we CANNOT classify — so it passes.
- *  Failing open matches `modelFilter`: never hide a model we merely failed to interrogate. */
-export const generatesText = (caps: string[] | null): boolean => !caps || caps.includes("completion");
-
-/** Does this model produce EMBEDDINGS? Unlike {@link generatesText} this fails CLOSED — an unclassifiable
- *  model is not offered as an embedding model, because picking one that turns out not to embed produces a
- *  confusing runtime failure rather than a mildly shorter list. A user can still name one explicitly and
- *  have it validated by an actual embed call. */
-export const producesEmbeddings = (caps: string[] | null): boolean => !!caps && caps.includes("embedding");
-
 /** Capabilities for MANY models at once, for the settings pickers. Sequential per model would be ~39 round
  *  trips on a real box; bounded concurrency turns that into well under a second, and `capabilitiesCache`
  *  makes every later call free. A model that fails to answer resolves to null (unknown) rather than

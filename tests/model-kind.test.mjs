@@ -3,7 +3,7 @@
 // Ollama (39 models) on 2026-09-03, and the obvious rule turned out to be wrong.
 import { test } from "node:test";
 import assert from "node:assert";
-const { generatesText, producesEmbeddings } = await import("../sw-llm.ts");
+const { generatesText, producesEmbeddings } = await import("../contract.ts");
 
 // Verbatim from that probe.
 const REAL = {

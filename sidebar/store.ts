@@ -91,6 +91,10 @@ export const resWindowS = signal(RESWIN_DEFAULT);  // seconds of history the res
 export const outMaxH = signal(OUTMAX_DEFAULT); // max height of a tool output cell (Settings → Appearance); 0 = uncapped
 export const config = signal<MlConfig>(DEFAULT_CONFIG);   // live mirror of chrome.storage.sync
 export const models = signal<string[]>([]);               // server model ids (for the datalists)
+// Each model's capabilities, when the picker asked for them (LIST_MODELS `kinds: true`). Empty until then,
+// and a model missing from it is UNKNOWN — which `generatesText` treats as "show it", so a slow or failed
+// capability lookup can never silently empty a picker.
+export const modelKinds = signal<Record<string, string[] | null>>({});
 export const ollamaIds = signal<string[] | null>(null);   // subset that's Ollama-backed (null = can't tell → skip cloud detection)
 export const vramOpen = signal(false);                    // VRAM monitor panel toggled on?
 export const sidebarOpen = signal(false);                 // is the shell slid open? (gates polling)

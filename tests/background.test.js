@@ -3032,3 +3032,44 @@ test("tool pointers persist ACROSS a session's turns, and a tool name still mean
     await resume("and the original?");
     assert.match(toolResults.at(-1) ?? toolResults[0], /ROWS-FROM-CALL-1/, "a pinned id does not move");
 });
+
+// Embedding models appear in the model list the moment they are pulled, and choosing one as a chat model
+// fails at request time with nothing to explain it. `kinds: true` reports each model's capabilities so a
+// picker can exclude them — OPT-IN, because it costs an /api/show per model and the composer and VRAM
+// panel, which only want names, must not pay for it.
+test("LIST_MODELS: `kinds` is opt-in, costs nothing when unasked, and is never served to a PAGE", async () => {
+    const shows = [];
+    const mk = () => loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            if (call.url === "http://host/api/models") return jsonResponse({ data: [{ id: "qwen3:14b" }, { id: "embeddinggemma:300m" }] });
+            if (/\/api\/show$/.test(call.url)) {
+                const model = JSON.parse(call.body ? JSON.stringify(call.body) : "{}").model;
+                shows.push(model);
+                return jsonResponse({ capabilities: model === "embeddinggemma:300m" ? ["embedding"] : ["completion", "tools"] });
+            }
+            return jsonResponse({ choices: [{ message: { content: "ok" } }] });
+        },
+    });
+
+    // Unasked: the names only, and NOT one capability round trip.
+    const plain = await mk().send({ type: "LIST_MODELS" });
+    assert.deepEqual(plain.data, ["qwen3:14b", "embeddinggemma:300m"], "the list itself is unfiltered — classifying is the picker's job");
+    assert.equal(plain.kinds, undefined, "no kinds unless asked");
+    assert.equal(shows.length, 0, "and no /api/show calls were made");
+
+    // Asked: capabilities alongside, so the picker can apply generatesText / producesEmbeddings.
+    shows.length = 0;
+    const withKinds = await mk().send({ type: "LIST_MODELS", payload: { kinds: true } });
+    assert.deepEqual(withKinds.data, ["qwen3:14b", "embeddinggemma:300m"]);
+    assert.deepEqual(withKinds.kinds["embeddinggemma:300m"], ["embedding"]);
+    assert.deepEqual(withKinds.kinds["qwen3:14b"], ["completion", "tools"]);
+    assert.equal(shows.length, 2, "one lookup per model");
+
+    // A PAGE (sender.tab set) never triggers the round trips — ml.models() must stay cheap, and this is the
+    // same reasoning that strips config overrides from page-relayed messages.
+    shows.length = 0;
+    const fromPage = await mk().send({ type: "LIST_MODELS", payload: { kinds: true } }, { tab: { id: 4 } });
+    assert.equal(fromPage.kinds, undefined, "a page cannot ask for kinds");
+    assert.equal(shows.length, 0);
+});

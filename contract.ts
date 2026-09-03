@@ -142,6 +142,23 @@ export const VISION_NUM_CTX = 8192;
  *  projected back to the viewport for a clickable @pt/@box (see util.ts projectShotPoint/Box). */
 export interface ShotBox { left: number; top: number; dpr: number; }
 
+/** Does this model generate TEXT? The right test for the chat/utility/vision pickers.
+ *
+ *  Measured against a real Ollama (2026-09-03): the obvious rule — "hide anything with `embedding`" — is
+ *  WRONG. `qwen3-embedding:0.6b` reports `['tools','thinking','embedding']` and `:8b` reports
+ *  `['tools','embedding']`, so an embedding model can advertise other capabilities too. Requiring
+ *  `completion` is the semantically correct test, and no embedding model has it.
+ *
+ *  Unknown (null) capabilities mean a cloud/non-Ollama model, which we CANNOT classify — so it passes.
+ *  Failing open matches `modelFilter`: never hide a model we merely failed to interrogate. */
+export const generatesText = (caps: string[] | null): boolean => !caps || caps.includes("completion");
+
+/** Does this model produce EMBEDDINGS? Unlike {@link generatesText} this fails CLOSED — an unclassifiable
+ *  model is not offered as an embedding model, because picking one that turns out not to embed produces a
+ *  confusing runtime failure rather than a mildly shorter list. A user can still name one explicitly and
+ *  have it validated by an actual embed call. */
+export const producesEmbeddings = (caps: string[] | null): boolean => !!caps && caps.includes("embedding");
+
 /** Whether a model id passes the optional `modelFilter` regex whitelist. Empty /
  *  whitespace filter → everything allowed. An INVALID regex → everything allowed
  *  (fail-OPEN: a typo shouldn't silently brick every call; the settings UI flags an

@@ -18,7 +18,7 @@ import { BUILD_INFO } from "./build-info.gen";
 import { browserInfo } from "./util";   // the fork's settings scheme (page-context Browser line)
 import { ensureDebuggerAttached, releaseDebugger, cdpClick, cdpEval, cdpScreenshot, cdpShadowResolve, cdpKeyType } from "./sw-cdp";   // CDP/debugger layer (strict-CSP exec, trusted click/type, host-grant-free screenshot)
 import { fetchUrlContent, fetchRenderedContent, fetchSheetCsv, SHEET_URL_OK, sheetNameFromDisposition } from "./sw-fetch";   // outbound fetch layer (ml.fetch, rendered fetch, credentialed Google Sheets CSV)
-import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, streamAgentTurn, prepareRequest, residentModels, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels } from "./sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
+import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, streamAgentTurn, prepareRequest, residentModels, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch } from "./sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
 
 
 // In-flight FETCH_LLM AbortControllers, keyed by the page's requestId, so an ABORT_TASK message
@@ -1419,10 +1419,17 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // ml.models() never even SEES an excluded (e.g. cloud) model, and the settings
         // datalists only offer allowed ones. Enforcement still lives in prepareRequest;
         // this is the "don't surface it" half.
+        // `kinds: true` additionally reports each model's CAPABILITIES, so a picker can tell a chat model
+        // from an embedding one. OPT-IN because it costs an /api/show per model (~60-110ms each, bounded
+        // concurrency, cached for the worker's life): the settings and popup pickers want it, while the
+        // composer and the VRAM panel just want names and must not pay for it.
+        const wantKinds = !sender.tab && !!(message.payload as { kinds?: unknown })?.kinds;
         Promise.all([listAvailableModels(sender.tab ? {} : (message.payload || {})), getConfig()])
-            .then(([{ ids, ollamaModels }, cfg]) => {
+            .then(async ([{ ids, ollamaModels }, cfg]) => {
                 const keep = (m: string) => modelFilterAllows(m, cfg.modelFilter);
-                sendResponse({ data: ids.filter(keep), ollamaModels: ollamaModels ? ollamaModels.filter(keep) : null });
+                const data = ids.filter(keep);
+                const kinds = wantKinds ? await modelCapabilitiesBatch(cfg, data) : undefined;
+                sendResponse({ data, ollamaModels: ollamaModels ? ollamaModels.filter(keep) : null, ...(kinds ? { kinds } : {}) });
             })
             .catch(err => sendResponse({ error: err.message }));
         return true;

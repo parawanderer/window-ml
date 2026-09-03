@@ -7,11 +7,11 @@ import { signal } from "@preact/signals";
 import { useState, useEffect, useRef } from "preact/hooks";
 import type { ComponentChildren } from "preact";
 import type { MlConfig, ApiFormat, Theme, DebugMode, CardCorner, AgentHud, LoadedModel, VisionSupport } from "../contract";
-import { DEFAULT_CONFIG, DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX, detectGroundingModel, modelFilterAllows } from "../contract";
+import { DEFAULT_CONFIG, DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX, detectGroundingModel, modelFilterAllows, generatesText } from "../contract";
 import { PY_PACKAGES } from "../python-env";
 import {
     config, models, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes,
-    MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_DEFAULT, resWindowS } from "./store";
+    MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_DEFAULT, resWindowS, modelKinds } from "./store";
 import { truncate } from "./format";
 import { applyTheme, applyFont, applyCodePrefs } from "./prefs";
 import { IconCheck } from "./icons";
@@ -643,12 +643,20 @@ export function Settings() {
     // Refresh the server model list whenever Settings opens — the initial fetch (App mount / gear click) may
     // have raced or failed while the server was waking up, leaving the datalists empty with no way to retry.
     useEffect(() => {
-        chrome.runtime.sendMessage({ type: "LIST_MODELS", payload: {} }, (resp: any) => {
-            if (!chrome.runtime.lastError && resp && !resp.error && Array.isArray(resp.data)) models.value = resp.data;
+        // `kinds: true` also reports capabilities, so an EMBEDDING model never appears in a chat/utility/
+        // vision picker. They show up in the model list the moment they are pulled, and selecting one as a
+        // chat model fails at request time with nothing to explain it.
+        chrome.runtime.sendMessage({ type: "LIST_MODELS", payload: { kinds: true } }, (resp: any) => {
+            if (chrome.runtime.lastError || !resp || resp.error || !Array.isArray(resp.data)) return;
+            models.value = resp.data;
+            if (resp.kinds) modelKinds.value = resp.kinds;
         });
     }, []);
     // Datalist entries after the access filter; plus the empty/unlisted states so the UI explains itself.
-    const listed = models.value.filter(m => modelFilterAllows(m, c.modelFilter));
+    // Only TEXT models belong in these pickers. `generatesText` requires `completion` rather than excluding
+    // `embedding`, because an embedding model can advertise other capabilities too (qwen3-embedding reports
+    // tools + thinking); it fails OPEN on unknown, so a cloud model we cannot interrogate is never hidden.
+    const listed = models.value.filter(m => modelFilterAllows(m, c.modelFilter) && generatesText(modelKinds.value[m] ?? null));
     const notListed = (v: string) => !!v.trim() && models.value.length > 0 && !models.value.includes(v.trim());
     const filterValid = (() => { if (!c.modelFilter.trim()) return true; try { new RegExp(c.modelFilter); return true; } catch { return false; } })();
     // A configured model id the current filter excludes (non-empty + no match) → flag it (ModelPicker cls).
