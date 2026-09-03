@@ -8,6 +8,23 @@
         "jsxImportSource": "preact",
         "strict": true,
         "noImplicitAny": true,
+        // Added because each was ALREADY satisfied — measured at 0 errors on the tree — so they cost
+        // nothing to turn on and lock in a bug class that would otherwise arrive silently one day:
+        //   noFallthroughCasesInSwitch  a missing `break`
+        //   noImplicitOverride          a method that looks like an override and is not (or the reverse)
+        //   allowUnreachableCode:false  code after a return, which is either dead or a misplaced brace
+        //   noUnusedParameters          a parameter the body ignores; prefix `_` where that is deliberate
+        //
+        // NOT added, and deliberately: `noUncheckedIndexedAccess` (290 errors, of which ~27% are literal
+        // or regex-group access where the only fix is a `!` that asserts rather than checks — the real
+        // hazard there is dynamic-key record lookups, better fixed at the declaration);
+        // `noImplicitReturns` (2 errors, both idiomatic — chrome.runtime.onMessage returns
+        // `boolean | undefined` by the API's own contract, and a useEffect returns a cleanup or nothing);
+        // `noUnusedLocals` (38, not free).
+        "noFallthroughCasesInSwitch": true,
+        "noImplicitOverride": true,
+        "allowUnreachableCode": false,
+        "noUnusedParameters": true,
         "allowJs": true,
         "checkJs": false,
         "noEmit": true,
