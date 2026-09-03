@@ -25,6 +25,7 @@ export function mdSink() {
         heading: (text, level = 2) => out.push(`${"#".repeat(level)} ${text}`),
         note: (text) => out.push(text),
         list: (items) => out.push(items.map((i) => `- ${i}`).join("\n")),
+        link: (text, href) => `[${text}](${href})`,
         // ONE block, not one push per row: the sink joins its blocks with a blank line, and a blank line
         // between rows is no longer a GFM table.
         table: (headers, rows) => out.push([
@@ -47,6 +48,9 @@ export function terminalSink(write = (s) => console.log(s)) {
         heading: (text, level = 2) => write(`\n${level <= 1 ? text.toUpperCase() : text}\n${"─".repeat(Math.min(72, text.length))}`),
         note: (text) => write(text),
         list: (items) => items.forEach((i) => write(`  • ${i}`)),
+        // A terminal cannot follow a link, and most terminals linkify a bare path anyway — so the PATH is
+        // the useful rendering here, not the label.
+        link: (text, href) => href,
         table: (headers, rows) => {
             const w = headers.map((h, i) => Math.max(h.length, ...rows.map((r) => String(r[i]).length)));
             const line = (cells) => "  " + cells.map((c, i) => (i === 0 ? String(c).padEnd(w[i]) : String(c).padStart(w[i]))).join("  ");
@@ -96,15 +100,23 @@ export function writeReport(sweep, sink) {
     // its repeats — a mean of five hides the one that went wrong, which is usually the one to read.
     sink.heading("Runs");
     const dimCols = dims.length ? dims : [];
-    sink.table([...dimCols, "task", "run", "outcome", "steps", "artifacts"],
+    sink.table([...dimCols, "task", "run", "outcome", "steps", "secs", "artifacts"],
         (sweep.runs || []).map((r) => [
             ...dimCols.map((d) => String(r.combo[d])),
             r.taskId,
             `r${r.repeat}`,
             !r.ok ? "FAILED" : r.succeeded === null ? "ok" : r.succeeded ? "ok · correct" : "ok · WRONG",
             String(r.steps),
-            r.repoPath || r.path,
+            r.secs != null ? r.secs.toFixed(1) : "—",
+            // Sweep-RELATIVE, because that is where this file lives, so the links resolve when it is
+            // opened in place. The sweep's own repo-relative path is stated once in the note below, which
+            // is what lets a reader compose an absolute path without repeating it on every row.
+            // ONE link. Markdown renders it as clickable text; a terminal renders the path itself, and
+            // two long paths per row buries the columns left of them. The rest of the directory's
+            // contents are listed once, in the note below.
+            r.path ? sink.link("run.md", `${r.path}/run.md`) : "—",
         ]));
-    sink.note(`Each directory holds \`run.md\` (the transcript to read), \`run.json\` (the machine-readable export — diff two runs with this, not the markdown), \`events.json\`, \`transcript.txt\` and a screenshot per step.${sweep.pdf ? " `--pdf` also wrote `run.html` + `run.pdf`." : " Add `--pdf` for `run.html` + `run.pdf` as well."}`);
+    sink.note(`Paths are relative to \`${sweep.sweepDir || "this directory"}\`. Each run's directory holds \`run.md\` (the transcript to read), \`run.json\` (the machine-readable export — diff two runs with this, not the markdown), \`events.json\`, \`transcript.txt\` and a screenshot per step.${sweep.pdf ? " `--pdf` also wrote `run.html` + `run.pdf`." : " Add `--pdf` for `run.html` + `run.pdf` as well."}`);
+    sink.note(`\`report.html\` beside this file is the same index as a page — the live view with the final state baked in, for a human.`);
     return sink.done();
 }

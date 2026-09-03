@@ -128,6 +128,10 @@ individual run, for further analysis), and one directory per RUN at
 - `events.json`, `transcript.txt`, a screenshot per step, and `cell.json` (the cached measurement).
 - `run.html` + `run.pdf` with `--pdf`.
 
+`run.md`, `run.json` and `events.json` are rewritten on EVERY event, not at the end — a run that hangs or
+is interrupted still leaves a readable partial rather than an empty directory. `report.md`, `report.html`
+and `rows.json` are written once, when the sweep finishes. `specs/README.md` has the full table.
+
 So a surprising row is always readable down to the transcript that produced it. The report's **Runs**
 table is the index: the aggregate says which CELL is interesting, that says which of its repeats to open —
 a mean of five hides the one that went wrong, which is usually the one worth reading.

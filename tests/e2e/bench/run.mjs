@@ -351,7 +351,7 @@ const main = async () => {
         repoPath: results[i] ? path.relative(ROOT, results[i].dir) : "",
     }));
 
-    const sweep = { spec, rows, runs, fingerprint, dirty, started, finished, cached: ctx.cached, ran: ctx.ran, jobs: args.jobs, pdf: args.pdf };
+    const sweep = { spec, rows, runs, fingerprint, dirty, started, finished, sweepDir: path.relative(ROOT, sweepDir), cached: ctx.cached, ran: ctx.ran, jobs: args.jobs, pdf: args.pdf };
     writeReport(sweep, terminalSink());
     const md = writeReport(sweep, mdSink());
     const reportPath = path.join(sweepDir, "report.md");

@@ -65,6 +65,34 @@ was fine" leaves no config flag behind. Ship a real setting only if the variant 
 which keeps the task usable when correctness is not the question being asked — token cost, re-emission and
 step count are all still measured.
 
+## What it writes, and when
+
+Everything lands under `tests/e2e/artifacts/bench/<spec name>/`, which is **gitignored** — a sweep is
+reproducible from the spec, and the runs are large.
+
+**Per run, `<task>/<combo>/r<N>/`, written AS IT GOES:**
+
+| File | When | What |
+| --- | --- | --- |
+| `run.md` | rewritten on every event | The transcript, as the extension's own "Export log → Markdown" would write it. **Read this first.** Written incrementally on purpose: a run that hangs or is interrupted still leaves a readable partial, rather than an empty directory. |
+| `run.json` | rewritten on every event | The same session through the machine-readable export (`docs/spec/export.schema.json`). **Diff two runs with this**, not the markdown — a markdown diff is mostly layout. Strip `VOLATILE_FIELDS` and apply `canonicalizeText` first (`export-schema.ts`) or you diff timestamps and pointer ids. |
+| `step-<n>.png`, `final.png` | per step | Screenshots, including `look`/`locate` crops. |
+| `events.json` | rewritten on every event | The raw `__mlDebug` stream, for a field the export does not carry. |
+| `transcript.txt` | at the end | Console + step log. |
+| `cell.json` | at the end | The cached measurement, keyed by cell config + build fingerprint. Its presence is what lets a resumed sweep skip this run. |
+| `run.html`, `run.pdf` | at the end, `--pdf` only | The print-styled transcript. |
+
+**Per sweep, at the end:**
+
+| File | What |
+| --- | --- |
+| `report.md` | The aggregate table plus a **Runs index** — every run with its outcome and a link to its `run.md`. The permanent artifact, and the one an agent should read. |
+| `report.html` | The same index as a page: the live view with the final state baked in, links relative so it works from disk with no server. For a human. |
+| `rows.json` | The aggregate AND every individual run, for further analysis. |
+
+`report.md` and `report.html` come from the same walk over the same data, so they cannot disagree about
+what happened — only about how it looks.
+
 ## Watching a sweep
 
 `--serve` prints a URL for a live page: every run with its state, what is queued next, the in-flight run's
