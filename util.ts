@@ -3,7 +3,7 @@
 // into injected.js.
 
 import { truncate, shadowRootStats, iframeStats, markdownTwin } from "./dom";
-import { TOKEN_PAYLOAD_LEN, checkChar } from "./token-id";
+import { TOKEN_PAYLOAD_LEN, checkChar, formatToken } from "./token-id";
 import type { ShotBox, VisionMemory } from "./contract";
 
 /**
@@ -348,5 +348,8 @@ export const toolToken = (runHash: string, seq: number): string => {
     h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35);
     h ^= h >>> 16;
     const payload = (h >>> 0).toString(16).padStart(8, "0").slice(0, TOKEN_PAYLOAD_LEN);
-    return payload + checkChar(payload);
+    // The id is minted in hex and RENDERED in this build's form (see token-id.ts TOKEN_FORMAT): the
+    // payload, the check character and the collision space are identical either way, so an experiment on
+    // the form varies only what the model reads.
+    return formatToken(payload + checkChar(payload));
 };

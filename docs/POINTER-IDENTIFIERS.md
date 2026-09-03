@@ -316,9 +316,33 @@ data?** That is a behavioural question about models, and it is testable rather t
 | Format | Example | Hypothesis |
 | --- | --- | --- |
 | **hex + check** (ships today) | `@tool:a39f599` | baseline |
-| **word pair** | `@tool:brisk-otter` | easier to copy; **but** introduces semantic drift — a misremembered `f22fa7` is garbage that misses, a misremembered `brisk-otter` becomes `quick-otter`, and near-synonyms are exactly what language models confuse |
+| **syllable** (built) | `@tool:muroji…` | easier to read and copy, without semantic drift. A strict TRANSCODING of hex — one syllable per hex character — so payload, check character and collision space are bit-identical and the ONLY variable is what the model reads |
+| **word pair** (not built) | `@tool:brisk-otter` | easier to copy; **but** introduces semantic drift — a misremembered `f22fa7` is garbage that misses, a misremembered `brisk-otter` becomes `quick-otter`, and near-synonyms are exactly what language models confuse. It also needs 24 bits to match hex's collision space, which is a 4096-word list for a pair (or three words from 256-lists) — hundreds of curated words for an arm whose error model is the one we most suspect |
 | **self-chosen label** | `@tool:the-pricing-table` | recalled rather than transcribed; degrades to a good `nearest()` hit |
 | **alias only** | `@tool:python_exec` | no identifier at all; fails when two calls of one tool both matter |
+
+### What is built, and how to run it
+
+`hex` and `syllable` ship as build-time variants (`--define __ML_TOKEN_FORMAT__`), and
+`tests/e2e/bench/specs/pointer-ids.bench.ts` is the sweep. `hex` needs no define, so the baseline arm
+measures the SHIPPED build rather than a rebuild of it.
+
+Choosing a transcoding over a word-pair is what makes the comparison controlled. Both forms carry the same
+24-bit payload and the same check character, so a difference in re-emission can be attributed to the form
+and nothing else. A word-pair would have moved the error model at the same time — and its own error model
+is the thing the table above is most suspicious of, which makes it a poor first arm rather than a good one.
+
+Two tasks. `cite-or-retype` captures a table in turn 1 and asks for it back in a follow-up: a model that
+uses the pointer cites it, one that does not retypes the rows. `read-back` SEEDS a captured output and then
+requires it, so the read-back path is exercised on every run instead of only when a model happens to reach
+for it.
+
+Run the pilot before the sweep:
+
+```
+npm run build
+USE_ENV=1 node --import tsx tests/e2e/bench/run.mjs tests/e2e/bench/specs/pointer-ids.bench.ts --repeats 2
+```
 
 ### Metrics that answer the real question
 
