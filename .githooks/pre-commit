@@ -20,16 +20,16 @@ staged=$(git diff --cached --name-only --diff-filter=ACMR)
 # A git WORKTREE does not get node_modules, and this repo is often worked in several at once — so a
 # missing install is a normal state, not an error. Without this the hook died on `tsc: command not found`
 # and blamed the typecheck, which is a confusing way to learn you needed `npm ci`. (Found by the hook
-# doing exactly that on its own commit.) The whitespace check needs nothing but node, so it still runs.
+# doing exactly that on its own commit.)
+#
+# A FLAG rather than an early exit, so each check below decides for itself: only the typecheck needs an
+# install. The whitespace check and the schema regeneration are plain node reading files, and skipping
+# them here would silently weaken the hook in exactly the worktrees this repo is usually worked in.
+HAVE_DEPS=1
 if [ ! -d node_modules ]; then
-    echo "pre-commit: no node_modules here (a fresh worktree?) — skipping the typecheck."
-    echo "            symlink or install to get it: ln -s <main-checkout>/node_modules node_modules"
-    node scripts/check-format.mjs --staged || {
-        echo ""
-        echo "pre-commit: whitespace. Fix with:  node scripts/check-format.mjs --staged --fix"
-        exit 1
-    }
-    exit 0
+    HAVE_DEPS=0
+    echo "pre-commit: no node_modules here (a fresh worktree?) — the typecheck will be skipped."
+    echo "            install with \`npm ci\` (a symlink works until a dependency changes)."
 fi
 
 # 1. Whitespace invariants (.editorconfig), reported not rewritten.
@@ -40,9 +40,41 @@ if ! node scripts/check-format.mjs --staged; then
     exit 1
 fi
 
-# 2. Types, but only when a typed source actually changed — `tsc` on this project is a few seconds, which
+# 2. The generated JSON Schema. `docs/spec/export.schema.json` is CHECKED IN — it is a published contract
+#    that people link to and generate parsers from — so it can go stale the moment src/export-schema.ts or
+#    src/contract.ts changes and nobody reruns the generator. CI catches that (tests/export-schema.test.mjs
+#    diffs it), but finding out from CI means a round trip for something a 40ms regeneration settles here.
+#
+#    Regenerated unconditionally: it needs no node_modules (plain node reading two files) and costs ~40ms,
+#    so gating it on which files are staged would be more code than it saves. The generator only WRITES on
+#    change, so on a normal commit this is a no-op.
+#
+#    CI already blocks a stale schema — tests/export-schema.test.mjs regenerates and diffs, in the `test`
+#    job on all three Node versions (verified: it fails on exactly this state). This hook is not a second
+#    gate, it is the same gate arriving 6 minutes earlier and pointing at the fix.
+if ! node scripts/gen-export-schema.mjs >/dev/null 2>&1; then
+    echo "pre-commit: the JSON Schema generator FAILED. It throws rather than emitting a partial schema —"
+    echo "            usually a type in export-schema.ts it cannot map. Run it to see:"
+    echo "                node scripts/gen-export-schema.mjs"
+    exit 1
+fi
+# Working tree vs INDEX. Non-empty means the regenerated file is not what is about to be committed —
+# either it was never staged, or it was staged before an edit that changed the output. Both are the same
+# mistake and the same fix.
+if ! git diff --quiet -- docs/spec/export.schema.json; then
+    echo "pre-commit: docs/spec/export.schema.json is out of date with the schema you are committing."
+    echo ""
+    git --no-pager diff --stat -- docs/spec/export.schema.json | sed 's/^/            /'
+    echo ""
+    echo "            It regenerated differently from the staged copy, so a consumer would be handed a"
+    echo "            contract that does not describe what this commit emits. Stage it:"
+    echo "                git add docs/spec/export.schema.json"
+    exit 1
+fi
+
+# 3. Types, but only when a typed source actually changed — `tsc` on this project is a few seconds, which
 #    is worth paying for a contract.ts edit and not worth paying for a README one.
-if echo "$staged" | grep -qE '\.(ts|tsx)$'; then
+if [ "$HAVE_DEPS" = "1" ] && echo "$staged" | grep -qE '\.(ts|tsx)$'; then
     if ! npm run --silent typecheck; then
         echo ""
         echo "pre-commit: typecheck failed. The core is strict, and its types are what gen-api-docs.mjs"
