@@ -15,7 +15,7 @@ const find = n => pk[n] || pk[Object.keys(pk).find(k => k.toLowerCase() === n.to
 // The top-level packages are the single source of truth in python-env.ts (PY_PACKAGES) —
 // grep the `load:` values so this can't drift from what the sandbox actually loads. Their
 // transitive deps are resolved from the lock below.
-const envSrc = await readFile(new URL("../python-env.ts", import.meta.url), "utf8");
+const envSrc = await readFile(new URL("../src/python-env.ts", import.meta.url), "utf8");
 const seed = [...envSrc.matchAll(/load:\s*"([^"]+)"/g)].map(m => m[1]);
 if (!seed.length) throw new Error("no `load:` packages found in python-env.ts");
 
