@@ -142,19 +142,23 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
                 ))}
                 {soft ? <div class="rc-soft" style={{ bottom: `${Math.min(100, (soft.bytes / ceiling) * 100)}%` }}
                     title={soft.label} /> : null}
-                <BandTip bands={bands} />
+                <BandTip bands={bands} ceiling={ceiling} />
             </div>
             <div class="rc-legend">
                 {bands.filter((b) => b.kind === "other" && b.bytes > 0).map((b) => (
                     <span class="rc-key tt" key={b.key}>
                         <i class="rc-swatch rc-swatch-other" /> {b.label} {formatBytes(b.bytes)}
-                        <span class="tt-pop left above" role="tooltip">{b.label === DRIVER_BAND_LABEL
+                        {/* The label is kept compact, so the SHARE of the pool — the thing that says whether a
+                            figure matters — lives in the hover text. */}
+                        <span class="tt-pop left above" role="tooltip">{formatShare(b.bytes, ceiling)} — {b.label === DRIVER_BAND_LABEL
                             ? "Ollama's own driver context, held on every visible card whether or not a model is loaded. Not another process."
                             : OTHER_BAND_NOTE}</span>
                     </span>
                 ))}
                 {bands.filter((b) => b.kind === "free").map((b) => (
-                    <span class="rc-key" key={b.key}><i class="rc-swatch rc-swatch-free" /> free {formatBytes(b.bytes)}</span>
+                    <span class="rc-key tt" key={b.key}><i class="rc-swatch rc-swatch-free" /> free {formatBytes(b.bytes)}
+                        <span class="tt-pop left above" role="tooltip">{formatShare(b.bytes, ceiling)} of this pool is unused.</span>
+                    </span>
                 ))}
             </div>
         </div>
@@ -164,7 +168,7 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
 /** What the hovered band is, shown over the plot. Deliberately the SAME facts as the legend row (ModelFacts),
  *  because a band and its row describe one model — an SVG <title> could carry none of it: no colour, no live
  *  TTL, no badge, and a half-second delay before it appears. */
-function BandTip({ bands }: { bands: Band[] }) {
+function BandTip({ bands, ceiling }: { bands: Band[]; ceiling: number }) {
     const name = hoverModel.value;
     const at = hoverAt.value;
     if (!name) return null;
@@ -178,7 +182,8 @@ function BandTip({ bands }: { bands: Band[] }) {
         <div class="rc-tip" role="tooltip" style={style}>
             <i class="rc-tip-dot" style={{ background: colorFor(name) }} />
             <span class="rc-tip-name">{name}</span>
-            <span class="rc-tip-size">{formatBytes(band.bytes)}</span>
+            {/* Bytes AND the share of this device — a model is "big" only relative to the card it is on. */}
+            <span class="rc-tip-size">{formatBytes(band.bytes)} <span class="rc-tip-pct">{percentOf(band.bytes, ceiling)}</span></span>
             {m ? <ModelFacts m={m} tips={false} /> : null}
         </div>
     );

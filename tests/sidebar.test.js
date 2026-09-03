@@ -6081,6 +6081,11 @@ test("resource panel: the floor is MEASURED, not summed from parts", async () =>
     assert.equal(layoutKey(3, 2), layoutKey(3, 2));
     assert.notEqual(layoutKey(3, 2), layoutKey(1, 2), "fewer tracks is a different floor");
     assert.notEqual(layoutKey(3, 2), layoutKey(3, 5), "…and so is a longer model list");
+    // WIDTH too: tracks tile side by side once there is room, so a wide panel needs LESS height. The
+    // correction only ever grows, so without this the floor learned in a narrow sidebar would never come back
+    // down after you drag the sidebar out.
+    assert.notEqual(layoutKey(3, 2, 460), layoutKey(3, 2, 1200), "a tiled layout is a different floor");
+    assert.equal(layoutKey(3, 2, 1200), layoutKey(3, 2, 1240), "…but not a new one per pixel of width");
 });
 
 // The reported bug: the model quoted an output inline AND designated the same one with the `answer` tool, so
@@ -6459,4 +6464,98 @@ test("overview legend: hovering one pool's line dims every other pool's key", as
     w.shadow.querySelector(".rc-hit").dispatchEvent(new w.window.MouseEvent("pointerleave", { bubbles: true }));
     await w.flush();
     assert.equal(keys().filter((k) => k.classList.contains("away")).length, 0, "leaving restores the legend");
+});
+
+// Two models on ONE card: the case the scripted fixtures never produce, where a device's stack has to divide
+// between two models and every figure has to keep saying which is which.
+test("one GPU, two models: each gets its own band, its own share, and both are named", async () => {
+    const two = [
+        { model: "gemma4:31b", vramGB: 18, vramBytes: 18 * 1024 ** 3, sizeBytes: 18 * 1024 ** 3,
+          gpus: [{ id: "0", runner: "CUDA", vramBytes: 18 * 1024 ** 3 }], expiresAt: null },
+        { model: "phi5:14b", vramGB: 9, vramBytes: 9 * 1024 ** 3, sizeBytes: 9 * 1024 ** 3,
+          gpus: [{ id: "0", runner: "CUDA", vramBytes: 9 * 1024 ** 3 }], expiresAt: null },
+    ];
+    const w = await loadSidebarWorld({ vram: two, info: INFO_2CARD, ...STACKED_LAYOUT });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    for (let i = 0; i < 20 && w.shadow.querySelectorAll(".rc-band").length < 2; i++) {
+        await w.flush(); await new Promise((r) => setTimeout(r, 150));
+    }
+    // Card 0's track holds two model bands; a single merged band would lose which model is which.
+    const track = w.shadow.querySelector(".rc-track");
+    assert.equal(track.querySelectorAll(".rc-band").length, 2, "one band per model on the card they share");
+
+    // Hovering either names THAT model and its share of the card, not the pair's total.
+    track.querySelectorAll(".rc-band")[0].dispatchEvent(new w.window.MouseEvent("pointerenter", { bubbles: true }));
+    track.querySelector(".rc-plot").dispatchEvent(new w.window.MouseEvent("pointermove", { bubbles: true }));
+    await w.flush();
+    const tip = w.shadow.querySelector(".rc-tip:not(.vram-rowtip)").textContent;
+    assert.match(tip, /(18|9)\.00 GiB/, "the band tip quotes that model's own bytes");
+    assert.match(tip, /\d[\d.]*%/, "…and what share of the card that is");
+    assert.doesNotMatch(tip, /27\.00 GiB/, "never the pair's total");
+
+    // Both rows are listed, and both are attributed to the same card.
+    const rows = [...w.shadow.querySelectorAll(".vram-row")].map((r) => r.textContent);
+    assert.equal(rows.length, 2);
+    assert.ok(rows.some((r) => /gemma4:31b/.test(r)) && rows.some((r) => /phi5:14b/.test(r)));
+});
+
+// The device view's compact labels leave the SHARE to the hover text — that is the figure that says whether a
+// number matters (562.9 MiB is nothing on a 95 GiB card and everything on an 8 GiB one).
+test("device view: the hover text carries the share, not just the bytes", async () => {
+    const w = await loadSidebarWorld({
+        vram: [{ model: "big", vramGB: 19, vramBytes: 19 * 1024 ** 3, sizeBytes: 19 * 1024 ** 3,
+                 gpus: [{ id: "0", runner: "CUDA", vramBytes: 19 * 1024 ** 3 }], expiresAt: null }],
+        info: INFO_2CARD, ...STACKED_LAYOUT,
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+    await w.flush();
+    const tips = [...w.shadow.querySelectorAll(".rc-legend .rc-key .tt-pop")].map((e) => e.textContent);
+    assert.ok(tips.length, "the legend keys have hover text");
+    for (const t of tips) assert.match(t, /GiB \(|MiB \(|B \(/, `a legend tooltip states its share: ${t}`);
+    assert.ok(tips.some((t) => /unused/i.test(t)), "including the free band, which had no hover text at all");
+});
+
+// The ceiling note names the tool that shows the same figure — nvidia-smi on CUDA, rocm-smi on AMD. Saying
+// "nvidia-smi" on an AMD box is worse than saying nothing: it sends the reader to check something that isn't
+// installed. And a runner we don't know (Vulkan, oneAPI, whatever ships next) must say nothing rather than
+// guess.
+test("ceiling note: names the right tool per vendor, and none for a runner we don't know", async () => {
+    const box = (gpu) => ({ compute: {
+        system_compute: { cpu_cores: 16, total_memory: 68719476736, free_memory: 20 * 1024 ** 3 },
+        supported_gpus: [gpu],
+    } });
+    const noteFor = async (gpu) => {
+        const w = await loadSidebarWorld({
+            vram: [{ model: "big", vramGB: 8, vramBytes: 8 * 1024 ** 3, sizeBytes: 8 * 1024 ** 3,
+                     gpus: [{ id: "0", runner: gpu.runner, vramBytes: 8 * 1024 ** 3 }], expiresAt: null }],
+            info: box(gpu),
+        });
+        await w.raw({ __mlSidebarOpen: true });
+        w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+        for (let i = 0; i < 20 && !w.shadow.querySelector(".rc-total .tt-pop"); i++) {
+            await w.flush(); await new Promise((r) => setTimeout(r, 100));
+        }
+        return w.shadow.querySelector(".rc-total .tt-pop")?.textContent || "";
+    };
+
+    const nvidia = await noteFor({ gpu_id: "0", name: "CUDA0", runner: "CUDA", total_memory: 101972967424, physical_memory: 102641958912, free_memory: 80 * 1024 ** 3 });
+    assert.match(nvidia, /nvidia-smi/);
+
+    const amd = await noteFor({ gpu_id: "0", name: "ROCm0", runner: "ROCm", total_memory: 51539607552, physical_memory: 51539607552, free_memory: 40 * 1024 ** 3 });
+    assert.match(amd, /rocm-smi/, "an AMD card names AMD's tool");
+    assert.doesNotMatch(amd, /nvidia/i, "…and never NVIDIA's");
+
+    // Metal is UNIFIED: there is no second pool and no vendor tool to name — the note is about the shared pool
+    // and the advised working set instead.
+    const metal = await noteFor({ gpu_id: "0", name: "MTL0", runner: "Metal", total_memory: 12712935424, free_memory: 12711886848 });
+    assert.match(metal, /ONE pool of memory/, "a Mac shares its memory with the system");
+    assert.doesNotMatch(metal, /-smi/, "no vendor tool exists to point at");
+
+    // Something we've never seen (Vulkan today, whatever ships next). Ollama treats an unknown runner as
+    // unified — the conservative default — so it gets the shared-pool note and, either way, no invented tool.
+    const unknown = await noteFor({ gpu_id: "0", name: "VLK0", runner: "Vulkan", total_memory: 17179869184, free_memory: 16 * 1024 ** 3 });
+    assert.doesNotMatch(unknown, /-smi/, "an unknown runner names no tool rather than guessing one");
 });

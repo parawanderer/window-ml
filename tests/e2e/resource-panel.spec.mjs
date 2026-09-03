@@ -640,6 +640,51 @@ test("resource panel: wide tiles the tracks instead of stretching them", async (
             .toBeLessThan(narrow.boxes[0].w * 2);
         // Every tile is readable: none squeezed under the column minimum.
         for (const b of wide.boxes) expect(b.w).toBeGreaterThanOrEqual(280);
+
+        // In BETWEEN, it fits what it can and wraps the rest — the layout decides, so there is no breakpoint
+        // to keep in sync with the panel's real width.
+        await page.evaluate(() => {
+            document.getElementById("ml-sb-root").shadowRoot.getElementById("ml-sb-host").style.width = "760px";
+        });
+        await sleep(600);
+        const mid = await rows();
+        expect(mid.distinctRows, "two fit, the third wraps").toBe(2);
+        expect(new Set(mid.boxes.map((b) => b.x)).size, "…into a column, not on top of each other").toBe(2);
+
+        // Nothing overlaps in ANY of those arrangements: same-row tiles are side by side, and a wrapped tile
+        // starts below the row above it.
+        for (const { boxes } of [narrow, wide, mid]) {
+            for (const a of boxes) for (const b of boxes) {
+                if (a === b) continue;
+                const apart = a.x + a.w <= b.x + 1 || b.x + b.w <= a.x + 1 || a.y !== b.y;
+                expect(apart, `tracks overlap at ${JSON.stringify([a, b])}`).toBe(true);
+            }
+        }
+
+        // And the panel can now be SHORTER than it could when narrow: tiling needs less height, and the floor
+        // is keyed by width so it comes back down instead of ratcheting.
+        await page.evaluate(() => {
+            document.getElementById("ml-sb-root").shadowRoot.getElementById("ml-sb-host").style.width = "1200px";
+        });
+        await sleep(600);
+        const floorAt = async () => {
+            const grip = await frame.locator(".vram-grip").boundingBox();
+            await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+            await page.mouse.down();
+            await page.mouse.move(grip.x + grip.width / 2, grip.y - 500, { steps: 10 });
+            await sleep(150);
+            const h = (await frame.locator(".vram").boundingBox()).height;
+            await page.mouse.up();
+            await sleep(300);
+            return h;
+        };
+        const wideFloor = await floorAt();
+        await page.evaluate(() => {
+            document.getElementById("ml-sb-root").shadowRoot.getElementById("ml-sb-host").style.width = "460px";
+        });
+        await sleep(800);
+        const narrowFloor = await floorAt();
+        expect(wideFloor, "one row of tiles needs less height than three stacked").toBeLessThan(narrowFloor - 40);
     } finally {
         await ext.close();
         await fake.stop();
