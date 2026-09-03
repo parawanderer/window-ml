@@ -2951,7 +2951,7 @@ test("export: a chat session downloads a markdown log (options, turns, reply)", 
     assert.match(text, /\*\*Assistant\*\* \(qwen3:14b\):\n\nIt is \*\*4\*\*\./);
 });
 
-test("export menu: offers both formats, and closes once one is picked", async () => {
+test("export menu: offers every format, and closes once one is picked", async () => {
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("expm", "look around", "gemma4:31b"));
     await w.dispatch(agentResult("expm", "done", 1));
@@ -2963,7 +2963,7 @@ test("export menu: offers both formats, and closes once one is picked", async ()
     trigger.click();
     await w.tick();
     assert.deepEqual([...w.shadow.querySelectorAll(".menu-item")].map(b => b.firstChild.textContent),
-        ["Markdown", "PDF"], "both export formats offered");
+        ["Markdown", "PDF", "JSON"], "every export format offered");
     assert.equal(trigger.getAttribute("aria-expanded"), "true");
 
     w.window.URL.createObjectURL = () => "blob:mock";

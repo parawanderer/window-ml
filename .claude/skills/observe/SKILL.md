@@ -29,7 +29,7 @@ Configure everything with **env vars** (all optional):
 | `FOLLOWUP="…"` | Run a SECOND turn in the SAME session (via `createAgent` + two `run()`s, so both turns share the run hash). Reproduces multi-turn behaviour a single `ml.agent()` can't — e.g. a "…now show the work" follow-up, or the cross-turn token-id collision. `TASK` is turn 1, `FOLLOWUP` is turn 2. |
 | `WARM=0` | Skip the VRAM warm-up. A **local** model wants it warmed (omit `WARM=0`); the fake/API don't need it. |
 | `APPROVE=<policy>` | How the built-in approval poller resolves a gate the run halts on: `auto` (default), `deny`, `readonly` (approve exec + readonly python only), `hold` (log but don't resolve — for manual clicking in WATCH). Every gate + decision is logged, so a run never hangs silently. |
-| `WATCH=1` | HOLD the browser open at the end (close the window / Ctrl+C to exit) instead of tearing down — for inspecting a finished run. (The sidebar auto-opens + focuses on the session by DEFAULT, so a watching human never clicks; `WATCH` only adds the hold.) |
+| `WATCH=1` | HOLD the browser open at the end (close the window / Ctrl+C to exit) instead of tearing down — for inspecting a finished run. (The sidebar auto-opens + focuses on the session by DEFAULT, so a watching human never clicks; `WATCH` only adds the hold. `WATCH=0` is off, like `WARM=0`.) |
 | `RUN_LABEL=my-run` | Names the artifact dir (else a timestamp). Use stable labels to diff before/after a fix. |
 
 ## Read the artifacts
@@ -39,9 +39,27 @@ Written to `tests/e2e/artifacts/<RUN_LABEL|timestamp>/` (gitignored):
 - **`run.md`** — the extension's OWN canonical markdown transcript (the "Export log" output): task, every
   step's In/Out, tool renders, the answer + its `@tool:` citations, model provenance. **Read this first.**
 - **`step-<n>.png`** / **`final.png`** — a screenshot per step (`look`/`locate` crops included).
+- **`run.json`** — the same session as the machine-readable export (`docs/spec/PROGRAMMATIC_EXPORT.md`):
+  steps with arguments/results verbatim, per-model token totals, outcome flags. **Diff two runs with this,
+  not `run.md`** — markdown diffs are dominated by layout. Unlike `events.json` it needs no reducer replay.
 - **`events.json`** — the raw `__mlDebug` event stream (parse it for exact fields: `renderOut`, `token`,
   `answer`, `outputs`, per-step `tool`/`arguments`/`result`).
 - **`transcript.txt`** — console + step log.
+
+## Gotchas
+
+- **The browser is headful and closes the instant the run ends.** A short run flashes past, which
+  looks like "it never launched". `WATCH=1` holds it open. (`WATCH=0` used to hold it too — the check
+  tested the variable's PRESENCE — so a run that seemed stuck was actually finished. Fixed; `WATCH=0`
+  is now off, matching `WARM=0`.)
+- **Three different step counts, all correct.** The console line ("N steps") is the observer's own
+  tally; `AgentResult.steps` is the loop's TURN count; `run.json`'s `steps[]` is one record per
+  emitted event — a turn contributes a thought AND its tool call. A run can print "0 steps", return
+  `steps: 2`, and export 5 records without anything being wrong. `outcome.turnsRun` is the one to
+  compare against `maxSteps`.
+- **In a fresh worktree, `python_exec` fails with `No module named 'numpy'`** until `pyodide-wheels/`
+  is present — see the worktree note in AGENTS.md. The build warns once and carries on, so the first
+  sign is a traceback inside a step.
 
 ## Typical uses
 

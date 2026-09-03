@@ -1025,6 +1025,16 @@ spaces in the generated string (see `tests/token-pipe.test.mjs`, memoryFault).
   `npm test` stays green. CI fetches the wheels (cached by pyodide version) for
   both the test job (so these run) and the build job (so the uploaded extension
   artifact can actually run `python_exec`).
+- **Working in a git worktree** (`.claude/worktrees/<name>`): two gitignored directories do
+  NOT come with it, and neither absence is loud. `node_modules` is obvious (nothing runs);
+  `pyodide-wheels/` is not — the build prints one `⚠ pyodide-wheels/ missing` line and
+  carries on, `npm test` stays green because the CPython tests self-skip, and the failure
+  only surfaces at RUNTIME as `ModuleNotFoundError: No module named 'numpy'` inside a
+  `python_exec` step, which reads like a sandbox bug. Symlink both to the main checkout
+  rather than re-downloading 28MB of wheels:
+  `ln -s ../../../node_modules node_modules && ln -s ../../../pyodide-wheels pyodide-wheels`,
+  then rebuild. (`node_modules/` in `.gitignore` has a trailing slash, so a symlink shows as
+  untracked — leave it out of commits.)
 - **Coverage: `npm run coverage`** — Node's built-in coverage (no dependency), writing
   `coverage/lcov.info` (the **Coverage Gutters** VSCode extension reads it with no configuration) plus a
   table on stdout. `node scripts/coverage-lines.mjs <file>` prints the gaps AS SOURCE, separating **NEVER
@@ -1070,8 +1080,9 @@ thing. The parts:
   full playbook): `node --import tsx tests/e2e/observe.mjs` drives ONE agent run in a real Chromium
   and writes ARTIFACTS to `tests/e2e/artifacts/<RUN_LABEL|timestamp>/` (gitignored): **`run.md`** =
   the extension's OWN canonical markdown (captures the `__mlDebug` stream under `debugMode:"overlay"`,
-  rebuilds a `Session`, runs `serializeSession`), a screenshot per step (`look`/`locate` sidecars
-  included), `events.json`, `transcript.txt`. This is how a model debugs the extension itself: run →
+  rebuilds a `Session`, runs `serializeSession`), **`run.json`** = the same Session through the
+  machine-readable export (diff TWO runs with this — a markdown diff is mostly layout), a screenshot
+  per step (`look`/`locate` sidecars included), `events.json`, `transcript.txt`. This is how a model debugs the extension itself: run →
   read `run.md` + screenshots → diff run dirs before/after a fix, and sweep rule-adherence across
   models. Knobs (env vars):
   - `TASK` — the agent task; `START` — the start route (any served example page: `/spreadsheet`,

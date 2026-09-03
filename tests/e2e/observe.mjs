@@ -1,6 +1,7 @@
 // observe.mjs — a standalone "let me watch a run end-to-end" harness so I (Claude) can debug the real
 // extension in a real browser by reading ARTIFACTS: the extension's OWN markdown transcript (run.md, via
-// serializeSession) + a screenshot per step + the raw event stream. Not a test — a debug tool.
+// serializeSession) + run.json (the machine-readable export) + a screenshot per step + the raw
+// event stream. Not a test — a debug tool.
 //
 //   node --import tsx tests/e2e/observe.mjs                 # deterministic: scripted fake-LLM
 //   E2E_BACKEND=<chatUrl> E2E_MODEL=<id> TASK="…" node --import tsx tests/e2e/observe.mjs   # real model
@@ -10,6 +11,7 @@
 
 import "../stub-css.mjs";   // export.ts imports a bundled .css → stub it (both loader paths) before the import below
 const { serializeSession } = await import("../../sidebar/export.ts");
+const { serializeSessionJson } = await import("../../sidebar/export-json.ts");
 
 import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
@@ -126,6 +128,9 @@ function dumpArtifacts(events) {
             if (!session) { await writeFile(path.join(ART, "run.md"), "_(no agent events yet — is debugMode emitting?)_\n"); return; }
             const { md, images } = serializeSession(session);
             await writeFile(path.join(ART, "run.md"), md);
+            // The machine-readable twin: same Session, no markdown in the way. This is the
+            // format to diff two runs with — see docs/spec/PROGRAMMATIC_EXPORT.md.
+            await writeFile(path.join(ART, "run.json"), serializeSessionJson(session));
             for (const img of images) {
                 await mkdir(path.dirname(path.join(ART, img.name)), { recursive: true });
                 await writeFile(path.join(ART, img.name), img.bytes);
@@ -372,7 +377,7 @@ const main = async () => {
 
     // WATCH=1 → leave the browser + servers UP so you can inspect the session in the sidebar. Hold until the
     // window is closed (or Ctrl+C). Otherwise tear everything down as usual.
-    if (process.env.WATCH) {
+    if (process.env.WATCH && process.env.WATCH !== "0") {
         console.log(`\n  WATCH: browser is open — inspect the run in the sidebar. Close the window (or Ctrl+C) to exit.\n`);
         await new Promise((resolve) => { ext.context.on("close", resolve); process.on("SIGINT", resolve); });
     }
