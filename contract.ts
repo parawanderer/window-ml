@@ -28,6 +28,11 @@ export type DebugMode = "off" | "overlay" | "devtools";
  *  cloud/non-Ollama model the probe can't describe. */
 export type VisionSupport = "" | "yes" | "no";
 
+/** The lexical metrics that can rank a near-miss on a pointer LABEL. Names here (shared config surface),
+ *  implementations in label-match.ts. */
+export const LEXICAL_METRICS = ["hybrid", "edit", "trigram", "tokenset"] as const;
+export type LexicalMetric = (typeof LEXICAL_METRICS)[number];
+
 /** Full config held in chrome.storage.sync (background + popup own it). */
 export interface MlConfig {
     chatUrl: string;
@@ -52,6 +57,12 @@ export interface MlConfig {
     modelFilter: string;
     /** where the debug UI renders (off / in-page overlay / DevTools panel) */
     debugMode: DebugMode;
+    /** Which lexical metric ranks a near-miss on a pointer LABEL. Swappable because it is genuinely
+     *  undecided: measured on the motivating cases, plain edit distance INVERTS (it ranks a different table
+     *  above the correct one reworded), token-set is perfect on rewording and blind to typos, and trigram
+     *  survives both without excelling. `hybrid` (the better of the last two) is the default. Exposed so the
+     *  benchmark can vary it — see docs/POINTER-IDENTIFIERS.md. */
+    labelMatch: LexicalMetric;
     theme: Theme;
     /** which screen corner the off-mode approval card + working pill anchor to */
     cardCorner: CardCorner;
@@ -394,6 +405,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     defaultModelVision: "",
     modelFilter: "",
     debugMode: "off",
+    labelMatch: "hybrid",
     theme: "auto",
     cardCorner: "bottom-right",
     agentHud: "progress",
@@ -434,7 +446,7 @@ export const detectGroundingModel = (models: string[]): string =>
  *  ml.agent can decide whether to route a run through the unforgeable BACKGROUND loop (design A —
  *  when a debug surface is enabled) or the in-page loop (off). It's UI state, not a secret. */
 export type MlPublicConfig = Pick<MlConfig,
-    "model" | "ocrModel" | "ocrNumCtx" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "autoApprovePython" | "autoApproveSameOriginAuth" | "autoApproveSelfSource" | "pierceClosedShadow" | "cdp" | "groundingEnabled" | "groundingModel" | "groundingRange" | "debugMode" | "defaultModelVision"> & {
+    "model" | "ocrModel" | "ocrNumCtx" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "autoApprovePython" | "autoApproveSameOriginAuth" | "autoApproveSelfSource" | "pierceClosedShadow" | "cdp" | "groundingEnabled" | "groundingModel" | "groundingRange" | "debugMode" | "defaultModelVision" | "labelMatch"> & {
     /** COMPUTED per request (not stored): whether THIS page's origin is on the user's page-approval
      *  whitelist. When true, ml.agent honours the page's own approve()/confirm gate (the user trusts this
      *  domain); otherwise a privileged tool routes to the unforgeable background gate. The raw domain
@@ -1198,6 +1210,9 @@ export interface StartRunPayload {
      *  max step/seq ride back in the response so the page can advance them for the next turn. */
     stepBase?: number;
     seqBase?: number;
+    /** Which lexical metric ranks a near-miss on a pointer label (config `labelMatch`); carried so a
+     *  background-hosted run resolves labels the same way a page-hosted one does. */
+    labelMatch?: LexicalMetric;
     /** Which surface hosts the run's gate/stream (all route through the background): a debug surface
      *  (overlay/devtools) streams steps + gates in the sidebar app; "off" also streams the SAME steps to
      *  the page, where the content-script shell renders them in a lazily-mounted acrylic corner CARD (a

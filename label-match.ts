@@ -11,8 +11,11 @@
 // means the same thing whichever is selected.
 import { editDistance } from "./token-pipe";
 
-export const LEXICAL_METRICS = ["hybrid", "edit", "trigram", "tokenset"] as const;
-export type LexicalMetric = (typeof LEXICAL_METRICS)[number];
+// The metric NAMES live in contract.ts with the other shared config types; the implementations live here.
+// Keeping them apart also breaks a cycle: contract needs the type for MlConfig, and this module needs
+// editDistance from token-pipe, which needs contract.
+export { LEXICAL_METRICS, type LexicalMetric } from "./contract";
+import type { LexicalMetric } from "./contract";
 
 /** Case and whitespace are not what the model was trying to communicate. */
 const norm = (s: string): string => s.trim().toLowerCase().replace(/\s+/g, " ");

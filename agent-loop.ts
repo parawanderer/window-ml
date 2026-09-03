@@ -205,6 +205,9 @@ export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number | (() =
      *  ToolContext so `ml.dereference` inside an approved exec reads THIS run's outputs — and only while a
      *  tool of this run is executing. The loop owns the store, so it is the only place that can hand this out. */
     tokenSink?: (resolve: (ref: string, pipe?: string | string[]) => DerefRead) => void;
+    /** Which lexical metric ranks a near-miss on a pointer label (config `labelMatch`). Omitted = the
+     *  default; the benchmark varies it. */
+    labelMatch?: import("./contract").LexicalMetric;
     /** The pointer store to use. Pass the SESSION's store so `@tool:` references survive across a handle's
      *  turns; omit for a one-shot run and the loop makes its own. */
     tokenStore?: TokenStore;
@@ -312,7 +315,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         // Still answer with the inventory (that is what it needs to recover), but say the pipe was dropped
         // rather than silently ignoring an argument it deliberately wrote.
         if (!ref) return { result: pipe.trim() ? `${inventory()}\n\n(Your \`pipe\` was not applied: no pointer was named to apply it to.)` : inventory() };
-        const { value: v, matched, score } = tokenStore.resolveRef(ref);
+        const { value: v, matched, score } = tokenStore.resolveRef(ref, opts.labelMatch);
         // A pointer that doesn't resolve is usually a HALLUCINATED id (six plausible hex characters that were
         // never minted), so name the closest real ones rather than just saying no — the model can then correct
         // itself in one step instead of guessing again.
@@ -390,7 +393,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     // Hand the resolver to the host (see tokenSink). Throws exactly what the tool would return, so a failed
     // read inside exec surfaces the same MemoryFault / pipe error the model sees from the tool itself.
     opts.tokenSink?.((ref: string, pipe?: string | string[]): DerefRead => {
-        const { value: v, matched, score } = tokenStore.resolveRef(ref);
+        const { value: v, matched, score } = tokenStore.resolveRef(ref, opts.labelMatch);
         if (!v) throw new Error(memoryFault(ref, tokenStore.nearest(ref), seq));
         // A soft label match travels BESIDE the value, never inside it: the caller here is a script that will
         // parse/split/pipe what it gets back, so a note appended to the value would corrupt the data.

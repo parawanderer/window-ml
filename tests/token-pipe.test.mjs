@@ -541,3 +541,19 @@ test("labels: the similarity metric is swappable, and the guard travels with it"
     assert.equal(s.resolveRef(q, "edit").value, null, "edit distance cannot see past the rewording");
     assert.equal(s.resolveRef(q).value.out, "REWORDED", "the default handles it");
 });
+
+// The metric is config, so the benchmark can vary it without a rebuild — and a stale or absent value must
+// degrade to the default rather than breaking pointer resolution.
+test("labelMatch: the configured metric reaches resolution, and a bad value falls back", async () => {
+    const { DEFAULT_CONFIG, LEXICAL_METRICS } = await import("../contract.ts");
+    assert.equal(DEFAULT_CONFIG.labelMatch, "hybrid");
+    assert.ok(LEXICAL_METRICS.includes(DEFAULT_CONFIG.labelMatch), "the default must be one of the offered metrics");
+
+    const s = new P.TokenStore();
+    s.note(tok({ id: "a1b2c3f", tool: "exec", out: "REWORDED", label: "the table of sales", step: 1 }));
+    const q = '@tool:"sales table"';
+    assert.equal(s.resolveRef(q, "tokenset").value.out, "REWORDED");
+    assert.equal(s.resolveRef(q, "edit").value, null, "edit distance cannot see past the rewording");
+    assert.equal(s.resolveRef(q, "nonsense").value.out, "REWORDED", "an unknown metric falls back to the default");
+    assert.equal(s.resolveRef(q, undefined).value.out, "REWORDED", "…as does none at all");
+});
