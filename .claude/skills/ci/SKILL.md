@@ -23,6 +23,15 @@ gh pr checks --watch                      # blocks until every check settles
 `gh pr checks --watch` is the one to use: it exits non-zero when anything failed, so it doubles as the
 gate. For a long e2e run, `--interval 30` keeps the polling quiet.
 
+**Wait a beat before watching.** Run immediately after `gh pr create` (or a push), it can print
+`no checks reported on the 'branch'` and exit 0 — it raced the run's registration, and that exit code
+looks exactly like success. Sleep ~20s first, or poll until a check exists:
+
+```bash
+until gh pr checks "$PR" 2>/dev/null | grep -q .; do sleep 10; done
+gh pr checks "$PR" --watch --interval 30
+```
+
 **Do not run it in the foreground and wait.** Use `run_in_background: true` and carry on; the result
 arrives as a task notification. A full run of this workflow is ~5 minutes (matrix + build + e2e).
 
