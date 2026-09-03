@@ -876,11 +876,13 @@ const queryAllRaw = (selector: string, includeExtensionUi = false): Element[] =>
  * and the fix is to route it through the tools instead. Otherwise the throw is a genuine CSS error (e.g.
  * an unescaped Tailwind `/` in a class) — surface it raw rather than misdiagnosing.
  *
- * @param {string} selector The selector that failed.
+ * @param {string} _selector The selector that failed. UNUSED on purpose — the diagnosis gates on the
+ *   error message rather than the selector (see below) — but kept in the signature because every caller
+ *   has it to hand and a future message may well want to quote it.
  * @param {Error} err The caught querySelector error.
  * @returns {string} A `Invalid selector: …` message to hand back to the model.
  */
-export const selectorError = (selector: string, err: Error): string => {
+export const selectorError = (_selector: string, err: Error): string => {
     // Gate on the ERROR MESSAGE, not the selector: only when querySelector actually choked ON the pseudo
     // (a raw document.querySelector call — the tools use queryAll, which handles it) is the hint right.
     // A native CSS error elsewhere (an unescaped Tailwind `/`, a bad combinator) surfaces raw — the
