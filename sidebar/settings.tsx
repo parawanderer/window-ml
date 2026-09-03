@@ -116,11 +116,14 @@ const modelTests = signal<Record<string, TestState | undefined>>({});
 
 // Name the quadrant of a point given as fractions [0,1] (image y-down: 0=top).
 const areaName = (fx: number, fy: number) => `${fy > 0.5 ? "bottom" : "top"}-${fx > 0.5 ? "right" : "left"}`;
-const MODEL_ROLES: { key: keyof MlConfig; label: string; vision?: boolean }[] = [
+const MODEL_ROLES: { key: keyof MlConfig; label: string; vision?: boolean; embed?: boolean }[] = [
     { key: "model", label: "Default" },
     { key: "ocrModel", label: "OCR", vision: true },   // must be vision-capable
     { key: "utilityModel", label: "Utility" },
     { key: "groundingModel", label: "Grounding", vision: true },   // needs vision (grounding itself isn't cap-detectable)
+    // Tested by actually EMBEDDING, not by a chat ping (it cannot answer one) and not by reading its
+    // capability list (that says what the server CLAIMS, not that a vector comes back).
+    { key: "embeddingModel", label: "Embedding", embed: true },
 ];
 
 const setTest = (key: keyof MlConfig, state: TestState) => { modelTests.value = { ...modelTests.value, [key]: state }; };
@@ -204,12 +207,32 @@ function testOne(key: keyof MlConfig): void {
     const name = roleModel(key);
     if (!name) return;
     setTest(key, { status: "loading", model: name });
-    const done = (s: Omit<TestState, "model" | "at">) => { setTest(key, { ...s, model: name, at: Date.now() }); unloadIfFresh(name); };
+    const done = (s: Omit<TestState, "model" | "at">) => {
+        setTest(key, { ...s, model: name, at: Date.now() });
+        // Tests normally free whatever they loaded, so checking your setup does not leave models resident.
+        // The exception is an embedding model the user has explicitly asked to keep loaded — unloading it
+        // here would undo the setting the test was verifying.
+        const pinned = key === "embeddingModel" && config.value.embeddingKeepAlive;
+        if (!pinned) unloadIfFresh(name);
+    };
 
     // Vision-required roles (OCR, grounding): first check the model actually reports
     // vision — a clear "not a vision model" beats a confusing functional failure
     // downstream. Unknown caps (cloud/non-Ollama) pass through to the test.
     const role = MODEL_ROLES.find(r => r.key === key);
+    // The embedding role is a different call entirely: one real embed, which proves reachability, that the
+    // model is genuinely an embedding model, and WHICH geometry its vectors are in — the last being the fact
+    // that matters, since vectors from two models cannot be compared and the failure is silent.
+    if (role?.embed) {
+        chrome.runtime.sendMessage({ type: "EMBED", payload: { inputs: ["test"], model: name } }, (resp: any) => {
+            const err = chrome.runtime.lastError?.message || resp?.error;
+            if (err) return done({ status: "err", error: err });
+            const vec = resp?.data?.vectors?.[0];
+            if (!Array.isArray(vec) || !vec.length) return done({ status: "err", error: "the server returned no vector" });
+            done({ status: "ok", detail: `${vec.length} dimensions` });
+        });
+        return;
+    }
     const gate = role?.vision ? visionGate(name) : Promise.resolve(null);
     gate.then(capErr => {
         if (capErr) return done({ status: "err", error: capErr });

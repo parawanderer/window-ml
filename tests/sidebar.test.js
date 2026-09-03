@@ -1230,12 +1230,15 @@ test("settings: the 'vision capable?' override stays ENABLED for a cloud (unprob
 test("settings: Test models runs a per-model liveness check (set models pass, unset stays '—')", async () => {
     const w = await loadSidebarWorld({ sync: { model: "qwen3:14b", utilityModel: "gemma:2b" }, models: ["qwen3:14b"] });
     await openSettings(w, "Models");
-    assert.equal(w.shadow.querySelectorAll(".test-row").length, 4, "one row per model role");
+    // One row per role: default, OCR, utility, grounding, embedding.
+    assert.equal(w.shadow.querySelectorAll(".test-row").length, 5, "one row per model role");
+    const roles = [...w.shadow.querySelectorAll(".test-row .role")].map((e) => e.textContent);
+    assert.deepEqual(roles, ["Default", "OCR", "Utility", "Grounding", "Embedding"]);
 
     w.shadow.querySelector(".test-btn").click();
     await w.tick();
     assert.equal(w.shadow.querySelectorAll(".test-ic.ok").length, 2, "the two set models pass");
-    assert.equal(w.shadow.querySelectorAll(".test-ic.unset").length, 2, "the unset OCR + grounding stay not-set");
+    assert.equal(w.shadow.querySelectorAll(".test-ic.unset").length, 3, "unset OCR, grounding + embedding stay not-set");
 });
 
 test("settings: Test models unloads only the models it freshly loaded (leaves already-warm ones)", async () => {
@@ -5707,4 +5710,26 @@ test("the resource chart window is configurable, and short by default", async ()
     assert.match(settings, /RESWIN_KEY/, "and persisted");
     assert.match(settings, /Samples are kept for the whole session either way/,
         "the note distinguishes what is DRAWN from what is retained");
+});
+
+// The embedding role cannot be liveness-checked the way the others are: it can't answer a chat ping, and
+// reading its capability list only says what the server CLAIMS. So it is tested by actually embedding —
+// which also reports the DIMENSIONS, the fact that matters most, since vectors from two different models
+// cannot be compared and that failure is silent.
+test("settings: the embedding model is tested by EMBEDDING, and reports its dimensions", async () => {
+    let embedded = null;
+    const w = await loadSidebarWorld({
+        sync: { model: "qwen3:14b", embeddingModel: "embeddinggemma:300m" },
+        models: ["qwen3:14b"],
+        embed: (payload) => { embedded = payload; return { data: { model: payload.model, vectors: [Array(768).fill(0.1)] } }; },
+    });
+    await openSettings(w, "Models");
+    w.shadow.querySelector(".test-btn").click();
+    await w.tick();
+
+    assert.ok(embedded, "it embedded rather than sending a chat ping");
+    assert.equal(embedded.model, "embeddinggemma:300m", "against the configured model");
+    const row = [...w.shadow.querySelectorAll(".test-row")].find((r) => r.querySelector(".role")?.textContent === "Embedding");
+    assert.ok(row.querySelector(".test-ic.ok"), "a real vector came back, so it passes");
+    assert.match(row.querySelector('[role="tooltip"]').textContent, /768 dimensions/, "and says which geometry");
 });
