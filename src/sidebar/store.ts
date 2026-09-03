@@ -100,6 +100,13 @@ export const brush = signal<{ from: number; to: number } | null>(null);
 /** Where the pointer is on the time axis, for the crosshair every track draws. `frac` positions it, `t` is
  *  the moment it names — one signal, so the line appears on all the graphs at once and they cannot disagree
  *  about which instant is being pointed at. */
+// What the event lane draws. Kinds are an EXCLUSION list (see LaneFilter) and are remembered; the session
+// SCOPE is not — it follows what you are looking at, and a stored scope would silently hide another run's
+// events on a later visit for a reason nothing on screen explains.
+export const LANE_HIDDEN_KEY = "ml_lane_hidden";
+export const laneHidden = signal<string[]>([]);
+/** Restrict the lane to the session being read, when one is open. */
+export const laneScoped = signal(false);
 export const crosshair = signal<{ frac: number; t: number | null; msPerPx?: number } | null>(null);
 export const resWindowS = signal(RESWIN_DEFAULT);  // seconds of history the resource chart shows (Settings → Appearance)
 export const outMaxH = signal(OUTMAX_DEFAULT); // max height of a tool output cell (Settings → Appearance); 0 = uncapped

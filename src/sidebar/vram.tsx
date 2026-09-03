@@ -13,10 +13,10 @@ import { truncate } from "./format";
 import { normModel, seenContext } from "./model";
 import { IconVram, IconEye, IconEyeOff, IconBench, IconGear } from "./icons";
 import { useTipPlacement } from "./use-tip";
-import { VRAMH_KEY, vramH, resWindowS, zoomRange } from "./store";
+import { VRAMH_KEY, vramH, resWindowS, zoomRange, laneHidden, laneScoped, LANE_HIDDEN_KEY } from "./store";
 import { usageByModel, eventsFrom, type UsageSource } from "./model-stats";
 import type { RunStats } from "../contract";
-import { parseInfo, holdCapacity, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, boxChange, type ResourceEvent, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
+import { parseInfo, holdCapacity, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, boxChange, type ResourceEvent, type LaneFilter, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
 import { ResourceTracks } from "./resource-chart";
 import type { LoadedModel } from "../contract";
 
@@ -311,6 +311,18 @@ export function timeline(): ResourceEvent[] {
     void rev.value;
     const fromSessions = eventsFrom([...sessionMap.values()] as UsageSource[]);
     return [...fromSessions, ...residencyEvents(resourceHistory.value, fromSessions)].sort((a, b) => a.t - b.t);
+}
+
+/** The session the lane scopes to when scoping is on: whichever one is open. Null in the list view, where
+ *  "this session" names nothing. */
+export function scopedHash(): string | null {
+    const v = view.value;
+    return laneScoped.value && v.name === "detail" ? v.hash : null;
+}
+
+/** The filter as the lane sees it. */
+export function laneFilter(): LaneFilter {
+    return { hash: scopedHash(), hidden: laneHidden.value as LaneFilter["hidden"] };
 }
 
 /** The cost line under a model's name: what it spent, and how fast — with the rate's BASIS said out loud,
