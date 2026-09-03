@@ -7199,3 +7199,46 @@ test("a card that vanishes mid-session: re-shape, keep the trace, say what happe
     assert.ok(chip, "the row warns that its card is gone");
     assert.match(chip.querySelector(".tt-pop").textContent, /stopped reporting/);
 });
+
+// The scrub strip: the whole session in one bar, with a box for the slice the chart is drawing. It only
+// appears when there IS something to scrub — a box covering the whole strip is a control that cannot do
+// anything, and drawing one implies otherwise.
+//
+// The UNPIN/re-pin round trip is an e2e: in a session a few seconds long, every position is within one poll
+// of the tail (TAIL_SLACK_MS), so "dragged back" and "following live" are genuinely the same state here —
+// correct behaviour, and untestable at this timescale. The rule itself is covered by scrubExtent's own test.
+test("scrub strip: appears once the session outgrows the window, and the box follows the drag", async () => {
+    const GB = 1024 ** 3;
+    const w = await loadSidebarWorld({
+        vram: [{ model: "big:27b", vramGB: 19, vramBytes: 19 * GB, sizeBytes: 19 * GB,
+                 gpus: [{ id: "0", runner: "CUDA", vramBytes: 19 * GB }], expiresAt: null }],
+        info: INFO_2CARD,
+        // A 2-second window, so a few polls of history is already more session than it draws.
+        local: { ml_res_window: 2 },
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+    assert.equal(w.shadow.querySelectorAll(".rc-scrub").length, 0, "no strip while the window covers everything");
+
+    for (let i = 0; i < 60 && !w.shadow.querySelector(".rc-scrub"); i++) {
+        await w.flush(); await new Promise((r) => setTimeout(r, 200));
+    }
+    const strip = w.shadow.querySelector(".rc-scrub");
+    assert.ok(strip, "the strip appears once there is history the window doesn't cover");
+    assert.ok(strip.querySelectorAll(".rc-scrub-run").length >= 1, "the session's runs are drawn as blocks");
+    const boxBefore = strip.querySelector(".rc-scrub-win").getAttribute("style");
+    assert.match(boxBefore, /left:\s*[\d.]+%/, "the window is a box on the strip");
+    assert.ok(strip.querySelector(".rc-scrub-live").classList.contains("on"), "it starts pinned to live");
+
+    // Dragging the box moves the window through the session — it scrolls, it does not zoom.
+    const track = strip.querySelector(".rc-scrub-track");
+    track.dispatchEvent(new w.window.MouseEvent("pointerdown", { bubbles: true, button: 0, clientX: 0, clientY: 0 }));
+    await w.flush();
+    const boxAfter = w.shadow.querySelector(".rc-scrub-win").getAttribute("style");
+    assert.notEqual(boxAfter, boxBefore, "the box moved to where it was dragged");
+    assert.match(boxAfter, /left:\s*0%/, "…to the start of the session");
+    // And the panel is holding an explicit range now rather than the rolling window.
+    assert.ok(w.shadow.querySelector(".vram-zoom"), "the window became a range you chose");
+    w.window.dispatchEvent(new w.window.MouseEvent("pointerup", { bubbles: true, clientX: 0, clientY: 0 }));
+});
