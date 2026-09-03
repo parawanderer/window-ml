@@ -197,6 +197,7 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rc-tip-line { display: flex; justify-content: space-between; gap: 12px; }
 .rc-tip-line .rc-tip-name { font-weight: 600; }
 .rc-tip-pct { opacity: .7; font-variant-numeric: tabular-nums; }
+.rc-tip-gone { padding: 0 4px; font-size: 0.9em; color: var(--fg-faint); border: 1px solid var(--border); border-radius: 3px; }
 .rc-tip-dim { color: var(--fg-faint); }
 .rc-tip-name { color: var(--fg); font-weight: 600; }
 .rc-tip-size { color: var(--fg-dim); font-variant-numeric: tabular-nums; }

@@ -6597,3 +6597,40 @@ test("embedding models: named as such, and evicted the same way", async () => {
     await w.flush();
     assert.deepEqual(w.unloadCalls.at(-1), { model: "qwen3-embedding:0.6b" }, "the row's ✕ evicts the embedder");
 });
+
+// A model that evicts doesn't erase what it did. Its band was coloured and named from the LAST frame only, so
+// the moment it left the newest sample its whole history turned anonymous grey and stopped being hoverable —
+// in the one view whose job is to say what WAS there.
+test("history: an evicted model keeps its colour, and says it is gone", async () => {
+    const withModel = (gb) => [{ model: "gemma4:31b", vramGB: gb, vramBytes: gb * 1024 ** 3, sizeBytes: gb * 1024 ** 3,
+                                 gpus: [{ id: "0", runner: "CUDA", vramBytes: gb * 1024 ** 3 }], expiresAt: null }];
+    const w = await loadSidebarWorld({ vram: withModel(18), info: INFO_2CARD, ...STACKED_LAYOUT });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    for (let i = 0; i < 25 && w.shadow.querySelectorAll(".rc-band").length < 1; i++) {
+        await w.flush(); await new Promise((r) => setTimeout(r, 150));
+    }
+    const bandFill = () => w.shadow.querySelector(".rc-track .rc-band")?.getAttribute("fill");
+    const colour = bandFill();
+    assert.ok(colour && !/fg-faint/.test(colour), `a resident model's band is its own colour (${colour})`);
+
+    // It evicts. The history it is drawn across is unchanged, so it must look unchanged.
+    w.setVram([]);
+    for (let i = 0; i < 25; i++) {
+        await w.flush();
+        await new Promise((r) => setTimeout(r, 150));
+        if (!w.shadow.querySelector(".vram-row")) break;
+    }
+    assert.equal(w.shadow.querySelectorAll(".vram-row").length, 0, "the row is gone from the list");
+    assert.equal(bandFill(), colour, "…but its history keeps the colour it was drawn in");
+
+    // And hovering it still answers, because there is no row left to explain the colour.
+    const band = w.shadow.querySelector(".rc-track .rc-band");
+    band.dispatchEvent(new w.window.MouseEvent("pointerenter", { bubbles: true }));
+    w.shadow.querySelector(".rc-plot").dispatchEvent(new w.window.MouseEvent("pointermove", { bubbles: true }));
+    await w.flush();
+    const tip = w.shadow.querySelector(".rc-tip:not(.vram-rowtip)");
+    assert.ok(tip, "the band is still hoverable after the model evicted");
+    assert.match(tip.textContent, /gemma4:31b/, "it names what was there");
+    assert.match(tip.textContent, /evicted/, "…and says it no longer is");
+});

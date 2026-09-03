@@ -141,7 +141,10 @@ test("resource panel: a closed spell leaves a GAP, and no /api/info draws no cei
         // Polling is gated on the panel being open, so a closed spell genuinely measures nothing. Longer than
         // MAX_SAMPLE_GAP_MS, so the history must BREAK rather than draw a line across it.
         await setPanel(false);
-        await sleep(18000);
+        // Comfortably past MAX_SAMPLE_GAP_MS (15s), not just over it: a poll already in flight when the panel
+        // closes lands after it, so an 18s spell could measure as a 14s gap and the two runs merged — a flake
+        // in a test whose whole subject is the gap.
+        await sleep(24000);
         await setPanel(true);
         await expect.poll(() => frame.locator(".rc-track").first().locator(".rc-seg").count(), { timeout: 20000 })
             .toBe(2);   // two runs = one honest gap between them

@@ -41,17 +41,26 @@ function bandOrder(frames: Band[][]): string[] {
     return [...[...models].sort(), "other", "free"];
 }
 
-const bandFill = (key: string, bands: Band[]): string => {
+/** Which model each band key belongs to, from ANY frame in the window. Read only from the LAST frame, a model
+ *  that evicted before the newest sample had no entry there — so its whole history lost its colour and turned
+ *  into anonymous grey, and it stopped being hoverable, exactly where the chart's job is to say what WAS
+ *  there. The history is the point; a band keeps its identity for as long as it is drawn. */
+function bandIdentity(frames: Band[][]): Record<string, string | undefined> {
+    const by: Record<string, string | undefined> = {};
+    for (const bands of frames) for (const b of bands) if (b.model && !by[b.key]) by[b.key] = b.model;
+    return by;
+}
+
+const bandFill = (key: string, model: string | undefined): string => {
     if (key === "free") return "transparent";
-    if (key === "other") return "var(--fg-faint)";
-    if (key === "unknown") return "var(--fg-faint)";
-    const b = bands.find((x) => x.key === key);
-    return b?.model ? colorFor(b.model) : "var(--fg-faint)";
+    if (key === "other" || key === "unknown") return "var(--fg-faint)";
+    return model ? colorFor(model) : "var(--fg-faint)";
 };
 
 /** One device (or the host pool) as a stacked area over time. `frames` is one band list per sample. */
 function StackedArea({ frames, ceiling, hidden }: { frames: Band[][]; ceiling: number; hidden: Set<string> }) {
     const order = useMemo(() => bandOrder(frames), [frames]);
+    const identity = useMemo(() => bandIdentity(frames), [frames]);
     if (frames.length < 2 || ceiling <= 0) return <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true" />;
     const x = (i: number) => (i / (frames.length - 1)) * W;
     const y = (v: number) => H - Math.min(1, v / ceiling) * H;
@@ -78,10 +87,10 @@ function StackedArea({ frames, ceiling, hidden }: { frames: Band[][]; ceiling: n
         for (let i = frames.length - 1; i >= 0; i--) pts.push(`${x(i).toFixed(1)},${y(below ? (tops[below]?.[i] ?? 0) : 0).toFixed(1)}`);
         // The band knows which model it is, so hovering it can name it — and dim its neighbours, so a stack of
         // similar colours resolves into one identifiable shape.
-        const model = (frames.at(-1) || []).find((b) => b.key === key)?.model;
+        const model = identity[key];
         const dim = hoverModel.value && model && hoverModel.value !== model;
         const hot = !!model && hoverModel.value === model;
-        return <polygon key={key} points={pts.join(" ")} fill={bandFill(key, frames.at(-1) || [])}
+        return <polygon key={key} points={pts.join(" ")} fill={bandFill(key, model)}
             class={model ? `rc-band${hot ? " hot" : ""}` : undefined} vector-effect="non-scaling-stroke"
             onPointerEnter={model ? () => (hoverModel.value = model) : undefined}
             onPointerLeave={model ? () => { hoverModel.value = null; hoverAt.value = null; } : undefined}
@@ -142,7 +151,7 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
                 ))}
                 {soft ? <div class="rc-soft" style={{ bottom: `${Math.min(100, (soft.bytes / ceiling) * 100)}%` }}
                     title={soft.label} /> : null}
-                <BandTip bands={bands} ceiling={ceiling} />
+                <BandTip bands={bands} history={samples.map(bandsOf)} ceiling={ceiling} />
             </div>
             <div class="rc-legend">
                 {bands.filter((b) => b.kind === "other" && b.bytes > 0).map((b) => (
@@ -168,12 +177,17 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
 /** What the hovered band is, shown over the plot. Deliberately the SAME facts as the legend row (ModelFacts),
  *  because a band and its row describe one model — an SVG <title> could carry none of it: no colour, no live
  *  TTL, no badge, and a half-second delay before it appears. */
-function BandTip({ bands, ceiling }: { bands: Band[]; ceiling: number }) {
+function BandTip({ bands, history, ceiling }: { bands: Band[]; history: Band[][]; ceiling: number }) {
     const name = hoverModel.value;
     const at = hoverAt.value;
     if (!name) return null;
-    const band = bands.find((b) => b.model === name);
+    // A band drawn in the HISTORY belongs to a model that may have evicted since. Fall back to the last frame
+    // that held it, so hovering the shape still answers what it was — silence there would leave a coloured
+    // area on the chart with nothing below it to explain the colour.
+    const band = bands.find((b) => b.model === name)
+        ?? [...history].reverse().flatMap((f) => f.filter((b) => b.model === name && b.bytes > 0)).at(0);
     if (!band) return null;   // hovering a model that isn't on THIS device — its own track shows the tip
+    const gone = !bands.some((b) => b.model === name);
     const m = (loadedModels.value || []).find((x) => x.model === name);
     // Follows the cursor, offset up-left so it never sits under the pointer (which would flicker as the
     // pointer enters the tip itself) and clamped inside the plot so it can't run off the narrow panel.
@@ -184,6 +198,9 @@ function BandTip({ bands, ceiling }: { bands: Band[]; ceiling: number }) {
             <span class="rc-tip-name">{name}</span>
             {/* Bytes AND the share of this device — a model is "big" only relative to the card it is on. */}
             <span class="rc-tip-size">{formatBytes(band.bytes)} <span class="rc-tip-pct">{percentOf(band.bytes, ceiling)}</span></span>
+            {/* Its row is gone from the list below, so the tip is the only place that can say why the colour
+                is still on the chart: this is history, not something resident now. */}
+            {gone ? <span class="rc-tip-gone">evicted</span> : null}
             {m ? <ModelFacts m={m} tips={false} /> : null}
         </div>
     );
