@@ -530,13 +530,29 @@ export function segments(samples: ResourceSample[], maxGapMs: number = MAX_SAMPL
  *  event source (the debug bus) is independent of the poll. */
 export interface ResourceEvent {
     t: number;
-    kind: "run" | "load" | "evict" | "error" | "note";
+    /** When it ENDED, for the kinds that have a duration. Absent → an instant (a vertical rule); present → a
+     *  span (a bar in the lane), and the duration is the interesting part: a 40-second turn that spent 30 of
+     *  them loading a model is a different story from one that didn't. */
+    until?: number;
+    kind: "run" | "gen" | "load" | "evict" | "error" | "note";
     label: string;
     model?: string;
+    /** Where this happened, so a click can go there: a session hash, and the step within it. Events are
+     *  CROSS-SESSION — a model load belongs to the machine's timeline, not to whichever chat provoked it — so
+     *  the reference is how the lane gets you back to the one that did. */
+    ref?: { hash: string; seq?: number };
+    /** What it cost, for the kinds that spend tokens. Plain numbers rather than a RunStats import: this module
+     *  stays standalone, and the surface that renders it already knows how to say "eval" vs "wall". */
+    cost?: { inTokens: number; outTokens: number; tokPerSec: number | null; genBasis: "eval" | "wall" | "mixed" | null };
 }
 
 /** Events inside a window, in time order — what the chart's event lane draws, and what a vertical rule
  *  through the plot is placed by. */
 export function eventsIn(events: ResourceEvent[], from: number, to: number): ResourceEvent[] {
-    return events.filter((e) => e.t >= from && e.t <= to).sort((a, b) => a.t - b.t);
+    // A SPAN counts when it overlaps the window at all — one that began before it and ended inside it is
+    // exactly the case the lane exists to show (the load that started before you looked). Clipping to the
+    // window is the renderer's job; deciding membership is this one's.
+    return events
+        .filter((e) => (e.until != null ? e.until >= from && e.t <= to : e.t >= from && e.t <= to))
+        .sort((a, b) => a.t - b.t);
 }

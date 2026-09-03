@@ -421,6 +421,11 @@ export interface TokenUsage {
     /** Ollama-native `eval_duration` (generation-only, ns → ms) when the native route reports it. PREFERRED
      *  over `genMs` for a tok/s rate (it excludes network/queue); absent for cloud / OpenWebUI-OpenAI. */
     evalMs?: number;
+    /** Ollama-native `load_duration` (ns → ms): how long THIS call spent loading the model before generating.
+     *  Small and constant when the model was already resident; seconds-to-a-minute when it was not — which is
+     *  the difference between "the model was slow" and "the model wasn't there yet", and the only place that
+     *  answer exists. Absent for cloud / OpenWebUI-OpenAI, which don't report it. */
+    loadMs?: number;
 }
 
 /** How much captured tool output the UI keeps. Deliberately FAR larger than the model-facing cap: the model's

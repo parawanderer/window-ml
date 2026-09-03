@@ -480,3 +480,19 @@ test("formatShare: the bytes and the fraction, never one without the other", () 
     assert.equal(M.percentOf(8 * GiB, 0), "");
     assert.equal(M.formatShare(8 * GiB, 0), "8.00 GiB of 0 B");
 });
+
+test("eventsIn: a span counts when it OVERLAPS the window, an instant when it is inside it", () => {
+    const evs = [
+        { t: 100, kind: "note", label: "before" },
+        { t: 500, kind: "note", label: "inside" },
+        { t: 900, kind: "note", label: "after" },
+        // Began before the window and ended inside it — the load that started before you looked, which is
+        // exactly what the lane exists to show.
+        { t: 100, until: 450, kind: "load", label: "straddles the start" },
+        { t: 550, until: 5000, kind: "gen", label: "straddles the end" },
+        { t: 10, until: 90, kind: "gen", label: "entirely before" },
+    ];
+    const got = M.eventsIn(evs, 200, 800).map((e) => e.label);
+    assert.deepEqual(got, ["straddles the start", "inside", "straddles the end"],
+        "membership is overlap for spans; clipping to the window is the renderer's job");
+});

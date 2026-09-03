@@ -61,8 +61,12 @@ export const normalizeUsage = (u: any): TokenUsage | null => {
     const promptTokens = p ?? 0, completionTokens = c ?? 0;
     // Ollama-native generation time (`eval_duration`, nanoseconds) — the generation-only rate basis, when present.
     const evalNs = n(u.eval_duration);
+    // How long this call spent LOADING the model before generating a token. Ollama reports it on every native
+    // call — a few ms when the model was already resident, tens of seconds when it had to come off disk.
+    const loadNs = n(u.load_duration);
     const out: TokenUsage = { promptTokens, completionTokens, totalTokens: n(u.total_tokens) ?? promptTokens + completionTokens };
     if (evalNs != null && evalNs > 0) out.evalMs = evalNs / 1e6;
+    if (loadNs != null && loadNs > 0) out.loadMs = loadNs / 1e6;
     return out;
 };
 
