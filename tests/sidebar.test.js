@@ -6066,3 +6066,67 @@ test("resource panel: the floor is MEASURED from what is rendered, not guessed",
     assert.ok(one < three, `one track needs less room than three (${one} < ${three})`);
     assert.equal(measureMinH(null), 0, "nothing rendered yet → no floor to enforce");
 });
+
+// The reported bug: the model quoted an output inline AND designated the same one with the `answer` tool, so
+// the table rendered TWICE — once where it was quoted, once appended under the reply. Anything shown inline
+// must not be fallback-attached at the end of the turn.
+test("answer dedup (sidebar): an output quoted inline is not ALSO appended in the Result block", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("dup", "compute it"));
+    await w.dispatch(compStep("dup"));
+    // Both at once: cited inline in the prose, AND designated in the answer set.
+    await w.dispatch({ ...agentResult("dup", `The total is ![it](@tool:${OUT}:out).`, 1),
+                       answer: `![the sales table](@tool:${OUT}:out)` });
+    await openRun(w);
+
+    const reply = w.shadow.querySelector(".msg.asst .answer-rendered");
+    assert.ok(reply && /COMPUTED_TABLE/.test(reply.textContent), "it expands inline, where the model put it");
+    assert.ok(!w.shadow.querySelector(".card-result"), "and is NOT appended again at the end of the turn");
+    const shown = (w.shadow.querySelector(".msg.asst").textContent.match(/COMPUTED_TABLE/g) || []).length;
+    assert.equal(shown, 1, "exactly one render of the output");
+});
+
+// The mixed form is the one a naive dedup misses: the prose cites the tool NAME while the answer set holds
+// the hex id (or the reverse). They are the same output, so comparing the strings would render it twice.
+test("answer dedup (sidebar): @tool:<name> inline and @tool:<id> in the answer set are ONE output", async () => {
+    for (const [prose, designated] of [
+        [`See ![it](@tool:python_exec:out).`, `![the table](@tool:${OUT}:out)`],   // name inline, hex designated
+        [`See ![it](@tool:${OUT}:out).`, `![the table](@tool:python_exec:out)`],   // hex inline, name designated
+    ]) {
+        const w = await loadSidebarWorld();
+        await w.dispatch(agentStart("mix", "compute it"));
+        await w.dispatch(compStep("mix"));
+        await w.dispatch({ ...agentResult("mix", prose, 1), answer: designated });
+        await openRun(w);
+        const count = (w.shadow.querySelector(".msg.asst").textContent.match(/COMPUTED_TABLE/g) || []).length;
+        assert.equal(count, 1, `one render for ${prose} + ${designated}`);
+        assert.ok(!w.shadow.querySelector(".card-result"), "no duplicate Result block");
+    }
+});
+
+// Both surfaces render the Result block independently, so the dedup has to hold in each (the parity rule).
+test("answer dedup (HUD card): the same output isn't shown twice there either", async () => {
+    const w = await loadSidebarWorld({ sync: { debugMode: "off" } });
+    await w.raw({ __mlSidebarSurface: "card" });
+    await w.dispatch(agentStart("hdup", "compute it"));
+    await w.dispatch(compStep("hdup"));
+    await w.dispatch({ ...agentResult("hdup", `The total is ![it](@tool:python_exec:out).`, 1),
+                       answer: `![the sales table](@tool:${OUT}:out)` });
+    await w.tick();
+
+    const card = w.shadow.querySelector(".card-body") || w.shadow.querySelector("body");
+    const count = (card.textContent.match(/COMPUTED_TABLE/g) || []).length;
+    assert.equal(count, 1, "the HUD shows it once, like the sidebar");
+    assert.ok(!w.shadow.querySelector(".card-result"), "no appended duplicate on the card");
+});
+
+// …and an output the model did NOT quote still gets appended: dedup must not swallow a real result.
+test("answer dedup: an UNquoted designated output still appears in the Result block", async () => {
+    const w = await loadSidebarWorld();
+    await w.dispatch(agentStart("keep", "compute it"));
+    await w.dispatch(compStep("keep"));
+    await w.dispatch({ ...agentResult("keep", "Done — see below.", 1), answer: `![the sales table](@tool:${OUT}:out)` });
+    await openRun(w);
+    const rb = w.shadow.querySelector(".card-result");
+    assert.ok(rb && /COMPUTED_TABLE/.test(rb.textContent), "it has nowhere else to be shown, so it is appended");
+});

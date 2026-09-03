@@ -41,7 +41,26 @@ function currentTurnSteps(run: Session): AgentStep[] {
     return steps.filter(s => (s.step || 0) > turnStart);
 }
 
-export function activityFor(run: Session): { icon: string; label: string; short: string } {
+/** What the model is doing before it has produced anything this turn. "Thinking" was used for all of it,
+ *  which is wrong in the two cases that take the longest and worry people most:
+ *
+ *   • AWAKENING — the model isn't resident yet, so the time is going into loading tens of GiB into VRAM.
+ *     Nothing is being thought about; saying "Thinking… 17s" invites you to wonder what it could possibly be
+ *     pondering. We can tell, now that the panel knows what is resident.
+ *   • WAITING — resident, but nothing has come back yet: prompt processing, or a queue behind another
+ *     request. Also not thinking.
+ *
+ *  THINKING is reserved for what it actually names: reasoning tokens arriving. Once ordinary content starts,
+ *  it is writing, not thinking. */
+export function startupPhase(run: Session, modelResident?: boolean): { icon: string; label: string; short: string } {
+    const ls = run.liveStream;
+    if (ls?.reasoning) return { icon: "💭", label: "Thinking…", short: "thinking" };
+    if (ls?.content) return { icon: "✍️", label: "Writing…", short: "writing" };
+    if (modelResident === false) return { icon: "🌅", label: "Awakening…", short: "loading" };
+    return { icon: "⏳", label: "Waiting for the model…", short: "waiting" };
+}
+
+export function activityFor(run: Session, modelResident?: boolean): { icon: string; label: string; short: string } {
     const cur = currentTurnSteps(run);
     // A tool actively RUNNING (pending) wins — that's the live op.
     const running = [...cur].reverse().find(s => s.pending && s.tool);
@@ -54,10 +73,13 @@ export function activityFor(run: Session): { icon: string; label: string; short:
     const done = [...cur].reverse().find(s => s.tool && !s.pending);
     if (done?.tool) {
         const about = ACTIVITY[done.tool]?.about || "the result";
+        // Once it starts WRITING, say so — "thinking about the Python output" while prose streams is stale.
+        if (run.liveStream?.content && !run.liveStream?.reasoning)
+            return { icon: "✍️", label: `Writing about ${about}…`, short: "writing" };
         return { icon: "💭", label: `Thinking about ${about}…`, short: "thinking" };
     }
-    // Nothing yet this turn → bare thinking (a fresh turn's opening reasoning).
-    return { icon: "💭", label: "Thinking…", short: "thinking" };
+    // Nothing yet this turn — and "thinking" is only one of the things that could mean (see startupPhase).
+    return startupPhase(run, modelResident);
 }
 
 // The model's latest between-step PROSE (its `thought` narration, not the hidden `reasoning`) within the

@@ -117,7 +117,7 @@ export function ReplyBubble({ content, status, model, profile, ts, reasoning = n
                                 : <div class="md" dangerouslySetInnerHTML={{ __html: markdown(content, { math: true }) }} />}
             {/* Bottom-of-answer tool outputs — SAME ResultBlock the HUD card renders (parity). Only on the
                 run's latest answer (s.answer is single-valued) and only in the normal, expanded view. */}
-            {hasReply && !collapsed && !showRaw && latest && tokenRun ? <ResultBlock run={tokenRun} /> : null}
+            {hasReply && !collapsed && !showRaw && latest && tokenRun ? <ResultBlock run={tokenRun} shownIn={content} /> : null}
             {/* A step-capped run stopped mid-task — one click resumes it with a fresh N-step budget (no need to
                 type a follow-up). Resuming re-enters the SAME run by hash from its stored state. */}
             {resumeCap && !collapsed

@@ -532,7 +532,9 @@ export function CardApp() {
                             {run.answerMedia && run.answerMedia.length ? <AnswerMediaGallery media={run.answerMedia} /> : null}
                             {/* The curated answer SET's tool outputs (designated + auto-appended), rendered under
                                 the summary — see ResultBlock (shared with the DevTools reply for parity). */}
-                            <ResultBlock run={run} />
+                            {/* `shownIn` is the same prose rendered just above, so an output the model quoted
+                                inline is not appended here as well (parity with the DevTools reply). */}
+                            <ResultBlock run={run} shownIn={run.summary || ""} />
                             {/* Step-capped stop → one click resumes with a fresh N-step budget (no need to type
                                 a follow-up in the composer). Not shown for a cancel/error. */}
                             {run.hitCap && !run.cancelled

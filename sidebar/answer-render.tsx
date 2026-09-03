@@ -4,7 +4,7 @@
 import type { ComponentChildren } from "preact";
 import { h } from "preact";
 import type { RenderDescriptor, ToolFeedback, ReusedGrant } from "../contract";
-import { splitAnswer, hasTokens, resolveTokenStep } from "../answer-tokens";
+import { splitAnswer, hasTokens, resolveTokenStep, answerWithoutShown } from "../answer-tokens";
 import type { AnswerSegment } from "../answer-tokens";
 import type { Session, AgentStep } from "./store";
 import { cardShowWorkHash, revealSeq } from "./store";
@@ -238,9 +238,18 @@ function hydrateAnswer(html: string, toks: { seg: Extract<AnswerSegment, { kind:
 // two stay in parity (same "one render, both surfaces" rule as everything else). Only shows when the answer set
 // carries a @tool OUTPUT (a table/image/value the prose can't render) — a text-only set would just echo the prose.
 // The label is chrome (muted + uppercase), so it reads as an extension-added section, not the model's own words.
-export function ResultBlock({ run }: { run: Session }) {
-    if (!run.answer || !hasTokens(run.answer, aliasOf(run))) return null;
-    return <div class="card-result"><div class="result-label">Result</div><AnswerBody text={run.answer} run={run} /></div>;
+export function ResultBlock({ run, shownIn }: { run: Session; shownIn?: string }) {
+    if (!run.answer) return null;
+    // Anything the model already QUOTED inline must not also be appended here. It routinely does both —
+    // embeds the table mid-sentence and calls `answer` with the same output — and the result was the table
+    // rendered twice. Identity is the resolved STEP, so a hex citation inline and a tool-name alias in the
+    // answer set are recognised as the same output.
+    const alias = aliasOf(run);
+    const md = shownIn
+        ? answerWithoutShown(run.answer, shownIn, (id) => resolveTokenStep(id, run.steps || []), alias)
+        : run.answer;
+    if (!hasTokens(md, alias)) return null;
+    return <div class="card-result"><div class="result-label">Result</div><AnswerBody text={md} run={run} /></div>;
 }
 
 // "Sent to the model" — what a tool fed straight INTO the model's context (locate's snap-inject: a

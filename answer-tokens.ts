@@ -90,3 +90,35 @@ export function resolveToken<T>(ref: string, items: readonly T[], idOf: (t: T) =
 export function resolveTokenStep<T extends { token?: string; tool?: string }>(id: string, steps: readonly T[], aliasScope?: readonly T[]): T | null {
     return resolveToken(id, steps, s => s.token, s => s.tool, aliasScope);
 }
+
+
+/** Remove from an ANSWER SET anything the model already showed inline in its prose.
+ *
+ *  The model routinely does both: it embeds `![table](@tool:a1b2c3:out)` mid-sentence AND calls the `answer`
+ *  tool with the same output. Rendering the answer set underneath then shows the table twice — once where it
+ *  was quoted and once appended at the end of the turn.
+ *
+ *  Identity is the resolved STEP, never the raw id: the prose may cite the hex while the answer set holds the
+ *  tool-NAME alias (or the other way round), and comparing the strings would miss that they are the same
+ *  output. `resolve` maps an id to whatever identifies the step it points at.
+ *
+ *  Returns the answer markdown with the duplicated citations dropped — which may be empty, meaning the whole
+ *  set was already shown inline and the block should not render at all. */
+export function answerWithoutShown(
+    answerMd: string,
+    shownMd: string,
+    resolve: (id: string) => unknown,
+    isAlias?: (name: string) => boolean,
+): string {
+    const shown = new Set<unknown>();
+    for (const id of tokenIdsIn(shownMd)) { const step = resolve(id); if (step != null) shown.add(step); }
+    if (!shown.size) return answerMd;
+    return splitAnswer(answerMd, isAlias)
+        .filter(seg => {
+            if (seg.kind !== "token") return true;
+            const step = resolve(seg.id);
+            return step == null || !shown.has(step);
+        })
+        .map(seg => (seg.kind === "prose" ? seg.text : `${seg.embed ? "!" : ""}[${seg.label}](@tool:${seg.id}:${seg.slot}${seg.fmt ? ` | ${seg.fmt}` : ""})`))
+        .join("");
+}
