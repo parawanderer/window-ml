@@ -741,3 +741,32 @@ test("scrubTo: dragging the box scrolls time, and never past the ends", () => {
     // A window wider than the session sits over all of it rather than being squeezed into it.
     assert.deepEqual(M.scrubTo(extent, { from: -5000, to: 30_000 }, 0.2), { from: 0, to: 10_000 });
 });
+
+// The lane shows every session's events, which is right until a browsing session has a dozen runs in it.
+test("filterEvents: scope answers whose, kinds answer which — and machine events survive both", () => {
+    const evs = [
+        { t: 1, kind: "run", label: "run a", id: "run:a", ref: { hash: "a" } },
+        { t: 2, kind: "tool", label: "exec", id: "s:a:1", ref: { hash: "a", seq: 1 } },
+        { t: 3, kind: "embed", label: "reader", id: "s:a:1:sub0", ref: { hash: "a", seq: 1 } },
+        { t: 4, kind: "run", label: "run b", id: "run:b", ref: { hash: "b" } },
+        // An eviction belongs to the MACHINE, not to a run: it has no ref at all.
+        { t: 5, kind: "evict", label: "m evicted", model: "m" },
+    ];
+    // Everything, by default.
+    assert.equal(M.filterEvents(evs, M.EMPTY_LANE_FILTER).length, 5);
+
+    // Scoped to one run: the other run goes, and the machine's own event STAYS — it is what the memory trace
+    // is doing, and hiding it for having no owner would remove the events the chart exists for.
+    const scoped = M.filterEvents(evs, { hash: "a", hidden: [] });
+    assert.deepEqual(scoped.map((e) => e.label), ["run a", "exec", "reader", "m evicted"]);
+
+    // Kinds are an EXCLUSION list, so a kind added later shows up by default instead of being filtered out by
+    // a stored preference that predates it.
+    assert.deepEqual(M.filterEvents(evs, { hash: null, hidden: ["embed"] }).map((e) => e.label),
+        ["run a", "exec", "run b", "m evicted"]);
+    assert.deepEqual(M.filterEvents(evs, { hash: "a", hidden: ["embed", "run"] }).map((e) => e.label),
+        ["exec", "m evicted"]);
+
+    // And the control can say what it would hide rather than making you toggle blindly.
+    assert.deepEqual(M.countByKind(evs), { run: 2, tool: 1, embed: 1, evict: 1 });
+});

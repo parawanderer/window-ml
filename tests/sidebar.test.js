@@ -7242,3 +7242,61 @@ test("scrub strip: appears once the session outgrows the window, and the box fol
     assert.ok(w.shadow.querySelector(".vram-zoom"), "the window became a range you chose");
     w.window.dispatchEvent(new w.window.MouseEvent("pointerup", { bubbles: true, clientX: 0, clientY: 0 }));
 });
+
+// The lane draws every session's events, which is right until a browsing session holds a dozen runs. The
+// filter is two independent axes: which KINDS to draw, and whether to scope to the run being read.
+test("lane filter: chips say what they hide, kinds persist, scope follows what you're reading", async () => {
+    const GB = 1024 ** 3;
+    const w = await loadSidebarWorld({
+        vram: [{ model: "gemma4:31b", vramGB: 19, vramBytes: 19 * GB, sizeBytes: 19 * GB,
+                 gpus: [{ id: "0", runner: "CUDA", vramBytes: 19 * GB }], expiresAt: null }],
+        info: INFO_2CARD,
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    for (let i = 0; i < 25 && w.shadow.querySelectorAll(".rc-seg").length < 1; i++) {
+        await w.flush(); await new Promise((r) => setTimeout(r, 150));
+    }
+    // Two runs, so scoping has something to exclude.
+    const now = Date.now();
+    for (const hash of ["one", "two"]) {
+        await w.dispatch(agentStart(hash, "go", "gemma4:31b"));
+        await w.dispatch({ ...agentStep(hash, 1, { seq: 1, tool: "exec", toolMs: 60,
+            usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, genMs: 50 } }), ts: now });
+        await w.dispatch({ ...agentStep(hash, 2, { seq: 2, tool: "click", toolMs: 40,
+            usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, genMs: 40 } }), ts: now });
+    }
+    await w.flush();
+    await w.flush();
+
+    const bars = () => w.shadow.querySelectorAll(".rc-ev").length;
+    const chip = (label) => [...w.shadow.querySelectorAll(".rc-lane-chip")].find((c) => c.textContent.startsWith(label));
+    assert.ok(bars() >= 4, "both runs' events are drawn");
+    // A chip carries its COUNT: a filter that makes you toggle blindly to learn what it hides is worse than none.
+    assert.match(chip("steps").textContent, /steps \d+/);
+
+    const before = bars();
+    chip("steps").click();
+    await w.flush();
+    assert.ok(bars() < before, "hiding a kind removes it from the lane");
+    assert.ok(chip("steps").classList.contains("off"), "…and the chip says so");
+    // Remembered, because it is a preference about what you want to see.
+    assert.deepEqual(w.localStore.ml_lane_hidden, ["tool"]);
+    chip("steps").click();
+    await w.flush();
+    assert.equal(bars(), before, "and toggling back restores them");
+
+    // Scope is only offered where "this run" names something — not in the list view.
+    assert.equal(chip("this run"), undefined, "no scope chip in the list");
+    w.shadow.querySelectorAll(".row")[0].click();
+    await w.flush();
+    const scope = chip("this run");
+    assert.ok(scope, "reading a run, the scope chip appears");
+    const all = bars();
+    scope.click();
+    await w.flush();
+    assert.ok(bars() < all, "scoping drops the other run's events");
+    // …but NOT the machine's own: an eviction has no run to belong to, and hiding it would remove the events
+    // the chart exists for. (Covered exactly in resource-model.test.mjs; here it is the scope chip working.)
+    assert.ok(scope.classList.contains("on"));
+});

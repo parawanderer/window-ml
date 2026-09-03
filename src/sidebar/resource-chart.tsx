@@ -12,13 +12,14 @@
 import { useMemo, useRef, useState, useLayoutEffect } from "preact/hooks";
 import {
     deviceBands, hostBands, ceilingsFor, segments, formatBytes, formatShare, percentOf, isCpuResident,
-    placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, MIN_EV_SPAN, scrubExtent, scrubTo, TAIL_SLACK_MS, type ResourceEvent, type EventPlacement,
+    placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, MIN_EV_SPAN, scrubExtent, scrubTo, TAIL_SLACK_MS,
+    filterEvents, countByKind, type ResourceEvent, type EventPlacement,
     OTHER_BAND_NOTE, DRIVER_BAND_LABEL,
     presetsFor,
     type ResourceSample, type Band, type Capacity, type TrackDef,
 } from "../resource-model";
-import { colorFor, poolColor, hoverModel, poolHover, poolFacts, ModelFacts, CostFacts, VRAM_POLL_MS } from "./vram";
-import { loadedModels, resWindowS, view, zoomRange, brush, crosshair } from "./store";
+import { colorFor, poolColor, hoverModel, poolHover, poolFacts, ModelFacts, CostFacts, VRAM_POLL_MS, laneFilter } from "./vram";
+import { loadedModels, resWindowS, view, zoomRange, brush, crosshair, laneHidden, laneScoped, LANE_HIDDEN_KEY } from "./store";
 import { clockAt, hhmmssms } from "./timestamps";
 import { scrollToStepSeq } from "./answer-render";
 import { useTipPlacement } from "./use-tip";
@@ -728,13 +729,20 @@ function EventTip({ scope }: { scope: string }) {
  *
  *  Spans are bars in the lane; instants (an eviction) are rules. Both are placed inside the run that contains
  *  them, because the axis is segmented by gaps and is not linear in time. */
-function EventLane({ samples, events }: { samples: ResourceSample[]; events: ResourceEvent[] }) {
+function EventLane({ samples, events: all }: { samples: ResourceSample[]; events: ResourceEvent[] }) {
+    // Filtered before anything is placed, so the rows pack against what is actually drawn — a hidden kind
+    // must not leave a hole where it would have been.
+    const filter = laneFilter();
+    const events = useMemo(() => filterEvents(all, filter), [all, filter.hash, filter.hidden]);
+    const counts = useMemo(() => countByKind(all), [all]);
     const runs = useMemo(() => segments(samples).filter((r) => r.length > 1), [samples]);
     const from = runs[0]?.[0]?.t ?? 0, to = runs.at(-1)?.at(-1)?.t ?? 0;
     // The window admits a poll's worth past the last sample, for the same reason placeEvents does.
     const placed = useMemo(() => placeEvents(runs, eventsIn(events, from, to + VRAM_POLL_MS), VRAM_POLL_MS),
         [runs, events, from, to]);
-    if (!runs.length || !placed.length) return null;
+    // The CONTROL still shows when everything is filtered out — otherwise hiding the last kind hides the way
+    // to bring it back.
+    if (!runs.length || (!placed.length && !all.length)) return null;
     const spans = placed.filter((p) => p.event.until != null);
     const rows = laneRows(spans);
     const lit = lineageOf(events, eventHover.value?.p.event.id);
@@ -781,6 +789,39 @@ function EventLane({ samples, events }: { samples: ResourceSample[]; events: Res
                 </div>
             ))}
             <EventTip scope="lane" />
+            <LaneFilterBar counts={counts} shown={events.length} total={all.length} />
+        </div>
+    );
+}
+
+/** What the lane is drawing, and what it is leaving out. Each kind is a chip with its count: a filter that
+ *  makes you toggle blindly to find out what it hides is worse than none. */
+function LaneFilterBar({ counts, shown, total }: { counts: Record<string, number>; shown: number; total: number }) {
+    const hidden = new Set(laneHidden.value);
+    const KINDS: { kind: ResourceEvent["kind"]; label: string }[] = [
+        { kind: "run", label: "runs" }, { kind: "tool", label: "steps" }, { kind: "gen", label: "calls" },
+        { kind: "embed", label: "sub-calls" }, { kind: "load", label: "loads" }, { kind: "evict", label: "evictions" },
+    ];
+    const toggle = (k: string) => {
+        const next = hidden.has(k) ? laneHidden.value.filter((x) => x !== k) : [...laneHidden.value, k];
+        laneHidden.value = next;
+        try { chrome.storage.local.set({ [LANE_HIDDEN_KEY]: next }); } catch { /* opaque origin */ }
+    };
+    const inDetail = view.value.name === "detail";
+    return (
+        <div class="rc-lane-filter">
+            {KINDS.filter((k) => counts[k.kind]).map((k) => (
+                <button class={`rc-lane-chip${hidden.has(k.kind) ? " off" : ""}`} key={k.kind}
+                    title={hidden.has(k.kind) ? `Show ${k.label}` : `Hide ${k.label}`}
+                    onClick={() => toggle(k.kind)}>{k.label} {counts[k.kind]}</button>
+            ))}
+            {/* Scope follows what you are READING, so it is only offered where "this run" names something. */}
+            {inDetail ? (
+                <button class={`rc-lane-chip scope${laneScoped.value ? " on" : ""}`}
+                    title={laneScoped.value ? "Showing only this run" : "Show only this run"}
+                    onClick={() => (laneScoped.value = !laneScoped.value)}>this run</button>
+            ) : null}
+            {shown < total ? <span class="rc-lane-count">{shown}/{total}</span> : null}
         </div>
     );
 }
