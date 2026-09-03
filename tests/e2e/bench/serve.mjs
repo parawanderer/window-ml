@@ -18,6 +18,9 @@ import { readFile } from "node:fs/promises";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { COLUMNS } from "./metrics.mjs";
 
+/** The stable default. Arbitrary, but FIXED: a reused URL is the whole point (see startDashboard). */
+export const DEFAULT_PORT = 7331;
+
 const MIME = {
     ".md": "text/plain; charset=utf-8", ".json": "application/json", ".txt": "text/plain; charset=utf-8",
     ".png": "image/png", ".html": "text/html; charset=utf-8", ".pdf": "application/pdf",
@@ -285,10 +288,10 @@ const tick = setInterval(() => {
  * changes and every connected browser is pushed the new state.
  *
  * @param {object} opts
- * @param {number} [opts.port] 0 picks a free port
+ * @param {number} [opts.port] omit for the stable default; 0 picks any free port
  * @param {string} opts.artifactRoot directory that `run.path` values are relative to, served read-only
  */
-export async function startDashboard({ port = 0, artifactRoot }) {
+export async function startDashboard({ port = DEFAULT_PORT, artifactRoot }) {
     const clients = new Set();
     let state = { name: "bench", runs: [], rows: [], jobs: 1, started: Date.now() };
     const root = resolve(artifactRoot);
@@ -323,8 +326,20 @@ export async function startDashboard({ port = 0, artifactRoot }) {
         res.writeHead(404); res.end("no such thing");
     });
 
-    await new Promise((r) => server.listen(port, "127.0.0.1", r));
+    // A STABLE port, so the browser tab survives between sweeps — reload rather than re-paste a new URL.
+    // That matters most in VS Code, where the page lives in a Simple Browser editor tab you would
+    // otherwise have to reopen every run. Falls back to any free port if something already holds it,
+    // rather than refusing to start over a convenience.
+    let bound = port;
+    try {
+        await new Promise((res, rej) => server.listen(port, "127.0.0.1", res).once("error", rej));
+    } catch {
+        bound = 0;
+        server.removeAllListeners("error");
+        await new Promise((r) => server.listen(0, "127.0.0.1", r));
+    }
     const url = `http://127.0.0.1:${server.address().port}`;
+    if (bound !== port) console.log(`  (port ${port} was taken — serving on ${server.address().port} instead)`);
 
     let flushTimer = null;
     const flush = () => {

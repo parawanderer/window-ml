@@ -19,10 +19,15 @@ so START A SWEEP WITH `--serve` AND HAND THE HUMAN THE URL. It prints as a banne
 
 ```
   ┌─────────────────────────────┐
-  │   http://127.0.0.1:58828    │
+  │    http://127.0.0.1:7331    │
   └─────────────────────────────┘
   watch it live ↑  (120 runs)
 ```
+
+**In VS Code, that URL docks as an editor tab.** Cmd-click it in the terminal and VS Code offers a picker
+— choose **Simple Browser** and the page opens beside the code, TensorBoard-style. Simple Browser is
+built in (it registers an external URI opener for http), so nothing needs installing. The port is stable,
+so the tab stays valid across sweeps: reload it rather than reopening.
 
 The page shows every run with its state and what is queued next, the in-flight run's step against its
 budget and the tool it is in right now, the last thing that happened, elapsed time, mean time per run and
@@ -109,6 +114,7 @@ task usable for measuring behaviour when correctness is not the question.
 | `--no-cache` | Re-run cells that are already measured. |
 | `--serve` | Serve the live page and print its URL. Costs nothing when nobody opens it; SSE, no dependency, no build step. |
 | `--open` | `--serve` plus launch a browser. |
+| `--port N` | Serve on a specific port. The default (7331) is STABLE on purpose, so a browser tab can just reload between sweeps instead of needing a new URL. Falls back to any free port if taken. |
 | `--pdf` | Also render each run to `run.html` + `run.pdf`. Off by default: it roughly triples a cell's disk and adds a render per run. The HTML is written alongside deliberately — it is searchable and diffable where a PDF is neither, and it is the only way to see why a PDF looks wrong. |
 
 Backend selection is the same as observe: `USE_ENV=1` reads `.env`, `E2E_BACKEND`/`E2E_MODEL`/`E2E_KEY`

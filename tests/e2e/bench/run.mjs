@@ -8,6 +8,9 @@
 //   … --pdf               also render each run to run.html + run.pdf (slower, and much larger)
 //   … --serve             serve a live page: every run's state, what is queued, the table filling in
 //   … --serve --open      …and open it in a browser
+//   … --port 7400         serve on a specific port (the default is stable, so a browser tab can just
+//                         reload between sweeps — in VS Code, cmd-click the URL and pick "Simple
+//                         Browser" to dock the page as an editor tab)
 //
 // The division of labour this is built for: an agent defines the benchmark in code, runs it, and reads the
 // terminal; a human watching over its shoulder opens the page. Same data, two audiences — which is why
@@ -40,7 +43,7 @@ const ARTROOT = path.join(ROOT, "tests/e2e/artifacts/bench");
 const BUILDROOT = path.join(ROOT, "tests/e2e/artifacts/builds");
 
 function parseArgv(argv) {
-    const args = { specPath: null, jobs: 1, only: [], skip: [], repeats: undefined, dry: false, cache: true, pdf: false, serve: false, open: false };
+    const args = { specPath: null, jobs: 1, only: [], skip: [], repeats: undefined, dry: false, cache: true, pdf: false, serve: false, open: false, port: undefined };
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i];
         if (a === "--jobs") args.jobs = Math.max(1, Number(argv[++i]) || 1);
@@ -51,6 +54,7 @@ function parseArgv(argv) {
         else if (a === "--no-cache") args.cache = false;
         else if (a === "--pdf") args.pdf = true;
         else if (a === "--serve") args.serve = true;
+        else if (a === "--port") { args.serve = true; args.port = Number(argv[++i]) || 0; }
         else if (a === "--open") { args.serve = true; args.open = true; }
         else if (!a.startsWith("--")) args.specPath = a;
     }
@@ -292,7 +296,7 @@ const main = async () => {
     // start — what is running, what is next, and what is left is the question a long sweep actually raises.
     const runsState = cells.map((c) => ({ combo: c.combo, taskId: c.task.id, repeat: c.repeat, state: "pending" }));
     const results = new Array(cells.length);
-    const dash = args.serve ? await startDashboard({ artifactRoot: sweepDir }) : null;
+    const dash = args.serve ? await startDashboard({ artifactRoot: sweepDir, ...(args.port != null ? { port: args.port } : {}) }) : null;
     const started = Date.now();
 
     const push = () => dash?.update({

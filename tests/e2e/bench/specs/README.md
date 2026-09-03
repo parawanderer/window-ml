@@ -95,7 +95,9 @@ what happened — only about how it looks.
 
 ## Watching a sweep
 
-`--serve` prints a URL for a live page: every run with its state, what is queued next, the in-flight run's
+`--serve` prints a URL for a live page (on a stable port, so a browser tab can reload between sweeps
+rather than needing a new address — in **VS Code**, cmd-click it and pick **Simple Browser** to dock the
+page as an editor tab beside the code): every run with its state, what is queued next, the in-flight run's
 step against its budget and what it is doing right now, elapsed time, mean time per run and per step, and
 an ETA. `--open` launches it. The terminal output is unchanged, so an agent can run the sweep and read the
 CLI while a human watches the page.
