@@ -32,7 +32,7 @@ import { runOnce, resolveBackendFromEnv } from "../run-once.mjs";
 import { measureRun, aggregate } from "./metrics.mjs";
 import { expandCells, cellKey, cellPath, comboLabel, buildGroups, parseSelector, slug } from "./cells.mjs";
 import { writeReport, mdSink, terminalSink } from "./sinks.mjs";
-import { startDashboard } from "./serve.mjs";
+import { startDashboard, staticPage } from "./serve.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "../../..");
@@ -338,9 +338,17 @@ const main = async () => {
     // this says which of its repeats to open.
     const runs = cells.map((c, i) => ({
         combo: c.combo, taskId: c.task.id, repeat: c.repeat,
+        // `state` is what the saved page reads to know a run FINISHED; without it report.html renders a
+        // completed sweep as 0% done. A cell with no measurement never ran (the sweep was interrupted),
+        // and saying so is more honest than calling it a failure.
+        state: results[i] ? "done" : "pending",
         ok: results[i]?.measurement?.ok ?? false, succeeded: results[i]?.measurement?.succeeded ?? null,
         steps: results[i]?.measurement?.steps ?? 0, cached: !!results[i]?.fromCache,
-        path: results[i] ? path.relative(ROOT, results[i].dir) : "",
+        secs: results[i]?.measurement ? results[i].measurement.runMs / 1000 : null,
+        // Relative to the SWEEP directory: report.html sits there, and the terminal/markdown reports
+        // print repo-relative paths separately below.
+        path: results[i] ? path.relative(sweepDir, results[i].dir) : "",
+        repoPath: results[i] ? path.relative(ROOT, results[i].dir) : "",
     }));
 
     const sweep = { spec, rows, runs, fingerprint, dirty, started, finished, cached: ctx.cached, ran: ctx.ran, jobs: args.jobs, pdf: args.pdf };
@@ -348,8 +356,15 @@ const main = async () => {
     const md = writeReport(sweep, mdSink());
     const reportPath = path.join(sweepDir, "report.md");
     await writeFile(reportPath, md);
+    // report.html — the live page with the final state baked in. Written ALWAYS, not only with --serve:
+    // the page is already an index of the runs, so archiving it is what makes the sweep directory
+    // navigable on its own. Links are relative, so it works from disk with no server.
+    await writeFile(path.join(sweepDir, "report.html"), staticPage({
+        name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
+        runs, rows, started, finished, jobs: args.jobs, dirty, fingerprint,
+    }));
     await writeFile(path.join(sweepDir, "rows.json"), JSON.stringify({ fingerprint, dirty, started, finished, rows, runs }, null, 2));
-    console.log(`\n  report: ${path.relative(ROOT, reportPath)}\n`);
+    console.log(`\n  report: ${path.relative(ROOT, reportPath)}\n  page:   ${path.relative(ROOT, path.join(sweepDir, "report.html"))}\n`);
 
     if (dash) {
         dash.update({

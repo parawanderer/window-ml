@@ -243,6 +243,7 @@ export function decideApproval(policy, gate) {
  * @param {string} [cfg.approve] approval policy: auto | deny | readonly | hold
  * @param {boolean} [cfg.focusSidebar] open + focus the overlay sidebar (a human watching)
  * @param {boolean} [cfg.hold] hold the browser open at the end until the window closes
+ * @param {boolean} [cfg.headful] force a visible window (implied by `hold`)
  * @param {number} [cfg.timeoutMs] how long to wait for the terminal agent-result
  * @param {(s: string) => void} [cfg.log] where progress lines go
  * @param {(ev: object) => void} [cfg.onEvent] called with every debug event as it arrives
@@ -265,7 +266,9 @@ export async function runOnce(cfg = {}) {
     // A seeded run needs the fake even WITH a real backend: turn 1 is scripted, turn 2 is the real model.
     const fake = (backend && !cfg.seed) ? null : await startFakeLlm({ model: "fake-model" });
     const site = await startPageServer({});
-    const ext = await launchExtension({ dist });
+    // A window only when someone is watching: `hold` (observe's WATCH) or an explicit focusSidebar
+    // request means a human is looking at it. A bench cell is neither.
+    const ext = await launchExtension({ dist, headful: !!(hold || cfg.headful) });
     let approvalLoopOn = true;
     const approvals = [];
     const transcript = [];

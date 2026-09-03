@@ -103,7 +103,7 @@ export function writeReport(sweep, sink) {
             `r${r.repeat}`,
             !r.ok ? "FAILED" : r.succeeded === null ? "ok" : r.succeeded ? "ok · correct" : "ok · WRONG",
             String(r.steps),
-            r.path,
+            r.repoPath || r.path,
         ]));
     sink.note(`Each directory holds \`run.md\` (the transcript to read), \`run.json\` (the machine-readable export — diff two runs with this, not the markdown), \`events.json\`, \`transcript.txt\` and a screenshot per step.${sweep.pdf ? " `--pdf` also wrote `run.html` + `run.pdf`." : " Add `--pdf` for `run.html` + `run.pdf` as well."}`);
     return sink.done();

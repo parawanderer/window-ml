@@ -41,8 +41,11 @@ const PAGE = /* html */ `<!doctype html>
   .counts { color:var(--dim); font-variant-numeric:tabular-nums }
   table { border-collapse:collapse; width:100%; font-variant-numeric:tabular-nums }
   th,td { text-align:right; padding:5px 9px; border-bottom:1px solid var(--line); white-space:nowrap }
-  th:first-child,td:first-child,th.l,td.l { text-align:left }
-  th { color:var(--dim); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.05em }
+  th.l,td.l { text-align:left }
+  /* Sticky, because a 120-run sweep scrolls the header away and then every column is a guess. */
+  th { position:sticky; top:0; z-index:1; background:var(--bg); color:var(--dim); font-weight:600;
+       font-size:11px; text-transform:uppercase; letter-spacing:.05em;
+       box-shadow:inset 0 -1px 0 var(--line) }
   tbody tr:hover { background:var(--panel) }
   code { font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace }
   a { color:var(--run) }
@@ -56,6 +59,14 @@ const PAGE = /* html */ `<!doctype html>
   .stats div { min-width:96px }
   .stats b { display:block; font-size:17px; font-weight:600; font-variant-numeric:tabular-nums }
   .stats span { color:var(--dim); font-size:11px; text-transform:uppercase; letter-spacing:.05em }
+  /* The in-flight panel. With --jobs N the live rows can be anywhere in a long list, so what is running
+     is lifted out of the table instead of being hunted for in it. */
+  .flight-panel { margin:12px 0 0; padding:10px 12px; border:1px solid var(--line); border-radius:6px;
+                  background:var(--panel); display:none }
+  .flight-panel.on { display:block }
+  .flight-panel .row { display:flex; gap:10px; align-items:baseline; padding:2px 0 }
+  .flight-panel .who { font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace; color:var(--fg) }
+  .flight-panel .what { color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
   .last { margin:10px 0 0; color:var(--dim); min-height:19px }
   .last code { color:var(--fg) }
   tr.live { background:color-mix(in srgb, var(--run) 9%, transparent) }
@@ -69,6 +80,7 @@ const PAGE = /* html */ `<!doctype html>
 <div class="bar"><i id="fill" style="width:0"></i></div>
 <p class="counts" id="counts">waiting for the sweep…</p>
 <div id="stats" class="stats"></div>
+<div id="flight" class="flight-panel"></div>
 <p id="last" class="last"></p>
 
 <h2>Results</h2>
@@ -80,13 +92,17 @@ const PAGE = /* html */ `<!doctype html>
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
-let dims = [], cols = [];
+let dims = [], cols = [], lastSeen = "";
 
-function table(headers, rows) {
-    return "<table><thead><tr>" + headers.map((h, i) =>
-        \`<th\${i === 0 ? ' class="l"' : ""}>\${esc(h)}</th>\`).join("") + "</tr></thead><tbody>" +
-        rows.map((r) => "<tr>" + r.map((c, i) =>
-            \`<td\${i === 0 ? ' class="l"' : ""}>\${c}</td>\`).join("") + "</tr>").join("") +
+/**
+ * labels: how many LEADING columns are names rather than numbers. Names left, numbers right — a
+ * right-aligned task name butted against a right-aligned run index reads as one field.
+ */
+function table(headers, rows, labels = 1, rowClass = () => "") {
+    const cell = (tag, c, i) => \`<\${tag}\${i < labels ? ' class="l"' : ""}>\${c}</\${tag}>\`;
+    return "<table><thead><tr>" + headers.map((h, i) => cell("th", esc(h), i)).join("") +
+        "</tr></thead><tbody>" +
+        rows.map((r, n) => \`<tr\${rowClass(n)}>\` + r.map((c, i) => cell("td", c, i)).join("") + "</tr>").join("") +
         "</tbody></table>";
 }
 
@@ -99,7 +115,7 @@ function renderAgg(rows) {
             esc(r.taskId),
             \`\${r.agg.runs - r.agg.errors}/\${r.agg.runs}\`,
             ...cols.map((c) => fmt(r.agg[c.key], c.digits)),
-        ]));
+        ]), dims.length + 1);
 }
 
 function fmt(a, digits) {
@@ -131,27 +147,46 @@ function outcome(r, now) {
     return r.succeeded ? '<span class="ok">ok · correct</span>' : '<span class="warn">ok · wrong</span>';
 }
 
-function renderRuns(runs) {
+function renderRuns(runs, base) {
     if (!runs?.length) return;
     const now = Date.now();
     const nextUp = runs.findIndex((r) => r.state === "pending");
     $("runs").className = "";
-    $("runs").innerHTML = "<table><thead><tr>" +
-        [...dims, "task", "run", "status", "steps", "secs", "artifacts"].map((h, i) =>
-            \`<th\${i === 0 ? ' class="l"' : ""}>\${esc(h)}</th>\`).join("") + "</tr></thead><tbody>" +
-        runs.map((r, i) => {
-            // Single quotes on purpose: this source lives inside a template literal, so a \" here would
-            // unescape to a bare quote and break the ATTRIBUTE, which is a page-wide syntax error.
-            const cls = r.state === "running" ? ' class="live"' : (i === nextUp ? ' class="next"' : "");
-            const cells = [
-                ...dims.map((d) => \`<code>\${esc(r.combo[d])}</code>\`),
-                esc(r.taskId), "r" + r.repeat, outcome(r, now),
-                r.steps ?? '<span class="dim">–</span>',
-                r.secs != null ? r.secs.toFixed(1) : '<span class="dim">–</span>',
-                r.path ? \`<a href="/artifacts/\${encodeURI(r.path)}/run.md">run.md</a> <span class="dim">·</span> <a href="/artifacts/\${encodeURI(r.path)}/run.json">json</a>\` : "",
-            ];
-            return \`<tr\${cls}>\` + cells.map((c, j) => \`<td\${j === 0 ? ' class="l"' : ""}>\${c}</td>\`).join("") + "</tr>";
-        }).join("") + "</tbody></table>";
+    $("runs").innerHTML = table(
+        [...dims, "task", "run", "status", "steps", "secs", "artifacts"],
+        runs.map((r) => [
+            ...dims.map((d) => \`<code>\${esc(r.combo[d])}</code>\`),
+            esc(r.taskId), "r" + r.repeat, outcome(r, now),
+            r.steps ?? '<span class="dim">–</span>',
+            r.secs != null ? r.secs.toFixed(1) : '<span class="dim">–</span>',
+            r.path ? \`<a href="\${base}\${encodeURI(r.path)}/run.md">run.md</a> <span class="dim">·</span> <a href="\${base}\${encodeURI(r.path)}/run.json">json</a>\` : "",
+        ]),
+        dims.length + 2,
+        (i) => runs[i].state === "running" ? ' class="live"' : (i === nextUp ? ' class="next"' : ""),
+    );
+}
+
+/**
+ * What is running, lifted OUT of the table.
+ *
+ * With \`--jobs N\` the live rows can be anywhere in a list of a hundred, and the answer to "what is it
+ * doing" should not require finding them. Rows stay in matrix order — reordering the queue to float the
+ * live ones would make the thing you are watching move under you.
+ */
+function renderFlight(s, now) {
+    const live = s.runs.filter((r) => r.state === "running");
+    const panel = $("flight");
+    panel.className = live.length ? "flight-panel on" : "flight-panel";
+    if (!live.length) return;
+    panel.innerHTML = live.map((r) => {
+        const l = r.live || {};
+        const step = l.step != null ? \`step \${l.step}\${l.maxSteps ? "/" + l.maxSteps : ""}\` : "starting";
+        const el = r.startedAt ? dur(now - r.startedAt) : "";
+        const dimVals = dims.map((d) => r.combo[d]).join(" ");
+        return \`<div class="row"><span class="who">\${esc(dimVals)} \${esc(r.taskId)} r\${r.repeat}</span>\` +
+            \`<span class="what"><span class="spin"></span>\${step}\${l.tool ? " · " + esc(l.tool) : ""}\` +
+            \`\${el ? ' · <span class="dim">' + el + "</span>" : ""}</span></div>\`;
+    }).join("");
 }
 
 /**
@@ -212,22 +247,36 @@ function renderHead(s) {
     document.title = s.finished ? \`✓ \${s.name}\` : \`\${pct}% \${s.name}\`;
 }
 
-let latest = null;
+// Baked-in state (a SAVED page) or a live subscription — the renderer does not care which. One renderer,
+// two lifetimes: a saved report.html is the same code with the last state inlined, so the archive cannot
+// drift from the live view the way a separately-written static report would.
+let latest = window.__BENCH_STATE__ || null;
 const draw = () => {
     if (!latest) return;
     const now = Date.now();
-    renderHead(latest); renderStats(latest, now); renderAgg(latest.rows); renderRuns(latest.runs);
+    renderHead(latest); renderStats(latest, now); renderFlight(latest, now);
+    renderAgg(latest.rows); renderRuns(latest.runs, latest.artifactBase ?? "/artifacts/");
 };
-const src = new EventSource("/events");
-src.onmessage = (e) => {
-    latest = JSON.parse(e.data);
+if (latest) {
+    // A SAVED page: the state is already here, so there is nothing to subscribe to. Subscribing anyway
+    // would sit on a dead port and paint "(disconnected)" over a perfectly complete report.
     dims = latest.dims || []; cols = latest.columns || [];
     draw();
-};
+} else {
+    const src = new EventSource("/events");
+    src.onmessage = (e) => {
+        latest = JSON.parse(e.data);
+        dims = latest.dims || []; cols = latest.columns || [];
+        draw();
+    };
+    src.onerror = () => { $("counts").innerHTML += ' <span class="dim">(disconnected)</span>'; };
+}
 // Redraw on a timer as well as on a push: the elapsed clocks and the ETA move with the wall, not with
 // events, and a run that sits in one tool for a minute would otherwise look frozen.
-setInterval(() => { if (latest && !latest.finished) draw(); }, 1000);
-src.onerror = () => { $("counts").innerHTML += ' <span class="dim">(disconnected)</span>'; };
+const tick = setInterval(() => {
+    if (!latest || latest.finished) return clearInterval(tick);   // nothing left to advance
+    draw();
+}, 1000);
 </script>
 `;
 
@@ -305,4 +354,34 @@ export async function startDashboard({ port = 0, artifactRoot }) {
             await new Promise((r) => server.close(r));
         },
     };
+}
+
+/**
+ * The same page with the final state baked in — a SAVED sweep.
+ *
+ * The live view is already an index of the runs, so archiving it makes the sweep directory navigable on
+ * its own: open `report.html` and every run is one click away, with the aggregate table above it. Written
+ * beside `report.md` for whoever prefers which.
+ *
+ * It is the same HTML and the same renderer, differing only in where the state comes from and in the link
+ * base — relative, since the file sits IN the sweep directory rather than being served from `/artifacts/`.
+ * Writing a separate static report instead would be a third implementation of the same table, and it
+ * would eventually disagree with the other two.
+ *
+ * @param {object} state the final sweep state (as pushed to `update`)
+ * @returns {string} a self-contained HTML document
+ */
+export function staticPage(state) {
+    const baked = { ...state, artifactBase: "", columns: COLUMNS.map((c) => ({ key: c.key, label: c.label, digits: c.digits })) };
+    // `</script>` inside the JSON would close the tag early; escaping the slash is the standard fix and
+    // leaves the JSON valid. `<!--` would open a comment, and U+2028/9 are literal newlines in JS.
+    // Injected as a JS OBJECT LITERAL, not as a string to JSON.parse. Wrapping it in a quoted string
+    // means escaping quotes AND the backslashes already inside the JSON, in that order — get it wrong and
+    // a `\n` inside any string becomes a real newline and the parse dies. JSON is a subset of JS literal
+    // syntax, so there is nothing to escape except the three sequences that are dangerous IN A SCRIPT TAG:
+    // `<` (which could close it early via `</script>`) and U+2028/9 (literal line terminators in JS).
+    const json = JSON.stringify(baked)
+        .replace(/</g, "\\u003c").replace(/\u2028/g, "\\u2028").replace(/\u2029/g, "\\u2029");
+    // A function replacer, so a `$&` or `$1` occurring in the data is not treated as a substitution.
+    return PAGE.replace("<script>", () => `<script>window.__BENCH_STATE__ = ${json};`);
 }

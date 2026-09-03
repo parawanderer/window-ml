@@ -118,7 +118,8 @@ jobs:
       - if: steps.pyocache.outputs.cache-hit != 'true'
         run: npm run fetch-pyodide
       # `test:e2e` runs `pretest:e2e` (npm run build) first, so it exercises the built dist/. The harness is
-      # headful by default (an MV3 service worker doesn't register under headless), so run it under xvfb.
+      # headless now (full Chromium in --headless=new); xvfb stays as a safety net for anything that asks
+      # for a window (the narrated demos, E2E_HEADFUL=1) so such a run fails on its assertion, not on DISPLAY.
       - name: Run E2E
         run: xvfb-run -a npm run test:e2e
 

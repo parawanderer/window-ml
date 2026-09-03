@@ -59,6 +59,10 @@ const main = async () => {
         // hung. (WARM already read its value correctly.)
         focusSidebar: true,
         hold: !!process.env.WATCH && process.env.WATCH !== "0",
+        // Headless unless someone is actually looking. WATCH implies a window (it holds the browser open
+        // at the end); HEADFUL=1 gives one without the hold. The sidebar still opens and the screenshots
+        // still capture it either way — that is DOM work, not a window manager's.
+        headful: !!process.env.HEADFUL && process.env.HEADFUL !== "0",
         log: (s) => console.log(s),
     });
 

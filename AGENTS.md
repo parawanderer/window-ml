@@ -1025,9 +1025,12 @@ thing. The parts:
 
 - **`harness.mjs`** — `launchExtension()` (persistent context + `--load-extension=dist`),
   `configureExtension(sw, cfg)` (writes `chrome.storage.sync` via the SW), `waitForMl(page)`.
-  **Headful by default** — an MV3 service worker does NOT register under headless Chromium
-  (verified); CI runs it under `xvfb`. Opt into headless with `E2E_HEADLESS=1` (only to see
-  the failure). **A run is started exactly like a console call:** `page.evaluate(() =>
+  **HEADLESS by default**, via `channel: "chromium"`. The old note here said an MV3 service worker does
+  not register under headless Chromium — true, but narrower than it read: plain `headless: true` runs the
+  headless SHELL, a stripped binary with no extension support at all. `channel: "chromium"` runs the FULL
+  browser in `--headless=new`, where the worker registers in ~0.5s and the whole suite passes. This
+  matters beyond tidiness: a headful window grabs focus and the mouse on every launch, and the suite
+  launches one per spec. Pass `headful: true` (the narrated demos do) or set `E2E_HEADFUL=1` for a look. **A run is started exactly like a console call:** `page.evaluate(() =>
   window.ml.agent(task, opts))` — Playwright's `page.evaluate` runs in the page **main world**,
   where `injected.js` defines `window.ml`, so no test-only hooks; the same front door a human
   uses. The result structured-clones back to Node.

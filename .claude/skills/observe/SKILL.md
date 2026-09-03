@@ -35,6 +35,7 @@ Configure everything with **env vars** (all optional):
 | `WARM=0` | Skip the VRAM warm-up. A **local** model wants it warmed (omit `WARM=0`); the fake/API don't need it. |
 | `APPROVE=<policy>` | How the built-in approval poller resolves a gate the run halts on: `auto` (default), `deny`, `readonly` (approve exec + readonly python only), `hold` (log but don't resolve — for manual clicking in WATCH). Every gate + decision is logged, so a run never hangs silently. |
 | `WATCH=1` | HOLD the browser open at the end (close the window / Ctrl+C to exit) instead of tearing down — for inspecting a finished run. (The sidebar auto-opens + focuses on the session by DEFAULT, so a watching human never clicks; `WATCH` only adds the hold. `WATCH=0` is off, like `WARM=0`.) |
+| `HEADFUL=1` | Show a real browser WINDOW. Off by default: the harness runs headless (full Chromium in `--headless=new`), because a window steals focus and the mouse on every launch. The sidebar still opens and the screenshots still capture it — that is DOM work. `WATCH=1` implies a window. |
 | `RUN_LABEL=my-run` | Names the artifact dir (else a timestamp). Use stable labels to diff before/after a fix. |
 
 ## Read the artifacts
