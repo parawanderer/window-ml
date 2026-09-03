@@ -19,7 +19,7 @@ const DEFAULT_DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 
  * `dist` loads a DIFFERENT build directory than `dist/` — how the bench runs an experimental variant
  * (an esbuild `--define`d build in its own outdir) without the experiment ever becoming a product flag.
  */
-export async function launchExtension({ dist, headful } = {}) {
+export async function launchExtension(/** @type {{ headful?: boolean, dist?: string }} */ { dist, headful } = {}) {
     const DIST = dist ? path.resolve(dist) : DEFAULT_DIST;
     const context = await chromium.launchPersistentContext("", {
         // HEADLESS by default, via `channel: "chromium"`.
@@ -50,11 +50,15 @@ export async function launchExtension({ dist, headful } = {}) {
 }
 
 /** Write the extension's non-secret config (chatUrl / apiFormat / model / debugMode …) via the SW. */
-export async function configureExtension(sw, config) {
-    await sw.evaluate((cfg) => new Promise((r) => chrome.storage.sync.set(cfg, r)), config);
+export async function configureExtension(/** @type {any} */ sw, /** @type {Record<string, unknown>} */ config) {
+    await sw.evaluate((/** @type {any} */ cfg) => new Promise((r) => chrome.storage.sync.set(cfg, () => r(undefined))), config);
 }
 
 /** Resolve when `window.ml` is live in the page's MAIN world (injected.js has fired ml:ready). */
-export async function waitForMl(page) {
-    await page.waitForFunction(() => !!(window.ml && window.ml.ready), null, { timeout: 15000 });
+export async function waitForMl(/** @type {any} */ page) {
+    // Cast, because this function is SERIALIZED and evaluated in the page: `window.ml` is installed there
+    // by injected.js at runtime, and no ambient declaration in this project covers it (the extension's own
+    // types describe the API's shape, not its presence on a page's window). A type here would be a claim
+    // about another realm either way.
+    await page.waitForFunction(() => { const w = /** @type {any} */ (window); return !!(w.ml && w.ml.ready); }, null, { timeout: 15000 });
 }

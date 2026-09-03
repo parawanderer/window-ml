@@ -1,0 +1,52 @@
+#!/bin/sh
+# Pre-commit: the two checks that are fast enough to run every time, on STAGED files only.
+#
+# Enable once per clone (hooks are not shared by git automatically):
+#
+#     git config core.hooksPath .githooks
+#
+# Skip a single commit with `git commit --no-verify` — for a WIP commit on your own branch, that is the
+# right call rather than fighting the hook.
+#
+# Deliberately NOT in here: `npm test` (~100s), the e2e suite (minutes), and any formatter. A hook that
+# takes two minutes gets disabled, and a hook that rewrites your staged files hands you a commit you did
+# not read. CI is where the slow checks belong; this only catches what is both instant and unambiguous.
+
+set -e
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+[ -z "$staged" ] && exit 0
+
+# A git WORKTREE does not get node_modules, and this repo is often worked in several at once — so a
+# missing install is a normal state, not an error. Without this the hook died on `tsc: command not found`
+# and blamed the typecheck, which is a confusing way to learn you needed `npm ci`. (Found by the hook
+# doing exactly that on its own commit.) The whitespace check needs nothing but node, so it still runs.
+if [ ! -d node_modules ]; then
+    echo "pre-commit: no node_modules here (a fresh worktree?) — skipping the typecheck."
+    echo "            symlink or install to get it: ln -s <main-checkout>/node_modules node_modules"
+    node scripts/check-format.mjs --staged || {
+        echo ""
+        echo "pre-commit: whitespace. Fix with:  node scripts/check-format.mjs --staged --fix"
+        exit 1
+    }
+    exit 0
+fi
+
+# 1. Whitespace invariants (.editorconfig), reported not rewritten.
+if ! node scripts/check-format.mjs --staged; then
+    echo ""
+    echo "pre-commit: whitespace. Fix with:  node scripts/check-format.mjs --staged --fix"
+    echo "            then re-stage. Or commit with --no-verify."
+    exit 1
+fi
+
+# 2. Types, but only when a typed source actually changed — `tsc` on this project is a few seconds, which
+#    is worth paying for a contract.ts edit and not worth paying for a README one.
+if echo "$staged" | grep -qE '\.(ts|tsx)$'; then
+    if ! npm run --silent typecheck; then
+        echo ""
+        echo "pre-commit: typecheck failed. The core is strict, and its types are what gen-api-docs.mjs"
+        echo "            lifts into what the AGENT reads — a wrong type there ships a wrong doc."
+        exit 1
+    fi
+fi

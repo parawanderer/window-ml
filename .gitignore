@@ -5,8 +5,10 @@ __pycache__
 *.log
 dist/
 tmp/
-src/api-docs.gen.ts
-src/build-info.gen.ts
+# Generated, ANYWHERE — not `src/…` specifically. Pinning the path is how the stale root-level copies
+# got committed: the src/ move repointed this at src/, the pre-move leftovers at the root stopped
+# being ignored, and the next `git add -A` swept them in as tracked dead files.
+*.gen.ts
 tools/annotate-preview.html
 tools/legend-notebook.html
 pyodide-wheels/
