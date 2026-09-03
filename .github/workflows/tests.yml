@@ -180,7 +180,13 @@ jobs:
           E2E_BACKEND: ${{ vars.E2E_REAL_BACKEND || 'https://api.groq.com/openai/v1/chat/completions' }}
           E2E_MODEL: ${{ vars.E2E_REAL_MODEL || 'openai/gpt-oss-20b' }}   # llama-3.3 emitted malformed tool calls; gpt-oss complies
           E2E_KEY: ${{ secrets.GROQ_API_KEY_FREE }}
-        run: xvfb-run -a npm run test:e2e
+        # ONLY the @real-ok tests. Everything else in the suite scripts the model — it sets an exact turn
+        # sequence and reads fake.calls() back — so it either skips (cross-page's beforeEach) or, like
+        # python-stream, starts its own fake and tests something a real model has no bearing on. Running
+        # them here cost four minutes to learn nothing, and python-stream additionally failed for want of
+        # the pyodide wheels this job has no reason to fetch. What remains is the two tests that actually
+        # exercise a real model end to end.
+        run: xvfb-run -a npm run test:e2e -- --grep "@real-ok"
       - uses: actions/upload-artifact@v4
         if: always() && steps.gate.outputs.have_key == 'true'
         with:

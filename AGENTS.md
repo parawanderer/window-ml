@@ -1186,10 +1186,15 @@ previously recoverable only by regexing the system prompt.
 
 **CI (`.github/workflows/tests.yml`):** two Playwright jobs. `e2e` is the **deterministic gate**
 (fake-LLM, every push/PR, under `xvfb`). `e2e-real-model` is a **non-blocking** sanity check
-(`continue-on-error`, `workflow_dispatch` + nightly) against a free hosted OpenAI-shaped model —
+(`continue-on-error`, `workflow_dispatch` + nightly) that runs **only the `@real-ok` tests** (everything
+else scripts the model, so it skips or tests something a real model has no bearing on) against a free
+hosted OpenAI-shaped model —
 default **Groq**, enabled by the repo secret `GROQ_API_KEY_FREE`, overridable via repo variables
-`E2E_REAL_BACKEND`/`E2E_REAL_MODEL`; it self-skips without the secret. Hard-won findings: **GitHub
-Models is retired** (its API 410s a "retirement brownout" — don't use it); **`llama-3.3-70b` on
+`E2E_REAL_BACKEND`/`E2E_REAL_MODEL`; it self-skips without the secret. Hard-won findings: a real model on this job produced a Groq
+`tool_use_failed` 400 — `attempted to call tool 'orient' which was not in request.tools` — having invented
+a tool from the system prompt's own numbered method ("1. ORIENT — get your bearings"). Groq validates tool
+calls server-side, so a hallucinated name is a hard 400 rather than a recoverable step, which is one more
+reason this job is non-blocking. **GitHub Models is retired** (its API 410s a "retirement brownout" — don't use it); **`llama-3.3-70b` on
 Groq emits malformed `<function=…>` tool calls** — use an `openai/gpt-oss-*` model, which complies;
 the Groq **free tier is 8000 TPM**, so a multi-turn agent (the ~3.2k-token system prompt re-sends
 each turn) trips it — hence the rate-limit backoff below. GPU-less CI runners can't run a real model
