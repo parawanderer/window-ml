@@ -1197,6 +1197,21 @@ polls, a fact about the box rather than about a session.
   DIFF** (a markdown diff is mostly layout; strip `VOLATILE_FIELDS` + `canonicalizeText` first), plus
   events/transcript/screenshots, and `run.html`+`run.pdf` behind `--pdf`. The report's **Runs** table
   indexes every individual run, since the aggregate hides the one repeat that went wrong.
+  **`run.md.html`** is the markdown RENDERED (`tests/e2e/viewer.mjs`, `marked` — a devDependency, since
+  the alternative is a partial renderer that silently mangles what it did not anticipate). It is written
+  beside `run.md` with RELATIVE asset paths, which is what lets ONE file serve both cases: opened off the
+  disk it finds its own `images/`, and served under `/artifacts/<run>/` it finds them there too — so there
+  is no server-side render to drift from it. Every h2 becomes a collapsible section, and a **failed run's
+  status in the index links straight AT the step that broke** (`focusStep` in metrics.mjs: a memory fault,
+  else a tool that returned an error, else the last step of a run that crashed or hit its cap; a run that
+  merely answered WRONG with every tool working gets no anchor, because there is no failing step and
+  pointing at one would send the reader to an innocent call). Folding is the NATIVE `<details>` state,
+  driven by a small inline script admitted by a **CSP hash** — raw HTML has to pass through for the sink's
+  own `<details>`, so a scraped hostile page could otherwise run script when a human READS the transcript,
+  and a hash admits this exact text while refusing anything injected. A first attempt did the folding in
+  pure CSS to avoid script entirely, and it was wrong in a way worth remembering: hiding section bodies
+  OVERRIDES the native state, so after "collapse all" a heading click did visibly nothing.
+  Observe's artifacts get the same file.
 - **`approval-demo.mjs`** — a **narrated demo, not a test**: `npm run build && node --import tsx
   tests/e2e/approval-demo.mjs` opens a headful browser and walks the approval-over-IPC flow (idea #2)
   three times — a manual APPROVE, a manual REJECT, and a POLICY driver that auto-approves read-only

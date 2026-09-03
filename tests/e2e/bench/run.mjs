@@ -215,7 +215,15 @@ async function runCell(cell, ctx, index) {
         await renderPdf(run.session, dir, `${slug(ctx.spec.name)}-${t.id}-r${cell.repeat}`)
             .catch((e) => ctx.log(`  (pdf render failed for ${label}: ${String(e).slice(0, 80)})`));
     }
-    const saved = { key, combo: cell.combo, taskId: t.id, repeat: cell.repeat, measurement };
+    // The agent run's own hash, so a row in the table can be matched by eye to the transcript it
+    // names (`# Agent run · model · <hash>`). Saved with the cell rather than derived at report
+    // time, because a cached cell has no session to ask.
+    const saved = { key, combo: cell.combo, taskId: t.id, repeat: cell.repeat, measurement,
+        hash: run.session?.hash ?? null,
+        // WHICH MODEL produced this. A sweep can vary the model as a dimension, and even when it does
+        // not, "which model was this run against" is the first question asked of any result and was
+        // previously answerable only by reading a run.md. Saved with the cell so a cached one keeps it.
+        backend: run.backendLabel ?? null, models: run.models ?? null };
     await writeFile(cacheFile, JSON.stringify(saved, null, 2));
     ctx.ran++;
     ctx.report?.(index, "done", { measurement, dir, fromCache: false });
@@ -322,6 +330,7 @@ const main = async () => {
             Object.assign(r, {
                 ok: m.ok, succeeded: m.succeeded, steps: m.steps, secs: m.runMs / 1000,
                 cached: info.fromCache, path: path.relative(sweepDir, info.dir), live: undefined,
+                hash: info.hash ?? null, backend: info.backend ?? null, models: info.models ?? null,
             });
             results[i] = info;
         }
@@ -358,6 +367,8 @@ const main = async () => {
         secs: results[i]?.measurement ? results[i].measurement.runMs / 1000 : null,
         // Relative to the SWEEP directory: report.html sits there, and the terminal/markdown reports
         // print repo-relative paths separately below.
+        hash: results[i]?.hash ?? null, backend: results[i]?.backend ?? null,
+        models: results[i]?.models ?? null,
         path: results[i] ? path.relative(sweepDir, results[i].dir) : "",
         repoPath: results[i] ? path.relative(ROOT, results[i].dir) : "",
     }));
@@ -372,7 +383,7 @@ const main = async () => {
     // navigable on its own. Links are relative, so it works from disk with no server.
     await writeFile(path.join(sweepDir, "report.html"), staticPage({
         name: spec.name, description: spec.description, dims: Object.keys(spec.dimensions || {}),
-        runs, rows, started, finished, jobs: args.jobs, dirty, fingerprint,
+        runs, rows, started, finished, jobs: args.jobs, dirty, fingerprint, pdf: args.pdf,
     }));
     await writeFile(path.join(sweepDir, "rows.json"), JSON.stringify({ fingerprint, dirty, started, finished, rows, runs }, null, 2));
     console.log(`\n  report: ${path.relative(ROOT, reportPath)}\n  page:   ${path.relative(ROOT, path.join(sweepDir, "report.html"))}\n`);

@@ -85,6 +85,20 @@ export function resultOf(events) {
 }
 
 /**
+ * Every turn's answer, in order — because a task with a `followup` has more than one, and they answer
+ * DIFFERENT questions.
+ *
+ * This was a real mis-scoring, not a refinement. `cite-or-retype` asks which region wins and then asks to
+ * see the rows; the predicate was handed the LAST summary, which answers the second question, so a run
+ * that said "East" and was entirely correct scored WRONG — in both arms, on every repeat. It reads as a
+ * task the model cannot do, which is the most expensive kind of bench bug because the output looks like a
+ * finding.
+ */
+export function answersOf(events) {
+    return events.filter((e) => e.kind === "agent-result").map((e) => e.summary ?? "");
+}
+
+/**
  * Every string the model actually WROTE inside a value, flattened out of the argument object.
  *
  * Not JSON.stringify: that escapes the content it is supposed to expose. A retyped table's newlines become
@@ -170,13 +184,55 @@ export function sharesRun(needleSource, haystack, k = 40) {
  *
  * @returns {{ outputs: number, reEmitted: number, rate: number, instances: Array }}
  */
+/**
+ * The distinctive VALUES in a blob: numbers of two digits or more, and words of three characters or more.
+ *
+ * Case is folded and order is dropped, so this survives the transformations a verbatim scan cannot.
+ *
+ * A number must NOT absorb its separators. The first version matched `\d[\d.,]+`, which reads the CSV
+ * row `120,150,130,160` as ONE token while the JS literal `120, 150, 130, 160` — a comma and a SPACE —
+ * splits into four. The two shapes then shared almost nothing, which is precisely the comparison this
+ * exists to make, and a full twelve-row retype measured 0.49 instead of ~1.
+ */
+export function valueTokens(text) {
+    return new Set(String(text ?? "").toLowerCase().match(/[a-z_][a-z0-9_]{2,}|\d+(?:\.\d+)?/g) || []);
+}
+
+/**
+ * Did the model REPRODUCE the data, in whatever shape it liked?
+ *
+ * `sharesRun` finds a verbatim run and tolerates reflowed whitespace, which is not enough: a model asked
+ * to compute over a captured table typically RETYPES it into a literal for `exec`. A CSV row
+ * `Ada,North,120,150,130,160` becomes `["Ada", "North", 120, 150, 130, 160],` — every value carried over,
+ * every 40-character window destroyed by the quotes and brackets. The run in question retyped all twelve
+ * rows and scored 0.00, and since neither arm of an A/B would score anything, the sweep would have
+ * concluded "no difference" from an instrument measuring nothing.
+ *
+ * So the test is COVERAGE of the captured values rather than contiguity. It needs the output to be
+ * substantial (`minTokens`) before it will judge at all, and then most of it to reappear
+ * (`minCoverage`) — a summary that cites two figures out of sixty is a citation, which is the behaviour
+ * we want, not a re-emission.
+ */
+export function sharesValues(needleSource, haystack, { minTokens = 8, minCoverage = 0.7 } = {}) {
+    const want = valueTokens(needleSource);
+    if (want.size < minTokens) return false;
+    const have = valueTokens(haystack);
+    let hit = 0;
+    for (const t of want) if (have.has(t)) hit++;
+    return hit / want.size >= minCoverage;
+}
+
 export function reEmission(events, k = 40) {
     const outputs = capturedOutputs(events).filter((o) => norm(o.text).length >= k);
     const authored = authoredTexts(events);
     const instances = [];
     for (const o of outputs) {
-        const hit = authored.find((t) => t.order > o.order && sharesRun(o.text, t.text, k));
-        if (hit) instances.push({ fromOrder: o.order, tool: o.tool, atOrder: hit.order, kind: hit.kind });
+        const hit = authored.find((t) => t.order > o.order
+            && (sharesRun(o.text, t.text, k) || sharesValues(o.text, t.text)));
+        if (hit) {
+            const verbatim = sharesRun(o.text, hit.text, k);
+            instances.push({ fromOrder: o.order, tool: o.tool, atOrder: hit.order, kind: hit.kind, verbatim });
+        }
     }
     return { outputs: outputs.length, reEmitted: instances.length, rate: outputs.length ? instances.length / outputs.length : 0, instances };
 }
@@ -261,16 +317,62 @@ export function tokenCost(events) {
  * looks like, so a task carries its own. A task with no predicate reports null rather than guessing,
  * and the report renders that as "not scored" instead of as a failure.
  */
+/**
+ * The step worth opening FIRST when a run went wrong — so the index can link into the transcript at the
+ * place that broke rather than at the top of a fifty-screen document.
+ *
+ * Ranked by how specific the evidence is, and it reports WHY so the link can say what it is pointing at:
+ *
+ *  1. a pointer MemoryFault — an exact step, and the thing the pointer work exists to study;
+ *  2. a tool step that came back an error — the tool named it, so this is not a guess;
+ *  3. the LAST step, when the run itself errored or hit the cap — where a crash or a timeout left off.
+ *
+ * A WRONG-but-clean run gets nothing: every step ran fine and the answer is simply not the expected one,
+ * so there is no failing step to point at and inventing one would send you to an innocent step. The
+ * answer is at the end of the document, which is where the plain link already lands.
+ *
+ * The TOOL comes back too, because a step is rendered as two sections — its reasoning and its call — and
+ * an anchor of "step 4" lands on the reasoning while the thing that failed is the call. The precise
+ * anchor is `step-<n>-<tool>`, matching the heading slug the viewer emits.
+ *
+ * @returns {{step:number, tool:string|undefined, why:string}|null}
+ */
+export function focusStep(run) {
+    /** A step's model-facing result, which is where a tool reports its own failure. */
+    const text = (s) => String(s.modelResult ?? s.result ?? "");
+    const events = afterSeed(run.events || [], run.seedBoundaryStep ?? -1);
+    const steps = stepsOf(events).filter((s) => s.tool);
+    if (!steps.length) return null;
+
+    const fault = steps.find((s) => s.tool === "dereference" && /memory ?fault/i.test(text(s)));
+    if (fault) return { step: fault.step, tool: fault.tool, why: "memory fault" };
+
+    // `isError` is what the loop itself sets on a failed tool result; the text probe is the fallback for
+    // a tool that reports failure in its content instead. Ordered so the structural signal wins.
+    const bad = steps.find((s) => s.result?.isError || s.isError || /^\s*(error|failed)\b/i.test(text(s)));
+    if (bad) return { step: bad.step, tool: bad.tool, why: "tool error" };
+
+    const done = resultOf(events);
+    const last = steps[steps.length - 1];
+    if (run.error || done?.error) return { step: last.step, tool: last.tool, why: "run ended here" };
+    if (done?.hitCap) return { step: last.step, tool: last.tool, why: "step cap" };
+    return null;
+}
+
 export function measureRun(run, task = {}, opts = {}) {
     const { result = null, runMs = 0, error = null, approvals = [] } = run;
     const events = afterSeed(run.events || [], run.seedBoundaryStep ?? -1);
     const k = opts.k ?? 40;
     const done = resultOf(events);
     const steps = stepsOf(events).filter((s) => s.tool);
-    const answer = done?.summary ?? result?.summary ?? "";
+    // The answer to the TASK, which is the FIRST one when a follow-up ran. `finalAnswer` and the full
+    // list are handed over too, so a spec that means to score the follow-up can still say so.
+    const answers = answersOf(events);
+    const answer = answers[0] ?? result?.summary ?? "";
+    const finalAnswer = answers[answers.length - 1] ?? answer;
     let succeeded = null;
     if (typeof task.succeeded === "function") {
-        try { succeeded = !!task.succeeded({ answer, events, result, steps }); }
+        try { succeeded = !!task.succeeded({ answer, finalAnswer, answers, events, result, steps }); }
         catch { succeeded = false; }   // a predicate that throws is a failed run, not a broken bench
     }
     return {
@@ -285,10 +387,12 @@ export function measureRun(run, task = {}, opts = {}) {
         approvals: approvals.length,
         denied: approvals.filter((a) => a.decision === "denied").length,
         answer,
+        finalAnswer,
         tokens: tokenCost(events),
         reEmission: reEmission(events, k),
         pointers: pointerUse(events),
         recovery: recovery(events),
+        focus: focusStep(run),
     };
 }
 

@@ -9,7 +9,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
     stepsOf, authoredTexts, capturedOutputs, sharesRun, reEmission, pointerRefs, pointerUse,
-    recovery, tokenCost, measureRun, afterSeed, spread, rate, aggregate, COLUMNS,
+    recovery, tokenCost, measureRun, afterSeed, spread, rate, aggregate, COLUMNS, focusStep,
 } from "../tests/e2e/bench/metrics.mjs";
 import { combos, expandCells, cellKey, selected, parseSelector, buildGroups, cellPath } from "../tests/e2e/bench/cells.mjs";
 
@@ -301,4 +301,54 @@ test("cellPath: a value that is not filesystem-safe still yields one directory s
     const p = cellPath({ combo: { model: "gemma4:31b/x" }, task: { id: "two tables" }, repeat: 2 });
     assert.equal(p, "two-tables/model-gemma4-31b-x/r2");
     assert.ok(!p.includes(":"));
+});
+
+// focusStep — which step the index should link INTO when a cell went wrong.
+//
+// The risk here is not a crash, it is a confident wrong answer: a link that lands on an innocent step
+// sends you to read the wrong evidence, which is worse than landing at the top of the document and
+// scrolling. So the interesting assertions are the ones where it must decline to guess.
+
+test("focusStep: a tool that reported an error is the step to open", () => {
+    const ev = [start(), ...step(1, "findByText", { text: "x" }, "found"),
+        ...step(2, "exec", { js: "@tool:abc" }, "Error: Invalid or unexpected token"), end("gave up")];
+    assert.deepEqual(focusStep({ events: ev }), { step: 2, tool: "exec", why: "tool error" });
+});
+
+test("focusStep: a memory fault OUTRANKS a later tool error — it is the more specific evidence", () => {
+    const ev = [start(),
+        ...step(1, "dereference", { ref: "@tool:zzzzzzz" }, "MemoryFault: no such pointer (distance 6)"),
+        ...step(2, "exec", { js: "x" }, "Error: boom"), end("gave up")];
+    assert.deepEqual(focusStep({ events: ev }), { step: 1, tool: "dereference", why: "memory fault" });
+});
+
+test("focusStep: a clean run that merely got the WRONG answer gets no step", () => {
+    // Every tool worked; the answer is just not the expected one. There is no failing step, and pointing
+    // at one would send the reader to an innocent call.
+    const ev = [start(), ...step(1, "findByText", { text: "x" }, "found"), end("West")];
+    assert.equal(focusStep({ events: ev }), null);
+});
+
+test("focusStep: a run that crashed lands on its LAST step", () => {
+    const ev = [start(), ...step(1, "findByText", { text: "x" }, "found"),
+        ...step(2, "sampleText", { sel: "td" }, "rows")];
+    assert.deepEqual(focusStep({ events: ev, error: "timeout" }), { step: 2, tool: "sampleText", why: "run ended here" });
+});
+
+test("focusStep: a run with no steps at all has nothing to point at", () => {
+    assert.equal(focusStep({ events: [start(), end("nothing to do")] }), null);
+    assert.equal(focusStep({ events: [] }), null);
+});
+
+test("focusStep: a SEEDED step is not blamed — the script wrote it, not the model", () => {
+    // The seed is the harness deliberately putting a failure in the history. Linking to it would report
+    // the bench's own scaffolding as the run's failure.
+    const ev = [start(), ...step(1, "exec", { js: "bad" }, "Error: seeded failure"),
+        ...step(2, "findByText", { text: "x" }, "found"), end("fine")];
+    assert.equal(focusStep({ events: ev, seedBoundaryStep: 1 }), null);
+});
+
+test("focusStep rides on the measurement, so the index needs no second pass over the stream", () => {
+    const ev = [start(), ...step(1, "exec", { js: "x" }, "Error: boom"), end("nope")];
+    assert.deepEqual(measureRun({ events: ev, runMs: 10 }, {}).focus, { step: 1, tool: "exec", why: "tool error" });
 });
