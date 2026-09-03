@@ -97,7 +97,25 @@ what happened — only about how it looks.
 
 `--serve` prints a URL for a live page (on a stable port, so a browser tab can reload between sweeps
 rather than needing a new address — in **VS Code**, cmd-click it and pick **Simple Browser** to dock the
-page as an editor tab beside the code): every run with its state, what is queued next, the in-flight run's
+page as an editor tab beside the code):
+
+![The live page mid-sweep](../../../../docs/bench-live-2026-09-03.png)
+
+Every run is listed from the start, so what is queued is as visible as what is done: `▸` marks what runs
+next, the live row is highlighted, and it reads `step 3/10 · python_exec · 48s` — how far in, against what
+budget, in which tool. Under the counters is the last thing that actually happened. The four figures are
+elapsed, mean per run, mean per step, and an ETA as a wall-clock time (withheld until a few runs land,
+since an estimate from one sample is a guess wearing a number's clothes).
+
+When the sweep finishes, the same page is saved as `report.html` beside `report.md` — the aggregate above
+a per-run index, each row linking to that run's transcript:
+
+![The saved report](../../../../docs/bench-report-2026-09-03.png)
+
+That screenshot is the smoke spec, so it doubles as what a correct calibration looks like: `re-emitter`
+reads 1.00, `citer` 0.00 holding the same data, and `seeded` 0.00 because the re-emission in its seeded
+turn is not charged to the measured one.
+ every run with its state, what is queued next, the in-flight run's
 step against its budget and what it is doing right now, elapsed time, mean time per run and per step, and
 an ETA. `--open` launches it. The terminal output is unchanged, so an agent can run the sweep and read the
 CLI while a human watches the page.
