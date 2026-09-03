@@ -215,6 +215,8 @@ function outcome(s: Session, isAgent: boolean): ExportOutcome {
 export function sessionToJson(s: Session, version?: string): ExportDocument {
     const isAgent = s.kind === "agent";
 
+    // Array.prototype.sort is stable, which matters: `seq` ties (a turn's thought and its
+    // tool call share one), and the input order within a tie is the real order.
     const steps = (s.steps || []).filter(isRecorded).map(stepToJson)
         .sort((a, b) => a.seq - b.seq);
     const messages = isAgent

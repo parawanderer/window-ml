@@ -190,11 +190,19 @@ export interface ExportStep {
     /** Index within the current turn of a multi-turn session (`run()` then `continue()`),
      *  where `step` keeps counting across turns. */
     localStep?: number;
-    /** Monotonic across the session, and the STABLE ORDERING KEY. Sort by this. */
+    /**
+     * Groups the records a single model turn emitted: a thought and the tool call it
+     * decided on share one `seq`. It is therefore NOT unique — 9 records over 5 turns
+     * carry 5 distinct values — so it identifies a turn's event group, not a record.
+     *
+     * ORDER: the `steps` array is already in the order things happened. Sort by `seq`
+     * only with a stable sort, or ties reorder; array order is authoritative.
+     */
     seq: number;
     /** When the step completed. Volatile. */
     at?: IsoTimestamp;
-    /** How long the tool took, from `toolMs`. Volatile. DERIVED name, same number. */
+    /** How long the tool took, from `toolMs`. Frequently ABSENT — the loop records it
+     *  per tool call, and a thought-only record has none. Volatile. */
     durationMs?: number;
     /** The model's narration for this step, when it produced any. */
     thought?: string;
@@ -250,7 +258,14 @@ export interface ExportStep {
      *  after a `locate`, say), and why. */
     feedback?: ToolFeedback;
 
-    /** Token counts for the model call that produced this step. */
+    /**
+     * Token counts for the model call that produced this step. In practice this sits on
+     * the THOUGHT record of a turn, not on the tool call it led to — the tokens were
+     * spent deciding, and the tool call is the consequence. Do not expect it per tool.
+     *
+     * `session.totals.tokensIn` sums these, so it counts the re-sent conversation once
+     * per turn. That is what a run COST; it is not the count of distinct tokens.
+     */
     usage?: TokenUsage;
     /** Tokens spent by delegated sub-calls made DURING this step. */
     subUsage?: SubcallUsage;

@@ -185,3 +185,16 @@ test("the file body is valid JSON and ends with a newline", () => {
     assert.doesNotThrow(() => JSON.parse(text));
     assert.ok(text.endsWith("\n"));
 });
+
+// Real runs emit several records per loop turn (a thought, then the tool it chose) sharing
+// one `seq`, so sorting must not reorder them relative to each other.
+test("records sharing a seq keep their original order", () => {
+    const s = agentSession();
+    s.steps = [
+        { step: 1, seq: 1, thought: "first" },
+        { step: 1, seq: 1, tool: "exec", result: "second" },
+        { step: 2, seq: 2, thought: "third" },
+    ];
+    const steps = sessionToJson(s).session.steps;
+    assert.deepEqual(steps.map(x => x.thought ?? x.result), ["first", "second", "third"]);
+});
