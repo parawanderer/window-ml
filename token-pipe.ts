@@ -13,6 +13,8 @@
 // Pure: no DOM, no chrome, no I/O.
 
 import { runPipe, splitStages } from "./text-pipe";
+import type { DerefRead } from "./contract";
+export type { DerefRead };
 import { isTokenShape } from "./token-id";
 import { lexicalSimilarity, type LexicalMetric } from "./label-match";
 

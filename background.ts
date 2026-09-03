@@ -7,7 +7,7 @@ import { modelFilterAllows, bgRunResumable, pushReplay, UI_OUT_CAP } from "./con
 import { runBackgroundAgent } from "./agent-host";   // design A: the background-hosted agent loop
 import type { ToolMeta } from "./agent-loop";
 import { externalSheetIds, googleSheetId, clipOut } from "./dom";
-import { TokenStore } from "./token-pipe";   // per-session `@tool:` pointer store for background-hosted runs   // track approved external sheets across a run + the choke-point grants
+import { TokenStore, type DerefRead } from "./token-pipe";   // per-session `@tool:` pointer store for background-hosted runs   // track approved external sheets across a run + the choke-point grants
 // The model-facing cap cdpEval clips its console to (exec's default per-slot cap) — the UI keeps far more, so
 // `seen` marks where the model's copy stopped, exactly like the main-world exec path.
 const CDP_EXEC_CAP = 500;
@@ -353,7 +353,7 @@ const pyStreamTabs = new Map<string, number>();
 
 // Pointer resolvers for background-hosted runs, keyed by runId — handed over by the loop at start (tokenSink)
 // so a page-side tool's `ml.dereference` can read THIS run's captured outputs. Deleted when the run ends.
-const derefByRun = new Map<string, (ref: string, pipe?: string | string[]) => string>();
+const derefByRun = new Map<string, (ref: string, pipe?: string | string[]) => DerefRead>();
 // The `@tool:` pointer store per background-hosted run, kept ACROSS the turns of one session so a follow-up
 // ("how did you compute that?") can still dereference the previous turn's output. Deliberately NOT a field on
 // the bgRuns record: that record is JSON-checkpointed to storage for MV3 eviction, and a Map serializes to
@@ -1232,7 +1232,9 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         const pipe = Array.isArray(message.pipe)
             ? (message.pipe as unknown[]).filter((x): x is string => typeof x === "string")
             : String(message.pipe || "");
-        try { sendResponse({ value: fn(String(message.ref || ""), pipe) }); }
+        // The advisory rides ALONGSIDE the value across the relay, for the same reason it does in-process:
+        // the page-side caller is a script that will operate on the value.
+        try { const read = fn(String(message.ref || ""), pipe); sendResponse({ value: read.value, ...(read.warning ? { warning: read.warning } : {}) }); }
         catch (e) { sendResponse({ error: (e as Error)?.message || String(e) }); }
         return true;
     }

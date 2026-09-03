@@ -48,7 +48,7 @@ import { annotate, pickAccentColorForTarget } from "./locate";
 import { suspiciousArgsWarning, suspiciousChars } from "./security";
 import { emitDebug, debugId, shortHash, sessionRegistry, agentRegistry, handleRegistry, enterAgentRun, exitAgentRun, resetSubcallUsage, subcallUsage } from "./bus";
 import { makeDomTools, buildDereferenceTool } from "./tools";
-import { pipeStages, TokenStore } from "./token-pipe";
+import { pipeStages, TokenStore, type DerefRead } from "./token-pipe";
 import { toolNameError } from "./token-id";
 import { hideSidebarForShot, makeBackgroundTaskPromise, makeChatRequest, makeStreamingTaskPromise } from "./bridge";
 import { validateArgs, validateExtend } from "./validate";
@@ -141,7 +141,12 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             const fn = currentDeref();
             if (!fn) throw new Error("ml.dereference is only live inside an ml.agent run (it reads that run's captured tool outputs).");
             // STAGES cross the boundary, not a joined string — a stage may hold a bare `|` (see pipeStages).
-            return await fn(String(ref ?? ""), pipeStages(pipe));
+            const read = await fn(String(ref ?? ""), pipeStages(pipe));
+            // The advisory goes to console, NOT into the return value — this result is about to be parsed,
+            // split or piped by the calling script, and exec captures console output into the step's result
+            // and its live stream, so the warning still reaches the model without touching the data.
+            if (read.warning) { try { console.warn(read.warning); } catch { /* no console in this realm */ } }
+            return read.value;
         },
         /**
          * Create a stateful multi-turn chat session.
@@ -920,7 +925,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             // `ml.dereference` inside an approved exec: the loop hands its pointer resolver to `tokenSink`
             // below, and this closure is what the ToolContext binds — so the primitive is live only while a
             // tool of THIS run is executing (see tool-exec's activeDeref), and resolves against this run.
-            let pageDeref: ((ref: string, pipe?: string | string[]) => string) | null = null;
+            let pageDeref: ((ref: string, pipe?: string | string[]) => DerefRead) | null = null;
             toolCtx.deref = async (ref, pipe) => {
                 if (!pageDeref) throw new Error("This run has no captured outputs yet.");
                 return pageDeref(ref, pipe);

@@ -781,8 +781,9 @@ test("ml.dereference (background-hosted): the page rings back to the SW, id-matc
     };
     window.addEventListener("message", onMsg);
     try {
-        const value = await derefViaBackground("run-7", "@tool:a1b2c3f", "head 5");
-        assert.equal(value, "resolved:@tool:a1b2c3f|head 5");
+        const read = await derefViaBackground("run-7", "@tool:a1b2c3f", "head 5");
+        assert.equal(read.value, "resolved:@tool:a1b2c3f|head 5");
+        assert.equal(read.warning, undefined, "no advisory when the pointer matched exactly");
         assert.equal(seen.length, 1);
         assert.equal(seen[0].runId, "run-7", "the read is scoped to the run whose tool is executing");
         assert.equal(seen[0].ref, "@tool:a1b2c3f");
@@ -832,4 +833,23 @@ test("ml.info(): the capacity round-trip, and null when the route isn't served",
     // Capacity UNKNOWN must arrive as null, so the panel omits its ceiling rather than drawing one at zero.
     const none = loadPageWorld({ onRuntimeMessage: (m) => (m.type === "OLLAMA_INFO" ? { data: null } : undefined) });
     assert.equal(await none.ml.info(), null);
+});
+
+// An advisory (a label resolved by similarity) must survive the background relay ALONGSIDE the value, so the
+// page-side ml.dereference can console.warn it without touching the data the script is about to parse.
+test("ml.dereference (background-hosted): a soft-match advisory crosses the relay beside the value", async () => {
+    const { derefViaBackground } = await import("../ml-agent.ts");
+    await withWindowBus(async (window) => {
+        const onMsg = (e) => {
+            const d = e.data;
+            if (!d || d.type !== "PAGE_DEREF") return;
+            window.postMessage({ type: "PAGE_DEREF_RESULT", id: d.id, value: "ROWS", warning: "resolved by similarity" }, "*");
+        };
+        window.addEventListener("message", onMsg);
+        try {
+            const read = await derefViaBackground("run-7", '@tool:"sales table"');
+            assert.equal(read.value, "ROWS", "the value is untouched — a note inside it would corrupt the data");
+            assert.equal(read.warning, "resolved by similarity", "and the advisory arrives separately");
+        } finally { window.removeEventListener("message", onMsg); }
+    });
 });

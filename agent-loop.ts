@@ -17,7 +17,7 @@ import { runStats, fmtTokPerSec, UI_OUT_CAP } from "./contract";
 import type { TokenRender } from "./contract";
 import { UNATTENDED_REFUSAL } from "./prompts";
 import { toolToken } from "./util";
-import { TokenStore, derefPipe, describeToken, extraBeyondModel, memoryFault, cleanLabel, nameOf, isAliasRef, parseLabel, DEREF_TOOL, type TokenKind, type TokenValue } from "./token-pipe";
+import { TokenStore, derefPipe, describeToken, extraBeyondModel, memoryFault, cleanLabel, nameOf, isAliasRef, parseLabel, DEREF_TOOL, type TokenKind, type TokenValue, type DerefRead } from "./token-pipe";
 
 export type Approval = "readonly" | "sandbox" | "same-origin" | "consented" | "self-source" | "user" | "denied" | "skipped" | "cancelled";
 export interface ToolMeta { name: string; requiresApproval?: boolean; capabilities?: string[]; }
@@ -204,7 +204,7 @@ export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number | (() =
     /** Called once at run start with a resolver for this run's `@tool:` pointers. The host binds it into the
      *  ToolContext so `ml.dereference` inside an approved exec reads THIS run's outputs — and only while a
      *  tool of this run is executing. The loop owns the store, so it is the only place that can hand this out. */
-    tokenSink?: (resolve: (ref: string, pipe?: string | string[]) => string) => void;
+    tokenSink?: (resolve: (ref: string, pipe?: string | string[]) => DerefRead) => void;
     /** The pointer store to use. Pass the SESSION's store so `@tool:` references survive across a handle's
      *  turns; omit for a one-shot run and the loop makes its own. */
     tokenStore?: TokenStore;
@@ -369,10 +369,15 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     };
     // Hand the resolver to the host (see tokenSink). Throws exactly what the tool would return, so a failed
     // read inside exec surfaces the same MemoryFault / pipe error the model sees from the tool itself.
-    opts.tokenSink?.((ref: string, pipe?: string | string[]): string => {
-        const v = tokenStore.get(ref);
+    opts.tokenSink?.((ref: string, pipe?: string | string[]): DerefRead => {
+        const { value: v, matched, score } = tokenStore.resolveRef(ref);
         if (!v) throw new Error(memoryFault(ref, tokenStore.nearest(ref), seq));
-        return derefPipe(v, TokenStore.slotOf(ref), pipe);
+        // A soft label match travels BESIDE the value, never inside it: the caller here is a script that will
+        // parse/split/pipe what it gets back, so a note appended to the value would corrupt the data.
+        const warning = matched
+            ? `ml.dereference: resolved ${JSON.stringify(parseLabel(ref) ?? ref)} to the label ${JSON.stringify(matched)} by similarity (${score?.toFixed(2)}), not an exact name.`
+            : undefined;
+        return { value: derefPipe(v, TokenStore.slotOf(ref), pipe), ...(warning ? { warning } : {}) };
     });
     /** Rewrite a `look` at an image pointer into a look at that image; anything else passes through.
      *  A bad pointer becomes an ERROR RESULT, never a throw: the model should read the fault and correct the

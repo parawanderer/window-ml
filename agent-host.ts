@@ -12,6 +12,7 @@
 // page-context, so a forged "it's read-only" gains nothing the page couldn't already do; it stays a
 // page-side concern of the delegated exec path. See principle-adding-a-privileged-tool.)
 import type { NeutralMessage, ToolCall, AgentResult, ApprovalDecision } from "./contract";
+import type { DerefRead } from "./token-pipe";
 import { runAgentLoop, shotTurnMessage } from "./agent-loop";
 import type { ToolMeta, AgentLoopDeps, ToolRunResult } from "./agent-loop";
 import { autoApprovePython } from "./auto-approve";
@@ -64,7 +65,7 @@ export interface RunAgentHostDeps {
     tryReadonly?(name: string, args: Record<string, unknown>): Promise<ToolRunResult | null>;
     /** Receives this run's pointer resolver at start, so the host can answer a page-side `ml.dereference`
      *  (the loop, and the store, live here; the tool runs in the page). See background's derefByRun. */
-    tokenSink?(resolve: (ref: string, pipe?: string | string[]) => string): void;
+    tokenSink?(resolve: (ref: string, pipe?: string | string[]) => DerefRead): void;
     // Pre-run In render for a PENDING step (streaming runs) — the page computes the tool's In descriptor
     // without running it, so a watched streaming step shows a pretty In, not raw JSON args.
     renderFor?: AgentLoopDeps["renderFor"];

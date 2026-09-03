@@ -292,3 +292,27 @@ test("dereference: a label resolved by SIMILARITY says so; an exact one says not
     assert.match(exact, /ROWS/);
     assert.doesNotMatch(exact, /resolved by similarity/);
 });
+
+// The exec path cannot carry the advisory in the value. `ml.dereference()` returns a string a script is about
+// to JSON.parse / split / pipe, so a note appended to it would corrupt the data — the tool path appends text
+// because there the model READS the result, and these are genuinely different channels.
+test("dereference: a soft match reaches exec as a console warning, leaving the VALUE clean", async () => {
+    let resolver = null;
+    await drive(
+        [call("python_exec", { code: "df", token: "the table of sales" }), { content: "done", tool_calls: [] }],
+        () => ({ result: "ROWS" }),
+        { tokenSink: (fn) => { resolver = fn; } });
+    assert.equal(typeof resolver, "function");
+
+    // Exact: the value, and nothing to advise about.
+    const exact = resolver('@tool:"the table of sales"');
+    assert.equal(exact.value, "ROWS");
+    assert.equal(exact.warning, undefined);
+
+    // Soft: the SAME clean value, with the advisory beside it for the caller to console.warn.
+    const soft = resolver('@tool:"sales table"');
+    assert.equal(soft.value, "ROWS", "the value is untouched — this is what the script operates on");
+    assert.match(soft.warning, /^ml\.dereference: resolved "sales table" to the label "the table of sales" by similarity/);
+    assert.match(soft.warning, /\(1\.00\)/, "with the score, so a weak match is visible");
+    assert.doesNotMatch(soft.value, /similarity/, "and nothing about the resolution leaked into the data");
+});

@@ -188,7 +188,7 @@ test("ml.dereference is LIVE inside a tool call and gone outside it", async () =
     assert.equal(currentDeref(), null, "nothing is bound before any tool runs — a page console gets nothing");
 
     const ctx = toolContext({ exec: fakeTool(async () => "") });
-    ctx.deref = async (ref, pipe) => `read ${ref}${pipe ? ` | ${pipe}` : ""}`;
+    ctx.deref = async (ref, pipe) => ({ value: `read ${ref}${pipe ? ` | ${pipe}` : ""}` });
 
     let sawInside = null;
     const tool = fakeTool(async () => {
@@ -197,7 +197,7 @@ test("ml.dereference is LIVE inside a tool call and gone outside it", async () =
         return "done";
     });
     await executeTool(tool, {}, ctx);
-    assert.equal(sawInside, "read @tool:abc1231 | head 2", "bound to THIS run's resolver while the tool ran");
+    assert.deepEqual(sawInside, { value: "read @tool:abc1231 | head 2" }, "bound to THIS run's resolver while the tool ran");
     assert.equal(currentDeref(), null, "and unbound again the moment the call returns");
 });
 
@@ -250,8 +250,12 @@ test("the loop hands out a resolver bound to ITS OWN store (the page-hosted path
     });
 
     assert.equal(typeof resolver, "function", "the loop handed a resolver to the host");
-    // It reads the FULL capture, not the truncated copy the model saw — the whole point.
-    assert.match(resolver("@tool:exec", "grep 'row 297:'"), /row 297: v297/);
+    // It reads the FULL capture, not the truncated copy the model saw — the whole point. The resolver returns
+    // { value, warning? }: an advisory travels BESIDE the value, never inside it, because the caller is a
+    // script that will parse or pipe what it gets back.
+    const read = resolver("@tool:exec", "grep 'row 297:'");
+    assert.match(read.value, /row 297: v297/);
+    assert.equal(read.warning, undefined, "an exact pointer read has nothing to advise about");
     // A bad pointer raises the same MemoryFault the tool returns, so exec and the tool behave identically.
     assert.throws(() => resolver("@tool:zzzzzz"), /MemoryFault: pointer '@tool:zzzzzz' does not exist/);
     assert.throws(() => resolver("@tool:zzzzzz"), /Nearest valid pointers/);

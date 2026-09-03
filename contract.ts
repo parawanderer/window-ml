@@ -159,6 +159,12 @@ export const generatesText = (caps: string[] | null): boolean => !caps || caps.i
  *  have it validated by an actual embed call. */
 export const producesEmbeddings = (caps: string[] | null): boolean => !!caps && caps.includes("embedding");
 
+/** What a pointer READ returns across the run boundary: the value, plus an optional advisory the caller must
+ *  surface on a SIDE channel. The two exist separately because `ml.dereference` inside `exec` returns a value
+ *  the script then operates on — JSON.parse it, split it, pipe it — so appending a note to `value` would
+ *  corrupt the data. The tool path appends the advisory to its result text; the exec path console.warn()s it. */
+export interface DerefRead { value: string; warning?: string }
+
 /** Whether a model id passes the optional `modelFilter` regex whitelist. Empty /
  *  whitespace filter → everything allowed. An INVALID regex → everything allowed
  *  (fail-OPEN: a typo shouldn't silently brick every call; the settings UI flags an
@@ -784,7 +790,7 @@ export interface ToolContext {
     answer?: AnswerSet;
     /** Read a `@tool:<id>` pointer from THIS run — what `ml.dereference` binds to inside a tool call. Absent
      *  outside a run, which is why the page can't reach it from its own console. */
-    deref?: (ref: string, pipe?: string | string[]) => Promise<string>;
+    deref?: (ref: string, pipe?: string | string[]) => Promise<DerefRead>;
     /** LIVE partial output — a GENERIC tool-streaming capability. A tool's `run` may call `ctx.stream(text)`
      *  to stream output AS IT WORKS (Jupyter-style: `exec`'s console.log, `python_exec`'s print), so the step's
      *  Out fills in live instead of only appearing at completion. Present ONLY when the run opted into
