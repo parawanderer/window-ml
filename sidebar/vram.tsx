@@ -334,7 +334,12 @@ export function measureFloor(el: HTMLElement | null): number {
 
 /** What the panel currently looks like, so a learned floor is discarded when the layout changes rather than
  *  ratcheting upward forever — switching to a smaller view must be able to shrink again. */
-export const layoutKey = (tracks: number, rows: number): string => `${tracks}:${rows}`;
+// The panel's WIDTH is part of it: tracks tile side by side once there is room, so a floor learned in a
+// narrow sidebar is far too tall after the sidebar is dragged out — and the correction only ever grows, so it
+// would never come back down on its own. Bucketed, because a floor per pixel of width is a floor per render.
+export const WIDTH_BUCKET = 100;
+export const layoutKey = (tracks: number, rows: number, width = 0): string =>
+    `${tracks}:${rows}:${Math.round(width / WIDTH_BUCKET)}`;
 
 /** Animate the panel to a height with a cubic ease. Used when the size changes on its OWN — the panel
  *  correcting an overlap, or a layout needing more room — where a snap reads as a glitch. A live DRAG never
@@ -526,7 +531,8 @@ export function VramPanel() {
     // the old floor instead of ratcheting the panel permanently taller.
     const panelRef = useRef<HTMLDivElement>(null);
     const [learned, setLearned] = useState<{ key: string; h: number }>({ key: "", h: 0 });
-    const key = layoutKey(layout.value?.length || 1, (loaded || []).length);
+    const key = layoutKey(layout.value?.length || 1, (loaded || []).length,
+        panelRef.current?.getBoundingClientRect().width || 0);
     const minH = learned.key === key ? learned.h : 0;
     /** Grow until the content fits, and remember that height as this layout's floor. Called after a render,
      *  and again when a DRAG ENDS — `dragging` is only read inside effects, so flipping it back triggers no

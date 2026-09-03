@@ -602,3 +602,46 @@ test("resource panel: releasing the drag doesn't move the panel", async () => {
         await fake.stop();
     }
 });
+
+// Dragged out to a full page, the panel used to stretch each track to the full width — a 1400px-wide, 44px-tall
+// sparkline is a worse chart than two 700px ones, and a wide sidebar is exactly when you are looking closely.
+test("resource panel: wide tiles the tracks instead of stretching them", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0), resident("qwen3.5:35b", 22 * GiB, 1)]);
+        await seedStacked(ext);   // three tracks: two cards and the host pool
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-track").count(), { timeout: 20000 }).toBe(3);
+
+        const rows = async () => {
+            const boxes = await frame.locator(".rc-track").evaluateAll((els) =>
+                els.map((e) => { const r = e.getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width) }; }));
+            return { boxes, distinctRows: new Set(boxes.map((b) => b.y)).size };
+        };
+
+        // Narrow (the default 460px sidebar): one per row, full width.
+        const narrow = await rows();
+        expect(narrow.distinctRows, "a narrow panel stacks them").toBe(3);
+
+        // Drag the sidebar out to a full page.
+        await page.evaluate(() => {
+            document.getElementById("ml-sb-root").shadowRoot.getElementById("ml-sb-host").style.width = "1200px";
+        });
+        await sleep(600);
+        const wide = await rows();
+        expect(wide.distinctRows, "a wide panel tiles them side by side").toBe(1);
+        expect(wide.boxes[0].w, "…and each track is narrower than the panel, not stretched across it")
+            .toBeLessThan(narrow.boxes[0].w * 2);
+        // Every tile is readable: none squeezed under the column minimum.
+        for (const b of wide.boxes) expect(b.w).toBeGreaterThanOrEqual(280);
+    } finally {
+        await ext.close();
+        await fake.stop();
+    }
+});

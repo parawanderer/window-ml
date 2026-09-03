@@ -142,7 +142,12 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
    Too little room is the panel's problem to solve by scrolling, not the chart's by overlapping. */
 /* No top margin: the column's own gap already separates it from the header, and the two together read as a
    band of nothing. */
-.rc { display: flex; flex-direction: column; gap: 8px; margin: 0 0 2px; flex: 1 1 auto; }
+/* Tracks TILE rather than stretch. Stacked in a 300px sidebar, side by side once there is room for a second
+   readable column — a 1400px-wide, 44px-tall sparkline is a worse chart than two 700px ones, and dragging the
+   sidebar out to a full page is exactly when you are looking closely. auto-fit does the deciding, so there is
+   no breakpoint to keep in sync with the panel's real width. */
+.rc { display: grid; grid-template-columns: repeat(auto-fit, minmax(var(--rc-col, 300px), 1fr));
+      grid-auto-rows: 1fr; gap: 8px; margin: 0 0 2px; flex: 1 1 auto; }
 /* One rule, not two: a second `.rc-track {` later in the file made the first look like it carried the flex
    sizing when it didn't. `position: relative` so a tip escaping the plot is still contained by something sane. */
 .rc-track { position: relative; display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; }
