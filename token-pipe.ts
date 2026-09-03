@@ -280,6 +280,19 @@ const FAR_ENOUGH_TO_BE_UNRELATED = 3;
  *  model's own words, which is what makes a list of pointers readable a dozen steps later. */
 export const nameOf = (v: TokenValue): string => v.label ? `${v.tool}: "${v.label}"` : v.tool;
 
+/** A COMPACT type for a candidate list — what the value IS, in a few characters. {@link describeToken} is a
+ *  sentence, which is right for the one pointer you actually read and wrong for a column of five. Knowing a
+ *  candidate is a 12x3 table rather than a screenshot is often enough to pick correctly without reading any
+ *  of them, which is the whole job of the list. */
+export function shortType(v: TokenValue): string {
+    if (v.kind === "table" && v.table) return `table ${v.table.rows.length}x${v.table.columns.length}`;
+    if (v.kind === "image") return "image";
+    if (v.kind === "code") return "code";
+    if (v.kind === "json") return "json";
+    const n = (v.full ?? v.out ?? "").length;
+    return `text ${n.toLocaleString()} chars`;
+}
+
 export function memoryFault(ref: string, near: TokenValue[], currentStep: number): string {
     const head = `MemoryFault: pointer '@tool:${normRef(ref)}' does not exist.`;
     // The commonest near-miss now: the model wrote its own LABEL without quotes. A bare ref is a TOOL alias,
@@ -293,10 +306,13 @@ export function memoryFault(ref: string, near: TokenValue[], currentStep: number
     const rows = near.map((v) => {
         const back = currentStep - v.step;
         const where = back <= 0 ? "this step" : `${back} step${back === 1 ? "" : "s"} back`;
-        return { left: `  - @tool:${v.id}`, mid: `(${where}: ${nameOf(v)})`, d: distanceTo(q, v) };
+        // The TYPE is what makes this list pickable: "a 12x3 table" vs "a screenshot" usually decides it
+        // outright, where two similar-looking ids and step numbers do not.
+        return { left: `  - @tool:${v.id}`, mid: `(${where}: ${nameOf(v)})`, type: shortType(v), d: distanceTo(q, v) };
     });
     const w = Math.max(...rows.map((r) => r.mid.length));
-    const body = rows.map((r) => `${r.left} ${r.mid.padEnd(w)} [edit_dist=${r.d}]`).join("\n");
+    const tw = Math.max(...rows.map((r) => r.type.length));
+    const body = rows.map((r) => `${r.left} ${r.mid.padEnd(w)} ${r.type.padEnd(tw)} [edit_dist=${r.d}]`).join("\n");
     const unrelated = rows.every((r) => r.d > FAR_ENOUGH_TO_BE_UNRELATED)
         ? "\nNone of these is close, so you may be recalling an output from an earlier turn or inventing the id."
         : "";

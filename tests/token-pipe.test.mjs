@@ -124,8 +124,8 @@ test("memoryFault: names the fault, ranks the candidates, and says it is recover
     assert.match(msg, /^MemoryFault: pointer '@tool:af21e0d' does not exist\./, "the fault names the bad address");
     assert.match(msg, /Nearest valid pointers:/);
     // Distance from the CURRENT step, which is the actionable half ("2 steps back" beats "step 2").
-    assert.match(msg, /- @tool:af21d0d \(2 steps back: python_exec\)\s+\[edit_dist=1\]/);
-    assert.match(msg, /- @tool:bf21d0e \(3 steps back: exec\)\s+\[edit_dist=3\]/);
+    assert.match(msg, /- @tool:af21d0d \(2 steps back: python_exec\)\s+text \d+ chars\s+\[edit_dist=1\]/);
+    assert.match(msg, /- @tool:bf21d0e \(3 steps back: exec\)\s+text \d+ chars\s+\[edit_dist=3\]/);
     // The candidate columns line up, so the list is scannable rather than ragged.
     const cols = msg.split("\n").filter((l) => l.includes("edit_dist")).map((l) => l.indexOf("[edit_dist"));
     assert.equal(new Set(cols).size, 1, "the edit_dist column is aligned across candidates");
@@ -452,4 +452,24 @@ test("labels: an UNQUOTED label misses, and the fault teaches the quoted form", 
     assert.match(msg, /an unquoted @tool:<name> means a TOOL's latest call/, "…and why");
     // The quoted form is the one that works.
     assert.equal(s.get('@tool:"the sales table"').out, "TABLE");
+});
+
+// A candidate list is only pickable if it says what each candidate IS. "a 12x3 table" versus "a screenshot"
+// usually decides it outright, where two similar ids and step numbers do not.
+test("shortType: a compact type for each candidate, and it reaches the fault list", () => {
+    const table = tok({ id: "a1b2c3f", tool: "python_exec", kind: "table", label: "the sales table", step: 2,
+        table: { columns: ["region", "q1", "q2"], rows: [[1, 2, 3], [4, 5, 6], [7, 8, 9]] } });
+    assert.equal(P.shortType(table), "table 3x3");
+    assert.equal(P.shortType(tok({ kind: "image" })), "image");
+    assert.equal(P.shortType(tok({ kind: "code" })), "code");
+    assert.equal(P.shortType(tok({ kind: "json" })), "json");
+    assert.equal(P.shortType(tok({ kind: "text", out: "x".repeat(1834) })), "text 1,834 chars");
+    assert.equal(P.shortType(tok({ kind: "text", out: "short", full: "x".repeat(50) })), "text 50 chars", "the FULL capture is the honest size");
+
+    const s = new P.TokenStore();
+    s.note(table);
+    s.note(tok({ id: "d4e5f6b", tool: "look", kind: "image", label: "the dashboard", step: 3, image: "data:image/png;base64,AAA" }));
+    const msg = P.memoryFault("@tool:eeeeeee", s.nearest("eeeeeee"), 6);
+    assert.match(msg, /table 3x3/, "the table candidate says it is a table, and how big");
+    assert.match(msg, /image/, "the screenshot candidate says it is an image");
 });

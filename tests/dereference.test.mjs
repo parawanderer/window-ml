@@ -55,7 +55,7 @@ test("dereference: a hallucinated pointer returns a MemoryFault naming the real 
     const out = results.find((r) => r.name === "dereference").result;
     assert.match(out, /^Error: MemoryFault: pointer '@tool:deadbe1' does not exist\./);
     assert.match(out, /Nearest valid pointers:/);
-    assert.match(out, /\(1 step back: exec\) +\[edit_dist=\d+\]/, "the real pointer, with distance and how far back");
+    assert.match(out, /\(1 step back: exec\) +\S+ [^[]*\[edit_dist=\d+\]/, "the real pointer, with its TYPE, distance and how far back");
     assert.match(out, /recoverable/i);
 });
 
