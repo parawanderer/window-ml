@@ -4,7 +4,7 @@
 // non-approval tool delegating straight through, and the gate-before-execute invariant end-to-end.
 import { test } from "node:test";
 import assert from "node:assert";
-import { runBackgroundAgent } from "../agent-host.ts";
+import { runBackgroundAgent } from "../src/agent-host.ts";
 
 // A model that plays a scripted list of assistant turns (one per step).
 const scriptedModel = (turns) => {

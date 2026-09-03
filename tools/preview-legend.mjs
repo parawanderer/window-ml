@@ -14,7 +14,7 @@ import { CLIP_CASES } from "./legend-cases.mjs";
 
 export async function generatePreview() {
     const { outputFiles } = await esbuild.build({
-        entryPoints: ["legend.ts"], bundle: true, write: false, format: "iife",
+        entryPoints: ["src/legend.ts"], bundle: true, write: false, format: "iife",
         globalName: "legend", target: ["chrome114"], logLevel: "silent",
     });
     const iife = outputFiles[0].text;

@@ -9,7 +9,7 @@ import assert from "node:assert";
 import { readFileSync } from "node:fs";
 import { generateApiDocs, renderModule, parseDecls, stripPrivateMembers, AGENT_HIDDEN } from "../scripts/gen-api-docs.mjs";
 
-const CONTRACT = readFileSync(new URL("../contract.ts", import.meta.url), "utf8");
+const CONTRACT = readFileSync(new URL("../src/contract.ts", import.meta.url), "utf8");
 const docs = generateApiDocs();
 
 /** The MlApi member names contract.ts declares, split into public and `_` plumbing. */
@@ -24,7 +24,7 @@ const apiMembers = () => {
 };
 
 test("api-docs.gen.ts is up to date with contract.ts (run `npm run gen-api-docs`)", () => {
-    const onDisk = readFileSync(new URL("../api-docs.gen.ts", import.meta.url), "utf8");
+    const onDisk = readFileSync(new URL("../src/api-docs.gen.ts", import.meta.url), "utf8");
     assert.equal(onDisk, renderModule(),
         "api-docs.gen.ts is stale — contract.ts changed since the last build.");
 });

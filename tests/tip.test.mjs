@@ -4,7 +4,7 @@
 // landed under the pointer, another never flipped horizontally and was cut off by the window.
 import { test } from "node:test";
 import assert from "node:assert";
-const { tipStyle, TIP_GAP, TIP_ABOVE, TIP_BELOW } = await import("../sidebar/tip.ts");
+const { tipStyle, TIP_GAP, TIP_ABOVE, TIP_BELOW } = await import("../src/sidebar/tip.ts");
 
 const W = 400;
 const px = (v) => parseFloat(v);

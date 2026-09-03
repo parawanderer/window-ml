@@ -5,7 +5,7 @@ import { test } from "node:test";
 import assert from "node:assert";
 
 globalThis.chrome = { debugger: {}, tabs: {}, windows: {}, scripting: {}, runtime: {}, extension: {}, permissions: {}, action: {} };
-const { fetchUrlContent } = await import("../sw-fetch.ts");
+const { fetchUrlContent } = await import("../src/sw-fetch.ts");
 
 const MD = "text/markdown; charset=utf-8";
 const HTML = "text/html; charset=utf-8";

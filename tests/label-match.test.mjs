@@ -4,7 +4,7 @@
 // why it is swappable.
 import { test } from "node:test";
 import assert from "node:assert";
-import { editSimilarity, trigramJaccard, tokenSetOverlap, hybridSimilarity, lexicalSimilarity, LEXICAL_METRICS } from "../label-match.ts";
+import { editSimilarity, trigramJaccard, tokenSetOverlap, hybridSimilarity, lexicalSimilarity, LEXICAL_METRICS } from "../src/label-match.ts";
 
 test("each metric has the strength and the blind spot it was chosen for", () => {
     // Token-set is perfect on rewording and reordering; edit distance is close to useless there.

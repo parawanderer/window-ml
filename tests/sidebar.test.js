@@ -5561,7 +5561,7 @@ test("resource tracks: the hovered band outlines itself, and single-sample runs 
 test("streamed output: a rule separates the timestamp gutter from the text", async () => {
     // The stamps are right-aligned in a fixed column; without an edge, leading whitespace in the output has
     // nothing to be measured against. Same device as a line-number gutter's rule.
-    const css = await import("node:fs").then((fs) => fs.readFileSync("sidebar/sidebar.css", "utf8"));
+    const css = await import("node:fs").then((fs) => fs.readFileSync("src/sidebar/sidebar.css", "utf8"));
     // The standalone `.r-ts` rule — not `.r-timed.short .r-ts`, which merely narrows the column.
     const rule = /\n\.r-ts \{([^}]*)\}/.exec(css)?.[1] ?? "";
     assert.ok(rule, "the gutter rule exists");
@@ -5573,7 +5573,7 @@ test("streamed output: a rule separates the timestamp gutter from the text", asy
 /** A class that dims must have a RULE behind it. Asserting only the class name let both cross-highlight
  *  directions ship with no styling at all — every test green, nothing visibly dimmed. */
 function assertDims(selector) {
-    const css = require("node:fs").readFileSync("sidebar/sidebar.css", "utf8");
+    const css = require("node:fs").readFileSync("src/sidebar/sidebar.css", "utf8");
     const at = css.indexOf(selector + " {");
     assert.ok(at !== -1, `no CSS rule for ${selector} — the class would dim nothing`);
     const body = css.slice(at, css.indexOf("}", at));
@@ -5716,10 +5716,10 @@ test("overview: hovering a model row dims the pools it isn't on", async () => {
 });
 
 test("the resource chart window is configurable, and short by default", async () => {
-    const { RESWIN_DEFAULT } = await import("../sidebar/store.ts");
+    const { RESWIN_DEFAULT } = await import("../src/sidebar/store.ts");
     assert.equal(RESWIN_DEFAULT, 300, "5 minutes — 30 squeezed into a narrow panel is an unreadable smear");
     // The knob belongs in DevTools Settings (the superset), per the AGENTS rule for user-editable config.
-    const settings = await import("node:fs").then((fs) => fs.readFileSync("sidebar/settings.tsx", "utf8"));
+    const settings = await import("node:fs").then((fs) => fs.readFileSync("src/sidebar/settings.tsx", "utf8"));
     assert.match(settings, /Resource chart window/, "surfaced in Settings → Appearance");
     assert.match(settings, /RESWIN_KEY/, "and persisted");
     assert.match(settings, /Samples are kept for the whole session either way/,
@@ -6009,7 +6009,7 @@ test("layout: a custom layout survives picking a preset, and can be returned to"
 // Dragging the panel taller must grow the CHART, not add empty space under it. jsdom has no layout, so this
 // asserts the flex chain that makes it so — a fixed-height plot inside a resizable panel is the bug.
 test("resource panel: the chart flexes into the dragged height", async () => {
-    const css = require("node:fs").readFileSync("sidebar/sidebar.css", "utf8");
+    const css = require("node:fs").readFileSync("src/sidebar/sidebar.css", "utf8");
     const rule = (sel) => css.slice(css.indexOf(sel + " {"), css.indexOf("}", css.indexOf(sel + " {")));
     for (const sel of [".rc", ".rc-track", ".rc-plot"]) {
         assert.match(rule(sel), /flex:\s*1 1/, `${sel} must grow with the panel`);
@@ -6027,7 +6027,7 @@ test("resource panel: the chart flexes into the dragged height", async () => {
 // A scroll container CLIPS its children, so the panel only scrolls once a height has been dragged — and the
 // badges in the rows open their tooltips UPWARD, since the rows sit at the bottom where the room is above.
 test("resource panel: badge tooltips aren't clipped by the resizable panel", async () => {
-    const css = require("node:fs").readFileSync("sidebar/sidebar.css", "utf8");
+    const css = require("node:fs").readFileSync("src/sidebar/sidebar.css", "utf8");
     const vram = css.slice(css.indexOf(".vram {"), css.indexOf("}", css.indexOf(".vram {")));
     assert.ok(!/overflow-y:\s*auto/.test(vram), "no clipping until a height is chosen");
     assert.match(css, /\.vram\[style\*="height"\] \{ overflow-y: auto/, "…and only then");
@@ -6054,7 +6054,7 @@ test("resource panel: badge tooltips aren't clipped by the resizable panel", asy
 // A panel dragged too small cannot fit its header, plot and rows — the content spilled over the session list
 // below rather than shrinking. Both the drag and the stylesheet enforce a floor.
 test("resource panel: the floor is MEASURED, not summed from parts", async () => {
-    const { shortfall, measureFloor, layoutKey } = await import("../sidebar/vram.tsx");
+    const { shortfall, measureFloor, layoutKey } = await import("../src/sidebar/vram.tsx");
     // Summing the parts is a guess about which parts exist and how tall they are — it goes stale the moment a
     // track grows a row or a name wraps, and the symptom is content rendering on top of itself. The shortfall
     // is what does not fit, whatever that content turns out to be.
@@ -6158,8 +6158,8 @@ test("answer dedup: an UNquoted designated output still appears in the Result bl
 // A programmatic resize (switching views changes the floor) EASES; a drag must not, because easing the
 // pointer would feel like lag. Driven by rAF, so the test steps the clock rather than waiting.
 test("resize easing: eases to the target over time, and never snaps mid-flight", async () => {
-    const { easeVramH } = await import("../sidebar/vram.tsx");
-    const { vramH } = await import("../sidebar/store.ts");
+    const { easeVramH } = await import("../src/sidebar/vram.tsx");
+    const { vramH } = await import("../src/sidebar/store.ts");
     const frames = [];
     const realRaf = globalThis.requestAnimationFrame;
     // rAF timestamps share performance.now()'s origin — start there, or the elapsed fraction is nonsense.
@@ -6186,8 +6186,8 @@ test("resize easing: eases to the target over time, and never snaps mid-flight",
 });
 
 test("resize easing: a tiny or first-time change is applied directly, not animated", async () => {
-    const { easeVramH } = await import("../sidebar/vram.tsx");
-    const { vramH } = await import("../sidebar/store.ts");
+    const { easeVramH } = await import("../src/sidebar/vram.tsx");
+    const { vramH } = await import("../src/sidebar/store.ts");
     const realRaf = globalThis.requestAnimationFrame;
     let scheduled = 0;
     globalThis.requestAnimationFrame = () => { scheduled++; return 1; };
@@ -6205,8 +6205,8 @@ test("resize easing: a tiny or first-time change is applied directly, not animat
 // "Not resident" and "we don't know yet" are different claims — the orb says "Awakening…" for the first and
 // must say nothing for the second.
 test("residentNow: knows loaded from not-loaded, and unknown from either", async () => {
-    const { residentNow } = await import("../sidebar/vram.tsx");
-    const { loadedModels } = await import("../sidebar/store.ts");
+    const { residentNow } = await import("../src/sidebar/vram.tsx");
+    const { loadedModels } = await import("../src/sidebar/store.ts");
     const before = loadedModels.value;
     try {
         loadedModels.value = null;                       // no /api/ps answer yet
@@ -6267,7 +6267,7 @@ test("track editor: expands and collapses instead of snapping in", async () => {
 
     // The animation is height-driven from the content's own size — a hardcoded max-height either clips the
     // editor or eases against empty space.
-    const css = require("node:fs").readFileSync("sidebar/sidebar.css", "utf8");
+    const css = require("node:fs").readFileSync("src/sidebar/sidebar.css", "utf8");
     const rule = css.slice(css.indexOf(".rc-editor-wrap {"), css.indexOf("}", css.indexOf(".rc-editor-wrap {")));
     assert.match(rule, /grid-template-rows:\s*0fr/, "collapsed to a zero-height row");
     assert.match(rule, /transition:[^;]*grid-template-rows/, "…and it transitions to the content's real height");
@@ -6298,7 +6298,7 @@ test("capacity: a box that never answers draws no ceiling", async () => {
 // min-height:0 zeroes only the content box, so the editor's own margin/padding/border left a strip of empty
 // panel between the header and the plot.
 test("track editor: collapsed occupies no height at all, chrome included", async () => {
-    const css = require("node:fs").readFileSync("sidebar/sidebar.css", "utf8");
+    const css = require("node:fs").readFileSync("src/sidebar/sidebar.css", "utf8");
     const closed = css.slice(css.indexOf(".rc-editor-wrap:not(.open) > * {"));
     const rule = closed.slice(0, closed.indexOf("}"));
     assert.ok(rule, "the collapsed state has a rule of its own");
@@ -6434,7 +6434,7 @@ test("overview lines: the hit target never moves under the pointer", async () =>
     assert.equal(widthOf(w.shadow.querySelector(".rc-hit")), before, "…but the target it sits on does not move");
 
     // And the thickened line can't steal the pointer from the target underneath it.
-    const css = require("node:fs").readFileSync("sidebar/sidebar.css", "utf8");
+    const css = require("node:fs").readFileSync("src/sidebar/sidebar.css", "utf8");
     assert.match(css, /\.rc-line \{[^}]*pointer-events:\s*none/, "the visible line takes no pointer events");
 });
 
@@ -6463,7 +6463,7 @@ test("overview legend: hovering one pool's line dims every other pool's key", as
         `every other key dims (${after.map((k) => k.className).join(" | ")})`);
 
     // The class has to actually reduce the opacity — a class name alone proves nothing.
-    const css = require("node:fs").readFileSync("sidebar/sidebar.css", "utf8");
+    const css = require("node:fs").readFileSync("src/sidebar/sidebar.css", "utf8");
     assert.match(css, /\.rc-key\.away \{[^}]*opacity:\s*0?\.\d/, ".rc-key.away dims the key");
 
     // …and it comes back.
@@ -6652,7 +6652,7 @@ test("history: an evicted model keeps its colour, and says it is gone", async ()
 // VRAM_COLORS[i % 8] gave card 0 and System RAM the same indigo — in a legend whose only job is telling the
 // lines apart. (The 4×3090 NVLink rig, five pools, is the common version of this.)
 test("many pools: every pool gets its own colour, past the curated palette", async () => {
-    const { poolColor, VRAM_COLORS } = await import("../sidebar/vram.tsx");
+    const { poolColor, VRAM_COLORS } = await import("../src/sidebar/vram.tsx");
     // Inside the palette, the hand-picked colours are used as-is.
     assert.equal(poolColor(0, 5), VRAM_COLORS[0]);
     assert.equal(poolColor(4, 5), VRAM_COLORS[4]);
@@ -6875,7 +6875,7 @@ test("event lane: an eviction rules through the plot and names itself", async ()
         "hovering one highlights the same moment everywhere");
     // A dashed rule, not solid: a solid line reads as part of the chart (a ceiling, an axis) rather than as
     // something that happened.
-    const css = require("node:fs").readFileSync("sidebar/sidebar.css", "utf8");
+    const css = require("node:fs").readFileSync("src/sidebar/sidebar.css", "utf8");
     assert.match(css.slice(css.indexOf(".rc-rule::before")), /repeating-linear-gradient/);
 
     rule.dispatchEvent(new w.window.MouseEvent("pointerenter", { bubbles: true }));

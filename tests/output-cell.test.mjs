@@ -21,7 +21,7 @@ before(async () => {
     // Load preact through require, NOT `import("preact")`: tsx compiles the .tsx component to CJS, so an
     // ESM import here would be a SECOND preact instance and its hooks would have no current component.
     ({ h, render } = require_("preact"));
-    ({ OutputCell, findMatches, atBottomOf } = await import("../sidebar/render-panel.tsx"));
+    ({ OutputCell, findMatches, atBottomOf } = await import("../src/sidebar/render-panel.tsx"));
 });
 
 // Preact defers effects to a rAF tick, and the find bar computes its match count IN an effect — so a
@@ -122,7 +122,7 @@ test("find bar: the arrows are disabled while there is nothing to step through",
 /* ---------------- streamed-output timestamps (supplied by the executor, not guessed) ---------------- */
 
 test("timeForOffset: a line takes the time of the last mark at or before it", async () => {
-    const { timeForOffset } = await import("../sidebar/render-panel.tsx");
+    const { timeForOffset } = await import("../src/sidebar/render-panel.tsx");
     const marks = [[0, 1000], [10, 2000], [25, 3000]];
     assert.equal(timeForOffset(marks, 0), 1000, "the first chunk's own time");
     assert.equal(timeForOffset(marks, 5), 1000, "still inside the first chunk");
@@ -131,21 +131,21 @@ test("timeForOffset: a line takes the time of the last mark at or before it", as
 });
 
 test("timeForOffset: no marks → NO time is invented", async () => {
-    const { timeForOffset } = await import("../sidebar/render-panel.tsx");
+    const { timeForOffset } = await import("../src/sidebar/render-panel.tsx");
     assert.equal(timeForOffset(undefined, 5), null);
     assert.equal(timeForOffset([], 5), null);
     assert.equal(timeForOffset([[10, 999]], 0), null, "an offset before the first mark has no time to show");
 });
 
 test("fmtDelta: sub-second gaps stay in ms (the resolution that matters for a fast loop)", async () => {
-    const { fmtDelta } = await import("../sidebar/render-panel.tsx");
+    const { fmtDelta } = await import("../src/sidebar/render-panel.tsx");
     assert.equal(fmtDelta(240), "240ms");
     assert.equal(fmtDelta(1204), "1.20s");
     assert.equal(fmtDelta(65000), "1m 5s");
 });
 
 test("alignedMarks: marks that don't index into the rendered text are DROPPED, never applied", async () => {
-    const { alignedMarks } = await import("../sidebar/render-panel.tsx");
+    const { alignedMarks } = await import("../src/sidebar/render-panel.tsx");
     const marks = [[0, 1], [40, 2]];
     assert.deepEqual(alignedMarks(marks, "x".repeat(60)), marks, "the text covers every mark → time it");
     assert.equal(alignedMarks(marks, "short"), undefined, "text shorter than the last mark → don't time the wrong lines");
@@ -154,7 +154,7 @@ test("alignedMarks: marks that don't index into the rendered text are DROPPED, n
 });
 
 test("elideHour: drops the hour only when every mark is in the CURRENT hour", async () => {
-    const { elideHour } = await import("../sidebar/render-panel.tsx");
+    const { elideHour } = await import("../src/sidebar/render-panel.tsx");
     const now = new Date("2026-09-02T14:17:30").getTime();
     const t = (hh, mm) => new Date(`2026-09-02T${hh}:${mm}:00`).getTime();
     assert.equal(elideHour([[0, t("14", "17")], [9, t("14", "19")]], now), true, "all in the current hour → elide");
@@ -169,7 +169,7 @@ test("elideHour: drops the hour only when every mark is in the CURRENT hour", as
 test("timestamp gutter: EVERY timestamped row is hoverable, with ms precision and a gap", async () => {
     const { h: h2, render: render2 } = await (async () => ({ h, render }))();
     const host = doc.getElementById("root");
-    const { TimedOutput } = await import("../sidebar/render-panel.tsx");
+    const { TimedOutput } = await import("../src/sidebar/render-panel.tsx");
     render2(null, host);
     // three lines: two share a mark (a burst), the third is 1.2s later
     const marks = [[0, 1731000000000], [8, 1731000001204]];
@@ -190,7 +190,7 @@ test("timestamp gutter: EVERY timestamped row is hoverable, with ms precision an
 /* ---------------- the Settings-controlled knobs, and find ownership ---------------- */
 
 test("output cell: the configured height cap drives the scroller, and 'uncapped' removes it", async () => {
-    const { outMaxH } = await import("../sidebar/store.ts");
+    const { outMaxH } = await import("../src/sidebar/store.ts");
     const cell = await mount("alpha\n");
     assert.match(cell.querySelector(".r-outscroll").getAttribute("style") || "", /max-height:\s*260px/);
     outMaxH.value = 420;
@@ -204,8 +204,8 @@ test("output cell: the configured height cap drives the scroller, and 'uncapped'
 });
 
 test("timestamp gutter: the Settings toggle hides it without touching the text", async () => {
-    const { showOutTimes } = await import("../sidebar/store.ts");
-    const { TimedOutput } = await import("../sidebar/render-panel.tsx");
+    const { showOutTimes } = await import("../src/sidebar/store.ts");
+    const { TimedOutput } = await import("../src/sidebar/render-panel.tsx");
     const host = doc.getElementById("root");
     const marks = [[0, 1731000000000]];
     render(null, host);
@@ -263,8 +263,8 @@ test("output cell: dragging the grip resizes THIS cell only", async () => {
 // bare mm:ss that silently claims the current hour. It is driven by a `hourNow` signal (one timer for the whole
 // app), so the roll-over is testable by advancing that signal instead of waiting an hour.
 test("hour roll-over: a mounted gutter widens to hh:mm:ss when the hour ticks over", async () => {
-    const { TimedOutput } = await import("../sidebar/render-panel.tsx");
-    const { hourNow, armHourTick, stopHourTick } = await import("../sidebar/timestamps.ts");
+    const { TimedOutput } = await import("../src/sidebar/render-panel.tsx");
+    const { hourNow, armHourTick, stopHourTick } = await import("../src/sidebar/timestamps.ts");
     const host = doc.getElementById("root");
     const base = new Date("2026-09-02T14:17:30").getTime();
     hourNow.value = base;
@@ -289,7 +289,7 @@ test("hour roll-over: a mounted gutter widens to hh:mm:ss when the hour ticks ov
 });
 
 test("timedText: the export's plain-text gutter mirrors the sidebar's", async () => {
-    const { timedText } = await import("../sidebar/timestamps.ts");
+    const { timedText } = await import("../src/sidebar/timestamps.ts");
     const now = new Date("2026-09-02T14:17:40").getTime();
     const t0 = new Date("2026-09-02T14:17:30").getTime();
     const text = "alpha\nbeta\ngamma";
@@ -313,8 +313,8 @@ test("timedText: the export's plain-text gutter mirrors the sidebar's", async ()
 // Midnight. The gutter is time-only, so without a divider 00:00:01 sits directly under 23:59:58 and reads as
 // one second later rather than the next day.
 test("day change: the gutter draws a divider, and only at the change", async () => {
-    const { TimedOutput } = await import("../sidebar/render-panel.tsx");
-    const { dayBreaks } = await import("../sidebar/timestamps.ts");
+    const { TimedOutput } = await import("../src/sidebar/render-panel.tsx");
+    const { dayBreaks } = await import("../src/sidebar/timestamps.ts");
     const host = doc.getElementById("root");
     const late = new Date("2026-09-02T23:59:58").getTime();
     const past = new Date("2026-09-03T00:00:01").getTime();
@@ -341,7 +341,7 @@ test("day change: the gutter draws a divider, and only at the change", async () 
 });
 
 test("timedText: the export marks the day change too", async () => {
-    const { timedText } = await import("../sidebar/timestamps.ts");
+    const { timedText } = await import("../src/sidebar/timestamps.ts");
     const late = new Date("2026-09-02T23:59:58").getTime();
     const past = new Date("2026-09-03T00:00:01").getTime();
     const out = timedText("before\nmidnight\nafter", [[0, late], [7, late + 1000], [16, past]], past);
@@ -359,7 +359,7 @@ test("timedText: the export marks the day change too", async () => {
 // pointer's resolution, not the data's: the chart samples on a 2s poll, so a crosshair between two samples
 // is interpolated — event times, which come from real timings, are exact and shown to the ms in their own tip.)
 test("clockAt: milliseconds only when a pixel is worth a few of them", async () => {
-    const { clockAt } = await import("../sidebar/timestamps.ts");
+    const { clockAt } = await import("../src/sidebar/timestamps.ts");
     const t = new Date("2026-09-03T14:15:16.789").getTime();
     assert.equal(clockAt(t, 750), "14:15:16", "5 minutes across a panel — seconds");
     assert.equal(clockAt(t, 25), "14:15:16.789", "zoomed to seconds — milliseconds mean something");

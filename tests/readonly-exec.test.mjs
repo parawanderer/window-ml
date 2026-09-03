@@ -2,7 +2,7 @@
 import { test } from "node:test";
 import assert from "node:assert";
 import { JSDOM } from "jsdom";
-import { evalReadonly, NotInDialect, Denied } from "../readonly-exec.ts";
+import { evalReadonly, NotInDialect, Denied } from "../src/readonly-exec.ts";
 
 function world() {
     const dom = new JSDOM(`<!doctype html><body>
@@ -842,7 +842,7 @@ test("blessed primitive: ml.a11y ADVERSARIAL — object can't reach a realm, fac
 /* ---------------------- ml.answer (the curate-only facade) ---------------------- */
 // The FIRST mutating facade member. Per the repo RULE, extending the dialect requires ADVERSARIAL tests:
 // prove the new surface can only curate the run's own answer and can't be abused to reach a node/the realm.
-import { AnswerSet, makeAnswerFacade } from "../answer-set.ts";
+import { AnswerSet, makeAnswerFacade } from "../src/answer-set.ts";
 const runAns = (js, set = new AnswerSet(), doc = world()) =>
     evalReadonly(js, doc, ML, makeAnswerFacade(set, el => el.id || el.tagName));
 
@@ -1033,9 +1033,9 @@ test("ADVERSARIAL: the info RESPONSE is inert data, not a route to anything", as
 
 const SCHEMA_ML = {
     ...ML,
-    schema: async (...vs) => { ML_CALLS.push(["schema", vs.length]); const { joinShapes, jsonValue } = await import("../dom.ts"); return joinShapes(vs.map((v, i) => jsonValue(v, `argument ${i + 1}`))); },
+    schema: async (...vs) => { ML_CALLS.push(["schema", vs.length]); const { joinShapes, jsonValue } = await import("../src/dom.ts"); return joinShapes(vs.map((v, i) => jsonValue(v, `argument ${i + 1}`))); },
     dereference: async (ref) => {
-        const { DerefText } = await import("../ml-agent.ts");
+        const { DerefText } = await import("../src/ml-agent.ts");
         return new DerefText('{"id":1,"name":"a"}', { id: "a1b2c3f", tool: "fetch_url", kind: "json", step: 2 },
             async () => { throw new Error("repipe reached"); });
     },
