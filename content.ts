@@ -230,9 +230,9 @@ window.addEventListener("message", (event: MessageEvent) => {
     // service worker, so relay the read and post the answer back to the page. Request/response, id-matched.
     if (data.type === "PAGE_DEREF") {
         const d = data as { id?: string; runId?: string; ref?: string; pipe?: string | string[] };
-        chrome.runtime.sendMessage({ type: "DEREF_TOKEN", runId: d.runId, ref: d.ref, pipe: d.pipe }, (resp: { value?: string; warning?: string; error?: string } = {}) => {
+        chrome.runtime.sendMessage({ type: "DEREF_TOKEN", runId: d.runId, ref: d.ref, pipe: d.pipe }, (resp: { value?: string; warning?: string; meta?: unknown; error?: string } = {}) => {
             const err = chrome.runtime.lastError?.message || resp?.error;
-            window.postMessage({ type: "PAGE_DEREF_RESULT", id: d.id, ...(err ? { error: err } : { value: resp?.value ?? "", ...(resp?.warning ? { warning: resp.warning } : {}) }) }, "*");
+            window.postMessage({ type: "PAGE_DEREF_RESULT", id: d.id, ...(err ? { error: err } : { value: resp?.value ?? "", ...(resp?.warning ? { warning: resp.warning } : {}), ...(resp?.meta ? { meta: resp.meta } : {}) }) }, "*");
         });
         return;
     }

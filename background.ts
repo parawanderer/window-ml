@@ -1234,7 +1234,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             : String(message.pipe || "");
         // The advisory rides ALONGSIDE the value across the relay, for the same reason it does in-process:
         // the page-side caller is a script that will operate on the value.
-        try { const read = fn(String(message.ref || ""), pipe); sendResponse({ value: read.value, ...(read.warning ? { warning: read.warning } : {}) }); }
+        try { const read = fn(String(message.ref || ""), pipe); sendResponse({ value: read.value, ...(read.warning ? { warning: read.warning } : {}), ...(read.meta ? { meta: read.meta } : {}) }); }
         catch (e) { sendResponse({ error: (e as Error)?.message || String(e) }); }
         return true;
     }

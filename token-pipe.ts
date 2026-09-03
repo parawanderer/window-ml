@@ -13,8 +13,8 @@
 // Pure: no DOM, no chrome, no I/O.
 
 import { runPipe, splitStages } from "./text-pipe";
-import type { DerefRead } from "./contract";
-export type { DerefRead };
+import type { DerefRead, DerefMeta, TokenKind } from "./contract";
+export type { DerefRead, DerefMeta };
 import { isTokenShape } from "./token-id";
 import { lexicalSimilarity, type LexicalMetric } from "./label-match";
 
@@ -25,10 +25,9 @@ export const DEREF_TOOL = "dereference";
  *  uses it to decide whether to hand the model the stable id — see the "Pinned:" line in agent-loop. */
 export const isAliasRef = (ref: string, resolvedId: string): boolean => normRef(ref) !== resolvedId;
 
-/** What the value at a pointer actually IS. The loop already knows — it holds the step's `RenderDescriptor` —
- *  so the pointer carries the type rather than flattening everything to a string the model must re-sniff. The
- *  value stays str-renderable regardless (`out` is always readable); the type just makes the pipe smarter. */
-export type TokenKind = "text" | "json" | "table" | "image" | "code";
+// TokenKind lives in contract.ts: the page↔background relay carries it now (see DerefMeta), and contract.ts
+// cannot import from here. Re-exported so every existing importer is unaffected.
+export type { TokenKind };
 
 export interface TokenValue {
     id: string;

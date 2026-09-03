@@ -400,7 +400,16 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
         const warning = matched
             ? `ml.dereference: resolved ${JSON.stringify(parseLabel(ref) ?? ref)} to the label ${JSON.stringify(matched)} by similarity (${score?.toFixed(2)}), not an exact name.`
             : undefined;
-        return { value: derefPipe(v, TokenStore.slotOf(ref), pipe), ...(warning ? { warning } : {}) };
+        // The METADATA travels with the value. The store knows what this is (a table, an image, JSON) and
+        // when it was captured; flattening all of it to text made every caller re-sniff the bytes.
+        const meta = {
+            id: v.id, tool: v.tool, kind: v.kind, step: v.step,
+            ...(v.label ? { label: v.label } : {}),
+            ...(v.table ? { table: v.table } : {}),
+            ...(v.image ? { image: v.image } : {}),
+            ...(v.latex ? { latex: v.latex } : {}),
+        };
+        return { value: derefPipe(v, TokenStore.slotOf(ref), pipe), ...(warning ? { warning } : {}), meta };
     });
     /** Rewrite a `look` at an image pointer into a look at that image; anything else passes through.
      *  A bad pointer becomes an ERROR RESULT, never a throw: the model should read the fault and correct the
