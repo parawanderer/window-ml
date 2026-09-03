@@ -37,6 +37,19 @@ gh pr checks "$PR" --watch --interval 30
 A push while a run is in flight starts a NEW run and the concurrency group cancels the old one, so the PR
 can report no checks for a few seconds in between. Same remedy.
 
+**And confirm the exit code with a real poll.** A dropped connection ends the watch with exit 0 too:
+
+```
+Post "https://api.github.com/graphql": read tcp ...: connection reset by peer
+[exited with code 0]
+```
+
+The last table it printed had three `test` jobs and `e2e` still `pending`, so exit 0 meant "the watch
+stopped", not "the checks passed". Both spurious-zero cases look identical to success from the exit code
+alone, so the rule is the same for both: **never merge on the watch's exit status — re-run a plain
+`gh pr checks <PR>` and read that every check says `pass`.** The tell is a watch that ends far too early,
+or whose final output still contains `pending`.
+
 **Do not run it in the foreground and wait.** Use `run_in_background: true` and carry on; the result
 arrives as a task notification. A full run of this workflow is ~5 minutes (matrix + build + e2e).
 
