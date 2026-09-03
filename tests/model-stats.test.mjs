@@ -95,7 +95,7 @@ test("eventsFrom: events from DIFFERENT sessions share one timeline", () => {
     assert.deepEqual(evs.map((e) => e.ref.hash), ["two", "one"]);
 });
 
-test("eventsFrom: a tool step is ONE block, split where the model hands over to the tool", () => {
+test("eventsFrom: a tool step is ONE block, phased by who was working", () => {
     const evs = M.eventsFrom([{
         hash: "run9", model: "qwen3.8:27b",
         steps: [{
@@ -106,7 +106,8 @@ test("eventsFrom: a tool step is ONE block, split where the model hands over to 
     const tool = evs.find((e) => e.kind === "tool");
     assert.ok(tool, "a tool step produces a composite span");
     assert.equal(tool.t, 45_000, "it begins when the model started generating the call");
-    assert.equal(tool.split, 47_000, "…hands over where generation ended");
+    assert.deepEqual(tool.phases, [{ kind: "model", until: 47_000 }, { kind: "tool", until: 50_000 }],
+        "two phases when nothing was gated: the model, then the tool");
     assert.equal(tool.until, 50_000, "…and ends when the tool finished");
     assert.equal(tool.tool, "python_exec");
     assert.equal(tool.model, "qwen3.8:27b", "both halves are named: the model, then the tool");
@@ -139,4 +140,88 @@ test("eventsFrom: a step with no tool execution is not a composite", () => {
     }]);
     assert.equal(evs.filter((e) => e.kind === "tool").length, 0);
     assert.equal(evs.find((e) => e.kind === "gen").until, 10_000, "just the generation it did do");
+});
+
+test("eventsFrom: an approval gate is its OWN phase — the human's time, not the machine's", () => {
+    const evs = M.eventsFrom([{
+        hash: "gated", model: "qwen3.8:27b",
+        steps: [{
+            // 2s generating, 47s waiting for a click, 1s actually running.
+            seq: 3, ts: 100_000, tool: "python_exec", toolMs: 1000, approveMs: 47_000,
+            usage: usage(500, 40, { genMs: 2000 }),
+        }],
+    }]);
+    const tool = evs.find((e) => e.kind === "tool");
+    assert.equal(tool.t, 50_000, "the block covers all three, so its width is the step's real wall time");
+    assert.deepEqual(tool.phases, [
+        { kind: "model", until: 52_000 },
+        { kind: "wait", until: 99_000 },
+        { kind: "tool", until: 100_000 },
+    ], "…and the wait is a phase of its own, so a step that sat at a gate can't read as work");
+    // The dominant phase here is a person deciding — which is exactly the thing that was invisible before.
+    const widest = tool.phases.reduce((a, b, i, arr) => {
+        const dur = (x, j) => x.until - (j ? arr[j - 1].until : tool.t);
+        return dur(b, i) > dur(a.p, a.i) ? { p: b, i } : a;
+    }, { p: tool.phases[0], i: 0 });
+    assert.equal(widest.p.kind, "wait");
+});
+
+test("eventsFrom: a delegated sub-call is its own span, parented to the step that spawned it", () => {
+    const evs = M.eventsFrom([{
+        hash: "r", model: "qwen3.8:27b",
+        steps: [{
+            seq: 2, ts: 20_000, tool: "look", toolMs: 3000,
+            usage: usage(100, 20, { genMs: 1000 }),
+            // The reader ran INSIDE the tool's own window — that nesting is the point.
+            subUsage: {
+                byModel: [{ model: "minicpm-v", prompt: 700, completion: 30, calls: 1 }],
+                calls_: [{ model: "minicpm-v", ts: 19_000, ms: 1800, prompt: 700, completion: 30 }],
+            },
+        }],
+    }]);
+    const step = evs.find((e) => e.kind === "tool");
+    const sub = evs.find((e) => e.kind === "embed");
+    assert.ok(sub, "the sub-call is drawn, not just tallied");
+    assert.equal(sub.model, "minicpm-v", "a DIFFERENT model doing different work");
+    assert.equal(sub.t, 17_200, "a span, back over its own generation");
+    assert.equal(sub.until, 19_000);
+    assert.equal(sub.parent, step.id, "…owned by the step that spawned it");
+    assert.equal(step.parent, "run:r", "…which is owned by the run");
+    assert.equal(sub.cost.inTokens, 700, "and it carries its own cost, not the driver's");
+    assert.deepEqual(sub.ref, { hash: "r", seq: 2 }, "clicking it opens the step it belongs to");
+});
+
+test("eventsFrom: a run starts when it STARTED, so it contains its own first call", () => {
+    const evs = M.eventsFrom([{
+        hash: "r", model: "gemma4:31b", createdTs: 1000, lastTs: 40_000,
+        // One step, finishing at 30s: 20s of it was waiting for the model to load.
+        steps: [{ seq: 1, ts: 30_000, tool: "exec", toolMs: 500,
+                  usage: usage(10, 10, { genMs: 2000, loadMs: 20_000 }) }],
+    }]);
+    const run = evs.find((e) => e.kind === "run");
+    const load = evs.find((e) => e.kind === "load");
+    // A step's timestamp is when it FINISHED. Measured from steps alone the run would begin at 30s — after
+    // its own first model call, with the load it waited through sitting outside it.
+    assert.equal(run.t, 1000, "the run begins when the agent started");
+    assert.equal(run.until, 40_000);
+    assert.ok(load.t >= run.t && (load.until ?? 0) <= run.until, "…so the load it caused is INSIDE it");
+});
+
+test("eventsFrom: both timings ride along, so the network cost is recoverable", () => {
+    const [ev] = M.eventsFrom([{
+        hash: "n", model: "m",
+        // Ollama says it generated for 3.0s; we measured 3.6s around the fetch. The 600ms difference is the
+        // network and the queue — a different diagnosis from a slow model, and not recoverable from the rate.
+        turns: [{ ts: 10_000, usage: usage(100, 90, { genMs: 3600, evalMs: 3000 }) }],
+    }]);
+    assert.equal(ev.cost.evalMs, 3000, "the model's own generation time");
+    assert.equal(ev.cost.wallMs, 3600, "…and the time we waited for it");
+    assert.equal(ev.cost.genBasis, "eval", "the rate divides by the generation time");
+    assert.ok(Math.abs(ev.cost.tokPerSec - 30) < 0.01);
+
+    // A cloud route reports no eval_duration, so there is nothing to subtract — and the tooltip must not
+    // invent an overhead from a single number.
+    const [cloud] = M.eventsFrom([{ hash: "c", model: "m", turns: [{ ts: 10_000, usage: usage(100, 90, { genMs: 3600 }) }] }]);
+    assert.equal(cloud.cost.evalMs, undefined);
+    assert.equal(cloud.cost.genBasis, "wall");
 });

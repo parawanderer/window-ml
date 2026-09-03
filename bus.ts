@@ -65,10 +65,15 @@ let subUsage = { prompt: 0, completion: 0, calls: 0 };
 // Per-vision-model breakdown of that spend (chat_metadata's "which model cost what"). The suppressed
 // chat-result events carry the resolved model, so keying by it is free at the point we already tally.
 const subByModel = new Map<string, { prompt: number; completion: number; calls: number }>();
-export const resetSubcallUsage = (): void => { subUsage = { prompt: 0, completion: 0, calls: 0 }; subByModel.clear(); };
+// Each sub-call as its OWN call, with when it happened and how long it took. The by-model tally answers "what
+// did the reader cost"; this answers "when, and inside which step" — which is what lets a sub-call be drawn
+// nested under the step that spawned it instead of summed into a number with no place on a timeline.
+let subCalls: import("./contract").SubcallRecord[] = [];
+export const resetSubcallUsage = (): void => { subUsage = { prompt: 0, completion: 0, calls: 0 }; subByModel.clear(); subCalls = []; };
 export const subcallUsage = (): import("./contract").SubcallUsage => ({
     ...subUsage,
     ...(subByModel.size ? { byModel: [...subByModel.entries()].map(([model, u]) => ({ model, ...u })) } : {}),
+    ...(subCalls.length ? { calls_: subCalls } : {}),
 });
 
 /** Emit a debug event to the sidebar via postMessage. No-op when there's no
@@ -85,6 +90,11 @@ export const emitDebug = (event: MlDebugEvent): void => {
             const model = (event as { model?: string | null }).model || "(unknown)";
             const m = subByModel.get(model) || { prompt: 0, completion: 0, calls: 0 };
             m.prompt += p; m.completion += c; m.calls += 1; subByModel.set(model, m);
+            // Keep the individual call too: a span needs a start and a duration, and a sum has neither. `ts`
+            // is when the call FINISHED (the result event), so the span runs back over its own generation.
+            const ev = event as { ts?: number; usage?: { genMs?: number; evalMs?: number } | null };
+            subCalls.push({ model, ts: ev.ts || Date.now(), ms: ev.usage?.genMs ?? ev.usage?.evalMs ?? 0,
+                            prompt: p, completion: c });
         }
         return;   // never buffer/emit orphan internal chats
     }

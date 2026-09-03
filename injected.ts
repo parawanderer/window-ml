@@ -36,14 +36,14 @@ import { detectGroundingModel, DEFAULT_GROUNDING_RANGE, outputCapEscalated } fro
 import { evalReadonly } from "./readonly-exec";
 import { htmlToMarkdown } from "./html-to-md";
 import { runPipe, mlPipe, pipeHint, PIPE_SYNTAX } from "./text-pipe";
-import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement, navTarget, clipOut, askReaderNumCtx, jsonShape, shadowHostReport, clickSelector, elLine } from "./dom";
+import { truncate, errText, elPath, describeSkeleton, queryAll, selectorError, extractTable, castTableColumns, googleSheetCsvUrl, googleSheetId, externalSheetIds, parseCsv, nonEmptyTables, classifyOverlay, setPierceClosedShadow, viewportRect, isElement, navTarget, clipOut, askReaderNumCtx, jsonShape, joinShapes, jsonValue, shadowHostReport, clickSelector, elLine } from "./dom";
 import { makeAnswerFacade, finalizeAnswer, resolveOutputs } from "./answer-set";
 import { isSelfSourceUrl } from "./self-source";
 import { BUILD_INFO } from "./build-info.gen";
 import { accessibleName, roleOf, ariaState } from "./a11y";
 import { AGENT_SYSTEM, VISION_CLAUSE, ANSWER_CLAUSE, TOOLTOKENS_CLAUSE, DEREF_CLAUSE, WAIT_CLAUSE, SHADOW_CLAUSE, SHADOW_CLOSED_NOTE, SHADOW_CLOSED_PIERCE_NOTE, SHADOW_EXEC_NOTE, IFRAME_CLAUSE, SELF_CLAUSE, HUD_HINT, HUD_PROSE_PROGRESS, HUD_PROSE_QUIET, PYTHON_CLAUSE, EXEC_COMPUTE_CLAUSE, EXEC_RANGE_CLAUSE, NAV_OFF_CLAUSE, UNATTENDED_CLAUSE, UNATTENDED_REFUSAL, UNATTENDED_EXEC_NOTE, UNATTENDED_PY_NOTE, askAboutTask } from "./prompts";
 import { pageContext, cropDataUrl, MIN_SHOT_PX, POINT_RE, resolvePoint, markSeen, PT_LOOK_RADIUS, BOX_RE, resolveBox, agentState, mlRange } from "./util";
-import type { ShotBox, ServerTool, OllamaInfo, VisionMemory, RebuildConfig, AnswerMedia, MlAnswer } from "./contract";
+import type { DerefValue, ShotBox, ServerTool, OllamaInfo, VisionMemory, RebuildConfig, AnswerMedia, MlAnswer } from "./contract";
 import { annotate, pickAccentColorForTarget } from "./locate";
 import { suspiciousArgsWarning, suspiciousChars } from "./security";
 import { emitDebug, debugId, shortHash, sessionRegistry, agentRegistry, handleRegistry, enterAgentRun, exitAgentRun, resetSubcallUsage, subcallUsage } from "./bus";
@@ -62,7 +62,7 @@ import { runAgentLoop, shotTurnMessage, CITABLE_TOOLS } from "./agent-loop";
 import type { AgentLoopDeps } from "./agent-loop";
 import { installToolDelegation, registerRun, endRun, runAnswer } from "./run-delegation";
 import { descriptorFor } from "./render-descriptor";
-import { AgentHandle, sameOriginNav, sameOriginFetch } from "./ml-agent";   // run-control object (createAgent/agent) + page-loop same-origin auto-approve predicates
+import { AgentHandle, sameOriginNav, sameOriginFetch, DerefText } from "./ml-agent";   // run-control object (createAgent/agent) + page-loop same-origin auto-approve predicates
 import type { AgentControl } from "./ml-agent";
 
 /** One resolved `python_exec` table source: its var name, provenance, and the payload the sandbox
@@ -148,7 +148,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          * @returns The value, reduced by the pipe. Rejects with an actionable message when the pointer doesn't
          *          exist (a MemoryFault naming the nearest real pointers) or a pipe stage is wrong.
          */
-        dereference: async function(ref: string, { pipe = null }: { pipe?: string | string[] | null } = {}): Promise<string> {
+        dereference: async function(ref: string, { pipe = null }: { pipe?: string | string[] | null } = {}): Promise<DerefValue> {
             const fn = currentDeref();
             if (!fn) throw new Error("ml.dereference is only live inside an ml.agent run (it reads that run's captured tool outputs).");
             // STAGES cross the boundary, not a joined string — a stage may hold a bare `|` (see pipeStages).
@@ -157,7 +157,35 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             // split or piped by the calling script, and exec captures console output into the step's result
             // and its live stream, so the warning still reaches the model without touching the data.
             if (read.warning) { try { console.warn(read.warning); } catch { /* no console in this realm */ } }
-            return read.value;
+            // A String subclass, so every previous spelling still works while `.type`/`.json`/`.table`
+            // answer what the caller used to have to sniff out of the bytes. `.pipe()` re-reads the SAME
+            // pointer with more stages rather than piping the text it already holds — the store keeps the
+            // fuller capture, so going back to it can return more than this text has.
+            const again = (stages: string | string[]): Promise<DerefValue> => (window.ml.dereference(ref, { pipe: stages }));
+            return new DerefText(read.value, read.meta, again);
+        },
+        /**
+         * The TypeScript-like type of some JSON — one document, or the JOINED type of several.
+         *
+         * ```js
+         *   ml.schema(r.json)                                   // one document's shape
+         *   await ml.schema(ml.dereference(a), ml.dereference(b))   // the type that covers both
+         * ```
+         *
+         * Instances of the same thing collapse into one object whose sometimes-present keys become
+         * optional; genuinely different things stay a union, since merging them would describe an object
+         * that never existed. Arguments are AWAITED, so pointer reads can be passed straight in without
+         * an await each. A JSON string is parsed; prose is refused rather than shaped, because there is
+         * no honest type for it.
+         *
+         * @param values The documents. One value = its own shape; several = the joined type.
+         * @returns The TS-like shape.
+         */
+        schema: async function(...values: unknown[]): Promise<string> {
+            const vs = await Promise.all(values);
+            if (!vs.length) throw new Error("ml.schema needs at least one value — pass a JSON value, a JSON string, a fetch result, or a pointer read.");
+            const label = (i: number) => vs.length === 1 ? "the argument" : `argument ${i + 1}`;
+            return joinShapes(vs.map((v, i) => jsonValue(v, label(i))));
         },
         /**
          * Create a stateful multi-turn chat session.

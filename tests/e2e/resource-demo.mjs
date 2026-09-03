@@ -6,6 +6,10 @@
 //   npm run build && node --import tsx tests/e2e/resource-demo.mjs
 //
 // Env: HOLD=0 exits at the end instead of holding the browser open. PACE scales every wait.
+//      ONLY=events skips the memory narrative and goes straight to the event lane (~20s instead of ~2min).
+//      The final beats script a RUN (posted as the same __mlDebug events a real one emits) so the event lane
+//      has something in it: a model load, a delegated vision sub-call, and a step that waited at an approval
+//      gate — the three shapes the lane exists to tell apart.
 //      BOX=cuda (default) | amd | laptop | rig | lab | metal picks which machine to pretend to be — two
 //      discrete cards naming nvidia-smi, two naming rocm-smi, a 12 GiB laptop 4080 where a 27B model has to
 //      spill into RAM, four NVLinked 3090s a 70B is split across, an eight-A100 lab node (nine pools, past
@@ -28,6 +32,8 @@ const GiB = 1024 ** 3;
 // a discrete card names nvidia-smi/rocm-smi in its ceiling note, while a Mac has ONE pool shared with the
 // system and names no vendor tool at all — and the only way to see that without the hardware is to fake it.
 const BOX = process.env.BOX || "cuda";
+// ONLY=events jumps straight to the event lane (the full walk takes ~2 minutes to reach it).
+const ONLY = process.env.ONLY || "";
 const ART = path.resolve(`tests/e2e/artifacts/resource-demo${BOX === "cuda" ? "" : `-${BOX}`}`);
 
 const gpu = (o) => ({ compute: "12.0", driver: "13.2", ...o });
@@ -125,6 +131,70 @@ const resident = (name, vramBytes, gpuOrSplit, sizeBytes = vramBytes) => {
 /** Free bytes per device given what is resident on each. */
 const freeWith = (onDev) => SHAPE.devices.map((_, i) => IDLE(i) - (onDev[i] || 0));
 
+/** The scripted run the event lane draws. Posted as the same `__mlDebug` events a real run emits, so the
+ *  shell relays them exactly as it would its own — the fake box moves memory but runs no model.
+ *
+ *  Every timestamp is relative to NOW and must land inside the sampled window, so the caller says how far
+ *  back the history actually reaches: an event before the first sample is correctly dropped (nothing was
+ *  measured then), which on a short warm-up would silently leave the lane looking empty. */
+const scriptRun = (page, spanMs) => page.evaluate((span) => {
+    const now = Date.now();
+    const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
+    const hash = "demo-run";
+    // Built FORWARD from the run's start, not backward from now: a step's timestamp is when it FINISHED, so
+    // laying these out by counting back is how the first version ended up with a model load that began
+    // BEFORE the run that waited through it — a fixture claiming something the loop could never produce.
+    const t0 = now - span;                   // the agent starts
+    const gap = Math.round(span * 0.03);     // a beat before the first call
+    const step = (from, parts) => from + parts.reduce((a, b) => a + b, 0);
+
+    post({ kind: "agent", id: hash, ts: t0, save: false, session: { hash, turn: 0 },
+           task: "summarise the spreadsheet", model: "gemma4:31b", maxSteps: 8, config: null });
+
+    // Step 1: the model wasn't resident. A long load, a short generation, a quick tool.
+    const load1 = Math.round(span * 0.30), gen1 = Math.round(span * 0.10), tool1 = Math.round(span * 0.06);
+    const ts1 = step(t0 + gap, [load1, gen1, tool1]);
+    post({ kind: "agent-step", id: hash, ts: ts1, save: false, session: { hash, turn: 1 },
+           step: 1, seq: 1, tool: "exec", toolMs: tool1,
+           arguments: { js: "document.title" }, result: "ok",
+           renderIn: { type: "code", lang: "javascript", code: "document.title", format: true },
+           usage: { promptTokens: 2400, completionTokens: 90, totalTokens: 2490, genMs: gen1, loadMs: load1 } });
+
+    // Step 2: resident now, so the cost is generation + a slow tool — and it DELEGATED: a vision reader ran
+    // INSIDE the tool's own window, twice. Hovering one lights only its lineage.
+    const gen2 = Math.round(span * 0.08), tool2 = Math.round(span * 0.22);
+    const ts2 = step(ts1, [gen2, tool2]);
+    const readerEnd = ts2 - Math.round(tool2 * 0.15);
+    post({ kind: "agent-step", id: hash, ts: ts2, save: false, session: { hash, turn: 2 },
+           step: 2, seq: 2, tool: "python_exec", toolMs: tool2,
+           arguments: { code: "df.describe()" }, result: "ok",
+           renderIn: { type: "python-in", mode: "readonly", source: "df.describe()",
+                       tables: [{ name: "df", source: "#sales", kind: "dom",
+                                  df: { columns: ["Rep", "Q1", "Q2"],
+                                        rows: [["Gia", 320, 530], ["Kim", 410, 400], ["Ada", 275, 610]] } }] },
+           renderOut: { type: "python-out", stdout: "count    3.000000\nmean   513.333333\nstd    105.4",
+                        df: { columns: ["", "Q1", "Q2"],
+                              rows: [["count", 3, 3], ["mean", 335, 513.33], ["std", 68.4, 105.4]] } },
+           usage: { promptTokens: 3100, completionTokens: 210, totalTokens: 3310, genMs: gen2, loadMs: 40 },
+           subUsage: { calls: 2, prompt: 1600, completion: 60,
+                       byModel: [{ model: "minicpm-v:8b", prompt: 1600, completion: 60, calls: 2 }],
+                       calls_: [{ model: "minicpm-v:8b", ts: readerEnd - Math.round(tool2 * 0.35), ms: Math.round(tool2 * 0.3), prompt: 800, completion: 30 },
+                                { model: "minicpm-v:8b", ts: readerEnd, ms: Math.round(tool2 * 0.25), prompt: 800, completion: 30 }] } });
+
+    // Step 3: gated. The model wrote the call quickly, a human took far longer to allow it, the tool ran in
+    // no time — so most of that block is a person deciding, and it must not read as work.
+    const gen3 = Math.round(span * 0.05), wait3 = Math.round(span * 0.14), tool3 = Math.round(span * 0.02);
+    const ts3 = step(ts2, [gen3, wait3, tool3]);
+    post({ kind: "agent-step", id: hash, ts: ts3, save: false, session: { hash, turn: 3 },
+           step: 3, seq: 3, tool: "exec", toolMs: tool3, approveMs: wait3, approval: "user",
+           arguments: { js: "document.querySelectorAll('tr').length" }, result: "41",
+           renderIn: { type: "code", lang: "javascript", code: "document.querySelectorAll('tr').length", format: true },
+           renderOut: { type: "keyval", pairs: [["value", "41"]] },
+           usage: { promptTokens: 3300, completionTokens: 45, totalTokens: 3345, genMs: gen3, loadMs: 30 } });
+    post({ kind: "agent-result", id: hash, ts: ts3 + Math.round(span * 0.01), save: false,
+           session: { hash, turn: 3 }, summary: "done", steps: 3, hitCap: false });
+}, spanMs);
+
 async function main() {
     mkdirSync(ART, { recursive: true });
     const fake = await startFakeLlm({ model: "fake-model" });
@@ -182,6 +252,33 @@ async function main() {
             throw new Error(`couldn't put the VRAM panel ${open ? "open" : "closed"}`);
         };
         await setPanel(true);
+
+        // ONLY=events — skip the memory narrative and go straight to the lane. It still needs an AXIS to draw
+        // against (an event outside the sampled window is correctly dropped), so this warms up just long
+        // enough for a run of samples, moves a model to give the trace some shape, and scripts the run across
+        // exactly the window that exists.
+        if (ONLY === "events") {
+            const warm = 16_000;
+            log("ONLY=events — warming the axis for 16s, then scripting the run.");
+            fake.setResident([resident(M.a[0], M.a[1], 0)]);
+            fake.setCapacity(box(freeWith([M.a[1]]), 10 * GiB));
+            await sleep(warm / 2);
+            // A second model, then an eviction: something for the trace to do, and a rule to hover.
+            fake.setResident([resident(M.a[0], M.a[1], 0), resident(M.b[0], M.b[1], 1 % DEVS)]);
+            fake.setCapacity(box(freeWith(DEVS > 1 ? [M.a[1], M.b[1]] : [M.a[1] + M.b[1]]), 9 * GiB));
+            await sleep(warm / 3);
+            fake.setResident([resident(M.b[0], M.b[1], 1 % DEVS)]);
+            fake.setCapacity(box(freeWith(DEVS > 1 ? [0, M.b[1]] : [M.b[1]]), 9 * GiB));
+            await sleep(warm / 6);
+            log("events: a model load, a delegated reader, and a step that waited at an approval gate.");
+            await scriptRun(page, warm * 0.75);
+            await sleep(4000);
+            await capture(page, "events");
+            console.log(`\n  screenshots in ${ART}`);
+            if (HOLD) { log("holding the browser open (HOLD=0 to skip)."); await new Promise(() => {}); }
+            return;
+        }
+
         log(`panel open — ${DEVS === 1 ? "one idle device" : `${DEVS} idle cards`}, holding only ollama's driver context.`);
         await sleep(3000);
         await capture(page, "idle");
@@ -327,7 +424,16 @@ async function main() {
             await capture(page, "split-model");
         }
 
-        // 9. Capacity STOPS answering. What was already measured stands — a box does not lose its hardware
+        // 9. The EVENT LANE: what happened, under what it happened to. The fake box moves memory but runs no
+        //    model, so the run is scripted — these are the same `__mlDebug` events a real run emits, posted
+        //    from the page so the shell relays them exactly as it would its own. The timings are the point:
+        //    a model load, a slow generation, and a tool that took longer than the model did.
+        log("events: a scripted run on the same axis — a model load, a delegated reader, and a step that waited at an approval gate.");
+        await scriptRun(page, 26_000);
+        await sleep(6000);
+        await capture(page, "events");
+
+        // 10. Capacity STOPS answering. What was already measured stands — a box does not lose its hardware
         //    because one poll came back empty, and forgetting it swapped the panel for the legacy chart at
         //    random.
         log("the box stops answering /api/info — the panel keeps what it measured rather than flipping views.");
@@ -335,7 +441,7 @@ async function main() {
         await sleep(14000);
         await capture(page, "capacity-silent");
 
-        // 10. The real degrade: a box that has NEVER answered. Fresh page, since that is a different state.
+        // 11. The real degrade: a box that has NEVER answered. Fresh page, since that is a different state.
         log("a box that never answers /api/info — capacity unknown, so no ceiling is invented.");
         await page.reload();
         await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot, null, { timeout: 20000 });

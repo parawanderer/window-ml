@@ -34,7 +34,7 @@ export interface Turn {
     reasoning?: string | null;  // separate thinking/reasoning text, if the model produced any
     usage?: TokenUsage | null;  // token counts for this turn, when the server reports them
 }
-export interface AgentStep { step: number; localStep?: number; seq?: number; toolMs?: number; ts?: number; pending?: boolean; awaitingApproval?: boolean; thought?: string; reasoning?: string | null; tool?: string; arguments?: Record<string, unknown>; result?: string; modelResult?: string; streamOutput?: string; streamMarks?: [number, number][]; token?: string; elements?: number; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; argIssues?: string[]; approval?: "readonly" | "sandbox" | "same-origin" | "consented" | "self-source" | "user" | "denied" | "skipped" | "cancelled"; usage?: TokenUsage | null; subUsage?: SubcallUsage; grants?: PersistGrant[]; reused?: ReusedGrant[]; }
+export interface AgentStep { step: number; localStep?: number; seq?: number; toolMs?: number; approveMs?: number; ts?: number; pending?: boolean; awaitingApproval?: boolean; thought?: string; reasoning?: string | null; tool?: string; arguments?: Record<string, unknown>; result?: string; modelResult?: string; streamOutput?: string; streamMarks?: [number, number][]; token?: string; elements?: number; renderIn?: RenderDescriptor; renderOut?: RenderDescriptor; feedback?: ToolFeedback; argIssues?: string[]; approval?: "readonly" | "sandbox" | "same-origin" | "consented" | "self-source" | "user" | "denied" | "skipped" | "cancelled"; usage?: TokenUsage | null; subUsage?: SubcallUsage; grants?: PersistGrant[]; reused?: ReusedGrant[]; }
 
 // The agent's TURN count — the number of distinct `.step` values, NOT `steps.length`.
 // One turn (one LLM call) emits several `AgentStep` events (its thought + one per tool
@@ -93,6 +93,16 @@ export const showStatsTps = signal(false);     // DevTools run-stats bar: genera
 export const OUTMAX_DEFAULT = 260;             // px — roughly 14 lines; enough to read, small enough not to bury the page
 export const showOutTimes = signal(true);      // render the timestamp gutter on streamed output (default on)
 export const vramH = signal(0);   // px; 0 = size to content (the default)
+// A drag-selected time range on the resource chart (Grafana-style), or null for "the whole window". Held in
+// the store rather than the component because EVERY track and the event lane must draw the same selection —
+// while it is being drawn, and after.
+export const zoomRange = signal<{ from: number; to: number } | null>(null);
+/** The drag in progress, as fractions of the plot's width, so every track can mirror it live. */
+export const brush = signal<{ from: number; to: number } | null>(null);
+/** Where the pointer is on the time axis, for the crosshair every track draws. `frac` positions it, `t` is
+ *  the moment it names — one signal, so the line appears on all the graphs at once and they cannot disagree
+ *  about which instant is being pointed at. */
+export const crosshair = signal<{ frac: number; t: number | null; msPerPx?: number } | null>(null);
 export const resWindowS = signal(RESWIN_DEFAULT);  // seconds of history the resource chart shows (Settings → Appearance)
 export const outMaxH = signal(OUTMAX_DEFAULT); // max height of a tool output cell (Settings → Appearance); 0 = uncapped
 export const config = signal<MlConfig>(DEFAULT_CONFIG);   // live mirror of chrome.storage.sync

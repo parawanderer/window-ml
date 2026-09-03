@@ -9,18 +9,19 @@
 //     ~0.55 GiB of ollama's discovery context and calling that "other processes" invents a process.
 //   • HONEST GAPS. Polling is gated on the panel being open, so history is discontinuous. A line drawn across
 //     a ten-minute hole is a confident claim about memory nobody measured; `segments` breaks it instead.
-import { useMemo } from "preact/hooks";
+import { useMemo, useRef, useState, useLayoutEffect } from "preact/hooks";
 import {
     deviceBands, hostBands, ceilingsFor, segments, formatBytes, formatShare, percentOf, isCpuResident,
-    placeEvents, laneRows, eventsIn, type ResourceEvent, type EventPlacement,
+    placeEvents, laneRows, eventsIn, lineageOf, timeAtFraction, MIN_EV_SPAN, type ResourceEvent, type EventPlacement,
     OTHER_BAND_NOTE, DRIVER_BAND_LABEL,
     presetsFor,
     type ResourceSample, type Band, type Capacity, type TrackDef,
 } from "../resource-model";
 import { colorFor, poolColor, hoverModel, poolHover, poolFacts, ModelFacts, CostFacts, VRAM_POLL_MS } from "./vram";
-import { loadedModels, resWindowS, view } from "./store";
+import { loadedModels, resWindowS, view, zoomRange, brush, crosshair } from "./store";
+import { clockAt, hhmmssms } from "./timestamps";
 import { scrollToStepSeq } from "./answer-render";
-import { tipStyle } from "./tip";
+import { useTipPlacement } from "./use-tip";
 import { signal } from "@preact/signals";
 
 /** Which overlay POOL (a card, or the host) is hovered — the line and its key light together. */
@@ -30,7 +31,20 @@ const hoverPool = signal<string | null>(null);
  *  which side to sit on. Tracked on the plot rather than on each polygon: a polygon's offsetX is relative to
  *  its own segment's SVG, so with several segments it would jump, and the viewBox is 300 units wide whatever
  *  the panel's real pixel width is. */
-const hoverAt = signal<{ x: number; y: number; w: number } | null>(null);
+// The cursor, in VIEWPORT coordinates, plus WHICH surface it is over. Two fixes in one:
+//   • Viewport, not element-relative. A tip positioned inside a 9px lane row has nowhere to go but under the
+//     pointer, which is exactly where a tooltip must never be. Against the window it flips like every other
+//     tip in the panel (tip.ts), so the behaviour is one implementation rather than per-container luck.
+//   • A surface, because every track renders a BandTip and the lane renders an EventTip, all reading these
+//     same signals — so hovering a lane bar (which cross-highlights a model) made every track's band tip
+//     appear at once. A tip renders only for the surface the pointer is actually on.
+const hoverAt = signal<{ x: number; y: number; w: number; surface: string } | null>(null);
+/** Read the cursor for a surface, or null when the pointer is somewhere else. */
+const cursorOn = (surface: string) => (hoverAt.value?.surface === surface ? hoverAt.value : null);
+/** Track a pointer against the viewport, tagged with the surface it is over. */
+const trackCursor = (surface: string) => (e: PointerEvent) => {
+    hoverAt.value = { x: e.clientX, y: e.clientY, w: typeof window !== "undefined" ? window.innerWidth : 1024, surface };
+};
 
 const W = 300, H = 72;
 
@@ -60,7 +74,7 @@ const bandFill = (key: string, model: string | undefined): string => {
 };
 
 /** One device (or the host pool) as a stacked area over time. `frames` is one band list per sample. */
-function StackedArea({ frames, ceiling, hidden }: { frames: Band[][]; ceiling: number; hidden: Set<string> }) {
+function StackedArea({ frames, ceiling, hidden, scope }: { frames: Band[][]; ceiling: number; hidden: Set<string>; scope: string }) {
     const order = useMemo(() => bandOrder(frames), [frames]);
     const identity = useMemo(() => bandIdentity(frames), [frames]);
     if (frames.length < 2 || ceiling <= 0) return <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true" />;
@@ -94,7 +108,7 @@ function StackedArea({ frames, ceiling, hidden }: { frames: Band[][]; ceiling: n
         const hot = !!model && hoverModel.value === model;
         return <polygon key={key} points={pts.join(" ")} fill={bandFill(key, model)}
             class={model ? `rc-band${hot ? " hot" : ""}` : undefined} vector-effect="non-scaling-stroke"
-            onPointerEnter={model ? () => (hoverModel.value = model) : undefined}
+            onPointerEnter={model ? (e: PointerEvent) => { hoverModel.value = model; trackCursor(scope)(e); } : undefined}
             onPointerLeave={model ? () => { hoverModel.value = null; hoverAt.value = null; } : undefined}
             opacity={dim ? 0.18 : key === "other" ? 0.35 : 0.75} />;
     });
@@ -119,10 +133,13 @@ export interface DeviceViewProps {
      *  device's is the system total, and the host pool has no driver in the story at all. */
     ceilingNote: string;
     hidden: Set<string>;
+    /** Instants to rule through this plot (evictions). Spans live in the lane below, not here. */
+    events?: ResourceEvent[];
 }
 
 /** One track: a header carrying the denominator, then the stacked history, gaps left as gaps. */
-export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote, hidden }: DeviceViewProps) {
+export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote, hidden, events = [] }: DeviceViewProps) {
+    const scope = `track:${label}`;   // one track per pool, so the label identifies the surface
     const latest = samples.at(-1);
     const bands = latest ? bandsOf(latest) : [];
     const used = bands.filter((b) => b.kind !== "free" && !(b.model && hidden.has(b.model))).reduce((n, b) => n + b.bytes, 0);
@@ -131,6 +148,8 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
     // leaves a pale sliver where the band wash is missing, which reads as a rendering artifact rather than as
     // data. Undrawable runs are skipped; nothing is lost, because a lone point conveys no trend either.
     const runs = useMemo(() => segments(samples).filter((r) => r.length > 1), [samples]);
+    // Only the instants: a span is a duration and belongs in the lane, where its length can be read.
+    const instants = useInstants(runs, events);
     return (
         <div class="rc-track">
             <div class="rc-head">
@@ -144,16 +163,21 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
                 </span>
             </div>
             <div class="rc-plot"
-                onPointerMove={(e: PointerEvent) => { const el = e.currentTarget as HTMLElement; hoverAt.value = { x: e.offsetX, y: e.offsetY, w: el.clientWidth }; }}
-                onPointerLeave={() => { hoverAt.value = null; hoverModel.value = null; }}>
+                onPointerDown={startBrush(runs)}
+                onPointerMove={(e: PointerEvent) => { trackCursor(scope)(e); trackCrosshair(runs)(e); }}
+                onPointerLeave={() => { hoverAt.value = null; hoverModel.value = null; eventHover.value = null; crosshair.value = null; }}>
                 {runs.map((run, i) => (
                     <div class="rc-seg" key={i} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
-                        <StackedArea frames={run.map(bandsOf)} ceiling={ceiling} hidden={hidden} />
+                        <StackedArea frames={run.map(bandsOf)} ceiling={ceiling} hidden={hidden} scope={scope} />
+                        <InstantRules instants={instants} run={i} scope={scope} />
                     </div>
                 ))}
+                <BrushOverlay />
+                <Crosshair />
                 {soft ? <div class="rc-soft" style={{ bottom: `${Math.min(100, (soft.bytes / ceiling) * 100)}%` }}
                     title={soft.label} /> : null}
-                <BandTip bands={bands} history={samples.map(bandsOf)} ceiling={ceiling} />
+                <BandTip bands={bands} history={samples.map(bandsOf)} ceiling={ceiling} scope={scope} />
+                <EventTip scope={scope} />
             </div>
             <div class="rc-legend">
                 {bands.filter((b) => b.kind === "other" && b.bytes > 0).map((b) => (
@@ -179,10 +203,10 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
 /** What the hovered band is, shown over the plot. Deliberately the SAME facts as the legend row (ModelFacts),
  *  because a band and its row describe one model — an SVG <title> could carry none of it: no colour, no live
  *  TTL, no badge, and a half-second delay before it appears. */
-function BandTip({ bands, history, ceiling }: { bands: Band[]; history: Band[][]; ceiling: number }) {
+function BandTip({ bands, history, ceiling, scope }: { bands: Band[]; history: Band[][]; ceiling: number; scope: string }) {
     const name = hoverModel.value;
-    const at = hoverAt.value;
-    if (!name) return null;
+    const at = cursorOn(scope);
+    if (!name || !at) return null;
     // A band drawn in the HISTORY belongs to a model that may have evicted since. Fall back to the last frame
     // that held it, so hovering the shape still answers what it was — silence there would leave a coloured
     // area on the chart with nothing below it to explain the colour.
@@ -193,17 +217,22 @@ function BandTip({ bands, history, ceiling }: { bands: Band[]; history: Band[][]
     const m = (loadedModels.value || []).find((x) => x.model === name);
     // Follows the cursor, offset up-left so it never sits under the pointer (which would flicker as the
     // pointer enters the tip itself) and clamped inside the plot so it can't run off the narrow panel.
-    const style = at ? tipStyle(at) : undefined;
+    const { ref, style } = useTipPlacement(at);
     return (
-        <div class="rc-tip" role="tooltip" style={style}>
-            <i class="rc-tip-dot" style={{ background: colorFor(name) }} />
-            <span class="rc-tip-name">{name}</span>
+        // A STACK, not a row: name, then the figure, then the badges. On one line the name and the figure set
+        // the tip's width and every shorter line left a slab of empty space beside it.
+        <div class="rc-tip rc-tip-model" role="tooltip" ref={ref} style={style}>
+            <div class="rc-tip-line"><i class="rc-tip-dot" style={{ background: colorFor(name) }} />
+                <span class="rc-tip-name">{name}</span></div>
             {/* Bytes AND the share of this device — a model is "big" only relative to the card it is on. */}
-            <span class="rc-tip-size">{formatBytes(band.bytes)} <span class="rc-tip-pct">{percentOf(band.bytes, ceiling)}</span></span>
+            <div class="rc-tip-line"><span class="rc-tip-size">{formatBytes(band.bytes)} <span class="rc-tip-pct">({percentOf(band.bytes, ceiling)})</span></span></div>
             {/* Its row is gone from the list below, so the tip is the only place that can say why the colour
                 is still on the chart: this is history, not something resident now. */}
             {gone ? <span class="rc-tip-gone">evicted</span> : null}
-            {m ? <ModelFacts m={m} tips={false} /> : null}
+            {/* Badges and cost each break onto their OWN line. On one line the tip grew past the panel and was
+                clipped at the window edge — and the figure that matters (how much, what share) is the part
+                that got cut. */}
+            {m ? <div class="rc-tip-facts"><ModelFacts m={m} tips={false} /></div> : null}
             <CostFacts model={name} />
         </div>
     );
@@ -213,19 +242,25 @@ function BandTip({ bands, history, ceiling }: { bands: Band[]; history: Band[][]
  *  The model list is deliberately SHORT here: the full detail is the rows below, which grey out to show the
  *  same answer, so this only has to name the device and confirm the selection. */
 function PoolTip({ latest }: { latest: ResourceSample }) {
-    const h = poolHover.value, at = hoverAt.value;
+    const h = poolHover.value, at = cursorOn("overlay");
     if (!h || !at) return null;
-    const style = tipStyle(at);
+    const { ref, style } = useTipPlacement(at);
     // Read from the NEWEST sample, not from what was true when the pointer arrived: a model can load or evict
     // while you hold the cursor still, and the tip has to say the same thing as the chart under it.
     const { used, consumers } = poolFacts(h.bandsOf(latest));
     return (
-        <div class="rc-tip rc-tip-pool" role="tooltip" style={style}>
+        <div class="rc-tip rc-tip-pool" role="tooltip" ref={ref} style={style}>
             <div class="rc-tip-line"><span class="rc-tip-name">{h.name}</span>
                 <span class="rc-tip-size">{formatShare(used, h.ceiling)}</span></div>
             {consumers.length
                 ? consumers.map((c) => (
-                    <div class="rc-tip-line rc-tip-dim" key={c.label}><span>{c.label}</span>
+                    <div class="rc-tip-line rc-tip-dim" key={c.label}>
+                        <span class="rc-tip-consumer">
+                            {/* A model's own dot, the same one its row carries. The residual gets none: it is
+                                not a model, and a dot would say it was. */}
+                            {c.model ? <i class="rc-tip-dot" style={{ background: colorFor(c.model) }} /> : null}
+                            {c.label}
+                        </span>
                         {/* Its own share of THIS pool: the question a per-consumer line is asked is "how much
                             of the card is this", which bytes alone only answer after arithmetic. */}
                         <span>{formatBytes(c.bytes)} <span class="rc-tip-pct">{percentOf(c.bytes, h.ceiling)}</span></span></div>
@@ -267,7 +302,7 @@ function deviceCeilingNote(dev: { runner: string; unified: boolean; physicalByte
  *  `ram`/`mem` the host pool's. STACK renders the bands (the parts do sum to that pool's occupancy); OVERLAY
  *  renders one line per series, each against its own ceiling, because several pools have no shared total —
  *  which is exactly what `stackRefusal` refuses and why the Overview preset overlays. */
-function TrackView({ def, samples, latest, hidden }: { def: TrackDef; samples: ResourceSample[]; latest: ResourceSample; hidden: Set<string> }) {
+function TrackView({ def, samples, latest, hidden, events = [] }: { def: TrackDef; samples: ResourceSample[]; latest: ResourceSample; hidden: Set<string>; events?: ResourceEvent[] }) {
     const cap = latest.capacity!;
     const deviceOf = (id: string) => cap.devices.find((d) => d.id === id.replace(/^vram\./, ""));
     const first = def.series[0] ?? "";
@@ -287,21 +322,21 @@ function TrackView({ def, samples, latest, hidden }: { def: TrackDef; samples: R
                 : "Total system memory. Models here are running on the CPU, or are the spilled part of a model too large for the accelerator.";
             return <DeviceView label={label} samples={samples} bandsOf={hostBands}
                 ceiling={c?.hardBytes ?? cap.host.totalBytes} ceilingNote={note}
-                soft={c?.softBytes ? { bytes: c.softBytes, label: c.softLabel || "" } : null} hidden={hidden} />;
+                soft={c?.softBytes ? { bytes: c.softBytes, label: c.softLabel || "" } : null} hidden={hidden} events={events} />;
         }
         const d = deviceOf(first);
         if (!d) return null;
         const c = ceilingsFor(latest, d.id);
         return <DeviceView label={d.name} samples={samples} bandsOf={(s) => deviceBands(s, d.id)}
             ceiling={c?.displayBytes ?? d.totalBytes} ceilingNote={deviceCeilingNote(d)}
-            soft={c?.softBytes ? { bytes: c.softBytes, label: c.softLabel || "" } : null} hidden={hidden} />;
+            soft={c?.softBytes ? { bytes: c.softBytes, label: c.softLabel || "" } : null} hidden={hidden} events={events} />;
     }
-    return <OverlayView def={def} samples={samples} latest={latest} hidden={hidden} />;
+    return <OverlayView def={def} samples={samples} latest={latest} hidden={hidden} events={events} />;
 }
 
 /** Several series in ONE track, drawn as independent lines rather than a stack: their sum is not a quantity
  *  anything is measured against (a model can only use one card's capacity), so the chart must not draw one. */
-function OverlayView({ def, samples, latest, hidden }: { def: TrackDef; samples: ResourceSample[]; latest: ResourceSample; hidden: Set<string> }) {
+function OverlayView({ def, samples, latest, hidden, events = [] }: { def: TrackDef; samples: ResourceSample[]; latest: ResourceSample; hidden: Set<string>; events?: ResourceEvent[] }) {
     const cap = latest.capacity!;
     // Each series is a POOL: a card, or the host. Including the host matters — a CPU-resident model holds no
     // VRAM, so a cards-only overlay makes it vanish from the chart entirely while it sits in the legend below.
@@ -332,6 +367,7 @@ function OverlayView({ def, samples, latest, hidden }: { def: TrackDef; samples:
         return mine.length > 0 && mine.every((b) => hidden.has(b.model!));
     };
     const pct = (v: number) => `${(v * 100).toFixed(v < 0.1 ? 1 : 0)}%`;
+    const instants = useInstants(runs, events);
     return (
         <div class="rc-track">
             <div class="rc-head">
@@ -343,11 +379,17 @@ function OverlayView({ def, samples, latest, hidden }: { def: TrackDef; samples:
                 </span>
             </div>
             <div class="rc-plot"
-                onPointerMove={(e: PointerEvent) => { const el = e.currentTarget as HTMLElement; hoverAt.value = { x: e.offsetX, y: e.offsetY, w: el.clientWidth }; }}
-                onPointerLeave={() => { hoverAt.value = null; leavePool(); }}>
+                onPointerDown={startBrush(runs)}
+                onPointerMove={(e: PointerEvent) => { trackCursor("overlay")(e); trackCrosshair(runs)(e); }}
+                onPointerLeave={() => { hoverAt.value = null; leavePool(); crosshair.value = null; }}>
+                <BrushOverlay />
+                <Crosshair />
                 <PoolTip latest={latest} />
+                {/* This view has rules of its own now, so it needs the tip that explains them. */}
+                <EventTip scope="overlay" />
                 {runs.map((run, ri) => (
                     <div class="rc-seg" key={ri} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
+                        <InstantRules instants={instants} run={ri} scope="overlay" />
                         <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
                             {pools.map((p, pi) => {
                                 const pts = run.map((s, i) => `${((i / (run.length - 1)) * W).toFixed(1)},${(H - frac(s, p) * H).toFixed(1)}`).join(" ");
@@ -369,7 +411,7 @@ function OverlayView({ def, samples, latest, hidden }: { def: TrackDef; samples:
                                             target cannot move out from under a still pointer. */}
                                         <polyline points={pts} fill="none" stroke="transparent" stroke-width="10"
                                             vector-effect="non-scaling-stroke" class="rc-hit"
-                                            onPointerEnter={() => enterPool(p)}
+                                            onPointerEnter={(e: PointerEvent) => { enterPool(p); trackCursor("overlay")(e); }}
                                             onPointerLeave={() => leavePool()} />
                                         {/* The visible line takes NO pointer events. Painted on top of the hit
                                             target, it would take them by default — and since it THICKENS on
@@ -392,12 +434,14 @@ function OverlayView({ def, samples, latest, hidden }: { def: TrackDef; samples:
                     // Dimmed from BOTH ends: hovering a model dims the pools it isn't on, and hovering a pool
                     // (its line or its key) dims the other pools' keys — the legend is the list this selection
                     // is made from, so leaving it lit while the chart and the rows both react is a half answer.
-                    <span class={`rc-key tt${(hoverModel.value && !p.bandsOf(latest).some((b) => b.model === hoverModel.value))
+                    // NO `tt` class here: this key opens the cursor-following pool tip (below), and a static
+                    // popup as well meant two tooltips for one hover. The pool tip carries the same figure
+                    // plus what is resident, so the static one had nothing left to add.
+                    <span class={`rc-key${(hoverModel.value && !p.bandsOf(latest).some((b) => b.model === hoverModel.value))
                             || (hoverPool.value && hoverPool.value !== p.id) ? " away" : ""}${allHidden(p) ? " off" : ""}`} key={p.id}
-                        onPointerEnter={() => enterPool(p)} onPointerLeave={() => leavePool()}>
+                        onPointerEnter={(e: PointerEvent) => { enterPool(p); trackCursor("overlay")(e); }} onPointerLeave={() => leavePool()}>
                         <i class="rc-swatch" style={{ background: poolColor(pi, pools.length) }} />
                         {p.name} {pct(frac(latest, p))}
-                        <span class="tt-pop left above" role="tooltip">{formatShare(usedOf(latest, p), p.ceiling)}</span>
                     </span>
                 ))}
             </div>
@@ -407,38 +451,222 @@ function OverlayView({ def, samples, latest, hidden }: { def: TrackDef; samples:
 
 /** The panel's tracks, from the chosen LAYOUT. A layout is just `TrackDef[]`; a preset is a named starting
  *  point for it (see `presetsFor`), and editing one is the same operation on the same state. */
-/** The hovered event, following the cursor like the other tips. */
-const eventHover = signal<{ p: EventPlacement } | null>(null);
+/** A composite span's fill: hard stops at each phase boundary. The model's own colour for the work it did
+ *  (the same one its row and bands carry, so the lane reads against the model list with no legend of its
+ *  own), a hatched neutral for the human's wait, and a paler wash of the model colour for the tool. */
+/** The fill for a LOAD span: diagonal stripes of the model's own colour against the panel. Waiting for a model
+ *  to arrive is not the model working, so it must not look like a solid block of its time — but it IS that
+ *  model's wait, so the colour stays. (A plain model-coloured bar is what the inline colouring made of it,
+ *  which is exactly the confusion the stripes exist to prevent.) */
+/** A phase's swatch, matching its stripe in the bar exactly — so the tooltip's sections and the block's parts
+ *  are visibly the same three things, rather than a list you have to map onto a picture yourself. */
+const phaseFill = (kind: string, model?: string): string => {
+    const base = model ? colorFor(model) : "var(--accent)";
+    return kind === "model" ? base
+        : kind === "wait" ? "color-mix(in srgb, var(--fg-faint) 45%, transparent)"
+        : `color-mix(in srgb, ${base} 38%, transparent)`;
+};
 
-function EventTip() {
-    const h = eventHover.value, at = hoverAt.value;
-    if (!h || !at) return null;
+const loadStripes = (model?: string): string => {
+    const c = model ? colorFor(model) : "var(--warn, #f59e0b)";
+    return `repeating-linear-gradient(45deg, ${c} 0 3px, var(--panel) 3px 8px)`;
+};
+
+function phaseGradient(phases: { kind: string; until: number }[], from: number, total: number, model?: string): string {
+    const base = model ? colorFor(model) : "var(--accent)";
+    const fill = (kind: string) => phaseFill(kind, model);
+    const stops: string[] = [];
+    let at = 0;
+    for (const ph of phases) {
+        const end = Math.min(100, Math.max(at, ((ph.until - from) / total) * 100));
+        stops.push(`${fill(ph.kind)} ${at}% ${end}%`);
+        at = end;
+    }
+    return `linear-gradient(to right, ${stops.join(", ")})`;
+}
+
+/** The instants to rule through a plot, placed against its own segments. Shared, because writing them inline
+ *  in one view is exactly how the Overview preset ended up with no rules at all while the per-pool tracks had
+ *  them: the same events, drawn in one place and not the other. */
+function useInstants(runs: ResourceSample[][], events: ResourceEvent[]): EventPlacement[] {
+    return useMemo(() => {
+        const from = runs[0]?.[0]?.t ?? 0, to = runs.at(-1)?.at(-1)?.t ?? 0;
+        return placeEvents(runs, eventsIn(events.filter((e) => e.until == null), from, to + VRAM_POLL_MS), VRAM_POLL_MS);
+    }, [runs, events]);
+}
+
+/** The dashed rules themselves — an eviction is a moment in the memory trace, and its meaning is WHERE the
+ *  curve steps, so it belongs on the plot rather than in the lane below. */
+function InstantRules({ instants, run, scope }: { instants: EventPlacement[]; run: number; scope: string }) {
+    return <>{instants.filter((p) => p.run === run).map((p, k) => (
+        // Keyed by the EVENT, not the element: the same eviction is drawn in every track, so hovering it in
+        // one plot thickens it in all of them — one thing that happened, not three.
+        <div class={`rc-rule rc-rule-${p.event.kind}${eventKey(p.event) === hotEvent.value ? " hot" : ""}`}
+            key={k} style={{ left: `${p.from * 100}%` }}
+            onPointerEnter={(e: PointerEvent) => { eventHover.value = { p, scope }; hotEvent.value = eventKey(p.event); trackCursor(scope)(e); }}
+            onPointerLeave={() => { eventHover.value = null; hotEvent.value = null; }} />
+    ))}</>;
+}
+
+/** The crosshair, mirrored into every track: a line where the pointer is, and the instant it names. Reading
+ *  one pool against another at a given moment is the whole reason these are small multiples, and doing it by
+ *  eye across three plots is exactly what a shared line removes. */
+function Crosshair() {
+    const c = crosshair.value;
+    if (!c) return null;
+    // Past the middle the label would run off the right edge, so it hangs on the other side of the line.
+    const flip = c.frac > 0.72;
+    return (
+        <div class="rc-cross" style={{ left: `${c.frac * 100}%` }}>
+            {c.t != null ? <span class={`rc-cross-t${flip ? " flip" : ""}`}>{clockAt(c.t, c.msPerPx ?? Infinity)}</span> : null}
+        </div>
+    );
+}
+
+/** Track the pointer along the time axis. The fraction positions the line; the TIME comes from the same
+ *  segmented mapping the brush uses, because the axis is not linear and a label read off the pixels would
+ *  name the wrong instant. */
+const trackCrosshair = (runs: ResourceSample[][]) => (e: PointerEvent) => {
+    const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const frac = Math.min(1, Math.max(0, (e.clientX - box.left) / Math.max(1, box.width)));
+    // How much time ONE PIXEL is worth here, which is what decides whether milliseconds mean anything in the
+    // label: zoomed into ten seconds they do, over five minutes of history they are noise.
+    const first = runs[0]?.[0]?.t, last = runs.at(-1)?.at(-1)?.t;
+    const msPerPx = first != null && last != null && box.width > 0 ? (last - first) / box.width : Infinity;
+    crosshair.value = { frac, t: timeAtFraction(runs, frac), msPerPx };
+};
+
+/** The selection, mirrored. Every track draws the same fractions, so a drag on ONE plot is visibly a drag on
+ *  the whole chart — the ranges only mean anything compared across pools. */
+function BrushOverlay() {
+    const b = brush.value;
+    if (!b) return null;
+    const from = Math.min(b.from, b.to), to = Math.max(b.from, b.to);
+    return <div class="rc-brush" style={{ left: `${from * 100}%`, width: `${Math.max(0, to - from) * 100}%` }} />;
+}
+
+/** Drag across a plot to select a time range (and release to apply it). The fractions are mapped back to TIME
+ *  through the same segmented geometry events are placed with — the axis is not linear, so a range read off
+ *  the pixels alone would select a different stretch than the one under the pointer. */
+const startBrush = (runs: ResourceSample[][]) => (e: PointerEvent) => {
+    if (e.button !== 0) return;
+    const el = (e.currentTarget as HTMLElement);
+    const box = el.getBoundingClientRect();
+    const frac = (x: number) => Math.min(1, Math.max(0, (x - box.left) / Math.max(1, box.width)));
+    const start = frac(e.clientX);
+    let moved = false;
+    brush.value = { from: start, to: start };
+    const move = (ev: PointerEvent) => {
+        if (ev.buttons === 0) return up(ev);
+        moved = true;
+        brush.value = { from: start, to: frac(ev.clientX) };
+    };
+    const up = (ev: PointerEvent) => {
+        window.removeEventListener("pointermove", move);
+        window.removeEventListener("pointerup", up);
+        const end = frac(ev.clientX);
+        brush.value = null;
+        // A CLICK is not a selection: without this every click on the chart would zoom to an instant.
+        if (!moved || Math.abs(end - start) < 0.01) return;
+        const a = timeAtFraction(runs, Math.min(start, end)), b = timeAtFraction(runs, Math.max(start, end));
+        if (a != null && b != null && b > a) zoomRange.value = { from: a, to: b };
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+};
+
+/** One event's identity across surfaces: the same eviction is drawn in every track, so hovering it anywhere
+ *  must highlight it everywhere. Its time and what it was are enough to identify it. */
+const eventKey = (e: ResourceEvent): string => `${e.kind}:${e.t}:${e.model ?? ""}`;
+const hotEvent = signal<string | null>(null);
+
+/** The hovered event, and WHICH surface owns it. Every track's plot renders a tip (a ruled instant is hovered
+ *  in the plot, where its meaning is) and so does the lane — all driven by this one signal, so without an
+ *  owner every one of them rendered the same tooltip at once, four deep on a three-track panel. */
+const eventHover = signal<{ p: EventPlacement; scope: string } | null>(null);
+
+function EventTip({ scope }: { scope: string }) {
+    const h = eventHover.value, at = cursorOn(scope);
+    if (!h || !at || h.scope !== scope) return null;
     const e = h.p.event;
     const dur = (e.until ?? e.t) - e.t;
     const ms = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}s` : `${Math.round(n)}ms`);
+    // Each phase's own duration, from where the previous one ended.
+    const { ref, style } = useTipPlacement(at);
+    // What getting TO the model cost, when we know both its own generation time and our wall clock.
+    const overheadMs = e.cost?.evalMs != null && e.cost.wallMs != null && e.cost.wallMs > e.cost.evalMs
+        ? e.cost.wallMs - e.cost.evalMs : null;
+    const phases = (e.phases || []).map((ph, i) => ({ ...ph, from: i ? e.phases![i - 1].until : e.t }));
+    const first = phases[0];
+    const nameFor = (kind: string) => (kind === "model" ? e.model || "model" : kind === "wait" ? "waiting for approval" : e.tool || "tool");
+    // A run span has no phases and no cost of its own — it is the CONTAINER. Saying "click to open this step"
+    // under it was wrong twice over: it is not a step, and its ref carries no seq to scroll to.
+    const isRun = e.kind === "run";
+    // An INSTANT has no duration and no cost — it is a moment, and the tooltip built for spans reported it as
+    // "0ms" with its label dropped entirely, which said nothing at all about the thing you were pointing at.
+    const instant = e.until == null;
+    if (instant) return (
+        <div class="rc-tip rc-tip-event" role="tooltip" ref={ref} style={style}>
+            <div class="rc-tip-line">
+                {e.model ? <i class="rc-tip-dot" style={{ background: colorFor(e.model) }} /> : null}
+                <span class="rc-tip-name">{e.model || e.label}</span>
+                {/* WHEN, not how long: that is the only quantity a moment has. */}
+                <span class="rc-tip-size">{hhmmssms(e.t)}</span>
+            </div>
+            <div class="rc-tip-note">{e.kind === "evict"
+                ? "left memory here — nothing reports an eviction, so this is the sample where it stopped being resident"
+                : e.kind === "load" ? "appeared here — loaded by something else, or while the panel was closed"
+                : e.label}</div>
+        </div>
+    );
     return (
-        <div class="rc-tip rc-tip-event" role="tooltip" style={tipStyle(at)}>
-            {/* The model half, then the tool half, in the order they happened. */}
-            <div class="rc-tip-line"><span class="rc-tip-name">{e.model || e.label}</span>
-                <span class="rc-tip-size">{e.split != null ? ms(e.split - e.t) : ms(dur)}</span></div>
+        <div class="rc-tip rc-tip-event" role="tooltip" ref={ref} style={style}>
+            {/* Each phase, in the order it happened: the model, the human deciding, then the tool. */}
+            <div class="rc-tip-line">
+                {/* Each section carries the swatch of the stripe it describes, so the tooltip and the block
+                    read as the same three things. */}
+                {first || e.model ? <i class="rc-tip-dot" style={{ background: phaseFill(first?.kind ?? "model", e.model) }} /> : null}
+                <span class="rc-tip-name">{first ? nameFor(first.kind) : isRun ? <>run · {e.model || "agent"}</> : e.model || e.label}</span>
+                <span class="rc-tip-size">{first ? ms(first.until - first.from) : ms(dur)}</span></div>
+            {/* The figures as BADGES, the same little blocks the model rows use. Loose text on two dim lines
+                gave no way to tell which numbers belonged together; a chip is visibly one fact. */}
             {e.cost ? (
-                <div class="rc-tip-line rc-tip-dim">
-                    <span>{e.cost.inTokens.toLocaleString()} in / {e.cost.outTokens.toLocaleString()} out</span>
-                    <span>{e.cost.tokPerSec != null ? `${e.cost.tokPerSec.toFixed(1)} tok/s` : ""}</span>
+                <div class="rc-tip-chips">
+                    <span class="rc-chip">{e.cost.inTokens.toLocaleString()} in</span>
+                    <span class="rc-chip">{e.cost.outTokens.toLocaleString()} out</span>
+                    {e.cost.tokPerSec != null ? <span class="rc-chip">{e.cost.tokPerSec.toFixed(1)} tok/s</span> : null}
+                    {/* A rate's basis is part of the rate: generation-only and wall-clock measure different
+                        things, and the bare number would imply a precision it doesn't have. */}
+                    {e.cost.genBasis ? <span class="rc-chip rc-chip-dim">{e.cost.genBasis === "eval" ? "generation only" : e.cost.genBasis === "wall" ? "incl. network" : "mixed timing"}</span> : null}
+                    {/* When BOTH timings are known, their difference is the network and the queue — a
+                        different diagnosis from a slow model, and not recoverable from the rate alone. */}
+                    {overheadMs != null ? <span class="rc-chip rc-chip-dim">+{Math.round(overheadMs)}ms network</span> : null}
                 </div>
             ) : null}
-            {/* A rate's basis is part of the rate: generation-only and wall-clock are different measurements. */}
-            {e.cost?.genBasis ? <div class="rc-tip-line rc-tip-dim"><span>{e.cost.genBasis === "eval" ? "generation only" : e.cost.genBasis === "wall" ? "incl. network + queue" : "mixed timing"}</span></div> : null}
-            {e.split != null ? (
+            {phases.slice(1).map((ph, i) => (
                 <>
-                    <div class="rc-tip-rule" />
-                    <div class="rc-tip-line"><span class="rc-tip-name">{e.tool}</span>
-                        <span class="rc-tip-size">{ms((e.until ?? e.t) - e.split)}</span></div>
+                    <div class="rc-tip-rule" key={`r${i}`} />
+                    <div class="rc-tip-line" key={i}>
+                        <i class="rc-tip-dot" style={{ background: phaseFill(ph.kind, e.model) }} />
+                        {/* A bare "exec" reads as a label of unknown kind. Saying what it IS — a tool call,
+                            with the name as code — is the difference between a word and an identifier. */}
+                        <span class="rc-tip-name">{ph.kind === "tool"
+                            ? <>tool call: <code>{e.tool}</code></>
+                            : nameFor(ph.kind)}</span>
+                        <span class="rc-tip-size">{ms(ph.until - ph.from)}</span></div>
                 </>
-            ) : null}
-            {e.kind === "load" ? <div class="rc-tip-line rc-tip-dim"><span>the model wasn't resident — this is the wait before a token</span></div> : null}
-            {h.p.clipped ? <div class="rc-tip-line rc-tip-dim"><span>continues past what was measured</span></div> : null}
-            {e.ref ? <div class="rc-tip-line rc-tip-dim"><span>click to open this step</span></div> : null}
+            ))}
+            {/* WHEN, exactly. The durations say how long each part took; this is what lets a block be lined up
+                against another one, or against a timestamped log. Milliseconds because an event's own timings
+                are exact — unlike the crosshair, which interpolates between samples. */}
+            <div class="rc-tip-rule" />
+            <div class="rc-tip-when">{hhmmssms(e.t)} → {hhmmssms(e.until ?? e.t)}</div>
+            {/* A rule before the notes: they are about the BLOCK, and without it "click to open this step"
+                read as part of whatever phase happened to be last. */}
+            {(e.kind === "load" || h.p.clipped || e.ref) ? <div class="rc-tip-rule" /> : null}
+            {e.kind === "load" ? <div class="rc-tip-note">the model wasn't resident — this is the wait before a token</div> : null}
+            {h.p.clipped ? <div class="rc-tip-note">continues past what was measured</div> : null}
+            {e.ref ? <div class="rc-tip-note">click to open this {e.ref.seq != null ? "step" : "run"}</div> : null}
         </div>
     );
 }
@@ -457,33 +685,42 @@ function EventLane({ samples, events }: { samples: ResourceSample[]; events: Res
     if (!runs.length || !placed.length) return null;
     const spans = placed.filter((p) => p.event.until != null);
     const rows = laneRows(spans);
+    const lit = lineageOf(events, eventHover.value?.p.event.id);
     const open = (e: ResourceEvent) => {
         if (!e.ref) return;
         view.value = { name: "detail", hash: e.ref.hash };
         scrollToStepSeq(e.ref.seq, e.ref.hash);
     };
     return (
-        <div class="rc-lane" onPointerLeave={() => { eventHover.value = null; hoverAt.value = null; }}>
+        <div class="rc-lane" onPointerLeave={() => { eventHover.value = null; hoverAt.value = null; hoverModel.value = null; }}>
             {rows.map((row, ri) => (
                 <div class="rc-lane-row" key={ri}
-                    onPointerMove={(ev: PointerEvent) => { const el = ev.currentTarget as HTMLElement; hoverAt.value = { x: ev.offsetX, y: ev.offsetY, w: el.clientWidth }; }}>
+                    onPointerMove={trackCursor("lane")}>
                     {runs.map((run, i) => (
                         <div class="rc-lane-seg" key={i} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
                             {row.filter((p) => p.run === i).map((p, k) => {
                                 const e = p.event;
-                                const w = Math.max(0.6, (p.to - p.from) * 100);
-                                // A composite tool span is ONE block with two halves: the model generating the
-                                // call, then the tool running it. Drawn as a gradient stop rather than two
-                                // elements, so it hovers, highlights and clicks as the single thing it is.
-                                const cut = e.split != null && p.to > p.from
-                                    ? Math.min(100, Math.max(0, ((e.split - e.t) / ((e.until ?? e.t) - e.t)) * 100))
-                                    : null;
+                                const w = Math.max(MIN_EV_SPAN * 100, (p.to - p.from) * 100);   // packed at this width too
+                                // A composite span is ONE block whose parts are different KINDS of time: the
+                                // model, the human deciding, the tool. Drawn as gradient stops rather than
+                                // separate elements, so it still hovers and clicks as the single step it is.
+                                const total = (e.until ?? e.t) - e.t;
+                                const bg = e.kind === "load" ? loadStripes(e.model)
+                                    : e.phases && total > 0 ? phaseGradient(e.phases, e.t, total, e.model) : undefined;
+                                // Hovering one event dims everything outside its LINEAGE: a sub-call only means
+                                // something next to the step that spawned it and the run that contains it.
+                                const away = lit.size > 0 && !(e.id && lit.has(e.id));
                                 return (
-                                    <button class={`rc-ev rc-ev-${e.kind}${e.ref ? " linked" : ""}`} key={k}
+                                    <button class={`rc-ev rc-ev-${e.kind}${e.ref ? " linked" : ""}${away ? " away" : ""}`} key={k}
                                         style={{ left: `${p.from * 100}%`, width: `${w}%`,
-                                                 ...(cut != null ? { "--cut": `${cut}%` } : {}) }}
+                                                 ...(e.model && !bg ? { background: colorFor(e.model) } : {}),
+                                                 // A model's events carry ITS colour — the same one its row and
+                                                 // its band already use, so the lane reads against the list
+                                                 // without a legend of its own.
+                                                 ...(e.model ? { "--model": colorFor(e.model) } : {}),
+                                                 ...(bg ? { background: bg } : {}) }}
                                         title=""
-                                        onPointerEnter={() => (eventHover.value = { p })}
+                                        onPointerEnter={(ev: PointerEvent) => { eventHover.value = { p, scope: "lane" }; hoverModel.value = e.model ?? null; trackCursor("lane")(ev); }}
                                         onClick={() => open(e)} />
                                 );
                             })}
@@ -491,7 +728,7 @@ function EventLane({ samples, events }: { samples: ResourceSample[]; events: Res
                     ))}
                 </div>
             ))}
-            <EventTip />
+            <EventTip scope="lane" />
         </div>
     );
 }
@@ -501,11 +738,14 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
     // none. Backfill the current one rather than dropping them: capacity is slow-moving (a card doesn't change
     // size), and the alternative is a panel that renders nothing for the first two seconds every time.
     const windowed = useMemo(() => {
+        // A zoom REPLACES the rolling window: you asked for a stretch, so the panel stops sliding away from it.
+        const z = zoomRange.value;
+        if (z) return samples.filter((s) => s.t >= z.from && s.t <= z.to);
         const secs = resWindowS.value;
         if (!secs) return samples;
         const cutoff = Date.now() - secs * 1000;
         return samples.filter((s) => s.t >= cutoff);
-    }, [samples, resWindowS.value]);
+    }, [samples, resWindowS.value, zoomRange.value]);
     const filled = useMemo(() => windowed.map((s) => (s.capacity ? s : { ...s, capacity })), [windowed, capacity]);
     const latest = filled.at(-1);
     if (!latest?.capacity) return null;
@@ -513,7 +753,7 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
     return (
         <>
             <div class="rc">
-                {tracks.map((t) => <TrackView key={t.id} def={t} samples={filled} latest={latest} hidden={hidden} />)}
+                {tracks.map((t) => <TrackView key={t.id} def={t} samples={filled} latest={latest} hidden={hidden} events={events} />)}
             </div>
             {/* Below every track, sharing their x-axis: what happened, against what was in memory while it did. */}
             <EventLane samples={filled} events={events} />

@@ -12,11 +12,11 @@ import {
 import { truncate } from "./format";
 import { normModel, seenContext } from "./model";
 import { IconVram, IconEye, IconEyeOff, IconBench, IconGear } from "./icons";
-import { tipStyle } from "./tip";
-import { VRAMH_KEY, vramH, resWindowS } from "./store";
+import { useTipPlacement } from "./use-tip";
+import { VRAMH_KEY, vramH, resWindowS, zoomRange } from "./store";
 import { usageByModel, eventsFrom, type UsageSource } from "./model-stats";
 import type { RunStats } from "../contract";
-import { parseInfo, holdCapacity, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, type ResourceEvent, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
+import { parseInfo, holdCapacity, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, residencyEvents, boxChange, type ResourceEvent, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
 import { ResourceTracks } from "./resource-chart";
 import type { LoadedModel } from "../contract";
 
@@ -100,12 +100,18 @@ export function fetchCapacity(): void {
         // A SWITCH means one known box replaced by a different known box. The first fetch (unknown → known)
         // is not one: treating it as such would drop every sample taken before capacity arrived, which on a
         // fresh open is all of them — the panel would render nothing until the next poll.
-        const switched = !!capacity.value && boxSignature(next) !== boxSignature(capacity.value);
+        // Not every difference is a different machine. A card that VANISHES mid-session is an incident, and
+        // the samples leading up to it are the most valuable ones on screen — so only a genuine switch (other
+        // hardware, or a device's identity changing under the same id) drops the history.
+        const change = boxChange(capacity.value, next);
+        const switched = change === "switched";
         // On a switch, drop samples that can't be attributed to EITHER box as well — an unattributed sample is
         // backfilled with the current capacity at render, which after a switch means drawing the old machine's
         // readings against the new machine's ceiling.
-        if (switched) {
-            resourceHistory.value = sameBoxOnly(resourceHistory.value, next, true);
+        // A device set that grew or shrank still invalidates the LAYOUT — a track naming a device that is no
+        // longer there would silently render nothing — so the layout is re-derived either way.
+        if (switched || change === "shrank" || change === "grew") {
+            resourceHistory.value = sameBoxOnly(resourceHistory.value, next, switched);
             // The LAYOUT is per-box too: one naming `vram.1` is meaningless on a machine with one device, and
             // TrackView would silently drop those tracks rather than falling back to something that fits.
             // Clearing it re-runs restoreLayout against the NEW box, where presetRefusal rejects a stale saved
@@ -292,6 +298,12 @@ export function costOf(model: string): RunStats | null {
     return usageByModel([...sessionMap.values()] as UsageSource[])[model] ?? null;
 }
 
+/** How long a selected range is, for the chip that offers to leave it. */
+export const zoomSpan = (z: { from: number; to: number }): string => {
+    const s = Math.max(0, Math.round((z.to - z.from) / 1000));
+    return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
+};
+
 /** Everything that happened this browsing session, on the machine's timeline: generations, tool steps, model
  *  loads (from the sessions), and evictions (from the samples themselves, since nothing else reports them).
  *  Recomputed per render for the same reason the cost ledger is — the session map IS the record. */
@@ -315,14 +327,28 @@ export function CostFacts({ model }: { model: string }) {
     );
 }
 
+/** Device ids this model is resident on that capacity no longer reports. A card can vanish while ps still
+ *  lists what was loaded onto it, and then the model's VRAM is in the list with no track to appear in — true,
+ *  but asymmetric enough to need saying out loud. */
+export function orphanedOn(m: LoadedModel, cap: Capacity | null): string[] {
+    if (!cap) return [];   // capacity unknown → nothing to contradict
+    return (m.gpus || []).map((g) => g.id).filter((id) => !cap.devices.some((d) => d.id === id));
+}
+
 export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean }) {
     const ttl = fmtTTL(m.expiresAt);
+    const orphaned = orphanedOn(m, capacity.value);
     // Only the row's copy has its own tooltips to defer to; the chart tip renders these as plain text.
     const yieldTip = tips
         ? { onPointerEnter: () => (rowTipSuppressed.value = true), onPointerLeave: () => (rowTipSuppressed.value = false) }
         : {};
     return (
         <>
+            {orphaned.length ? (
+                <span class={tips ? "tt vram-orphan" : "vram-orphan"} {...yieldTip}>card gone
+                    {tips ? <span class="tt-pop left above" role="tooltip">Still resident on {orphaned.length > 1 ? "devices" : "device"} {orphaned.join(", ")}, which the server has stopped reporting — a driver crash, a GPU reset, or a container that lost the device. Its memory is real but has no pool to be drawn against, so it appears here and not in the chart.</span> : null}
+                </span>
+            ) : null}
             {isEmbedding(m.model) ? (
                 <span class={tips ? "tt vram-embed" : "vram-embed"} {...yieldTip}>embed
                     {tips ? <span class="tt-pop left above" role="tooltip">An EMBEDDING model — it turns text into vectors for search and retrieval; it doesn't chat. It holds its VRAM like any other resident model, and evicts the same way.</span> : null}
@@ -350,12 +376,14 @@ export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean 
 // quietly disagree with the chart moving underneath it.
 export const poolHover = signal<{ id: string; name: string; ceiling: number; bandsOf: (s: ResourceSample) => Band[] } | null>(null);
 /** What a hovered pool holds RIGHT NOW: total in use, and each consumer that has any of it. */
-export function poolFacts(bands: Band[]): { used: number; consumers: { label: string; bytes: number }[] } {
+export function poolFacts(bands: Band[]): { used: number; consumers: { label: string; bytes: number; model?: string }[] } {
     return {
         used: bands.filter((b) => b.kind !== "free").reduce((n, b) => n + b.bytes, 0),
         // Including the residual, which is most of what a nearly-idle card holds and is the thing a reader
-        // would otherwise go looking for a process to explain.
-        consumers: bands.filter((b) => b.kind !== "free" && b.bytes > 0).map((b) => ({ label: b.label, bytes: b.bytes })),
+        // would otherwise go looking for a process to explain. `model` rides along so the tip can carry each
+        // consumer's own colour — the residual has none, because it is not a model.
+        consumers: bands.filter((b) => b.kind !== "free" && b.bytes > 0)
+            .map((b) => ({ label: b.label, bytes: b.bytes, ...(b.model ? { model: b.model } : {}) })),
     };
 }
 
@@ -566,12 +594,15 @@ function RowTip({ sample }: { sample: ResourceSample | null }) {
     const m = sample.models.find((x) => x.model === name);
     if (!m) return null;
     const where = placementOf(m, sample.capacity, formatBytes);
+    // The SAME placement every other cursor tip uses — measured, so it flips when it doesn't fit rather than
+    // when it passes an arbitrary fraction of the width.
+    const { ref, style } = useTipPlacement({ x: at.x, y: at.y, w: typeof window !== "undefined" ? window.innerWidth : 1e4 });
     return (
         // The SAME snapping every other cursor-following tip uses — this one had none, so it ran off the
         // window's right edge. Bounds are the viewport here (the row sits outside the plot, so the tip is
         // position: fixed).
         <div class="vram-rowtip rc-tip" role="tooltip"
-            style={tipStyle({ x: at.x, y: at.y, w: typeof window !== "undefined" ? window.innerWidth : 1e4 })}>
+            ref={ref} style={style}>
             <div class="vram-rowtip-name"><i class="rc-tip-dot" style={{ background: colorFor(name) }} />{name}</div>
             {where ? <div class={isSplit(m) ? "vram-rowtip-split" : ""}>{isSplit(m) ? "split: " : "on "}{where}</div> : null}
             <div class="vram-rowtip-dim">{formatBytes((m.vramBytes || 0) + (m.ramBytes || 0))} resident</div>
@@ -619,6 +650,13 @@ export function VramPanel() {
         if (el.getBoundingClientRect().height < floor - 1) easeVramH(floor);
     };
     useEffect(correct);
+    // Esc leaves the zoom. Bound while the panel is open, on the document, because the pointer may be
+    // anywhere by the time you want out.
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => { if (e.key === "Escape" && zoomRange.value) zoomRange.value = null; };
+        document.addEventListener("keydown", onKey);
+        return () => document.removeEventListener("keydown", onKey);
+    }, []);
     // The panel already ticks once a second (the TTL countdowns); that is also what notices a drag whose
     // release never arrived, so a missed pointerup self-heals within a second instead of wedging the panel.
     useEffect(() => { const id = setInterval(correct, 1000); return () => clearInterval(id); }, [key]);
@@ -748,6 +786,14 @@ export function VramPanel() {
                             {customTracks.value ? <option value="custom">Custom</option> : null}
                         </select>
                     </>
+                ) : null}
+                {/* What the drag selected, and the way out of it. Esc does the same — a zoom you can't leave is
+                    a trap, and the panel otherwise keeps showing a stretch that scrolled into the past. */}
+                {zoomRange.value ? (
+                    <button class="tt vram-zoom" onClick={() => (zoomRange.value = null)}>
+                        {zoomSpan(zoomRange.value)} ✕
+                        <span class="tt-pop wrap" role="tooltip">Showing the range you selected instead of the rolling window. Click, or press Esc, to go back to live.</span>
+                    </button>
                 ) : null}
                 {rows.length ? <button class="vram-free" onClick={() => evict()}>Free VRAM</button> : null}
                 {/* Last in the row: the picker is what you reach for, the editor is the rarer follow-up. */}

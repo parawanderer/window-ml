@@ -589,3 +589,111 @@ test("laneRows: nested and overlapping events stack under the one that contains 
     assert.equal(at("embed"), 2, "…and what THAT contains goes below again");
     assert.equal(at("tool"), 1, "a later sibling reuses the freed row rather than opening a new one");
 });
+
+// A delegated sub-call — a vision reader, an embedding — never happens on its own: it belongs to a step,
+// which belongs to a run. Hovering one has to leave that chain lit, or the bar is just "some bar".
+test("lineageOf: an event, what spawned it, and what it spawned", () => {
+    const evs = [
+        { id: "run:a", kind: "run", label: "run", t: 0 },
+        { id: "step:a:1", parent: "run:a", kind: "tool", label: "exec", t: 1 },
+        { id: "step:a:1:sub0", parent: "step:a:1", kind: "embed", label: "reader", t: 2 },
+        { id: "step:a:2", parent: "run:a", kind: "tool", label: "click", t: 3 },
+        { id: "run:b", kind: "run", label: "other run", t: 4 },
+    ];
+    // From the sub-call UP: the step that spawned it and the run that contains it.
+    assert.deepEqual([...M.lineageOf(evs, "step:a:1:sub0")].sort(), ["run:a", "step:a:1", "step:a:1:sub0"]);
+    // From the step: itself, its run, and what IT spawned — the same relationship read the other way.
+    assert.deepEqual([...M.lineageOf(evs, "step:a:1")].sort(), ["run:a", "step:a:1", "step:a:1:sub0"]);
+    // From the run: everything under it, but never a sibling run.
+    const fromRun = M.lineageOf(evs, "run:a");
+    assert.ok(fromRun.has("step:a:2") && fromRun.has("step:a:1:sub0"));
+    assert.ok(!fromRun.has("run:b"), "another run is not part of this lineage");
+    // Nothing hovered → nothing lit, which is what leaves the lane undimmed at rest.
+    assert.equal(M.lineageOf(evs, undefined).size, 0);
+});
+
+// Turning a drag into a time range is the INVERSE of placing an event: the plot is segments weighted by
+// sample count, so a fraction is spent across them in those proportions and interpolated inside the one it
+// lands in. Getting this wrong makes a zoom select a different stretch than the one you dragged over.
+test("timeAtFraction: the inverse of placeEvents, across weighted segments", () => {
+    // Two runs: four samples over 3s, then two samples over 1s after a gap. Weights 4 and 2 → 2/3 and 1/3.
+    const runs = [
+        [{ t: 1000 }, { t: 2000 }, { t: 3000 }, { t: 4000 }],
+        [{ t: 10_000 }, { t: 11_000 }],
+    ];
+    assert.equal(M.timeAtFraction(runs, 0), 1000, "the left edge is the first sample");
+    assert.equal(M.timeAtFraction(runs, 1), 11_000, "the right edge is the last");
+    // A third of the way is halfway through the FIRST segment (which owns two thirds of the width).
+    assert.equal(M.timeAtFraction(runs, 1 / 3), 2500);
+    // AT the boundary between segments the answer is the last measured moment before the gap, never a time
+    // interpolated across it — nothing was measured there, so there is no honest value inside it.
+    assert.equal(M.timeAtFraction(runs, 2 / 3), 4000);
+    assert.equal(M.timeAtFraction(runs, 0.7), 10_100, "past it, inside the second segment");
+    assert.equal(M.timeAtFraction(runs, 5 / 6), 10_500);
+    // It round-trips with placeEvents: an event placed at a fraction reads back as its own time.
+    const ev = { t: 2500, kind: "note", label: "x" };
+    const [p] = M.placeEvents(runs, [ev]);
+    const overall = (p.run === 0 ? 0 : 2 / 3) + p.from * (p.run === 0 ? 2 / 3 : 1 / 3);
+    assert.ok(Math.abs(M.timeAtFraction(runs, overall) - 2500) < 1);
+    // Out of range clamps rather than extrapolating into time that was never on screen.
+    assert.equal(M.timeAtFraction(runs, -3), 1000);
+    assert.equal(M.timeAtFraction(runs, 9), 11_000);
+    assert.equal(M.timeAtFraction([], 0.5), null, "no samples → no answer, not a guess");
+});
+
+// A very short event is WIDENED so it stays visible, so packing has to reserve the same width — otherwise
+// two events that don't overlap in time are drawn overlapping, which reads as one longer bar.
+test("laneRows: packs at the DRAWN width, not the true one", () => {
+    const p = (label, from, to) => ({ event: { t: from, until: to, kind: "embed", label }, run: 0, from, to, clipped: false });
+    // Two instants a hair apart: true extents don't overlap, drawn ones do.
+    const rows = M.laneRows([p("a", 0.30, 0.3005), p("b", 0.302, 0.3025)]);
+    assert.equal(rows.length, 2, "they need separate rows because they are DRAWN overlapping");
+    // Far enough apart to share a row.
+    assert.equal(M.laneRows([p("a", 0.1, 0.11), p("b", 0.5, 0.51)]).length, 1);
+});
+
+// A card can stop being reported mid-session: a driver crash, a GPU reset, a container losing its device.
+// That is an INCIDENT, and the samples leading up to it are the most valuable ones on screen — so it must not
+// be treated as "a different machine", which is what drops the history.
+test("boxChange: a vanished card is not a different box", () => {
+    const box = (gpus, hostBytes = 130142785536) => M.parseInfo({ compute: {
+        system_compute: { cpu_cores: 32, total_memory: hostBytes, free_memory: 8 * GB },
+        supported_gpus: gpus,
+    } });
+    const c0 = { gpu_id: "0", name: "CUDA0", runner: "CUDA", total_memory: 25 * GB, free_memory: 6 * GB };
+    const c1 = { gpu_id: "1", name: "CUDA1", runner: "CUDA", total_memory: 25 * GB, free_memory: 20 * GB };
+
+    assert.equal(M.boxChange(box([c0, c1]), box([c0, c1])), "same", "the same devices, whatever their free memory");
+    assert.equal(M.boxChange(box([c0, c1]), box([c0])), "shrank", "a card vanished");
+    assert.equal(M.boxChange(box([c0]), box([c0, c1])), "grew", "one appeared");
+    // A device's identity changing under the same id IS other hardware, and its readings cannot be redrawn
+    // against these ceilings.
+    assert.equal(M.boxChange(box([c0]), box([{ ...c0, name: "MTL0", runner: "Metal", total_memory: 12 * GB }])), "switched");
+    assert.equal(M.boxChange(box([c0]), box([c0], 68719476736)), "switched", "…and so does the host's total");
+    // One replaced by another in the same reading is a swap, not a growth.
+    assert.equal(M.boxChange(box([c0]), box([c1])), "switched");
+    // Nothing to compare against yet → nothing to conclude.
+    assert.equal(M.boxChange(null, box([c0])), "same");
+
+    // And the SAMPLES survive a shrink: sameBoxOnly is only told to drop unattributable ones on a switch.
+    // And the SAMPLES survive it: one taken while the vanished card was still reported describes THIS
+    // machine, one card ago — comparing whole signatures dropped exactly the samples showing what happened
+    // just before it went.
+    const samples = [{ t: 1, models: [], capacity: box([c0, c1]) }, { t: 2, models: [], capacity: null }];
+    assert.equal(M.sameBoxOnly(samples, box([c0]), false).length, 2, "kept: the pre-incident trace, and one that carries no capacity");
+    // A real switch still drops both — the reading and the unattributable one.
+    const metal = box([{ ...c0, name: "MTL0", runner: "Metal", total_memory: 12 * GB }], 68719476736);
+    assert.equal(M.sameBoxOnly(samples, metal, true).length, 0, "another machine's ceilings cannot redraw these");
+});
+
+test("placementOf: a model on a card that stopped being reported says so", () => {
+    const cap = M.parseInfo({ compute: {
+        system_compute: { cpu_cores: 8, total_memory: 68719476736, free_memory: 8 * GB },
+        supported_gpus: [{ gpu_id: "0", name: "CUDA0", runner: "CUDA", total_memory: 25 * GB, free_memory: 6 * GB }],
+    } });
+    // ps still reports it on device 1, which capacity no longer lists.
+    const m = M.residencyFrom({ name: "orphan:8b", size: 8 * GB, size_vram: 8 * GB, gpus: [{ gpu_id: "1", size_vram: 8 * GB }] });
+    const where = M.placementOf(m, cap, M.formatBytes);
+    assert.match(where, /no longer reported/, `honest about the missing card (${where})`);
+    assert.doesNotMatch(where, /^device 1 8/, "not a bare id printed as though the card were still there");
+});

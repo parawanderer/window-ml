@@ -1025,3 +1025,84 @@ test("ADVERSARIAL: the info RESPONSE is inert data, not a route to anything", as
     assert.equal((await run(`return typeof ml.unload`)).value, "undefined");
     assert.equal((await run(`return typeof ml.pythonExec`)).value, "undefined");
 });
+
+// --- ADVERSARIAL: ml.schema, and the OBJECT ml.dereference now returns -------------------------------------
+// Two changes to probe, per the AGENTS rule. `schema` is a new facade member; and `dereference` now resolves
+// to a String SUBCLASS carrying metadata and methods, which is new surface inside the dialect — an object
+// where there used to be a primitive is exactly the shape an escape hides in.
+
+const SCHEMA_ML = {
+    ...ML,
+    schema: async (...vs) => { ML_CALLS.push(["schema", vs.length]); const { joinShapes, jsonValue } = await import("../dom.ts"); return joinShapes(vs.map((v, i) => jsonValue(v, `argument ${i + 1}`))); },
+    dereference: async (ref) => {
+        const { DerefText } = await import("../ml-agent.ts");
+        return new DerefText('{"id":1,"name":"a"}', { id: "a1b2c3f", tool: "fetch_url", kind: "json", step: 2 },
+            async () => { throw new Error("repipe reached"); });
+    },
+};
+const runS = (js) => evalReadonly(js, world(), SCHEMA_ML);
+
+test("ml.schema: the intended use works — the joined type of two pointer reads", async () => {
+    ML_CALLS.length = 0;
+    const { value } = await runS(`return ml.schema(ml.dereference("@tool:a"), ml.dereference("@tool:b"))`);
+    assert.equal(value, "{ id: number, name: string }", "both reads shaped and joined, no approval needed");
+});
+
+test("ml.schema: a plain value works, and prose is refused rather than shaped", async () => {
+    assert.equal((await runS(`return ml.schema({ a: 1 })`)).value, "{ a: number }");
+    await assert.rejects(runS(`return ml.schema("just prose")`), /not JSON/);
+});
+
+test("ADVERSARIAL: ml.schema can't be extracted, re-bound, or aimed at the realm", async () => {
+    ML_CALLS.length = 0;
+    // Same guarantees as every other facade member: reading it yields the inert sentinel.
+    await assert.rejects(runS(`const f = ml.schema; return f({a:1})`), outOfDialect);
+    await assert.rejects(runS(`return ml.schema.call(ml, {a:1})`), outOfDialect);
+    await assert.rejects(runS(`return ml.schema.bind(ml)({a:1})`), outOfDialect);
+    assert.deepEqual(ML_CALLS, [], "none of those reached the real method");
+});
+
+test("ADVERSARIAL: ml.schema refuses a host object, and can only ever hand back a string", async () => {
+    // A DOM node walked as data would print its property names as though they were a schema, so a host
+    // object is refused outright.
+    await assert.rejects(runS(`return ml.schema(document)`), /not JSON|out of dialect|Denied/i);
+    await assert.rejects(runS(`return ml.schema(document.body)`), /not JSON|out of dialect|Denied/i);
+
+    // An ARRAY of nodes is not refused — an array IS a JSON shape, and the guard is top-level. That is
+    // safe for the reason that matters: the return is a STRING, so no reference escapes whatever it walked.
+    // (It is also useless, which is the honest outcome: DOM nodes have no own enumerable data.)
+    const out = (await runS(`return ml.schema(document.querySelectorAll("input"))`)).value;
+    assert.equal(typeof out, "string", "only text comes back, never a live object");
+    assert.doesNotMatch(out, /function|=>/, "and nothing callable is described");
+});
+
+test("the dereference RESULT is usable as the string it is, with its metadata readable", async () => {
+    // String methods still work on it (it is a String subclass), which is what keeps every prior spelling alive.
+    assert.equal((await runS(`return ml.dereference("@tool:a").length`)).value, 19);
+    assert.equal((await runS(`return ml.dereference("@tool:a").startsWith("{")`)).value, true);
+    assert.equal((await runS(`return ml.dereference("@tool:a").split(",")[0]`)).value, '{"id":1');
+    // the metadata reads are plain data
+    assert.equal((await runS(`return ml.dereference("@tool:a").type`)).value, "json");
+    assert.equal((await runS(`return ml.dereference("@tool:a").id`)).value, "a1b2c3f");
+    assert.deepEqual((await runS(`return ml.dereference("@tool:a").json`)).value, { id: 1, name: "a" });
+});
+
+test("ADVERSARIAL: the dereference result can't be walked to the realm", async () => {
+    // The String subclass is the new worry: constructor → String → Function is the classic route out.
+    await assert.rejects(runS(`return ml.dereference("@tool:a").constructor`), outOfDialect);
+    await assert.rejects(runS(`return ml.dereference("@tool:a").constructor("return 1")`), outOfDialect);
+    await assert.rejects(runS(`return ml.dereference("@tool:a").__proto__`), outOfDialect);
+    await assert.rejects(runS(`return ml.dereference("@tool:a").text.constructor`), outOfDialect);
+});
+
+test("ADVERSARIAL: the result's own METHODS stay out of dialect (a name grant would be too wide)", async () => {
+    // `.pipe()` and `.schema()` are real methods on the wrapper, but ALLOWED_METHODS is keyed by NAME across
+    // every object — allowing either would grant it on anything the dialect can reach. So they refuse here
+    // and fall through to approval; `ml.schema(…)` is the free path, granted on the facade by identity.
+    await assert.rejects(runS(`return ml.dereference("@tool:a").pipe("head 1")`), outOfDialect);
+    await assert.rejects(runS(`return ml.dereference("@tool:a").schema()`), outOfDialect);
+    // `toString` IS allowed (a pure string/number method the dialect already permits), and on this object
+    // it does the harmless thing — hands back the same text. Worth pinning: it is the one method of the
+    // wrapper reachable here, and it must stay a plain read.
+    assert.equal((await runS(`return ml.dereference("@tool:a").toString()`)).value, '{"id":1,"name":"a"}');
+});

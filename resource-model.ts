@@ -236,7 +236,10 @@ export function placementOf(m: ModelResidency, cap: Capacity | null, fmt: (b: nu
     const parts: string[] = [];
     let unknown = false;
     for (const [id, bytes] of Object.entries(m.perDevice)) {
-        const name = cap?.devices.find((d) => d.id === id)?.name ?? `device ${id}`;
+        const dev = cap?.devices.find((d) => d.id === id);
+        // A card can stop being reported while a model is still resident on it (a driver crash, a reset). The
+        // honest label says the device is gone rather than printing an id as though it were still there.
+        const name = dev?.name ?? (cap ? `device ${id} (no longer reported)` : `device ${id}`);
         if (bytes == null) { unknown = true; parts.push(`${name} (unknown)`); continue; }
         if (bytes > 0) parts.push(`${name} ${fmt(bytes)}`);
     }
@@ -490,7 +493,34 @@ export function boxSignature(cap: Capacity | null): string {
     return `${devs}#${cap.host.totalBytes}`;
 }
 
-/** Samples that describe the CURRENT box. Anything recorded against a different machine is dropped rather than
+/** How the box CHANGED between two capacity readings. Not every difference is a different machine, and the
+ *  distinction decides whether the history survives:
+ *
+ *  - `same` — nothing that matters moved.
+ *  - `shrank` — a device stopped being reported. A card can vanish mid-session (a driver crash, a GPU reset,
+ *    a container losing its device), and that is an INCIDENT: the samples leading up to it are the most
+ *    valuable ones on screen, so they are kept and the vanished pool's series simply ends.
+ *  - `grew` — a device appeared. Nothing measured before is invalidated by that either.
+ *  - `switched` — a device's identity changed under the same id (different name, runner or total), or the
+ *    host total changed. THAT is another machine, and its readings cannot be redrawn against this one's
+ *    ceilings: an 18 GiB band against a 12 GiB pool clips to full height and looks like a measurement.
+ */
+export function boxChange(prev: Capacity | null, next: Capacity | null): "same" | "grew" | "shrank" | "switched" {
+    if (!prev || !next) return "same";                       // nothing to compare against
+    if (prev.host.totalBytes !== next.host.totalBytes) return "switched";
+    const ident = (d: DeviceCapacity) => `${d.name}:${d.runner}:${d.totalBytes}`;
+    const before = new Map(prev.devices.map((d) => [d.id, ident(d)]));
+    const after = new Map(next.devices.map((d) => [d.id, ident(d)]));
+    for (const [id, sig] of after) if (before.has(id) && before.get(id) !== sig) return "switched";
+    const gone = [...before.keys()].filter((id) => !after.has(id));
+    const added = [...after.keys()].filter((id) => !before.has(id));
+    if (gone.length && added.length) return "switched";      // one replaced by another is a different box
+    if (gone.length) return "shrank";
+    if (added.length) return "grew";
+    return "same";
+}
+
+/** Samples that describe the CURRENT box./** Samples that describe the CURRENT box. Anything recorded against a different machine is dropped rather than
  *  redrawn against a ceiling it was never measured under.
  *
  *  `switched` is the case that bites: a sample taken before capacity was first known carries none, and a
@@ -499,9 +529,11 @@ export function boxSignature(cap: Capacity | null): string {
  *  CUDA server, backfilled with a Mac's 16 GiB pool, clips to the full height and looks like a measurement. So
  *  when the box changed, an unattributable sample is dropped rather than assumed to belong to either machine. */
 export function sameBoxOnly(samples: ResourceSample[], cap: Capacity | null, switched = false): ResourceSample[] {
-    const sig = boxSignature(cap);
-    if (!sig) return samples;   // capacity unknown → nothing to contradict; keep what we have
-    return samples.filter((s) => (s.capacity ? boxSignature(s.capacity) === sig : !switched));
+    if (!cap) return samples;   // capacity unknown → nothing to contradict; keep what we have
+    // Compared through boxChange, not by whole signature: a sample taken while a now-vanished card was still
+    // reported describes THIS machine, one card ago. Comparing signatures dropped exactly the samples that
+    // show what happened just before the card went — the reason to look at all.
+    return samples.filter((s) => (s.capacity ? boxChange(s.capacity, cap) !== "switched" : !switched));
 }
 
 // --- history ------------------------------------------------------------------------------------------------
@@ -570,6 +602,52 @@ export function residencyEvents(samples: ResourceSample[], knownLoads: ResourceE
     return out;
 }
 
+/** The TIME at a fraction across the whole plot — the inverse of `placeEvents`, for turning a drag into a
+ *  time range. The plot is segments laid out with flex weights proportional to their sample counts, so the
+ *  fraction is spent across the segments in those proportions and then interpolated INSIDE the one it lands
+ *  in. A fraction landing in a gap between segments resolves to that gap's near edge: nothing was measured
+ *  there, so the honest answer is the last moment that was. */
+export function timeAtFraction(runs: { t: number }[][], frac: number): number | null {
+    const live = runs.filter((r) => r.length > 0);
+    if (!live.length) return null;
+    const weights = live.map((r) => Math.max(1, r.length));
+    const total = weights.reduce((a, b) => a + b, 0);
+    let acc = 0;
+    const f = Math.min(1, Math.max(0, frac));
+    for (let i = 0; i < live.length; i++) {
+        const share = weights[i] / total;
+        if (f <= acc + share || i === live.length - 1) {
+            const within = share > 0 ? Math.min(1, Math.max(0, (f - acc) / share)) : 0;
+            const from = live[i][0].t, to = live[i].at(-1)!.t;
+            return from + (to - from) * within;
+        }
+        acc += share;
+    }
+    return live.at(-1)!.at(-1)!.t;
+}
+
+/** An event's whole lineage:/** An event's whole lineage: itself, everything it descends from, and everything descended from it. Hovering
+ *  a sub-call should leave the step that spawned it and the run that contains it lit — the relationship is
+ *  what makes the bar mean anything — and hovering the step should keep what it spawned, which is the same
+ *  relationship read the other way. */
+export function lineageOf(events: readonly ResourceEvent[], id: string | undefined): Set<string> {
+    const out = new Set<string>();
+    if (!id) return out;
+    const byId = new Map(events.filter((e) => e.id).map((e) => [e.id!, e]));
+    out.add(id);
+    // ANCESTORS: straight up the chain.
+    for (let cur = byId.get(id)?.parent; cur && !out.has(cur); cur = byId.get(cur)?.parent) out.add(cur);
+    // DESCENDANTS: only of the hovered event itself, never of its ancestors — a sibling step is not part of
+    // this lineage, and pulling one in would light half the run for hovering one sub-call.
+    const below = new Set<string>([id]);
+    for (let grew = true; grew; ) {
+        grew = false;
+        for (const e of events) if (e.id && e.parent && below.has(e.parent) && !below.has(e.id)) { below.add(e.id); grew = true; }
+    }
+    for (const d of below) out.add(d);
+    return out;
+}
+
 /** Pack placed events into non-overlapping ROWS, greedily and in time order: an event goes in the first row
  *  whose last event ends before it starts. Spans that overlap in TIME must not overlap on screen — two bars on
  *  one line read as a single longer one, which is a false statement about what happened.
@@ -583,10 +661,20 @@ export function residencyEvents(samples: ResourceSample[], knownLoads: ResourceE
  *
  *  which falls out of "first free row, earliest start first" without special-casing nesting: the longest span
  *  starts first, so it takes the top row and everything inside it goes below. */
-export function laneRows(placed: EventPlacement[], maxRows = 4): EventPlacement[][] {
+/** The smallest fraction of the plot a bar is DRAWN at. A shorter event is widened to this so it stays
+ *  visible — which means packing has to reserve the same width, or two events that do not overlap in time
+ *  are drawn overlapping and read as one longer bar. */
+export const MIN_EV_SPAN = 0.006;
+/** A hair of separation reserved BETWEEN bars in a row. Two bars that merely touch read as one bar with a
+ *  seam — which is the same misreading as an overlap, arrived at differently. */
+export const EV_ROW_GAP = 0.004;
+
+export function laneRows(placed: EventPlacement[], maxRows = 4, minSpan = MIN_EV_SPAN): EventPlacement[][] {
     const rows: EventPlacement[][] = [];
     const ends: number[] = [];   // per row: [run, to] as a comparable number
-    const key = (p: EventPlacement, edge: "from" | "to") => p.run + p[edge];
+    // The END is the DRAWN end, not the true one: see MIN_EV_SPAN.
+    const key = (p: EventPlacement, edge: "from" | "to") =>
+        p.run + (edge === "from" ? p.from : Math.max(p.to, p.from + minSpan) + EV_ROW_GAP);
     for (const p of [...placed].sort((a, b) => key(a, "from") - key(b, "from"))) {
         let r = ends.findIndex((e) => e <= key(p, "from"));
         if (r < 0) {
@@ -640,20 +728,36 @@ export interface ResourceEvent {
     kind: "run" | "gen" | "tool" | "embed" | "load" | "evict" | "error" | "note";
     label: string;
     model?: string;
+    /** This event's own id, and the event that SPAWNED it. A delegated sub-call — a vision reader, an
+     *  embedding — never happens on its own: it belongs to a step, which belongs to a run. Hovering one can
+     *  then light its whole lineage and dim everything else, which is the difference between "some bar" and
+     *  "the reader this step called". */
+    id?: string;
+    parent?: string;
     /** Where this happened, so a click can go there: a session hash, and the step within it. Events are
      *  CROSS-SESSION — a model load belongs to the machine's timeline, not to whichever chat provoked it — so
      *  the reference is how the lane gets you back to the one that did. */
     ref?: { hash: string; seq?: number };
-    /** For a composite span, where its two halves meet: a `tool` event is ONE block — the model generating the
-     *  call, then the tool running it — because they are one step and you reason about them together. The
-     *  split is what makes the balance visible: a wide left half is a slow model, a wide right half is a slow
-     *  tool, and the same block hovers as one thing. */
-    split?: number;
+    /** A composite span's PHASES, in order, each ending at `until`. A tool step is one block because it is one
+     *  step and you reason about its parts together — but the parts are different kinds of time and must look
+     *  different: the model generating the call, the human deciding whether to allow it, and the tool actually
+     *  running. A step that waited two minutes for a click otherwise looked exactly like one that ran
+     *  instantly, since only the last part is work the machine did. */
+    phases?: { kind: "model" | "wait" | "tool"; until: number }[];
     /** The tool that ran, for a composite span. */
     tool?: string;
     /** What it cost, for the kinds that spend tokens. Plain numbers rather than a RunStats import: this module
      *  stays standalone, and the surface that renders it already knows how to say "eval" vs "wall". */
-    cost?: { inTokens: number; outTokens: number; tokPerSec: number | null; genBasis: "eval" | "wall" | "mixed" | null };
+    cost?: {
+        inTokens: number; outTokens: number; tokPerSec: number | null;
+        genBasis: "eval" | "wall" | "mixed" | null;
+        /** Ollama's generation-only time and our own wall clock for the same call, when both are known. Their
+         *  DIFFERENCE is what the network and the queue cost — the one number that separates "the model is
+         *  slow" from "getting to the model is slow", and it exists only where the native route reports
+         *  `eval_duration` beside our measurement. */
+        evalMs?: number;
+        wallMs?: number;
+    };
 }
 
 /** Events inside a window, in time order — what the chart's event lane draws, and what a vertical rule

@@ -8,6 +8,14 @@ on:
     - cron: "0 6 * * *"   # nightly — for the non-blocking real-model sanity job below
   workflow_dispatch:
 
+# One run per branch. Several sessions work this repo at once and each push used to queue a full
+# matrix + e2e behind the last one, so the answer you were waiting for arrived minutes after it
+# mattered. A superseded run is cancelled — except on main, where every commit's result is a record
+# worth keeping.
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   test:
     runs-on: ubuntu-latest

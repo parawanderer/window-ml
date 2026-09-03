@@ -4,7 +4,9 @@
 // no `this` rewrite. injected.ts imports `AgentHandle` (used by createAgent/agent), the two same-origin
 // auto-approve predicates (used by the page loop), and the `AgentControl` type.
 import type { NeutralMessage, MlApi, AgentOptions, MlAgentHandle, AgentResult, AgentTranscriptEntry } from "./contract";
-import type { DerefRead } from "./token-pipe";
+import type { DerefRead, DerefMeta, TokenKind } from "./token-pipe";
+import type { DerefValue } from "./contract";
+import { jsonShape, jsonValue } from "./dom";
 import { navTarget } from "./dom";
 import { emitDebug } from "./bus";
 import { makeBackgroundTaskPromise } from "./bridge";
@@ -138,14 +140,72 @@ export class AgentHandle implements MlAgentHandle, AgentControl {
  *  Not a page-reachable capability: nothing calls this except a ToolContext built for an executing delegated
  *  tool (run-delegation), and the background answers only for a run it is actually hosting. A page's own
  *  console has no active run, so `ml.dereference` throws there before any message is sent. */
+
+/**
+ * The object `ml.dereference` resolves to: the pointer's text, with what the loop knows about it attached.
+ *
+ * It EXTENDS String, which is the whole trick — every spelling that worked when this returned a bare string
+ * still works (`JSON.parse(await ml.dereference(id))`, `${v}`, `v.split("\n")`, `v.length`), while `.type`,
+ * `.json` and the rest answer the questions a caller previously had to guess at from the bytes. The one
+ * casualty is `typeof v === "string"`, which is now false: compare `v.text`, or `String(v)`.
+ *
+ * `json` is parsed LAZILY and cached — most reads never ask, and a big capture should not pay for a parse
+ * nobody wanted. A non-JSON body leaves it undefined rather than throwing, since asking is how you find out.
+ */
+export class DerefText extends String implements DerefValue {
+    readonly type: TokenKind;
+    readonly id: string;
+    readonly tool: string;
+    readonly step: number;
+    readonly label?: string;
+    readonly table?: { columns: string[]; rows: unknown[][] };
+    readonly image?: string;
+    readonly latex?: string;
+
+    #json?: { v: unknown };            // memo: absent = not parsed yet, { v: undefined } = parsed, not JSON
+    #repipe: (stages: string | string[]) => Promise<DerefValue>;
+
+    constructor(text: string, meta: DerefMeta | undefined, repipe: (stages: string | string[]) => Promise<DerefValue>) {
+        super(text);
+        this.type = meta?.kind ?? "text";
+        this.id = meta?.id ?? "";
+        this.tool = meta?.tool ?? "";
+        this.step = meta?.step ?? -1;
+        if (meta?.label) this.label = meta.label;
+        if (meta?.table) this.table = meta.table;
+        if (meta?.image) this.image = meta.image;
+        if (meta?.latex) this.latex = meta.latex;
+        this.#repipe = repipe;
+    }
+
+    /** The text, explicitly — for a caller that would rather not rely on coercion. */
+    get text(): string { return String(this); }
+
+    get json(): unknown {
+        if (!this.#json) {
+            const t = this.text.trim();
+            let v: unknown;
+            if (t.startsWith("{") || t.startsWith("[")) { try { v = JSON.parse(t); } catch { v = undefined; } }
+            this.#json = { v };
+        }
+        return this.#json.v;
+    }
+
+    /** Reduce this value further through the text-pipe dialect. */
+    pipe(stages: string | string[]): Promise<DerefValue> { return this.#repipe(stages); }
+
+    /** The TS-like shape of it. Throws the same actionable error as `ml.schema` on a non-JSON body. */
+    schema(): string { return jsonShape(jsonValue(this.text, `@tool:${this.id || "?"}`)); }
+}
+
 export function derefViaBackground(runId: string, ref: string, pipe?: string | string[]): Promise<DerefRead> {
     return new Promise((resolve, reject) => {
         const id = `deref-${Math.random().toString(16).slice(2)}`;
         const onMsg = (e: MessageEvent) => {
-            const d = e.data as { type?: string; id?: string; value?: string; warning?: string; error?: string } | undefined;
+            const d = e.data as { type?: string; id?: string; value?: string; warning?: string; meta?: DerefMeta; error?: string } | undefined;
             if (!d || d.type !== "PAGE_DEREF_RESULT" || d.id !== id) return;
             window.removeEventListener("message", onMsg);
-            if (d.error) reject(new Error(d.error)); else resolve({ value: d.value ?? "", ...(d.warning ? { warning: d.warning } : {}) });
+            if (d.error) reject(new Error(d.error)); else resolve({ value: d.value ?? "", ...(d.warning ? { warning: d.warning } : {}), ...(d.meta ? { meta: d.meta } : {}) });
         };
         window.addEventListener("message", onMsg);
         // `pipe` may be an ARRAY of stages (structured-clones fine); `??` not `||` so an array survives.

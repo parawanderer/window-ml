@@ -839,6 +839,44 @@ display rather than an obvious bug:
   may never propose a layout the rule then rejects (Overview stacked several cards until a drift guard caught
   it). Stacking asserts the parts sum to a real whole: true within one pool, false across cards or across
   device+host on unified memory.
+- **Capacity is a fact about the BOX, not about a poll** (`holdCapacity`): a `/api/info` that answers with
+  nothing means THIS request learned nothing, and forgetting what was measured swapped the whole panel for
+  the no-ceiling fallback until some later poll happened to succeed. A box that has NEVER answered still
+  degrades — and SAYS so, since an unexplained bare line reads as the panel having regressed.
+- **A model keeps its identity for as long as it is DRAWN.** Band colour/name came from the last frame only,
+  so an evicted model's whole history turned anonymous grey — in the view whose job is saying what WAS there.
+  Identity comes from any frame in the window, and the model list carries GHOST rows for models still drawn
+  but no longer resident, because the rows are the chart's legend and a colour with no row explains nothing.
+- **Tracks TILE at width** (auto-fit 300px columns) rather than stretching, and the learned drag floor is
+  keyed by width as well as layout — tiling needs less height, and the correction only ever grows.
+
+**The event lane (§4.5 of the spec).** Under the tracks, on the SAME segmented axis: what happened, against
+what memory was doing while it did. Nothing new is collected — `sidebar/model-stats.ts` derives it from what
+sessions already record. `usageByModel` is the per-model ledger (attributed to the model that RAN, with
+delegated sub-calls charged to the READER); `eventsFrom` builds the timeline.
+- **Spans run BACKWARDS from when a call finished** — the timestamp we hold is the end — else every bar sits
+  one generation to the right of the memory movement it caused, which defeats the shared axis.
+- **A tool step is ONE block with PHASES**: the model generating the call, the human at the approval gate,
+  the tool running. `toolMs` and `approveMs` are measured separately in `agent-loop.ts` for exactly that
+  reason — a human deciding is the step's wall time but not the machine's work, and the wait draws as a
+  hollow neutral so a wide bar can never read as work.
+- **`load_duration`** (captured as `TokenUsage.loadMs`) is the only place the difference between "the model
+  was slow" and "the model wasn't there yet" exists. Drawn as its own span in front of the block, floored at
+  a second so a resident model's few ms of bookkeeping doesn't fill the lane.
+- **Sub-calls are drawn under the step that spawned them** (`bus.ts` keeps each one's ts/duration beside the
+  totals), and events carry a lineage (`id`/`parent`); hovering one lights its chain and dims the rest.
+  Ancestors go all the way up; descendants come only from the hovered event, or one sub-call lights every
+  sibling step.
+- **The axis is NOT linear in time** (`placeEvents`): the plot is segmented by gaps and each segment is
+  flex-weighted by sample count, so an event is placed inside the run that CONTAINS it, one that falls in a
+  gap is dropped (nothing was measured then), and the window admits a poll's grace past the last sample —
+  without it the newest events, the ones you are watching for, were the only ones that never appeared.
+- **Instants rule through the plot** (dashed — a solid line reads as part of the chart), and one eviction is
+  drawn in every track, so hovering it anywhere thickens it everywhere.
+- **Cursor tooltips share `useTipPlacement`** and are placed against the VIEWPORT from their own MEASURED
+  size: they flip when they do not FIT (not at an arbitrary fraction of the width), never sit under the
+  pointer, and only the surface the pointer is on renders one. Pinned by `tests/e2e/tooltips.spec.mjs`, which
+  sweeps positions in a narrow and a wide panel rather than probing one point.
 
 **Two surfaces (in-page overlay + DevTools panel).** The same `sidebar-app` bundle runs
 in two places: the in-page **overlay** (a content-script shadow-root shell, `shell.ts`,
@@ -1216,6 +1254,23 @@ CI; do real iteration on a local GPU box instead.
   degrades to slow-but-successful. `rateLimitWaitMs` is pure/unit-tested; the retry-then-succeed and
   give-up-after-cap behaviour is in `tests/background.test.js`. Harmless on a local backend (Ollama
   never 429s).
+
+## Branches, PRs and CI
+
+Work goes on a **branch and through a PR**, not straight onto main: several sessions work this repo at
+once (this one on the UI, another on the benchmark/pointers), and the PR is what runs CI — which is what
+catches what one session broke for another. A green local `npm test` is not that check: it does not run
+the e2e suite, three Node versions, or the real-CPython tests.
+
+`.github/workflows/tests.yml` runs on `pull_request` (and on pushes to main), and **cancels superseded
+runs per branch** so a fix supersedes the run it replaces instead of queueing behind it; main is exempt,
+because every commit there keeps its result.
+
+**The `ci` skill (`.claude/skills/ci/SKILL.md`) is the playbook**: open the PR, watch it in the
+BACKGROUND (`gh pr checks --watch`, ~5 minutes for a full run), read only the failing steps
+(`gh run view <id> --log-failed`), fix forward on the branch, and — importantly — the list of
+KNOWN-BAD failures that arrived from other branches, so a red check that is not yours is named in the PR
+body rather than chased or silently re-run.
 
 ## Security invariants (don't regress these)
 

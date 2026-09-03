@@ -29,6 +29,17 @@ export function alignedMarks(marks: [number, number][] | undefined, text?: strin
 export const hhmmss = (ts: number): string => new Date(ts).toTimeString().slice(0, 8);
 // Full precision for the hover — the gutter stays hh:mm:ss (narrow, scannable) but the underlying marks are
 // epoch MILLISECONDS, so the tooltip can show the exact instant and a meaningful gap.
+/** A clock label at the resolution the PIXEL affords. Milliseconds are shown only when a pixel is worth less
+ *  than `MS_PRECISE` — otherwise the digits move faster than the pointer can mean anything by them, which is
+ *  a precision the reader did not ask for and cannot use.
+ *
+ *  Note this is the resolution of the POINTER, not of the data: the resource chart samples on a poll (2s), so
+ *  a crosshair between two samples is interpolated. Event times, which come from real timings rather than the
+ *  sample grid, are exact and are shown to the millisecond in their own tooltip. */
+export const MS_PRECISE = 40;   // ms per pixel below which the third decimal place is meaningful
+export const clockAt = (ts: number, msPerPx: number): string =>
+    msPerPx > 0 && msPerPx < MS_PRECISE ? hhmmssms(ts) : hhmmss(ts);
+
 export const hhmmssms = (ts: number): string => `${hhmmss(ts)}.${String(new Date(ts).getMilliseconds()).padStart(3, "0")}`;
 // A timestamp's LOCAL hour bucket (date + hour), so "same hour" is exact across midnight and half-hour zones.
 const hourKey = (ts: number): string => { const d = new Date(ts); return `${d.toDateString()} ${d.getHours()}`; };

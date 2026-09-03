@@ -693,3 +693,279 @@ test("resource panel: wide tiles the tracks instead of stretching them", async (
         await fake.stop();
     }
 });
+
+// The event lane in a real browser: jsdom has no layout, so the alignment of a bar to the segment it belongs
+// to, and the click that navigates to the step, can only be checked here. The run is SCRIPTED — posted as the
+// same __mlDebug events a real run emits — because the fake box moves memory but runs no model.
+test("resource panel: the event lane draws phased blocks, dims by lineage, and clicks through", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-track").count(), { timeout: 20000 }).toBeGreaterThan(0);
+        // Sample for a while: an event outside the window is correctly dropped, so there must BE a window.
+        await sleep(9000);
+
+        await page.evaluate(() => {
+            const now = Date.now(), span = 7000;
+            const at = (f) => now - Math.round(span * f);
+            const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
+            const hash = "e2e-run";
+            post({ kind: "agent", id: hash, ts: at(1), save: false, session: { hash, turn: 0 },
+                   task: "check the page", model: "gemma4:31b", maxSteps: 4, config: null });
+            post({ kind: "agent-step", id: hash, ts: at(0.5), save: false, session: { hash, turn: 1 },
+                   step: 1, seq: 1, tool: "python_exec", toolMs: 1200, arguments: { code: "1" }, result: "ok",
+                   // A real load in front of it: the model wasn't resident yet.
+                   usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120, genMs: 800, loadMs: 1800 },
+                   subUsage: { calls: 1, prompt: 400, completion: 10,
+                               byModel: [{ model: "minicpm-v:8b", prompt: 400, completion: 10, calls: 1 }],
+                               calls_: [{ model: "minicpm-v:8b", ts: at(0.55), ms: 500, prompt: 400, completion: 10 }] } });
+            // A gated step: most of its block is a person deciding.
+            post({ kind: "agent-step", id: hash, ts: at(0.05), save: false, session: { hash, turn: 2 },
+                   step: 2, seq: 2, tool: "exec", toolMs: 300, approveMs: 2500, approval: "user",
+                   arguments: { js: "1" }, result: "ok",
+                   usage: { promptTokens: 120, completionTokens: 12, totalTokens: 132, genMs: 400 } });
+        });
+        await expect.poll(() => frame.locator(".rc-ev").count(), { timeout: 15000 }).toBeGreaterThan(2);
+
+        // Every bar is INSIDE the plot's horizontal span — the lane mirrors the chart's segments, so a bar
+        // that drifted off them would be pointing at a moment the trace doesn't cover.
+        // Measured on ONE side of the frame boundary: a locator's boundingBox is page-relative while a rect
+        // read inside the frame is frame-relative, and mixing them compares two different origins.
+        const geo = await frame.evaluate(() => {
+            const r = (el) => { const b = el.getBoundingClientRect(); return { x: b.x, w: b.width }; };
+            return {
+                plot: r(document.querySelector(".rc-plot")),
+                bars: [...document.querySelectorAll(".rc-ev")].map(r),
+            };
+        });
+        for (const b of geo.bars) {
+            expect(b.x, "a bar starts left of the trace it annotates").toBeGreaterThanOrEqual(geo.plot.x - 1);
+            expect(b.x + b.w, "…or runs past its right edge").toBeLessThanOrEqual(geo.plot.x + geo.plot.w + 1);
+        }
+
+        // A tool step is one block with hard stops where the work changes hands.
+        const toolBar = frame.locator(".rc-ev-tool").first();
+        const toolBg = await toolBar.evaluate((e) => getComputedStyle(e).backgroundImage);
+        expect(toolBg).toContain("gradient");
+
+        // A LOAD is time spent NOT generating, so it is striped rather than a solid block of the model's
+        // time — but it is that model's wait, so it keeps the colour. (An inline model-colour once overrode
+        // the striped class entirely, which is the exact confusion the stripes exist to prevent.)
+        const loadBg = await frame.locator(".rc-ev-load").first().evaluate((e) => getComputedStyle(e).backgroundImage);
+        expect(loadBg, "the load is striped").toContain("repeating-linear-gradient");
+        expect(toolBg, "…and the tool block is not, so the two can't be confused").not.toContain("repeating-linear-gradient");
+
+        // Hovering the delegated reader lights its lineage and drops the rest back.
+        const sub = frame.locator(".rc-ev-embed").first();
+        expect(await sub.count()).toBe(1);
+        await sub.hover();
+        await sleep(300);
+        const dimmed = await frame.locator(".rc-ev").evaluateAll((els) =>
+            els.map((e) => ({ cls: e.className, o: Number(getComputedStyle(e).opacity) })));
+        expect(dimmed.some((d) => d.o < 0.3), "unrelated events drop back").toBe(true);
+        expect(dimmed.find((d) => /rc-ev-embed/.test(d.cls)).o, "the hovered sub-call stays lit").toBeGreaterThan(0.5);
+
+        // And clicking it opens the step that produced it.
+        await sub.click();
+        await sleep(600);
+        expect(await frame.locator(".astep, [data-astep-seq]").count(), "it navigated into the run").toBeGreaterThan(0);
+    } finally {
+        await ext.close();
+        await fake.stop();
+    }
+});
+
+// Drag across a plot to select a time range, Grafana-style. Two things only a real browser can check: that
+// the selection is MIRRORED into every track while it is being drawn (the ranges only mean anything compared
+// across pools), and that the drag maps back to the right stretch of TIME through a segmented axis.
+test("resource panel: drag selects a range, mirrored across every track, Esc leaves it", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0), resident("qwen3.5:35b", 22 * GiB, 1)]);
+        await seedStacked(ext);   // three tracks, so mirroring has something to mirror into
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-track").count(), { timeout: 20000 }).toBe(3);
+        await sleep(9000);   // a window worth selecting inside
+
+        const plot = await frame.locator(".rc-plot").first().boundingBox();
+        const y = plot.y + plot.height / 2;
+        await page.mouse.move(plot.x + plot.width * 0.3, y);
+        await page.mouse.down();
+        await page.mouse.move(plot.x + plot.width * 0.6, y, { steps: 8 });
+        await sleep(200);
+
+        // MID-DRAG: every track shows the same selection, not just the one under the pointer.
+        const mid = await frame.locator(".rc-brush").evaluateAll((els) => els.map((e) => {
+            const r = e.getBoundingClientRect(); const p = e.parentElement.getBoundingClientRect();
+            return { from: (r.x - p.x) / p.width, w: r.width / p.width };
+        }));
+        expect(mid.length, "the selection is drawn in every track").toBe(3);
+        for (const m of mid) {
+            expect(Math.abs(m.from - 0.3), `mirrored at the same place (${JSON.stringify(mid)})`).toBeLessThan(0.03);
+            expect(Math.abs(m.w - 0.3), "…and the same width").toBeLessThan(0.03);
+        }
+
+        await page.mouse.up();
+        await sleep(400);
+        // Released: the brush is gone and the panel is showing the selected stretch instead of the rolling
+        // window, with a way out.
+        expect(await frame.locator(".rc-brush").count()).toBe(0);
+        const chip = frame.locator(".vram-zoom");
+        await expect(chip).toBeVisible();
+        // The range is the ~30% of the window that was dragged over, not the whole thing.
+        expect(await chip.textContent()).toMatch(/\d+s|\dm/);
+
+        // Esc goes back to live — a zoom you cannot leave is a trap.
+        await page.keyboard.press("Escape");
+        await sleep(300);
+        expect(await frame.locator(".vram-zoom").count()).toBe(0);
+
+        // And a plain CLICK is not a selection: without that guard every click on the chart zooms to an instant.
+        await page.mouse.click(plot.x + plot.width * 0.5, y);
+        await sleep(300);
+        expect(await frame.locator(".vram-zoom").count()).toBe(0);
+    } finally {
+        await ext.close();
+        await fake.stop();
+    }
+});
+
+// Grafana's crosshair: hovering any plot draws a line in EVERY track at the same instant, labelled with the
+// time. Reading one pool against another at a given moment is the whole reason these are small multiples,
+// and doing it by eye across three plots is exactly what a shared line removes.
+test("resource panel: the crosshair is mirrored across tracks and names the instant", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        await seedStacked(ext);
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-track").count(), { timeout: 20000 }).toBe(3);
+        await sleep(7000);
+
+        // Park the pointer off the chart first: opening the panel leaves it wherever the last click was, which
+        // may well be over a plot.
+        const plot = await frame.locator(".rc-plot").first().boundingBox();
+        const head0 = await frame.locator(".vram-head").boundingBox();
+        await page.mouse.move(head0.x + head0.width / 2, head0.y + head0.height / 2);
+        await sleep(250);
+        expect(await frame.locator(".rc-cross").count(), "nothing until you hover").toBe(0);
+        await page.mouse.move(plot.x + plot.width * 0.4, plot.y + plot.height / 2);
+        await sleep(250);
+
+        const lines = await frame.locator(".rc-cross").evaluateAll((els) => els.map((e) => {
+            const r = e.getBoundingClientRect(), p = e.parentElement.getBoundingClientRect();
+            return { frac: (r.x - p.x) / p.width, label: e.textContent.trim() };
+        }));
+        expect(lines.length, "one line per track").toBe(3);
+        for (const l of lines) expect(Math.abs(l.frac - 0.4), "at the same instant in each").toBeLessThan(0.03);
+        // The time is the point: a line with no label says where, not when. Milliseconds appear only when a
+        // pixel is worth a few of them — this window is seconds wide, so they do (clockAt).
+        for (const l of lines) expect(l.label, `labelled (${JSON.stringify(lines)})`).toMatch(/^\d{2}:\d{2}:\d{2}(\.\d{3})?$/);
+        // And they all name the SAME instant — three plots disagreeing about the moment would be worse than none.
+        expect(new Set(lines.map((l) => l.label)).size).toBe(1);
+
+        // It follows the pointer, and leaves with it.
+        await page.mouse.move(plot.x + plot.width * 0.8, plot.y + plot.height / 2);
+        await sleep(250);
+        const moved = await frame.locator(".rc-cross").first().evaluate((e) => {
+            const r = e.getBoundingClientRect(), p = e.parentElement.getBoundingClientRect();
+            return (r.x - p.x) / p.width;
+        });
+        expect(Math.abs(moved - 0.8)).toBeLessThan(0.03);
+        // Off the chart entirely — onto the panel header, which is inside the same frame.
+        const head = await frame.locator(".vram-head").boundingBox();
+        await page.mouse.move(head.x + head.width / 2, head.y + head.height / 2);
+        await sleep(300);
+        expect(await frame.locator(".rc-cross").count(), "the line leaves with the pointer").toBe(0);
+    } finally {
+        await ext.close();
+        await fake.stop();
+    }
+});
+
+// Bars in the same lane row must never overlap: two bars on one line read as a single longer one, which is a
+// false statement about what happened. Packing reserves the width a bar is DRAWN at (short events are widened
+// to stay visible), and this is the check that the reserved width and the drawn width actually agree — in a
+// real browser, where the pixels are real.
+test("resource panel: no two lane bars overlap on the same row", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-track").count(), { timeout: 20000 }).toBeGreaterThan(0);
+        await sleep(9000);
+
+        // Deliberately adversarial: sub-calls that OVERLAP each other, sub-calls that merely touch, and a
+        // couple of instant-length ones — the case where the widening for visibility creates the overlap.
+        await page.evaluate(() => {
+            const now = Date.now(), span = 8000, t0 = now - span;
+            const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
+            const hash = "overlap";
+            post({ kind: "agent", id: hash, ts: t0, save: false, session: { hash, turn: 0 },
+                   task: "t", model: "gemma4:31b", maxSteps: 4, config: null });
+            const ts1 = t0 + 4000;
+            post({ kind: "agent-step", id: hash, ts: ts1, save: false, session: { hash, turn: 1 },
+                   step: 1, seq: 1, tool: "python_exec", toolMs: 2500,
+                   usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, genMs: 500 },
+                   subUsage: { calls: 4, prompt: 40, completion: 8,
+                               byModel: [{ model: "minicpm-v:8b", prompt: 40, completion: 8, calls: 4 }],
+                               calls_: [
+                                   { model: "minicpm-v:8b", ts: ts1 - 1800, ms: 900, prompt: 10, completion: 2 },  // overlaps the next
+                                   { model: "minicpm-v:8b", ts: ts1 - 1200, ms: 800, prompt: 10, completion: 2 },
+                                   { model: "minicpm-v:8b", ts: ts1 - 300, ms: 5, prompt: 10, completion: 2 },     // an instant…
+                                   { model: "minicpm-v:8b", ts: ts1 - 260, ms: 5, prompt: 10, completion: 2 },     // …right beside another
+                               ] } });
+            post({ kind: "agent-step", id: hash, ts: t0 + 7500, save: false, session: { hash, turn: 2 },
+                   step: 2, seq: 2, tool: "exec", toolMs: 100, approveMs: 900,
+                   usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, genMs: 200 } });
+        });
+        await expect.poll(() => frame.locator(".rc-ev").count(), { timeout: 15000 }).toBeGreaterThan(4);
+
+        const rows = await frame.evaluate(() => [...document.querySelectorAll(".rc-lane-row")].map((row) =>
+            [...row.querySelectorAll(".rc-ev")].map((e) => {
+                const r = e.getBoundingClientRect();
+                return { cls: e.className.replace("rc-ev ", ""), x: Math.round(r.x), right: Math.round(r.right) };
+            }).sort((a, b) => a.x - b.x)));
+
+        const clashes = [];
+        rows.forEach((row, i) => {
+            for (let k = 1; k < row.length; k++) {
+                // Not just overlap: bars that merely TOUCH read as one bar with a seam, which is the same
+                // misreading arrived at differently. A hair of daylight is required.
+                const gap = row[k].x - row[k - 1].right;
+                if (gap < 1) clashes.push(`row ${i}: ${row[k - 1].cls} [${row[k - 1].x}..${row[k - 1].right}] ${gap < 0 ? "overlaps" : "touches"} ${row[k].cls} [${row[k].x}..${row[k].right}]`);
+            }
+        });
+        // Capture what it looked like, so a failure is a picture and not just numbers.
+        await frame.locator(".vram").screenshot({ path: "tests/e2e/artifacts/lane-overlap.png" }).catch(() => {});
+        expect(clashes, clashes.join("\n")).toEqual([]);
+    } finally {
+        await ext.close();
+        await fake.stop();
+    }
+});

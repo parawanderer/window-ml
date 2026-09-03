@@ -1874,53 +1874,7 @@
     },
     "SubcallUsage": {
       "type": "object",
-      "properties": {
-        "prompt": {
-          "type": "number"
-        },
-        "completion": {
-          "type": "number"
-        },
-        "calls": {
-          "type": "number"
-        },
-        "byModel": {
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/SubcallUsageByModel"
-          }
-        }
-      },
-      "required": [
-        "prompt",
-        "completion",
-        "calls"
-      ],
-      "additionalProperties": true
-    },
-    "SubcallUsageByModel": {
-      "type": "object",
-      "description": "Delegated-sub-call token tally (look/locate/verify's own vision calls). See DebugAgentStep.subUsage. `byModel` breaks the aggregate down per vision model, for chat_metadata's \"which model cost what\".",
-      "properties": {
-        "model": {
-          "type": "string"
-        },
-        "prompt": {
-          "type": "number"
-        },
-        "completion": {
-          "type": "number"
-        },
-        "calls": {
-          "type": "number"
-        }
-      },
-      "required": [
-        "model",
-        "prompt",
-        "completion",
-        "calls"
-      ],
+      "properties": {},
       "additionalProperties": true
     }
   }

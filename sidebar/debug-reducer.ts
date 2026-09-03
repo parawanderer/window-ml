@@ -80,7 +80,7 @@ export function onDebug(ev: MlDebugEvent): void {
         }
         // `ts` is kept because a step is a point on the machine's TIMELINE as well as a row in a transcript: the
         // resource panel's event lane places it against what memory was doing at that moment.
-        const step = { step: ev.step, localStep: ev.localStep, seq: ev.seq, toolMs: ev.toolMs, ts: ev.ts, pending: ev.pending, awaitingApproval: ev.awaitingApproval, thought: ev.thought, reasoning: ev.reasoning, tool: ev.tool, arguments: ev.arguments, result: ev.result, modelResult: ev.modelResult, streamMarks: ev.streamMarks, token: ev.token, elements: ev.elements, renderIn: ev.renderIn, renderOut: ev.renderOut, feedback: ev.feedback, argIssues: ev.argIssues, approval: ev.approval, usage: ev.usage, subUsage: ev.subUsage, grants: ev.grants, reused: ev.reused };
+        const step = { step: ev.step, localStep: ev.localStep, seq: ev.seq, toolMs: ev.toolMs, approveMs: ev.approveMs, ts: ev.ts, pending: ev.pending, awaitingApproval: ev.awaitingApproval, thought: ev.thought, reasoning: ev.reasoning, tool: ev.tool, arguments: ev.arguments, result: ev.result, modelResult: ev.modelResult, streamMarks: ev.streamMarks, token: ev.token, elements: ev.elements, renderIn: ev.renderIn, renderOut: ev.renderOut, feedback: ev.feedback, argIssues: ev.argIssues, approval: ev.approval, usage: ev.usage, subUsage: ev.subUsage, grants: ev.grants, reused: ev.reused };
         const steps = s.steps || [];
         // In-flight: a tool step arrives twice — a pending START then the DONE, sharing a `seq`.
         // Patch the existing row in place (immutably) so it fills in; otherwise append. Thoughts

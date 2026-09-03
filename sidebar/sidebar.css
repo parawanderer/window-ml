@@ -186,10 +186,22 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* ONE look for every cursor-following tip (chart band, pool line, model row). Sized off the ROOT (--fs), not
    the parent's em: these are anchored in rows and legends of different sizes, and an em would make otherwise
    identical popups render at different sizes a centimetre apart. Same reasoning as .tt-pop. */
-.rc-tip { position: absolute; top: 4px; left: 4px; z-index: 5; display: flex; align-items: center; white-space: nowrap;
-          gap: 5px; padding: 4px 7px; font-size: calc(var(--fs) * 0.8); line-height: 1.4; pointer-events: none;
+/* FIXED, not absolute: these follow the cursor and are positioned against the viewport (see tip.ts), so they
+   flip at the window's edges instead of being trapped inside a 9px lane row — which is how one ended up
+   sitting directly under the pointer. */
+.rc-tip { position: fixed; top: 4px; left: 4px; z-index: 30; display: flex; align-items: center; flex-wrap: wrap;
+          max-width: min(300px, 92vw);
+          gap: 4px 5px; padding: 4px 7px; font-size: calc(var(--fs) * 0.8); line-height: 1.4; pointer-events: none;
           color: var(--fg); background: var(--panel); border: 1px solid var(--border); border-radius: 5px;
           box-shadow: 0 2px 10px rgba(0,0,0,.35); }
+/* The model's own name and figure lead; its badges (context window, TTL, embed) and its cost each take a line
+   of their own, so a long name can't push the number that matters off the edge. */
+.rc-tip-name { white-space: nowrap; }
+.rc-tip-facts { flex-basis: 100%; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+/* A model tip reads top-down — who, how much, then its badges — so no line has to be as wide as the widest,
+   which is what left a slab of empty space to the right of the short ones. */
+.rc-tip-model { flex-direction: column; align-items: flex-start; gap: 3px; width: max-content; max-width: min(300px, 92vw); }
+.rc-tip-model .rc-tip-line { display: flex; align-items: center; gap: 5px; }
 .rc-tip-dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
 /* The pool tip is a small table, not a one-liner: how big, how much is used, and BY WHAT — the consumer list
    is repeated here so the answer is complete without looking away from the cursor. */
@@ -198,26 +210,81 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rc-tip-line .rc-tip-name { font-weight: 600; }
 /* The event lane: what happened, under the memory it happened to. Segments mirror .rc-seg exactly (same flex
    weights, same order) so a bar sits under the moment it describes — the axis is segmented, not linear. */
+/* An instant, ruled THROUGH the plot: an eviction's meaning is where the curve steps, so it belongs on the
+   memory trace rather than in the lane below. Wider than it looks — the hit area is what you aim at. */
+/* DASHED, not solid: an instant is an annotation on the trace, and a solid rule reads as part of the chart
+   (a ceiling, an axis) rather than as something that happened. The wide box is the hit area; the visible line
+   is the ::before inside it. */
+/* The drag selection, drawn in every track at once: the ranges only mean anything compared across pools. */
+/* The crosshair: one line, drawn in every track at the same fraction, with the instant it names. */
+.rc-cross { position: absolute; top: 0; bottom: 0; width: 1px; z-index: 5; pointer-events: none;
+            background: var(--accent); opacity: .55; }
+.rc-cross-t { position: absolute; top: -1px; left: 3px; padding: 0 3px; font-size: 0.72em; line-height: 1.4;
+              color: var(--fg); background: var(--panel); border: 1px solid var(--border); border-radius: 3px;
+              font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* Past the middle it would run off the right edge, so it hangs on the other side of the line. */
+.rc-cross-t.flip { left: auto; right: 3px; }
+.rc-brush { position: absolute; top: 0; bottom: 0; z-index: 4; pointer-events: none;
+            background: color-mix(in srgb, var(--accent) 18%, transparent);
+            border-left: 1px solid var(--accent); border-right: 1px solid var(--accent); }
+.rc-plot { cursor: crosshair; }
+/* The way out of a zoom, beside the view picker. */
+.vram-zoom { background: var(--panel-2); color: var(--fg); border: 1px solid var(--accent); border-radius: 4px;
+             padding: 2px 7px; font-size: 0.8em; cursor: pointer; font-variant-numeric: tabular-nums; }
+.vram-zoom:hover { background: var(--panel-2-hover); }
+.rc-rule { position: absolute; top: 0; bottom: 0; width: 9px; margin-left: -4px; cursor: help; z-index: 3; }
+.rc-rule::before { content: ""; position: absolute; top: 0; bottom: 0; left: 4px; width: 1px;
+    background: repeating-linear-gradient(to bottom, var(--fg-dim) 0 3px, transparent 3px 6px); }
+.rc-rule-evict::before { background: repeating-linear-gradient(to bottom, var(--danger, #ef4444) 0 3px, transparent 3px 6px); opacity: .85; }
+/* Hovered — in THIS plot or any other, since one eviction is drawn in all of them. */
+.rc-rule:hover::before, .rc-rule.hot::before { width: 3px; left: 3px; opacity: 1; }
 .rc-lane { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 0; }
 .rc-lane-row { position: relative; display: flex; gap: 3px; height: 9px; }
 .rc-lane-seg { position: relative; min-width: 2px; height: 100%; }
 .rc-ev { position: absolute; top: 0; height: 100%; min-width: 3px; padding: 0; border: none; border-radius: 2px;
-         cursor: default; background: var(--fg-faint); opacity: .75; }
+         cursor: default; background: var(--fg-faint); opacity: .75;
+         /* A hairline in the panel's own colour, so two bars that end up adjacent read as TWO. */
+         box-shadow: 0 0 0 1px var(--panel); }
 .rc-ev.linked { cursor: pointer; }
+/* Outside the hovered event's lineage: still there, but out of the way. A sub-call means something only
+   beside the step that spawned it, so hovering one leaves that chain lit and drops everything else back. */
+.rc-ev.away { opacity: .18; }
+.rc-ev { transition: opacity .12s ease; }
 .rc-ev:hover { opacity: 1; outline: 1px solid var(--fg-dim); }
-/* One block, two halves: the model generating the call, then the tool running it. A hard gradient stop rather
-   than two elements, so it stays one thing to hover and click. */
-.rc-ev-tool { background: linear-gradient(to right, var(--accent) 0 var(--cut, 50%),
-              color-mix(in srgb, var(--accent) 35%, transparent) var(--cut, 50%) 100%); }
+/* A composite step: hard stops at each phase boundary, built inline from the phases themselves (the model's
+   own colour for its work, a neutral for the human's wait, a wash of the same colour for the tool). The
+   fallback here only matters if an event arrives with no phases. */
+.rc-ev-tool { background: linear-gradient(to right, var(--model, var(--accent)) 0 50%,
+              color-mix(in srgb, var(--model, var(--accent)) 38%, transparent) 50% 100%); }
+/* The WAIT phase is drawn as a hollow neutral stop in that same gradient (see phaseGradient), so a step that
+   sat at an approval gate can never read as work: the bar is wide because a person was deciding. */
 .rc-ev-gen { background: var(--accent); }
 /* A background embedding call: a small model working BESIDE the driver rather than in its sequence, so it is
    quieter and reads as something happening underneath. */
 .rc-ev-embed { background: color-mix(in srgb, var(--ok, #22c55e) 60%, transparent); }
 .rc-ev-run { background: color-mix(in srgb, var(--fg-dim) 45%, transparent); }
-/* A load is the wait before a token — striped, because it is time spent NOT generating. */
-.rc-ev-load { background: repeating-linear-gradient(45deg, var(--warn, #f59e0b) 0 3px, transparent 3px 6px), var(--panel-2); }
+/* A load is the wait before a token — striped, because it is time spent NOT generating. The real fill is
+   built inline from the model's colour (loadStripes); this is what it falls back to. */
+.rc-ev-load { background: repeating-linear-gradient(45deg, var(--warn, #f59e0b) 0 3px, var(--panel) 3px 8px);
+              outline: 1px solid var(--border); outline-offset: -1px; }
 .rc-tip-event { flex-direction: column; align-items: stretch; gap: 2px; min-width: 150px; }
+.rc-tip-event .rc-tip-line { display: flex; align-items: center; gap: 5px; }
+.rc-tip-event .rc-tip-size { margin-left: auto; }
+/* Figures as the same little blocks the model rows use: a chip is visibly ONE fact, where three numbers on a
+   dim line gave no way to tell which belonged together. */
+.rc-tip-chips { display: flex; flex-wrap: wrap; gap: 3px; margin: 1px 0 2px; }
+.rc-chip { padding: 0 4px; font-size: 0.88em; line-height: 1.5; color: var(--fg-dim); border: 1px solid var(--border);
+           border-radius: 3px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rc-chip-dim { color: var(--fg-faint); }
+/* A note is prose ABOUT the block, not a fact in it — no border, and set apart. */
+.rc-tip-note { color: var(--fg-faint); font-size: 0.92em; }
+.rc-tip-when { color: var(--fg-dim); font-size: 0.92em; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rc-tip-event code { font-family: var(--mono, ui-monospace, monospace); font-size: 0.95em;
+                     padding: 0 3px; background: var(--panel-2); border-radius: 3px; }
+/* Phases are separated by their rule; the name/duration pair is the line itself. */
+.rc-tip-event .rc-tip-name { font-weight: 600; }
 .rc-tip-rule { height: 1px; margin: 2px 0; background: var(--border); }
+.rc-tip-consumer { display: inline-flex; align-items: center; gap: 5px; }
 .rc-tip-pct { opacity: .7; font-variant-numeric: tabular-nums; }
 .rc-tip-gone { padding: 0 4px; font-size: 0.9em; color: var(--fg-faint); border: 1px solid var(--border); border-radius: 3px; }
 .rc-tip-dim { color: var(--fg-faint); }
@@ -277,6 +344,9 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .vram-row.ghost { opacity: .55; }
 .vram-row.ghost .vram-name { text-decoration: none; }
 .ghost-dot { border: none; opacity: .8; }
+/* Its card stopped being reported: real memory with no pool to draw it against. */
+.vram-orphan { padding: 0 4px; font-size: 0.72em; color: var(--danger, #ef4444); border: 1px solid var(--danger, #ef4444);
+               border-radius: 3px; opacity: .85; }
 .vram-embed { padding: 0 4px; font-size: 0.72em; color: var(--fg-dim); border: 1px solid var(--border); border-radius: 3px; }
 /* Live keep-alive countdown — same chip shape as the context badge, sat beside it. */
 .vram-ttl { flex: 0 0 auto; color: var(--fg-faint); font-size: 0.9em; font-variant-numeric: tabular-nums;
