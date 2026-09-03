@@ -996,11 +996,23 @@ thing. The parts:
   `fake-llm.mjs` fakes the box as well as the model: **`setResident()`** drives `/api/ps` and
   **`setCapacity()`** drives `/api/info`, both settable mid-run, so a demo or spec can make models load, move
   card and evict on a timeline. `setCapacity(null)` reproduces a server without the patch, which answers that
-  route with the SPA's HTML rather than a 404. The demo walks: idle cards → a model onto CUDA0 → a second onto
-  CUDA1 → a CPU-resident third against System RAM → an eviction → the panel CLOSED for 20s (so the history
-  shows an honest GAP) → no `/api/info` at all → capacity restored. The spec asserts the same, plus a
-  **CUDA → Metal backend switch** (the panel re-shapes to one unified track and the old box's history is
-  dropped, since an 18 GiB reading redrawn against an 11.84 GiB pool clips and looks like a measurement).
+  route with the SPA's HTML rather than a 404. The demo walks: idle cards → a model onto the first card → a
+  second onto the next → a CPU-resident third against System RAM → an eviction → the panel CLOSED for 20s (so
+  the history shows an honest GAP) → CHURN (models loading and evicting at random, including two on one card)
+  → the same track drawn stacked and overlaid → a SPLIT model (uneven across every card, remainder in RAM; on
+  a one-card box, a partial offload instead) → the box going SILENT on `/api/info` (the tracks stand, because
+  capacity is a fact about the box) → a fresh page against a box that NEVER answered (no ceiling invented) →
+  capacity restored.
+  **`BOX=` picks the machine**: `cuda` (default — two ~95 GiB cards, names nvidia-smi) · `amd` (two ROCm
+  cards, names rocm-smi) · `laptop` (a 12 GiB 4080 laptop and 32 GiB RAM, where a 27B has to spill into system
+  memory) · `rig` (four NVLinked 3090s a 70B is split across) · `lab` (eight A100s = nine pools, past the
+  curated colour palette) · `metal` (one unified pool, no vendor tool to name). Screenshots land in
+  `tests/e2e/artifacts/resource-demo[-<box>]/`. The fake box PLACES models the way ollama does — a model takes
+  what fits on its card and spills the rest to RAM — so a script can't produce a card at 128% of its capacity.
+  The spec asserts the same behaviours, plus a **CUDA → Metal backend switch** (the panel re-shapes to one
+  unified track and the old box's history is dropped, since an 18 GiB reading redrawn against an 11.84 GiB
+  pool clips and looks like a measurement), the tiling at width, the drag floor, and the tooltip/hit-target
+  invariants.
 - **`stream-demo.mjs`** — a **narrated demo, not a test** of LIVE tool-output streaming: `npm run build &&
   node --import tsx tests/e2e/stream-demo.mjs` opens a headful browser, slides the overlay open on a real
   (background-hosted) run, and drives a deliberately SLOW `exec` (paced `console.log`) and `python_exec`
