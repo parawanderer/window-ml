@@ -126,6 +126,16 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          *   rows.filter(r => r[2] > 100).length
          * ```
          *
+         * WHY THIS IS ASYNC, since the page path does not need it: when the run is PAGE-hosted the resolver
+         * behind this is synchronous — a pure read of in-memory run state — and the await is ceremony. It is
+         * async for the BACKGROUND-hosted path (design A, the default whenever a debug surface is open),
+         * where the pointer store lives in the service worker and the read is a postMessage round trip. The
+         * signature cannot vary by host: the same call must work either way, and returning a value in one
+         * case and a promise in the other would be an invisible footgun. The cost lands in the READ-ONLY exec
+         * dialect, whose evaluator is a generator precisely because every ml method is async — its `runSync`
+         * driver (for arrows a host method invokes) throws NotInDialect on an await, so
+         * `ids.map(id => ml.dereference(id))` inside a read-only survey falls through to approval.
+         *
          * @param ref A pointer: `@tool:<id>`, the bare id, or a builtin's name for its latest call. `:in` reads
          *            the call/arguments instead of the result.
          * @param options `pipe` reduces the value first — the text-pipe dialect as a string

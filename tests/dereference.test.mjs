@@ -59,13 +59,16 @@ test("dereference: a hallucinated pointer returns a MemoryFault naming the real 
     assert.match(out, /recoverable/i);
 });
 
-test("dereference: a missing token argument lists what IS available", async () => {
+test("dereference: a pipe with NO token still answers with the inventory, and says the pipe was dropped", async () => {
     const { results } = await drive(
         [call("exec", { js: "x", token: true }), call("dereference", { pipe: "head 2" })],
         () => ({ result: "captured" }));
     const out = results.find((r) => r.name === "dereference").result;
-    assert.match(out, /^Error: "token" is required/);
-    assert.match(out, /@tool:[0-9a-f]{7} \(exec, step 1\)/, "names the pointer it could have used");
+    // A pipe with no pointer is a slip, not an inventory request — but the inventory is what recovers it.
+    assert.match(out, /1 pointer in this session:/);
+    assert.match(out, /@tool:[0-9a-f]{7} \(exec\)/, "names the pointer it could have used");
+    // …and the dropped argument is stated rather than silently ignored.
+    assert.match(out, /`pipe` was not applied: no pointer was named/);
 });
 
 test("dereference: a bad pipe stage returns the dialect's own actionable refusal", async () => {
@@ -315,4 +318,36 @@ test("dereference: a soft match reaches exec as a console warning, leaving the V
     assert.match(soft.warning, /^ml\.dereference: resolved "sales table" to the label "the table of sales" by similarity/);
     assert.match(soft.warning, /\(1\.00\)/, "with the score, so a weak match is visible");
     assert.doesNotMatch(soft.value, /similarity/, "and nothing about the resolution leaked into the data");
+});
+
+// Calling with NO argument is the inventory. It used to be reachable only by provoking the "token is
+// required" error, which is backwards for a mechanism whose job is confidence: a model that cannot cheaply
+// see what it holds will guess, and a model that expects to guess wrong retypes the data instead.
+test("dereference: no argument lists what the session holds, as a real read", async () => {
+    const { results } = await drive(
+        [call("python_exec", { code: "df", token: "the sales table" }),
+         call("exec", { js: "x", token: true }),
+         call("dereference", {})],
+        (name) => name === "python_exec" ? { result: "ROWS" } : { result: "SURVEY" });
+    const out = derefResult({ results });
+
+    assert.doesNotMatch(out, /^Error/, "an inventory is a legitimate read, not a validation failure");
+    assert.match(out, /2 pointers in this session:/);
+    assert.match(out, /@tool:[0-9a-f]{7} \(python_exec: "the sales table"\) text \d+ chars, step 1/, "each carries its name, TYPE and age");
+    assert.match(out, /@tool:[0-9a-f]{7} \(exec\) text \d+ chars, step 2/);
+    // It teaches the reference forms by example, which is cheaper than paying for a paragraph every run.
+    assert.match(out, /Read one by passing it as `token`/);
+    assert.match(out, /or by its label: @tool:"the sales table"/);
+    // No column padding — it is read by a model (see the AGENTS.md rule).
+    for (const line of out.split("\n").filter((l) => l.includes("@tool:"))) {
+        assert.doesNotMatch(line.trimStart(), / {2,}/, `padded: ${JSON.stringify(line)}`);
+    }
+});
+
+test("dereference: an empty session says how to fill it, not that something went wrong", async () => {
+    const { results } = await drive([call("dereference", {})], () => ({ result: "" }));
+    const out = derefResult({ results });
+    assert.doesNotMatch(out, /^Error/);
+    assert.match(out, /No pointers captured yet/);
+    assert.match(out, /token: true/, "and names the way to create one");
 });

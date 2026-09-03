@@ -17,7 +17,7 @@ import { runStats, fmtTokPerSec, UI_OUT_CAP } from "./contract";
 import type { TokenRender } from "./contract";
 import { UNATTENDED_REFUSAL } from "./prompts";
 import { toolToken } from "./util";
-import { TokenStore, derefPipe, describeToken, extraBeyondModel, memoryFault, cleanLabel, nameOf, isAliasRef, parseLabel, DEREF_TOOL, type TokenKind, type TokenValue, type DerefRead } from "./token-pipe";
+import { TokenStore, derefPipe, describeToken, extraBeyondModel, memoryFault, cleanLabel, nameOf, shortType, isAliasRef, parseLabel, DEREF_TOOL, type TokenKind, type TokenValue, type DerefRead } from "./token-pipe";
 
 export type Approval = "readonly" | "sandbox" | "same-origin" | "consented" | "self-source" | "user" | "denied" | "skipped" | "cancelled";
 export interface ToolMeta { name: string; requiresApproval?: boolean; capabilities?: string[]; }
@@ -304,7 +304,14 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     const derefLocally = (args: Record<string, unknown>, step: number, seq: number): ToolRunResult => {
         const ref = String(args?.token ?? "").trim();
         const pipe = args?.pipe == null ? "" : String(args.pipe);
-        if (!ref) return { result: `Error: "token" is required — the @tool:<id> of an output you want to read. Available: ${tokenList()}` };
+        // NO argument is a legitimate read: the INVENTORY of what this session holds. It used to be reachable
+        // only by triggering the "token is required" error, which is backwards for a mechanism whose whole job
+        // is confidence — a model that cannot cheaply see what it has will guess, and a model that expects to
+        // guess wrong retypes the data instead, which is the cost this exists to avoid.
+        // A `pipe` with no token is a slip, not an inventory request — the model meant to reduce SOMETHING.
+        // Still answer with the inventory (that is what it needs to recover), but say the pipe was dropped
+        // rather than silently ignoring an argument it deliberately wrote.
+        if (!ref) return { result: pipe.trim() ? `${inventory()}\n\n(Your \`pipe\` was not applied: no pointer was named to apply it to.)` : inventory() };
         const { value: v, matched, score } = tokenStore.resolveRef(ref);
         // A pointer that doesn't resolve is usually a HALLUCINATED id (six plausible hex characters that were
         // never minted), so name the closest real ones rather than just saying no — the model can then correct
@@ -353,6 +360,19 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     };
     const tokenList = (): string =>
         tokenStore.size ? tokenStore.all().map(v => `@tool:${v.id} (${nameOf(v)}, step ${v.step})`).join(", ") : "(nothing captured yet)";
+    /** Everything this session holds a pointer to — what it is, what it was called, and how far back. The
+     *  answer to "what do I have?", so the model never has to recall an id to find out. Also teaches the
+     *  reference forms by example, which is cheaper than a paragraph in the tool description that is paid on
+     *  every run. One line each, no column padding (it is read by a model). */
+    const inventory = (): string => {
+        const all = tokenStore.all();
+        if (!all.length) return "No pointers captured yet this session. Run a tool with `token: true` (or a short label) and its output becomes readable here.";
+        const lines = all.map((v) => `  @tool:${v.id} (${nameOf(v)}) ${shortType(v)}, step ${v.step}`);
+        const labelled = all.find((v) => v.label);
+        const byLabel = labelled ? ` — or by its label: @tool:${JSON.stringify(labelled.label)}.` : "";
+        return `${all.length} pointer${all.length === 1 ? "" : "s"} in this session:\n${lines.join("\n")}\n`
+            + `Read one by passing it as \`token\`, e.g. "@tool:${all[all.length - 1].id}"${byLabel}`;
+    };
     /** `look` at an IMAGE POINTER. A screenshot the run already captured is addressable like any other output,
      *  so `look { selector: "@tool:abc123" }` re-examines it — a different question about the SAME pixels —
      *  instead of re-screenshotting a page that has since scrolled or changed. The store lives here, so the
