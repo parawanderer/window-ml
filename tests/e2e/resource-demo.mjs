@@ -324,7 +324,34 @@ async function main() {
             await capture(page, "split-model");
         }
 
-        // 9. Capacity STOPS answering. What was already measured stands — a box does not lose its hardware
+        // 9. The EVENT LANE: what happened, under what it happened to. The fake box moves memory but runs no
+        //    model, so the run is scripted — these are the same `__mlDebug` events a real run emits, posted
+        //    from the page so the shell relays them exactly as it would its own. The timings are the point:
+        //    a model load, a slow generation, and a tool that took longer than the model did.
+        log("events: a scripted run on the same axis — a load, a generation, and a tool step.");
+        await page.evaluate(() => {
+            const now = Date.now();
+            const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
+            const hash = "demo-run";
+            post({ kind: "agent", id: hash, ts: now - 26_000, save: false, session: { hash, turn: 0 },
+                   task: "summarise the spreadsheet", model: "gemma4:31b", maxSteps: 8, config: null });
+            // Step 1: the model wasn't resident — 12s of loading before a token, then a short generation.
+            post({ kind: "agent-step", id: hash, ts: now - 12_000, save: false, session: { hash, turn: 1 },
+                   step: 1, seq: 1, tool: "exec", toolMs: 1200,
+                   arguments: { js: "document.title" }, result: "ok",
+                   usage: { promptTokens: 2400, completionTokens: 90, totalTokens: 2490, genMs: 2600, loadMs: 12_000 } });
+            // Step 2: resident now, so the whole cost is generation + a slow tool.
+            post({ kind: "agent-step", id: hash, ts: now - 4000, save: false, session: { hash, turn: 2 },
+                   step: 2, seq: 2, tool: "python_exec", toolMs: 5200,
+                   arguments: { code: "df.describe()" }, result: "ok",
+                   usage: { promptTokens: 3100, completionTokens: 210, totalTokens: 3310, genMs: 2100, loadMs: 40 } });
+            post({ kind: "agent-result", id: hash, ts: now - 3500, save: false, session: { hash, turn: 3 },
+                   summary: "done", steps: 2, hitCap: false });
+        });
+        await sleep(6000);
+        await capture(page, "events");
+
+        // 10. Capacity STOPS answering. What was already measured stands — a box does not lose its hardware
         //    because one poll came back empty, and forgetting it swapped the panel for the legacy chart at
         //    random.
         log("the box stops answering /api/info — the panel keeps what it measured rather than flipping views.");
@@ -332,7 +359,7 @@ async function main() {
         await sleep(14000);
         await capture(page, "capacity-silent");
 
-        // 10. The real degrade: a box that has NEVER answered. Fresh page, since that is a different state.
+        // 11. The real degrade: a box that has NEVER answered. Fresh page, since that is a different state.
         log("a box that never answers /api/info — capacity unknown, so no ceiling is invented.");
         await page.reload();
         await page.waitForFunction(() => !!document.getElementById("ml-sb-root")?.shadowRoot, null, { timeout: 20000 });

@@ -6827,3 +6827,41 @@ test("settings: the embedding model is tested by EMBEDDING, and reports its dime
     const row = [...w.shadow.querySelectorAll(".test-row")].find((r) => r.querySelector(".role")?.textContent === "Embedding");
     assert.ok(row.querySelector(".test-ic.ok"), "a real vector came back, so it passes");
     assert.match(row.querySelector('[role="tooltip"]').textContent, /768 dimensions/, "and says which geometry");});
+
+// Instants belong on the memory trace, not in the lane: an eviction's whole meaning is WHERE the curve steps,
+// and a bar below the chart can't say that. (Spans stay in the lane, where their length can be read.)
+test("event lane: an eviction rules through the plot and names itself", async () => {
+    const two = [
+        { model: "keeper:8b", vramGB: 5, vramBytes: 5 * 1024 ** 3, sizeBytes: 5 * 1024 ** 3,
+          gpus: [{ id: "0", runner: "CUDA", vramBytes: 5 * 1024 ** 3 }], expiresAt: null },
+        { model: "doomed:12b", vramGB: 7, vramBytes: 7 * 1024 ** 3, sizeBytes: 7 * 1024 ** 3,
+          gpus: [{ id: "0", runner: "CUDA", vramBytes: 7 * 1024 ** 3 }], expiresAt: null },
+    ];
+    const w = await loadSidebarWorld({ vram: two, info: INFO_2CARD, ...STACKED_LAYOUT });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    for (let i = 0; i < 25 && w.shadow.querySelectorAll(".rc-seg").length < 1; i++) {
+        await w.flush(); await new Promise((r) => setTimeout(r, 150));
+    }
+    assert.equal(w.shadow.querySelectorAll(".rc-rule").length, 0, "nothing has happened yet");
+
+    // One evicts. Nothing REPORTS that — a model simply stops being in ps — so the diff is the only source.
+    w.setVram([two[0]]);
+    for (let i = 0; i < 25 && !w.shadow.querySelector(".rc-rule"); i++) {
+        await w.flush(); await new Promise((r) => setTimeout(r, 150));
+    }
+    const rule = w.shadow.querySelector(".rc-rule-evict");
+    assert.ok(rule, "the eviction is ruled through the plot");
+    // It sits inside a segment, positioned by time — not pinned to an edge.
+    assert.match(rule.getAttribute("style") || "", /left:/);
+    assert.ok(rule.closest(".rc-seg"), "…inside the run that contains it");
+
+    rule.dispatchEvent(new w.window.MouseEvent("pointerenter", { bubbles: true }));
+    w.shadow.querySelector(".rc-plot").dispatchEvent(new w.window.MouseEvent("pointermove", { bubbles: true }));
+    await w.flush();
+    const tips = [...w.shadow.querySelectorAll(".rc-tip-event")];
+    assert.equal(tips.length, 1, "ONE tooltip — every track renders one, and they share a signal");
+    assert.match(tips[0].textContent, /doomed:12b/, "…naming the model that left");
+    // It belongs to the plot the rule is in, not to a sibling track.
+    assert.equal(tips[0].closest(".rc-track"), rule.closest(".rc-track"));
+});

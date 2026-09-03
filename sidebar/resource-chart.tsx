@@ -119,10 +119,13 @@ export interface DeviceViewProps {
      *  device's is the system total, and the host pool has no driver in the story at all. */
     ceilingNote: string;
     hidden: Set<string>;
+    /** Instants to rule through this plot (evictions). Spans live in the lane below, not here. */
+    events?: ResourceEvent[];
 }
 
 /** One track: a header carrying the denominator, then the stacked history, gaps left as gaps. */
-export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote, hidden }: DeviceViewProps) {
+export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote, hidden, events = [] }: DeviceViewProps) {
+    const scope = `track:${label}`;   // one track per pool, so the label identifies the surface
     const latest = samples.at(-1);
     const bands = latest ? bandsOf(latest) : [];
     const used = bands.filter((b) => b.kind !== "free" && !(b.model && hidden.has(b.model))).reduce((n, b) => n + b.bytes, 0);
@@ -131,6 +134,11 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
     // leaves a pale sliver where the band wash is missing, which reads as a rendering artifact rather than as
     // data. Undrawable runs are skipped; nothing is lost, because a lone point conveys no trend either.
     const runs = useMemo(() => segments(samples).filter((r) => r.length > 1), [samples]);
+    // Only the instants: a span is a duration and belongs in the lane, where its length can be read.
+    const instants = useMemo(() => {
+        const from = runs[0]?.[0]?.t ?? 0, to = runs.at(-1)?.at(-1)?.t ?? 0;
+        return placeEvents(runs, eventsIn(events.filter((e) => e.until == null), from, to + VRAM_POLL_MS), VRAM_POLL_MS);
+    }, [runs, events]);
     return (
         <div class="rc-track">
             <div class="rc-head">
@@ -149,11 +157,19 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
                 {runs.map((run, i) => (
                     <div class="rc-seg" key={i} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
                         <StackedArea frames={run.map(bandsOf)} ceiling={ceiling} hidden={hidden} />
+                        {/* Instants are drawn THROUGH the plot rather than in the lane below: an eviction is a
+                            moment in the memory trace, and its whole meaning is where the curve steps. */}
+                        {instants.filter((p) => p.run === i).map((p, k) => (
+                            <div class={`rc-rule rc-rule-${p.event.kind}`} key={k} style={{ left: `${p.from * 100}%` }}
+                                onPointerEnter={() => (eventHover.value = { p, scope })}
+                                onPointerLeave={() => (eventHover.value = null)} />
+                        ))}
                     </div>
                 ))}
                 {soft ? <div class="rc-soft" style={{ bottom: `${Math.min(100, (soft.bytes / ceiling) * 100)}%` }}
                     title={soft.label} /> : null}
                 <BandTip bands={bands} history={samples.map(bandsOf)} ceiling={ceiling} />
+                <EventTip scope={scope} />
             </div>
             <div class="rc-legend">
                 {bands.filter((b) => b.kind === "other" && b.bytes > 0).map((b) => (
@@ -267,7 +283,7 @@ function deviceCeilingNote(dev: { runner: string; unified: boolean; physicalByte
  *  `ram`/`mem` the host pool's. STACK renders the bands (the parts do sum to that pool's occupancy); OVERLAY
  *  renders one line per series, each against its own ceiling, because several pools have no shared total —
  *  which is exactly what `stackRefusal` refuses and why the Overview preset overlays. */
-function TrackView({ def, samples, latest, hidden }: { def: TrackDef; samples: ResourceSample[]; latest: ResourceSample; hidden: Set<string> }) {
+function TrackView({ def, samples, latest, hidden, events = [] }: { def: TrackDef; samples: ResourceSample[]; latest: ResourceSample; hidden: Set<string>; events?: ResourceEvent[] }) {
     const cap = latest.capacity!;
     const deviceOf = (id: string) => cap.devices.find((d) => d.id === id.replace(/^vram\./, ""));
     const first = def.series[0] ?? "";
@@ -287,14 +303,14 @@ function TrackView({ def, samples, latest, hidden }: { def: TrackDef; samples: R
                 : "Total system memory. Models here are running on the CPU, or are the spilled part of a model too large for the accelerator.";
             return <DeviceView label={label} samples={samples} bandsOf={hostBands}
                 ceiling={c?.hardBytes ?? cap.host.totalBytes} ceilingNote={note}
-                soft={c?.softBytes ? { bytes: c.softBytes, label: c.softLabel || "" } : null} hidden={hidden} />;
+                soft={c?.softBytes ? { bytes: c.softBytes, label: c.softLabel || "" } : null} hidden={hidden} events={events} />;
         }
         const d = deviceOf(first);
         if (!d) return null;
         const c = ceilingsFor(latest, d.id);
         return <DeviceView label={d.name} samples={samples} bandsOf={(s) => deviceBands(s, d.id)}
             ceiling={c?.displayBytes ?? d.totalBytes} ceilingNote={deviceCeilingNote(d)}
-            soft={c?.softBytes ? { bytes: c.softBytes, label: c.softLabel || "" } : null} hidden={hidden} />;
+            soft={c?.softBytes ? { bytes: c.softBytes, label: c.softLabel || "" } : null} hidden={hidden} events={events} />;
     }
     return <OverlayView def={def} samples={samples} latest={latest} hidden={hidden} />;
 }
@@ -407,12 +423,14 @@ function OverlayView({ def, samples, latest, hidden }: { def: TrackDef; samples:
 
 /** The panel's tracks, from the chosen LAYOUT. A layout is just `TrackDef[]`; a preset is a named starting
  *  point for it (see `presetsFor`), and editing one is the same operation on the same state. */
-/** The hovered event, following the cursor like the other tips. */
-const eventHover = signal<{ p: EventPlacement } | null>(null);
+/** The hovered event, and WHICH surface owns it. Every track's plot renders a tip (a ruled instant is hovered
+ *  in the plot, where its meaning is) and so does the lane — all driven by this one signal, so without an
+ *  owner every one of them rendered the same tooltip at once, four deep on a three-track panel. */
+const eventHover = signal<{ p: EventPlacement; scope: string } | null>(null);
 
-function EventTip() {
+function EventTip({ scope }: { scope: string }) {
     const h = eventHover.value, at = hoverAt.value;
-    if (!h || !at) return null;
+    if (!h || !at || h.scope !== scope) return null;
     const e = h.p.event;
     const dur = (e.until ?? e.t) - e.t;
     const ms = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}s` : `${Math.round(n)}ms`);
@@ -483,7 +501,7 @@ function EventLane({ samples, events }: { samples: ResourceSample[]; events: Res
                                         style={{ left: `${p.from * 100}%`, width: `${w}%`,
                                                  ...(cut != null ? { "--cut": `${cut}%` } : {}) }}
                                         title=""
-                                        onPointerEnter={() => (eventHover.value = { p })}
+                                        onPointerEnter={() => (eventHover.value = { p, scope: "lane" })}
                                         onClick={() => open(e)} />
                                 );
                             })}
@@ -491,7 +509,7 @@ function EventLane({ samples, events }: { samples: ResourceSample[]; events: Res
                     ))}
                 </div>
             ))}
-            <EventTip />
+            <EventTip scope="lane" />
         </div>
     );
 }
@@ -513,7 +531,7 @@ export function ResourceTracks({ samples, capacity, hidden, layout, events = [] 
     return (
         <>
             <div class="rc">
-                {tracks.map((t) => <TrackView key={t.id} def={t} samples={filled} latest={latest} hidden={hidden} />)}
+                {tracks.map((t) => <TrackView key={t.id} def={t} samples={filled} latest={latest} hidden={hidden} events={events} />)}
             </div>
             {/* Below every track, sharing their x-axis: what happened, against what was in memory while it did. */}
             <EventLane samples={filled} events={events} />

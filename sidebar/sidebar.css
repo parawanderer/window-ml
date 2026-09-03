@@ -198,6 +198,12 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 .rc-tip-line .rc-tip-name { font-weight: 600; }
 /* The event lane: what happened, under the memory it happened to. Segments mirror .rc-seg exactly (same flex
    weights, same order) so a bar sits under the moment it describes — the axis is segmented, not linear. */
+/* An instant, ruled THROUGH the plot: an eviction's meaning is where the curve steps, so it belongs on the
+   memory trace rather than in the lane below. Wider than it looks — the hit area is what you aim at. */
+.rc-rule { position: absolute; top: 0; bottom: 0; width: 7px; margin-left: -3px; cursor: help;
+           background: linear-gradient(to right, transparent 3px, var(--fg-dim) 3px 4px, transparent 4px); }
+.rc-rule:hover { background: linear-gradient(to right, transparent 2px, var(--fg) 2px 5px, transparent 5px); }
+.rc-rule-evict { background: linear-gradient(to right, transparent 3px, var(--danger, #ef4444) 3px 4px, transparent 4px); opacity: .8; }
 .rc-lane { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 0; }
 .rc-lane-row { position: relative; display: flex; gap: 3px; height: 9px; }
 .rc-lane-seg { position: relative; min-width: 2px; height: 100%; }
