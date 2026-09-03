@@ -276,6 +276,40 @@ async function residentContextLength(config: MlConfig, model: string): Promise<n
 // Returns the array, or null when it can't be determined (non-Ollama backend,
 // old Ollama, cloud model, unreachable) — callers must treat null as "unknown"
 // and degrade gracefully, never as "no".
+/** Does this model generate TEXT? The right test for the chat/utility/vision pickers.
+ *
+ *  Measured against a real Ollama (2026-09-03): the obvious rule — "hide anything with `embedding`" — is
+ *  WRONG. `qwen3-embedding:0.6b` reports `['tools','thinking','embedding']` and `:8b` reports
+ *  `['tools','embedding']`, so an embedding model can advertise other capabilities too. Requiring
+ *  `completion` is the semantically correct test, and no embedding model has it.
+ *
+ *  Unknown (null) capabilities mean a cloud/non-Ollama model, which we CANNOT classify — so it passes.
+ *  Failing open matches `modelFilter`: never hide a model we merely failed to interrogate. */
+export const generatesText = (caps: string[] | null): boolean => !caps || caps.includes("completion");
+
+/** Does this model produce EMBEDDINGS? Unlike {@link generatesText} this fails CLOSED — an unclassifiable
+ *  model is not offered as an embedding model, because picking one that turns out not to embed produces a
+ *  confusing runtime failure rather than a mildly shorter list. A user can still name one explicitly and
+ *  have it validated by an actual embed call. */
+export const producesEmbeddings = (caps: string[] | null): boolean => !!caps && caps.includes("embedding");
+
+/** Capabilities for MANY models at once, for the settings pickers. Sequential per model would be ~39 round
+ *  trips on a real box; bounded concurrency turns that into well under a second, and `capabilitiesCache`
+ *  makes every later call free. A model that fails to answer resolves to null (unknown) rather than
+ *  rejecting the batch — one unreachable model must not blank the whole picker. */
+export async function modelCapabilitiesBatch(config: MlConfig, models: string[], concurrency = 6): Promise<Record<string, string[] | null>> {
+    const out: Record<string, string[] | null> = {};
+    const queue = [...models];
+    const worker = async (): Promise<void> => {
+        for (let m = queue.shift(); m !== undefined; m = queue.shift()) {
+            try { out[m] = await modelCapabilities(config, m); }
+            catch { out[m] = null; }
+        }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, models.length) }, worker));
+    return out;
+}
+
 export async function modelCapabilities(config: MlConfig, model: string): Promise<string[] | null> {
     const cacheKey = `${config.chatUrl}|${model}`;
     if (capabilitiesCache.has(cacheKey)) return capabilitiesCache.get(cacheKey)!;
