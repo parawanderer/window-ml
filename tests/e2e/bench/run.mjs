@@ -6,6 +6,8 @@
 //   … --repeats 2 --dry   print the matrix and stop
 //   … --no-cache          re-run cells that are already measured
 //   … --pdf               also render each run to run.html + run.pdf (slower, and much larger)
+//   … --capture always    snapshot the browser (screenshot + DOM, every open page) on EVERY run, not
+//                         just the failures — the default is `failure`, and `never` turns it off
 //   … --serve             serve a live page: every run's state, what is queued, the table filling in
 //   … --serve --open      …and open it in a browser
 //   … --port 7400         serve on a specific port (the default is stable, so a browser tab can just
@@ -43,7 +45,7 @@ const ARTROOT = path.join(ROOT, "tests/e2e/artifacts/bench");
 const BUILDROOT = path.join(ROOT, "tests/e2e/artifacts/builds");
 
 function parseArgv(argv) {
-    const args = { specPath: null, jobs: 1, only: [], skip: [], repeats: undefined, dry: false, cache: true, pdf: false, serve: false, open: false, port: undefined };
+    const args = { specPath: null, jobs: 1, only: [], skip: [], repeats: undefined, dry: false, cache: true, pdf: false, serve: false, open: false, port: undefined, capture: undefined };
     for (let i = 0; i < argv.length; i++) {
         const a = argv[i];
         if (a === "--jobs") args.jobs = Math.max(1, Number(argv[++i]) || 1);
@@ -53,6 +55,7 @@ function parseArgv(argv) {
         else if (a === "--dry") args.dry = true;
         else if (a === "--no-cache") args.cache = false;
         else if (a === "--pdf") args.pdf = true;
+        else if (a === "--capture") args.capture = argv[++i];
         else if (a === "--serve") args.serve = true;
         else if (a === "--port") { args.serve = true; args.port = Number(argv[++i]) || 0; }
         else if (a === "--open") { args.serve = true; args.open = true; }
@@ -168,6 +171,7 @@ async function runCell(cell, ctx, index) {
             dist: ctx.buildDirs.get(cell) ?? null,
             artDir: dir,
             approve: ctx.spec.approve || "auto",
+            capture: ctx.capture,
             timeoutMs: t.timeoutMs ?? ctx.spec.timeoutMs ?? 180000,
             // A sweep is a machine reading a matrix: no sidebar to focus, no browser to hold open, and the
             // per-event chatter would bury the progress line.
@@ -290,7 +294,10 @@ const main = async () => {
         spec, fingerprint, sweepDir, backend, buildDirs, cache: args.cache,
         // Warming is a VRAM concern for a local model, and pointless against a hosted API or the fake.
         warm: !!backend && process.env.WARM !== "0",
-        cached: 0, ran: 0, pdf: args.pdf, log: (s) => console.log(s),
+        cached: 0, ran: 0, pdf: args.pdf,
+        // CLI beats the spec: a sweep you are debugging wants `--capture always` without editing the file.
+        capture: args.capture || spec.capture || "failure",
+        log: (s) => console.log(s),
     };
     // The live page, when asked for. Every cell is seeded as QUEUED so the whole matrix is visible from the
     // start — what is running, what is next, and what is left is the question a long sweep actually raises.

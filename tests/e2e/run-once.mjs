@@ -156,6 +156,44 @@ function makeDumper(artDir) {
     return { dump, settle: () => chain };
 }
 
+
+/**
+ * Capture what the BROWSER looked like, for a run that went wrong.
+ *
+ * The log says what the agent did; it does not say what it was looking at, and for a stuck or wrong run
+ * that is usually the question. A timeout is the sharpest case: the transcript just stops, and the page
+ * itself — a modal nobody dismissed, a login wall, a spinner that never resolved — is the answer.
+ *
+ * Captures EVERY open page, not just the one the run started on: a run can navigate, and `fetch_url`
+ * with `rendered` opens a background tab. The DOM goes out beside the screenshot because they answer
+ * different questions — the image shows what a human would see, the HTML has the text, the hidden nodes
+ * and the attributes a selector was supposed to match.
+ *
+ * Best-effort throughout. This runs when something has ALREADY failed, so a failure here must never
+ * replace the original one.
+ */
+async function captureBrowserState(context, artDir, label) {
+    if (!artDir || !context) return [];
+    const written = [];
+    let pages = [];
+    try { pages = context.pages().filter((p) => !p.isClosed()); } catch { return written; }
+    for (const [i, page] of pages.entries()) {
+        const stem = pages.length > 1 ? `${label}-page${i + 1}` : label;
+        let url = "";
+        try { url = page.url(); } catch { /* context gone */ }
+        try {
+            await page.screenshot({ path: path.join(artDir, `${stem}.png`), fullPage: false });
+            written.push(`${stem}.png`);
+        } catch { /* mid-navigation, or the page died with the run */ }
+        try {
+            const html = await page.content();
+            await writeFile(path.join(artDir, `${stem}.html`), `<!-- ${url} -->\n${html}`);
+            written.push(`${stem}.html`);
+        } catch { /* same */ }
+    }
+    return written;
+}
+
 /**
  * WATCH/focus: slide the overlay sidebar open, size it to HALF the viewport, and click into the session
  * that was just launched — so a human sees the run in the real extension UI without clicking. The shell
@@ -241,20 +279,25 @@ export function decideApproval(policy, gate) {
  * @param {string|null} [cfg.dist] a variant build directory to load instead of dist/
  * @param {string|null} [cfg.artDir] write artifacts here, incrementally; null writes nothing
  * @param {string} [cfg.approve] approval policy: auto | deny | readonly | hold
+ * @param {"failure"|"always"|"never"} [cfg.capture] when to snapshot the BROWSER (every open page: a
+ *   screenshot plus the DOM). `"failure"` (default) fires only when the run errored, timed out or threw
+ *   — the case where the log stops and the page holds the answer. `"always"` also captures a clean run,
+ *   which is what you want when comparing what two models were LOOKING at rather than what they did.
+ *   `"never"` for a long sweep where the disk matters more than the diagnosis.
  * @param {boolean} [cfg.focusSidebar] open + focus the overlay sidebar (a human watching)
  * @param {boolean} [cfg.hold] hold the browser open at the end until the window closes
  * @param {boolean} [cfg.headful] force a visible window (implied by `hold`)
  * @param {number} [cfg.timeoutMs] how long to wait for the terminal agent-result
  * @param {(s: string) => void} [cfg.log] where progress lines go
  * @param {(ev: object) => void} [cfg.onEvent] called with every debug event as it arrives
- * @returns {Promise<{events, session, runMd, runJson, images, result, error, runMs, stepCount, approvals, transcript, finalUrl, startUrl, backendLabel, seedBoundaryStep}>}
+ * @returns {Promise<{events, session, runMd, runJson, images, result, error, runMs, stepCount, approvals, transcript, finalUrl, startUrl, backendLabel, seedBoundaryStep, captured}>}
  */
 export async function runOnce(cfg = {}) {
     const {
         task = DEFAULT_TASK, followup = "", start = "/step3", tools = null,
         python = false, toolTokens = false, agentOptions = {},
         backend = null, script = DEFAULT_SCRIPT, warm = true, warmAll = false,
-        dist = null, artDir = null, approve = "auto",
+        dist = null, artDir = null, approve = "auto", capture = "failure",
         focusSidebar = true, hold = false,
         timeoutMs = followup ? 240000 : 120000,
         log = () => {}, onEvent = null,
@@ -270,6 +313,7 @@ export async function runOnce(cfg = {}) {
     // request means a human is looking at it. A bench cell is neither.
     const ext = await launchExtension({ dist, headful: !!(hold || cfg.headful) });
     let approvalLoopOn = true;
+    let captured = [];
     const approvals = [];
     const transcript = [];
     const events = [];
@@ -284,9 +328,13 @@ export async function runOnce(cfg = {}) {
             apiKey: backend?.key || "",
             model: backend ? backend.model : "fake-model",
         };
-        const seedCfg = { chatUrl: fake.url, apiKey: "", model: "fake-model" };
+        // Only when seeding. `fake` is NULL whenever a real backend is configured and no seed was asked
+        // for, and building this unconditionally dereferenced it — so EVERY real-model run crashed here
+        // before reaching the browser. It went unnoticed because the seed feature was only ever exercised
+        // against the fake, which is exactly the configuration that hides it.
+        const seedCfg = seed && fake ? { chatUrl: fake.url, apiKey: "", model: "fake-model" } : null;
         await configureExtension(ext.sw, {
-            ...(seed ? seedCfg : realCfg),
+            ...(seedCfg || realCfg),
             apiFormat: "openai",
             utilityModel: backend?.utilityModel || "",
             ocrModel: backend?.visionModel || "",
@@ -294,6 +342,7 @@ export async function runOnce(cfg = {}) {
             autoApprovePython: true,   // wire python_exec (auto-approve readonly) so a DataFrame/table probe can run
             debugMode: "overlay",   // so injected emitDebug posts the event stream to the page window
         });
+        if (seed && !fake) throw new Error("runOnce: `seed` needs the fake-LLM, which is not running — this is a bug in the harness, not the spec");
         if (fake) fake.setScript(seed ? seed.script : script);
 
         // Warm the model(s) into VRAM before timing. Only meaningful for a real backend; the fake needs none.
@@ -457,6 +506,14 @@ export async function runOnce(cfg = {}) {
 
         const finalUrl = page.url();
         if (artDir) { try { await page.screenshot({ path: path.join(artDir, "final.png") }); } catch { /* */ } }
+
+        // The browser snapshot, per the `capture` knob. Taken HERE — before the finally tears the context
+        // down — because on a timeout the page is still standing and holding the explanation, and once
+        // the context closes there is nothing left to photograph.
+        if (capture === "always" || (capture === "failure" && (error || timedOut))) {
+            captured = await captureBrowserState(ext.context, artDir, error || timedOut ? "failure" : "state");
+            if (captured.length) log(`  captured browser state: ${captured.join(", ")}`);
+        }
         await dump(events);
         await settle();
         const { session, md, images, json } = renderRun(events);
@@ -474,7 +531,15 @@ export async function runOnce(cfg = {}) {
             await new Promise((resolve) => { ext.context.on("close", resolve); process.on("SIGINT", resolve); });
         }
 
-        return { events, session, runMd: md, runJson: json, images, result, error, runMs, stepCount, approvals, transcript, finalUrl, startUrl, backendLabel, seedBoundaryStep };
+        return { events, session, runMd: md, runJson: json, images, result, error, runMs, stepCount, approvals, transcript, finalUrl, startUrl, backendLabel, seedBoundaryStep, captured };
+    } catch (thrown) {
+        // An UNEXPECTED failure — the interesting one. A capture in `finally` would run after the context
+        // is torn down; doing it here, before rethrowing, is the only place the page still exists.
+        if (capture !== "never") {
+            captured = await captureBrowserState(ext.context, artDir, "failure").catch(() => []);
+            if (captured.length) log(`  captured browser state after a throw: ${captured.join(", ")}`);
+        }
+        throw thrown;
     } finally {
         approvalLoopOn = false;
         await ext.close().catch(() => {});

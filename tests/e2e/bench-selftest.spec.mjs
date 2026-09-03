@@ -9,6 +9,9 @@
 // so every expected reading is known before the run starts.
 
 import { test, expect } from "@playwright/test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { runOnce } from "./run-once.mjs";
 import { measureRun } from "./bench/metrics.mjs";
 
@@ -67,4 +70,37 @@ test("a SEEDED history is installed, and its behaviour is not charged to the mea
     // installed that history rather than the run simply never producing one.
     const unscoped = measureRun({ ...run, seedBoundaryStep: -1 }, {});
     expect(unscoped.reEmission.rate).toBe(1);
+});
+
+test("a REAL backend needs no fake — the seed path must not dereference it", async () => {
+    // This crashed every real-model run: `seedCfg` was built unconditionally from `fake.url`, and `fake`
+    // is null whenever a real backend is configured without a seed. It went unnoticed because the seed
+    // feature was only exercised against the fake — the one configuration that hides it. A dead port is
+    // enough to prove the harness gets as far as the browser and reports a MODEL failure, not a TypeError.
+    const run = await runOnce({
+        ...base, task: "anything",
+        backend: { chatUrl: "http://127.0.0.1:9/v1/chat/completions", model: "nope", key: "" },
+        timeoutMs: 20000,
+    });
+    expect(String(run.error || "")).not.toMatch(/Cannot read properties of null/);
+    expect(run.error, "a dead backend must surface as a run error").toBeTruthy();
+});
+
+test("capture: a failed run snapshots the BROWSER; a clean one does not", async () => {
+    // The log says what the agent did, not what it was looking at — and for a stuck run that is the
+    // question. Captures every open page, since a run can navigate or open a background tab.
+    const failed = await runOnce({
+        ...base, task: "anything",
+        backend: { chatUrl: "http://127.0.0.1:9/v1/chat/completions", model: "nope", key: "" },
+        timeoutMs: 20000, artDir: mkdtempSync(join(tmpdir(), "cap-fail-")),
+    });
+    expect(failed.captured.some((f) => f.endsWith(".png")), "a screenshot of the page it died on").toBe(true);
+    expect(failed.captured.some((f) => f.endsWith(".html")), "and the DOM, for the text a screenshot cannot show").toBe(true);
+
+    const clean = await runOnce({
+        ...base, task: "Find the code and report it.", script: [FIND, { content: "done" }],
+        artDir: mkdtempSync(join(tmpdir(), "cap-clean-")),
+    });
+    expect(clean.error).toBeFalsy();
+    expect(clean.captured, "nothing went wrong, so nothing is captured").toEqual([]);
 });
