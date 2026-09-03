@@ -1055,6 +1055,32 @@ thing. The parts:
     click. **`WATCH=1`** additionally HOLDS the browser open at the end (close the window / Ctrl+C to
     exit) instead of tearing down — for inspecting a finished run; without it the browser closes when the
     run completes.
+- **`run-once.mjs`** — the run-driving CORE both CLIs share: `runOnce(config)` drives ONE agent run in a
+  real Chromium and RETURNS `{ events, session, runMd, result, … }` instead of only writing files.
+  `observe.mjs` is a thin env-var CLI over it; the bench is a matrix over it. Every piece of run state is
+  a local (not a module global) so `--jobs N` can call it concurrently. It also owns **seeded histories**
+  (`seed: { task, script }`): turn 1 runs against the SCRIPTED fake so an experiment decides exactly what
+  the model will find in context — a corrupted pointer, a failed call, a large captured output — then the
+  backend swaps to the real model and the task continues in the SAME session. Nothing is fabricated (the
+  real loop produced that history), and `seedBoundarySeq` marks where the seed ends so the script's own
+  behaviour is never scored as the model's.
+- **`bench/`** — a **matrix over `runOnce`, not a test** (see the `bench` skill for the playbook):
+  `node --import tsx tests/e2e/bench/run.mjs <spec>.bench.ts` runs every combination of the spec's
+  dimensions x tasks x repeats and reports re-emission, pointer use split by fault cause, recovery, token
+  cost and correctness with **spread, not a point estimate** (models are stochastic; N>=5 per cell). A
+  spec is **typed TypeScript** (`spec.ts`, `defineBench`), so the dimension keys you declare are the keys
+  `apply()` receives — a mistyped axis is a compile error, not a cell that silently never varies. Four
+  rules keep it honest: metrics derive ONLY from the existing `__mlDebug` stream (a metric that can't be
+  computed from it means the PRODUCT is missing an event — fix it there); an experimental dimension is a
+  build-time `--define` (`build.mjs --outdir <dir> --define K=V`) so a hypothesis that may conclude "the
+  current design was fine" adds zero product surface; cells are content-addressed by config AND build
+  fingerprint, so a long sweep resumes and an edit invalidates what it invalidates instead of mixing two
+  builds into one table; and the extractors are calibrated FIRST against the scripted fake-LLM. That last
+  rule is not ceremony — `specs/smoke.bench.ts` scripts a run that re-emits (must read 1.00), one that
+  cites instead (0.00) and one that hides a re-emission in a seeded turn (0.00), and it caught two real
+  extractor bugs before any GPU time. Assertions: `tests/bench-metrics.test.mjs` (fast, synthetic
+  streams) and `tests/e2e/bench-selftest.spec.mjs` (real streams — the only thing that catches an
+  extractor reading a field the product never emits). One walk, N sinks: terminal + markdown today.
 - **`approval-demo.mjs`** — a **narrated demo, not a test**: `npm run build && node --import tsx
   tests/e2e/approval-demo.mjs` opens a headful browser and walks the approval-over-IPC flow (idea #2)
   three times — a manual APPROVE, a manual REJECT, and a POLICY driver that auto-approves read-only

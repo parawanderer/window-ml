@@ -334,12 +334,12 @@ data?** That is a behavioural question about models, and it is testable rather t
    give up and retype?
 6. **Token cost per run** — the economic bottom line the mechanism exists to lower.
 
-### Harness — agreed design
+### Harness — built
 
-The existing `tests/e2e/observe.mjs` drives ONE run and writes artifacts (`run.md`, `events.json`,
-screenshots; see the `observe` skill). It has the wrong *interface* for a matrix — env knobs
-(`TASK`, `E2E_MODEL`, `TOOLTOKENS`, …) are right for one run and cannot express a sweep — so the
-bench is a sibling, not a bigger `observe`:
+This is **built** — `tests/e2e/bench/`, see the `bench` skill. `tests/e2e/observe.mjs` drives ONE run
+and writes artifacts (`run.md`, `events.json`, screenshots). It had the wrong *interface* for a matrix
+— env knobs (`TASK`, `E2E_MODEL`, `TOOLTOKENS`, …) are right for one run and cannot express a sweep —
+so the bench is a sibling, not a bigger `observe`:
 
 - **`harness.mjs` untouched.** Browser plumbing (`launchExtension`, `configureExtension`,
   `waitForMl`), already correct.
@@ -368,6 +368,22 @@ Four rules that keep it that way, and keep the results meaningful:
    data, deliberately corrupts an id, and deliberately recovers; assert the extractors report
    exactly that. Free, deterministic, and it catches the classic benchmark failure of measuring
    your own bug.
+
+**What the calibration caught, before any GPU time.** Rule 4 is not ceremony. Scripting the fake-LLM to
+re-emit deliberately, and asserting the extractors said so, found two bugs that would each have produced
+a confident wrong answer: the model's tool arguments were being JSON-stringified before scanning, so a
+retyped table's newlines became a literal `\n` and a quoted label became `\"` — both invisible, scoring a
+clean zero for re-emissions that plainly happened; and only the terminal `agent-result` was read as
+authored text, so an earlier turn's answer was never scanned, under-reporting every multi-turn run. Both
+are the failure mode the rule exists to prevent: a null result that looks like evidence.
+
+**Seeding changes what metric 5 can measure.** Recovery was going to be observed only where a model
+happened to corrupt an identifier, which needs hundreds of runs to collect a handful of instances. A
+task's `seed` runs turn 1 against the scripted fake — so the experiment decides exactly what is in
+context, a corrupted pointer included — then swaps the backend to the real model and continues in the
+SAME session. Nothing is fabricated: the real loop produced that history, so the fault is a real fault
+and the recovery is a real recovery. The seed's own steps and answer are excluded from the score, which
+is asserted in both directions rather than assumed.
 
 **Order of work, and when GPUs are actually needed.** (1) `runOnce` + `bench.mjs` + the spec
 format — no GPU. (2) extractors validated against scripted fake-LLM cells — no GPU. (3) the real
