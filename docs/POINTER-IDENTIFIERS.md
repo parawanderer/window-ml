@@ -236,16 +236,48 @@ data?** That is a behavioural question about models, and it is testable rather t
    give up and retype?
 6. **Token cost per run** — the economic bottom line the mechanism exists to lower.
 
-### Harness
+### Harness — agreed design
 
-`tests/e2e/observe.mjs` already drives one agent run and writes `run.md` + `events.json`
-(see the `observe` skill). It takes `E2E_MODEL`, so a sweep is a loop over
-{format} × {model} × {task}. Tasks must be ones where re-emission is *tempting*: a large
-`python_exec` table that must be referenced two steps later, a multi-turn session with a
-follow-up ("now show the work") that forces a cross-turn read, and a task with **two** calls of
-the same tool so the alias alone is insufficient.
+The existing `tests/e2e/observe.mjs` drives ONE run and writes artifacts (`run.md`, `events.json`,
+screenshots; see the `observe` skill). It has the wrong *interface* for a matrix — env knobs
+(`TASK`, `E2E_MODEL`, `TOOLTOKENS`, …) are right for one run and cannot express a sweep — so the
+bench is a sibling, not a bigger `observe`:
 
-Format should be a config flag rather than a build, so one harness run can sweep all four.
+- **`harness.mjs` untouched.** Browser plumbing (`launchExtension`, `configureExtension`,
+  `waitForMl`), already correct.
+- **One refactor:** extract observe's run-driving core into
+  `runOnce(config) -> { events, session, runMd, usage }`, returning artifacts rather than only
+  writing them. `observe.mjs` becomes a thin CLI over it, behaviour unchanged.
+- **`bench.mjs` is new** and walks a matrix, writing per-cell artifacts plus aggregate rows.
+- A bench spec is a **file** (a declarative matrix + task list), not environment variables.
+
+One function, two CLIs — one for a human watching a run, one for a matrix. The core never learns
+what a benchmark is.
+
+Four rules that keep it that way, and keep the results meaningful:
+
+1. **Metrics come from ARTIFACTS, never from new instrumentation.** Every metric above derives
+   from the `__mlDebug` stream the extension already emits. If one cannot, that is a signal the
+   event stream is missing something the *product* should have anyway — fix it there, not in the
+   bench. This is the rule that stops the bench leaking into the core.
+2. **Repeats, or it is noise.** Models are stochastic. N ≥ 5 per cell, reporting spread rather
+   than a point estimate. One run per cell measures sampling, not the thing under test.
+3. **Experimental dimensions are build-time `define`s, not config flags.** `npm run build` takes
+   ~25 ms, so the bench can rebuild per identifier format via esbuild `--define` and add **zero**
+   product surface for an experiment that may well conclude "the current design was fine". If a
+   format wins, *then* it becomes a real setting.
+4. **Validate the extractors on the fake-LLM first.** Script a backend that deliberately re-emits
+   data, deliberately corrupts an id, and deliberately recovers; assert the extractors report
+   exactly that. Free, deterministic, and it catches the classic benchmark failure of measuring
+   your own bug.
+
+**Order of work, and when GPUs are actually needed.** (1) `runOnce` + `bench.mjs` + the spec
+format — no GPU. (2) extractors validated against scripted fake-LLM cells — no GPU. (3) the real
+sweep — **this** is the only step that needs the GPUs, so they should not be held during (1) and
+(2). Rough size for (3): 4 formats × 3 tasks × 2 models × 5 repeats = **120 runs**, ~1–3 min each,
+so **2–6 hours** contiguous. Trim non-discriminating cells after (2) — if two formats perform
+identically on a task, that task is not measuring anything and should be dropped rather than
+repeated five times.
 
 ### Open questions
 
