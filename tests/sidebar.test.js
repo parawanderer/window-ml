@@ -6933,3 +6933,40 @@ test("event lane: hovering a sub-call lights its lineage and dims the rest", asy
     // is — the same mechanism the bands and rows already use.
     assert.match(w.shadow.querySelector(".rc-tip-event")?.textContent || "minicpm-v", /minicpm-v|/);
 });
+
+// (The LOAD span's striping is asserted in resource-panel.spec.mjs: a load precedes its own generation, so
+// it only lands inside a window that is seconds wide — which the real panel has and this world, sampling
+// milliseconds apart, does not.)
+
+// The lane's tooltip names a model, so it carries that model's own dot — the same colour its row and its
+// bands use, so the tip is identifiable at a glance from the list below it.
+test("event lane: the tooltip's model line carries the model's colour", async () => {
+    const w = await loadSidebarWorld({
+        vram: [{ model: "gemma4:31b", vramGB: 19, vramBytes: 19 * 1024 ** 3, sizeBytes: 19 * 1024 ** 3,
+                 gpus: [{ id: "0", runner: "CUDA", vramBytes: 19 * 1024 ** 3 }], expiresAt: null }],
+        info: INFO_2CARD,
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    for (let i = 0; i < 25 && w.shadow.querySelectorAll(".rc-seg").length < 1; i++) {
+        await w.flush(); await new Promise((r) => setTimeout(r, 150));
+    }
+    const now = Date.now();
+    await w.dispatch(agentStart("dot", "go", "gemma4:31b"));
+    await w.dispatch({ ...agentStep("dot", 1, { seq: 1, tool: "exec", toolMs: 80,
+        usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, genMs: 60 } }), ts: now });
+    await w.flush();
+    await w.flush();
+
+    const bar = w.shadow.querySelector(".rc-ev-tool");
+    bar.dispatchEvent(new w.window.MouseEvent("pointerenter", { bubbles: true }));
+    await w.flush();
+    const tip = w.shadow.querySelector(".rc-tip-event");
+    const dot = tip.querySelector(".rc-tip-dot");
+    assert.ok(dot, "the model line has a dot");
+    // The SAME colour the row below uses — a different one would be a second colour scheme for one model.
+    const rowDot = w.shadow.querySelector(".vram-row .vram-dot");
+    assert.equal(dot.getAttribute("style"), rowDot.getAttribute("style"));
+    // The tool half is not a model, so it gets no dot: one would imply it is.
+    assert.equal(tip.querySelectorAll(".rc-tip-dot").length, 1);
+});

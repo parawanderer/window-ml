@@ -721,7 +721,8 @@ test("resource panel: the event lane draws phased blocks, dims by lineage, and c
                    task: "check the page", model: "gemma4:31b", maxSteps: 4, config: null });
             post({ kind: "agent-step", id: hash, ts: at(0.5), save: false, session: { hash, turn: 1 },
                    step: 1, seq: 1, tool: "python_exec", toolMs: 1200, arguments: { code: "1" }, result: "ok",
-                   usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120, genMs: 800 },
+                   // A real load in front of it: the model wasn't resident yet.
+                   usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120, genMs: 800, loadMs: 1800 },
                    subUsage: { calls: 1, prompt: 400, completion: 10,
                                byModel: [{ model: "minicpm-v:8b", prompt: 400, completion: 10, calls: 1 }],
                                calls_: [{ model: "minicpm-v:8b", ts: at(0.55), ms: 500, prompt: 400, completion: 10 }] } });
@@ -751,7 +752,15 @@ test("resource panel: the event lane draws phased blocks, dims by lineage, and c
 
         // A tool step is one block with hard stops where the work changes hands.
         const toolBar = frame.locator(".rc-ev-tool").first();
-        expect(await toolBar.evaluate((e) => getComputedStyle(e).backgroundImage)).toContain("gradient");
+        const toolBg = await toolBar.evaluate((e) => getComputedStyle(e).backgroundImage);
+        expect(toolBg).toContain("gradient");
+
+        // A LOAD is time spent NOT generating, so it is striped rather than a solid block of the model's
+        // time — but it is that model's wait, so it keeps the colour. (An inline model-colour once overrode
+        // the striped class entirely, which is the exact confusion the stripes exist to prevent.)
+        const loadBg = await frame.locator(".rc-ev-load").first().evaluate((e) => getComputedStyle(e).backgroundImage);
+        expect(loadBg, "the load is striped").toContain("repeating-linear-gradient");
+        expect(toolBg, "…and the tool block is not, so the two can't be confused").not.toContain("repeating-linear-gradient");
 
         // Hovering the delegated reader lights its lineage and drops the rest back.
         const sub = frame.locator(".rc-ev-embed").first();

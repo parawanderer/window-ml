@@ -451,6 +451,15 @@ function OverlayView({ def, samples, latest, hidden }: { def: TrackDef; samples:
 /** A composite span's fill: hard stops at each phase boundary. The model's own colour for the work it did
  *  (the same one its row and bands carry, so the lane reads against the model list with no legend of its
  *  own), a hatched neutral for the human's wait, and a paler wash of the model colour for the tool. */
+/** The fill for a LOAD span: diagonal stripes of the model's own colour against the panel. Waiting for a model
+ *  to arrive is not the model working, so it must not look like a solid block of its time — but it IS that
+ *  model's wait, so the colour stays. (A plain model-coloured bar is what the inline colouring made of it,
+ *  which is exactly the confusion the stripes exist to prevent.) */
+const loadStripes = (model?: string): string => {
+    const c = model ? colorFor(model) : "var(--warn, #f59e0b)";
+    return `repeating-linear-gradient(45deg, ${c} 0 3px, var(--panel) 3px 8px)`;
+};
+
 function phaseGradient(phases: { kind: string; until: number }[], from: number, total: number, model?: string): string {
     const base = model ? colorFor(model) : "var(--accent)";
     // The wait is a hollow neutral — a person deciding is not work, and it must not read as any model's time.
@@ -491,7 +500,12 @@ function EventTip({ scope }: { scope: string }) {
     return (
         <div class="rc-tip rc-tip-event" role="tooltip" ref={ref} style={style}>
             {/* Each phase, in the order it happened: the model, the human deciding, then the tool. */}
-            <div class="rc-tip-line"><span class="rc-tip-name">{first ? nameFor(first.kind) : e.model || e.label}</span>
+            <div class="rc-tip-line">
+                {/* The model's own colour, the same dot its row and its bands carry — the tip should be
+                    identifiable at a glance from the list below it. A tool phase gets none: a tool is not a
+                    model and giving it a dot would imply one. */}
+                {e.model && (!first || first.kind === "model") ? <i class="rc-tip-dot" style={{ background: colorFor(e.model) }} /> : null}
+                <span class="rc-tip-name">{first ? nameFor(first.kind) : e.model || e.label}</span>
                 <span class="rc-tip-size">{first ? ms(first.until - first.from) : ms(dur)}</span></div>
             {e.cost ? (
                 <div class="rc-tip-line rc-tip-dim">
@@ -550,7 +564,8 @@ function EventLane({ samples, events }: { samples: ResourceSample[]; events: Res
                                 // model, the human deciding, the tool. Drawn as gradient stops rather than
                                 // separate elements, so it still hovers and clicks as the single step it is.
                                 const total = (e.until ?? e.t) - e.t;
-                                const bg = e.phases && total > 0 ? phaseGradient(e.phases, e.t, total, e.model) : undefined;
+                                const bg = e.kind === "load" ? loadStripes(e.model)
+                                    : e.phases && total > 0 ? phaseGradient(e.phases, e.t, total, e.model) : undefined;
                                 // Hovering one event dims everything outside its LINEAGE: a sub-call only means
                                 // something next to the step that spawned it and the run that contains it.
                                 const away = lit.size > 0 && !(e.id && lit.has(e.id));
