@@ -14,7 +14,7 @@ import { normModel, seenContext } from "./model";
 import { IconVram, IconEye, IconEyeOff, IconBench, IconGear } from "./icons";
 import { tipStyle } from "./tip";
 import { VRAMH_KEY, vramH } from "./store";
-import { parseInfo, holdCapacity, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
+import { parseInfo, holdCapacity, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
 import { ResourceTracks } from "./resource-chart";
 import type { LoadedModel } from "../contract";
 
@@ -277,7 +277,19 @@ export function ModelFacts({ m, tips = true }: { m: LoadedModel; tips?: boolean 
 /** The pool (card or host) currently hovered in the chart, and which models sit on it. The model rows below
  *  ARE the legend, so rows not on that pool grey out — reusing what is already on screen instead of injecting
  *  a row that shifts the layout under the cursor. */
-export const poolHover = signal<{ name: string; ceiling: number; used: number; consumers: { label: string; bytes: number }[] } | null>(null);
+// WHICH pool is hovered, not what it held when you got there. The numbers are recomputed from the newest
+// sample every render (poolFacts) — the panel polls every 2s, and a tooltip that froze at hover time would
+// quietly disagree with the chart moving underneath it.
+export const poolHover = signal<{ id: string; name: string; ceiling: number; bandsOf: (s: ResourceSample) => Band[] } | null>(null);
+/** What a hovered pool holds RIGHT NOW: total in use, and each consumer that has any of it. */
+export function poolFacts(bands: Band[]): { used: number; consumers: { label: string; bytes: number }[] } {
+    return {
+        used: bands.filter((b) => b.kind !== "free").reduce((n, b) => n + b.bytes, 0),
+        // Including the residual, which is most of what a nearly-idle card holds and is the thing a reader
+        // would otherwise go looking for a process to explain.
+        consumers: bands.filter((b) => b.kind !== "free" && b.bytes > 0).map((b) => ({ label: b.label, bytes: b.bytes })),
+    };
+}
 
 // The smallest the panel may be dragged is LEARNED, not computed. Summing the parts is a guess about which
 // parts exist and how tall they are — it goes stale the moment a track grows a row, the font scale changes, or
@@ -664,14 +676,21 @@ export function VramPanel() {
                 /* Asked, and this server doesn't serve /api/info (stock Ollama, or an OpenWebUI without the
                    passthrough): capacity is UNKNOWN, so fall back to the old auto-scaled shape rather than
                    drawing a ceiling we don't have. */
-                : <svg class="vram-spark" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
-                    {pts ? <polyline points={pts} fill="none" stroke="var(--accent)" stroke-width="1.5" /> : null}
-                </svg>}
+                : <>
+                    <svg class="vram-spark" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
+                        {pts ? <polyline points={pts} fill="none" stroke="var(--accent)" stroke-width="1.5" /> : null}
+                    </svg>
+                    {/* An unexplained plain line just looks like the panel regressed to an older design. Say
+                        what is missing and why, so a shape with no ceiling is legible as a degraded view. */}
+                    <span class="tt vram-nocap">no ceiling — capacity unknown
+                        <span class="tt-pop wrap" role="tooltip">This server doesn't answer /api/info, so how much memory the machine HAS is unknown. The line is auto-scaled to whatever has been resident, not drawn against a real capacity — no bands, no free space, no per-device split.</span>
+                    </span>
+                </>}
             {rows.length
                 ? rows.map(m => {
                     const off = hidden.has(m.model);
                     return (
-                        <div class={`vram-row${off ? " off" : ""}${hoverModel.value === m.model ? " hot" : ""}${poolHover.value && !poolHover.value.consumers.some((c) => c.label === m.model) ? " away" : ""}`} key={m.model}
+                        <div class={`vram-row${off ? " off" : ""}${hoverModel.value === m.model ? " hot" : ""}${poolHover.value && latestSample && !poolFacts(poolHover.value.bandsOf(latestSample)).consumers.some((c) => c.label === m.model) ? " away" : ""}`} key={m.model}
                             onPointerEnter={() => (hoverModel.value = m.model)}
                             onPointerMove={(e: PointerEvent) => (rowTipAt.value = { x: e.clientX, y: e.clientY })}
                             onPointerLeave={() => { hoverModel.value = null; rowTipAt.value = null; rowTipSuppressed.value = false; }}>

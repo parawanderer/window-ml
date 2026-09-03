@@ -6263,6 +6263,11 @@ test("capacity: a box that never answers draws no ceiling", async () => {
     for (let i = 0; i < 4; i++) await never.flush();
     assert.equal(never.shadow.querySelectorAll(".rc-track").length, 0, "no ceiling is invented");
     assert.ok(never.shadow.querySelector(".vram-spark"), "it falls back to the auto-scaled shape");
+    // …and SAYS so. An unexplained bare line just reads as the panel having regressed to an older design.
+    const note = never.shadow.querySelector(".vram-nocap");
+    assert.ok(note, "the degraded view names itself");
+    assert.match(note.textContent, /capacity unknown/);
+    assert.match(note.querySelector(".tt-pop").textContent, /api\/info/, "…and says what is missing");
 });
 
 // The editor stays mounted so it can animate both ways — which means "closed" must genuinely occupy nothing.
@@ -6279,4 +6284,100 @@ test("track editor: collapsed occupies no height at all, chrome included", async
     // And it eases rather than snapping, on the same curve as the row transition.
     const item = css.slice(css.indexOf(".rc-editor-wrap > * {"));
     assert.match(item.slice(0, item.indexOf("}")), /transition:[^;]*padding-block/);
+});
+
+// Every memory figure carries its share of the pool. "18.00 GiB of 95.59 GiB" makes the reader divide; the
+// question they are actually asking is how FULL the card is.
+test("resource figures: bytes always come with the percentage of the pool", async () => {
+    const w = await loadSidebarWorld({
+        vram: [{ model: "big", vramGB: 19, vramBytes: 19 * 1024 ** 3, sizeBytes: 19 * 1024 ** 3,
+                 gpus: [{ id: "0", runner: "CUDA", vramBytes: 19 * 1024 ** 3 }], expiresAt: null }],
+        info: INFO_MIXED,
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+    await w.flush();
+
+    // The Overview key's tooltip: the real figure behind the plotted percentage.
+    const key = w.shadow.querySelector(".rc-legend .rc-key .tt-pop");
+    assert.match(key.textContent, /GiB of .*GiB \(\d[\d.]*%\)/, "the key's figure is a share");
+
+    // A device track's header says the same thing in its compact form.
+    w.shadow.querySelector('[aria-label="Edit tracks"]').click();
+    await w.flush();
+    const sel = w.shadow.querySelector(".rc-emode");
+    if (sel) { /* the editor is open; the header is what matters */ }
+    const totals = [...w.shadow.querySelectorAll(".rc-total")].map((e) => e.firstChild.textContent.trim());
+    assert.ok(totals.some((t) => /GiB \/ .*GiB \(\d[\d.]*%\)/.test(t) || t === "% of each pool"),
+        `a track header states its share (${totals.join(" | ")})`);
+});
+
+// Every tooltip that shows a live figure has to KEEP showing it: the panel polls every 2s, and a model can
+// load, grow or evict while the pointer sits still. A tip that froze at hover time quietly disagrees with the
+// chart underneath it. Two tests, because the four surfaces don't all exist in one layout.
+const growModel = (gb) => [{ model: "big", vramGB: gb, vramBytes: gb * 1024 ** 3, sizeBytes: gb * 1024 ** 3,
+                             gpus: [{ id: "0", runner: "CUDA", vramBytes: gb * 1024 ** 3 }], expiresAt: null }];
+/** /api/ps polls on its own clock, so wait for the panel to catch up rather than assuming a flush count. */
+async function untilTrue(w, fn, why) {
+    for (let i = 0; i < 40; i++) { if (fn()) return; await w.flush(); await new Promise((r) => setTimeout(r, 150)); }
+    assert.fail(`${why} — gave up after 6s`);
+}
+const mouse = (w, el, type, init = {}) => el.dispatchEvent(new w.window.MouseEvent(type, { bubbles: true, ...init }));
+
+test("tooltips: the band and row tips track the newest sample, not the moment you hovered", async () => {
+    const w = await loadSidebarWorld({ vram: growModel(19), info: INFO_2CARD, ...STACKED_LAYOUT });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+    await w.flush();
+
+    // A band needs two samples to have a shape at all.
+    await untilTrue(w, () => w.shadow.querySelector(".rc-band"), "no model band was ever drawn");
+    mouse(w, w.shadow.querySelector(".rc-band"), "pointerenter");
+    mouse(w, w.shadow.querySelector(".rc-plot"), "pointermove");
+    const row = w.shadow.querySelector(".vram-row");
+    mouse(w, row, "pointerenter");
+    mouse(w, row, "pointermove", { clientX: 40, clientY: 40 });
+    await w.flush();
+
+    const bandTip = () => [...w.shadow.querySelectorAll(".rc-tip")].find((e) => !e.classList.contains("vram-rowtip"))?.textContent || "";
+    const rowTip = () => w.shadow.querySelector(".vram-rowtip")?.textContent || "";
+    assert.match(bandTip(), /19\.00 GiB/, "the band tip opens on what is resident");
+    assert.match(rowTip(), /19\.00 GiB/, "so does the row tip");
+
+    // The model grows while both are open.
+    w.setVram(growModel(31));
+    await untilTrue(w, () => rowTip().includes("31.00 GiB"), `the row tip froze at hover time (${rowTip()})`);
+    assert.match(bandTip(), /31\.00 GiB/, "the band tip follows the band it is naming");
+    assert.doesNotMatch(bandTip(), /19\.00 GiB/);
+    assert.doesNotMatch(rowTip(), /19\.00 GiB/);
+});
+
+test("tooltips: the pool tip and the cloned pool key follow the newest sample too", async () => {
+    const w = await loadSidebarWorld({ vram: growModel(19), info: INFO_2CARD });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    await w.flush();
+    await w.flush();
+
+    // Overview: one track, a line per pool, each with a key that quotes the real figure behind the percentage.
+    const key = w.shadow.querySelector(".rc-legend .rc-key");
+    assert.ok(key, "the overview draws pool keys");
+    mouse(w, key, "pointerenter");                       // → the cursor-following pool tip
+    mouse(w, w.shadow.querySelector(".rc-plot"), "pointermove");
+    mouse(w, key, "pointerover");                        // → the cloned static popup for the same key
+    await w.flush();
+
+    const poolTip = () => w.shadow.querySelector(".rc-tip-pool")?.textContent || "";
+    const layer = () => w.shadow.querySelector(".tt-layer")?.textContent || "";
+    assert.match(poolTip(), /19\.00 GiB of /, "the pool tip opens on what is on that pool");
+    assert.match(layer(), /19\.00 GiB of .*\(\d+[\d.]*%\)/, "the cloned key quotes the figure AND its share");
+
+    w.setVram(growModel(31));
+    await untilTrue(w, () => poolTip().includes("31.00 GiB"), `the pool tip froze at hover time (${poolTip()})`);
+    // The layer holds a COPY of the source node, so it needs its own watch to stay true.
+    await untilTrue(w, () => layer().includes("31.00 GiB"), `the cloned key tooltip went stale (${layer()})`);
+    assert.doesNotMatch(poolTip(), /19\.00 GiB/);
+    assert.doesNotMatch(layer(), /19\.00 GiB/);
 });

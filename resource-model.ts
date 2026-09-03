@@ -92,6 +92,25 @@ export interface Capacity {
 /** Parse `/api/info`. Returns null for anything that isn't the expected JSON — a stock Ollama or unpatched
  *  OpenWebUI answers this route with SPA HTML, and every user but one is in that position. Null means
  *  "capacity unknown", which the panel must render as a missing ceiling, never as zero. */
+/** A share as a percentage: "19%", or "<1%" for something too small to round to a whole percent but not
+ *  nothing. Empty when there is no denominator to be a share OF. */
+export function percentOf(part: number, whole: number): string {
+    if (!(whole > 0)) return "";
+    const p = (part / whole) * 100;
+    if (p > 0 && p < 1) return "<1%";
+    // A decimal below 10% ("5.4%", not "5%") — on a 95 GiB pool that is half a gigabyte. Exactly zero has no
+    // precision to report.
+    return `${p.toFixed(p > 0 && p < 10 ? 1 : 0)}%`;
+}
+
+/** "18.00 GiB of 95.59 GiB (19%)". The bytes answer "how much", the percentage answers "how full" — and a
+ *  reader asked to divide 18 by 95.59 in their head is being handed half an answer. `sep` is the word between
+ *  the two figures, so a compact header can use "/" where a tooltip uses "of". */
+export function formatShare(part: number, whole: number, sep = "of"): string {
+    const p = percentOf(part, whole);
+    return `${formatBytes(part)} ${sep} ${formatBytes(whole)}${p ? ` (${p})` : ""}`;
+}
+
 /** What capacity to hold after a poll answers. Capacity is a fact about the BOX, not about this poll: a null
  *  answer means THIS request learned nothing (a hiccup, a worker that had gone to sleep, a lost race), and
  *  forgetting what was already measured swaps the whole panel for the no-ceiling fallback until some later

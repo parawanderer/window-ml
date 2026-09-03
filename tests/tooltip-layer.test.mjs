@@ -83,3 +83,30 @@ test("installing twice is a no-op — one layer per root", () => {
     assert.equal(w.document.querySelectorAll(".tt-layer").length, 1);
     w.stop();
 });
+
+// The layer shows a COPY, so a source that re-renders while the tooltip is open (the resource panel polls
+// every 2s) used to leave the reader looking at a figure the panel no longer believed.
+test("a shown tooltip follows its source's numbers", async () => {
+    const w = world(`<span class="tt" id="key">CUDA0 19%<span class="tt-pop">18.00 GiB of 95.59 GiB (19%)</span></span>`);
+    const trigger = w.document.querySelector("#key");
+    hover(w.document, trigger);
+    assert.match(w.layer().textContent, /\(19%\)/);
+
+    // The panel polls and the model grows.
+    trigger.querySelector(".tt-pop").textContent = "30.00 GiB of 95.59 GiB (31%)";
+    await new Promise((r) => setTimeout(r, 0));   // MutationObserver delivers on a microtask
+    assert.match(w.layer().textContent, /30\.00 GiB of 95\.59 GiB \(31%\)/, "the open tooltip re-copied");
+
+    // A re-render that REPLACES the popup node, rather than editing its text, counts too — which is why the
+    // observer watches the trigger and not the popup.
+    trigger.innerHTML = 'CUDA0 44%<span class="tt-pop">42.00 GiB of 95.59 GiB (44%)</span>';
+    await new Promise((r) => setTimeout(r, 0));
+    assert.match(w.layer().textContent, /42\.00 GiB/, "…even when the .tt-pop node itself is new");
+
+    // And it stops watching once hidden — a stale observer firing into a closed layer is a leak.
+    trigger.dispatchEvent(new w.dom.window.MouseEvent("pointerout", { bubbles: true, relatedTarget: w.document.body }));
+    trigger.querySelector(".tt-pop").textContent = "changed while hidden";
+    await new Promise((r) => setTimeout(r, 0));
+    assert.equal(w.layer().hidden, true);
+    assert.equal(w.layer().textContent, "");
+});

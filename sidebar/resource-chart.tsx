@@ -11,12 +11,12 @@
 //     a ten-minute hole is a confident claim about memory nobody measured; `segments` breaks it instead.
 import { useMemo } from "preact/hooks";
 import {
-    deviceBands, hostBands, ceilingsFor, segments, formatBytes, isCpuResident,
+    deviceBands, hostBands, ceilingsFor, segments, formatBytes, formatShare, percentOf, isCpuResident,
     OTHER_BAND_NOTE, DRIVER_BAND_LABEL,
     presetsFor,
     type ResourceSample, type Band, type Capacity, type TrackDef,
 } from "../resource-model";
-import { colorFor, hoverModel, poolHover, ModelFacts, VRAM_COLORS } from "./vram";
+import { colorFor, hoverModel, poolHover, poolFacts, ModelFacts, VRAM_COLORS } from "./vram";
 import { loadedModels, resWindowS } from "./store";
 import { tipStyle } from "./tip";
 import { signal } from "@preact/signals";
@@ -126,7 +126,7 @@ export function DeviceView({ label, samples, bandsOf, ceiling, soft, ceilingNote
                 <span class="rc-name">{label}</span>
                 <span class="sp" />
                 <span class="rc-total tt">
-                    {formatBytes(used)} / {formatBytes(ceiling)}
+                    {formatShare(used, ceiling, "/")}
                     {/* RIGHT-anchored (the default): this figure sits at the panel's right edge, so a
                         left-anchored pop extends rightward and is clipped. `wrap` because it is prose. */}
                     <span class="tt-pop wrap" role="tooltip">{ceilingNote}</span>
@@ -187,17 +187,23 @@ function BandTip({ bands }: { bands: Band[] }) {
 /** Which device the hovered line is, and what is resident on it — following the cursor, like the band tip.
  *  The model list is deliberately SHORT here: the full detail is the rows below, which grey out to show the
  *  same answer, so this only has to name the device and confirm the selection. */
-function PoolTip() {
+function PoolTip({ latest }: { latest: ResourceSample }) {
     const h = poolHover.value, at = hoverAt.value;
     if (!h || !at) return null;
     const style = tipStyle(at);
+    // Read from the NEWEST sample, not from what was true when the pointer arrived: a model can load or evict
+    // while you hold the cursor still, and the tip has to say the same thing as the chart under it.
+    const { used, consumers } = poolFacts(h.bandsOf(latest));
     return (
         <div class="rc-tip rc-tip-pool" role="tooltip" style={style}>
             <div class="rc-tip-line"><span class="rc-tip-name">{h.name}</span>
-                <span class="rc-tip-size">{formatBytes(h.used)} of {formatBytes(h.ceiling)}</span></div>
-            {h.consumers.length
-                ? h.consumers.map((c) => (
-                    <div class="rc-tip-line rc-tip-dim" key={c.label}><span>{c.label}</span><span>{formatBytes(c.bytes)}</span></div>
+                <span class="rc-tip-size">{formatShare(used, h.ceiling)}</span></div>
+            {consumers.length
+                ? consumers.map((c) => (
+                    <div class="rc-tip-line rc-tip-dim" key={c.label}><span>{c.label}</span>
+                        {/* Its own share of THIS pool: the question a per-consumer line is asked is "how much
+                            of the card is this", which bytes alone only answer after arithmetic. */}
+                        <span>{formatBytes(c.bytes)} <span class="rc-tip-pct">{percentOf(c.bytes, h.ceiling)}</span></span></div>
                 ))
                 : <div class="rc-tip-line rc-tip-dim">nothing resident</div>}
         </div>
@@ -211,17 +217,10 @@ function PoolTip() {
  *  every resident model, so they are the legend: rows not on this pool grey out, and a tooltip on the plot
  *  names the device. That reuses what is on screen instead of injecting a row that pushes the layout around
  *  under the cursor. */
-function enterPool(p: { id: string; name: string; ceiling: number; bandsOf: (s: ResourceSample) => Band[] }, latest: ResourceSample): void {
-    const bands = p.bandsOf(latest);
+function enterPool(p: { id: string; name: string; ceiling: number; bandsOf: (s: ResourceSample) => Band[] }): void {
     hoverPool.value = p.id;
-    poolHover.value = {
-        name: p.name,
-        ceiling: p.ceiling,
-        used: bands.filter((b) => b.kind !== "free").reduce((n, b) => n + b.bytes, 0),
-        // Every consumer, named with its share — including the residual, which is most of what a nearly-idle
-        // card holds and is the thing a reader would otherwise go looking for a process to explain.
-        consumers: bands.filter((b) => b.kind !== "free" && b.bytes > 0).map((b) => ({ label: b.label, bytes: b.bytes })),
-    };
+    // The pool itself, not a reading of it — every figure is derived from the latest sample at render time.
+    poolHover.value = { id: p.id, name: p.name, ceiling: p.ceiling, bandsOf: p.bandsOf };
 }
 function leavePool(): void { hoverPool.value = null; poolHover.value = null; }
 
@@ -321,7 +320,7 @@ function OverlayView({ def, samples, latest, hidden }: { def: TrackDef; samples:
             <div class="rc-plot"
                 onPointerMove={(e: PointerEvent) => { const el = e.currentTarget as HTMLElement; hoverAt.value = { x: e.offsetX, y: e.offsetY, w: el.clientWidth }; }}
                 onPointerLeave={() => { hoverAt.value = null; leavePool(); }}>
-                <PoolTip />
+                <PoolTip latest={latest} />
                 {runs.map((run, ri) => (
                     <div class="rc-seg" key={ri} style={{ flex: `${Math.max(1, run.length)} 1 0` }}>
                         <svg class="rc-area" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
@@ -343,7 +342,7 @@ function OverlayView({ def, samples, latest, hidden }: { def: TrackDef; samples:
                                             impossible to hover, so the visible stroke stays thin. */}
                                         <polyline points={pts} fill="none" stroke="transparent" stroke-width="10"
                                             vector-effect="non-scaling-stroke" class="rc-hit"
-                                            onPointerEnter={() => enterPool(p, latest)}
+                                            onPointerEnter={() => enterPool(p)}
                                             onPointerLeave={() => leavePool()} />
                                         <polyline points={pts} fill="none" vector-effect="non-scaling-stroke"
                                             stroke={VRAM_COLORS[pi % VRAM_COLORS.length]}
@@ -358,10 +357,10 @@ function OverlayView({ def, samples, latest, hidden }: { def: TrackDef; samples:
             <div class="rc-legend">
                 {pools.map((p, pi) => (
                     <span class={`rc-key tt${hoverModel.value && !p.bandsOf(latest).some((b) => b.model === hoverModel.value) ? " away" : ""}${allHidden(p) ? " off" : ""}`} key={p.id}
-                        onPointerEnter={() => enterPool(p, latest)} onPointerLeave={() => leavePool()}>
+                        onPointerEnter={() => enterPool(p)} onPointerLeave={() => leavePool()}>
                         <i class="rc-swatch" style={{ background: VRAM_COLORS[pi % VRAM_COLORS.length] }} />
                         {p.name} {pct(frac(latest, p))}
-                        <span class="tt-pop left above" role="tooltip">{formatBytes(usedOf(latest, p))} of {formatBytes(p.ceiling)}</span>
+                        <span class="tt-pop left above" role="tooltip">{formatShare(usedOf(latest, p), p.ceiling)}</span>
                     </span>
                 ))}
             </div>

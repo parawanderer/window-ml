@@ -464,3 +464,19 @@ test("holdCapacity: a silent poll never unlearns the box", () => {
     } });
     assert.equal(M.holdCapacity(box, other), other);
 });
+
+test("formatShare: the bytes and the fraction, never one without the other", () => {
+    const GiB = 1024 ** 3;
+    // The pair a reader wants — asking them to divide 18 by 95.59 in their head is half an answer.
+    assert.equal(M.formatShare(18 * GiB, 95.59 * GiB), "18.00 GiB of 95.59 GiB (19%)");
+    // A compact header says the same thing with a slash.
+    assert.equal(M.formatShare(18 * GiB, 95.59 * GiB, "/"), "18.00 GiB / 95.59 GiB (19%)");
+    // Under 10% gets a decimal: "5%" and "5.4%" are different answers when the pool is 95 GiB.
+    assert.equal(M.percentOf(5.4 * GiB, 100 * GiB), "5.4%");
+    // Not nothing, but too small to round to a whole percent — "0%" of 400 MiB would be a lie.
+    assert.equal(M.percentOf(0.4 * GiB, 95.59 * GiB), "<1%");
+    assert.equal(M.percentOf(0, 95.59 * GiB), "0%");
+    // No denominator → no share. The figure still stands on its own.
+    assert.equal(M.percentOf(8 * GiB, 0), "");
+    assert.equal(M.formatShare(8 * GiB, 0), "8.00 GiB of 0 B");
+});

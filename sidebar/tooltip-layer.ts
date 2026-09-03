@@ -32,7 +32,26 @@ export function installTooltipLayer(root: Document | ShadowRoot, doc: Document =
     ((root as ShadowRoot).host ? root : doc.body).appendChild(layer);
 
     let current: Element | null = null;
-    const hide = (): void => { current = null; layer.hidden = true; layer.textContent = ""; };
+    // The layer holds a COPY, so anything that re-renders the source while it is open (the resource panel
+    // polls every 2s) would leave the reader looking at a figure the panel no longer believes. Watch the
+    // source and re-copy — a tooltip that disagrees with what is under it is worse than no tooltip.
+    const watcher = doc.defaultView?.MutationObserver
+        ? new (doc.defaultView.MutationObserver)(() => { if (current) fill(current); })
+        : null;
+    const hide = (): void => {
+        current = null; layer.hidden = true; layer.textContent = "";
+        watcher?.disconnect();
+    };
+
+    /** Copy the trigger's tooltip content into the layer. Returns false when it has none (any more). */
+    const fill = (trigger: Element): boolean => {
+        const src = trigger.querySelector(".tt-pop");
+        if (!src) return false;
+        layer.textContent = "";
+        for (const n of Array.from(src.childNodes)) layer.appendChild(n.cloneNode(true));
+        layer.classList.toggle("wrap", src.classList.contains("wrap") || src.classList.contains("wide") || src.classList.contains("left"));
+        return true;
+    };
 
     const show = (trigger: Element): void => {
         const src = trigger.querySelector(".tt-pop");
@@ -40,11 +59,13 @@ export function installTooltipLayer(root: Document | ShadowRoot, doc: Document =
         current = trigger;
         // Clone rather than move: the source stays put (and hidden), so nothing about the row's markup or its
         // tests changes, and a re-render can't strand the layer holding a detached node.
-        layer.textContent = "";
-        for (const n of Array.from(src.childNodes)) layer.appendChild(n.cloneNode(true));
-        // `wrap`/`wide` carried a width intent worth keeping; direction classes did not.
-        layer.classList.toggle("wrap", src.classList.contains("wrap") || src.classList.contains("wide") || src.classList.contains("left"));
+        // (`wrap`/`wide` carry a width intent worth keeping; direction classes do not — see fill.)
+        fill(trigger);
         layer.hidden = false;
+        // Re-copy on any change under the trigger. Observing the TRIGGER, not the popup, because a re-render
+        // may replace the .tt-pop node itself rather than editing its text.
+        watcher?.disconnect();
+        watcher?.observe(trigger, { childList: true, subtree: true, characterData: true });
 
         // Measure AFTER content is in, then place against the viewport — the only box that never scrolls out
         // from under it.
@@ -81,6 +102,7 @@ export function installTooltipLayer(root: Document | ShadowRoot, doc: Document =
         root.removeEventListener("pointerout", out, true);
         root.removeEventListener("pointerdown", hide, true);
         root.removeEventListener("scroll", hide, true);
+        watcher?.disconnect();
         layer.remove();
         (host as { __mlTipLayer?: boolean }).__mlTipLayer = false;
     };
