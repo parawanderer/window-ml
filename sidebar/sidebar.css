@@ -211,10 +211,13 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
          cursor: default; background: var(--fg-faint); opacity: .75; }
 .rc-ev.linked { cursor: pointer; }
 .rc-ev:hover { opacity: 1; outline: 1px solid var(--fg-dim); }
-/* One block, two halves: the model generating the call, then the tool running it. A hard gradient stop rather
-   than two elements, so it stays one thing to hover and click. */
-.rc-ev-tool { background: linear-gradient(to right, var(--accent) 0 var(--cut, 50%),
-              color-mix(in srgb, var(--accent) 35%, transparent) var(--cut, 50%) 100%); }
+/* A composite step: hard stops at each phase boundary, built inline from the phases themselves (the model's
+   own colour for its work, a neutral for the human's wait, a wash of the same colour for the tool). The
+   fallback here only matters if an event arrives with no phases. */
+.rc-ev-tool { background: linear-gradient(to right, var(--model, var(--accent)) 0 50%,
+              color-mix(in srgb, var(--model, var(--accent)) 38%, transparent) 50% 100%); }
+/* The WAIT phase is drawn as a hollow neutral stop in that same gradient (see phaseGradient), so a step that
+   sat at an approval gate can never read as work: the bar is wide because a person was deciding. */
 .rc-ev-gen { background: var(--accent); }
 /* A background embedding call: a small model working BESIDE the driver rather than in its sequence, so it is
    quieter and reads as something happening underneath. */

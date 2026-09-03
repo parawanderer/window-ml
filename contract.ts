@@ -1622,6 +1622,9 @@ export interface DebugAgentStep extends DebugBase {
      *  (a human deciding is not the tool being slow). Absent when nothing was executed: a denial, a
      *  doomed-action skip, or a step that only carried a thought. */
     toolMs?: number;
+    /** How long the approval gate was OPEN, in ms — a human deciding, which is the step's wall time but not
+     *  the machine's work. Absent when nothing was gated (auto-approved, read-only, denied without a prompt). */
+    approveMs?: number;
     /** A monotonic id per TOOL-call step in a run, so the sidebar can correlate the in-flight START
      *  (pending: true, no result yet) with the completed DONE and patch the row in place. Thoughts
      *  have no seq. `pending` marks the START (render "running…" until the DONE arrives). */

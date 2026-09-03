@@ -22,6 +22,9 @@ export interface UsageSource {
         tool?: string;
         /** How long the tool itself ran (the loop measures it around the dispatch, excluding the gate). */
         toolMs?: number;
+        /** How long the approval gate was open — the human's time, measured separately for exactly that
+         *  reason: it is the step's wall clock but not the machine's work. */
+        approveMs?: number;
         usage?: TokenUsage | null;
         /** Delegated vision sub-calls (look/locate/verify) — a DIFFERENT model, and attributing them to the
          *  driver is how a reader model's cost disappears from the ledger. */
@@ -107,9 +110,16 @@ export function eventsFrom(sessions: readonly UsageSource[]): ResourceEvent[] {
             // "the model was slow" and "the tool was slow" are different shapes rather than one long bar.
             if (st.tool && st.toolMs != null && st.ts) {
                 const genMs = st.usage?.genMs ?? st.usage?.evalMs ?? 0;
-                const from = st.ts - st.toolMs - genMs;
+                const waitMs = st.approveMs ?? 0;
+                const from = st.ts - st.toolMs - waitMs - genMs;
+                // Three kinds of time, in the order they happened: the model, the human, the tool. Only the
+                // first and last are work; the middle is a person deciding, and it is often the largest.
+                const phases: NonNullable<ResourceEvent["phases"]> = [];
+                if (genMs > 0) phases.push({ kind: "model", until: from + genMs });
+                if (waitMs > 0) phases.push({ kind: "wait", until: from + genMs + waitMs });
+                phases.push({ kind: "tool", until: st.ts });
                 out.push({
-                    t: from, until: st.ts, split: from + genMs, kind: "tool",
+                    t: from, until: st.ts, phases, kind: "tool",
                     label: st.tool, tool: st.tool, model: s.model || undefined,
                     ref: { hash: s.hash, seq: st.seq },
                     ...(st.usage ? { cost: costOf(st.usage) } : {}),

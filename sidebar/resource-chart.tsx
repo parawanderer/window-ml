@@ -423,6 +423,25 @@ function OverlayView({ def, samples, latest, hidden }: { def: TrackDef; samples:
 
 /** The panel's tracks, from the chosen LAYOUT. A layout is just `TrackDef[]`; a preset is a named starting
  *  point for it (see `presetsFor`), and editing one is the same operation on the same state. */
+/** A composite span's fill: hard stops at each phase boundary. The model's own colour for the work it did
+ *  (the same one its row and bands carry, so the lane reads against the model list with no legend of its
+ *  own), a hatched neutral for the human's wait, and a paler wash of the model colour for the tool. */
+function phaseGradient(phases: { kind: string; until: number }[], from: number, total: number, model?: string): string {
+    const base = model ? colorFor(model) : "var(--accent)";
+    // The wait is a hollow neutral — a person deciding is not work, and it must not read as any model's time.
+    const fill = (kind: string) => (kind === "model" ? base
+        : kind === "wait" ? "color-mix(in srgb, var(--fg-faint) 45%, transparent)"
+        : `color-mix(in srgb, ${base} 38%, transparent)`);
+    const stops: string[] = [];
+    let at = 0;
+    for (const ph of phases) {
+        const end = Math.min(100, Math.max(at, ((ph.until - from) / total) * 100));
+        stops.push(`${fill(ph.kind)} ${at}% ${end}%`);
+        at = end;
+    }
+    return `linear-gradient(to right, ${stops.join(", ")})`;
+}
+
 /** The hovered event, and WHICH surface owns it. Every track's plot renders a tip (a ruled instant is hovered
  *  in the plot, where its meaning is) and so does the lane — all driven by this one signal, so without an
  *  owner every one of them rendered the same tooltip at once, four deep on a three-track panel. */
@@ -434,11 +453,15 @@ function EventTip({ scope }: { scope: string }) {
     const e = h.p.event;
     const dur = (e.until ?? e.t) - e.t;
     const ms = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}s` : `${Math.round(n)}ms`);
+    // Each phase's own duration, from where the previous one ended.
+    const phases = (e.phases || []).map((ph, i) => ({ ...ph, from: i ? e.phases![i - 1].until : e.t }));
+    const first = phases[0];
+    const nameFor = (kind: string) => (kind === "model" ? e.model || "model" : kind === "wait" ? "waiting for approval" : e.tool || "tool");
     return (
         <div class="rc-tip rc-tip-event" role="tooltip" style={tipStyle(at)}>
-            {/* The model half, then the tool half, in the order they happened. */}
-            <div class="rc-tip-line"><span class="rc-tip-name">{e.model || e.label}</span>
-                <span class="rc-tip-size">{e.split != null ? ms(e.split - e.t) : ms(dur)}</span></div>
+            {/* Each phase, in the order it happened: the model, the human deciding, then the tool. */}
+            <div class="rc-tip-line"><span class="rc-tip-name">{first ? nameFor(first.kind) : e.model || e.label}</span>
+                <span class="rc-tip-size">{first ? ms(first.until - first.from) : ms(dur)}</span></div>
             {e.cost ? (
                 <div class="rc-tip-line rc-tip-dim">
                     <span>{e.cost.inTokens.toLocaleString()} in / {e.cost.outTokens.toLocaleString()} out</span>
@@ -447,13 +470,14 @@ function EventTip({ scope }: { scope: string }) {
             ) : null}
             {/* A rate's basis is part of the rate: generation-only and wall-clock are different measurements. */}
             {e.cost?.genBasis ? <div class="rc-tip-line rc-tip-dim"><span>{e.cost.genBasis === "eval" ? "generation only" : e.cost.genBasis === "wall" ? "incl. network + queue" : "mixed timing"}</span></div> : null}
-            {e.split != null ? (
+            {phases.slice(1).map((ph, i) => (
                 <>
-                    <div class="rc-tip-rule" />
-                    <div class="rc-tip-line"><span class="rc-tip-name">{e.tool}</span>
-                        <span class="rc-tip-size">{ms((e.until ?? e.t) - e.split)}</span></div>
+                    <div class="rc-tip-rule" key={`r${i}`} />
+                    <div class={`rc-tip-line${ph.kind === "wait" ? " rc-tip-dim" : ""}`} key={i}>
+                        <span class="rc-tip-name">{nameFor(ph.kind)}</span>
+                        <span class="rc-tip-size">{ms(ph.until - ph.from)}</span></div>
                 </>
-            ) : null}
+            ))}
             {e.kind === "load" ? <div class="rc-tip-line rc-tip-dim"><span>the model wasn't resident — this is the wait before a token</span></div> : null}
             {h.p.clipped ? <div class="rc-tip-line rc-tip-dim"><span>continues past what was measured</span></div> : null}
             {e.ref ? <div class="rc-tip-line rc-tip-dim"><span>click to open this step</span></div> : null}
@@ -490,16 +514,20 @@ function EventLane({ samples, events }: { samples: ResourceSample[]; events: Res
                             {row.filter((p) => p.run === i).map((p, k) => {
                                 const e = p.event;
                                 const w = Math.max(0.6, (p.to - p.from) * 100);
-                                // A composite tool span is ONE block with two halves: the model generating the
-                                // call, then the tool running it. Drawn as a gradient stop rather than two
-                                // elements, so it hovers, highlights and clicks as the single thing it is.
-                                const cut = e.split != null && p.to > p.from
-                                    ? Math.min(100, Math.max(0, ((e.split - e.t) / ((e.until ?? e.t) - e.t)) * 100))
-                                    : null;
+                                // A composite span is ONE block whose parts are different KINDS of time: the
+                                // model, the human deciding, the tool. Drawn as gradient stops rather than
+                                // separate elements, so it still hovers and clicks as the single step it is.
+                                const total = (e.until ?? e.t) - e.t;
+                                const bg = e.phases && total > 0 ? phaseGradient(e.phases, e.t, total, e.model) : undefined;
                                 return (
                                     <button class={`rc-ev rc-ev-${e.kind}${e.ref ? " linked" : ""}`} key={k}
                                         style={{ left: `${p.from * 100}%`, width: `${w}%`,
-                                                 ...(cut != null ? { "--cut": `${cut}%` } : {}) }}
+                                                 ...(e.model && !bg ? { background: colorFor(e.model) } : {}),
+                                                 // A model's events carry ITS colour — the same one its row and
+                                                 // its band already use, so the lane reads against the list
+                                                 // without a legend of its own.
+                                                 ...(e.model ? { "--model": colorFor(e.model) } : {}),
+                                                 ...(bg ? { background: bg } : {}) }}
                                         title=""
                                         onPointerEnter={() => (eventHover.value = { p, scope: "lane" })}
                                         onClick={() => open(e)} />

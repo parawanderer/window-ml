@@ -6760,7 +6760,7 @@ test("model tooltips: carry what the model has cost, with the rate's basis said 
 
 // The lane: what HAPPENED, on the same axis as what was in memory — which answers the question neither view
 // answers alone (did that slow turn spend its time LOADING a model, or was the model already there?).
-test("event lane: spans render, a tool step is one split block, and clicking opens its step", async () => {
+test("event lane: spans render, a tool step is one phased block, and clicking opens its step", async () => {
     const w = await loadSidebarWorld({
         vram: [{ model: "qwen3.8:27b", vramGB: 19, vramBytes: 19 * 1024 ** 3, sizeBytes: 19 * 1024 ** 3,
                  gpus: [{ id: "0", runner: "CUDA", vramBytes: 19 * 1024 ** 3 }], expiresAt: null }],
@@ -6784,7 +6784,10 @@ test("event lane: spans render, a tool step is one split block, and clicking ope
     assert.ok(w.shadow.querySelectorAll(".rc-ev").length >= 1, "the lane draws the run's events");
     const tool = w.shadow.querySelector(".rc-ev-tool");
     assert.ok(tool, "a tool step is ONE block…");
-    assert.match(tool.getAttribute("style") || "", /--cut:/, "…with the split where the model handed over");
+    // Phased by who was working, and carrying the MODEL's own colour — the same one its row and bands use,
+    // so the lane reads against the model list without needing a legend of its own.
+    assert.match(tool.getAttribute("style") || "", /linear-gradient/, "…drawn with a stop where the model handed over");
+    assert.match(tool.getAttribute("style") || "", /--model:/, "…in that model's colour");
     // The LOAD span in this fixture ran before the first sample, so it is correctly absent: nothing was
     // measured then, and the lane never draws over a stretch the chart can't speak for. (Its placement is
     // covered in resource-model.test.mjs, where the window is a fixture rather than the wall clock.)

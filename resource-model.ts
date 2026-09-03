@@ -644,11 +644,12 @@ export interface ResourceEvent {
      *  CROSS-SESSION — a model load belongs to the machine's timeline, not to whichever chat provoked it — so
      *  the reference is how the lane gets you back to the one that did. */
     ref?: { hash: string; seq?: number };
-    /** For a composite span, where its two halves meet: a `tool` event is ONE block — the model generating the
-     *  call, then the tool running it — because they are one step and you reason about them together. The
-     *  split is what makes the balance visible: a wide left half is a slow model, a wide right half is a slow
-     *  tool, and the same block hovers as one thing. */
-    split?: number;
+    /** A composite span's PHASES, in order, each ending at `until`. A tool step is one block because it is one
+     *  step and you reason about its parts together — but the parts are different kinds of time and must look
+     *  different: the model generating the call, the human deciding whether to allow it, and the tool actually
+     *  running. A step that waited two minutes for a click otherwise looked exactly like one that ran
+     *  instantly, since only the last part is work the machine did. */
+    phases?: { kind: "model" | "wait" | "tool"; until: number }[];
     /** The tool that ran, for a composite span. */
     tool?: string;
     /** What it cost, for the kinds that spend tokens. Plain numbers rather than a RunStats import: this module

@@ -328,7 +328,7 @@ async function main() {
         //    model, so the run is scripted — these are the same `__mlDebug` events a real run emits, posted
         //    from the page so the shell relays them exactly as it would its own. The timings are the point:
         //    a model load, a slow generation, and a tool that took longer than the model did.
-        log("events: a scripted run on the same axis — a load, a generation, and a tool step.");
+        log("events: a scripted run on the same axis — a model load, generations, and a step that waited at an approval gate.");
         await page.evaluate(() => {
             const now = Date.now();
             const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
@@ -341,12 +341,18 @@ async function main() {
                    arguments: { js: "document.title" }, result: "ok",
                    usage: { promptTokens: 2400, completionTokens: 90, totalTokens: 2490, genMs: 2600, loadMs: 12_000 } });
             // Step 2: resident now, so the whole cost is generation + a slow tool.
-            post({ kind: "agent-step", id: hash, ts: now - 4000, save: false, session: { hash, turn: 2 },
+            post({ kind: "agent-step", id: hash, ts: now - 9000, save: false, session: { hash, turn: 2 },
                    step: 2, seq: 2, tool: "python_exec", toolMs: 5200,
                    arguments: { code: "df.describe()" }, result: "ok",
                    usage: { promptTokens: 3100, completionTokens: 210, totalTokens: 3310, genMs: 2100, loadMs: 40 } });
-            post({ kind: "agent-result", id: hash, ts: now - 3500, save: false, session: { hash, turn: 3 },
-                   summary: "done", steps: 2, hitCap: false });
+            // Step 3: gated. The model wrote the call in 1.4s, a human took 6s to allow it, the tool ran in
+            // 700ms — so most of that block is a person deciding, and it must not read as work.
+            post({ kind: "agent-step", id: hash, ts: now - 1000, save: false, session: { hash, turn: 3 },
+                   step: 3, seq: 3, tool: "exec", toolMs: 700, approveMs: 6000, approval: "user",
+                   arguments: { js: "document.querySelectorAll('tr').length" }, result: "41",
+                   usage: { promptTokens: 3300, completionTokens: 45, totalTokens: 3345, genMs: 1400, loadMs: 30 } });
+            post({ kind: "agent-result", id: hash, ts: now - 500, save: false, session: { hash, turn: 3 },
+                   summary: "done", steps: 3, hitCap: false });
         });
         await sleep(6000);
         await capture(page, "events");

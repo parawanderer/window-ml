@@ -95,7 +95,7 @@ test("eventsFrom: events from DIFFERENT sessions share one timeline", () => {
     assert.deepEqual(evs.map((e) => e.ref.hash), ["two", "one"]);
 });
 
-test("eventsFrom: a tool step is ONE block, split where the model hands over to the tool", () => {
+test("eventsFrom: a tool step is ONE block, phased by who was working", () => {
     const evs = M.eventsFrom([{
         hash: "run9", model: "qwen3.8:27b",
         steps: [{
@@ -106,7 +106,8 @@ test("eventsFrom: a tool step is ONE block, split where the model hands over to 
     const tool = evs.find((e) => e.kind === "tool");
     assert.ok(tool, "a tool step produces a composite span");
     assert.equal(tool.t, 45_000, "it begins when the model started generating the call");
-    assert.equal(tool.split, 47_000, "…hands over where generation ended");
+    assert.deepEqual(tool.phases, [{ kind: "model", until: 47_000 }, { kind: "tool", until: 50_000 }],
+        "two phases when nothing was gated: the model, then the tool");
     assert.equal(tool.until, 50_000, "…and ends when the tool finished");
     assert.equal(tool.tool, "python_exec");
     assert.equal(tool.model, "qwen3.8:27b", "both halves are named: the model, then the tool");
@@ -139,4 +140,28 @@ test("eventsFrom: a step with no tool execution is not a composite", () => {
     }]);
     assert.equal(evs.filter((e) => e.kind === "tool").length, 0);
     assert.equal(evs.find((e) => e.kind === "gen").until, 10_000, "just the generation it did do");
+});
+
+test("eventsFrom: an approval gate is its OWN phase — the human's time, not the machine's", () => {
+    const evs = M.eventsFrom([{
+        hash: "gated", model: "qwen3.8:27b",
+        steps: [{
+            // 2s generating, 47s waiting for a click, 1s actually running.
+            seq: 3, ts: 100_000, tool: "python_exec", toolMs: 1000, approveMs: 47_000,
+            usage: usage(500, 40, { genMs: 2000 }),
+        }],
+    }]);
+    const tool = evs.find((e) => e.kind === "tool");
+    assert.equal(tool.t, 50_000, "the block covers all three, so its width is the step's real wall time");
+    assert.deepEqual(tool.phases, [
+        { kind: "model", until: 52_000 },
+        { kind: "wait", until: 99_000 },
+        { kind: "tool", until: 100_000 },
+    ], "…and the wait is a phase of its own, so a step that sat at a gate can't read as work");
+    // The dominant phase here is a person deciding — which is exactly the thing that was invisible before.
+    const widest = tool.phases.reduce((a, b, i, arr) => {
+        const dur = (x, j) => x.until - (j ? arr[j - 1].until : tool.t);
+        return dur(b, i) > dur(a.p, a.i) ? { p: b, i } : a;
+    }, { p: tool.phases[0], i: 0 });
+    assert.equal(widest.p.kind, "wait");
 });

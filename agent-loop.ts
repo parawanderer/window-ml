@@ -416,6 +416,8 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     // by runTool, read by the DONE emit; safe as a single holder because the loop dispatches tools one at a
     // time (delegation is sequential).
     let lastToolMs: number | undefined;
+    /** How long the approval GATE was open for this step, when it opened at all. */
+    let lastApproveMs: number | undefined;
     /** Every tool dispatch goes through here so `dereference` is answered from run state instead of delegated. */
     const runTool = async (name: string, a: Record<string, unknown>, push: ((t: string, ts?: number) => void) | undefined, step: number, seq: number): Promise<ToolRunResult> => {
         const t0 = Date.now();
@@ -480,7 +482,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             const meta = byName.get(call.name);
             let args = (call.arguments || {}) as Record<string, unknown>;
             const s = ++seq;
-            lastToolMs = undefined;   // this step's own measurement, never the previous step's
+            lastToolMs = undefined; lastApproveMs = undefined;   // this step's own measurements, never the previous step's
             // On a STREAMING run the pending step is on screen while its output fills in, so give it a pretty
             // In up front (the gated path already does this via approve; this covers auto-approved calls too).
             const preIn = (opts.stream && deps.renderFor) ? await deps.renderFor(call.name, args).catch(() => undefined) : undefined;
@@ -524,7 +526,12 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                     approval = "denied";
                     result = UNATTENDED_REFUSAL;
                 } else {
+                    // The gate's own duration. It is the HUMAN's time, not the machine's, and leaving it out of
+                    // the picture entirely made a step that waited two minutes for a click look identical to
+                    // one that ran instantly.
+                    const gateT0 = Date.now();
                     const rawDecision = await deps.approve({ tool: call.name, arguments: args, seq: s, step });
+                    lastApproveMs = Date.now() - gateT0;
                     const d = normalize(rawDecision, args);
                     // CANCELLED while the gate was open (Stop pressed) — two channels, either suffices:
                     // `signal.aborted` (CANCEL_RUN aborted the run's controller) OR `d.cancelled` (CANCEL_RUN
@@ -637,7 +644,7 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
                 : result;
             // The DONE event carries the clean `result` for the pretty Out AND — when a token line was appended —
             // `modelResult` (what the model ACTUALLY saw), so the log's raw view stays complete (the AGENTS rule).
-            deps.emit?.({ step, seq: s, tool: call.name, arguments: args, result, ...(tokenId ? { token: tokenId } : {}), ...(forModel !== result ? { modelResult: forModel } : {}), approval, renderIn: tr?.renderIn, renderOut: tr?.renderOut, feedback: tr?.feedback, elements: tr?.elements, reused: tr?.reused, ...(lastToolMs != null ? { toolMs: lastToolMs } : {}) });   // DONE (patches the START)
+            deps.emit?.({ step, seq: s, tool: call.name, arguments: args, result, ...(tokenId ? { token: tokenId } : {}), ...(forModel !== result ? { modelResult: forModel } : {}), approval, renderIn: tr?.renderIn, renderOut: tr?.renderOut, feedback: tr?.feedback, elements: tr?.elements, reused: tr?.reused, ...(lastToolMs != null ? { toolMs: lastToolMs } : {}), ...(lastApproveMs != null ? { approveMs: lastApproveMs } : {}) });   // DONE (patches the START)
             deps.pushToolResult(messages, call, forModel);
             if (tr?.image) pendingImages.push({ image: tr.image, label: tr.imageLabel || "screenshot" });
             // Multiple images from one call (look's overlay + no-overlay) → each becomes its own inline image.
