@@ -8,6 +8,14 @@ on:
     - cron: "0 6 * * *"   # nightly — for the non-blocking real-model sanity job below
   workflow_dispatch:
 
+# One run per branch. Several sessions work this repo at once and each push used to queue a full
+# matrix + e2e behind the last one, so the answer you were waiting for arrived minutes after it
+# mattered. A superseded run is cancelled — except on main, where every commit's result is a record
+# worth keeping.
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -105,8 +113,21 @@ jobs:
       - run: npm ci
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
+      # The wheels the built dist/ needs for python_exec. Without them the extension loads but a python
+      # step dies with `No module named 'numpy'`, so python-stream.spec.mjs failed on every run — it does
+      # NOT self-skip the way the node CPython tests do, because a browser test cannot know why the
+      # sandbox is empty. Cached exactly as the `test` job caches it.
+      - name: Cache pyodide wheels
+        id: pyocache
+        uses: actions/cache@v4
+        with:
+          path: pyodide-wheels
+          key: pyodide-wheels-${{ hashFiles('package-lock.json', 'python-env.ts') }}
+      - if: steps.pyocache.outputs.cache-hit != 'true'
+        run: npm run fetch-pyodide
       # `test:e2e` runs `pretest:e2e` (npm run build) first, so it exercises the built dist/. The harness is
-      # headful by default (an MV3 service worker doesn't register under headless), so run it under xvfb.
+      # headless now (full Chromium in --headless=new); xvfb stays as a safety net for anything that asks
+      # for a window (the narrated demos, E2E_HEADFUL=1) so such a run fails on its assertion, not DISPLAY.
       - name: Run E2E
         run: xvfb-run -a npm run test:e2e
 

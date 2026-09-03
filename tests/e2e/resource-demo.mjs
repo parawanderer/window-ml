@@ -198,7 +198,10 @@ const scriptRun = (page, spanMs) => page.evaluate((span) => {
 async function main() {
     mkdirSync(ART, { recursive: true });
     const fake = await startFakeLlm({ model: "fake-model" });
-    const ext = await launchExtension();
+    // A NARRATED DEMO: it exists to be watched, so it keeps a real window even though the harness is now
+    // headless by default (a window that steals focus on every launch makes the machine unusable while
+    // the suite runs).
+    const ext = await launchExtension({ headful: true });
     let shot = 0;
     const capture = async (page, label) => {
         await page.screenshot({ path: path.join(ART, `${String(++shot).padStart(2, "0")}-${label}.png`) }).catch(() => {});

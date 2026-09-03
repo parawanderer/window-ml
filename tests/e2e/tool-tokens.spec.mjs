@@ -5,6 +5,7 @@
 // fake-LLM, whose final step reads the minted id out of the tool result and cites it — exactly what a real model
 // does (there is NO auto-fallback: an uncited output is never surfaced).
 import { test, expect } from "@playwright/test";
+import { TOKEN_HEX_SRC } from "../../token-id.ts";
 import { launchExtension, configureExtension, waitForMl } from "./harness.mjs";
 import { startFakeLlm } from "./fake-llm.mjs";
 import { startPageServer } from "../../examples/cross-page/serve.mjs";
@@ -36,7 +37,11 @@ test("tool tokens e2e: a computed output flows through the REAL loop → res.ans
         { tool: "compute", args: { token: true } },
         (reqBody) => {
             const toolMsg = [...(reqBody.messages || [])].reverse().find((m) => m.role === "tool");
-            const id = String(toolMsg?.content || "").match(/@tool:([0-9a-f]{6})/)?.[1];
+            // Built from TOKEN_HEX_SRC, not hardcoded: this read `{6}` and silently kept working as a
+            // WRONG test when the check character made ids 7 characters. It captured the first six, the
+            // model cited a truncated id, nothing resolved, and `res.outputs` came back empty — a failure
+            // that reads as "the token pipeline is broken" rather than "the test is".
+            const id = String(toolMsg?.content || "").match(new RegExp(`@tool:(${TOKEN_HEX_SRC})`))?.[1];
             return { content: `The totals are ![the totals](@tool:${id}:out).` };
         },
     ]);
@@ -52,7 +57,7 @@ test("tool tokens e2e: a computed output flows through the REAL loop → res.ans
 
     // The model's reply EMBEDS the output inline with IMAGE syntax (`![…](@tool:<id>:out)`), not a link — and
     // because it's cited inline, finalizeAnswer dedups it out of the bottom `answer` block (no double render).
-    expect(res.summary).toMatch(/!\[[^\]]*\]\(@tool:[0-9a-f]{6}:out\)/);
+    expect(res.summary).toMatch(new RegExp(`!\\[[^\\]]*\\]\\(@tool:${TOKEN_HEX_SRC}:out\\)`));
     expect(res.answer || "").not.toMatch(/@tool:/);
     // And res.outputs hands the CALLER the structured 2D data — the headless-scripting payload.
     expect(res.outputs).toHaveLength(1);

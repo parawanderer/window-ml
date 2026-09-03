@@ -4,8 +4,8 @@
 // re-injection, the MV3 service worker). Keep E2E rare — only for behaviour that genuinely needs a real
 // browser (see CLAUDE.md "End-to-end tests"). Everything else stays in the fast node:test/jsdom suite.
 //
-// An MV3 extension only loads with a PERSISTENT context + --load-extension (and needs a headful or
-// new-headless Chromium — the CI job runs it under xvfb). `dist/` must be built first (pretest:e2e).
+// An MV3 extension only loads with a PERSISTENT context + --load-extension (and needs the FULL
+// browser, not the headless shell — see launchExtension). `dist/` must be built first (pretest:e2e).
 
 import { chromium } from "@playwright/test";
 import path from "node:path";
@@ -14,12 +14,25 @@ import { fileURLToPath } from "node:url";
 const DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../dist");
 
 /** Launch Chromium with the built extension. Returns { context, sw, extensionId, close }. */
-export async function launchExtension() {
+export async function launchExtension({ headful } = {}) {
     const context = await chromium.launchPersistentContext("", {
-        // Headful by default — an MV3 extension's service worker does NOT register under headless Chromium
-        // (verified). CI runs this under xvfb; locally it opens a real window. Opt into headless (e.g. to
-        // check the failure) with E2E_HEADLESS=1.
-        headless: process.env.E2E_HEADLESS === "1",
+        // HEADLESS by default, via `channel: "chromium"`.
+        //
+        // This used to be headful, on the finding that an MV3 service worker does not register under
+        // headless Chromium. That finding was real but narrower than it read: plain `headless: true` runs
+        // the headless SHELL, a separate stripped binary with no extension support at all. `channel:
+        // "chromium"` runs the FULL browser in --headless=new, where the worker registers fine — measured
+        // at ~0.5s against 12s of timeout for the shell, and the whole e2e suite passes.
+        //
+        // This matters beyond tidiness: a headful window grabs focus and the mouse on every launch, and
+        // the suite launches one per spec, so running it makes the machine unusable for minutes. Nothing
+        // is lost for debugging — the sidebar still opens and screenshots still capture the full
+        // extension UI, because that is DOM work rather than a window manager's.
+        //
+        // Headful on request: `headful: true` from a caller that exists to be WATCHED (the narrated
+        // demos), or E2E_HEADFUL=1 for a one-off look at a test.
+        headless: !(headful || process.env.E2E_HEADFUL === "1"),
+        channel: "chromium",
         args: [
             `--disable-extensions-except=${DIST}`,
             `--load-extension=${DIST}`,

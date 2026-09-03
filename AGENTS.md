@@ -1063,9 +1063,12 @@ thing. The parts:
 
 - **`harness.mjs`** — `launchExtension()` (persistent context + `--load-extension=dist`),
   `configureExtension(sw, cfg)` (writes `chrome.storage.sync` via the SW), `waitForMl(page)`.
-  **Headful by default** — an MV3 service worker does NOT register under headless Chromium
-  (verified); CI runs it under `xvfb`. Opt into headless with `E2E_HEADLESS=1` (only to see
-  the failure). **A run is started exactly like a console call:** `page.evaluate(() =>
+  **HEADLESS by default**, via `channel: "chromium"`. The old note here said an MV3 service worker does
+  not register under headless Chromium — true, but narrower than it read: plain `headless: true` runs the
+  headless SHELL, a stripped binary with no extension support at all. `channel: "chromium"` runs the FULL
+  browser in `--headless=new`, where the worker registers in ~0.5s and the whole suite passes. This
+  matters beyond tidiness: a headful window grabs focus and the mouse on every launch, and the suite
+  launches one per spec. Pass `headful: true` (the narrated demos do) or set `E2E_HEADFUL=1` for a look. **A run is started exactly like a console call:** `page.evaluate(() =>
   window.ml.agent(task, opts))` — Playwright's `page.evaluate` runs in the page **main world**,
   where `injected.js` defines `window.ml`, so no test-only hooks; the same front door a human
   uses. The result structured-clones back to Node.
@@ -1170,6 +1173,23 @@ CI; do real iteration on a local GPU box instead.
   degrades to slow-but-successful. `rateLimitWaitMs` is pure/unit-tested; the retry-then-succeed and
   give-up-after-cap behaviour is in `tests/background.test.js`. Harmless on a local backend (Ollama
   never 429s).
+
+## Branches, PRs and CI
+
+Work goes on a **branch and through a PR**, not straight onto main: several sessions work this repo at
+once (this one on the UI, another on the benchmark/pointers), and the PR is what runs CI — which is what
+catches what one session broke for another. A green local `npm test` is not that check: it does not run
+the e2e suite, three Node versions, or the real-CPython tests.
+
+`.github/workflows/tests.yml` runs on `pull_request` (and on pushes to main), and **cancels superseded
+runs per branch** so a fix supersedes the run it replaces instead of queueing behind it; main is exempt,
+because every commit there keeps its result.
+
+**The `ci` skill (`.claude/skills/ci/SKILL.md`) is the playbook**: open the PR, watch it in the
+BACKGROUND (`gh pr checks --watch`, ~5 minutes for a full run), read only the failing steps
+(`gh run view <id> --log-failed`), fix forward on the branch, and — importantly — the list of
+KNOWN-BAD failures that arrived from other branches, so a red check that is not yours is named in the PR
+body rather than chased or silently re-run.
 
 ## Security invariants (don't regress these)
 

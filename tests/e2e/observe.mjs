@@ -230,7 +230,10 @@ const main = async () => {
     const backend = await resolveBackend();
     const fake = backend ? null : await startFakeLlm({ model: "fake-model" });
     const site = await startPageServer({});
-    const ext = await launchExtension();
+    // Headless unless someone is looking: WATCH means a human will inspect the run at the end, and
+    // HEADFUL=1 gives a window without the hold. The sidebar still opens and the screenshots still
+    // capture it either way — that is DOM work, not a window manager's.
+    const ext = await launchExtension({ headful: !!process.env.WATCH || (!!process.env.HEADFUL && process.env.HEADFUL !== "0") });
     await configureExtension(ext.sw, {
         chatUrl: backend ? backend.chatUrl : fake.url,
         apiKey: backend?.key || "",
