@@ -57,3 +57,21 @@ test("rank returns scores, not just a winner — the guard is the MARGIN", () =>
     assert.ok(ranked[0].score - ranked[1].score > 0, "the margin is computable");
     assert.deepEqual(q.rank([]), [], "nothing to rank is not an error");
 });
+
+// The clamp is not defensive: measured over 768 dimensions, accumulated floating-point error drifts a
+// self-comparison to +1 + 3.55e-15 and an exactly-opposite pair to -1 - 3.55e-15. Without clamping, every
+// caller comparing against a threshold would have to defend against 1.0000000000000002 itself — and a
+// similarity outside [-1, 1] is not a number any of them could interpret.
+test("cosine stays inside [-1, 1] despite floating-point drift at real dimensionality", () => {
+    for (let trial = 0; trial < 200; trial++) {
+        const raw = Array.from({ length: 768 }, () => Math.random() * 2 - 1);
+        const a = Embedding.from(raw);
+        const opposite = Embedding.from(raw.map((v) => -v));
+        const self = a.dot(a);
+        const anti = a.dot(opposite);
+        assert.ok(self <= 1, `self similarity exceeded 1: ${self}`);
+        assert.ok(anti >= -1, `opposite similarity fell below -1: ${anti}`);
+        // …and still MEANS what it should: the bound is reached, not merely approached.
+        assert.ok(self > 0.999999 && anti < -0.999999);
+    }
+});
