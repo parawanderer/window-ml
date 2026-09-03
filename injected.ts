@@ -49,6 +49,7 @@ import { suspiciousArgsWarning, suspiciousChars } from "./security";
 import { emitDebug, debugId, shortHash, sessionRegistry, agentRegistry, handleRegistry, enterAgentRun, exitAgentRun, resetSubcallUsage, subcallUsage } from "./bus";
 import { makeDomTools, buildDereferenceTool } from "./tools";
 import { pipeStages, TokenStore, type DerefRead } from "./token-pipe";
+import { Embedding } from "./embedding";
 import { toolNameError } from "./token-id";
 import { hideSidebarForShot, makeBackgroundTaskPromise, makeChatRequest, makeStreamingTaskPromise } from "./bridge";
 import { validateArgs, validateExtend } from "./validate";
@@ -2338,6 +2339,32 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          */
         range: mlRange,
         pipe: mlPipe,
+        /**
+         * Embed text with the configured embedding model — for comparing MEANING rather than spelling.
+         *
+         * Returns an {@link Embedding}: a UNIT vector, so `.dot(other)` is cosine similarity by construction
+         * rather than by assumption. Pass an array to embed in ONE round trip (the modern Ollama endpoint
+         * batches; the legacy one is a per-input fallback).
+         *
+         * ```js
+         *   const [q, ...docs] = await ml.embed(["sales figures", "the Q3 table", "a screenshot"]);
+         *   q.rank(docs.map((embedding, key) => ({ key, embedding })));   // most similar first
+         * ```
+         *
+         * @param {string|string[]} input Text, or several strings embedded together.
+         * @param {{model?: string}} [opts] Override the configured model. Vectors from DIFFERENT models are
+         *        different geometries, so comparing across them throws rather than returning a meaningless number.
+         * @returns {Promise<Embedding|Embedding[]>} One per input, in order.
+         */
+        embed: async function<T extends string | string[]>(input: T, opts?: { model?: string }): Promise<T extends string[] ? Embedding[] : Embedding> {
+            const many = Array.isArray(input);
+            const inputs = (many ? input as string[] : [input as string]).map(String);
+            const r = await makeBackgroundTaskPromise<{ model: string; vectors: number[][] }>(
+                "EMBED_REQUEST", "EMBED_RESPONSE", { inputs, ...(opts?.model ? { model: opts.model } : {}) });
+            const out = r.vectors.map(v => Embedding.from(v));
+            // The one cast a conditional return type always needs; the SHAPE is checked by the branch above.
+            return (many ? out : out[0]) as T extends string[] ? Embedding[] : Embedding;
+        },
         /**
          * GET a URL's content via the background worker — bypasses CORS (host permissions), and by DEFAULT sends
          * no cookies (uncredentialed; `credentials`/`rendered` opt in — see below). Use it to READ a page/file

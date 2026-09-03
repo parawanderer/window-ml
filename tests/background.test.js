@@ -3073,3 +3073,59 @@ test("LIST_MODELS: `kinds` is opt-in, costs nothing when unasked, and is never s
     assert.equal(fromPage.kinds, undefined, "a page cannot ask for kinds");
     assert.equal(shows.length, 0);
 });
+
+// `ml.embed` reaches the model through the background like any other call. Two endpoint shapes exist in the
+// wild and both were verified against a live Ollama: the modern one BATCHES (so N strings cost one round
+// trip) and the legacy one does not.
+test("EMBED: prefers the batching endpoint, falls back to the per-input one, and reports the model", async () => {
+    const calls = [];
+    const mk = (serve) => loadBackground({
+        config: baseConfig({ embeddingModel: "embeddinggemma:300m" }),
+        onFetch: (call) => { calls.push(call.url); return serve(call); },
+    });
+
+    // Modern: one request for both inputs.
+    const modern = await mk((call) => /\/api\/embed$/.test(call.url)
+        ? jsonResponse({ model: "embeddinggemma:300m", embeddings: [[1, 0], [0, 1]] })
+        : jsonResponse({}, 404)).send({ type: "EMBED", payload: { inputs: ["a", "b"] } });
+    assert.deepEqual(modern.data.vectors, [[1, 0], [0, 1]]);
+    assert.equal(modern.data.model, "embeddinggemma:300m", "reports WHICH geometry the vectors are in");
+    assert.equal(calls.filter((u) => /\/api\/embed$/.test(u)).length, 1, "both inputs in ONE request");
+
+    // Legacy: /api/embed absent, so it falls back to one request per input.
+    calls.length = 0;
+    const legacy = await mk((call) => /\/api\/embeddings$/.test(call.url)
+        ? jsonResponse({ embedding: [0.5, 0.5] })
+        : jsonResponse({}, 404)).send({ type: "EMBED", payload: { inputs: ["a", "b"] } });
+    assert.deepEqual(legacy.data.vectors, [[0.5, 0.5], [0.5, 0.5]]);
+    assert.equal(calls.filter((u) => /\/api\/embeddings$/.test(u)).length, 2, "one request per input");
+
+    // A PARTIAL batch must not be accepted: pairing the wrong vector with the wrong string is undetectable
+    // downstream, so it falls through to the per-input path instead.
+    calls.length = 0;
+    const partial = await mk((call) => /\/api\/embed$/.test(call.url)
+        ? jsonResponse({ embeddings: [[1, 0]] })                       // one vector for two inputs
+        : /\/api\/embeddings$/.test(call.url) ? jsonResponse({ embedding: [9, 9] }) : jsonResponse({}, 404))
+        .send({ type: "EMBED", payload: { inputs: ["a", "b"] } });
+    assert.deepEqual(partial.data.vectors, [[9, 9], [9, 9]], "a short batch is rejected, not silently mispaired");
+});
+
+test("EMBED: says what to DO when unconfigured or unsupported, and honours the model filter", async () => {
+    const none = await loadBackground({ config: baseConfig({ embeddingModel: "" }), onFetch: () => jsonResponse({}) })
+        .send({ type: "EMBED", payload: { inputs: ["a"] } });
+    assert.match(none.error, /No embedding model configured.*Settings/s, "names the setting, not just the failure");
+
+    // A model that answers neither endpoint is the "you picked a chat model" case; say so.
+    const wrong = await loadBackground({ config: baseConfig({ embeddingModel: "qwen3:14b" }), onFetch: () => jsonResponse({}, 404) })
+        .send({ type: "EMBED", payload: { inputs: ["a"] } });
+    assert.match(wrong.error, /no embeddings for "qwen3:14b".*not be an embedding model, or not pulled/s);
+
+    // An explicit model still passes the access whitelist — a page cannot reach one the user excluded.
+    const filtered = await loadBackground({ config: baseConfig({ modelFilter: "^qwen" }), onFetch: () => jsonResponse({ embeddings: [[1]] }) })
+        .send({ type: "EMBED", payload: { inputs: ["a"], model: "secret-model" } });
+    assert.match(filtered.error, /Refused.*excluded by the model filter/);
+
+    const bad = await loadBackground({ config: baseConfig(), onFetch: () => jsonResponse({}) })
+        .send({ type: "EMBED", payload: { inputs: "not an array" } });
+    assert.match(bad.error, /needs `inputs`/);
+});

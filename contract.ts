@@ -8,6 +8,8 @@
 // Type-only (erased): the curated answer-set class, referenced by ToolContext.answer. answer-set.ts
 // imports AnswerMedia back from here — a type-only cycle, which is fine.
 import type { AnswerSet } from "./answer-set";
+// Type-only: the unit-vector wrapper `ml.embed` resolves to. embedding.ts imports nothing, so no cycle.
+import type { Embedding } from "./embedding";
 
 /* ------------------------------- config ------------------------------- */
 
@@ -63,6 +65,9 @@ export interface MlConfig {
      *  survives both without excelling. `hybrid` (the better of the last two) is the default. Exposed so the
      *  benchmark can vary it — see docs/POINTER-IDENTIFIERS.md. */
     labelMatch: LexicalMetric;
+    /** Model used for `ml.embed`. Only models reporting the `embedding` capability are offered in Settings.
+     *  Empty = no embedding model configured, and `ml.embed` says so rather than guessing one. */
+    embeddingModel: string;
     theme: Theme;
     /** which screen corner the off-mode approval card + working pill anchor to */
     cardCorner: CardCorner;
@@ -406,6 +411,7 @@ export const DEFAULT_CONFIG: MlConfig = {
     modelFilter: "",
     debugMode: "off",
     labelMatch: "hybrid",
+    embeddingModel: "",
     theme: "auto",
     cardCorner: "bottom-right",
     agentHud: "progress",
@@ -1122,7 +1128,7 @@ export interface MlHistory {
  *  each to its BackgroundMessageType counterpart via HANDLE_MAP). */
 export type PageRequestType =
     | "LLM_REQUEST" | "LLM_STREAM_REQUEST" | "B64_REQUEST" | "LIST_MODELS_REQUEST"
-    | "GET_MODEL_REQUEST" | "CONFIG_REQUEST" | "SET_MODEL_REQUEST" | "CAPS_REQUEST"
+    | "GET_MODEL_REQUEST" | "CONFIG_REQUEST" | "SET_MODEL_REQUEST" | "CAPS_REQUEST" | "EMBED_REQUEST"
     | "PS_REQUEST" | "UNLOAD_REQUEST" | "CAPTURE_TAB_REQUEST"
     | "SAVE_SESSION_REQUEST" | "GET_SESSION_REQUEST" | "PYTHON_EXEC_REQUEST" | "FETCH_SHEET_REQUEST" | "FETCH_URL_REQUEST"
     | "CDP_SHADOW_RESOLVE_REQUEST"   // read-only: resolve a `>>>` selector into a SEALED closed shadow root via CDP (discovery)
@@ -1138,7 +1144,7 @@ export type PageRequestType =
 /** Message types the background worker's onMessage listener handles. */
 export type BackgroundMessageType =
     | "FETCH_LLM" | "FETCH_IMAGE_B64" | "LIST_MODELS" | "GET_MODEL" | "GET_CONFIG"
-    | "SET_MODEL" | "MODEL_CAPS" | "OLLAMA_PS" | "OLLAMA_UNLOAD" | "CAPTURE_TAB"
+    | "SET_MODEL" | "MODEL_CAPS" | "EMBED" | "OLLAMA_PS" | "OLLAMA_UNLOAD" | "CAPTURE_TAB"
     | "SAVE_SESSION" | "GET_SESSION" | "PYTHON_EXEC" | "FETCH_SHEET" | "FETCH_SHEET_TITLE" | "FETCH_URL"
     | "CDP_SHADOW_RESOLVE"   // read-only CDP resolve of a `>>>` selector across sealed shadow roots (discovery half of sealed reach)
     | "LIST_SERVER_TOOLS"   // GET OpenWebUI /api/v1/tools/ — the server-side tools, with their function specs
@@ -1815,6 +1821,13 @@ export interface MlApi {
      *  `["grep -E error|warn", "head 5"]`). Synchronous and pure — no network, no tokens. Throws an actionable
      *  Error naming the supported verbs if a stage is wrong. */
     pipe(source: string | FetchResult, pipe?: string | string[] | null): string;
+    /** Embed text with the configured embedding model, for comparing MEANING rather than spelling. Returns
+     *  an {@link Embedding} (or one per input), a unit vector whose `.dot(other)` IS cosine similarity —
+     *  normalised on construction, so a model that returns non-unit vectors cannot silently mis-rank. Pass
+     *  an array to embed in ONE round trip. `.rank(candidates)` sorts by similarity, which is the shape you
+     *  usually want: the useful guard is the MARGIN between the best and the runner-up, not the best score.
+     *  Throws when no embedding model is configured, naming the setting. */
+    embed<T extends string | string[]>(input: T, opts?: { model?: string }): Promise<T extends string[] ? Embedding[] : Embedding>;
     /** GET a URL's content via the background (bypasses CORS; UNCREDENTIALED BY DEFAULT — no cookies unless you
      *  ask). Use it to READ a page/file the current DOM can't reach — a raw file, a JSON API, another site —
      *  instead of navigating there. Returns a {@link FetchResult}: `.type` classifies the body (json/csv/html/

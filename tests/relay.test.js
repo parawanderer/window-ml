@@ -853,3 +853,37 @@ test("ml.dereference (background-hosted): a soft-match advisory crosses the rela
         } finally { window.removeEventListener("message", onMsg); }
     });
 });
+
+// The page-relay contract for ml.embed: EMBED_REQUEST -> EMBED -> EMBED_RESPONSE, id-matched like every
+// other primitive (AGENTS.md's three-file rule).
+test("ml.embed relays through the content script and wraps the vectors", async () => {
+    const world = loadPageWorld({
+        config: { model: "m", ocrModel: "" },
+        onRuntimeMessage: (m) => (m.type === "EMBED" ? { data: { model: "embeddinggemma:300m", vectors: [[3, 4]] } } : undefined),
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    // A single string resolves to ONE Embedding, not an array of one.
+    const e = await world.ml.embed("hello");
+    assert.equal(e.dims, 2);
+    assert.deepEqual(e.values.map((v) => +v.toFixed(2)), [0.6, 0.8], "normalised on arrival, so dot is cosine");
+    assert.ok(Math.abs(e.dot(e) - 1) < 1e-12);
+});
+
+test("ml.embed sends an ARRAY as one request, and returns one vector per input in order", async () => {
+    let sent = null;
+    const world = loadPageWorld({
+        config: { model: "m", ocrModel: "" },
+        onRuntimeMessage: (m) => {
+            if (m.type !== "EMBED") return undefined;
+            sent = m.payload;
+            return { data: { model: "e", vectors: m.payload.inputs.map((_, i) => [i + 1, 0]) } };
+        },
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    const out = await world.ml.embed(["a", "b", "c"]);
+    assert.deepEqual(sent.inputs, ["a", "b", "c"], "one request carrying every input");
+    assert.equal(out.length, 3, "one Embedding per input, in order");
+    assert.ok(out.every((v) => Math.abs(v.dot(v) - 1) < 1e-12));
+});

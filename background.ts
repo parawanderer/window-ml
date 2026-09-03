@@ -18,7 +18,7 @@ import { BUILD_INFO } from "./build-info.gen";
 import { browserInfo } from "./util";   // the fork's settings scheme (page-context Browser line)
 import { ensureDebuggerAttached, releaseDebugger, cdpClick, cdpEval, cdpScreenshot, cdpShadowResolve, cdpKeyType } from "./sw-cdp";   // CDP/debugger layer (strict-CSP exec, trusted click/type, host-grant-free screenshot)
 import { fetchUrlContent, fetchRenderedContent, fetchSheetCsv, SHEET_URL_OK, sheetNameFromDisposition } from "./sw-fetch";   // outbound fetch layer (ml.fetch, rendered fetch, credentialed Google Sheets CSV)
-import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, streamAgentTurn, prepareRequest, residentModels, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch } from "./sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
+import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, streamAgentTurn, prepareRequest, residentModels, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
 
 
 // In-flight FETCH_LLM AbortControllers, keyed by the page's requestId, so an ABORT_TASK message
@@ -1515,6 +1515,24 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 } });
             })
             .catch(err => sendResponse({ error: err.message }));
+        return true;
+
+    } else if (message.type === "EMBED") {
+        // Embedding runs on the user's own box like any other model call, so a page may ask — the same
+        // reasoning that lets a page call ml.chat. An explicit model still passes the access whitelist, so a
+        // page cannot reach a model the user excluded, and the resolved model is reported back so a caller
+        // can see WHICH geometry the vectors are in (comparing across models is meaningless).
+        (async () => {
+            const inputs = (message.payload as { inputs?: unknown })?.inputs;
+            const asked = String((message.payload as { model?: unknown })?.model || "");
+            if (!Array.isArray(inputs) || inputs.some((i) => typeof i !== "string")) { sendResponse({ error: "EMBED needs `inputs`: an array of strings." }); return; }
+            try {
+                const cfg = await getConfig();
+                const model = asked || cfg.embeddingModel;
+                if (asked && !modelFilterAllows(asked, cfg.modelFilter)) { sendResponse({ error: `Refused: "${asked}" is excluded by the model filter.` }); return; }
+                sendResponse({ data: { model, vectors: await embedTexts(cfg, model, inputs as string[]) } });
+            } catch (e) { sendResponse({ error: (e as Error)?.message || String(e) }); }
+        })();
         return true;
 
     } else if (message.type === "MODEL_CAPS") {

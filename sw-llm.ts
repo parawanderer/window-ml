@@ -280,6 +280,47 @@ async function residentContextLength(config: MlConfig, model: string): Promise<n
  *  trips on a real box; bounded concurrency turns that into well under a second, and `capabilitiesCache`
  *  makes every later call free. A model that fails to answer resolves to null (unknown) rather than
  *  rejecting the batch — one unreachable model must not blank the whole picker. */
+/** Embed one or more strings, returning raw vectors in the same order. Throws with an actionable message
+ *  rather than returning null: unlike a capability probe, a caller asking for an embedding has no sensible
+ *  way to continue without one, and "which model, and is it pulled" is exactly what the human needs told.
+ *
+ *  Two endpoint shapes, tried in order (both verified against a live Ollama):
+ *    · `/api/embed`      modern, `{model, input: string[]}` -> `{embeddings: number[][]}` — BATCHES, so N
+ *                        strings cost one round trip. Preferred for that reason alone.
+ *    · `/api/embeddings` legacy, `{model, prompt: string}` -> `{embedding: number[]}` — one at a time.
+ *  Each is tried under the OpenWebUI passthrough prefix first, then bare, matching `modelCapabilities`. */
+export async function embedTexts(config: MlConfig, model: string, inputs: string[]): Promise<number[][]> {
+    if (!model) throw new Error("No embedding model configured. Set one in Settings (Models), e.g. embeddinggemma:300m, and make sure it is pulled.");
+    if (!inputs.length) return [];
+    const origin = new URL(config.chatUrl).origin;
+    const headers = authHeaders(config);
+    const post = async (path: string, body: unknown): Promise<any | null> => {
+        try {
+            const res = await fetch(origin + path, { method: "POST", headers, body: JSON.stringify(body) });
+            if (!res.ok) return null;
+            return await res.json();
+        } catch { return null; }
+    };
+
+    for (const path of ["/ollama/api/embed", "/api/embed"]) {
+        const data = await post(path, { model, input: inputs });
+        const vecs = data?.embeddings;
+        // Length-check rather than truthiness: a partial batch would silently pair the wrong vector with
+        // the wrong string, which no caller could detect.
+        if (Array.isArray(vecs) && vecs.length === inputs.length) return vecs as number[][];
+    }
+    for (const path of ["/ollama/api/embeddings", "/api/embeddings"]) {
+        const out: number[][] = [];
+        for (const input of inputs) {
+            const data = await post(path, { model, prompt: input });
+            if (!Array.isArray(data?.embedding)) { out.length = 0; break; }
+            out.push(data.embedding as number[]);
+        }
+        if (out.length === inputs.length) return out;
+    }
+    throw new Error(`The server returned no embeddings for "${model}". It may not be an embedding model, or not pulled — check Settings (Models), where only models reporting the embedding capability are offered.`);
+}
+
 export async function modelCapabilitiesBatch(config: MlConfig, models: string[], concurrency = 6): Promise<Record<string, string[] | null>> {
     const out: Record<string, string[] | null> = {};
     const queue = [...models];
