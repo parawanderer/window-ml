@@ -17,6 +17,61 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
+  # Is this change DOCS-ONLY? The browser jobs below take five to seven minutes, and a markdown edit
+  # cannot affect them — but a wrong answer here silently skips a real check, which is worse than the
+  # minutes it saves. So the rule is: a skip must be POSITIVELY PROVEN, and everything else runs.
+  #
+  # Two traps this repo has, both worth stating because the obvious version gets them wrong:
+  #   - `docs/**` is NOT docs. docs/spec/export.schema.json is GENERATED and checked in, and
+  #     tests/export-schema.test.mjs diffs it. Ignoring docs/ wholesale would let a stale contract land.
+  #   - the workflow itself is not docs: a change to this file must run everything it describes.
+  #
+  # The decision is written to the run summary rather than being an invisible skip, so a job that did not
+  # run says so on the page you are already looking at.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: filter
+        run: |
+          base=""
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            base="${{ github.event.pull_request.base.sha }}"
+          elif [ "${{ github.event_name }}" = "push" ]; then
+            base="${{ github.event.before }}"
+          fi
+          # No base, or a base this clone does not have (a new branch pushes 000…0): assume CODE. Failing
+          # open is the only safe default — the cost of being wrong that way is six minutes, and the cost
+          # of being wrong the other way is a check that never ran.
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "Ran everything: no comparable base for \`${{ github.event_name }}\`." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          files=$(git diff --name-only "$base" HEAD)
+          # Docs = markdown, images, and the agent skills. Everything else — including any .json under
+          # docs/ — counts as code.
+          other=$(echo "$files" | grep -vE '(\.md$|\.png$|\.jpe?g$|\.gif$|^\.claude/)' || true)
+          if [ -n "$files" ] && [ -z "$other" ]; then
+            echo "code=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Docs-only change — skipped \`e2e\` and \`bench\`"
+              echo ""
+              echo "No source file changed, so the browser jobs cannot be affected. Files:"
+              echo ""
+              echo '```'
+              echo "$files"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "Ran everything: $(echo "$other" | grep -c .) non-docs file(s) changed." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -103,6 +158,8 @@ jobs:
   # Kept minimal on purpose (real browsers are slow); only behaviour that genuinely needs a browser
   # lives here (see CLAUDE.md "End-to-end tests"). Everything else is in the fast `test` job above.
   e2e:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -141,6 +198,8 @@ jobs:
   # 1.00, one that cites 0.00, one whose re-emission is in a SEEDED turn 0.00); check-calibration.mjs
   # asserts exactly those. Deterministic — fake-LLM, no model, no key. Headful under xvfb like the e2e job.
   bench:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
