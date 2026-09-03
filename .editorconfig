@@ -1,0 +1,35 @@
+# Editor defaults, so a contributor whose editor prefers 2-space indent does not produce a diff full of
+# reindentation. This is DESCRIPTIVE, not aspirational: it records what the tree already does (measured —
+# .ts/.tsx/.mjs are 4-space with no tabs anywhere, JSON and YAML are 2). It is not a formatter and it
+# rewrites nothing; it only tells the editor what to do as you type.
+#
+# See https://editorconfig.org — honoured natively by most editors, including VS Code.
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+indent_size = 4
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+# JSON and YAML are 2-space here (package.json, .vscode/*, the workflow).
+[*.{json,jsonc,yml,yaml}]
+indent_size = 2
+
+# Markdown: trailing whitespace is SIGNIFICANT — two spaces at end of line is a hard break — so trimming
+# it silently changes rendering. Left alone deliberately.
+[*.md]
+trim_trailing_whitespace = false
+
+# The OpenWebUI workspace tools, which are real Python deliverables rather than embedded snippets.
+[*.py]
+indent_size = 4
+
+# Generated, and not ours to format.
+[{package-lock.json,*.gen.ts}]
+indent_style = unset
+indent_size = unset
+insert_final_newline = unset
