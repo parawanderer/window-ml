@@ -693,3 +693,82 @@ test("resource panel: wide tiles the tracks instead of stretching them", async (
         await fake.stop();
     }
 });
+
+// The event lane in a real browser: jsdom has no layout, so the alignment of a bar to the segment it belongs
+// to, and the click that navigates to the step, can only be checked here. The run is SCRIPTED — posted as the
+// same __mlDebug events a real run emits — because the fake box moves memory but runs no model.
+test("resource panel: the event lane draws phased blocks, dims by lineage, and clicks through", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-track").count(), { timeout: 20000 }).toBeGreaterThan(0);
+        // Sample for a while: an event outside the window is correctly dropped, so there must BE a window.
+        await sleep(9000);
+
+        await page.evaluate(() => {
+            const now = Date.now(), span = 7000;
+            const at = (f) => now - Math.round(span * f);
+            const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
+            const hash = "e2e-run";
+            post({ kind: "agent", id: hash, ts: at(1), save: false, session: { hash, turn: 0 },
+                   task: "check the page", model: "gemma4:31b", maxSteps: 4, config: null });
+            post({ kind: "agent-step", id: hash, ts: at(0.5), save: false, session: { hash, turn: 1 },
+                   step: 1, seq: 1, tool: "python_exec", toolMs: 1200, arguments: { code: "1" }, result: "ok",
+                   usage: { promptTokens: 100, completionTokens: 20, totalTokens: 120, genMs: 800 },
+                   subUsage: { calls: 1, prompt: 400, completion: 10,
+                               byModel: [{ model: "minicpm-v:8b", prompt: 400, completion: 10, calls: 1 }],
+                               calls_: [{ model: "minicpm-v:8b", ts: at(0.55), ms: 500, prompt: 400, completion: 10 }] } });
+            // A gated step: most of its block is a person deciding.
+            post({ kind: "agent-step", id: hash, ts: at(0.05), save: false, session: { hash, turn: 2 },
+                   step: 2, seq: 2, tool: "exec", toolMs: 300, approveMs: 2500, approval: "user",
+                   arguments: { js: "1" }, result: "ok",
+                   usage: { promptTokens: 120, completionTokens: 12, totalTokens: 132, genMs: 400 } });
+        });
+        await expect.poll(() => frame.locator(".rc-ev").count(), { timeout: 15000 }).toBeGreaterThan(2);
+
+        // Every bar is INSIDE the plot's horizontal span — the lane mirrors the chart's segments, so a bar
+        // that drifted off them would be pointing at a moment the trace doesn't cover.
+        // Measured on ONE side of the frame boundary: a locator's boundingBox is page-relative while a rect
+        // read inside the frame is frame-relative, and mixing them compares two different origins.
+        const geo = await frame.evaluate(() => {
+            const r = (el) => { const b = el.getBoundingClientRect(); return { x: b.x, w: b.width }; };
+            return {
+                plot: r(document.querySelector(".rc-plot")),
+                bars: [...document.querySelectorAll(".rc-ev")].map(r),
+            };
+        });
+        for (const b of geo.bars) {
+            expect(b.x, "a bar starts left of the trace it annotates").toBeGreaterThanOrEqual(geo.plot.x - 1);
+            expect(b.x + b.w, "…or runs past its right edge").toBeLessThanOrEqual(geo.plot.x + geo.plot.w + 1);
+        }
+
+        // A tool step is one block with hard stops where the work changes hands.
+        const toolBar = frame.locator(".rc-ev-tool").first();
+        expect(await toolBar.evaluate((e) => getComputedStyle(e).backgroundImage)).toContain("gradient");
+
+        // Hovering the delegated reader lights its lineage and drops the rest back.
+        const sub = frame.locator(".rc-ev-embed").first();
+        expect(await sub.count()).toBe(1);
+        await sub.hover();
+        await sleep(300);
+        const dimmed = await frame.locator(".rc-ev").evaluateAll((els) =>
+            els.map((e) => ({ cls: e.className, o: Number(getComputedStyle(e).opacity) })));
+        expect(dimmed.some((d) => d.o < 0.3), "unrelated events drop back").toBe(true);
+        expect(dimmed.find((d) => /rc-ev-embed/.test(d.cls)).o, "the hovered sub-call stays lit").toBeGreaterThan(0.5);
+
+        // And clicking it opens the step that produced it.
+        await sub.click();
+        await sleep(600);
+        expect(await frame.locator(".astep, [data-astep-seq]").count(), "it navigated into the run").toBeGreaterThan(0);
+    } finally {
+        await ext.close();
+        await fake.stop();
+    }
+});

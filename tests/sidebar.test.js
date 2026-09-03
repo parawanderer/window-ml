@@ -6323,9 +6323,14 @@ test("resource figures: bytes always come with the percentage of the pool", asyn
     await w.flush();
     await w.flush();
 
-    // The Overview key's tooltip: the real figure behind the plotted percentage.
-    const key = w.shadow.querySelector(".rc-legend .rc-key .tt-pop");
-    assert.match(key.textContent, /GiB of .*GiB \(\d[\d.]*%\)/, "the key's figure is a share");
+    // The Overview key opens the CURSOR tip (it used to also carry a static popup, which meant two tooltips
+    // for one hover), and that is where the real figure behind the plotted percentage lives.
+    assert.equal(w.shadow.querySelectorAll(".rc-legend .rc-key .tt-pop").length, 0, "one tooltip per hover");
+    const key = w.shadow.querySelector(".rc-legend .rc-key");
+    key.dispatchEvent(new w.window.MouseEvent("pointerenter", {}));
+    await w.flush();
+    assert.match(w.shadow.querySelector(".rc-tip-pool").textContent, /GiB of .*GiB \(\d[\d.]*%\)/,
+        "the key's figure is a share");
 
     // A device track's header says the same thing in its compact form.
     w.shadow.querySelector('[aria-label="Edit tracks"]').click();
@@ -6378,7 +6383,7 @@ test("tooltips: the band and row tips track the newest sample, not the moment yo
     assert.doesNotMatch(rowTip(), /19\.00 GiB/);
 });
 
-test("tooltips: the pool tip and the cloned pool key follow the newest sample too", async () => {
+test("tooltips: the pool tip follows the newest sample too", async () => {
     const w = await loadSidebarWorld({ vram: growModel(19), info: INFO_2CARD });
     await w.raw({ __mlSidebarOpen: true });
     w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
@@ -6390,20 +6395,18 @@ test("tooltips: the pool tip and the cloned pool key follow the newest sample to
     assert.ok(key, "the overview draws pool keys");
     mouse(w, key, "pointerenter");                       // → the cursor-following pool tip
     mouse(w, w.shadow.querySelector(".rc-plot"), "pointermove");
-    mouse(w, key, "pointerover");                        // → the cloned static popup for the same key
     await w.flush();
 
     const poolTip = () => w.shadow.querySelector(".rc-tip-pool")?.textContent || "";
-    const layer = () => w.shadow.querySelector(".tt-layer")?.textContent || "";
     assert.match(poolTip(), /19\.00 GiB of /, "the pool tip opens on what is on that pool");
-    assert.match(layer(), /19\.00 GiB of .*\(\d+[\d.]*%\)/, "the cloned key quotes the figure AND its share");
+    assert.match(poolTip(), /\(\d+[\d.]*%\)/, "…quoting the figure AND its share");
 
     w.setVram(growModel(31));
     await untilTrue(w, () => poolTip().includes("31.00 GiB"), `the pool tip froze at hover time (${poolTip()})`);
-    // The layer holds a COPY of the source node, so it needs its own watch to stay true.
-    await untilTrue(w, () => layer().includes("31.00 GiB"), `the cloned key tooltip went stale (${layer()})`);
     assert.doesNotMatch(poolTip(), /19\.00 GiB/);
-    assert.doesNotMatch(layer(), /19\.00 GiB/);
+    // The cloned STATIC tooltips (a track header, a device legend key) have their own live-update watch —
+    // covered in tooltip-layer.test.mjs, since the pool key no longer has one to test here.
+    assert.equal(w.shadow.querySelectorAll(".rc-legend .rc-key .tt-pop").length, 0);
 });
 
 // Hovering the EDGE of an overview line used to make the tooltip flicker many times a second: the visible

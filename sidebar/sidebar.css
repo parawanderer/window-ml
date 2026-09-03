@@ -197,7 +197,11 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
 /* The model's own name and figure lead; its badges (context window, TTL, embed) and its cost each take a line
    of their own, so a long name can't push the number that matters off the edge. */
 .rc-tip-name { white-space: nowrap; }
-.rc-tip-facts { flex-basis: 100%; display: flex; align-items: center; gap: 4px; }
+.rc-tip-facts { flex-basis: 100%; display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+/* A model tip reads top-down — who, how much, then its badges — so no line has to be as wide as the widest,
+   which is what left a slab of empty space to the right of the short ones. */
+.rc-tip-model { flex-direction: column; align-items: flex-start; gap: 3px; width: max-content; max-width: min(300px, 92vw); }
+.rc-tip-model .rc-tip-line { display: flex; align-items: center; gap: 5px; }
 .rc-tip-dot { width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto; }
 /* The pool tip is a small table, not a one-liner: how big, how much is used, and BY WHAT — the consumer list
    is repeated here so the answer is complete without looking away from the cursor. */

@@ -77,9 +77,11 @@ test("tooltips: always fully on screen, never clipped, never under the cursor", 
             return { tip, trigger: t, vp, text };
         };
 
-        // Every tooltip-bearing thing in the panel: the ceiling figure (hard against the RIGHT edge), the pool
-        // keys, and the badges in the model rows (near the panel's BOTTOM, inside what may be a scroller).
-        const targets = [".rc-total", ".rc-key", ".vram-ctx", ".vram-ttl"];
+        // Every STATIC-tooltip bearer in the panel: the ceiling figure (hard against the RIGHT edge) and the
+        // badges in the model rows (near the panel's BOTTOM, inside what may be a scroller). `.rc-key.tt` is
+        // qualified deliberately — an Overview pool key carries NO static popup, because it opens the
+        // cursor-following pool tip and having both meant two tooltips for one hover.
+        const targets = [".rc-total", ".vram-ctx", ".vram-ttl"];
         for (const sel of targets) {
             const n = await frame.locator(sel).count();
             expect(n, `${sel} exists to hover`).toBeGreaterThan(0);
@@ -334,7 +336,8 @@ for (const width of [360, 900]) {
                 if (t.y + t.h > view.height + 1) failures.push(`${label}: clipped bottom by ${Math.round(t.y + t.h - view.height)}px`);
             };
 
-            for (const sel of [".rc-band", ".rc-hit", ".vram-row", ".rc-ev"]) {
+            // Includes the legend keys, where a static popup and a cursor tip once BOTH opened on one hover.
+            for (const sel of [".rc-band", ".rc-hit", ".vram-row", ".rc-ev", ".rc-key", ".rc-total"]) {
                 const n = await frame.locator(sel).count();
                 if (!n) continue;
                 const b = await frame.locator(sel).first().boundingBox();

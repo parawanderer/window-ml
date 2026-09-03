@@ -6,6 +6,7 @@
 //   npm run build && node --import tsx tests/e2e/resource-demo.mjs
 //
 // Env: HOLD=0 exits at the end instead of holding the browser open. PACE scales every wait.
+//      ONLY=events skips the memory narrative and goes straight to the event lane (~20s instead of ~2min).
 //      The final beats script a RUN (posted as the same __mlDebug events a real one emits) so the event lane
 //      has something in it: a model load, a delegated vision sub-call, and a step that waited at an approval
 //      gate — the three shapes the lane exists to tell apart.
@@ -31,6 +32,8 @@ const GiB = 1024 ** 3;
 // a discrete card names nvidia-smi/rocm-smi in its ceiling note, while a Mac has ONE pool shared with the
 // system and names no vendor tool at all — and the only way to see that without the hardware is to fake it.
 const BOX = process.env.BOX || "cuda";
+// ONLY=events jumps straight to the event lane (the full walk takes ~2 minutes to reach it).
+const ONLY = process.env.ONLY || "";
 const ART = path.resolve(`tests/e2e/artifacts/resource-demo${BOX === "cuda" ? "" : `-${BOX}`}`);
 
 const gpu = (o) => ({ compute: "12.0", driver: "13.2", ...o });
@@ -128,6 +131,45 @@ const resident = (name, vramBytes, gpuOrSplit, sizeBytes = vramBytes) => {
 /** Free bytes per device given what is resident on each. */
 const freeWith = (onDev) => SHAPE.devices.map((_, i) => IDLE(i) - (onDev[i] || 0));
 
+/** The scripted run the event lane draws. Posted as the same `__mlDebug` events a real run emits, so the
+ *  shell relays them exactly as it would its own — the fake box moves memory but runs no model.
+ *
+ *  Every timestamp is relative to NOW and must land inside the sampled window, so the caller says how far
+ *  back the history actually reaches: an event before the first sample is correctly dropped (nothing was
+ *  measured then), which on a short warm-up would silently leave the lane looking empty. */
+const scriptRun = (page, spanMs) => page.evaluate((span) => {
+    const now = Date.now();
+    const at = (frac) => now - Math.round(span * frac);   // frac of the way back through the window
+    const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
+    const hash = "demo-run";
+    post({ kind: "agent", id: hash, ts: at(1), save: false, session: { hash, turn: 0 },
+           task: "summarise the spreadsheet", model: "gemma4:31b", maxSteps: 8, config: null });
+    // Step 1: the model wasn't resident — a long load before a token, then a short generation.
+    post({ kind: "agent-step", id: hash, ts: at(0.46), save: false, session: { hash, turn: 1 },
+           step: 1, seq: 1, tool: "exec", toolMs: 1200,
+           arguments: { js: "document.title" }, result: "ok",
+           usage: { promptTokens: 2400, completionTokens: 90, totalTokens: 2490, genMs: 2600,
+                    loadMs: Math.round(span * 0.46) } });
+    // Step 2: resident now, so the cost is generation + a slow tool — and it DELEGATED: a vision reader ran
+    // inside it, a different model doing different work. Hovering one lights only its lineage.
+    post({ kind: "agent-step", id: hash, ts: at(0.35), save: false, session: { hash, turn: 2 },
+           step: 2, seq: 2, tool: "python_exec", toolMs: 5200,
+           arguments: { code: "df.describe()" }, result: "ok",
+           usage: { promptTokens: 3100, completionTokens: 210, totalTokens: 3310, genMs: 2100, loadMs: 40 },
+           subUsage: { calls: 2, prompt: 1600, completion: 60,
+                       byModel: [{ model: "minicpm-v:8b", prompt: 1600, completion: 60, calls: 2 }],
+                       calls_: [{ model: "minicpm-v:8b", ts: at(0.44), ms: 1400, prompt: 800, completion: 30 },
+                                { model: "minicpm-v:8b", ts: at(0.38), ms: 1100, prompt: 800, completion: 30 }] } });
+    // Step 3: gated. The model wrote the call in 1.4s, a human took 6s to allow it, the tool ran in 700ms —
+    // most of that block is a person deciding, and it must not read as work.
+    post({ kind: "agent-step", id: hash, ts: at(0.04), save: false, session: { hash, turn: 3 },
+           step: 3, seq: 3, tool: "exec", toolMs: 700, approveMs: 6000, approval: "user",
+           arguments: { js: "document.querySelectorAll('tr').length" }, result: "41",
+           usage: { promptTokens: 3300, completionTokens: 45, totalTokens: 3345, genMs: 1400, loadMs: 30 } });
+    post({ kind: "agent-result", id: hash, ts: at(0.02), save: false, session: { hash, turn: 3 },
+           summary: "done", steps: 3, hitCap: false });
+}, spanMs);
+
 async function main() {
     mkdirSync(ART, { recursive: true });
     const fake = await startFakeLlm({ model: "fake-model" });
@@ -182,6 +224,33 @@ async function main() {
             throw new Error(`couldn't put the VRAM panel ${open ? "open" : "closed"}`);
         };
         await setPanel(true);
+
+        // ONLY=events — skip the memory narrative and go straight to the lane. It still needs an AXIS to draw
+        // against (an event outside the sampled window is correctly dropped), so this warms up just long
+        // enough for a run of samples, moves a model to give the trace some shape, and scripts the run across
+        // exactly the window that exists.
+        if (ONLY === "events") {
+            const warm = 16_000;
+            log("ONLY=events — warming the axis for 16s, then scripting the run.");
+            fake.setResident([resident(M.a[0], M.a[1], 0)]);
+            fake.setCapacity(box(freeWith([M.a[1]]), 10 * GiB));
+            await sleep(warm / 2);
+            // A second model, then an eviction: something for the trace to do, and a rule to hover.
+            fake.setResident([resident(M.a[0], M.a[1], 0), resident(M.b[0], M.b[1], 1 % DEVS)]);
+            fake.setCapacity(box(freeWith(DEVS > 1 ? [M.a[1], M.b[1]] : [M.a[1] + M.b[1]]), 9 * GiB));
+            await sleep(warm / 3);
+            fake.setResident([resident(M.b[0], M.b[1], 1 % DEVS)]);
+            fake.setCapacity(box(freeWith(DEVS > 1 ? [0, M.b[1]] : [M.b[1]]), 9 * GiB));
+            await sleep(warm / 6);
+            log("events: a model load, a delegated reader, and a step that waited at an approval gate.");
+            await scriptRun(page, warm * 0.75);
+            await sleep(4000);
+            await capture(page, "events");
+            console.log(`\n  screenshots in ${ART}`);
+            if (HOLD) { log("holding the browser open (HOLD=0 to skip)."); await new Promise(() => {}); }
+            return;
+        }
+
         log(`panel open — ${DEVS === 1 ? "one idle device" : `${DEVS} idle cards`}, holding only ollama's driver context.`);
         await sleep(3000);
         await capture(page, "idle");
@@ -331,38 +400,8 @@ async function main() {
         //    model, so the run is scripted — these are the same `__mlDebug` events a real run emits, posted
         //    from the page so the shell relays them exactly as it would its own. The timings are the point:
         //    a model load, a slow generation, and a tool that took longer than the model did.
-        log("events: a scripted run on the same axis — a model load, generations, and a step that waited at an approval gate.");
-        await page.evaluate(() => {
-            const now = Date.now();
-            const post = (ev) => window.postMessage({ __mlDebug: ev }, "*");
-            const hash = "demo-run";
-            post({ kind: "agent", id: hash, ts: now - 26_000, save: false, session: { hash, turn: 0 },
-                   task: "summarise the spreadsheet", model: "gemma4:31b", maxSteps: 8, config: null });
-            // Step 1: the model wasn't resident — 12s of loading before a token, then a short generation.
-            post({ kind: "agent-step", id: hash, ts: now - 12_000, save: false, session: { hash, turn: 1 },
-                   step: 1, seq: 1, tool: "exec", toolMs: 1200,
-                   arguments: { js: "document.title" }, result: "ok",
-                   usage: { promptTokens: 2400, completionTokens: 90, totalTokens: 2490, genMs: 2600, loadMs: 12_000 } });
-            // Step 2: resident now, so the whole cost is generation + a slow tool.
-            post({ kind: "agent-step", id: hash, ts: now - 9000, save: false, session: { hash, turn: 2 },
-                   step: 2, seq: 2, tool: "python_exec", toolMs: 5200,
-                   arguments: { code: "df.describe()" }, result: "ok",
-                   usage: { promptTokens: 3100, completionTokens: 210, totalTokens: 3310, genMs: 2100, loadMs: 40 },
-                   subUsage: { calls: 2, prompt: 1600, completion: 60,
-                               byModel: [{ model: "minicpm-v:8b", prompt: 1600, completion: 60, calls: 2 }],
-                               calls_: [{ model: "minicpm-v:8b", ts: now - 12_500, ms: 1400, prompt: 800, completion: 30 },
-                                        { model: "minicpm-v:8b", ts: now - 10_200, ms: 1100, prompt: 800, completion: 30 }] } });
-            // Step 2 also delegated: a vision reader ran INSIDE it, a different model doing different work.
-            // Hovering it lights only its lineage — itself, the step that spawned it, the run that contains it.
-            // Step 3: gated. The model wrote the call in 1.4s, a human took 6s to allow it, the tool ran in
-            // 700ms — so most of that block is a person deciding, and it must not read as work.
-            post({ kind: "agent-step", id: hash, ts: now - 1000, save: false, session: { hash, turn: 3 },
-                   step: 3, seq: 3, tool: "exec", toolMs: 700, approveMs: 6000, approval: "user",
-                   arguments: { js: "document.querySelectorAll('tr').length" }, result: "41",
-                   usage: { promptTokens: 3300, completionTokens: 45, totalTokens: 3345, genMs: 1400, loadMs: 30 } });
-            post({ kind: "agent-result", id: hash, ts: now - 500, save: false, session: { hash, turn: 3 },
-                   summary: "done", steps: 3, hitCap: false });
-        });
+        log("events: a scripted run on the same axis — a model load, a delegated reader, and a step that waited at an approval gate.");
+        await scriptRun(page, 26_000);
         await sleep(6000);
         await capture(page, "events");
 

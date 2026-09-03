@@ -229,11 +229,13 @@ function BandTip({ bands, history, ceiling, scope }: { bands: Band[]; history: B
     // pointer enters the tip itself) and clamped inside the plot so it can't run off the narrow panel.
     const { ref, style } = useTipPlacement(at);
     return (
-        <div class="rc-tip" role="tooltip" ref={ref} style={style}>
-            <i class="rc-tip-dot" style={{ background: colorFor(name) }} />
-            <span class="rc-tip-name">{name}</span>
+        // A STACK, not a row: name, then the figure, then the badges. On one line the name and the figure set
+        // the tip's width and every shorter line left a slab of empty space beside it.
+        <div class="rc-tip rc-tip-model" role="tooltip" ref={ref} style={style}>
+            <div class="rc-tip-line"><i class="rc-tip-dot" style={{ background: colorFor(name) }} />
+                <span class="rc-tip-name">{name}</span></div>
             {/* Bytes AND the share of this device — a model is "big" only relative to the card it is on. */}
-            <span class="rc-tip-size">{formatBytes(band.bytes)} <span class="rc-tip-pct">{percentOf(band.bytes, ceiling)}</span></span>
+            <div class="rc-tip-line"><span class="rc-tip-size">{formatBytes(band.bytes)} <span class="rc-tip-pct">({percentOf(band.bytes, ceiling)})</span></span></div>
             {/* Its row is gone from the list below, so the tip is the only place that can say why the colour
                 is still on the chart: this is history, not something resident now. */}
             {gone ? <span class="rc-tip-gone">evicted</span> : null}
@@ -429,12 +431,14 @@ function OverlayView({ def, samples, latest, hidden }: { def: TrackDef; samples:
                     // Dimmed from BOTH ends: hovering a model dims the pools it isn't on, and hovering a pool
                     // (its line or its key) dims the other pools' keys — the legend is the list this selection
                     // is made from, so leaving it lit while the chart and the rows both react is a half answer.
-                    <span class={`rc-key tt${(hoverModel.value && !p.bandsOf(latest).some((b) => b.model === hoverModel.value))
+                    // NO `tt` class here: this key opens the cursor-following pool tip (below), and a static
+                    // popup as well meant two tooltips for one hover. The pool tip carries the same figure
+                    // plus what is resident, so the static one had nothing left to add.
+                    <span class={`rc-key${(hoverModel.value && !p.bandsOf(latest).some((b) => b.model === hoverModel.value))
                             || (hoverPool.value && hoverPool.value !== p.id) ? " away" : ""}${allHidden(p) ? " off" : ""}`} key={p.id}
                         onPointerEnter={(e: PointerEvent) => { enterPool(p); trackCursor("overlay")(e); }} onPointerLeave={() => leavePool()}>
                         <i class="rc-swatch" style={{ background: poolColor(pi, pools.length) }} />
                         {p.name} {pct(frac(latest, p))}
-                        <span class="tt-pop left above" role="tooltip">{formatShare(usedOf(latest, p), p.ceiling)}</span>
                     </span>
                 ))}
             </div>
