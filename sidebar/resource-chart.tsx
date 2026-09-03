@@ -16,7 +16,7 @@ import {
     presetsFor,
     type ResourceSample, type Band, type Capacity, type TrackDef,
 } from "../resource-model";
-import { colorFor, hoverModel, poolHover, poolFacts, ModelFacts, VRAM_COLORS } from "./vram";
+import { colorFor, poolColor, hoverModel, poolHover, poolFacts, ModelFacts } from "./vram";
 import { loadedModels, resWindowS } from "./store";
 import { tipStyle } from "./tip";
 import { signal } from "@preact/signals";
@@ -375,7 +375,7 @@ function OverlayView({ def, samples, latest, hidden }: { def: TrackDef; samples:
                                             a tooltip flickering many times a second. Only the fixed-width
                                             target decides. */}
                                         <polyline class="rc-line" points={pts} fill="none" vector-effect="non-scaling-stroke"
-                                            stroke={VRAM_COLORS[pi % VRAM_COLORS.length]}
+                                            stroke={poolColor(pi, pools.length)}
                                             stroke-width={on ? 3 : 1.5} opacity={muted ? 0.25 : 1} />
                                     </g>
                                 );
@@ -392,7 +392,7 @@ function OverlayView({ def, samples, latest, hidden }: { def: TrackDef; samples:
                     <span class={`rc-key tt${(hoverModel.value && !p.bandsOf(latest).some((b) => b.model === hoverModel.value))
                             || (hoverPool.value && hoverPool.value !== p.id) ? " away" : ""}${allHidden(p) ? " off" : ""}`} key={p.id}
                         onPointerEnter={() => enterPool(p)} onPointerLeave={() => leavePool()}>
-                        <i class="rc-swatch" style={{ background: VRAM_COLORS[pi % VRAM_COLORS.length] }} />
+                        <i class="rc-swatch" style={{ background: poolColor(pi, pools.length) }} />
                         {p.name} {pct(frac(latest, p))}
                         <span class="tt-pop left above" role="tooltip">{formatShare(usedOf(latest, p), p.ceiling)}</span>
                     </span>

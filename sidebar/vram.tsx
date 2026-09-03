@@ -13,7 +13,7 @@ import { truncate } from "./format";
 import { normModel, seenContext } from "./model";
 import { IconVram, IconEye, IconEyeOff, IconBench, IconGear } from "./icons";
 import { tipStyle } from "./tip";
-import { VRAMH_KEY, vramH } from "./store";
+import { VRAMH_KEY, vramH, resWindowS } from "./store";
 import { parseInfo, holdCapacity, formatBytes, boxSignature, sameBoxOnly, presetsFor, presetRefusal, seriesCatalog, stackRefusal, placementOf, isSplit, type Band, type Capacity, type ResourceSample, type ModelResidency, type TrackDef } from "../resource-model";
 import { ResourceTracks } from "./resource-chart";
 import type { LoadedModel } from "../contract";
@@ -55,6 +55,16 @@ export function fetchModels(): void {
 // --- VRAM monitor ---
 export const VRAM_COLORS = ["#6366f1", "#22c55e", "#f59e0b", "#ec4899", "#06b6d4", "#a855f7", "#ef4444", "#84cc16"];
 export const colorFor = (name: string) => VRAM_COLORS[[...name].reduce((a, c) => a + c.charCodeAt(0), 0) % VRAM_COLORS.length];
+/** A POOL's colour. Pools are an ordered set, not names to hash, so they get distinct colours by construction
+ *  — which `VRAM_COLORS[i % 8]` stopped doing on a box with more than eight pools: an 8-GPU node (eight cards
+ *  plus system RAM) gave card 0 and System RAM the same indigo, in a legend whose entire job is telling the
+ *  lines apart. Past the curated palette, hues are spread evenly over however many pools there are. */
+export function poolColor(i: number, count: number): string {
+    if (count <= VRAM_COLORS.length) return VRAM_COLORS[i % VRAM_COLORS.length];
+    // Golden-angle-free even spread: with the count known, evenly spaced hues are maximally far apart, and
+    // fixed saturation/lightness keeps them legible on both themes.
+    return `hsl(${Math.round((i * 360) / count)}deg 70% 55%)`;
+}
 export const VRAM_HISTORY = 45, VRAM_POLL_MS = 2000;
 // Session-long history, in a MODULE signal rather than component state: the old panel kept 45 samples in
 // useState and threw them away on every close, so "what happened during that run" was unanswerable the moment
@@ -661,6 +671,21 @@ export function VramPanel() {
     const total = loaded ? loaded.reduce((s, m) => s + (hidden.has(m.model) ? 0 : (m.vramBytes ?? 0)), 0) : 0;
     // Stable order so rows don't reshuffle as models load/evict.
     const rows = loaded ? [...loaded].sort((a, b) => a.model.localeCompare(b.model)) : [];
+    // The rows ARE the chart's legend, so they have to cover the WINDOW, not just this instant: a model that
+    // evicted five minutes ago is still drawn in its own colour across the history, and with no row for it
+    // that colour has nothing to explain it. Ghost rows carry the name and the colour, nothing else — there
+    // is no size, no TTL and nothing to evict.
+    const ghosts = (() => {
+        const live = new Set((loaded || []).map((m) => m.model));
+        const secs = resWindowS.value;
+        const cutoff = secs ? Date.now() - secs * 1000 : 0;
+        const seen = new Set<string>();
+        for (const s of resourceHistory.value) {
+            if (s.t < cutoff) continue;
+            for (const m of s.models) if (!live.has(m.model) && (m.vramBytes > 0 || m.ramBytes > 0)) seen.add(m.model);
+        }
+        return [...seen].sort();
+    })();
     // Recompute every point's visible-total each render, so toggling redraws the
     // full line retroactively (not just going forward).
     const series = history.map(sumVisible);
@@ -746,7 +771,19 @@ export function VramPanel() {
                         </div>
                     );
                 })
-                : <div class="vram-empty">Nothing loaded.</div>}
+                : ghosts.length ? null : <div class="vram-empty">Nothing loaded.</div>}
+            {ghosts.map((name) => (
+                <div class={`vram-row ghost${hoverModel.value === name ? " hot" : ""}`} key={`ghost:${name}`}
+                    onPointerEnter={() => (hoverModel.value = name)}
+                    onPointerLeave={() => (hoverModel.value = null)}>
+                    <i class="vram-dot ghost-dot" style={{ background: colorFor(name) }} />
+                    <span class="vram-name">{name}</span>
+                    <span class="tt vram-embed">evicted
+                        <span class="tt-pop left above" role="tooltip">No longer resident. It is still drawn in the history above, for as long as that history covers the time it was loaded — this row is what says whose colour that is.</span>
+                    </span>
+                    <span class="sp" />
+                </div>
+            ))}
         <div class="vram-grip" role="separator" aria-label="Drag to resize the resource panel"
                 title="Drag to resize" onPointerDown={onGrab} />
         </div>

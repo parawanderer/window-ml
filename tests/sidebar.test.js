@@ -6621,8 +6621,15 @@ test("history: an evicted model keeps its colour, and says it is gone", async ()
         await new Promise((r) => setTimeout(r, 150));
         if (!w.shadow.querySelector(".vram-row")) break;
     }
-    assert.equal(w.shadow.querySelectorAll(".vram-row").length, 0, "the row is gone from the list");
+    assert.equal(w.shadow.querySelectorAll(".vram-row:not(.ghost)").length, 0, "it is no longer a resident row");
     assert.equal(bandFill(), colour, "…but its history keeps the colour it was drawn in");
+    // And it keeps a GHOST row, because the rows are the chart's legend: a colour still drawn with no row to
+    // name it is a colour nothing on screen explains.
+    const ghost = w.shadow.querySelector(".vram-row.ghost");
+    assert.ok(ghost, "an evicted model still drawn keeps a row");
+    assert.match(ghost.textContent, /gemma4:31b/);
+    assert.match(ghost.textContent, /evicted/);
+    assert.equal(ghost.querySelector(".vram-x"), null, "…with nothing to evict");
 
     // And hovering it still answers, because there is no row left to explain the colour.
     const band = w.shadow.querySelector(".rc-track .rc-band");
@@ -6633,4 +6640,70 @@ test("history: an evicted model keeps its colour, and says it is gone", async ()
     assert.ok(tip, "the band is still hoverable after the model evicted");
     assert.match(tip.textContent, /gemma4:31b/, "it names what was there");
     assert.match(tip.textContent, /evicted/, "…and says it no longer is");
+});
+
+// A box with more cards than the curated palette. Eight A100s plus system RAM is NINE pools, and
+// VRAM_COLORS[i % 8] gave card 0 and System RAM the same indigo — in a legend whose only job is telling the
+// lines apart. (The 4×3090 NVLink rig, five pools, is the common version of this.)
+test("many pools: every pool gets its own colour, past the curated palette", async () => {
+    const { poolColor, VRAM_COLORS } = await import("../sidebar/vram.tsx");
+    // Inside the palette, the hand-picked colours are used as-is.
+    assert.equal(poolColor(0, 5), VRAM_COLORS[0]);
+    assert.equal(poolColor(4, 5), VRAM_COLORS[4]);
+    // Past it, hues are spread over however many there are — and no two collide.
+    for (const n of [9, 12, 20]) {
+        const seen = new Set(Array.from({ length: n }, (_, i) => poolColor(i, n)));
+        assert.equal(seen.size, n, `${n} pools get ${n} distinct colours`);
+    }
+});
+
+test("many GPUs: a lab node draws a track per card, and a split model is attributed to each", async () => {
+    const cards = 4;   // the homelab rig: 4x RTX 3090, NVLink-paired
+    const GB = 1024 ** 3;
+    const shares = [17, 13, 15, 16];   // one 70B model, split unevenly across all four
+    const info = { compute: {
+        system_compute: { cpu_cores: 32, total_memory: 137438953472, free_memory: 40 * GB },
+        // Free follows from what is ON each card (its share, plus ollama's ~0.35 GiB context) — a fixture with
+        // one flat free figure would make the headers disagree with the split it is meant to describe.
+        supported_gpus: Array.from({ length: cards }, (_, i) => ({
+            gpu_id: String(i), name: `CUDA${i}`, runner: "CUDA",
+            total_memory: 25757220864, physical_memory: 25769803776,
+            free_memory: 25757220864 - shares[i] * GB - Math.round(0.35 * GB) })),
+    } };
+    // It fits on NO single card, so the remainder lives in system RAM.
+    const onGpu = shares.reduce((n, g) => n + g, 0) * GB;
+    const w = await loadSidebarWorld({
+        vram: [{ model: "llama4:70b", vramGB: onGpu / GB, vramBytes: onGpu, sizeBytes: onGpu + 7 * GB,
+                 gpus: shares.map((g, i) => ({ id: String(i), runner: "CUDA", vramBytes: g * GB })), expiresAt: null }],
+        info,
+        local: { ml_res_layout: { presetId: "memory", tracks: [
+            ...Array.from({ length: cards }, (_, i) => ({ id: `dev-${i}`, series: [`vram.${i}`], mode: "stack", heightPx: 96 })),
+            { id: "ram", series: ["ram"], mode: "stack", heightPx: 96 },
+        ] } },
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    for (let i = 0; i < 20 && w.shadow.querySelectorAll(".rc-track").length < 5; i++) {
+        await w.flush(); await new Promise((r) => setTimeout(r, 120));
+    }
+    const names = [...w.shadow.querySelectorAll(".rc-name")].map((e) => e.textContent);
+    assert.deepEqual(names, ["CUDA0", "CUDA1", "CUDA2", "CUDA3", "System RAM"], "a track per card, plus the host pool");
+
+    // Each card's header states ITS OWN share, never the model's 61 GiB total — a model can only use one
+    // card's capacity, and a header claiming otherwise would be the "false total" the design refuses.
+    const totals = [...w.shadow.querySelectorAll(".rc-total")].map((e) => e.firstChild.textContent.trim());
+    // A card's header is what is on THAT card — its share of the split plus ollama's own context — never the
+    // model's 61 GiB total.
+    shares.forEach((g, i) => assert.match(totals[i], new RegExp(`^${g}\\.3\\d GiB / 24\\.00 GiB`), `CUDA${i} shows its own ~${g} GiB (${totals[i]})`));
+    for (const t of totals) assert.doesNotMatch(t, /61\.00 GiB \//, "no card claims the whole model");
+
+    // The row says it was divided, and names every place it landed.
+    const row = w.shadow.querySelector(".vram-row");
+    row.dispatchEvent(new w.window.MouseEvent("pointerenter", {}));
+    row.dispatchEvent(new w.window.MouseEvent("pointermove", { clientX: 40, clientY: 40 }));
+    await w.flush();
+    const tip = w.shadow.querySelector(".vram-rowtip").textContent;
+    assert.match(tip, /split:/, "the row calls it a split");
+    for (const i of [0, 1, 2, 3]) assert.match(tip, new RegExp(`CUDA${i}`), `…naming CUDA${i}`);
+    assert.match(tip, /RAM/, "…and the part that didn't fit on any card");
 });

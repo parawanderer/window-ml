@@ -6,8 +6,10 @@
 //   npm run build && node --import tsx tests/e2e/resource-demo.mjs
 //
 // Env: HOLD=0 exits at the end instead of holding the browser open. PACE scales every wait.
-//      BOX=cuda (default) | amd | metal picks which machine to pretend to be — two discrete cards naming
-//      nvidia-smi, two naming rocm-smi, or a Mac's single unified pool that names no vendor tool at all.
+//      BOX=cuda (default) | amd | laptop | rig | lab | metal picks which machine to pretend to be — two
+//      discrete cards naming nvidia-smi, two naming rocm-smi, a 12 GiB laptop 4080 where a 27B model has to
+//      spill into RAM, four NVLinked 3090s a 70B is split across, an eight-A100 lab node (nine pools, past
+//      the curated palette), or a Mac's single unified pool.
 // Screenshots land in tests/e2e/artifacts/resource-demo/ (BOX=metal → …/resource-demo-metal/).
 import { mkdirSync } from "node:fs";
 import path from "node:path";
@@ -18,10 +20,11 @@ const HOLD = process.env.HOLD !== "0";
 const PACE = Number(process.env.PACE || 1);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms * PACE));
 const log = (m) => console.log(`  ${m}`);
+const gb = (b) => `${(b / GiB).toFixed(0)} GiB`;
 
 const GiB = 1024 ** 3;
 
-// WHICH MACHINE to pretend to be: BOX=cuda (default) | amd | metal. The panel reads differently on each —
+// WHICH MACHINE to pretend to be: BOX=cuda (default) | amd | laptop | rig | lab | metal. The panel reads differently on each —
 // a discrete card names nvidia-smi/rocm-smi in its ceiling note, while a Mac has ONE pool shared with the
 // system and names no vendor tool at all — and the only way to see that without the hardware is to fake it.
 const BOX = process.env.BOX || "cuda";
@@ -46,6 +49,41 @@ const BOXES = {
             total_memory: 68719476736, physical_memory: 68719476736 })),
         models: { a: ["gemma4:31b", 18 * GiB], b: ["qwen3.5:35b", 22 * GiB], c: ["phi5:14b", 9 * GiB],
                   d: ["coder:7b", 5 * GiB], big: ["gemma4:31b", 30 * GiB], cpu: ["util:2b", 7 * GiB] },
+    },
+    // The homelab rig: four RTX 3090s (24 GiB each, NVLink-paired) and 128 GiB of system RAM. The point of
+    // this shape is that a 70B model does NOT fit on any one card — it is split across all four, and each
+    // card's track shows only its own share.
+    rig: {
+        runner: "CUDA", hostTotal: 137438953472, idleHeld: 0.35 * GiB,
+        devices: [0, 1, 2, 3].map((id) => gpu({ gpu_id: String(id), name: `CUDA${id}`, runner: "CUDA",
+            total_memory: 25757220864, physical_memory: 25769803776 })),
+        models: { a: ["qwen3.5:14b", 9 * GiB], b: ["gemma4:12b", 7 * GiB], c: ["phi5:14b", 8 * GiB],
+                  d: ["coder:7b", 5 * GiB], big: ["llama4:70b", 21 * GiB], cpu: ["util:2b", 3 * GiB] },
+    },
+    // The ordinary consumer machine: an RTX 4080 Laptop (12 GiB GDDR6) and 32 GiB of system RAM. The whole
+    // point of this shape is that things DON'T fit — a 27B model has to be split between the card and RAM,
+    // which is the everyday case the big boxes never show.
+    //
+    // ONE device, deliberately: the laptop also has an integrated GPU, but ollama's CUDA build enumerates CUDA
+    // devices only, so an Intel/AMD iGPU doesn't appear unless the Vulkan backend is in play. (If it ever
+    // does, it is a UNIFIED device — it has no memory of its own, it shares system RAM — sitting beside a
+    // discrete one, which is a shape the model does not handle today: `Capacity.unified` is true when ANY
+    // device is unified, which would collapse the 4080's own pool into the host's. Wants a real capture.)
+    laptop: {
+        runner: "CUDA", hostTotal: 34359738368, idleHeld: 0.3 * GiB,
+        devices: [gpu({ gpu_id: "0", name: "CUDA0", runner: "CUDA",
+            total_memory: 12736200704, physical_memory: 12884901888 })],
+        models: { a: ["qwen3.5:8b", 5 * GiB], b: ["gemma4:12b", 7 * GiB], c: ["phi5:4b", 3 * GiB],
+                  d: ["coder:3b", 2 * GiB], big: ["gemma4:27b", 9 * GiB], cpu: ["util:1b", 2 * GiB] },
+    },
+    // The lab node: eight A100 80GB and a terabyte of RAM. NINE pools — past the curated palette, which is
+    // where "colour per pool" has to keep meaning something.
+    lab: {
+        runner: "CUDA", hostTotal: 1099511627776, idleHeld: 0.6 * GiB,
+        devices: [0, 1, 2, 3, 4, 5, 6, 7].map((id) => gpu({ gpu_id: String(id), name: `CUDA${id}`, runner: "CUDA",
+            total_memory: 85899345920, physical_memory: 85899345920 })),
+        models: { a: ["gemma4:31b", 18 * GiB], b: ["qwen3.5:35b", 22 * GiB], c: ["phi5:14b", 9 * GiB],
+                  d: ["coder:7b", 5 * GiB], big: ["deepseek:671b", 70 * GiB], cpu: ["util:2b", 7 * GiB] },
     },
     // A Mac: ONE unified pool. `total_memory` is the advised working set (~75% of the system), NOT a second
     // pool — and there is no physical_memory and no vendor tool to point at.
@@ -141,21 +179,21 @@ async function main() {
             throw new Error(`couldn't put the VRAM panel ${open ? "open" : "closed"}`);
         };
         await setPanel(true);
-        log("panel open — two idle cards, each holding only ollama's driver context.");
+        log(`panel open — ${DEVS === 1 ? "one idle device" : `${DEVS} idle cards`}, holding only ollama's driver context.`);
         await sleep(3000);
         await capture(page, "idle");
 
         // 1. A model lands on card 0.
         fake.setResident([resident(M.a[0], M.a[1], 0)]);
         fake.setCapacity(box(freeWith([M.a[1]]), 12.3 * GiB));
-        log("gemma4:31b loaded onto CUDA0 (18 GiB).");
+        log(`${M.a[0]} loaded onto ${SHAPE.devices[0].name} (${gb(M.a[1])}).`);
         await sleep(6000);
         await capture(page, "one-model");
 
         // 2. A second model, on the OTHER card — the reason tracks are small multiples.
         fake.setResident([resident(M.a[0], M.a[1], 0), resident(M.b[0], M.b[1], 1 % DEVS)]);
         fake.setCapacity(box(freeWith(DEVS > 1 ? [M.a[1], M.b[1]] : [M.a[1] + M.b[1]]), 12.3 * GiB));
-        log("qwen3.5:35b loaded onto CUDA1 (22 GiB) — a model can only use ONE card's capacity.");
+        log(`${M.b[0]} loaded onto ${SHAPE.devices[1 % DEVS].name} (${gb(M.b[1])}) — a model can only use ONE card's capacity.`);
         await sleep(6000);
         await capture(page, "two-cards");
 
@@ -165,14 +203,14 @@ async function main() {
             resident(M.cpu[0], 0, null, M.cpu[1]),
         ]);
         fake.setCapacity(box(freeWith(DEVS > 1 ? [M.a[1], M.b[1]] : [M.a[1] + M.b[1]]), 5.3 * GiB));
-        log("util:2b forced to the CPU — it holds no VRAM, so it appears against System RAM.");
+        log(`${M.cpu[0]} forced to the CPU — it holds no VRAM, so it appears against System RAM.`);
         await sleep(6000);
         await capture(page, "cpu-resident");
 
         // 4. Evict the big one: the stack drops and the history keeps the shape.
         fake.setResident([resident(M.b[0], M.b[1], 1 % DEVS), resident(M.cpu[0], 0, null, M.cpu[1])]);
         fake.setCapacity(box(freeWith(DEVS > 1 ? [0, M.b[1]] : [M.b[1]]), 5.3 * GiB));
-        log("gemma4:31b evicted — CUDA0 falls back to its driver context.");
+        log(`${M.a[0]} evicted — ${SHAPE.devices[0].name} falls back to its driver context.`);
         await sleep(6000);
         await capture(page, "evicted");
 
@@ -191,17 +229,25 @@ async function main() {
         // 6. CHURN: models loading and evicting on their own, including TWO on the same card — the case the
         //    scripted steps never produce, where one device's stack has to divide between two models and the
         //    attribution has to keep up.
-        log("churn: models load and evict at random, and CUDA0 takes two at once…");
+        log(`churn: models load and evict at random, and ${SHAPE.devices[0].name} takes two at once…`);
         const POOL = [M.a, M.b, M.c, M.d].map(([name, bytes]) => ({ name, bytes }));
         // Seeded, so a screenshot of a run can be reproduced — random-LOOKING is the point, not unrepeatable.
         let seed = 20260903;
         const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
         const live = new Map();   // name → { bytes, gpu }
+        // Place them the way ollama would: a model takes what FITS on its card and spills the rest to system
+        // RAM. Without this the churn could stack 17 GiB of models onto a 12 GiB laptop card and the panel
+        // would faithfully report 128% of a capacity — a number no real box can produce.
         const push = () => {
-            const models = [...live].map(([name, m]) => resident(name, m.bytes, m.gpu));
-            const on = (g) => [...live.values()].filter((m) => m.gpu === g).reduce((n, m) => n + m.bytes, 0);
+            const room = SHAPE.devices.map((_, i) => IDLE(i));
+            const models = [];
+            for (const [name, m] of live) {
+                const fits = Math.max(0, Math.min(m.bytes, room[m.gpu]));
+                room[m.gpu] -= fits;
+                models.push(fits > 0 ? resident(name, 0, { [m.gpu]: fits }, m.bytes) : resident(name, 0, null, m.bytes));
+            }
             fake.setResident(models);
-            fake.setCapacity(box(SHAPE.devices.map((_, i) => IDLE(i) - on(i)), 8 * GiB));
+            fake.setCapacity(box(room, 8 * GiB));
         };
         // Start with the pair on ONE card, so the two-on-a-GPU case is guaranteed rather than hoped for.
         live.set(M.a[0], { bytes: M.a[1], gpu: 0 });
@@ -212,7 +258,7 @@ async function main() {
         for (let i = 0; i < 8; i++) {
             const pick = POOL[Math.floor(rnd() * POOL.length)];
             if (live.has(pick.name)) { live.delete(pick.name); log(`  ${pick.name} evicted`); }
-            else { const g = DEVS > 1 ? (rnd() < 0.5 ? 0 : 1) : 0; live.set(pick.name, { bytes: pick.bytes, gpu: g }); log(`  ${pick.name} → ${SHAPE.devices[g].name}`); }
+            else { const g = Math.floor(rnd() * DEVS); live.set(pick.name, { bytes: pick.bytes, gpu: g }); log(`  ${pick.name} → ${SHAPE.devices[g].name}`); }
             push();
             await sleep(3000);
         }
@@ -225,6 +271,7 @@ async function main() {
         live.set(M.a[0], { bytes: M.a[1], gpu: 0 });
         live.set(M.c[0], { bytes: M.c[1], gpu: 0 });
         live.set(M.b[0], { bytes: M.b[1], gpu: 1 % DEVS });
+        if (DEVS > 2) live.set(M.d[0], { bytes: M.d[1], gpu: 2 });
         push();
         await sleep(6000);
         log("stack vs overlay: the same series, summed into one shape or drawn as separate lines.");
@@ -242,16 +289,37 @@ async function main() {
         }
         await frame.locator('[aria-label="Edit tracks"]').click();
         await sleep(1000);
+        // Editing a track flipped the picker to Custom (a layout is no longer that preset), which left every
+        // later beat rendering ONE track — the split across four cards is not much of a demonstration on one.
+        await frame.locator(".rc-preset").selectOption("memory").catch(() => {});
+        await sleep(1500);
 
         // 8. A model too big for one card: SPLIT unevenly across both, with the remainder in system RAM. Each
         //    device's stack shows only ITS share, the row says how it was divided, and nothing is summed
         //    across pools — the parts of one model living in three places is exactly the case a single
         //    "30 GiB resident" figure hides.
+        if (DEVS === 1 && !SHAPE.devices[0].name.startsWith("MTL")) {
+            // One card, and a model bigger than it: part on the GPU, the rest in system RAM. The row says how
+            // it was divided; the card's track shows only its share.
+            const onGpu = Math.round(devTotal(0) * 0.78 / GiB) * GiB;
+            const spill = 8 * GiB;
+            log(`partial offload: ${gb(onGpu)} of a ${gb(onGpu + spill)} model on ${SHAPE.devices[0].name}, ${gb(spill)} in RAM — the everyday case on one card.`);
+            fake.setResident([resident("gemma4:27b", 0, { 0: onGpu }, onGpu + spill)]);
+            fake.setCapacity(box(freeWith([onGpu]), 6 * GiB));
+            await sleep(7000);
+            await capture(page, "partial-offload");
+        }
         if (DEVS > 1) {
-            const onA = 26 * GiB, onB = 14 * GiB, spill = 8 * GiB;
-            log(`split: one model across ${SHAPE.devices[0].name} (${(onA / GiB).toFixed(0)} GiB) + ${SHAPE.devices[1].name} (${(onB / GiB).toFixed(0)} GiB) + ${(spill / GiB).toFixed(0)} GiB in RAM.`);
-            fake.setResident([resident("colossus:120b", 0, { 0: onA, 1: onB }, onA + onB + spill)]);
-            fake.setCapacity(box(freeWith([onA, onB]), 6 * GiB));
+            // Uneven ON PURPOSE: a split is not a clean division. Card 0 usually takes the most (it holds the
+            // KV cache and the output layer), the rest take what fits, and the remainder lives in system RAM.
+            const shares = SHAPE.devices.map((_, i) => Math.round((devTotal(i) * (i === 0 ? 0.72 : 0.5 + 0.06 * i)) / GiB) * GiB);
+            const spill = Math.round(devTotal(0) * 0.3 / GiB) * GiB;
+            const onDev = Object.fromEntries(shares.map((b, i) => [i, b]));
+            log(`split: ${DEVS === 2 ? "one model across both cards" : `one model across all ${DEVS} cards`} — ` +
+                `${shares.map((b, i) => `${SHAPE.devices[i].name} ${(b / GiB).toFixed(0)} GiB`).join(" + ")} + ${(spill / GiB).toFixed(0)} GiB in RAM.`);
+            fake.setResident([resident(DEVS > 2 ? "llama4:70b" : "colossus:120b", 0, onDev,
+                shares.reduce((n, b) => n + b, 0) + spill)]);
+            fake.setCapacity(box(freeWith(shares), 6 * GiB));
             await sleep(7000);
             await capture(page, "split-model");
         }
