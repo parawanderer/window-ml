@@ -493,3 +493,112 @@ test("resource panel: a closed editor takes no space, an open one takes its own"
         await fake.stop();
     }
 });
+
+// The real thing the unit test can only approximate: a browser hit-testing an SVG stroke. Hovering the EDGE
+// of an overview line made the tooltip flicker many times a second — the visible stroke thickens on hover and,
+// painted above the hit target, took the pointer, which fired pointerleave on the target, which thinned it.
+test("resource panel: hovering the edge of an overview line doesn't flicker", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0)]);
+        const { page, frame } = await openPanel(fake, ext);
+        // Overview is the default view; a line needs a couple of samples to have any shape.
+        await expect.poll(() => frame.locator(".rc-hit").count(), { timeout: 20000 }).toBeGreaterThan(0);
+        await sleep(5000);
+
+        // Where the newest end of the line is painted. Measured INSIDE the frame as a fraction of the plot,
+        // then mapped onto the plot's box in page coordinates — a client rect from inside an iframe is
+        // frame-relative and page.mouse is not.
+        const rel = await frame.locator(".rc-hit").first().evaluate((el) => {
+            const pts = el.getAttribute("points").trim().split(/\s+/);
+            const last = pts[pts.length - 1].split(",").map(Number);
+            const svg = el.ownerSVGElement.getBoundingClientRect();
+            const plot = el.closest(".rc-plot").getBoundingClientRect();
+            const vb = el.ownerSVGElement.viewBox.baseVal;
+            return { fx: (svg.left + (last[0] / vb.width) * svg.width - plot.left) / plot.width,
+                     fy: (svg.top + (last[1] / vb.height) * svg.height - plot.top) / plot.height };
+        });
+        const plotBox = await frame.locator(".rc-plot").boundingBox();
+        const spot = { x: plotBox.x + rel.fx * plotBox.width - 3, y: plotBox.y + rel.fy * plotBox.height };
+        const inFrame = { dx: plotBox.x, dy: plotBox.y };
+
+        await page.mouse.move(spot.x, spot.y);
+        await expect.poll(() => frame.locator(".rc-tip-pool").count(), { timeout: 5000 }).toBe(1);
+
+        // THE invariant: while the line is hovered and drawn at its thick width, every point within that thick
+        // stroke must still hit-test to the TARGET. If the fat visible line answers here, the pointer leaves
+        // the target the moment the highlight appears — which is the oscillation.
+        const owners = await frame.evaluate(({ fx, fy, ox, oy }) => {
+            const plot = document.querySelector(".rc-plot").getBoundingClientRect();
+            const x = plot.left + fx - ox, y = plot.top + fy - oy;
+            return [-1.4, -1, -0.5, 0, 0.5, 1, 1.4].map((dy) => {
+                const el = document.elementFromPoint(x, y + dy);
+                return el ? (typeof el.className === "object" ? el.getAttribute("class") : el.className) || el.tagName : "none";
+            });
+        }, { fx: spot.x - inFrame.dx, fy: spot.y - inFrame.dy, ox: 0, oy: 0 });
+        expect(owners.filter((c) => /rc-line/.test(c)),
+            `the thickened line took the pointer from its own hit target (${owners.join(", ")})`).toEqual([]);
+
+        // And behaviourally: sit on the edge and the tooltip stays up.
+        let missing = 0;
+        for (let i = 0; i < 10; i++) {
+            await page.mouse.move(spot.x, spot.y + (i % 2 ? 1.2 : 0.9));
+            await sleep(50);
+            if (!(await frame.locator(".rc-tip-pool").count())) missing++;
+        }
+        expect(missing, "the tooltip flickered while the pointer sat on the line's edge").toBe(0);
+    } finally {
+        await ext.close();
+        await fake.stop();
+    }
+});
+
+// Dragging up stops at the floor — and STAYS there. It used to settle a few px away after release: the drag
+// read its own shortfall in the same frame as the height that caused it (the chart's flex box and its SVG
+// settle a frame later), so it stopped just off the true minimum and the next correction moved it.
+test("resource panel: releasing the drag doesn't move the panel", async () => {
+    const fake = await startFakeLlm({ model: "fake-model" });
+    const ext = await launchExtension();
+    try {
+        await configureExtension(ext.sw, {
+            chatUrl: `${fake.url}/api/chat/completions`, apiKey: "", apiFormat: "openai",
+            model: "fake-model", debugMode: "overlay",
+        });
+        fake.setCapacity(box(IDLE - 18 * GiB, IDLE));
+        fake.setResident([resident("gemma4:31b", 18 * GiB, 0), resident("qwen3.5:35b", 22 * GiB, 1)]);
+        const { page, frame } = await openPanel(fake, ext);
+        await expect.poll(() => frame.locator(".rc-plot").count(), { timeout: 20000 }).toBeGreaterThan(0);
+        await sleep(3000);
+
+        const height = async () => (await frame.locator(".vram").boundingBox()).height;
+        const tall = await height();
+        const grip = await frame.locator(".vram-grip").boundingBox();
+        await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+        await page.mouse.down();
+        // Well past the floor: the clamp is what stops it, not the pointer.
+        await page.mouse.move(grip.x + grip.width / 2, grip.y - 400, { steps: 12 });
+        await sleep(150);
+        const held = await height();
+        expect(held, "the drag squeezed the panel").toBeLessThan(tall - 20);
+
+        await page.mouse.up();
+        // Through the correction tick (1s) and well past it: the height must not move AT ALL.
+        for (const wait of [100, 400, 1200, 2000]) {
+            await sleep(wait);
+            expect(Math.abs((await height()) - held), `the panel moved ${Math.round((await height()) - held)}px after release`)
+                .toBeLessThanOrEqual(1);
+        }
+        // And it really is the floor: the content fits, with nothing overflowing.
+        const over = await frame.locator(".vram").evaluate((el) => el.scrollHeight - el.clientHeight);
+        expect(over, "it stopped where everything still fits").toBeLessThanOrEqual(2);
+    } finally {
+        await ext.close();
+        await fake.stop();
+    }
+});

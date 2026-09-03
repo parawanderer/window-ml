@@ -339,12 +339,20 @@ function OverlayView({ def, samples, latest, hidden }: { def: TrackDef; samples:
                                 return (
                                     <g key={p.id}>
                                         {/* A wide TRANSPARENT copy is the hit target: a 1.5px line is almost
-                                            impossible to hover, so the visible stroke stays thin. */}
+                                            impossible to hover, so the visible stroke stays thin. Its width
+                                            NEVER changes — it already covers the hovered stroke, so the
+                                            target cannot move out from under a still pointer. */}
                                         <polyline points={pts} fill="none" stroke="transparent" stroke-width="10"
                                             vector-effect="non-scaling-stroke" class="rc-hit"
                                             onPointerEnter={() => enterPool(p)}
                                             onPointerLeave={() => leavePool()} />
-                                        <polyline points={pts} fill="none" vector-effect="non-scaling-stroke"
+                                        {/* The visible line takes NO pointer events. Painted on top of the hit
+                                            target, it would take them by default — and since it THICKENS on
+                                            hover, hovering near the edge put the pointer on the fat stroke,
+                                            which fired pointerleave on the hit target, which thinned it again:
+                                            a tooltip flickering many times a second. Only the fixed-width
+                                            target decides. */}
+                                        <polyline class="rc-line" points={pts} fill="none" vector-effect="non-scaling-stroke"
                                             stroke={VRAM_COLORS[pi % VRAM_COLORS.length]}
                                             stroke-width={on ? 3 : 1.5} opacity={muted ? 0.25 : 1} />
                                     </g>

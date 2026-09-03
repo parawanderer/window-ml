@@ -318,6 +318,20 @@ export function shortfall(el: HTMLElement | null): number {
     return Math.max(0, el.scrollHeight - el.clientHeight);
 }
 
+/** The smallest height at which everything still fits — measured, by squeezing the panel to nothing and asking
+ *  what its content then needs. One forced layout, and no guessing: a shortfall read in the same frame as the
+ *  height that caused it can be WRONG (the chart's flex box and its SVG settle a frame later), which is what
+ *  let a drag stop just under the true floor and then jump when the next correction disagreed. Asking for the
+ *  minimum directly means the drag and the correction compute the same number. */
+export function measureFloor(el: HTMLElement | null): number {
+    if (!el) return 0;
+    const prev = el.style.height;
+    el.style.height = "0px";
+    const min = el.scrollHeight;   // reading it forces the layout, so this is the settled answer
+    el.style.height = prev;        // …and restoring before the frame ends means nothing is ever painted at 0
+    return Math.ceil(min);
+}
+
 /** What the panel currently looks like, so a learned floor is discarded when the layout changes rather than
  *  ratcheting upward forever — switching to a smaller view must be able to shrink again. */
 export const layoutKey = (tracks: number, rows: number): string => `${tracks}:${rows}`;
@@ -523,12 +537,10 @@ export function VramPanel() {
         // A drag that has gone quiet is over, whether or not its release ever reached us.
         if (dragging.value && dragStale()) dragging.value = false;
         if (dragging.value) return;
-        const need = shortfall(el);
-        if (need <= 0) return;
-        // Exactly what does not fit — so the result is where the overlap stops, which IS the minimum here.
-        const floor = Math.ceil(el.getBoundingClientRect().height + need);
-        setLearned({ key, h: floor });
-        easeVramH(floor);
+        const floor = measureFloor(el);
+        if (floor !== minH) setLearned({ key, h: floor });
+        // Only ever GROWS: a height the user chose is theirs to keep, however much room is left over.
+        if (el.getBoundingClientRect().height < floor - 1) easeVramH(floor);
     };
     useEffect(correct);
     // The panel already ticks once a second (the TTL countdowns); that is also what notices a drag whose
@@ -572,21 +584,18 @@ export function VramPanel() {
         // its parts.
         // NOT clamped to a remembered floor: a stale floor is exactly the thing that fights you. The drag goes
         // where you put it, and the panel corrects once you let go — and learns the floor from that.
-        let liveFloor = Infinity;   // the smallest height seen this drag where the content still fits
+        // The floor is measured ONCE, up front: the layout cannot change under a held pointer, and asking each
+        // frame invited the answer to differ between frames — which is exactly how a drag used to stop just
+        // below the true minimum and then jump on release.
+        const floor = measureFloor(el);
         const move = (ev: PointerEvent) => {
             noteDrag();
             // The button came up somewhere we never heard about — end the drag rather than staying "held".
             if (ev.buttons === 0) return up();
-            const want = Math.max(1, startH + (ev.clientY - startY));
-            // Apply IMPERATIVELY first: the signal's render is async, so reading scrollHeight after it would
-            // measure the previous height. Writing the style forces layout now, which is what makes a live
-            // floor possible at all.
-            el.style.height = `${want}px`;
-            const need = shortfall(el);
-            // Dragging UP is blocked at the point the content stops fitting — otherwise the panel keeps
-            // shrinking and the text mangles until release. Dragging DOWN is never restricted.
-            const h = need > 0 ? want + need : want;
-            if (need <= 0) liveFloor = Math.min(liveFloor, h);
+            // Dragging UP stops at the floor — otherwise the panel keeps shrinking and the text mangles until
+            // release. Dragging DOWN is never restricted.
+            const h = Math.max(floor, Math.max(1, startH + (ev.clientY - startY)));
+            // Apply IMPERATIVELY: the signal's render is async, and the pointer must never outrun the panel.
             el.style.height = `${h}px`;
             vramH.value = h;
         };
@@ -597,9 +606,9 @@ export function VramPanel() {
             grip.removeEventListener("pointerup", up);
             grip.removeEventListener("pointercancel", up);
             try { grip.releasePointerCapture(e.pointerId); } catch { /* already released */ }
-            // The floor is learned from the drag itself: the smallest height passed through where everything
-            // still fitted. Nothing to compute from parts, and nothing to discover after the fact.
-            if (Number.isFinite(liveFloor)) setLearned({ key, h: Math.ceil(liveFloor) });
+            // The floor the drag was clamped against IS this layout's floor — the same number the correction
+            // will compute, so nothing moves after you let go.
+            setLearned({ key, h: floor });
             dragging.value = false;
             // Let the browser lay out at the released height first, then measure and correct.
             requestAnimationFrame(() => requestAnimationFrame(correct));

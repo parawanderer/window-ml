@@ -6050,8 +6050,8 @@ test("resource panel: badge tooltips aren't clipped by the resizable panel", asy
 
 // A panel dragged too small cannot fit its header, plot and rows — the content spilled over the session list
 // below rather than shrinking. Both the drag and the stylesheet enforce a floor.
-test("resource panel: the floor is LEARNED from the actual shortfall, not summed from parts", async () => {
-    const { shortfall, layoutKey } = await import("../sidebar/vram.tsx");
+test("resource panel: the floor is MEASURED, not summed from parts", async () => {
+    const { shortfall, measureFloor, layoutKey } = await import("../sidebar/vram.tsx");
     // Summing the parts is a guess about which parts exist and how tall they are — it goes stale the moment a
     // track grows a row or a name wraps, and the symptom is content rendering on top of itself. The shortfall
     // is what does not fit, whatever that content turns out to be.
@@ -6059,6 +6059,22 @@ test("resource panel: the floor is LEARNED from the actual shortfall, not summed
     assert.equal(shortfall({ scrollHeight: 300, clientHeight: 300 }), 0, "it fits → nothing to learn");
     assert.equal(shortfall({ scrollHeight: 200, clientHeight: 300 }), 0, "never negative — room to spare is not a floor");
     assert.equal(shortfall(null), 0);
+
+    // The floor itself is asked for directly: squeeze the panel to nothing and see what its content then
+    // needs. A shortfall read in the same frame as the height that caused it can be wrong (the chart settles a
+    // frame later), which is what let a drag stop just under the floor and then jump when the correction
+    // disagreed. One question, one answer, used by both.
+    const el = {
+        style: { height: "180px" }, scrollHeight: 0,
+        set _h(v) { this.style.height = v; this.scrollHeight = v === "0px" ? 167 : 180; },
+    };
+    Object.defineProperty(el.style, "height", {
+        get() { return this._v ?? "180px"; },
+        set(v) { this._v = v; el.scrollHeight = v === "0px" ? 167 : 180; },
+    });
+    assert.equal(measureFloor(el), 167, "the minimum is what the content needs at zero height");
+    assert.equal(el.style.height, "180px", "…and the panel is put back before anything is painted");
+    assert.equal(measureFloor(null), 0);
 
     // The floor is keyed by the LAYOUT, so switching to a smaller view can shrink again rather than the panel
     // ratcheting permanently taller.
@@ -6380,4 +6396,33 @@ test("tooltips: the pool tip and the cloned pool key follow the newest sample to
     await untilTrue(w, () => layer().includes("31.00 GiB"), `the cloned key tooltip went stale (${layer()})`);
     assert.doesNotMatch(poolTip(), /19\.00 GiB/);
     assert.doesNotMatch(layer(), /19\.00 GiB/);
+});
+
+// Hovering the EDGE of an overview line used to make the tooltip flicker many times a second: the visible
+// stroke THICKENS on hover, and being painted over the hit target it took the pointer events, which fired
+// pointerleave on the target, which thinned it again. The hit target's width is the fix — it never changes,
+// and the visible line is not interactive at all.
+test("overview lines: the hit target never moves under the pointer", async () => {
+    const w = await loadSidebarWorld({
+        vram: [{ model: "big", vramGB: 19, vramBytes: 19 * 1024 ** 3, sizeBytes: 19 * 1024 ** 3,
+                 gpus: [{ id: "0", runner: "CUDA", vramBytes: 19 * 1024 ** 3 }], expiresAt: null }],
+        info: INFO_2CARD,
+    });
+    await w.raw({ __mlSidebarOpen: true });
+    w.shadow.querySelector('[aria-label="VRAM monitor"]').click();
+    for (let i = 0; i < 20 && !w.shadow.querySelector(".rc-hit"); i++) { await w.flush(); await new Promise((r) => setTimeout(r, 150)); }
+    const hit = w.shadow.querySelector(".rc-hit");
+    assert.ok(hit, "the overview draws a hit target for each line");
+    const widthOf = (el) => el.getAttribute("stroke-width");
+    const before = widthOf(hit);
+    const lineBefore = widthOf(w.shadow.querySelector(".rc-line"));
+
+    hit.dispatchEvent(new w.window.MouseEvent("pointerenter", { bubbles: true }));
+    await w.flush();
+    assert.notEqual(widthOf(w.shadow.querySelector(".rc-line")), lineBefore, "the visible line does thicken (that is the point of the highlight)");
+    assert.equal(widthOf(w.shadow.querySelector(".rc-hit")), before, "…but the target it sits on does not move");
+
+    // And the thickened line can't steal the pointer from the target underneath it.
+    const css = require("node:fs").readFileSync("sidebar/sidebar.css", "utf8");
+    assert.match(css, /\.rc-line \{[^}]*pointer-events:\s*none/, "the visible line takes no pointer events");
 });

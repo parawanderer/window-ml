@@ -158,9 +158,18 @@ body { background: var(--bg); color: var(--fg); font: var(--fs)/1.5 system-ui, -
            background: var(--panel-2); border-radius: 3px; }
 /* Once a height is chosen, `height` becomes the FLOOR the flex box grows from rather than a fixed size. */
 .vram[style*="height"] .rc-plot { height: auto; }
-.rc-seg { min-width: 2px; height: 100%; overflow: hidden; border-radius: 3px; }
-.rc-area { width: 100%; height: 100%; display: block; }
+/* The chart is taken OUT of the flow (absolute inside a relative segment) so it contributes no intrinsic
+   height. An SVG with a viewBox has an aspect-ratio height, and as a flex item's content that became the
+   automatic minimum of every ancestor — pinning the panel's floor ~50px above what it needs while .rc-plot's
+   own min-height never got a say. Now the plot's min-height IS the limit, with no min-height:0 anywhere (that
+   lets the chart spill over the rows below instead of stopping). */
+.rc-seg { position: relative; min-width: 2px; height: 100%; overflow: hidden; border-radius: 3px; }
+.rc-area { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 /* The soft ceiling on unified memory: the recommended working set INSIDE the system total. */
+/* Only the fixed-width hit target is interactive; the visible line (which changes width on hover) must never
+   be, or hovering its edge oscillates enter/leave. */
+.rc-line { pointer-events: none; }
+.rc-hit { pointer-events: stroke; }
 .rc-soft { position: absolute; left: 0; right: 0; height: 0; border-top: 1px dashed var(--accent); opacity: .6; }
 /* A band names itself on hover, and its neighbours dim so one shape resolves out of a similar-coloured stack. */
 .rc-band { cursor: help; transition: opacity .12s ease; }
