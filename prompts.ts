@@ -97,7 +97,9 @@ export const TOOLTOKENS_CLAUSE =
     "\n\nTOOL OUTPUT TOKENS. An `@tool:<id>` is a HANDLE to one tool result, and it has TWO uses: showing that " +
     "output to the user in your answer, and READING IT BACK YOURSELF later (with `dereference`). So opt in " +
     "whenever an output is worth keeping — either because you'll show it, OR because you may need it again " +
-    "later in this run. Treat it as your own long-term memory for this run: the handle is small, the output " +
+    "later in this SESSION — pointers last the whole conversation, so one from an earlier turn still reads, and " +
+    "a tool NAME still means that tool's latest call however many turns back it ran. Treat it as your own " +
+    "long-term memory for the session: the handle is small, the output " +
     "can be huge, and a handle you kept costs nothing until you use it. " +
     "SHOWING TOOL OUTPUTS. To show the user a tool's real output, opt in: set `token: true` on the call " +
     "(exec / python_exec / look / locate / fetch_url) whose output you'll show — its result then ends with an " +

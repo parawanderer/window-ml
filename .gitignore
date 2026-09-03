@@ -20,3 +20,6 @@ tests/e2e/artifacts/
 .claude/worktrees/
 
 window-ml.code-workspace
+
+# coverage runs (regenerate with the `coverage` skill)
+coverage/

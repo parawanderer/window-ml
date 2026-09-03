@@ -5,9 +5,9 @@
 // reachable, so without it it's a cookie-authenticated read-any-URL exfil primitive), and only a safelisted,
 // non-auth subset of response headers is ever surfaced. Callers gate approval upstream (injected.ts); these
 // functions assume the decision was already made.
-import type { FetchResult } from "./contract";
+import type { FetchResult, FetchFormat, FetchAttempt } from "./contract";
 import { acceptLanguageFrom } from "./contract";
-import { classifyContent, jsonShape } from "./dom";
+import { classifyContent, jsonShape, markdownAlternateHref, resolveMarkdownAlternate, markdownSiblingUrl, isMarkdownResponse, typeFromExtension } from "./dom";
 import { ensureDebuggerAttached, releaseDebugger } from "./sw-cdp";
 import { incognitoEnableSteps } from "./util";
 
@@ -54,9 +54,10 @@ const FETCH_URL_MAX = 8_000_000;
  *  headers `fetch` actually lets us override — `Sec-Fetch-*`/`Origin`/`Referer`/`Cookie` are browser-controlled
  *  (forbidden header names) and left untouched; `Accept`/`Accept-Language` are CORS-safelisted, and modern
  *  Chrome allows overriding `User-Agent`. */
-function browserFetchHeaders(): Record<string, string> {
-    // HTML/XML first like a browser, but welcome JSON/anything — ml.fetch reads APIs too.
-    const h: Record<string, string> = { "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.9,*/*;q=0.8" };
+function browserFetchHeaders(accept?: string): Record<string, string> {
+    // HTML/XML first like a browser, but welcome JSON/anything — ml.fetch reads APIs too. `accept` overrides it
+    // for the Markdown ladder's first rung (see MD_ACCEPT).
+    const h: Record<string, string> = { "Accept": accept || "text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.9,*/*;q=0.8" };
     try { if (typeof navigator !== "undefined" && navigator.userAgent) h["User-Agent"] = navigator.userAgent; } catch { /* no navigator → skip */ }
     try {
         const langs = typeof navigator !== "undefined"
@@ -85,28 +86,155 @@ function safeResponseHeaders(h: Headers): NonNullable<FetchResult["headers"]> | 
     for (const [field, name] of map) { const v = h.get(name); if (v != null) { out[field] = v; any = true; } }
     return any ? out : undefined;
 }
-export async function fetchUrlContent(url: string, credentials = false): Promise<FetchResult> {
-    // `credentials:"include"` sends the user's cookies (authenticated fetch — gated + one-time upstream);
-    // default `"omit"` reads only public bytes. Browser-identity headers either way (see browserFetchHeaders).
-    const res = await fetch(url, { method: "GET", credentials: credentials ? "include" : "omit", redirect: "follow", headers: browserFetchHeaders() });
-    const contentType = res.headers.get("content-type") || "";
+// Markdown ranked first, but everything still welcome — a strict negotiator must never 406 us, and a JSON API
+// that ignores Accept keeps answering JSON. Measured: this alone gets the twin from 9 of the 11 docs sites
+// that publish one (docs.github.com and Cloudflare answer ONLY this way, never a `.md` URL).
+const MD_ACCEPT = "text/markdown, text/x-markdown;q=0.9, text/html;q=0.8, application/json;q=0.8, */*;q=0.7";
+
+// Origins whose derived `.md` sibling missed, for this service-worker's lifetime. Only rung 3 consults it:
+// the negotiated GET (rung 1) costs no extra request, so it always runs. Deliberately NOT persisted — a site
+// that adds Markdown support tomorrow should not be remembered as lacking it for days.
+const noSiblingOrigins = new Set<string>();
+
+/** One GET, returning the pieces every rung needs. Never throws for a non-2xx — only for a network failure. */
+async function rawGet(url: string, credentials: boolean, accept?: string): Promise<{ res: Response; text: string; truncated: boolean; ms: number }> {
+    const t0 = Date.now();
+    const res = await fetch(url, { method: "GET", credentials: credentials ? "include" : "omit", redirect: "follow", headers: browserFetchHeaders(accept) });
     let text = await res.text();
     const truncated = text.length > FETCH_URL_MAX;
     if (truncated) text = text.slice(0, FETCH_URL_MAX);
-    const { type, language, byHeader, byContent, byExtension } = classifyContent(contentType, text, url);
+    return { res, text, truncated, ms: Date.now() - t0 };
+}
+
+/** Assemble the FetchResult from whichever response the ladder settled on. */
+function buildResult(requested: string, r: { res: Response; text: string; truncated: boolean }): FetchResult {
+    const contentType = r.res.headers.get("content-type") || "";
+    const { type, language, byHeader, byContent, byExtension } = classifyContent(contentType, r.text, r.res.url || requested);
     const out: FetchResult = {
-        url: res.url || url, status: res.status, ok: res.ok, type, language,
-        typeByHeader: byHeader, typeByContent: byContent, typeByExtension: byExtension, contentType, text,
-        truncated: truncated || undefined, redirected: res.redirected || undefined,
-        headers: safeResponseHeaders(res.headers),
+        url: r.res.url || requested, status: r.res.status, ok: r.res.ok, type, language,
+        typeByHeader: byHeader, typeByContent: byContent, typeByExtension: byExtension, contentType, text: r.text,
+        truncated: r.truncated || undefined, redirected: r.res.redirected || undefined,
+        headers: safeResponseHeaders(r.res.headers),
     };
     // Pre-parse JSON only when it's whole — a truncated body can't parse. (type stays "json" so the agent knows.)
     // A parsed value also gets a compact TS-like `schema` (jsonShape) so the model can see the structure
     // without the whole payload — on the return object, and the tool can prefer it.
-    if (type === "json" && !truncated) {
-        try { out.json = JSON.parse(text); out.schema = jsonShape(out.json); } catch { /* mislabelled → leave as text */ }
+    if (type === "json" && !r.truncated) {
+        try { out.json = JSON.parse(r.text); out.schema = jsonShape(out.json); } catch { /* mislabelled → leave as text */ }
     }
     return out;
+}
+
+/** Perform the GET for ml.fetch (host permissions bypass CORS). Uncredentialed (no cookies) unless
+ *  `credentials` is set — then it sends the user's cookies (the gated as-you path).
+ *
+ *  With `format: "markdown"` (the default) this runs the NEGOTIATION LADDER for the site's own Markdown, which
+ *  is authored rather than derived and typically an order of magnitude smaller than the page it mirrors:
+ *
+ *    1. `accept`   — the SAME request, asking for Markdown. Costs nothing extra, and its miss IS the HTML
+ *                    fallback we need anyway, so this rung is never a HEAD and never wasted.
+ *    2. `declared` — the `<link rel="alternate" type="text/markdown">` in that HTML. Free to evaluate (we hold
+ *                    the body) and AUTHORITATIVE where derivation cannot be: docs.github.com publishes its twin
+ *                    at `/api/article/body?pathname=…`, which no guess would ever find.
+ *    3. `sibling`  — the derived `.md`/`index.md`. The guess, so it goes last and is skipped for an origin
+ *                    already known not to serve one.
+ *    4. `convert`  — our own HTML→Markdown, applied page-side. The status quo.
+ *
+ *  Rungs 2-4 run only when rung 1 came back HTML: a JSON API answers at rung 1 and the ladder stops there, so
+ *  a data fetch pays exactly one request, as before. Throws on a network/permission failure (the handler turns
+ *  that into an actionable message). */
+export async function fetchUrlContent(url: string, credentials = false, format: FetchFormat = "markdown"): Promise<FetchResult> {
+    // A URL whose extension already names a data/code file never negotiates: there is no prose twin, and
+    // sending a Markdown-first Accept to an API that honours it could change what comes back.
+    const dataShape = ["json", "csv", "code"].includes(typeFromExtension(url)?.type || "");
+    const negotiating = format === "markdown" && !dataShape;
+    const first = await rawGet(url, credentials, negotiating ? MD_ACCEPT : undefined);
+    if (!negotiating) return buildResult(url, first);
+
+    const attempts: FetchAttempt[] = [];
+    const record = (a: FetchAttempt): FetchAttempt => { attempts.push(a); return a; };
+    const ctOf = (r: { res: Response }): string => r.res.headers.get("content-type") || "";
+    const done = (r: typeof first, requested: string, by: FetchAttempt["strategy"]): FetchResult => {
+        const out = buildResult(requested, r);
+        out.negotiation = { wanted: format, attempts, resolvedBy: by };
+        return out;
+    };
+
+    // ---- rung 1: content negotiation on the original URL ----
+    const firstIsMd = isMarkdownResponse(first.res.ok, ctOf(first), first.text);
+    record({ strategy: "accept", url, status: first.res.status, contentType: ctOf(first), bytes: first.text.length, ms: first.ms,
+             outcome: firstIsMd ? "hit" : "not-markdown" });
+    if (firstIsMd) {
+        record({ strategy: "declared", url: "", outcome: "skipped", note: "not attempted — already resolved" });
+        record({ strategy: "sibling", url: "", outcome: "skipped", note: "not attempted — already resolved" });
+        record({ strategy: "convert", url: "", outcome: "skipped", note: "not used" });
+        return done(first, url, "accept");
+    }
+    // Anything that isn't HTML is the resource itself (a JSON API, a CSV, a source file) — there is no twin to
+    // look for and the ladder stops. The remaining rungs only make sense for a rendered document.
+    const firstResult = buildResult(url, first);
+    if (firstResult.type !== "html") {
+        record({ strategy: "declared", url: "", outcome: "skipped", note: `not attempted — the body is ${firstResult.type}, not a document` });
+        record({ strategy: "sibling", url: "", outcome: "skipped", note: "not attempted" });
+        record({ strategy: "convert", url: "", outcome: "skipped", note: "not needed" });
+        firstResult.negotiation = { wanted: format, attempts, resolvedBy: "accept" };
+        return firstResult;
+    }
+    // Every later rung derives from the FINAL url, not the requested one: a redirect is how `…/guide` becomes
+    // `…/guide/`, which is exactly what flips the sibling from `.md` to `index.md`.
+    const landed = first.res.url || url;
+
+    // ---- rung 2: the twin the page DECLARES ----
+    const declaredHref = markdownAlternateHref(first.text);
+    const declared = resolveMarkdownAlternate(declaredHref, landed);
+    if (!declared) {
+        record({ strategy: "declared", url: declaredHref || "", outcome: "skipped",
+                 note: declaredHref ? "declared, but cross-origin — a page-supplied URL doesn't ride this page's grant" : "the page declares none" });
+    } else {
+        try {
+            const r = await rawGet(declared, credentials);
+            const hit = isMarkdownResponse(r.res.ok, ctOf(r), r.text);
+            record({ strategy: "declared", url: declared, status: r.res.status, contentType: ctOf(r), bytes: r.text.length, ms: r.ms,
+                     outcome: hit ? "hit" : "not-markdown" });
+            if (hit) {
+                record({ strategy: "sibling", url: "", outcome: "skipped", note: "not attempted — the site named its own" });
+                record({ strategy: "convert", url: "", outcome: "skipped", note: "not used" });
+                return done(r, declared, "declared");
+            }
+        } catch (e) {
+            record({ strategy: "declared", url: declared, outcome: "error", note: (e as Error)?.message || String(e) });
+        }
+    }
+
+    // ---- rung 3: the derived sibling (the guess) ----
+    const sibling = markdownSiblingUrl(landed);
+    let origin = ""; try { origin = new URL(landed).origin; } catch { /* keep "" */ }
+    if (!sibling) {
+        record({ strategy: "sibling", url: "", outcome: "skipped", note: "nothing to derive from this URL" });
+    } else if (origin && noSiblingOrigins.has(origin)) {
+        record({ strategy: "sibling", url: sibling, outcome: "skipped", note: "skipped — this origin has no .md siblings (seen earlier)" });
+    } else {
+        try {
+            const r = await rawGet(sibling, credentials);
+            const hit = isMarkdownResponse(r.res.ok, ctOf(r), r.text);
+            record({ strategy: "sibling", url: sibling, status: r.res.status, contentType: ctOf(r), bytes: r.text.length, ms: r.ms,
+                     outcome: hit ? "hit" : "not-markdown" });
+            if (hit) {
+                record({ strategy: "convert", url: "", outcome: "skipped", note: "not used" });
+                return done(r, sibling, "sibling");
+            }
+            if (origin) noSiblingOrigins.add(origin);   // don't pay this request again for this origin
+        } catch (e) {
+            record({ strategy: "sibling", url: sibling, outcome: "error", note: (e as Error)?.message || String(e) });
+        }
+    }
+
+    // ---- rung 4: our own conversion (done page-side, which has a DOM) ----
+    // The rung's note stays short; RESOLVED_LABEL is what says whose Markdown this is, so saying it twice in
+    // one tree just makes the row wrap.
+    record({ strategy: "convert", url: landed, outcome: "hit", note: "nav/header/footer/aside stripped" });
+    firstResult.negotiation = { wanted: format, attempts, resolvedBy: "convert" };
+    return firstResult;
 }
 
 const RENDER_LOAD_TIMEOUT_MS = 15_000;   // max wait for the background tab to reach "complete" before snapshotting anyway

@@ -48,7 +48,9 @@ import { annotate, pickAccentColorForTarget } from "./locate";
 import { suspiciousArgsWarning, suspiciousChars } from "./security";
 import { emitDebug, debugId, shortHash, sessionRegistry, agentRegistry, handleRegistry, enterAgentRun, exitAgentRun, resetSubcallUsage, subcallUsage } from "./bus";
 import { makeDomTools, buildDereferenceTool } from "./tools";
-import { pipeStages, TokenStore } from "./token-pipe";
+import { pipeStages, TokenStore, type DerefRead } from "./token-pipe";
+import { Embedding } from "./embedding";
+import { toolNameError } from "./token-id";
 import { hideSidebarForShot, makeBackgroundTaskPromise, makeChatRequest, makeStreamingTaskPromise } from "./bridge";
 import { validateArgs, validateExtend } from "./validate";
 import { renderArgs, logStep, defaultApprove, normalizeApproval, formatReadonlyExec } from "./approval";
@@ -125,6 +127,16 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          *   rows.filter(r => r[2] > 100).length
          * ```
          *
+         * WHY THIS IS ASYNC, since the page path does not need it: when the run is PAGE-hosted the resolver
+         * behind this is synchronous — a pure read of in-memory run state — and the await is ceremony. It is
+         * async for the BACKGROUND-hosted path (design A, the default whenever a debug surface is open),
+         * where the pointer store lives in the service worker and the read is a postMessage round trip. The
+         * signature cannot vary by host: the same call must work either way, and returning a value in one
+         * case and a promise in the other would be an invisible footgun. The cost lands in the READ-ONLY exec
+         * dialect, whose evaluator is a generator precisely because every ml method is async — its `runSync`
+         * driver (for arrows a host method invokes) throws NotInDialect on an await, so
+         * `ids.map(id => ml.dereference(id))` inside a read-only survey falls through to approval.
+         *
          * @param ref A pointer: `@tool:<id>`, the bare id, or a builtin's name for its latest call. `:in` reads
          *            the call/arguments instead of the result.
          * @param options `pipe` reduces the value first — the text-pipe dialect as a string
@@ -140,7 +152,12 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             const fn = currentDeref();
             if (!fn) throw new Error("ml.dereference is only live inside an ml.agent run (it reads that run's captured tool outputs).");
             // STAGES cross the boundary, not a joined string — a stage may hold a bare `|` (see pipeStages).
-            return await fn(String(ref ?? ""), pipeStages(pipe));
+            const read = await fn(String(ref ?? ""), pipeStages(pipe));
+            // The advisory goes to console, NOT into the return value — this result is about to be parsed,
+            // split or piped by the calling script, and exec captures console output into the step's result
+            // and its live stream, so the warning still reaches the model without touching the data.
+            if (read.warning) { try { console.warn(read.warning); } catch { /* no console in this realm */ } }
+            return read.value;
         },
         /**
          * Create a stateful multi-turn chat session.
@@ -396,6 +413,12 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             if (!name || typeof run !== "function") {
                 throw new Error("ml.defineTool needs a name and a run(args) function");
             }
+            // The name goes into a `@tool:<name>` reference bare, so it has to be shaped like one — and must
+            // not look like a generated id, which is what keeps the three reference forms tellable apart.
+            // Thrown at DEFINITION time: a custom tool with an unusable name should fail where it is written,
+            // not silently become uncitable halfway through a run.
+            const nameErr = toolNameError(name);
+            if (nameErr) throw new Error(`ml.defineTool: ${nameErr}`);
             return { name, description, summary, parameters, run, requiresApproval, capabilities, render, precheck };
         },
         /**
@@ -524,6 +547,9 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             const autoPy = !!(agentCfg && (agentCfg as { autoApprovePython?: boolean }).autoApprovePython);
             const autoSOA = !!(agentCfg && (agentCfg as { autoApproveSameOriginAuth?: boolean }).autoApproveSameOriginAuth);
             const autoSelfSrc = !!(agentCfg && (agentCfg as { autoApproveSelfSource?: boolean }).autoApproveSelfSource);
+            // Which lexical metric ranks a near-miss on a pointer LABEL. Undefined = the built-in default;
+            // it is a config value so the benchmark can vary it without a rebuild.
+            const labelMatch = (agentCfg as { labelMatch?: import("./contract").LexicalMetric } | null)?.labelMatch;
             // Closed-shadow-root piercing (opt-in). Set the dom.ts module flag from THIS run's config before
             // any DOM tool executes — it governs both loop paths (the page loop below AND the background's
             // delegated page-side tool execution, since both call into the same main-world dom.ts). Off →
@@ -797,7 +823,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     const res = await makeBackgroundTaskPromise<AgentResult>("START_RUN_REQUEST", "START_RUN_RESPONSE", {
                         runId: runHash, task, systemPrompt, tools: descriptors,
                         model: runModel, think: (think === true || think === false) ? think : null,
-                        maxSteps, autoApprovePython: autoPy, autoApproveReadonly: autoRO, autoApproveSameOriginAuth: autoSOA, autoApproveSelfSource: autoSelfSrc, surface: bgSurface, stream: stream || undefined, toolTokens: toolTokens || undefined,
+                        maxSteps, autoApprovePython: autoPy, autoApproveReadonly: autoRO, autoApproveSameOriginAuth: autoSOA, autoApproveSelfSource: autoSelfSrc, labelMatch, surface: bgSurface, stream: stream || undefined, toolTokens: toolTokens || undefined,
                         images: pendingImages,   // native-vision composer attachments for this turn's user message
                         // (OCR fallback for a text-only driver is already folded into `task` above)
                         unattended: unattended || undefined, silent: silent || undefined,
@@ -913,7 +939,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
             // `ml.dereference` inside an approved exec: the loop hands its pointer resolver to `tokenSink`
             // below, and this closure is what the ToolContext binds — so the primitive is live only while a
             // tool of THIS run is executing (see tool-exec's activeDeref), and resolves against this run.
-            let pageDeref: ((ref: string, pipe?: string | string[]) => string) | null = null;
+            let pageDeref: ((ref: string, pipe?: string | string[]) => DerefRead) | null = null;
             toolCtx.deref = async (ref, pipe) => {
                 if (!pageDeref) throw new Error("This run has no captured outputs yet.");
                 return pageDeref(ref, pipe);
@@ -1052,7 +1078,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                 answerSet.clear();   // the answer set reflects THIS turn's designations only
                 enterAgentRun();   // suppress orphan chat sessions from a tool's internal ml.chat; finally-decremented
                 try {
-                    const r = await runAgentLoop(t, { tools: toolMetas, maxSteps: () => control.maxSteps, signal, unattended, toolTokens, runHash, seqBase: control.seqBase, stream, tokenStore: (control.tokens ??= new TokenStore()), tokenSink: (fn) => { pageDeref = fn; } }, deps);
+                    const r = await runAgentLoop(t, { tools: toolMetas, maxSteps: () => control.maxSteps, signal, unattended, toolTokens, runHash, seqBase: control.seqBase, stream, tokenStore: (control.tokens ??= new TokenStore()), labelMatch, tokenSink: (fn) => { pageDeref = fn; } }, deps);
                     control.seqBase += turnMaxSeq; turnMaxSeq = 0;   // next turn's step seqs continue past this turn's
                     control.stepBase += turnMaxStep; turnMaxStep = 0;   // …and its step numbers, so turn groups stay distinct
                     // The bottom-of-answer render: the outputs the model DESIGNATED into the answer set, minus
@@ -1582,7 +1608,11 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     "question — you get back the ANSWER, not the (possibly huge) body, so a big page/API never floods " +
                     "your context. Use it when you need a FACT out of the content, not the raw bytes to process further. " +
                     "An HTML page is auto-converted to clean Markdown (scripts/nav/chrome stripped) so you get the " +
-                    "readable content, not tag soup; set `raw: true` if you specifically need the original HTML. " +
+                    "readable content, not tag soup. Better still, many docs sites PUBLISH their own Markdown version of a page — " +
+                    "this NEGOTIATES for it (asking the server, then following any version the page declares, then a " +
+                    "conventional `.md` URL) and falls back to converting the HTML itself, so you usually get the site's " +
+                    "authored text rather than our reduction of its markup. Set `format: \"html\"` if you specifically " +
+                    "need the original markup and no negotiation. " +
                     "**NOTE:** When a user asks you to get information from a user-facing HTML page, assume the user " +
                     "wants you to actually navigate them to a page by default so that they see the information themselves. " +
                     "You can still use this tool to fetch the information for your own usage, but navigate the user so that " +
@@ -1600,7 +1630,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                         credentials: { type: "boolean", description: "If true, fetch AS THE USER (send their cookies) for authenticated data. Always prompts; never cached/remembered." },
                         rendered: { type: "boolean", description: "If true, load the URL in a background tab so its JavaScript runs, then return the SETTLED DOM — for client-rendered/SPA pages a raw GET returns empty. Renders in INCOGNITO (no session/cookies): same-origin is FREE, cross-origin asks once then remembered (needs 'Allow in Incognito'). Add credentials:true to render in the user's SESSION (a normal tab with cookies) — always re-asks. Slower/heavier; never cached." },
                         ask: { type: "string", description: "If set, a fast reader model reads the fetched content and answers THIS question; you get the answer, not the body (keeps a large page out of your context). Takes precedence over `schema`." },
-                        raw: { type: "boolean", description: "If true, return an HTML page's ORIGINAL raw HTML instead of the auto-converted Markdown (HTML is converted to clean Markdown by default for readability; non-HTML is unaffected)." },
+                        format: { type: "string", enum: ["markdown", "html"], description: "What DOCUMENT to fetch. \"markdown\" (default) negotiates for the site's own Markdown version of the page and falls back to converting its HTML. \"html\" returns the ORIGINAL markup in one plain request, no negotiation — for when you need the markup itself (a selector, an attribute, an embedded script). Data bodies (JSON/CSV/code) are unaffected either way." },
                         pipe: { type: "string", description: "Optional. SCAN/FILTER the returned text through a small shell-style pipeline BEFORE it reaches you — so you read only the relevant lines instead of the whole doc (cheaper). " + PIPE_SYNTAX + " For anything MORE COMPLEX than this dialect, use exec instead: `const { markdown } = await ml.fetch('<the url>');` then process that string with JS." },
                     },
                     required: ["url"],
@@ -1615,19 +1645,26 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     const pipe = (typeof a?.pipe === "string" && a.pipe.trim()) ? a.pipe.trim() : undefined;
                     return { type: "action", verb: "fetch", target: String(a?.url ?? ""), ...(note ? { note } : {}), ...(ask ? { ask } : {}), ...(pipe ? { pipe } : {}) };
                 },
-                run: async ({ url, schema = false, credentials = false, rendered = false, ask = null, raw = false, pipe = null }: { url?: unknown; schema?: boolean; credentials?: boolean; rendered?: boolean; ask?: unknown; raw?: boolean; pipe?: unknown } = {}, ctx?: import("./contract").ToolContext): Promise<string | ToolResult> => {
+                run: async ({ url, schema = false, credentials = false, rendered = false, ask = null, format = "markdown", pipe = null }: { url?: unknown; schema?: boolean; credentials?: boolean; rendered?: boolean; ask?: unknown; format?: unknown; pipe?: unknown } = {}, ctx?: import("./contract").ToolContext): Promise<string | ToolResult> => {
                     if (typeof url !== "string" || !url.trim()) return "Error: fetch_url needs a `url`.";
                     let r: import("./contract").FetchResult;
-                    try { r = await ml.fetch(url, { credentials, rendered }); }
+                    const wantHtml = format === "html";
+                    try { r = await ml.fetch(url, { credentials, rendered, format: wantHtml ? "html" : "markdown" }); }
                     catch (e) { return `Error: ${errText(e)}`; }
                     const mislabel = r.typeByHeader && r.typeByHeader !== r.type ? ` (header said "${r.typeByHeader}")` : "";
                     const head = `Fetched ${r.url} — HTTP ${r.status}, type: ${r.type}${r.language ? ` (${r.language})` : ""}${mislabel}${r.truncated ? " · body truncated" : ""}.`;
                     // HTML → Markdown by DEFAULT (readability): an HTML page is mostly slop (scripts/nav/chrome) to a
                     // reading model, so distil it unless `raw` is set. Only HTML — json/csv/code/text/markdown are
                     // already clean. Applies to BOTH the normal view and the ask-mode reader input.
-                    const converted = r.type === "html" && !raw && !schema && r.json === undefined;
+                    const converted = r.type === "html" && !wantHtml && !schema && r.json === undefined;
+                    // Say WHOSE Markdown this is. The site's own is authored for reading and is the better text;
+                    // ours is a reduction of the page's markup with nav/header/footer stripped. A model that
+                    // can't tell them apart can't judge whether a missing detail was never there or was cut.
+                    const by = r.negotiation?.resolvedBy;
                     const mdNote = converted
-                        ? "\n\n(This page was raw HTML; the tool converted it to Markdown automatically for readability. Re-run fetch_url with \"raw\": true to get the original HTML.)"
+                        ? "\n\n(This page was HTML; the tool converted it to Markdown itself for readability — nav/header/footer stripped. Re-run with \"format\": \"html\" for the original markup.)"
+                        : (by === "accept" || by === "declared" || by === "sibling")
+                        ? `\n\n(This is the SITE'S OWN Markdown version of the page${by === "declared" ? ", the one it declares for agents" : by === "sibling" ? ", from its .md URL" : ", served by content negotiation"} — authored text, not our conversion of the HTML. Re-run with "format": "html" for the original markup.)`
                         : "";
                     // The body to read/return: converted Markdown for HTML (unless raw), else the JSON/raw text.
                     // ml.fetch already attached `.markdown` for HTML; reuse it (fall back to a fresh conversion).
@@ -1638,6 +1675,17 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     // hatch. The FOOTER states the result's size (lines / chars, vs source) so the model has a
                     // reference for what it's operating on. `pipeStr` is the trimmed pipe (falsy = no pipe).
                     const pipeStr = typeof pipe === "string" && pipe.trim() ? pipe.trim() : "";
+                    /** ONE In descriptor for every return path, so no path can quietly drop a field. It used to
+                     *  be built per-path, which is why a credentialed PIPED fetch lost its "as you" note. Carries
+                     *  the Markdown ladder's trace when negotiation ran — the sidebar draws it as a resolution
+                     *  tree, and the export mirrors it. */
+                    const inRender = (extra: Record<string, unknown> = {}): RenderDescriptor => ({
+                        type: "action", verb: "fetch", target: r.url,
+                        ...(credentials ? { note: "as you (sends your cookies)" } : rendered ? { note: "rendered (ran the page's JS)" } : {}),
+                        ...(pipeStr ? { pipe: pipeStr } : {}),
+                        ...(r.negotiation ? { attempts: r.negotiation.attempts, resolvedBy: r.negotiation.resolvedBy } : {}),
+                        ...extra,
+                    } as RenderDescriptor);
                     const nlines = (s: string): number => s === "" ? 0 : s.replace(/\n$/, "").split("\n").length;
                     const doPipe = (src: string): { text: string; footer: string; err?: string } => {
                         if (!pipeStr) return { text: src, footer: "" };
@@ -1650,7 +1698,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                         // drop raw:true (the default HTML→Markdown lines up cleanly) or otherwise reformat first.
                         const srcLines = nlines(src);
                         const minified = srcLines <= 2 && src.length > 800;
-                        const warn = minified ? ` — ⚠ the source is ${srcLines} line${srcLines === 1 ? "" : "s"} (minified?), so line tools couldn't split it${r.type === "html" && raw ? "; drop \"raw\": true to pipe the clean Markdown instead" : ""}` : "";
+                        const warn = minified ? ` — ⚠ the source is ${srcLines} line${srcLines === 1 ? "" : "s"} (minified?), so line tools couldn't split it${r.type === "html" && wantHtml ? "; drop \"format\": \"html\" to pipe the clean Markdown instead" : ""}` : "";
                         return { text: out, footer: `\n\n(piped through \`${pipeStr}\`: ${nlines(out)} lines, ${out.length.toLocaleString()} chars — filtered from ${srcLines} source lines${warn})` };
                     };
                     // ASK mode: distill the body through a fast reader model (extend:"utility") instead of returning
@@ -1685,17 +1733,15 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                         const prevCalls = new Map((beforeU.byModel || []).map(m => [m.model, m.calls]));
                         const answeredBy = (afterU.byModel || []).find(m => (m.calls - (prevCalls.get(m.model) || 0)) > 0)?.model || null;
                         const content = `${head}\n\nAnswer${cut ? " (the content was truncated before reading — it may be incomplete)" : ""}:\n${answer}${mdNote}${pp.footer}`;
-                        const renderIn: RenderDescriptor = {
-                            type: "action", verb: "fetch", target: r.url, ask: question,
-                            ...(credentials ? { note: "as you (sends your cookies)" } : {}),
-                            ...(pipeStr ? { pipe: pipeStr } : {}),
+                        const renderIn: RenderDescriptor = inRender({
+                            ask: question,
                             ...(answeredBy ? { answeredBy } : {}), ...(tokens > 0 ? { tokens } : {}),
                             // The content handed to the reader — the in-the-middle step, so the distill is auditable
                             // (like locate's per-substep prompt). JSON is highlighted; a converted HTML page shows as
                             // the Markdown the reader actually saw, not the original tag soup.
                             askBody: clipped, askBodyLang: r.json !== undefined ? "json" : converted ? "markdown" : "text",
                             ...(cut ? { askBodyTruncated: true } : {}),
-                        };
+                        });
                         return { content, renderIn };
                     }
                     // `schema: true` — the caller wants the JSON's STRUCTURE, not the body.
@@ -1705,10 +1751,10 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                             const why = r.truncated ? "the body was too large to parse whole" : `it's ${r.type}, Content-Type: ${r.contentType || "(none)"}`;
                             return `Error: you asked for the JSON schema, but ${r.url} isn't JSON — ${why}${mislabel}. First bytes:\n\n${clipOut(r.text, 600)}`;
                         }
-                        const sig = r.schema ?? jsonShape(r.json), raw = JSON.stringify(r.json, null, 2);
+                        const sig = r.schema ?? jsonShape(r.json), rawJson = JSON.stringify(r.json, null, 2);
                         // If the shape is bigger than the payload itself (a tiny/flat object), just dump the JSON.
-                        if (sig.length >= raw.length) return `${head}\n\n${clipOut(raw, 4000)}\n\n(raw JSON shown — its schema would be larger than the object itself.)`;
-                        return `${head}\n\nJSON schema:\n${clipOut(sig, 4000)}`;
+                        if (sig.length >= rawJson.length) return { content: `${head}\n\n${clipOut(rawJson, 4000)}\n\n(raw JSON shown — its schema would be larger than the object itself.)`, renderIn: inRender() };
+                        return { content: `${head}\n\nJSON schema:\n${clipOut(sig, 4000)}`, renderIn: inRender() };
                     }
                     // Default: the body (HTML → Markdown unless raw), optionally scanned through `pipe` (which the
                     // model uses to filter a big doc to the relevant lines BEFORE the clip). For a LARGE json, prepend
@@ -1721,10 +1767,7 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                         ? `JSON schema: ${r.schema}\n\n` : "";
                     // The pipe footer (size/lines) goes at the END, so the model has a reference for the doc it got.
                     const buildTool = (t: string): string => `${head}${mdNote}\n\n${shapeLine}${t}${pd.footer}`;
-                    const bodyRender: RenderDescriptor | undefined = pipeStr
-                        ? { type: "action", verb: "fetch", target: r.url, pipe: pipeStr }
-                        : undefined;
-                    return bodyRender ? { content: buildTool(clipOut(body, 4000)), renderIn: bodyRender } : buildTool(clipOut(body, 4000));
+                    return { content: buildTool(clipOut(body, 4000)), renderIn: inRender() };
                 },
             });
         },
@@ -2297,6 +2340,32 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
         range: mlRange,
         pipe: mlPipe,
         /**
+         * Embed text with the configured embedding model — for comparing MEANING rather than spelling.
+         *
+         * Returns an {@link Embedding}: a UNIT vector, so `.dot(other)` is cosine similarity by construction
+         * rather than by assumption. Pass an array to embed in ONE round trip (the modern Ollama endpoint
+         * batches; the legacy one is a per-input fallback).
+         *
+         * ```js
+         *   const [q, ...docs] = await ml.embed(["sales figures", "the Q3 table", "a screenshot"]);
+         *   q.rank(docs.map((embedding, key) => ({ key, embedding })));   // most similar first
+         * ```
+         *
+         * @param {string|string[]} input Text, or several strings embedded together.
+         * @param {{model?: string}} [opts] Override the configured model. Vectors from DIFFERENT models are
+         *        different geometries, so comparing across them throws rather than returning a meaningless number.
+         * @returns {Promise<Embedding|Embedding[]>} One per input, in order.
+         */
+        embed: async function<T extends string | string[]>(input: T, opts?: { model?: string }): Promise<T extends string[] ? Embedding[] : Embedding> {
+            const many = Array.isArray(input);
+            const inputs = (many ? input as string[] : [input as string]).map(String);
+            const r = await makeBackgroundTaskPromise<{ model: string; vectors: number[][] }>(
+                "EMBED_REQUEST", "EMBED_RESPONSE", { inputs, ...(opts?.model ? { model: opts.model } : {}) });
+            const out = r.vectors.map(v => Embedding.from(v));
+            // The one cast a conditional return type always needs; the SHAPE is checked by the branch above.
+            return (many ? out : out[0]) as T extends string[] ? Embedding[] : Embedding;
+        },
+        /**
          * GET a URL's content via the background worker — bypasses CORS (host permissions), and by DEFAULT sends
          * no cookies (uncredentialed; `credentials`/`rendered` opt in — see below). Use it to READ a page/file
          * the current DOM can't reach — a raw source file, a JSON API, another site — instead of NAVIGATING
@@ -2335,11 +2404,12 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
          * @param {{ fresh?: boolean; credentials?: boolean; rendered?: boolean }} [opts] `fresh` bypasses the read cache; `credentials` fetches with the user's cookies; `rendered` loads it in a background tab and returns the settled DOM (both gated, uncached).
          * @returns {Promise<FetchResult>} { url, status, ok, type, language?, text, json?, schema?, typeBy*, truncated?, rendered?, headers? }. `headers` is a SAFELIST of non-sensitive response headers (link/etag/lastModified/retryAfter/contentLength/contentDisposition/cacheControl/date) — auth headers (Cookie/Authorization/…) are never exposed.
          */
-        fetch: function(url: string, opts?: { fresh?: boolean; credentials?: boolean; rendered?: boolean }): Promise<import("./contract").FetchResult> {
+        fetch: function(url: string, opts?: { fresh?: boolean; credentials?: boolean; rendered?: boolean; format?: import("./contract").FetchFormat }): Promise<import("./contract").FetchResult> {
             const key = String(url);   // the real method always fetches live; `fresh` only matters for the read-only cache path
             const credentials = !!opts?.credentials;
             const rendered = !!opts?.rendered;
-            return makeBackgroundTaskPromise<import("./contract").FetchResult>("FETCH_URL_REQUEST", "FETCH_URL_RESPONSE", { url: key, credentials, rendered })
+            const format = opts?.format === "html" ? "html" as const : "markdown" as const;
+            return makeBackgroundTaskPromise<import("./contract").FetchResult>("FETCH_URL_REQUEST", "FETCH_URL_RESPONSE", { url: key, credentials, rendered, format })
                 .then(r => {
                     // For an HTML body, attach a `.markdown` distillation (scripts/nav/chrome stripped) so ANY
                     // caller — exec, a read-only survey (`ml.fetch(url).markdown`), the fetch_url tool — gets the
@@ -2348,7 +2418,11 @@ type LoadedTable = { name: string; source: TableSource; data: { kind: "rows"; co
                     if (r && r.type === "html" && typeof r.text === "string" && r.markdown === undefined) {
                         try { r.markdown = htmlToMarkdown(r.text); } catch { /* leave undefined — callers fall back to .text */ }
                     }
-                    if (r && r.ok && !credentials && !rendered) mlFetchCache.set(key, r);   // cache ONLY a successful UNCREDENTIALED, non-rendered fetch (as-you bytes are authenticated — never cache)
+                    // Cache ONLY a successful UNCREDENTIALED, non-rendered fetch (as-you bytes are authenticated —
+                    // never cache). Keyed by url ALONE, so only the DEFAULT format is cached: `format:"html"`
+                    // returns different bytes for the same url, and letting it share the key would hand a later
+                    // reader the wrong document.
+                    if (r && r.ok && !credentials && !rendered && format === "markdown") mlFetchCache.set(key, r);
                     return r;
                 });
         },

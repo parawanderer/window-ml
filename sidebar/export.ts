@@ -10,6 +10,7 @@
 // Includes a tiny dependency-free store-method ZIP writer (PNGs are already
 // deflated). Extracted from app.tsx.
 import atomOneLight from "highlight.js/styles/atom-one-light.css";
+import { ladderLines } from "./fetch-ladder";
 import katexCss from "katex/dist/katex.min.css";
 import { sessionMap, turnsRun, config } from "./store";
 import type { Session, AgentStep } from "./store";
@@ -373,12 +374,23 @@ function writeAgent(s: Session, d: Sink): void {
             // like the python input table, so the .md stays readable but the PDF (<details open>) still shows it.
             if (ri.askBody) d.details(`content read by the model${ri.askBodyTruncated ? " (truncated)" : ""} · ${ri.askBody.length.toLocaleString()} chars`, () => d.code(ri.askBody!, ri.askBodyLang || "text"));
             if (ri.pipe) d.block("Piped through", ri.pipe, "bash");
+            const lad = ladderLines(ri.attempts, ri.resolvedBy);
+            if (lad.length) d.block("Markdown negotiation", lad.join("\n"));
             renderedIn = true;
         } else if (st.renderIn && st.renderIn.type === "action" && st.renderIn.pipe) {
             // fetch_url `pipe` (no ask): show the URL + the shell pipeline as a `bash` block, matching the sidebar.
             const ri = st.renderIn;
-            d.block("In", `${ri.verb}${ri.target ? " " + ri.target : ""}`);
+            d.block("In", `${ri.verb}${ri.target ? " " + ri.target : ""}${ri.note ? " · " + ri.note : ""}`);
             d.block("Piped through", ri.pipe!, "bash");
+            const lad = ladderLines(ri.attempts, ri.resolvedBy);
+            if (lad.length) d.block("Markdown negotiation", lad.join("\n"));
+            renderedIn = true;
+        } else if (st.renderIn && st.renderIn.type === "action" && st.renderIn.attempts?.length) {
+            // A plain fetch_url (no ask, no pipe) had NO In branch, so its ladder would have been dropped —
+            // and the ladder is the one view that shows which URL the bytes came from (render-in-both).
+            const ri = st.renderIn;
+            d.block("In", `${ri.verb}${ri.target ? " " + ri.target : ""}${ri.note ? " · " + ri.note : ""}`);
+            d.block("Markdown negotiation", ladderLines(ri.attempts, ri.resolvedBy).join("\n"));
             renderedIn = true;
         } else if (!st.renderIn && st.tool === "exec" && typeof st.arguments?.js === "string") {
             d.block("In", beautifyJs(st.arguments.js), "javascript");

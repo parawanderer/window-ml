@@ -18,6 +18,10 @@ const jsonResult = (json, extra = {}) => ({
     contentType: "application/json", ...extra,
 });
 
+// fetch_url's returns are ToolResults wherever an In render rides along (the Markdown ladder's trace); this
+// reads the model-facing text out of either shape.
+const body = (out) => (typeof out === "string" ? out : out.content);
+
 test("fetch_url tool: the render note flags schema-only vs full-page (so the log says which the agent asked for)", async () => {
     const tool = fetchTool(jsonResult({ a: 1 }));
     const full = tool.render(undefined, { url: "https://x.test/a.json" });
@@ -30,7 +34,7 @@ test("fetch_url tool: the render note flags schema-only vs full-page (so the log
 
 test("fetch_url tool: schema:true returns the JSON shape, not the body", async () => {
     const json = { id: 7, items: [{ name: "a" }, { name: "b" }] };
-    const out = await fetchTool(jsonResult(json, { schema: "{ id: number, items: { name: string }[] /* 2 items */ }" })).run({ url: "https://x.test/a.json", schema: true });
+    const out = body(await fetchTool(jsonResult(json, { schema: "{ id: number, items: { name: string }[] /* 2 items */ }" })).run({ url: "https://x.test/a.json", schema: true }));
     assert.match(out, /JSON schema:/);
     assert.match(out, /items: \{ name: string \}\[\]/);
     assert.doesNotMatch(out, /"name":\s*"a"/, "the raw body is NOT dumped when schema was requested");
@@ -38,7 +42,7 @@ test("fetch_url tool: schema:true returns the JSON shape, not the body", async (
 
 test("fetch_url tool: schema:true falls back to computing the shape when the result carries none", async () => {
     // No `.schema` on the result → the tool computes jsonShape(json) itself.
-    const out = await fetchTool(jsonResult({ a: [1, 2, 3] })).run({ url: "https://x.test/a.json", schema: true });
+    const out = body(await fetchTool(jsonResult({ a: [1, 2, 3] })).run({ url: "https://x.test/a.json", schema: true }));
     assert.match(out, /JSON schema:/);
     assert.match(out, /a: number\[\]/);
 });
@@ -55,7 +59,7 @@ test("fetch_url tool: schema:true on a NON-JSON body errors and says what it act
 
 test("fetch_url tool: schema:true dumps the RAW json + a note when the shape would be larger than the object", async () => {
     // A tiny flat object: its shape (`{ a: number }`) is longer than the payload itself.
-    const out = await fetchTool(jsonResult({ a: 1 }, { schema: "{ a: number }" })).run({ url: "https://x.test/a.json", schema: true });
+    const out = body(await fetchTool(jsonResult({ a: 1 }, { schema: "{ a: number }" })).run({ url: "https://x.test/a.json", schema: true }));
     assert.doesNotMatch(out, /JSON schema:/, "no shape header");
     assert.match(out, /"a": 1/, "the raw JSON is shown");
     assert.match(out, /schema would be larger than the object/i, "with a note explaining why");
@@ -64,11 +68,11 @@ test("fetch_url tool: schema:true dumps the RAW json + a note when the shape wou
 test("fetch_url tool: default (no flag) PREPENDS the shape for a LARGE json, but not a small one", async () => {
     // Large json → the shape orients the model even though the body is clipped.
     const big = { items: Array.from({ length: 60 }, (_, i) => ({ name: `item-number-${i}`, index: i })) };
-    const bigOut = await fetchTool(jsonResult(big, { schema: "{ items: { name: string, index: number }[] /* 60 items */ }" })).run({ url: "https://x.test/a.json" });
+    const bigOut = body(await fetchTool(jsonResult(big, { schema: "{ items: { name: string, index: number }[] /* 60 items */ }" })).run({ url: "https://x.test/a.json" }));
     assert.match(bigOut, /JSON schema: \{ items:/, "a big json gets its shape prepended");
     assert.match(bigOut, /"item-number-0"/, "and the (clipped) body too");
     // Small json → no shape line, just the body.
-    const smallOut = await fetchTool(jsonResult({ ok: true }, { schema: "{ ok: boolean }" })).run({ url: "https://x.test/a.json" });
+    const smallOut = body(await fetchTool(jsonResult({ ok: true }, { schema: "{ ok: boolean }" })).run({ url: "https://x.test/a.json" }));
     assert.doesNotMatch(smallOut, /JSON schema:/, "a small json isn't cluttered with a shape line");
     assert.match(smallOut, /"ok": true/);
 });
@@ -777,11 +781,12 @@ test("ml.dereference (background-hosted): the page rings back to the SW, id-matc
     };
     window.addEventListener("message", onMsg);
     try {
-        const value = await derefViaBackground("run-7", "@tool:a1b2c3", "head 5");
-        assert.equal(value, "resolved:@tool:a1b2c3|head 5");
+        const read = await derefViaBackground("run-7", "@tool:a1b2c3f", "head 5");
+        assert.equal(read.value, "resolved:@tool:a1b2c3f|head 5");
+        assert.equal(read.warning, undefined, "no advisory when the pointer matched exactly");
         assert.equal(seen.length, 1);
         assert.equal(seen[0].runId, "run-7", "the read is scoped to the run whose tool is executing");
-        assert.equal(seen[0].ref, "@tool:a1b2c3");
+        assert.equal(seen[0].ref, "@tool:a1b2c3f");
         assert.ok(seen[0].id, "carries a request id so concurrent reads can't cross");
     } finally { window.removeEventListener("message", onMsg); }
     });
@@ -811,7 +816,7 @@ test("ml.dereference (background-hosted): an error from the SW rejects, and a fo
 test("ml.dereference: throws when called outside a run", async () => {
     const { loadPageWorld } = require("./helpers");
     const world = loadPageWorld({});
-    await assert.rejects(() => world.ml.dereference("@tool:a1b2c3"), /only live inside an ml\.agent run/);
+    await assert.rejects(() => world.ml.dereference("@tool:a1b2c3f"), /only live inside an ml\.agent run/);
 });
 
 // ml.info() across the real page relay: injected.js → content.js HANDLE_MAP → background.
@@ -828,4 +833,57 @@ test("ml.info(): the capacity round-trip, and null when the route isn't served",
     // Capacity UNKNOWN must arrive as null, so the panel omits its ceiling rather than drawing one at zero.
     const none = loadPageWorld({ onRuntimeMessage: (m) => (m.type === "OLLAMA_INFO" ? { data: null } : undefined) });
     assert.equal(await none.ml.info(), null);
+});
+
+// An advisory (a label resolved by similarity) must survive the background relay ALONGSIDE the value, so the
+// page-side ml.dereference can console.warn it without touching the data the script is about to parse.
+test("ml.dereference (background-hosted): a soft-match advisory crosses the relay beside the value", async () => {
+    const { derefViaBackground } = await import("../ml-agent.ts");
+    await withWindowBus(async (window) => {
+        const onMsg = (e) => {
+            const d = e.data;
+            if (!d || d.type !== "PAGE_DEREF") return;
+            window.postMessage({ type: "PAGE_DEREF_RESULT", id: d.id, value: "ROWS", warning: "resolved by similarity" }, "*");
+        };
+        window.addEventListener("message", onMsg);
+        try {
+            const read = await derefViaBackground("run-7", '@tool:"sales table"');
+            assert.equal(read.value, "ROWS", "the value is untouched — a note inside it would corrupt the data");
+            assert.equal(read.warning, "resolved by similarity", "and the advisory arrives separately");
+        } finally { window.removeEventListener("message", onMsg); }
+    });
+});
+
+// The page-relay contract for ml.embed: EMBED_REQUEST -> EMBED -> EMBED_RESPONSE, id-matched like every
+// other primitive (AGENTS.md's three-file rule).
+test("ml.embed relays through the content script and wraps the vectors", async () => {
+    const world = loadPageWorld({
+        config: { model: "m", ocrModel: "" },
+        onRuntimeMessage: (m) => (m.type === "EMBED" ? { data: { model: "embeddinggemma:300m", vectors: [[3, 4]] } } : undefined),
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    // A single string resolves to ONE Embedding, not an array of one.
+    const e = await world.ml.embed("hello");
+    assert.equal(e.dims, 2);
+    assert.deepEqual(e.values.map((v) => +v.toFixed(2)), [0.6, 0.8], "normalised on arrival, so dot is cosine");
+    assert.ok(Math.abs(e.dot(e) - 1) < 1e-12);
+});
+
+test("ml.embed sends an ARRAY as one request, and returns one vector per input in order", async () => {
+    let sent = null;
+    const world = loadPageWorld({
+        config: { model: "m", ocrModel: "" },
+        onRuntimeMessage: (m) => {
+            if (m.type !== "EMBED") return undefined;
+            sent = m.payload;
+            return { data: { model: "e", vectors: m.payload.inputs.map((_, i) => [i + 1, 0]) } };
+        },
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    const out = await world.ml.embed(["a", "b", "c"]);
+    assert.deepEqual(sent.inputs, ["a", "b", "c"], "one request carrying every input");
+    assert.equal(out.length, 3, "one Embedding per input, in order");
+    assert.ok(out.every((v) => Math.abs(v.dot(v) - 1) < 1e-12));
 });

@@ -7,7 +7,7 @@ import { modelFilterAllows, bgRunResumable, pushReplay, UI_OUT_CAP } from "./con
 import { runBackgroundAgent } from "./agent-host";   // design A: the background-hosted agent loop
 import type { ToolMeta } from "./agent-loop";
 import { externalSheetIds, googleSheetId, clipOut } from "./dom";
-import { TokenStore } from "./token-pipe";   // per-session `@tool:` pointer store for background-hosted runs   // track approved external sheets across a run + the choke-point grants
+import { TokenStore, type DerefRead } from "./token-pipe";   // per-session `@tool:` pointer store for background-hosted runs   // track approved external sheets across a run + the choke-point grants
 // The model-facing cap cdpEval clips its console to (exec's default per-slot cap) — the UI keeps far more, so
 // `seen` marks where the model's copy stopped, exactly like the main-world exec path.
 const CDP_EXEC_CAP = 500;
@@ -18,7 +18,7 @@ import { BUILD_INFO } from "./build-info.gen";
 import { browserInfo } from "./util";   // the fork's settings scheme (page-context Browser line)
 import { ensureDebuggerAttached, releaseDebugger, cdpClick, cdpEval, cdpScreenshot, cdpShadowResolve, cdpKeyType } from "./sw-cdp";   // CDP/debugger layer (strict-CSP exec, trusted click/type, host-grant-free screenshot)
 import { fetchUrlContent, fetchRenderedContent, fetchSheetCsv, SHEET_URL_OK, sheetNameFromDisposition } from "./sw-fetch";   // outbound fetch layer (ml.fetch, rendered fetch, credentialed Google Sheets CSV)
-import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, streamAgentTurn, prepareRequest, residentModels, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels } from "./sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
+import { fetchOllamaInfo, getConfig, fetchLLM, streamLLM, streamAgentTurn, prepareRequest, residentModels, modelCapabilities, listAvailableModels, listServerTools, setModel, listLoadedModels, unloadModels, modelCapabilitiesBatch, embedTexts } from "./sw-llm";   // LLM request/response layer (config, per-format request build, chat calls, model plumbing)
 
 
 // In-flight FETCH_LLM AbortControllers, keyed by the page's requestId, so an ABORT_TASK message
@@ -114,7 +114,7 @@ async function purgeAllBgRuns(): Promise<void> {
     for (const runId of [...hydratedRuns]) {
         const snap = bgRuns.get(runId);
         if (snap) untrackRun(snap.tabId, runId);
-        bgRuns.delete(runId); hydratedRuns.delete(runId);
+        bgRuns.delete(runId); hydratedRuns.delete(runId); releaseSessionTokens(runId);
     }
     resurrectedRuns.clear();
 }
@@ -222,8 +222,10 @@ const trackRun = (tabId: number, runId: string, rebuild?: import("./contract").R
 const tabHasBgRun = (tabId: number): boolean => { for (const r of bgRuns.values()) if (r.tabId === tabId) return true; return false; };
 const untrackRun = (tabId: number, runId: string): void => {
     runRebuilds.delete(runId);
-    derefByRun.delete(runId);   // the run's pointers die with it — a later read must not resolve against it
-    tokensByRun.delete(runId);
+    derefByRun.delete(runId);   // the resolver is a per-TURN closure over that turn's loop — it must not outlive it
+    // NOT tokensByRun: this runs in each TURN's finally (the run stays resumable in bgRuns), so dropping the
+    // pointer store here emptied it between turns — the exact bug the session-scoped store was meant to fix.
+    // Its life is the SESSION's, so it is released with the bgRuns entry instead (see releaseSessionTokens).
 
     const s = activeRuns.get(tabId);
     if (!s) return;
@@ -351,21 +353,30 @@ const pyStreamTabs = new Map<string, number>();
 
 // Pointer resolvers for background-hosted runs, keyed by runId — handed over by the loop at start (tokenSink)
 // so a page-side tool's `ml.dereference` can read THIS run's captured outputs. Deleted when the run ends.
-const derefByRun = new Map<string, (ref: string, pipe?: string | string[]) => string>();
+const derefByRun = new Map<string, (ref: string, pipe?: string | string[]) => DerefRead>();
 // The `@tool:` pointer store per background-hosted run, kept ACROSS the turns of one session so a follow-up
 // ("how did you compute that?") can still dereference the previous turn's output. Deliberately NOT a field on
 // the bgRuns record: that record is JSON-checkpointed to storage for MV3 eviction, and a Map serializes to
 // `{}` — it would rehydrate as a plain object and blow up on the first read. Bounded by TokenStore.CAP, and
 // dropped with the run in untrackRun. An SW eviction loses it, like the rest of the run's in-memory state.
 const tokensByRun = new Map<string, TokenStore>();
+/** How many SESSIONS' pointer stores to keep. Each is itself capped (TokenStore.CAP); this bounds the number
+ *  of them, so a service worker that outlives many runs can't accumulate without limit. */
+const MAX_TOKEN_SESSIONS = 24;
+
 /** This run's pointer store, created on the first turn and REUSED by every later turn of the same session. */
 const sessionTokens = (runId: string): TokenStore => {
     const existing = tokensByRun.get(runId);
-    if (existing) return existing;
+    if (existing) { tokensByRun.delete(runId); tokensByRun.set(runId, existing); return existing; }   // keep it fresh
     const fresh = new TokenStore();
     tokensByRun.set(runId, fresh);
+    while (tokensByRun.size > MAX_TOKEN_SESSIONS) tokensByRun.delete(tokensByRun.keys().next().value as string);
     return fresh;
 };
+
+/** Release a SESSION's pointers — only when the session itself is gone (its bgRuns entry dropped), never at the
+ *  end of a turn. Paired with every `bgRuns.delete` so the two lifetimes cannot drift apart again. */
+const releaseSessionTokens = (runId: string): void => { tokensByRun.delete(runId); };
 // LIVE tool-output streaming on the BACKGROUND path: the in-flight delegated tool's onStream, keyed by runId.
 // The loop delegates tool calls SEQUENTIALLY (one in flight per run), so runId alone correlates a page-posted
 // PAGE_TOOL_STREAM chunk to the right callback. Set in delegateTool while a streaming call runs, deleted after.
@@ -769,7 +780,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         if (!resumeMessages) emitLifecycle(startEvent);
         else if (resurrected) fanEvent(startEvent);   // resurrected: no page-side caller emitted a start → fan it ourselves
         runBackgroundAgent(
-            { task: p.task, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, autoApproveSameOriginAuth: p.autoApproveSameOriginAuth, autoApproveSelfSource: p.autoApproveSelfSource, unattended: p.unattended, toolTokens: p.toolTokens, stream: p.stream, runId, seqBase, tokenStore: sessionTokens(runId), resumeMessages, images: p.images },
+            { task: p.task, systemPrompt: p.systemPrompt, tools: toolMetas, model: p.model, think: p.think, maxSteps: p.maxSteps, autoApprovePython: p.autoApprovePython, autoApproveSameOriginAuth: p.autoApproveSameOriginAuth, autoApproveSelfSource: p.autoApproveSelfSource, unattended: p.unattended, toolTokens: p.toolTokens, stream: p.stream, runId, seqBase, tokenStore: sessionTokens(runId), labelMatch: p.labelMatch, resumeMessages, images: p.images },
             {
                 callModel: async (messages, opts) => {
                     // Thread the run's abort signal so a CANCEL_RUN kills a slow in-flight generation, not
@@ -1221,7 +1232,9 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         const pipe = Array.isArray(message.pipe)
             ? (message.pipe as unknown[]).filter((x): x is string => typeof x === "string")
             : String(message.pipe || "");
-        try { sendResponse({ value: fn(String(message.ref || ""), pipe) }); }
+        // The advisory rides ALONGSIDE the value across the relay, for the same reason it does in-process:
+        // the page-side caller is a script that will operate on the value.
+        try { const read = fn(String(message.ref || ""), pipe); sendResponse({ value: read.value, ...(read.warning ? { warning: read.warning } : {}) }); }
         catch (e) { sendResponse({ error: (e as Error)?.message || String(e) }); }
         return true;
     }
@@ -1271,6 +1284,8 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
             const url = String((message.payload as { url?: unknown })?.url || "");
             const credentials = !!(message.payload as { credentials?: unknown })?.credentials;
             const rendered = !!(message.payload as { rendered?: unknown })?.rendered;
+            // Only "html" opts OUT of the Markdown ladder; anything else (absent, junk) takes the default.
+            const format = (message.payload as { format?: unknown })?.format === "html" ? "html" as const : "markdown" as const;
             let scheme = "";
             try { scheme = new URL(url).protocol; } catch { sendResponse({ error: `Refused: "${url}" is not a valid URL.` }); return; }
             if (scheme !== "http:" && scheme !== "https:") { sendResponse({ error: `Refused: ml.fetch supports only http(s) URLs (got "${scheme}").` }); return; }
@@ -1316,7 +1331,7 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 // same-origin one is free); a credentialed render uses the SESSION tab (as-you → always prompts).
                 // A session (non-incognito) render is NEVER free. The `cdp` setting lets it emulate foreground so
                 // a backgrounded tab's gated loads fire.
-                const data = rendered ? await fetchRenderedContent(url, !credentials, !!cfg.cdp) : await fetchUrlContent(url, credentials);
+                const data = rendered ? await fetchRenderedContent(url, !credentials, !!cfg.cdp) : await fetchUrlContent(url, credentials, format);
                 // Redirect guard: a per-URL-consented fetch (NOT a surface/whitelisted/exec one) that ends on a
                 // DIFFERENT, un-consented origin followed a redirect off the approved resource — withhold the body
                 // (a consented public URL could redirect to a private/other target). The GET already happened but
@@ -1406,10 +1421,17 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
         // ml.models() never even SEES an excluded (e.g. cloud) model, and the settings
         // datalists only offer allowed ones. Enforcement still lives in prepareRequest;
         // this is the "don't surface it" half.
+        // `kinds: true` additionally reports each model's CAPABILITIES, so a picker can tell a chat model
+        // from an embedding one. OPT-IN because it costs an /api/show per model (~60-110ms each, bounded
+        // concurrency, cached for the worker's life): the settings and popup pickers want it, while the
+        // composer and the VRAM panel just want names and must not pay for it.
+        const wantKinds = !sender.tab && !!(message.payload as { kinds?: unknown })?.kinds;
         Promise.all([listAvailableModels(sender.tab ? {} : (message.payload || {})), getConfig()])
-            .then(([{ ids, ollamaModels }, cfg]) => {
+            .then(async ([{ ids, ollamaModels }, cfg]) => {
                 const keep = (m: string) => modelFilterAllows(m, cfg.modelFilter);
-                sendResponse({ data: ids.filter(keep), ollamaModels: ollamaModels ? ollamaModels.filter(keep) : null });
+                const data = ids.filter(keep);
+                const info = wantKinds ? await modelCapabilitiesBatch(cfg, data) : undefined;
+                sendResponse({ data, ollamaModels: ollamaModels ? ollamaModels.filter(keep) : null, ...(info ? { kinds: info.caps, dims: info.dims } : {}) });
             })
             .catch(err => sendResponse({ error: err.message }));
         return true;
@@ -1493,6 +1515,24 @@ chrome.runtime.onMessage.addListener((message: any, sender, sendResponse) => {
                 } });
             })
             .catch(err => sendResponse({ error: err.message }));
+        return true;
+
+    } else if (message.type === "EMBED") {
+        // Embedding runs on the user's own box like any other model call, so a page may ask — the same
+        // reasoning that lets a page call ml.chat. An explicit model still passes the access whitelist, so a
+        // page cannot reach a model the user excluded, and the resolved model is reported back so a caller
+        // can see WHICH geometry the vectors are in (comparing across models is meaningless).
+        (async () => {
+            const inputs = (message.payload as { inputs?: unknown })?.inputs;
+            const asked = String((message.payload as { model?: unknown })?.model || "");
+            if (!Array.isArray(inputs) || inputs.some((i) => typeof i !== "string")) { sendResponse({ error: "EMBED needs `inputs`: an array of strings." }); return; }
+            try {
+                const cfg = await getConfig();
+                const model = asked || cfg.embeddingModel;
+                if (asked && !modelFilterAllows(asked, cfg.modelFilter)) { sendResponse({ error: `Refused: "${asked}" is excluded by the model filter.` }); return; }
+                sendResponse({ data: { model, vectors: await embedTexts(cfg, model, inputs as string[]) } });
+            } catch (e) { sendResponse({ error: (e as Error)?.message || String(e) }); }
+        })();
         return true;
 
     } else if (message.type === "MODEL_CAPS") {

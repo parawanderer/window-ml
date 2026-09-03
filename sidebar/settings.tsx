@@ -6,12 +6,12 @@
 import { signal } from "@preact/signals";
 import { useState, useEffect, useRef } from "preact/hooks";
 import type { ComponentChildren } from "preact";
-import type { MlConfig, ApiFormat, Theme, DebugMode, CardCorner, AgentHud, LoadedModel, VisionSupport } from "../contract";
-import { DEFAULT_CONFIG, DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX, detectGroundingModel, modelFilterAllows } from "../contract";
+import type { MlConfig, ApiFormat, Theme, DebugMode, CardCorner, AgentHud, LoadedModel, VisionSupport, LexicalMetric } from "../contract";
+import { DEFAULT_CONFIG, DEFAULT_GROUNDING_RANGE, VISION_NUM_CTX, detectGroundingModel, modelFilterAllows, generatesText, producesEmbeddings } from "../contract";
 import { PY_PACKAGES } from "../python-env";
 import {
     config, models, fontScale, codeWrap, codeLineNumbers, showStatsTokens, showStatsTps, outMaxH, showOutTimes,
-    MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_DEFAULT, resWindowS } from "./store";
+    MAX_FS, MIN_FS, FONT_KEY, WRAP_KEY, LINES_KEY, STATS_TOKENS_KEY, STATS_TPS_KEY, OUTMAX_KEY, OUTMAX_DEFAULT, OUTTS_KEY, RESWIN_KEY, RESWIN_DEFAULT, resWindowS, modelKinds, embedDims } from "./store";
 import { truncate } from "./format";
 import { applyTheme, applyFont, applyCodePrefs } from "./prefs";
 import { IconCheck } from "./icons";
@@ -77,6 +77,10 @@ const TIP = {
     utilityNumCtx: "Context window (num_ctx) for the utility model. Summarising needs little context — keep it small on modest hardware; larger just uses more KV-cache memory. Only used when a utility model is set.",
     utilityForceCpu: "Run the utility model on CPU (num_gpu: 0) so it never competes with your main model for VRAM. Only used when a utility model is set.",
     autoTitles: "Let the utility model write short summaries for you: debug session titles, and the plain-English gloss above a code approval / the description of a custom tool call in the off-mode card. Off = titles fall back to the first prompt and the card shows no summary. Only runs when a utility model is set.",
+    embeddingModel: "Model used for ml.embed — comparing text by MEANING rather than spelling. Only models reporting the `embedding` capability are offered; an embedding model cannot generate text, so it never appears in the chat/utility/vision pickers either.",
+    embeddingKeepAlive: "Keep the embedding model loaded with no expiry. ON by default because of the ACCESS PATTERN, not the size: a cold embed measured 2726ms against 95ms warm, and a model used rarely and unpredictably would sit past Ollama's 5-minute expiry almost every time, so it would be cold nearly always. Evicting it from the VRAM panel still works — the next call simply loads it again and re-pins it.",
+    embeddingForceCpu: "Run the embedding model on CPU instead of the GPU. ON by default: measured 33ms slower warm (128 vs 95), FASTER cold (1628 vs 2726, since nothing is copied to VRAM), and it uses no VRAM at all — which the chat model wants. Turn it off only if you pick an embedding model large enough that CPU inference stops being cheap.",
+    labelMatch: "How a pointer LABEL is matched when it isn't recalled exactly. A near match is only ever used when it clearly beats the runner-up, and is always reported — but WHICH metric ranks the candidates is genuinely undecided, so it is exposed here. hybrid (default): the better of trigram and word-overlap; handles both rewording and typos. tokenset: word overlap only — perfect on reordering, blind to typos. trigram: character-level, survives both without excelling. edit: Levenshtein — best on typos, but it ranks a DIFFERENT label above the correct one reworded, so it is here to be measured against, not recommended.",
     autoApproveReadonly: "Experimental. Run read-only exec surveys (querySelectorAll → filter → map, no mutation) without an approval prompt, via a mediated interpreter that can't reach window/fetch and never eval()s a string. Anything that mutates or isn't recognised still asks. Also lets these surveys run on Trusted-Types pages where eval is blocked. The agent can likewise read its own setup without asking — ml.getModel/config/models/capabilities/ps/serverTools, the same non-secret values any page can read; every other ml method still prompts.",
     autoApprovePython: "Experimental. Run readonly-mode python_exec calls without an approval prompt. A readonly run is isolated by construction — the WASM sandbox has no DOM, no filesystem, and (in this mode) no network or JS/extension scope — so it's a pure function over the injected data and can't affect the page or exfiltrate. A `mode:'full'` call (which the agent must explicitly request to get network) ALWAYS asks. Code with hidden/bidi characters also still asks.",
     autoApproveSameOriginAuth: "Advanced, default OFF. Auto-approve a fetch that spends your session on the SAME origin you're already on — a fetch_url/ml.fetch with credentials:true (sends your cookies), or a rendered:true load in a normal (non-incognito) tab that inherits your login. OFF keeps you in charge: those always ask. This never touches cross-origin fetches (always ask) or the uncredentialed same-origin reads (already free — the page could fetch its own origin itself).",
@@ -112,11 +116,14 @@ const modelTests = signal<Record<string, TestState | undefined>>({});
 
 // Name the quadrant of a point given as fractions [0,1] (image y-down: 0=top).
 const areaName = (fx: number, fy: number) => `${fy > 0.5 ? "bottom" : "top"}-${fx > 0.5 ? "right" : "left"}`;
-const MODEL_ROLES: { key: keyof MlConfig; label: string; vision?: boolean }[] = [
+const MODEL_ROLES: { key: keyof MlConfig; label: string; vision?: boolean; embed?: boolean }[] = [
     { key: "model", label: "Default" },
     { key: "ocrModel", label: "OCR", vision: true },   // must be vision-capable
     { key: "utilityModel", label: "Utility" },
     { key: "groundingModel", label: "Grounding", vision: true },   // needs vision (grounding itself isn't cap-detectable)
+    // Tested by actually EMBEDDING, not by a chat ping (it cannot answer one) and not by reading its
+    // capability list (that says what the server CLAIMS, not that a vector comes back).
+    { key: "embeddingModel", label: "Embedding", embed: true },
 ];
 
 const setTest = (key: keyof MlConfig, state: TestState) => { modelTests.value = { ...modelTests.value, [key]: state }; };
@@ -200,12 +207,32 @@ function testOne(key: keyof MlConfig): void {
     const name = roleModel(key);
     if (!name) return;
     setTest(key, { status: "loading", model: name });
-    const done = (s: Omit<TestState, "model" | "at">) => { setTest(key, { ...s, model: name, at: Date.now() }); unloadIfFresh(name); };
+    const done = (s: Omit<TestState, "model" | "at">) => {
+        setTest(key, { ...s, model: name, at: Date.now() });
+        // Tests normally free whatever they loaded, so checking your setup does not leave models resident.
+        // The exception is an embedding model the user has explicitly asked to keep loaded — unloading it
+        // here would undo the setting the test was verifying.
+        const pinned = key === "embeddingModel" && config.value.embeddingKeepAlive;
+        if (!pinned) unloadIfFresh(name);
+    };
 
     // Vision-required roles (OCR, grounding): first check the model actually reports
     // vision — a clear "not a vision model" beats a confusing functional failure
     // downstream. Unknown caps (cloud/non-Ollama) pass through to the test.
     const role = MODEL_ROLES.find(r => r.key === key);
+    // The embedding role is a different call entirely: one real embed, which proves reachability, that the
+    // model is genuinely an embedding model, and WHICH geometry its vectors are in — the last being the fact
+    // that matters, since vectors from two models cannot be compared and the failure is silent.
+    if (role?.embed) {
+        chrome.runtime.sendMessage({ type: "EMBED", payload: { inputs: ["test"], model: name } }, (resp: any) => {
+            const err = chrome.runtime.lastError?.message || resp?.error;
+            if (err) return done({ status: "err", error: err });
+            const vec = resp?.data?.vectors?.[0];
+            if (!Array.isArray(vec) || !vec.length) return done({ status: "err", error: "the server returned no vector" });
+            done({ status: "ok", detail: `${vec.length} dimensions` });
+        });
+        return;
+    }
     const gate = role?.vision ? visionGate(name) : Promise.resolve(null);
     gate.then(capErr => {
         if (capErr) return done({ status: "err", error: capErr });
@@ -643,12 +670,24 @@ export function Settings() {
     // Refresh the server model list whenever Settings opens — the initial fetch (App mount / gear click) may
     // have raced or failed while the server was waking up, leaving the datalists empty with no way to retry.
     useEffect(() => {
-        chrome.runtime.sendMessage({ type: "LIST_MODELS", payload: {} }, (resp: any) => {
-            if (!chrome.runtime.lastError && resp && !resp.error && Array.isArray(resp.data)) models.value = resp.data;
+        // `kinds: true` also reports capabilities, so an EMBEDDING model never appears in a chat/utility/
+        // vision picker. They show up in the model list the moment they are pulled, and selecting one as a
+        // chat model fails at request time with nothing to explain it.
+        chrome.runtime.sendMessage({ type: "LIST_MODELS", payload: { kinds: true } }, (resp: any) => {
+            if (chrome.runtime.lastError || !resp || resp.error || !Array.isArray(resp.data)) return;
+            models.value = resp.data;
+            if (resp.kinds) modelKinds.value = resp.kinds;
+            if (resp.dims) embedDims.value = resp.dims;
         });
     }, []);
     // Datalist entries after the access filter; plus the empty/unlisted states so the UI explains itself.
-    const listed = models.value.filter(m => modelFilterAllows(m, c.modelFilter));
+    // Only TEXT models belong in these pickers. `generatesText` requires `completion` rather than excluding
+    // `embedding`, because an embedding model can advertise other capabilities too (qwen3-embedding reports
+    // tools + thinking); it fails OPEN on unknown, so a cloud model we cannot interrogate is never hidden.
+    const listed = models.value.filter(m => modelFilterAllows(m, c.modelFilter) && generatesText(modelKinds.value[m] ?? null));
+    // The other half of the same classification. Fails CLOSED, unlike `listed`: offering a model that turns
+    // out not to embed is a runtime surprise, where a shorter list costs nothing — a user can still type one.
+    const embedListed = models.value.filter(m => modelFilterAllows(m, c.modelFilter) && producesEmbeddings(modelKinds.value[m] ?? null));
     const notListed = (v: string) => !!v.trim() && models.value.length > 0 && !models.value.includes(v.trim());
     const filterValid = (() => { if (!c.modelFilter.trim()) return true; try { new RegExp(c.modelFilter); return true; } catch { return false; } })();
     // A configured model id the current filter excludes (non-empty + no match) → flag it (ModelPicker cls).
@@ -892,6 +931,40 @@ export function Settings() {
                         onChange={(e: any) => setField("autoApproveReadonly", e.target.checked)} />
                     <Lbl tip={TIP.autoApproveReadonly}>Auto-approve read-only exec calls</Lbl>
                 </label>
+                </Section>
+
+                <Section id="embeddings" title="Embeddings">
+                <div class="set-note">Model for <code>ml.embed</code> — comparing text by meaning rather than spelling. Only models that report the <b>embedding</b> capability are listed; these are small and fast, so they default to living on the CPU and staying loaded.</div>
+                <div class="set-field">
+                    <Lbl tip={TIP.embeddingModel}>Embedding model</Lbl>
+                    <input list="embedModels" {...text("embeddingModel")} placeholder="none configured" />
+                    <datalist id="embedModels">{embedListed.map(m => <option key={m} value={m} />)}</datalist>
+                    {c.embeddingModel.trim() && embedDims.value[c.embeddingModel.trim()]
+                        ? <div class="set-hint">{embedDims.value[c.embeddingModel.trim()]} dimensions</div> : null}
+                </div>
+                <label class="set-check">
+                    <input type="checkbox" checked={c.embeddingKeepAlive}
+                        onChange={(e: any) => setField("embeddingKeepAlive", e.target.checked)} />
+                    <Lbl tip={TIP.embeddingKeepAlive}>Keep loaded (no expiry)</Lbl>
+                </label>
+                <label class="set-check">
+                    <input type="checkbox" checked={c.embeddingForceCpu}
+                        onChange={(e: any) => setField("embeddingForceCpu", e.target.checked)} />
+                    <Lbl tip={TIP.embeddingForceCpu}>Run on CPU (uses no VRAM)</Lbl>
+                </label>
+                </Section>
+
+                <Section id="pointers" title="Output pointers">
+                <div class="set-note">A tool output can be kept under a name you give it (<code>token: "the sales table"</code>) and read back later with <code>dereference</code>. When a name isn't recalled exactly, this picks how the near matches are ranked. A near match is only used when it clearly beats the runner-up, and it is always reported.</div>
+                <div class="set-field">
+                    <Lbl tip={TIP.labelMatch}>Label matching</Lbl>
+                    <select value={c.labelMatch} onChange={(e: any) => setField("labelMatch", e.target.value as LexicalMetric)}>
+                        <option value="hybrid">hybrid — trigram + word overlap (default)</option>
+                        <option value="tokenset">tokenset — word overlap only</option>
+                        <option value="trigram">trigram — character level</option>
+                        <option value="edit">edit — Levenshtein (for comparison)</option>
+                    </select>
+                </div>
                 </Section>
 
                 <Section id="python" title="Sandboxed Python">

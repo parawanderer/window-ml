@@ -8,6 +8,8 @@
 // Type-only (erased): the curated answer-set class, referenced by ToolContext.answer. answer-set.ts
 // imports AnswerMedia back from here — a type-only cycle, which is fine.
 import type { AnswerSet } from "./answer-set";
+// Type-only: the unit-vector wrapper `ml.embed` resolves to. embedding.ts imports nothing, so no cycle.
+import type { Embedding } from "./embedding";
 
 /* ------------------------------- config ------------------------------- */
 
@@ -27,6 +29,11 @@ export type DebugMode = "off" | "overlay" | "devtools";
  *  /api/show), "yes"/"no" = declared. Used for the default model, to enable NATIVE vision on a
  *  cloud/non-Ollama model the probe can't describe. */
 export type VisionSupport = "" | "yes" | "no";
+
+/** The lexical metrics that can rank a near-miss on a pointer LABEL. Names here (shared config surface),
+ *  implementations in label-match.ts. */
+export const LEXICAL_METRICS = ["hybrid", "edit", "trigram", "tokenset"] as const;
+export type LexicalMetric = (typeof LEXICAL_METRICS)[number];
 
 /** Full config held in chrome.storage.sync (background + popup own it). */
 export interface MlConfig {
@@ -52,6 +59,27 @@ export interface MlConfig {
     modelFilter: string;
     /** where the debug UI renders (off / in-page overlay / DevTools panel) */
     debugMode: DebugMode;
+    /** Which lexical metric ranks a near-miss on a pointer LABEL. Swappable because it is genuinely
+     *  undecided: measured on the motivating cases, plain edit distance INVERTS (it ranks a different table
+     *  above the correct one reworded), token-set is perfect on rewording and blind to typos, and trigram
+     *  survives both without excelling. `hybrid` (the better of the last two) is the default. Exposed so the
+     *  benchmark can vary it — see docs/POINTER-IDENTIFIERS.md. */
+    labelMatch: LexicalMetric;
+    /** Model used for `ml.embed`. Only models reporting the `embedding` capability are offered in Settings.
+     *  Empty = no embedding model configured, and `ml.embed` says so rather than guessing one. */
+    embeddingModel: string;
+    /** Keep the embedding model RESIDENT with no expiry (Ollama `keep_alive: -1`). Default ON, and the
+     *  argument is the access PATTERN rather than the model's size: measured, a cold embed costs 2726ms
+     *  against 95ms warm — 29x — and a label-resolution fallback fires rarely and unpredictably, so under
+     *  Ollama's default 5-minute expiry it would be almost always cold. Sparse use is exactly the pattern a
+     *  timeout never helps. Evicting it from the VRAM panel still works and needs no state here: keep_alive
+     *  is sent per request, so the next call simply re-pins it. */
+    embeddingKeepAlive: boolean;
+    /** Run the embedding model on CPU (`num_gpu: 0`). Default ON: measured, CPU is 33ms slower warm
+     *  (128 vs 95), FASTER cold (1628 vs 2726 — no VRAM transfer), and uses zero VRAM. On a box whose GPU is
+     *  holding the chat model, spending ~700MB of VRAM to save 33ms is the wrong trade. Turn it off if the
+     *  embedding model is large enough that CPU inference stops being cheap. */
+    embeddingForceCpu: boolean;
     theme: Theme;
     /** which screen corner the off-mode approval card + working pill anchor to */
     cardCorner: CardCorner;
@@ -142,6 +170,29 @@ export const VISION_NUM_CTX = 8192;
  *  projected back to the viewport for a clickable @pt/@box (see util.ts projectShotPoint/Box). */
 export interface ShotBox { left: number; top: number; dpr: number; }
 
+/** Does this model generate TEXT? The right test for the chat/utility/vision pickers.
+ *
+ *  Measured against a real Ollama (2026-09-03): the obvious rule — "hide anything with `embedding`" — is
+ *  WRONG. `qwen3-embedding:0.6b` reports `['tools','thinking','embedding']` and `:8b` reports
+ *  `['tools','embedding']`, so an embedding model can advertise other capabilities too. Requiring
+ *  `completion` is the semantically correct test, and no embedding model has it.
+ *
+ *  Unknown (null) capabilities mean a cloud/non-Ollama model, which we CANNOT classify — so it passes.
+ *  Failing open matches `modelFilter`: never hide a model we merely failed to interrogate. */
+export const generatesText = (caps: string[] | null): boolean => !caps || caps.includes("completion");
+
+/** Does this model produce EMBEDDINGS? Unlike {@link generatesText} this fails CLOSED — an unclassifiable
+ *  model is not offered as an embedding model, because picking one that turns out not to embed produces a
+ *  confusing runtime failure rather than a mildly shorter list. A user can still name one explicitly and
+ *  have it validated by an actual embed call. */
+export const producesEmbeddings = (caps: string[] | null): boolean => !!caps && caps.includes("embedding");
+
+/** What a pointer READ returns across the run boundary: the value, plus an optional advisory the caller must
+ *  surface on a SIDE channel. The two exist separately because `ml.dereference` inside `exec` returns a value
+ *  the script then operates on — JSON.parse it, split it, pipe it — so appending a note to `value` would
+ *  corrupt the data. The tool path appends the advisory to its result text; the exec path console.warn()s it. */
+export interface DerefRead { value: string; warning?: string }
+
 /** Whether a model id passes the optional `modelFilter` regex whitelist. Empty /
  *  whitespace filter → everything allowed. An INVALID regex → everything allowed
  *  (fail-OPEN: a typo shouldn't silently brick every call; the settings UI flags an
@@ -220,7 +271,40 @@ export function outputCapPrecheck(tool: OutputCapTool, args: Record<string, unkn
  *  permissions). Uncredentialed by default; `credentials` sends the user's cookies, `rendered` loads it in a
  *  tab so its JS runs (incognito unless credentialed). No headers/body/method knobs by design: a locked,
  *  low-surface read primitive. */
-export interface FetchUrlPayload { url: string; credentials?: boolean; rendered?: boolean; }
+export interface FetchUrlPayload { url: string; credentials?: boolean; rendered?: boolean; format?: FetchFormat; }
+
+/** What DOCUMENT a fetch goes and gets — a fetch-level concern, so it is the one option shared by `ml.fetch`
+ *  and the `fetch_url` tool. `"markdown"` (the default) runs the negotiation ladder for the site's OWN
+ *  Markdown; `"html"` skips it entirely and returns the original markup in one plain GET. Data bodies
+ *  (json/csv/code) are unaffected either way. This REPLACED `raw`, which straddled the line between "what do
+ *  we fetch" and "what does the model receive" and so read as a second, overlapping knob. */
+export type FetchFormat = "markdown" | "html";
+
+/** One rung of the Markdown ladder, as it actually ran. Recorded for every attempt — including the ones that
+ *  were skipped — because the failure modes here are INVISIBLE in the body alone: a stub twin is a valid 200
+ *  Markdown document that is simply the wrong page, and a site-authored twin is content written specifically
+ *  to be read by agents (GitBook appends an "Agent Instructions" section), so "which URL did these bytes come
+ *  from" is provenance for an injection surface, not decoration. */
+export interface FetchAttempt {
+    /** `accept` = the same URL with `Accept: text/markdown`; `declared` = the `<link rel="alternate">` the
+     *  page named; `sibling` = the derived `.md`/`index.md`; `convert` = our own HTML→Markdown. */
+    strategy: "accept" | "declared" | "sibling" | "convert";
+    url: string;
+    status?: number;
+    contentType?: string;
+    bytes?: number;
+    ms?: number;
+    outcome: "hit" | "not-markdown" | "error" | "skipped";
+    /** Why, when the outcome needs one ("not attempted — already resolved", a cross-origin declaration). */
+    note?: string;
+}
+
+/** The ladder's trace: what was tried, what worked, what was never needed. */
+export interface FetchNegotiation {
+    wanted: FetchFormat;
+    attempts: FetchAttempt[];
+    resolvedBy: FetchAttempt["strategy"];
+}
 /** The result of `ml.fetch(url)`. Content type is resolved BOTH ways so a mislabel is visible: `type` is the
  *  final pick (header when specific, else the content sniff), `typeByHeader`/`typeByContent` are the raw
  *  signals. `json` is pre-parsed when `type === "json"`. `text` is the raw body (size-capped → `truncated`). */
@@ -244,6 +328,11 @@ export interface FetchResult {
     truncated?: boolean;      // the body was clipped to the size cap
     redirected?: boolean;     // the request followed ≥1 redirect (`url` above is the FINAL landing URL — the
                               // intermediate chain isn't visible to fetch; a redirect log needs chrome.webRequest)
+    /** The Markdown ladder's trace, when negotiation ran (absent for `format: "html"` and for data bodies that
+     *  never negotiate). `resolvedBy` says which rung produced `text` — in particular whether the Markdown is
+     *  the SITE's or our own Turndown reduction, which is the difference that matters when debugging why a
+     *  model missed a detail. */
+    negotiation?: FetchNegotiation;
     rendered?: boolean;       // the body is the SETTLED DOM after the page's JS ran in a background tab (rendered
                               // mode), not the raw HTTP response — so client-rendered/SPA content is present
     /** A SAFELIST of NON-SENSITIVE response headers — the ONLY headers ever exposed. Auth-bearing headers
@@ -333,6 +422,10 @@ export const DEFAULT_CONFIG: MlConfig = {
     defaultModelVision: "",
     modelFilter: "",
     debugMode: "off",
+    labelMatch: "hybrid",
+    embeddingModel: "",
+    embeddingKeepAlive: true,
+    embeddingForceCpu: true,
     theme: "auto",
     cardCorner: "bottom-right",
     agentHud: "progress",
@@ -373,7 +466,7 @@ export const detectGroundingModel = (models: string[]): string =>
  *  ml.agent can decide whether to route a run through the unforgeable BACKGROUND loop (design A —
  *  when a debug surface is enabled) or the in-page loop (off). It's UI state, not a secret. */
 export type MlPublicConfig = Pick<MlConfig,
-    "model" | "ocrModel" | "ocrNumCtx" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "autoApprovePython" | "autoApproveSameOriginAuth" | "autoApproveSelfSource" | "pierceClosedShadow" | "cdp" | "groundingEnabled" | "groundingModel" | "groundingRange" | "debugMode" | "defaultModelVision"> & {
+    "model" | "ocrModel" | "ocrNumCtx" | "apiFormat" | "utilityModel" | "utilityNumCtx" | "utilityForceCpu" | "autoApproveReadonly" | "autoApprovePython" | "autoApproveSameOriginAuth" | "autoApproveSelfSource" | "pierceClosedShadow" | "cdp" | "groundingEnabled" | "groundingModel" | "groundingRange" | "debugMode" | "defaultModelVision" | "labelMatch"> & {
     /** COMPUTED per request (not stored): whether THIS page's origin is on the user's page-approval
      *  whitelist. When true, ml.agent honours the page's own approve()/confirm gate (the user trusts this
      *  domain); otherwise a privileged tool routes to the unforgeable background gate. The raw domain
@@ -671,7 +764,13 @@ export type RenderDescriptor = (
     // is auditable: you can read exactly what the model saw before it answered.
     // `pipe` (fetch_url): the grep/head/tail/… shell pipeline the model scanned the fetched text through —
     // shown as a `bash` code block in the In slot so it reads as the interpreted command it is.
-    | { type: "action"; verb: string; kind?: string; target?: string; selector?: string; input?: string; note?: string; crossOrigin?: string; ask?: string; answeredBy?: string; tokens?: number; askBody?: string; askBodyLang?: string; askBodyTruncated?: boolean; pipe?: string }
+    // `attempts`/`resolvedBy` (fetch_url): the Markdown ladder as it actually ran — rendered as a resolution
+    // TREE, every rung shown including the ones never needed. Not decoration: a stub twin is a valid 200
+    // Markdown document that is simply the wrong page, so "which URL did these bytes come from" is the only
+    // place that failure is visible; and the winning rung says whether the Markdown is the SITE's authored
+    // text or our own reduction of its markup. Present only on the POST-call render (the approval card's
+    // `render()` runs before any rung has been tried).
+    | { type: "action"; verb: string; kind?: string; target?: string; selector?: string; input?: string; note?: string; crossOrigin?: string; ask?: string; answeredBy?: string; tokens?: number; askBody?: string; askBodyLang?: string; askBodyTruncated?: boolean; pipe?: string; attempts?: FetchAttempt[]; resolvedBy?: FetchAttempt["strategy"] }
 );
 // The slot a descriptor fills is decided by which hook produced it (a tool's `render()`
 // method / run()-returned `renderIn` → the In slot; a run()-returned `render` / an
@@ -728,7 +827,7 @@ export interface ToolContext {
     answer?: AnswerSet;
     /** Read a `@tool:<id>` pointer from THIS run — what `ml.dereference` binds to inside a tool call. Absent
      *  outside a run, which is why the page can't reach it from its own console. */
-    deref?: (ref: string, pipe?: string | string[]) => Promise<string>;
+    deref?: (ref: string, pipe?: string | string[]) => Promise<DerefRead>;
     /** LIVE partial output — a GENERIC tool-streaming capability. A tool's `run` may call `ctx.stream(text)`
      *  to stream output AS IT WORKS (Jupyter-style: `exec`'s console.log, `python_exec`'s print), so the step's
      *  Out fills in live instead of only appearing at completion. Present ONLY when the run opted into
@@ -1048,7 +1147,7 @@ export interface MlHistory {
  *  each to its BackgroundMessageType counterpart via HANDLE_MAP). */
 export type PageRequestType =
     | "LLM_REQUEST" | "LLM_STREAM_REQUEST" | "B64_REQUEST" | "LIST_MODELS_REQUEST"
-    | "GET_MODEL_REQUEST" | "CONFIG_REQUEST" | "SET_MODEL_REQUEST" | "CAPS_REQUEST"
+    | "GET_MODEL_REQUEST" | "CONFIG_REQUEST" | "SET_MODEL_REQUEST" | "CAPS_REQUEST" | "EMBED_REQUEST"
     | "PS_REQUEST" | "UNLOAD_REQUEST" | "CAPTURE_TAB_REQUEST"
     | "SAVE_SESSION_REQUEST" | "GET_SESSION_REQUEST" | "PYTHON_EXEC_REQUEST" | "FETCH_SHEET_REQUEST" | "FETCH_URL_REQUEST"
     | "CDP_SHADOW_RESOLVE_REQUEST"   // read-only: resolve a `>>>` selector into a SEALED closed shadow root via CDP (discovery)
@@ -1064,7 +1163,7 @@ export type PageRequestType =
 /** Message types the background worker's onMessage listener handles. */
 export type BackgroundMessageType =
     | "FETCH_LLM" | "FETCH_IMAGE_B64" | "LIST_MODELS" | "GET_MODEL" | "GET_CONFIG"
-    | "SET_MODEL" | "MODEL_CAPS" | "OLLAMA_PS" | "OLLAMA_UNLOAD" | "CAPTURE_TAB"
+    | "SET_MODEL" | "MODEL_CAPS" | "EMBED" | "OLLAMA_PS" | "OLLAMA_UNLOAD" | "CAPTURE_TAB"
     | "SAVE_SESSION" | "GET_SESSION" | "PYTHON_EXEC" | "FETCH_SHEET" | "FETCH_SHEET_TITLE" | "FETCH_URL"
     | "CDP_SHADOW_RESOLVE"   // read-only CDP resolve of a `>>>` selector across sealed shadow roots (discovery half of sealed reach)
     | "LIST_SERVER_TOOLS"   // GET OpenWebUI /api/v1/tools/ — the server-side tools, with their function specs
@@ -1136,6 +1235,9 @@ export interface StartRunPayload {
      *  max step/seq ride back in the response so the page can advance them for the next turn. */
     stepBase?: number;
     seqBase?: number;
+    /** Which lexical metric ranks a near-miss on a pointer label (config `labelMatch`); carried so a
+     *  background-hosted run resolves labels the same way a page-hosted one does. */
+    labelMatch?: LexicalMetric;
     /** Which surface hosts the run's gate/stream (all route through the background): a debug surface
      *  (overlay/devtools) streams steps + gates in the sidebar app; "off" also streams the SAME steps to
      *  the page, where the content-script shell renders them in a lazily-mounted acrylic corner CARD (a
@@ -1742,6 +1844,13 @@ export interface MlApi {
      *  `["grep -E error|warn", "head 5"]`). Synchronous and pure — no network, no tokens. Throws an actionable
      *  Error naming the supported verbs if a stage is wrong. */
     pipe(source: string | FetchResult, pipe?: string | string[] | null): string;
+    /** Embed text with the configured embedding model, for comparing MEANING rather than spelling. Returns
+     *  an {@link Embedding} (or one per input), a unit vector whose `.dot(other)` IS cosine similarity —
+     *  normalised on construction, so a model that returns non-unit vectors cannot silently mis-rank. Pass
+     *  an array to embed in ONE round trip. `.rank(candidates)` sorts by similarity, which is the shape you
+     *  usually want: the useful guard is the MARGIN between the best and the runner-up, not the best score.
+     *  Throws when no embedding model is configured, naming the setting. */
+    embed<T extends string | string[]>(input: T, opts?: { model?: string }): Promise<T extends string[] ? Embedding[] : Embedding>;
     /** GET a URL's content via the background (bypasses CORS; UNCREDENTIALED BY DEFAULT — no cookies unless you
      *  ask). Use it to READ a page/file the current DOM can't reach — a raw file, a JSON API, another site —
      *  instead of navigating there. Returns a {@link FetchResult}: `.type` classifies the body (json/csv/html/
@@ -1751,8 +1860,15 @@ export interface MlApi {
      *  `rendered: true` loads the URL in a background tab so its JavaScript runs, then returns the SETTLED DOM
      *  (for SPA / client-rendered pages a raw GET can't see); by default it renders PRIVATELY in incognito (no
      *  session — rememberable like a plain fetch), or in the user's session when combined with `credentials`.
-     *  Rendered is never cached. */
-    fetch(url: string, opts?: { fresh?: boolean; credentials?: boolean; rendered?: boolean }): Promise<FetchResult>;
+     *  Rendered is never cached.
+     *
+     *  `format` (default `"markdown"`) NEGOTIATES for the site's OWN Markdown version of a page before falling
+     *  back to converting its HTML: the same request asking for Markdown, then any version the page declares,
+     *  then the conventional `.md` URL. When one is found `.type` is `"markdown"` and `.text` IS that document;
+     *  `.negotiation` records every rung and which one produced the body — the difference between the site's
+     *  authored text and our reduction of its markup. `format: "html"` skips all of it for the original markup
+     *  in one request. A data body (JSON/CSV/code) never negotiates and costs one request either way. */
+    fetch(url: string, opts?: { fresh?: boolean; credentials?: boolean; rendered?: boolean; format?: FetchFormat }): Promise<FetchResult>;
     /** Internal: CACHE-ONLY read of a prior `ml.fetch(url)` result (or undefined on a miss). The read-only
      *  `exec` dialect binds its `ml.fetch` to this, so re-reading an already-fetched URL is free (no egress).
      *  Not part of the stable public API. */

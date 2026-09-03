@@ -13,6 +13,10 @@
 // Pure: no DOM, no chrome, no I/O.
 
 import { runPipe, splitStages } from "./text-pipe";
+import type { DerefRead } from "./contract";
+export type { DerefRead };
+import { isTokenShape } from "./token-id";
+import { lexicalSimilarity, type LexicalMetric } from "./label-match";
 
 /** The tool name, shared by the loop (which answers it) and the toolset builder (which advertises it). */
 export const DEREF_TOOL = "dereference";
@@ -197,14 +201,80 @@ export class TokenStore {
     }
 
     /** Resolve `@tool:<id>`, a bare id, or a tool-name alias. Null when nothing matches. */
-    get(ref: string): TokenValue | null {
-        const id = normRef(ref);
-        const exact = this.byId.get(id);
-        if (exact) { this.used.set(exact.id, ++this.clock); return exact; }
+    /** A label must score at least this well to be resolved without being asked about. Measured on the
+     *  motivating cases: correct matches score 0.68-1.00 under the default metric, wrong ones 0.36 or below. */
+    private static readonly LABEL_MIN = 0.5;
+    /** …AND it must lead the runner-up by this much. The threshold alone is not the guard — the danger is two
+     *  SIMILAR labels ("model_fit_linear" / "model_fit_quadratic"), where the best candidate may clear any
+     *  absolute bar and still be a coin flip. Requiring separation encodes "never silently pick between two
+     *  plausible symbols" directly, instead of approximating it with a distance number. */
+    private static readonly LABEL_MARGIN = 0.15;
+
+    /** The best SOFT label match, when one is safe to resolve without asking. Applies only to the QUOTED
+     *  label form: an id-shaped ref that misses must stay missed (its checksum and the sparse id space are
+     *  what make a corrupted id fail loudly), and a bare ref is a tool alias with nothing to be fuzzy about. */
+    private fuzzyLabel(query: string, metric?: LexicalMetric): { value: TokenValue; score: number } | null {
+        const scored = [...this.byId.values()]
+            .filter((v) => v.label)
+            .map((v) => ({ value: v, score: lexicalSimilarity(metric, query, v.label!) }))
+            .sort((a, b) => b.score - a.score);
+        if (!scored.length) return null;
+        const [best, second] = scored;
+        if (best.score < TokenStore.LABEL_MIN) return null;
+        if (second && best.score - second.score < TokenStore.LABEL_MARGIN) return null;   // too close to call
+        return best;
+    }
+
+    /** The LATEST value whose own label matches, or null. Latest-wins mirrors the tool-name alias ("that
+     *  tool's most recent call"), so the two named forms behave the same way when reused. */
+    private byLabel(label: string): TokenValue | null {
+        const want = labelKey(label);
+        if (!want) return null;
+        const hits = [...this.byId.values()].filter((v) => v.label && labelKey(v.label) === want);
+        return hits.length ? hits[hits.length - 1] : null;
+    }
+
+    /** Resolve `@tool:<id>`, a bare id, a tool-name alias, or the model's own LABEL — quoted
+     *  (`@tool:"the sales table"`, unambiguous) or, as a last resort, bare. Null when nothing matches.
+     *
+     *  A label is the most reliable handle a model has, because it CHOSE it at the moment it knew what the
+     *  output was for: it is recalled rather than transcribed, so it degrades gracefully where a hex id
+     *  degrades into garbage. Before this, a labelled output could be named in a fault's candidate list but
+     *  not actually resolved — the store knew the name and still refused it.
+     *
+     *  Order matters. A QUOTED ref is a label lookup and nothing else. An UNQUOTED one tries id, then tool
+     *  name, then label — label last, so a label can never shadow a real id or a tool alias. */
+    get(ref: string): TokenValue | null { return this.resolveRef(ref).value; }
+
+    /** {@link get}, plus HOW it resolved — so a caller can hand back the canonical handle. An unquoted label
+     *  works but teaches nothing; the reply says what the quoted form would have been, the same way reading
+     *  through a tool-name alias hands over the stable id. */
+    resolveRef(ref: string, metric?: LexicalMetric): { value: TokenValue | null; via: "id" | "tool" | "label"; matched?: string; score?: number } {
+        const { label, id } = parseRef(ref);
+        const touch = (v: TokenValue | null): TokenValue | null => { if (v) this.used.set(v.id, ++this.clock); return v; };
+        // THREE DISJOINT FORMS, dispatched on SHAPE rather than tried in order:
+        //   @tool:"a label"   quoted     -> the model's own label
+        //   @tool:a1b2c3f     token-shaped -> a minted id
+        //   @tool:python_exec bare       -> a tool alias, that tool's latest call
+        // Dispatching on form rather than falling through means each spelling has exactly ONE meaning, so
+        // there is no precedence rule to teach and nothing can shadow anything. It also keeps a corrupted id
+        // in the id branch — it MISSES and faults, instead of being retried as a tool or a label and possibly
+        // resolving to something unrelated. (Rests on ids and tool names being distinguishable by shape: no
+        // tool is named as seven hex characters. Asserted in tests, not assumed.)
+        if (label != null) {
+            const exact = this.byLabel(label);
+            if (exact) return { value: touch(exact), via: "label" };
+            // No exact symbol. A near match is resolved only when it is BOTH good and unambiguous — and it is
+            // always announced, never silent: an address dereference must not quietly change which data the
+            // computation runs on.
+            const soft = this.fuzzyLabel(label, metric);
+            return soft
+                ? { value: touch(soft.value), via: "label", matched: soft.value.label, score: soft.score }
+                : { value: null, via: "label" };
+        }
+        if (isTokenShape(id)) return { value: touch(this.byId.get(id) ?? null), via: "id" };
         const ofTool = [...this.byId.values()].filter((v) => v.tool === id);
-        const latest = ofTool.length ? ofTool[ofTool.length - 1] : null;
-        if (latest) this.used.set(latest.id, ++this.clock);
-        return latest;
+        return { value: touch(ofTool.length ? ofTool[ofTool.length - 1] : null), via: "tool" };
     }
 
     /** The captured pointers most similar to a reference that didn't resolve. Models hallucinate token-SHAPED
@@ -247,17 +317,43 @@ const FAR_ENOUGH_TO_BE_UNRELATED = 3;
  *  model's own words, which is what makes a list of pointers readable a dozen steps later. */
 export const nameOf = (v: TokenValue): string => v.label ? `${v.tool}: "${v.label}"` : v.tool;
 
+/** A COMPACT type for a candidate list — what the value IS, in a few characters. {@link describeToken} is a
+ *  sentence, which is right for the one pointer you actually read and wrong for a column of five. Knowing a
+ *  candidate is a 12x3 table rather than a screenshot is often enough to pick correctly without reading any
+ *  of them, which is the whole job of the list. */
+export function shortType(v: TokenValue): string {
+    if (v.kind === "table" && v.table) return `table ${v.table.rows.length}x${v.table.columns.length}`;
+    if (v.kind === "image") return "image";
+    if (v.kind === "code") return "code";
+    if (v.kind === "json") return "json";
+    const n = (v.full ?? v.out ?? "").length;
+    return `text ${n.toLocaleString()} chars`;
+}
+
 export function memoryFault(ref: string, near: TokenValue[], currentStep: number): string {
     const head = `MemoryFault: pointer '@tool:${normRef(ref)}' does not exist.`;
+    // The commonest near-miss now: the model wrote its own LABEL without quotes. A bare ref is a TOOL alias,
+    // so it misses — but the store knows that label, and saying so in the canonical form teaches the syntax
+    // in the same step it recovers. (Resolving it silently would work once and teach nothing.)
+    const bare = normRef(ref);
+    const labelled = near.find((v) => v.label && v.label.trim().toLowerCase().replace(/\s+/g, " ") === bare.trim().toLowerCase().replace(/\s+/g, " "));
+    if (labelled) return `${head}\nThat is a LABEL, and a label must be quoted: read it with @tool:${JSON.stringify(labelled.label)} (an unquoted @tool:<name> means a TOOL's latest call).`;
     if (!near.length) return `${head}\nNothing has been captured in this run yet, so there is no pointer to read. Run a tool first.`;
     const q = normRef(ref).toLowerCase();
     const rows = near.map((v) => {
         const back = currentStep - v.step;
         const where = back <= 0 ? "this step" : `${back} step${back === 1 ? "" : "s"} back`;
-        return { left: `  - @tool:${v.id}`, mid: `(${where}: ${nameOf(v)})`, d: distanceTo(q, v) };
+        // The TYPE is what makes this list pickable: "a 12x3 table" vs "a screenshot" usually decides it
+        // outright, where two similar-looking ids and step numbers do not.
+        const d = distanceTo(q, v);
+        return { line: `  - @tool:${v.id} (${where}: ${nameOf(v)}) ${shortType(v)} [dist ${d}]`, d };
     });
-    const w = Math.max(...rows.map((r) => r.mid.length));
-    const body = rows.map((r) => `${r.left} ${r.mid.padEnd(w)} [edit_dist=${r.d}]`).join("\n");
+    // NOT column-aligned. Padding to a common width is a HUMAN scanning affordance, and this string is read
+    // by a model — which parses the fields either way and pays for every space. On a three-candidate list the
+    // padding was 10% of the message, and it grows with the label lengths. A mechanism whose whole purpose is
+    // to stop the model re-emitting data should not spend context on whitespace. The human-facing view of the
+    // same list is the sidebar/export, which can align in CSS for free.
+    const body = rows.map((r) => r.line).join("\n");
     const unrelated = rows.every((r) => r.d > FAR_ENOUGH_TO_BE_UNRELATED)
         ? "\nNone of these is close, so you may be recalling an output from an earlier turn or inventing the id."
         : "";
@@ -274,6 +370,33 @@ function distanceTo(q: string, v: TokenValue): number {
 }
 
 const normRef = (ref: string): string => String(ref).trim().replace(/^@tool:/, "").replace(/:(in|out)$/, "");
+
+/** A QUOTED reference — `@tool:"the sales table"` — names the model's own LABEL rather than an id or a tool.
+ *  The quotes earn their place twice: they delimit a label containing spaces, and they make the lookup
+ *  UNAMBIGUOUS, so a label that happens to read like a tool name or an id can never shadow one. Both quote
+ *  styles are accepted because models mix them. */
+const QUOTED = /^["'](.*)["']$/s;
+
+/** Undo the escaping inside a quoted label: `\"` is a literal quote, `\\` a literal backslash. A label is
+ *  free text the model wrote, so it can contain the delimiter; escaping is what makes the form closed rather
+ *  than merely usually-right. Anything else after a backslash is left alone (a Windows path in a label should
+ *  survive being read back). */
+const unescapeLabel = (s: string): string => s.replace(/\\(["'\\])/g, "$1");
+
+/** Compare labels forgivingly — case and inner whitespace are not what the model is trying to communicate,
+ *  and the entire reason labels exist is that they are RECALLED rather than transcribed. */
+const labelKey = (s: string): string => s.trim().toLowerCase().replace(/\s+/g, " ");
+
+/** The LABEL a quoted reference names, or null if the reference isn't the quoted form. Exported so a caller
+ *  can echo back what the model actually asked for when reporting a soft match. */
+export const parseLabel = (ref: string): string | null => parseRef(ref).label ?? null;
+
+/** Split a reference into "this is a label" vs "this is an id or a tool name". */
+function parseRef(ref: string): { label?: string; id: string } {
+    const bare = normRef(ref);
+    const q = QUOTED.exec(bare);
+    return q ? { label: unescapeLabel(q[1]), id: "" } : { id: bare };
+}
 
 /** Levenshtein distance — tiny inputs (a 6-hex id or a tool name), so the simple row form is fine. */
 export function editDistance(a: string, b: string): number {

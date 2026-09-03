@@ -2926,13 +2926,13 @@ test("PDF print: GET_PRINT_DOC for an unknown key returns null (no crash)", asyn
 test("DEREF_TOKEN answers only for a run this worker hosts, and forgets it when the run ends", async () => {
     const bg = loadBackground({ config: baseConfig() });
     // No such run → an actionable error, never a silent empty value the tool would treat as data.
-    const missing = await bg.send({ type: "DEREF_TOKEN", runId: "nope", ref: "@tool:a1b2c3" }, { tab: { id: 9 } });
+    const missing = await bg.send({ type: "DEREF_TOKEN", runId: "nope", ref: "@tool:a1b2c3f" }, { tab: { id: 9 } });
     assert.match(missing.error, /No active background run "nope"/);
     assert.equal(missing.value, undefined, "nothing is returned for a run we don't host");
 
     // A run this worker never hosted can't be read by naming it either — the resolver map is populated ONLY by
     // the loop's tokenSink at run start, so a page cannot conjure a pointer store for an arbitrary runId.
-    const forged = await bg.send({ type: "DEREF_TOKEN", runId: "../../etc", ref: "@tool:a1b2c3" }, { tab: { id: 9 } });
+    const forged = await bg.send({ type: "DEREF_TOKEN", runId: "../../etc", ref: "@tool:a1b2c3f" }, { tab: { id: 9 } });
     assert.match(forged.error, /No active background run/);
     assert.equal(forged.value, undefined);
 });
@@ -2961,4 +2961,203 @@ test("OLLAMA_INFO returns the machine's capacity, and null when the route isn't 
     // A JSON body of the wrong shape is equally not capacity.
     const wrong = loadBackground({ config: baseConfig(), onFetch: () => jsonResponse({ hello: 1 }) });
     assert.equal((await wrong.send({ type: "OLLAMA_INFO", payload: {} }, { tab: { id: 1 } })).data, null);
+});
+
+// REGRESSION. `@tool:` pointers are the run's own memory, and a SESSION is what the model sees as one
+// conversation — so a follow-up turn must still read what an earlier turn captured, and a tool NAME must still
+// mean "the latest call of that tool" even when that call happened in an older turn. This broke twice, in two
+// different places: first because the store was created per runAgentLoop call, then because `untrackRun` —
+// which fires in EACH TURN's finally, not at session end — dropped the background store beside the per-turn
+// deref resolver. A model hitting it was told "Nothing has been captured in this run yet" about a tool it had
+// just watched itself run, and concluded pointers were per-turn.
+test("tool pointers persist ACROSS a session's turns, and a tool name still means its latest call", async () => {
+    const PY_TOOL = { name: "python_exec", requiresApproval: false, description: "", parameters: { type: "object", properties: {} }, capabilities: [] };
+    const DEREF_TOOL = { name: "dereference", requiresApproval: false, description: "", parameters: { type: "object", properties: {} }, capabilities: [] };
+    const script = [];          // one entry per model call, in order
+    const toolResults = [];     // every tool result the MODEL was handed
+    let pyRun = 0;
+    const bg = loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            // Record the tool result from the previous step, so assertions read what the model actually saw.
+            const tr = [...(call.body?.messages || [])].reverse().find(m => m.role === "tool");
+            if (tr) toolResults.push(typeof tr.content === "string" ? tr.content : JSON.stringify(tr.content));
+            const next = script.shift();
+            return jsonResponse({ choices: [{ message: next }] });
+        },
+        onTabMessage: async (_tabId, msg) => {
+            if (msg?.type === "RUN_TOOL_IN_PAGE" && msg.payload?.name === "python_exec" && !msg.payload?.renderOnly) {
+                return { result: `ROWS-FROM-CALL-${++pyRun}` };
+            }
+            return undefined;
+        },
+    });
+    const callPy = { content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "python_exec", arguments: JSON.stringify({ code: "df", token: true }) } }] };
+    const deref = (token) => ({ content: "", tool_calls: [{ id: "c2", type: "function", function: { name: "dereference", arguments: JSON.stringify({ token }) } }] });
+    const start = (payload) => bg.send({ type: "START_RUN", payload: { systemPrompt: "S", tools: [PY_TOOL, DEREF_TOOL], model: "m", think: null, maxSteps: 6, autoApprovePython: false, autoApproveReadonly: false, surface: "devtools", toolTokens: true, ...payload } }, { tab: { id: 7 } });
+    const resume = (task) => bg.send({ type: "RESUME_RUN", payload: { runId: "sess1", task } }, { tab: { id: 7 } });
+
+    // Turn 1: run python_exec, keep its output.
+    script.push(callPy, { content: "turn one done" });
+    await start({ runId: "sess1", task: "compute" });
+    const firstToolResult = toolResults.find((r) => r.includes("ROWS-FROM-CALL-1"));
+    const pinned = /@tool:([0-9a-f]{7})/.exec(firstToolResult)?.[1];
+    assert.ok(pinned, "turn 1 minted a pointer");
+
+    // Turn 2: a follow-up reads it BY NAME. This is the exact call that used to fault.
+    toolResults.length = 0;
+    script.push(deref("python_exec"), { content: "turn two done" });
+    await resume("how did you compute that?");
+    const acrossTurns = toolResults.at(-1) ?? toolResults[0];
+    assert.doesNotMatch(acrossTurns, /MemoryFault|Nothing has been captured/, "an earlier turn's output is still readable");
+    assert.match(acrossTurns, /ROWS-FROM-CALL-1/, "…and it is the value that turn captured");
+
+    // Turn 3: the name still reaches BACK past a turn boundary — the last python_exec is two turns old now.
+    toolResults.length = 0;
+    script.push(deref("python_exec"), { content: "turn three done" });
+    await resume("and again?");
+    assert.match(toolResults.at(-1) ?? toolResults[0], /ROWS-FROM-CALL-1/, "the alias reaches a call from an OLDER turn");
+
+    // Turn 4: run it again, then read by name — the alias follows the NEWEST call, across turns…
+    toolResults.length = 0;
+    script.push(callPy, deref("python_exec"), { content: "turn four done" });
+    await resume("recompute");
+    const latest = toolResults.at(-1);
+    assert.match(latest, /ROWS-FROM-CALL-2/, "the name means the latest call");
+    assert.doesNotMatch(latest, /ROWS-FROM-CALL-1/);
+
+    // …while the id pinned in turn 1 still means THAT call. That is the point of handing the id over.
+    toolResults.length = 0;
+    script.push(deref(`@tool:${pinned}`), { content: "turn five done" });
+    await resume("and the original?");
+    assert.match(toolResults.at(-1) ?? toolResults[0], /ROWS-FROM-CALL-1/, "a pinned id does not move");
+});
+
+// Embedding models appear in the model list the moment they are pulled, and choosing one as a chat model
+// fails at request time with nothing to explain it. `kinds: true` reports each model's capabilities so a
+// picker can exclude them — OPT-IN, because it costs an /api/show per model and the composer and VRAM
+// panel, which only want names, must not pay for it.
+test("LIST_MODELS: `kinds` is opt-in, costs nothing when unasked, and is never served to a PAGE", async () => {
+    const shows = [];
+    const mk = () => loadBackground({
+        config: baseConfig(),
+        onFetch: (call) => {
+            if (call.url === "http://host/api/models") return jsonResponse({ data: [{ id: "qwen3:14b" }, { id: "embeddinggemma:300m" }] });
+            if (/\/api\/show$/.test(call.url)) {
+                const model = JSON.parse(call.body ? JSON.stringify(call.body) : "{}").model;
+                shows.push(model);
+                return jsonResponse(model === "embeddinggemma:300m"
+                    ? { capabilities: ["embedding"], model_info: { "gemma3.embedding_length": 768 } }
+                    : { capabilities: ["completion", "tools"], model_info: { "qwen3.embedding_length": 5120 } });
+            }
+            return jsonResponse({ choices: [{ message: { content: "ok" } }] });
+        },
+    });
+
+    // Unasked: the names only, and NOT one capability round trip.
+    const plain = await mk().send({ type: "LIST_MODELS" });
+    assert.deepEqual(plain.data, ["qwen3:14b", "embeddinggemma:300m"], "the list itself is unfiltered — classifying is the picker's job");
+    assert.equal(plain.kinds, undefined, "no kinds unless asked");
+    assert.equal(shows.length, 0, "and no /api/show calls were made");
+
+    // Asked: capabilities alongside, so the picker can apply generatesText / producesEmbeddings.
+    shows.length = 0;
+    const withKinds = await mk().send({ type: "LIST_MODELS", payload: { kinds: true } });
+    assert.deepEqual(withKinds.data, ["qwen3:14b", "embeddinggemma:300m"]);
+    assert.deepEqual(withKinds.kinds["embeddinggemma:300m"], ["embedding"]);
+    assert.deepEqual(withKinds.kinds["qwen3:14b"], ["completion", "tools"]);
+    assert.equal(shows.length, 2, "one lookup per model");
+    // Dimensions ride the SAME /api/show response, so the picker shows them without a second round trip.
+    assert.equal(withKinds.dims["embeddinggemma:300m"], 768);
+    assert.equal(shows.length, 2, "…and still only one lookup per model");
+
+    // A PAGE (sender.tab set) never triggers the round trips — ml.models() must stay cheap, and this is the
+    // same reasoning that strips config overrides from page-relayed messages.
+    shows.length = 0;
+    const fromPage = await mk().send({ type: "LIST_MODELS", payload: { kinds: true } }, { tab: { id: 4 } });
+    assert.equal(fromPage.kinds, undefined, "a page cannot ask for kinds");
+    assert.equal(shows.length, 0);
+});
+
+// `ml.embed` reaches the model through the background like any other call. Two endpoint shapes exist in the
+// wild and both were verified against a live Ollama: the modern one BATCHES (so N strings cost one round
+// trip) and the legacy one does not.
+test("EMBED: prefers the batching endpoint, falls back to the per-input one, and reports the model", async () => {
+    const calls = [];
+    const mk = (serve) => loadBackground({
+        config: baseConfig({ embeddingModel: "embeddinggemma:300m" }),
+        onFetch: (call) => { calls.push(call.url); return serve(call); },
+    });
+
+    // Modern: one request for both inputs.
+    const modern = await mk((call) => /\/api\/embed$/.test(call.url)
+        ? jsonResponse({ model: "embeddinggemma:300m", embeddings: [[1, 0], [0, 1]] })
+        : jsonResponse({}, 404)).send({ type: "EMBED", payload: { inputs: ["a", "b"] } });
+    assert.deepEqual(modern.data.vectors, [[1, 0], [0, 1]]);
+    assert.equal(modern.data.model, "embeddinggemma:300m", "reports WHICH geometry the vectors are in");
+    assert.equal(calls.filter((u) => /\/api\/embed$/.test(u)).length, 1, "both inputs in ONE request");
+
+    // Legacy: /api/embed absent, so it falls back to one request per input.
+    calls.length = 0;
+    const legacy = await mk((call) => /\/api\/embeddings$/.test(call.url)
+        ? jsonResponse({ embedding: [0.5, 0.5] })
+        : jsonResponse({}, 404)).send({ type: "EMBED", payload: { inputs: ["a", "b"] } });
+    assert.deepEqual(legacy.data.vectors, [[0.5, 0.5], [0.5, 0.5]]);
+    assert.equal(calls.filter((u) => /\/api\/embeddings$/.test(u)).length, 2, "one request per input");
+
+    // A PARTIAL batch must not be accepted: pairing the wrong vector with the wrong string is undetectable
+    // downstream, so it falls through to the per-input path instead.
+    calls.length = 0;
+    const partial = await mk((call) => /\/api\/embed$/.test(call.url)
+        ? jsonResponse({ embeddings: [[1, 0]] })                       // one vector for two inputs
+        : /\/api\/embeddings$/.test(call.url) ? jsonResponse({ embedding: [9, 9] }) : jsonResponse({}, 404))
+        .send({ type: "EMBED", payload: { inputs: ["a", "b"] } });
+    assert.deepEqual(partial.data.vectors, [[9, 9], [9, 9]], "a short batch is rejected, not silently mispaired");
+});
+
+test("EMBED: says what to DO when unconfigured or unsupported, and honours the model filter", async () => {
+    const none = await loadBackground({ config: baseConfig({ embeddingModel: "" }), onFetch: () => jsonResponse({}) })
+        .send({ type: "EMBED", payload: { inputs: ["a"] } });
+    assert.match(none.error, /No embedding model configured.*Settings/s, "names the setting, not just the failure");
+
+    // A model that answers neither endpoint is the "you picked a chat model" case; say so.
+    const wrong = await loadBackground({ config: baseConfig({ embeddingModel: "qwen3:14b" }), onFetch: () => jsonResponse({}, 404) })
+        .send({ type: "EMBED", payload: { inputs: ["a"] } });
+    assert.match(wrong.error, /no embeddings for "qwen3:14b".*not be an embedding model, or not pulled/s);
+
+    // An explicit model still passes the access whitelist — a page cannot reach one the user excluded.
+    const filtered = await loadBackground({ config: baseConfig({ modelFilter: "^qwen" }), onFetch: () => jsonResponse({ embeddings: [[1]] }) })
+        .send({ type: "EMBED", payload: { inputs: ["a"], model: "secret-model" } });
+    assert.match(filtered.error, /Refused.*excluded by the model filter/);
+
+    const bad = await loadBackground({ config: baseConfig(), onFetch: () => jsonResponse({}) })
+        .send({ type: "EMBED", payload: { inputs: "not an array" } });
+    assert.match(bad.error, /needs `inputs`/);
+});
+
+// Residency and placement are sent on EVERY embed request. That is also what makes eviction from the VRAM
+// panel work with no state to track: the next call simply re-pins the model.
+test("EMBED: keep-alive and CPU placement ride every request, and both are switchable", async () => {
+    const bodyOf = async (cfg) => {
+        let body = null;
+        await loadBackground({
+            config: baseConfig({ embeddingModel: "e", ...cfg }),
+            onFetch: (call) => { if (/\/api\/embed$/.test(call.url)) body = call.body; return jsonResponse({ embeddings: [[1, 0]] }); },
+        }).send({ type: "EMBED", payload: { inputs: ["a"] } });
+        return body;
+    };
+
+    // Defaults: pinned, and off the GPU. A cold embed measured 2726ms against 95ms warm, and CPU costs 33ms
+    // warm while using no VRAM — so these are the defaults the measurements argue for.
+    const def = await bodyOf({});
+    assert.equal(def.keep_alive, -1, "pinned with no expiry by default");
+    assert.deepEqual(def.options, { num_gpu: 0 }, "on the CPU by default");
+
+    const noPin = await bodyOf({ embeddingKeepAlive: false });
+    assert.equal(noPin.keep_alive, undefined, "off -> the server's own expiry applies");
+    assert.deepEqual(noPin.options, { num_gpu: 0 }, "…and placement is independent");
+
+    const onGpu = await bodyOf({ embeddingForceCpu: false });
+    assert.equal(onGpu.options, undefined, "off -> no placement override, so the server decides");
+    assert.equal(onGpu.keep_alive, -1);
 });

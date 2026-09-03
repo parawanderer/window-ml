@@ -5,7 +5,7 @@
 // background.ts verbatim; it depends only on the shared contract (types + DEFAULT_CONFIG/modelFilterAllows)
 // and chrome/fetch. All server JSON is genuinely opaque, so it's typed `any`; our own data uses the contract.
 import type { MlConfig, ApiFormat, NeutralMessage, ToolCall, FetchLlmPayload, LlmResult, LoadedModel, ServerTool, JsonSchema, TokenUsage } from "./contract";
-import { DEFAULT_CONFIG, modelFilterAllows } from "./contract";   // single source of truth (see contract.ts)
+import { DEFAULT_CONFIG, modelFilterAllows, generatesText, producesEmbeddings } from "./contract";   // single source of truth (see contract.ts)
 
 // The wire body we assemble for a chat request (grows per format/options).
 interface ChatBody {
@@ -247,6 +247,13 @@ export function getConfig(): Promise<MlConfig> {
 
 // model -> capabilities array | null, per service-worker lifetime
 const capabilitiesCache = new Map<string, string[] | null>();
+// Output DIMENSIONS, from the same /api/show response — `model_info["<family>.embedding_length"]`. Filled by
+// modelCapabilities so the settings picker costs no extra round trip.
+//
+// NOTE this field is present for CHAT models too, where it is the hidden size (qwen3.8:27b reports 5120), so
+// it must never be used to DETECT an embedding model — only `capabilities` can. It is shown beside a model
+// the user has already chosen as an embedding model, which is the only context where it means what it says.
+const dimsCache = new Map<string, number | null>();
 
 // Short-lived cache of Ollama's resident set (/api/ps). It changes as models load
 // and unload, so a few seconds keeps the num_ctx-reuse check cheap across a run's
@@ -280,6 +287,78 @@ async function residentContextLength(config: MlConfig, model: string): Promise<n
 // Returns the array, or null when it can't be determined (non-Ollama backend,
 // old Ollama, cloud model, unreachable) — callers must treat null as "unknown"
 // and degrade gracefully, never as "no".
+/** Capabilities for MANY models at once, for the settings pickers. Sequential per model would be ~39 round
+ *  trips on a real box; bounded concurrency turns that into well under a second, and `capabilitiesCache`
+ *  makes every later call free. A model that fails to answer resolves to null (unknown) rather than
+ *  rejecting the batch — one unreachable model must not blank the whole picker. */
+/** Embed one or more strings, returning raw vectors in the same order. Throws with an actionable message
+ *  rather than returning null: unlike a capability probe, a caller asking for an embedding has no sensible
+ *  way to continue without one, and "which model, and is it pulled" is exactly what the human needs told.
+ *
+ *  Two endpoint shapes, tried in order (both verified against a live Ollama):
+ *    · `/api/embed`      modern, `{model, input: string[]}` -> `{embeddings: number[][]}` — BATCHES, so N
+ *                        strings cost one round trip. Preferred for that reason alone.
+ *    · `/api/embeddings` legacy, `{model, prompt: string}` -> `{embedding: number[]}` — one at a time.
+ *  Each is tried under the OpenWebUI passthrough prefix first, then bare, matching `modelCapabilities`. */
+export async function embedTexts(config: MlConfig, model: string, inputs: string[]): Promise<number[][]> {
+    if (!model) throw new Error("No embedding model configured. Set one in Settings (Models), e.g. embeddinggemma:300m, and make sure it is pulled.");
+    if (!inputs.length) return [];
+    const origin = new URL(config.chatUrl).origin;
+    const headers = authHeaders(config);
+    // Residency and placement, both measured rather than assumed (see MlConfig):
+    //  · keep_alive -1 pins the model, because a cold embed is 29x a warm one and this is a SPARSE caller.
+    //  · num_gpu 0 costs 33ms warm and saves the whole VRAM footprint, which the chat model wants.
+    // Sent on every request, which is also what makes eviction from the VRAM panel work with no state: the
+    // next call re-pins. Both are plain Ollama fields on the native route, so they pass the OpenWebUI
+    // passthrough unchanged (verified: expires_at comes back in the year 2318, and size_vram is 0).
+    const runtime: Record<string, unknown> = {
+        ...(config.embeddingKeepAlive === false ? {} : { keep_alive: -1 }),
+        ...(config.embeddingForceCpu === false ? {} : { options: { num_gpu: 0 } }),
+    };
+    const post = async (path: string, body: unknown): Promise<any | null> => {
+        try {
+            const res = await fetch(origin + path, { method: "POST", headers, body: JSON.stringify(body) });
+            if (!res.ok) return null;
+            return await res.json();
+        } catch { return null; }
+    };
+
+    for (const path of ["/ollama/api/embed", "/api/embed"]) {
+        const data = await post(path, { model, input: inputs, ...runtime });
+        const vecs = data?.embeddings;
+        // Length-check rather than truthiness: a partial batch would silently pair the wrong vector with
+        // the wrong string, which no caller could detect.
+        if (Array.isArray(vecs) && vecs.length === inputs.length) return vecs as number[][];
+    }
+    for (const path of ["/ollama/api/embeddings", "/api/embeddings"]) {
+        const out: number[][] = [];
+        for (const input of inputs) {
+            const data = await post(path, { model, prompt: input, ...runtime });
+            if (!Array.isArray(data?.embedding)) { out.length = 0; break; }
+            out.push(data.embedding as number[]);
+        }
+        if (out.length === inputs.length) return out;
+    }
+    throw new Error(`The server returned no embeddings for "${model}". It may not be an embedding model, or not pulled — check Settings (Models), where only models reporting the embedding capability are offered.`);
+}
+
+export async function modelCapabilitiesBatch(config: MlConfig, models: string[], concurrency = 6): Promise<{ caps: Record<string, string[] | null>; dims: Record<string, number | null> }> {
+    const caps: Record<string, string[] | null> = {};
+    const dims: Record<string, number | null> = {};
+    const queue = [...models];
+    const worker = async (): Promise<void> => {
+        for (let m = queue.shift(); m !== undefined; m = queue.shift()) {
+            try { caps[m] = await modelCapabilities(config, m); }
+            catch { caps[m] = null; }
+            // Same /api/show response, so the dimensions cost nothing extra.
+            const d = dimsCache.get(`${config.chatUrl}|${m}`);
+            if (d != null) dims[m] = d;
+        }
+    };
+    await Promise.all(Array.from({ length: Math.min(concurrency, models.length) }, worker));
+    return { caps, dims };
+}
+
 export async function modelCapabilities(config: MlConfig, model: string): Promise<string[] | null> {
     const cacheKey = `${config.chatUrl}|${model}`;
     if (capabilitiesCache.has(cacheKey)) return capabilitiesCache.get(cacheKey)!;
@@ -299,6 +378,9 @@ export async function modelCapabilities(config: MlConfig, model: string): Promis
             const data: any = await res.json();
             if (Array.isArray(data.capabilities)) {
                 result = data.capabilities;
+                const info = data.model_info || {};
+                const dimKey = Object.keys(info).find((k) => k.endsWith(".embedding_length"));
+                dimsCache.set(cacheKey, dimKey && Number.isFinite(info[dimKey]) ? Number(info[dimKey]) : null);
                 break;
             }
         } catch {

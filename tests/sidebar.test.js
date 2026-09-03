@@ -1230,12 +1230,15 @@ test("settings: the 'vision capable?' override stays ENABLED for a cloud (unprob
 test("settings: Test models runs a per-model liveness check (set models pass, unset stays '—')", async () => {
     const w = await loadSidebarWorld({ sync: { model: "qwen3:14b", utilityModel: "gemma:2b" }, models: ["qwen3:14b"] });
     await openSettings(w, "Models");
-    assert.equal(w.shadow.querySelectorAll(".test-row").length, 4, "one row per model role");
+    // One row per role: default, OCR, utility, grounding, embedding.
+    assert.equal(w.shadow.querySelectorAll(".test-row").length, 5, "one row per model role");
+    const roles = [...w.shadow.querySelectorAll(".test-row .role")].map((e) => e.textContent);
+    assert.deepEqual(roles, ["Default", "OCR", "Utility", "Grounding", "Embedding"]);
 
     w.shadow.querySelector(".test-btn").click();
     await w.tick();
     assert.equal(w.shadow.querySelectorAll(".test-ic.ok").length, 2, "the two set models pass");
-    assert.equal(w.shadow.querySelectorAll(".test-ic.unset").length, 2, "the unset OCR + grounding stay not-set");
+    assert.equal(w.shadow.querySelectorAll(".test-ic.unset").length, 3, "unset OCR, grounding + embedding stay not-set");
 });
 
 test("settings: Test models unloads only the models it freshly loaded (leaves already-warm ones)", async () => {
@@ -4488,7 +4491,7 @@ test("agent-step: a step's delegated sub-call tokens surface as the '+N sub' usa
 // Two ways an output reaches the answer, BOTH explicit (no auto-fallback): (1) inline @tool cite (expands in the
 // reply), (2) designated into the answer set (ml.answer / the answer tool). The reducer stores ev.answer (the
 // finalized bottom markdown) + the step's minted `token`; the render resolves it.
-const OUT = "abcdef";
+const OUT = "abcdef5";
 const compStep = (hash) => agentStep(hash, 1, { seq: 1, tool: "python_exec", token: OUT, result: "COMPUTED_TABLE",
     renderOut: { type: "code", text: "COMPUTED_TABLE", lang: "text" } });
 const openRun = async (w) => { w.shadow.querySelector(".row").click(); await w.tick(); };
@@ -4528,10 +4531,10 @@ test("answer render (HUD card): a PRIOR Show-work block's answer resolves its @t
     await w.raw({ __mlSidebarSurface: "card" });   // off-mode corner card
     const hash = "blkcite";
     await w.dispatch(agentStart(hash, "compute totals", "m"));
-    await w.dispatch(agentStep(hash, 1, { seq: 1, tool: "python_exec", token: "aa11bb", result: "COMPUTED_TABLE",
+    await w.dispatch(agentStep(hash, 1, { seq: 1, tool: "python_exec", token: "aa11bb0", result: "COMPUTED_TABLE",
         renderOut: { type: "code", text: "COMPUTED_TABLE", lang: "text" } }));
     // The FIRST task's answer cites that step inline (the summary carries the ![…](@tool:…)).
-    await w.dispatch(agentResult(hash, "The total is 42. ![Calculations](@tool:aa11bb:out)", 1));
+    await w.dispatch(agentResult(hash, "The total is 42. ![Calculations](@tool:aa11bb0:out)", 1));
     // A follow-up task → a second block, so the run SEGMENTS and block 0 becomes a PRIOR (CardTraceMsg-rendered).
     await w.dispatch({ kind: "agent-say", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text: "again" });
     await w.dispatch(agentStep(hash, 2, { seq: 2, tool: "findByText", arguments: { text: "x" }, result: "ok" }));
@@ -4544,7 +4547,7 @@ test("answer render (HUD card): a PRIOR Show-work block's answer resolves its @t
     answered.querySelector(".astep-head").click(); await w.tick();                   // expand its "answered" disclosure
     assert.ok(answered.querySelector(".tok-ref"), "the @tool citation resolves to a token render");
     assert.match(answered.textContent, /COMPUTED_TABLE/, "the cited step's output is inlined");
-    assert.doesNotMatch(answered.innerHTML, /@tool:aa11bb/, "the raw @tool markdown is NOT shown");
+    assert.doesNotMatch(answered.innerHTML, /@tool:aa11bb0/, "the raw @tool markdown is NOT shown");
 });
 
 test("answer render (HUD card): a TOOL-NAME alias in a PRIOR block resolves to THAT block's tool call, not a later turn's", async () => {
@@ -4620,19 +4623,19 @@ test("answer render (sidebar): a sympy-AUTO `latex` python-out typesets with NO 
         "| raw overrides the auto-latex → inline literal text");
 });
 
-// Reproduces run 200d7599: turn 1 mints @tool:239987 on a python_exec; a FOLLOW-UP turn cites that SAME hex
+// Reproduces run 200d7599: turn 1 mints @tool:239987c on a python_exec; a FOLLOW-UP turn cites that SAME hex
 // token INLINE, mid-sentence, with `| latex`. It must (a) RESOLVE (a hex anchors any turn — the per-turn scope
 // broke it → "unresolved" in the DevTools reply) and (b) render INLINE, not a display block. Both surfaces
 // must agree (parity).
 async function inlineHexLatexRun(w) {
     const hash = "xt";
     await w.dispatch(agentStart(hash, "differentiate", "gemma4:31b"));
-    await w.dispatch(agentStep(hash, 1, { seq: 1, tool: "python_exec", token: "239987", result: "e^{x} + 2",
+    await w.dispatch(agentStep(hash, 1, { seq: 1, tool: "python_exec", token: "239987c", result: "e^{x} + 2",
         renderOut: { type: "python-out", value: "e^{x} + 2 \\sin{\\left(x \\right)} \\cos{\\left(x \\right)}", latex: true } }));
-    await w.dispatch(agentResult(hash, "On its own line:\n\n![deriv](@tool:239987:out | latex)", 1));   // turn 1: standalone
+    await w.dispatch(agentResult(hash, "On its own line:\n\n![deriv](@tool:239987c:out | latex)", 1));   // turn 1: standalone
     await w.dispatch({ kind: "agent-say", id: hash, ts: Date.now(), save: false, session: { hash, turn: 0 }, text: "inline please" });
     // turn 2: cite the SAME token INLINE, mid-sentence — NO python_exec step in this turn.
-    await w.dispatch(agentResult(hash, "The derivative of $x$ is ![deriv](@tool:239987:out | latex), which renders inline.", 2));
+    await w.dispatch(agentResult(hash, "The derivative of $x$ is ![deriv](@tool:239987c:out | latex), which renders inline.", 2));
     await w.flush();
     return hash;
 }
@@ -4652,9 +4655,9 @@ test("answer render: a comma-inline `| latex` cite (no newlines) is INLINE, not 
     // must render INLINE. (A stale `!`-embed build rendered every `![…]` as a display block — this guards it.)
     const w = await loadSidebarWorld();
     await w.dispatch(agentStart("ex", "differentiate"));
-    await w.dispatch(agentStep("ex", 1, { seq: 1, tool: "python_exec", token: "918874", result: "3x^2",
+    await w.dispatch(agentStep("ex", 1, { seq: 1, tool: "python_exec", token: "9188747", result: "3x^2",
         renderOut: { type: "python-out", value: "3x^{2} + 4x - 5", latex: true } }));
-    await w.dispatch(agentResult("ex", "The derivative is ![result](@tool:918874:out | latex), which is typeset inline.", 1));
+    await w.dispatch(agentResult("ex", "The derivative is ![result](@tool:9188747:out | latex), which is typeset inline.", 1));
     w.shadow.querySelector(".row").click(); await w.tick();
     const tok = w.shadow.querySelector(".msg.asst .answer-rendered .tok-ref");
     assert.ok(tok?.classList.contains("tok-inline") && !tok.classList.contains("tok-block"), "a comma-inline citation is INLINE");
@@ -6803,3 +6806,24 @@ test("event lane: spans render, a tool step is one split block, and clicking ope
     await w.flush();
     assert.match(w.shadow.body.innerHTML, /astep|agent/, "it navigated into the run");
 });
+
+// The embedding role cannot be liveness-checked the way the others are: it can't answer a chat ping, and
+// reading its capability list only says what the server CLAIMS. So it is tested by actually embedding —
+// which also reports the DIMENSIONS, the fact that matters most, since vectors from two different models
+// cannot be compared and that failure is silent.
+test("settings: the embedding model is tested by EMBEDDING, and reports its dimensions", async () => {
+    let embedded = null;
+    const w = await loadSidebarWorld({
+        sync: { model: "qwen3:14b", embeddingModel: "embeddinggemma:300m" },
+        models: ["qwen3:14b"],
+        embed: (payload) => { embedded = payload; return { data: { model: payload.model, vectors: [Array(768).fill(0.1)] } }; },
+    });
+    await openSettings(w, "Models");
+    w.shadow.querySelector(".test-btn").click();
+    await w.tick();
+
+    assert.ok(embedded, "it embedded rather than sending a chat ping");
+    assert.equal(embedded.model, "embeddinggemma:300m", "against the configured model");
+    const row = [...w.shadow.querySelectorAll(".test-row")].find((r) => r.querySelector(".role")?.textContent === "Embedding");
+    assert.ok(row.querySelector(".test-ic.ok"), "a real vector came back, so it passes");
+    assert.match(row.querySelector('[role="tooltip"]').textContent, /768 dimensions/, "and says which geometry");});

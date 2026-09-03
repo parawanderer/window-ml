@@ -55,13 +55,13 @@ test("@tool citations in an answer RESOLVE to the cited step's output; unresolve
     const id = toolToken(hash, 1);   // the token for step seq 1
     const s = {
         hash, kind: "agent", model: "qwen3", tag: "session", createdTs: 1, lastTs: 2, status: "ok", turns: [], answers: [],
-        summary: `The count is ![n](@tool:${id}:out) and a bogus ![x](@tool:beefee:out).`,
+        summary: `The count is ![n](@tool:${id}:out) and a bogus ![x](@tool:beefeec:out).`,
         steps: [{ step: 1, seq: 1, tool: "exec", token: id, arguments: { js: "x" }, result: "9",
             renderOut: { type: "code", text: "COUNT_RESULT_42", lang: "text" } }],
     };
     const { md } = serializeSession(s);
     assert.match(md, /COUNT_RESULT_42/, "the cited step's Out is inlined at the token");
-    assert.match(md, /⟨unresolved @tool:beefee/, "a hallucinated token shows a visible unresolved note");
+    assert.match(md, /⟨unresolved @tool:beefeec/, "a hallucinated token shows a visible unresolved note");
     assert.match(md, /Answer · raw \(as the model wrote it\)/, "the literal answer stays recoverable");
     assert.match(md, new RegExp(`@tool:${id}:out`), "the raw disclosure keeps the literal link");
 });
@@ -96,7 +96,7 @@ test("a step's model-facing Out (with an @tool token line) stays recoverable in 
             arguments: { js: "document.querySelectorAll('*').length" },
             result: "9",   // the CLEAN Out (pretty view)
             // what the model ACTUALLY saw — the clean result PLUS the appended token line
-            modelResult: "9\n\n[output token @tool:e7ed9f — cite this exact result …]",
+            modelResult: "9\n\n[output token @tool:e7ed9fa — cite this exact result …]",
             renderIn: { type: "code", text: "document.querySelectorAll('*').length", lang: "javascript" },
         }],
     };
@@ -104,7 +104,7 @@ test("a step's model-facing Out (with an @tool token line) stays recoverable in 
     const htmlText = sessionToHtml(s, "run").replace(/<[^>]+>/g, "").replace(/&quot;/g, '"');
     for (const [fmt, out] of [["markdown", md], ["pdf/html", htmlText]]) {
         assert.match(out, /Out · raw \(as the model saw it\)/, `${fmt} discloses the model-facing Out`);
-        assert.match(out, /@tool:e7ed9f/, `${fmt} keeps the token line the model saw`);
+        assert.match(out, /@tool:e7ed9fa/, `${fmt} keeps the token line the model saw`);
     }
 });
 

@@ -465,7 +465,7 @@ function closeSidebarWorlds() {
 // document (sidebar.html): renders into #root, no shadow root. In the real
 // extension the content-script shell relays __mlDebug in from the parent window;
 // in jsdom window.parent === window, so dispatch posts with source: win.
-async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaModels = null, fetchLlm = () => ({ data: "OK" }), vram = [], info = null, holdInfo = null, invocation = null, psError = null, caps = null, pythonExec = null, listModels = null } = {}) {
+async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaModels = null, fetchLlm = () => ({ data: "OK" }), vram = [], info = null, holdInfo = null, invocation = null, psError = null, caps = null, pythonExec = null, listModels = null, embed = null } = {}) {
     const unloadCalls = [];
     const pyCalls = [];   // PYTHON_EXEC payloads the app sent (the bench)
     const printCalls = [];   // PRINT_SESSION payloads (the PDF export routes its rendered doc to the background)
@@ -495,6 +495,11 @@ async function loadSidebarWorld({ sync = {}, local = {}, models = [], ollamaMode
                 if (type === "LIST_MODELS") cb(listModels ? listModels(msg.payload) : { data: models, ollamaModels });
                 else if (type === "FETCH_LLM") cb(fetchLlm(msg.payload));
                 else if (type === "MODEL_CAPS") cb({ data: typeof caps === "function" ? caps(msg.payload && msg.payload.model) : caps });
+                // `embed` may be a function (inspect the payload) or a dims NUMBER, which is the common case:
+                // a settings test cares that a real vector came back and how wide it is, not its contents.
+                else if (type === "EMBED") cb(typeof embed === "function" ? embed(msg.payload)
+                    : embed == null ? { error: "no embedding model configured" }
+                    : { data: { model: msg.payload && msg.payload.model, vectors: (msg.payload?.inputs || [""]).map(() => Array(embed).fill(0.1)) } });
                 else if (type === "OLLAMA_PS") cb(psError ? { error: psError } : { data: psVram });
                 // Machine CAPACITY (/api/info). `info: null` (or omitted) is the common case — a stock Ollama
                 // doesn't serve the route — and the panel must treat it as UNKNOWN, never as zero.

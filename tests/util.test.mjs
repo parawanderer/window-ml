@@ -160,10 +160,43 @@ test("markSeen: rounds coordinates and is a no-op on a null memory", () => {
 test("toolToken: deterministic 6-hex id from (runHash, seq); opaque + varies", async () => {
     const { toolToken } = await import("../util.ts");
     const t = toolToken("abcd1234", 3);
-    assert.match(t, /^[0-9a-f]{6}$/, "6 hex");
+    assert.match(t, /^[0-9a-f]{7}$/, "6 hex");
     assert.equal(toolToken("abcd1234", 3), t, "deterministic — same inputs, same id (survives replay)");
     assert.notEqual(toolToken("abcd1234", 4), t, "differs by seq");
     assert.notEqual(toolToken("wxyz9999", 3), t, "differs by run");
+});
+
+// REGRESSION. These ids were a thinly disguised COUNTER. FNV-1a's last step xors only the final byte before
+// one multiply, so consecutive seqs stayed closely related and the TOP bits — the ones the id truncates to —
+// barely moved. Real output: f22fa7 · ef2fa3 · f02fa4 · f52fac · f62fae … — the middle four characters
+// IDENTICAL for nine steps. Two properties depend on that not being true: the id must be opaque (a model has
+// to COPY it, not extrapolate it), and near-misses must MISS — ids sat a Hamming distance of 2 apart, so
+// mistyping two characters landed on another LIVE pointer and read the wrong output with no error, which
+// MemoryFault cannot catch because it only fires on an id that resolves to nothing.
+test("toolToken: consecutive ids AVALANCHE — no position stays put, no near-collisions", async () => {
+    const { toolToken } = await import("../util.ts");
+    const hamming = (a, b) => [...a].reduce((d, c, i) => d + (c === b[i] ? 0 : 1), 0);
+
+    for (const run of ["7f45f80c", "abcd1234", "0", "a-longer-run-hash"]) {
+        const ids = Array.from({ length: 16 }, (_, i) => toolToken(run, i + 1));
+        // Every character POSITION must actually move. Random 6-hex gives ~10.3 distinct over 16 draws; the
+        // broken version gave 1 (constant). The worst seen over 18k sampled positions was 5, so 4 has margin.
+        for (let pos = 0; pos < 6; pos++) {
+            const distinct = new Set(ids.map((id) => id[pos])).size;
+            assert.ok(distinct >= 4, `run ${run}: position ${pos} took only ${distinct} distinct values over 16 seqs`);
+        }
+        // No id is one typo away from another LIVE id in the same run.
+        for (let i = 0; i < ids.length; i++) {
+            for (let j = i + 1; j < ids.length; j++) {
+                assert.ok(hamming(ids[i], ids[j]) >= 2, `run ${run}: ${ids[i]} and ${ids[j]} are one character apart`);
+            }
+        }
+        // The literal signature of the bug: a shared substring at a fixed offset across consecutive ids.
+        for (let pos = 0; pos <= 3; pos++) {
+            const runs3 = new Set(ids.slice(0, 9).map((id) => id.slice(pos, pos + 3)));
+            assert.ok(runs3.size > 1, `run ${run}: every id shares "${[...runs3][0]}" at offset ${pos}`);
+        }
+    }
 });
 
 // ---- pageContext: the "Markdown:" line, and WHOSE tools it may name ----

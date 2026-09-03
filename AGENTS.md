@@ -749,6 +749,33 @@ background-hosted paths with no page round-trip and no approval.
   uses (`DEREF_TOKEN`, keyed by runId) — a page-only binding would have worked in off-mode and silently
   returned nothing whenever a debug surface was open. `dereference` and `info` are both in the read-only exec
   dialect (pure reads that spend nothing), with the adversarial tests the dialect rule requires.
+- **THREE DISJOINT REFERENCE FORMS, told apart by SHAPE** — dispatched, never tried in order, so each
+  spelling has exactly one meaning and nothing can shadow anything:
+  `@tool:"the budget dataframe"` (quoted) = the model's own LABEL · `@tool:adf40ed` (7 hex) = a minted id ·
+  `@tool:python_exec` (bare) = that tool's latest call. Dispatching on form also keeps a CORRUPTED id in the
+  id branch, where it misses and faults, rather than being retried as a tool or label and resolving to
+  something unrelated. The partition is ENFORCED: `ml.defineTool` throws on a name that is not an identifier
+  or that is id-shaped, because the charset alone does not give it (`deadbee` is both).
+- **The id carries a CHECK CHARACTER** (6 hex of avalanched hash + 1). It was FNV-1a truncated, which made it
+  a disguised counter — the middle four characters were identical for nine consecutive steps, so ids sat a
+  Hamming distance of 2 apart and a two-character typo could land on ANOTHER LIVE POINTER. A murmur3 `fmix32`
+  finaliser fixed the diffusion; the check character then makes every single-character substitution
+  structurally invalid, and — more usefully — lets a fault tell a MISTYPED id from an INVENTED one.
+  Correction is deliberately NOT in the id: the live set of ~24 ids is already a code with minimum distance
+  ~4 for zero characters, and unlike an algebraic code it degrades gracefully as the error grows. See
+  `docs/POINTER-IDENTIFIERS.md` for the measurements and the benchmark that is still unrun.
+- **Labels resolve, in tiers, and a near match is never silent.** Exact → resolve. Near AND clearly ahead of
+  the runner-up (`labelMatch`, default `hybrid`) → resolve and SAY SO. Ambiguous → fault with candidates.
+  The margin is the guard, not a distance threshold: given `model_fit_linear` and `model_fit_quadratic`,
+  both clear any absolute bar, so only separation can refuse `model_fit` while still accepting a typo with a
+  clear winner. The announcement channel differs by caller and this is load-bearing — the TOOL appends it to
+  its result, but `ml.dereference` in `exec` returns a VALUE the script parses, so a note there would corrupt
+  the data: a read returns `{ value, warning? }` and the exec path `console.warn`s it.
+- **Pointers span the SESSION, not the turn**, LRU-bounded (`TokenStore.CAP`) with a read counting as a use.
+  On the background path the store is released with the `bgRuns` entry, NOT in `untrackRun` — that fires per
+  TURN, and putting it there emptied the store between turns.
+- **`dereference` with NO argument lists what the session holds** (id, name, TYPE, age) — the answer to "what
+  do I have?", so the model never has to recall an id to find out.
 
 - **Reading by NAME pins a stable id.** `@tool:python_exec` means "the LATEST python_exec call" — a moving
   target. A model that didn't pass `token: true` was never shown that call's hex (it is minted for a citable
@@ -859,6 +886,31 @@ to the tab's `shell.ts`, which draws the box (in devtools mode it lazily mounts 
 highlight-only shadow host, since no overlay is present). `SET_APPROVAL` is the same shape.
 A future page-input channel would follow the pattern.
 
+**Markdown negotiation (`ml.fetch` / `fetch_url`, `format: "markdown" | "html"`).** A docs page run through
+Turndown is OUR reduction of its markup; many sites publish an authored Markdown version of the same page,
+typically an order of magnitude smaller. A four-rung ladder in `sw-fetch.ts` goes and gets it: **1 `accept`**
+— the SAME request asking for Markdown, so its miss IS the HTML fallback and the rung is never wasted;
+**2 `declared`** — the `<link rel="alternate" type="text/markdown">` in that HTML, free to evaluate and
+authoritative where derivation cannot be (docs.github.com publishes at `/api/article/body?pathname=…`);
+**3 `sibling`** — the derived `.md`/`index.md`, the guess, so it goes last; **4 `convert`** — Turndown.
+Rungs 2-4 run only when rung 1 returned HTML, so a JSON API answers at rung 1 and a data fetch still costs
+one request; a URL whose extension names a data file never negotiates at all. Measured across 12 docs
+platforms, neither mechanism dominates: `Accept` alone gets 9 of the 11 that publish a twin, the `.md` URL
+alone also 9 — together 11. Two rules the probe forced: later rungs derive from the **final** url (a redirect
+is how `…/guide` becomes `…/guide/`, which flips the sibling to `index.md`), and a DECLARED href is
+page-controlled, so a cross-origin one is refused rather than followed under this page's grant. `raw` was
+replaced by `format` because it straddled "what do we FETCH" and "what does the model RECEIVE"; `format` is
+the fetch-level half, shared with `ml.fetch`. `FetchResult.negotiation` carries the trace, rendered as a
+resolution TREE in the In slot (`sidebar/fetch-ladder.ts` holds the labels once, for the sidebar AND both
+export sinks) — not decoration: a stub twin is a valid 200 Markdown document that is simply the wrong page.
+`pageInfo` reports a declared twin too, so an agent standing on a docs page knows to fetch rather than survey.
+
+**`ml.pipe(source, pipe)`** runs the text-pipe dialect over ANY string, not just one tool's output —
+`ml.pipe(await ml.fetch(url), "grep -i pricing | head -20")`. Named `pipe`, not `bash`: `PIPE_CMDS` includes
+`keys`/`values`/`schema`/`type`, which are not shell commands. A fetch result may be passed whole (its
+`.markdown`, else `.text`). Advertised in `exec`'s description only — it needs exec, which a run may not
+have — and otherwise discovered through `agent_api_docs`.
+
 **Sources.** When a tool/RAG runs, OpenWebUI attaches provenance — top-level
 `data.sources` (non-stream) or its own SSE line `{ sources: [...] }` (stream,
 captured in `streamChunk`/`consume`). `fetchLLM`/`streamLLM` return
@@ -903,6 +955,16 @@ date is YOUR responsibility** — every time you change a self-tool's behaviour,
 mention in the same change. Do this proactively, never ask the user whether to. (Skills live in
 `.claude/skills/`; the `observe` skill is the reference example.)
 
+**RULE — never pad model-facing text for alignment.** Column-aligning a list with `padEnd` is a HUMAN
+scanning affordance. A model parses the fields either way and pays for every space, so padding is pure
+context cost on a path whose whole purpose is usually to SAVE context. Measured on the `dereference`
+candidate list: 55 of 557 characters — 10% — were padding, and it grows with the field widths. Use a single
+space or a delimiter, and let the fields be ragged. This covers every string a model reads: tool results and
+errors, tool/parameter descriptions, prompt clauses, fault messages. **Human-facing surfaces are the
+opposite** — the sidebar, the HUD and the exports should align freely, and the sidebar gets it for free in
+CSS, so nothing is lost by keeping the model-facing string dense. Testable: assert no run of two or more
+spaces in the generated string (see `tests/token-pipe.test.mjs`, memoryFault).
+
 - **Plain JS in docs/examples** — `document.querySelector`, never jQuery-style
   `$`/`$$` (those are devtools-only and read as dated).
 - **Document functions with JSDoc** (`/** … */`, `@param`/`@returns` where useful),
@@ -925,6 +987,14 @@ mention in the same change. Do this proactively, never ask the user whether to. 
   `npm test` stays green. CI fetches the wheels (cached by pyodide version) for
   both the test job (so these run) and the build job (so the uploaded extension
   artifact can actually run `python_exec`).
+- **Coverage: `npm run coverage`** — Node's built-in coverage (no dependency), writing
+  `coverage/lcov.info` (the **Coverage Gutters** VSCode extension reads it with no configuration) plus a
+  table on stdout. `node scripts/coverage-lines.mjs <file>` prints the gaps AS SOURCE, separating **NEVER
+  RUN** from **BRANCH NOT TAKEN** — the second is the one a percentage hides, and the one that answers "was
+  the `else` of this guard ever taken". Reach for it before claiming a path is tested: auditing the Markdown
+  ladder this way found five untaken branches where the claim had been "fully covered", though only one was
+  worth a test. `--enable-source-maps` is NOT optional in that script — tests run through tsx, so without it
+  every line number describes the transform. See the `coverage` skill.
 - **End-to-end tests: `npm run test:e2e`** (Playwright, `tests/e2e/*.spec.mjs`) —
   the ONE heavy layer that loads the **built** extension in a real Chromium. Use
   it **only** for behaviour jsdom/`node:vm` genuinely can't represent: full-page
@@ -1013,6 +1083,12 @@ thing. The parts:
   unified track and the old box's history is dropped, since an 18 GiB reading redrawn against an 11.84 GiB
   pool clips and looks like a measurement), the tiling at width, the drag floor, and the tooltip/hit-target
   invariants.
+- **`md-ladder-live.mjs`** — a **debug probe, not a test**: `npm run build && node --import tsx
+  tests/e2e/md-ladder-live.mjs` drives the Markdown negotiation ladder against LIVE docs sites through the
+  built extension and prints each resolution tree. Every other ladder test drives a SCRIPTED fetch, so this
+  is the only thing that exercises the real background worker, its host permissions and the real consent
+  path. Each site is visited first and fetched from its OWN origin, so the fetch is same-origin and needs no
+  approval. Not in CI — the sites are live.
 - **`stream-demo.mjs`** — a **narrated demo, not a test** of LIVE tool-output streaming: `npm run build &&
   node --import tsx tests/e2e/stream-demo.mjs` opens a headful browser, slides the overlay open on a real
   (background-hosted) run, and drives a deliberately SLOW `exec` (paced `console.log`) and `python_exec`

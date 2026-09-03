@@ -17,7 +17,7 @@ import { runStats, fmtTokPerSec, UI_OUT_CAP } from "./contract";
 import type { TokenRender } from "./contract";
 import { UNATTENDED_REFUSAL } from "./prompts";
 import { toolToken } from "./util";
-import { TokenStore, derefPipe, describeToken, extraBeyondModel, memoryFault, cleanLabel, nameOf, isAliasRef, DEREF_TOOL, type TokenKind, type TokenValue } from "./token-pipe";
+import { TokenStore, derefPipe, describeToken, extraBeyondModel, memoryFault, cleanLabel, nameOf, shortType, isAliasRef, parseLabel, DEREF_TOOL, type TokenKind, type TokenValue, type DerefRead } from "./token-pipe";
 
 export type Approval = "readonly" | "sandbox" | "same-origin" | "consented" | "self-source" | "user" | "denied" | "skipped" | "cancelled";
 export interface ToolMeta { name: string; requiresApproval?: boolean; capabilities?: string[]; }
@@ -204,7 +204,10 @@ export interface AgentLoopOptions { tools: ToolMeta[]; maxSteps?: number | (() =
     /** Called once at run start with a resolver for this run's `@tool:` pointers. The host binds it into the
      *  ToolContext so `ml.dereference` inside an approved exec reads THIS run's outputs — and only while a
      *  tool of this run is executing. The loop owns the store, so it is the only place that can hand this out. */
-    tokenSink?: (resolve: (ref: string, pipe?: string | string[]) => string) => void;
+    tokenSink?: (resolve: (ref: string, pipe?: string | string[]) => DerefRead) => void;
+    /** Which lexical metric ranks a near-miss on a pointer label (config `labelMatch`). Omitted = the
+     *  default; the benchmark varies it. */
+    labelMatch?: import("./contract").LexicalMetric;
     /** The pointer store to use. Pass the SESSION's store so `@tool:` references survive across a handle's
      *  turns; omit for a one-shot run and the loop makes its own. */
     tokenStore?: TokenStore;
@@ -304,8 +307,15 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     const derefLocally = (args: Record<string, unknown>, step: number, seq: number): ToolRunResult => {
         const ref = String(args?.token ?? "").trim();
         const pipe = args?.pipe == null ? "" : String(args.pipe);
-        if (!ref) return { result: `Error: "token" is required — the @tool:<id> of an output you want to read. Available: ${tokenList()}` };
-        const v = tokenStore.get(ref);
+        // NO argument is a legitimate read: the INVENTORY of what this session holds. It used to be reachable
+        // only by triggering the "token is required" error, which is backwards for a mechanism whose whole job
+        // is confidence — a model that cannot cheaply see what it has will guess, and a model that expects to
+        // guess wrong retypes the data instead, which is the cost this exists to avoid.
+        // A `pipe` with no token is a slip, not an inventory request — the model meant to reduce SOMETHING.
+        // Still answer with the inventory (that is what it needs to recover), but say the pipe was dropped
+        // rather than silently ignoring an argument it deliberately wrote.
+        if (!ref) return { result: pipe.trim() ? `${inventory()}\n\n(Your \`pipe\` was not applied: no pointer was named to apply it to.)` : inventory() };
+        const { value: v, matched, score } = tokenStore.resolveRef(ref, opts.labelMatch);
         // A pointer that doesn't resolve is usually a HALLUCINATED id (six plausible hex characters that were
         // never minted), so name the closest real ones rather than just saying no — the model can then correct
         // itself in one step instead of guessing again.
@@ -335,10 +345,16 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
             // the only handle it has, and it often only decides an output is worth keeping AFTER seeing it.
             // Reading through the alias is exactly that moment, so hand back the stable id and say it is one.
             // Only when the model came in via a NAME: given the hex it already holds the pin.
+            // A label that did NOT match exactly was resolved by similarity. Say so, every time: an address
+            // dereference must never quietly change which data the computation ran on, and the model can only
+            // notice a wrong resolution if it is told one happened.
+            const soft = matched
+                ? `\n\n[resolved by similarity, not an exact name: you asked for ${JSON.stringify(parseLabel(ref) ?? ref)} and the closest label was ${JSON.stringify(matched)} (${score?.toFixed(2)}). If that is not what you meant, list what you have with dereference and no token.]`
+                : "";
             const pin = isAliasRef(ref, v.id)
                 ? `\n\n[pinned: this call is @tool:${v.id}. "${nameOf(v)}" always means the LATEST ${v.tool} call and will move when you run it again — @tool:${v.id} always means THIS one. Cite it with ![label](@tool:${v.id}:out).]`
                 : "";
-            return { result: `${head}\n\n${text}${derived}${pin}` };
+            return { result: `${head}\n\n${text}${derived}${soft}${pin}` };
         } catch (e) {
             // Any stage that fails throws with an actionable message — the pipe dialect's existing contract.
             // Surface it verbatim so the model corrects the pipe rather than abandoning the pointer.
@@ -347,6 +363,19 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     };
     const tokenList = (): string =>
         tokenStore.size ? tokenStore.all().map(v => `@tool:${v.id} (${nameOf(v)}, step ${v.step})`).join(", ") : "(nothing captured yet)";
+    /** Everything this session holds a pointer to — what it is, what it was called, and how far back. The
+     *  answer to "what do I have?", so the model never has to recall an id to find out. Also teaches the
+     *  reference forms by example, which is cheaper than a paragraph in the tool description that is paid on
+     *  every run. One line each, no column padding (it is read by a model). */
+    const inventory = (): string => {
+        const all = tokenStore.all();
+        if (!all.length) return "No pointers captured yet this session. Run a tool with `token: true` (or a short label) and its output becomes readable here.";
+        const lines = all.map((v) => `  @tool:${v.id} (${nameOf(v)}) ${shortType(v)}, step ${v.step}`);
+        const labelled = all.find((v) => v.label);
+        const byLabel = labelled ? ` — or by its label: @tool:${JSON.stringify(labelled.label)}.` : "";
+        return `${all.length} pointer${all.length === 1 ? "" : "s"} in this session:\n${lines.join("\n")}\n`
+            + `Read one by passing it as \`token\`, e.g. "@tool:${all[all.length - 1].id}"${byLabel}`;
+    };
     /** `look` at an IMAGE POINTER. A screenshot the run already captured is addressable like any other output,
      *  so `look { selector: "@tool:abc123" }` re-examines it — a different question about the SAME pixels —
      *  instead of re-screenshotting a page that has since scrolled or changed. The store lives here, so the
@@ -363,10 +392,15 @@ export async function runAgentLoop(task: string, opts: AgentLoopOptions, deps: A
     };
     // Hand the resolver to the host (see tokenSink). Throws exactly what the tool would return, so a failed
     // read inside exec surfaces the same MemoryFault / pipe error the model sees from the tool itself.
-    opts.tokenSink?.((ref: string, pipe?: string | string[]): string => {
-        const v = tokenStore.get(ref);
+    opts.tokenSink?.((ref: string, pipe?: string | string[]): DerefRead => {
+        const { value: v, matched, score } = tokenStore.resolveRef(ref, opts.labelMatch);
         if (!v) throw new Error(memoryFault(ref, tokenStore.nearest(ref), seq));
-        return derefPipe(v, TokenStore.slotOf(ref), pipe);
+        // A soft label match travels BESIDE the value, never inside it: the caller here is a script that will
+        // parse/split/pipe what it gets back, so a note appended to the value would corrupt the data.
+        const warning = matched
+            ? `ml.dereference: resolved ${JSON.stringify(parseLabel(ref) ?? ref)} to the label ${JSON.stringify(matched)} by similarity (${score?.toFixed(2)}), not an exact name.`
+            : undefined;
+        return { value: derefPipe(v, TokenStore.slotOf(ref), pipe), ...(warning ? { warning } : {}) };
     });
     /** Rewrite a `look` at an image pointer into a look at that image; anything else passes through.
      *  A bad pointer becomes an ERROR RESULT, never a throw: the model should read the fault and correct the

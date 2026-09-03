@@ -42,7 +42,7 @@ test("dereference: the reply says WHAT the value is and HOW STALE, then the pipe
             : { result: "" });
 
     const out = results.find((r) => r.name === "dereference").result;
-    assert.match(out, /^@tool:[0-9a-f]{6} \(exec\) — text, \d+ chars \/ 300 lines/, "leads with what is at the pointer");
+    assert.match(out, /^@tool:[0-9a-f]{7} \(exec\) — text, \d+ chars \/ 300 lines/, "leads with what is at the pointer");
     assert.match(out, /chars MORE than you were shown \(your copy was truncated\)/, "…and that this read is worth the step");
     assert.match(out, /captured at step 1, 1 step ago — the page may have changed since/, "…and how stale it is");
     assert.match(out, /row 297: v297/, "then the piped value — a line the model never saw");
@@ -50,22 +50,25 @@ test("dereference: the reply says WHAT the value is and HOW STALE, then the pipe
 
 test("dereference: a hallucinated pointer returns a MemoryFault naming the real ones", async () => {
     const { results } = await drive(
-        [call("exec", { js: "x", token: true }), call("dereference", { token: "@tool:deadbe" })],
+        [call("exec", { js: "x", token: true }), call("dereference", { token: "@tool:deadbe1" })],
         () => ({ result: "captured" }));
     const out = results.find((r) => r.name === "dereference").result;
-    assert.match(out, /^Error: MemoryFault: pointer '@tool:deadbe' does not exist\./);
+    assert.match(out, /^Error: MemoryFault: pointer '@tool:deadbe1' does not exist\./);
     assert.match(out, /Nearest valid pointers:/);
-    assert.match(out, /\(1 step back: exec\) +\[edit_dist=\d+\]/, "the real pointer, with distance and how far back");
+    assert.match(out, /\(1 step back: exec\) [^[]*\[dist \d+\]/, "the real pointer, with its TYPE, distance and how far back");
     assert.match(out, /recoverable/i);
 });
 
-test("dereference: a missing token argument lists what IS available", async () => {
+test("dereference: a pipe with NO token still answers with the inventory, and says the pipe was dropped", async () => {
     const { results } = await drive(
         [call("exec", { js: "x", token: true }), call("dereference", { pipe: "head 2" })],
         () => ({ result: "captured" }));
     const out = results.find((r) => r.name === "dereference").result;
-    assert.match(out, /^Error: "token" is required/);
-    assert.match(out, /@tool:[0-9a-f]{6} \(exec, step 1\)/, "names the pointer it could have used");
+    // A pipe with no pointer is a slip, not an inventory request — but the inventory is what recovers it.
+    assert.match(out, /1 pointer in this session:/);
+    assert.match(out, /@tool:[0-9a-f]{7} \(exec\)/, "names the pointer it could have used");
+    // …and the dropped argument is stated rather than silently ignored.
+    assert.match(out, /`pipe` was not applied: no pointer was named/);
 });
 
 test("dereference: a bad pipe stage returns the dialect's own actionable refusal", async () => {
@@ -110,7 +113,7 @@ test("look: an @tool: image pointer is rewritten into a look at that image", asy
 
     const second = got.filter((g) => g.name === "look")[1];
     assert.equal(second.args._image, shot, "the loop resolved the pointer to the captured image");
-    assert.match(second.args._imageLabel, /@tool:[0-9a-f]{6} \(captured at step 1\)/, "…labelled with where it came from");
+    assert.match(second.args._imageLabel, /@tool:[0-9a-f]{7} \(captured at step 1\)/, "…labelled with where it came from");
     assert.equal(second.args.question, "any red text?", "the model's own question is preserved");
     assert.equal(results.filter((r) => r.name === "look").length, 2);
 });
@@ -145,7 +148,7 @@ test("token as a label: names the pointer in the reply, the listing, and the fau
     const { results } = await drive(
         [call("python_exec", { code: "x", token: "the pricing table" }),
          call("dereference", { token: "@tool:python_exec" }),
-         call("dereference", { token: "@tool:deadbe" })],
+         call("dereference", { token: "@tool:deadbe1" })],
         (name) => name === "python_exec" ? { result: "rows…" } : { result: "" });
 
     const [read, fault] = results.filter((r) => r.name === "dereference").map((r) => r.result);
@@ -160,7 +163,7 @@ test("token as a label: a string still opts IN (it is not just decoration)", asy
         () => ({ result: "a\nb" }));
     // If the string hadn't counted as opting in, the id would never have been surfaced to the model.
     const execResult = results.find((r) => r.name === "exec").result;
-    assert.match(execResult, /@tool:[0-9a-f]{6}/, "the handle was surfaced because the label opted in");
+    assert.match(execResult, /@tool:[0-9a-f]{7}/, "the handle was surfaced because the label opted in");
     assert.match(derefResult({ results }), /"nav links"/);
 });
 
@@ -211,7 +214,7 @@ test("dereference: a PIPED view mints its own pointer, and that pointer resolves
         (name) => name === "python_exec" ? { result: rows } : { result: "" });
     const out = derefResult(results ? { results } : { results });
     assert.match(out, /TOTAL 6260/, "the reduction itself");
-    const id = /\[this view is @tool:([0-9a-f]{6})/.exec(out)?.[1];
+    const id = /\[this view is @tool:([0-9a-f]{7})/.exec(out)?.[1];
     assert.ok(id, "the view was given a pointer");
     assert.match(out, new RegExp(`!\\[label\\]\\(@tool:${id}:out\\)`), "…and says how to show it");
 
@@ -249,14 +252,14 @@ test("dereference: reading by NAME hands back the stable id, and that id does no
         (name, args) => name === "python_exec" ? { result: args.code === "first" ? "ONE" : "TWO" } : { result: "" });
     const reads = results.filter((r) => r.name === "dereference");
 
-    const pinned = /\[pinned: this call is @tool:([0-9a-f]{6})\./.exec(reads[0].result)?.[1];
+    const pinned = /\[pinned: this call is @tool:([0-9a-f]{7})\./.exec(reads[0].result)?.[1];
     assert.ok(pinned, "reading by name pins the call it resolved to");
     assert.match(reads[0].result, /always means the LATEST python_exec call and will move/, "…and says the name moves");
     assert.match(reads[0].result, /ONE/);
 
     // The SAME name now resolves to the second call — the alias moved, exactly as the pin line warned.
     assert.match(reads[1].result, /TWO/, "the alias followed the newer call");
-    const pinned2 = /\[pinned: this call is @tool:([0-9a-f]{6})\./.exec(reads[1].result)?.[1];
+    const pinned2 = /\[pinned: this call is @tool:([0-9a-f]{7})\./.exec(reads[1].result)?.[1];
     assert.notEqual(pinned2, pinned, "…so it pins a different id");
 
     // …while the FIRST pin still means the first call. That is the whole point of handing it over.
@@ -267,4 +270,84 @@ test("dereference: reading by NAME hands back the stable id, and that id does no
     const byId = after.results.filter((r) => r.name === "dereference")[1].result;
     assert.match(byId, /ONE/, "the pinned id still reads the ORIGINAL call after the alias moved");
     assert.doesNotMatch(byId, /\[pinned:/, "and a read BY id doesn't re-pin — it already holds the handle");
+});
+
+// A soft label match must never be silent: an address dereference that quietly picks different data is the
+// failure that costs ten steps of the model explaining an anomaly it caused itself.
+test("dereference: a label resolved by SIMILARITY says so; an exact one says nothing", async () => {
+    const run = async (query) => {
+        const { results } = await drive(
+            [call("python_exec", { code: "df", token: "the table of sales" }), call("dereference", { token: `@tool:${JSON.stringify(query)}` })],
+            (name) => name === "python_exec" ? { result: "ROWS" } : { result: "" });
+        return derefResult({ results });
+    };
+
+    const soft = await run("sales table");
+    assert.match(soft, /ROWS/, "it did resolve");
+    assert.match(soft, /resolved by similarity, not an exact name/);
+    assert.match(soft, /you asked for "sales table"/, "echoes what the model actually wrote");
+    assert.match(soft, /closest label was "the table of sales"/, "…and what it got");
+    assert.match(soft, /\(1\.00\)/, "…with the score, so a weak match is visible as one");
+    assert.match(soft, /list what you have with dereference and no token/, "…and the way to check");
+
+    // An EXACT match approximated nothing, so it says nothing.
+    const exact = await run("the table of sales");
+    assert.match(exact, /ROWS/);
+    assert.doesNotMatch(exact, /resolved by similarity/);
+});
+
+// The exec path cannot carry the advisory in the value. `ml.dereference()` returns a string a script is about
+// to JSON.parse / split / pipe, so a note appended to it would corrupt the data — the tool path appends text
+// because there the model READS the result, and these are genuinely different channels.
+test("dereference: a soft match reaches exec as a console warning, leaving the VALUE clean", async () => {
+    let resolver = null;
+    await drive(
+        [call("python_exec", { code: "df", token: "the table of sales" }), { content: "done", tool_calls: [] }],
+        () => ({ result: "ROWS" }),
+        { tokenSink: (fn) => { resolver = fn; } });
+    assert.equal(typeof resolver, "function");
+
+    // Exact: the value, and nothing to advise about.
+    const exact = resolver('@tool:"the table of sales"');
+    assert.equal(exact.value, "ROWS");
+    assert.equal(exact.warning, undefined);
+
+    // Soft: the SAME clean value, with the advisory beside it for the caller to console.warn.
+    const soft = resolver('@tool:"sales table"');
+    assert.equal(soft.value, "ROWS", "the value is untouched — this is what the script operates on");
+    assert.match(soft.warning, /^ml\.dereference: resolved "sales table" to the label "the table of sales" by similarity/);
+    assert.match(soft.warning, /\(1\.00\)/, "with the score, so a weak match is visible");
+    assert.doesNotMatch(soft.value, /similarity/, "and nothing about the resolution leaked into the data");
+});
+
+// Calling with NO argument is the inventory. It used to be reachable only by provoking the "token is
+// required" error, which is backwards for a mechanism whose job is confidence: a model that cannot cheaply
+// see what it holds will guess, and a model that expects to guess wrong retypes the data instead.
+test("dereference: no argument lists what the session holds, as a real read", async () => {
+    const { results } = await drive(
+        [call("python_exec", { code: "df", token: "the sales table" }),
+         call("exec", { js: "x", token: true }),
+         call("dereference", {})],
+        (name) => name === "python_exec" ? { result: "ROWS" } : { result: "SURVEY" });
+    const out = derefResult({ results });
+
+    assert.doesNotMatch(out, /^Error/, "an inventory is a legitimate read, not a validation failure");
+    assert.match(out, /2 pointers in this session:/);
+    assert.match(out, /@tool:[0-9a-f]{7} \(python_exec: "the sales table"\) text \d+ chars, step 1/, "each carries its name, TYPE and age");
+    assert.match(out, /@tool:[0-9a-f]{7} \(exec\) text \d+ chars, step 2/);
+    // It teaches the reference forms by example, which is cheaper than paying for a paragraph every run.
+    assert.match(out, /Read one by passing it as `token`/);
+    assert.match(out, /or by its label: @tool:"the sales table"/);
+    // No column padding — it is read by a model (see the AGENTS.md rule).
+    for (const line of out.split("\n").filter((l) => l.includes("@tool:"))) {
+        assert.doesNotMatch(line.trimStart(), / {2,}/, `padded: ${JSON.stringify(line)}`);
+    }
+});
+
+test("dereference: an empty session says how to fill it, not that something went wrong", async () => {
+    const { results } = await drive([call("dereference", {})], () => ({ result: "" }));
+    const out = derefResult({ results });
+    assert.doesNotMatch(out, /^Error/);
+    assert.match(out, /No pointers captured yet/);
+    assert.match(out, /token: true/, "and names the way to create one");
 });

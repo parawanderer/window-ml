@@ -3,7 +3,7 @@
 // via chrome.runtime for privileged work.
 import type { MlConfig, Theme, LoadedModel } from "./contract";
 import { formatBytes } from "./resource-model";
-import { DEFAULT_CONFIG, fmtCtx } from "./contract";   // single source of truth (see contract.ts)
+import { DEFAULT_CONFIG, fmtCtx, generatesText } from "./contract";   // single source of truth (see contract.ts)
 import { browserInfo, extensionDetailsUrl } from "./util";   // browser-correct internal scheme + details-page URL
 
 // The popup is a QUICK LAUNCHER: connection (the bare minimum to work) + the two
@@ -78,7 +78,10 @@ function loadModels() {
     setStatus("Loading models…", "busy");
 
     chrome.runtime.sendMessage(
-        { type: "LIST_MODELS", payload: { chatUrl, apiKey } },
+        // `kinds: true` also reports capabilities so EMBEDDING models stay out of the chat picker — they
+        // appear in the list as soon as they are pulled, and choosing one fails at request time with
+        // nothing to explain why.
+        { type: "LIST_MODELS", payload: { chatUrl, apiKey, kinds: true } },
         (response: any) => {
             if (chrome.runtime.lastError) {
                 setStatus(`Failed to load models: ${chrome.runtime.lastError.message}`, "err");
@@ -89,7 +92,11 @@ function loadModels() {
                 return;
             }
 
-            const models: string[] = response.data;
+            // Requires `completion` rather than excluding `embedding`: an embedding model can advertise
+            // other capabilities too (qwen3-embedding reports tools + thinking). Unknown passes, so a model
+            // we could not interrogate is never hidden.
+            const kinds: Record<string, string[] | null> = response.kinds || {};
+            const models: string[] = (response.data as string[]).filter(m => generatesText(kinds[m] ?? null));
             const list = $("modelList");
             list.replaceChildren(...models.map(id => {
                 const opt = document.createElement("option");

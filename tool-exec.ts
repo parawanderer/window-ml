@@ -4,6 +4,7 @@
 // the page) will call the SAME function — so the two paths can't drift. Page-side (a tool's run()
 // touches the DOM and may return real Nodes); the delegation layer reduces `elements` to a count.
 import type { MlTool, ToolResult, RenderDescriptor, ToolContext, ToolFeedback, DocsMemory } from "./contract";
+import type { DerefRead } from "./token-pipe";
 import { AnswerSet } from "./answer-set";
 import { validateArgs } from "./validate";
 import { errText } from "./dom";
@@ -34,9 +35,9 @@ export function currentAnswer(): AnswerSet | null { return activeAnswer; }
 // executing a tool — so an APPROVED exec can read a previous output as DATA rather than re-reading it as text,
 // while a page calling `window.ml.dereference` from its own console gets nothing: there is no active run, so
 // there is no store to read. The binding, not a permission check, is what scopes it.
-let activeDeref: ((ref: string, pipe?: string | string[]) => Promise<string>) | null = null;
+let activeDeref: ((ref: string, pipe?: string | string[]) => Promise<DerefRead>) | null = null;
 /** The pointer resolver for the tool currently running, or null (→ `ml.dereference` throws outside a run). */
-export function currentDeref(): ((ref: string, pipe?: string | string[]) => Promise<string>) | null { return activeDeref; }
+export function currentDeref(): ((ref: string, pipe?: string | string[]) => Promise<DerefRead>) | null { return activeDeref; }
 
 // How many NON-docs tool calls may fall between two `agent_api_docs` calls before the dig counts as "over" and
 // the shown-set is purged. 1 = tolerate a single quick detour (an `exec` check) mid-dig without re-printing;

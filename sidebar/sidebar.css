@@ -787,6 +787,23 @@ details.io[open] > summary .io-preview { display: none; }
 .r-action-ask { margin-top: 5px; color: var(--fg); }
 .r-action-ask b { font-weight: 700; }
 .r-action-meta { margin-top: 3px; font-size: 0.88em; color: var(--fg-dim); }
+
+/* The Markdown ladder (fetch_url's In slot): a resolution TREE — what was tried, what worked, what was never
+   needed. Every rung is drawn, unused ones dimmed, so the protocol reads off any single render. A monospace
+   rail (not a border) keeps it aligned with the ASCII form the exports emit, so the two views match. */
+.r-lad { margin-top: 6px; font-size: 0.88em; line-height: 1.55; }
+.r-lad-row { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; overflow-x: auto; }
+.r-lad-rail { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg-faint); user-select: none; }
+.r-lad-glyph { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; width: 1ch; text-align: center; }
+.r-lad-hit { color: var(--ok); }
+.r-lad-not-markdown, .r-lad-error { color: var(--err); }
+.r-lad-skipped { color: var(--fg-faint); }
+.r-lad-label { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.r-lad-meta { color: var(--fg-dim); }
+.r-lad-note { color: var(--fg-faint); font-style: italic; }
+.r-lad-unused { opacity: 0.55; }
+.r-lad-by { margin-top: 4px; color: var(--fg-dim); }
+.r-lad-by b { font-weight: 600; color: var(--fg); }
 .r-action-model { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .dim { color: var(--fg-faint); font-style: italic; }
 

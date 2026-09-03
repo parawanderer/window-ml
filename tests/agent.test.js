@@ -981,7 +981,7 @@ const citeToolOutput = (toolName, id = "c1") => {
         if (m.type === "GET_CONFIG" || m.type === "MODEL_CAPS") return undefined;
         if (++turn === 1) return { data: toolCall(toolName, { token: true }, id) };
         const tm = (m.payload?.messages || []).find((x) => x.tool_call_id === id);
-        const tid = String(tm?.content || "").match(/@tool:([0-9a-f]{6})/)?.[1] || "000000";
+        const tid = String(tm?.content || "").match(/@tool:([0-9a-f]{7})/)?.[1] || "000000";
         return { data: reply(`The result: ![out](@tool:${tid}:out).`) };
     };
 };
@@ -1036,7 +1036,7 @@ test("toolTokens: opt-in — a token is minted ONLY when the model sets token:tr
     let world = loadPageWorld({ onRuntimeMessage: script() });
     await world.ml.agent("t", { tools: [world.ml.defineTool(tool("wants")), world.ml.defineTool(tool("skip"))], toolTokens: true });
     let msgs = world.runtimeCalls.at(-1).payload.messages;
-    assert.match(msgs.find(m => m.tool_call_id === "c1").content, /@tool:[0-9a-f]{6}:out/, "the opted-in call gets a token");
+    assert.match(msgs.find(m => m.tool_call_id === "c1").content, /@tool:[0-9a-f]{7}:out/, "the opted-in call gets a token");
     assert.doesNotMatch(msgs.find(m => m.tool_call_id === "c2").content, /@tool:/, "a call that didn't ask gets none");
 
     // OFF (default): no token line even on the opted-in call — a normal run is byte-identical.
@@ -2231,7 +2231,7 @@ test("cached ml.fetch: fetch_url prompts + caches once, then a readonly exec re-
     assert.deepEqual(execStep.reused, [{ kind: "fetch-url", detail: url }], "the reused cached URL is reported on the step");
 });
 
-test("fetch_url: an HTML page is auto-converted to Markdown (+ a note); raw:true returns the original HTML", async () => {
+test("fetch_url: an HTML page is auto-converted to Markdown (+ a note); format:\"html\" returns the original HTML", async () => {
     const url = "https://x.test/page.html";
     let fetchResult;
     const world = loadPageWorld({
@@ -2251,11 +2251,12 @@ test("fetch_url: an HTML page is auto-converted to Markdown (+ a note); raw:true
     assert.doesNotMatch(md, /<h1>|track\(\)|JUNKFOOTER|Menu Home|PAGETITLE/, "tags + script + chrome stripped");
     assert.match(md, /converted it to Markdown/, "the conversion note is present");
 
-    // raw:true → the ORIGINAL HTML, no conversion, no note (same URL → served from ml.fetch's cache).
-    const rawOut = await tool.run({ url, raw: true });
+    // format:"html" → the ORIGINAL markup, no conversion, no note. (Replaced `raw`, which straddled "what do
+    // we fetch" and "what does the model receive"; `format` is the fetch-level half and is shared with ml.fetch.)
+    const rawOut = await tool.run({ url, format: "html" });
     const rawMd = typeof rawOut === "string" ? rawOut : rawOut.content;
     assert.match(rawMd, /<h1>Hello<\/h1>/, "raw HTML preserved verbatim");
-    assert.doesNotMatch(rawMd, /converted it to Markdown/, "no conversion note on a raw fetch");
+    assert.doesNotMatch(rawMd, /converted it to Markdown/, "no conversion note on an html fetch");
 
     // The distillation is exposed on ml.fetch's OWN result too — any caller (exec, a read-only survey) can
     // read r.markdown without re-converting; r.text still holds the raw HTML.
@@ -2295,10 +2296,10 @@ test("fetch_url pipe: filters the returned text through the grep/head pipeline (
     // Grepping RAW HTML is ALLOWED — but a MINIFIED (one-line) page can't be split by line tools, so nudge.
     const minifiedHtml = "<html><body>" + "<p>x</p>".repeat(300) + "</body></html>";   // one long line, no newlines
     fetchResult = { url, status: 200, ok: true, type: "html", contentType: "text/html", text: minifiedHtml };
-    const rawOut = await tool.run({ url, raw: true, pipe: "grep -c x" }, withExec);
+    const rawOut = await tool.run({ url, format: "html", pipe: "grep -c x" }, withExec);
     const rawMd = typeof rawOut === "string" ? rawOut : rawOut.content;
     assert.match(rawMd, /the source is 1 line \(minified\?\)/, "warns the raw HTML was one line");
-    assert.match(rawMd, /drop "raw": true to pipe the clean Markdown/, "nudges toward the Markdown path");
+    assert.match(rawMd, /drop "format": "html" to pipe the clean Markdown/, "nudges toward the Markdown path");
 });
 
 test("fetch_url: non-HTML content (JSON) is never converted or note-tagged", async () => {
